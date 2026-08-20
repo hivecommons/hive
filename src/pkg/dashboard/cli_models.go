@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/claude"
 )
 
@@ -300,6 +301,11 @@ var copilotStaticModels = []string{
 	"gpt-5.2",
 	"gpt-4.1",
 	"gpt-4o",
+	// The -5 family is DASHED in copilot CLI nomenclature; the 4.x family is
+	// DOTTED. Keep in sync with agent.copilotCLIAcceptedModels (#4262).
+	"claude-opus-5",
+	"claude-sonnet-5",
+	"claude-fable-5",
 	"claude-opus-4.6",
 	"claude-sonnet-4.6",
 	"claude-sonnet-4.5",
@@ -600,7 +606,7 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	} else if len(models) == 0 {
 		s.logger.Info("copilot SDK model discovery returned no models, falling back to HTTP probe")
 	} else {
-		return cliModelResult{models: dedupeModels(models), fallback: false}
+		return cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
 	}
 
 	if token == "" {
@@ -620,7 +626,24 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 		}
 		return cliModelResult{fallback: true}
 	}
-	return cliModelResult{models: dedupeModels(models), fallback: false}
+	return cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
+}
+
+// canonicalizeCopilotModelIDs maps every discovered Copilot catalog id to the
+// nomenclature the copilot CLI's --model flag accepts (#4262): the catalog
+// periodically returns ids whose version separator drifts between "." and "-"
+// relative to the CLI (e.g. claude-fable.5 vs the CLI-accepted claude-fable-5).
+// Normalizing at discovery time keeps the dropdown, the stored selections it
+// produces, AND the stabilize/auto-heal retention keys in one canonical
+// spelling, so a sample that flips separators can never look like a new model
+// appearing plus the old one vanishing (false "model revoked" churn). Unknown
+// ids pass through verbatim (see agent.CanonicalizeCopilotModel).
+func canonicalizeCopilotModelIDs(in []string) []string {
+	out := make([]string, len(in))
+	for i, id := range in {
+		out[i] = agent.CanonicalizeCopilotModel(id)
+	}
+	return out
 }
 
 // runCopilotSDKHelper executes the SDK helper and returns its stdout. A

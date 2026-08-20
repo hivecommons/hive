@@ -10,18 +10,23 @@ import (
 	"time"
 )
 
+func initTestGitRepo(t *testing.T, repoDir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "init", repoDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s %v", out, err)
+	}
+	exec.Command("git", "-C", repoDir, "checkout", "-B", "master").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+}
+
 func TestStartWithLocalGitRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")
 	}
 
 	repoDir := t.TempDir()
-	cmd := exec.Command("git", "init", repoDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %s %v", out, err)
-	}
-	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+	initTestGitRepo(t, repoDir)
 
 	agentDir := filepath.Join(repoDir, "agents")
 	os.MkdirAll(agentDir, 0o755)
@@ -59,9 +64,7 @@ func TestInitialCloneExistingRepo(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
-	exec.Command("git", "init", repoDir).Run()
-	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+	initTestGitRepo(t, repoDir)
 	os.WriteFile(filepath.Join(repoDir, "test.md"), []byte("hello"), 0o644)
 	exec.Command("git", "-C", repoDir, "add", ".").Run()
 	exec.Command("git", "-C", repoDir, "commit", "-m", "init").Run()
@@ -86,9 +89,7 @@ func TestPullNoChanges(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
-	exec.Command("git", "init", repoDir).Run()
-	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+	initTestGitRepo(t, repoDir)
 	os.WriteFile(filepath.Join(repoDir, "test.md"), []byte("hello"), 0o644)
 	exec.Command("git", "-C", repoDir, "add", ".").Run()
 	exec.Command("git", "-C", repoDir, "commit", "-m", "init").Run()
@@ -106,9 +107,7 @@ func TestPullWithNewCommit(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
-	exec.Command("git", "init", repoDir).Run()
-	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+	initTestGitRepo(t, repoDir)
 	os.WriteFile(filepath.Join(repoDir, "scanner.md"), []byte("v1"), 0o644)
 	exec.Command("git", "-C", repoDir, "add", ".").Run()
 	exec.Command("git", "-C", repoDir, "commit", "-m", "init").Run()
@@ -139,9 +138,7 @@ func TestStartLoadPoliciesError(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
-	exec.Command("git", "init", repoDir).Run()
-	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "-C", repoDir, "config", "user.name", "test").Run()
+	initTestGitRepo(t, repoDir)
 	os.WriteFile(filepath.Join(repoDir, "test.md"), []byte("hello"), 0o644)
 	exec.Command("git", "-C", repoDir, "add", ".").Run()
 	exec.Command("git", "-C", repoDir, "commit", "-m", "init").Run()

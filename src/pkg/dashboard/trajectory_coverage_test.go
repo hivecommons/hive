@@ -111,7 +111,7 @@ func TestCov_ReconcileTrajectoryAlert(t *testing.T) {
 	g := &deps.Config.Governor
 
 	// The banner alert is no longer raised in ANY state — the half-configured
-	// case is surfaced inline in Governor Config → General instead. The lane
+	// case is surfaced inline in Settings → General instead. The lane
 	// defaults to ON, so raising it here fired on every unconfigured hive.
 
 	// Enabled + no reviewer endpoint/model → still no alert (the case that

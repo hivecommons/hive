@@ -15,6 +15,7 @@ import (
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/governor"
 	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/kubestellar/hive/pkg/rotation"
 	"github.com/kubestellar/hive/pkg/scheduler"
 	"github.com/kubestellar/hive/pkg/tokens"
 )
@@ -31,6 +32,9 @@ type Dependencies struct {
 	Nous             *NousState
 	Scheduler        *scheduler.Scheduler
 	MetricsCollector *MetricsCollector
+	// RotationMgr is the provider-rotation manager (RFC #3958). Nil when
+	// rotation is disabled; the headroom endpoint then reports enabled=false.
+	RotationMgr *rotation.Manager
 	// FleetStats is the spoke's fleet-stat contribution collector (PRs
 	// merged/rejected over the trailing 90-day window, cached, refreshed on a
 	// 30-minute timer). The ACMM advisor derives its baseline merge-success

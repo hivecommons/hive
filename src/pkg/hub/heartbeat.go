@@ -350,6 +350,10 @@ type GovernorSummary struct {
 	Mode   string `json:"mode"`
 	Issues int    `json:"issues"`
 	PRs    int    `json:"prs"`
+	// WorkSource is the configured work source type ("github_projects",
+	// "linear", "jira"). Empty for the default GitHub Issues source; the hub
+	// dashboard only badges non-default sources.
+	WorkSource string `json:"work_source,omitempty"`
 }
 
 type ContributorSummary struct {
@@ -542,6 +546,13 @@ type HeartbeatPayload struct {
 	// already logs, so it never carries key material. Set = the hub flags the
 	// digest as stale (gated on advisory-mode + app-can-write) with this cause.
 	AdvisoryError string `json:"advisory_error,omitempty"`
+	// AdvisoryFindingCount is how many findings went out in the last digest this
+	// spoke posted, and AdvisoryOverflowCount how many MORE exist that the
+	// top-N cap withheld (0 when nothing was capped). Reported together so the
+	// hub can render "12 findings (top 10)" — a bare count would read as the
+	// whole picture when it is deliberately only the top of it.
+	AdvisoryFindingCount  int `json:"advisory_finding_count,omitempty"`
+	AdvisoryOverflowCount int `json:"advisory_overflow_count,omitempty"`
 	// InferenceAuthError is the log-safe cause string set when this spoke's
 	// self-hosted inference backend (LiteLLM/vLLM/llm-d gateway) has rejected
 	// several CONSECUTIVE calls with 401 — a stale/invalid gateway key that

@@ -180,6 +180,7 @@ type ContributorProfile struct {
 	PreferredRole     string `json:"preferred_role,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	AvatarURL         string `json:"avatar_url,omitempty"`
 	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
 	// who invited this person via a trusted invite link (issue #2598). It is
@@ -772,7 +773,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
 			}
 		} else {
-			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
+			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" data-action="dismiss-parent">Dismiss</button></div>`
 		}
 	}
 
@@ -1877,7 +1878,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 </div>
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
 <label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
-<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" oninput="updateCmds()">
+<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" data-input-action="updateCmds">
 </div>
 <!-- #2549 Kubernetes-mode note. Hidden except in Kubernetes mode. States the two
      honest constraints up front: only headless-capable backends run in a cluster
@@ -1976,6 +1977,9 @@ function isHostOnly(c){return HOST_ONLY_BACKENDS.indexOf(c)>=0;}
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
+// Event delegation (#3848): replaces the former inline oninput= attribute so
+// CSP script-src-attr can be 'none'.
+if(modelInput){modelInput.addEventListener('input',updateCmds);}
 function update(){
 var os=osSel.value;
 var prereq=prereqByOS[os]||prereqByOS.macos;
@@ -2202,7 +2206,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 })();
 </script>
 </div>
-<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/v2/src/docs/podman-rootless-ci.md" target="_blank" style="color:#58a6ff">docs/podman-rootless-ci.md</a>.</p>
+<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:#58a6ff">docs/podman-rootless-ci.md</a>.</p>
 <p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
 <button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
@@ -2555,6 +2559,33 @@ It clears automatically when the period elapses. An operator can shorten or disa
     <span>Report an issue with this page</span>
   </a>
 </footer>
+<script>
+(function(){
+// ── Event delegation (#3848) ─────────────────────────────────────────────────
+// Replaces former inline on*= handler attributes so CSP script-src-attr can be
+// 'none'. Behaviors are keyed off data-* attributes:
+//   data-action="dismiss-parent"  → remove the button's parent element
+//   data-hide-on-error="1"        → hide <img> whose load failed
+//   data-select-on-click="1"      → select input contents on click
+//   data-stop-prop="1"            → stop click/mousedown propagating to parents
+document.addEventListener('click',function(e){
+  if(!e.target.closest)return;
+  var d=e.target.closest('[data-action="dismiss-parent"]');
+  if(d&&d.parentElement){d.parentElement.remove();return;}
+  var s=e.target.closest('[data-select-on-click]');
+  if(s&&s.select){s.select();}
+});
+document.addEventListener('error',function(e){
+  var t=e.target;
+  if(t&&t.getAttribute&&t.getAttribute('data-hide-on-error')){t.style.visibility='hidden';}
+},true);
+['click','mousedown'].forEach(function(type){
+  document.addEventListener(type,function(e){
+    if(e.target.closest&&e.target.closest('[data-stop-prop]')){e.stopPropagation();}
+  },true);
+});
+})();
+</script>
 <script>
 (function(){
 // ── Init-order hoist (fixes the #2603/#2604/#2606 merge-interleaving regression) ──
@@ -3104,7 +3135,7 @@ function meCollaborators(p){
     var occ=(c.occasions>1)?(' · '+c.occasions+' occasions'):'';
     out+='<a class="dz-collab" href="/contribute/dossier/'+encodeURIComponent(c.username)+'">'
       +'<img class="dz-collab__av" src="https://github.com/'+encodeURIComponent(c.username)+'.png" alt="" '
-        +'onerror="this.style.visibility=\'hidden\'">'
+        +'data-hide-on-error="1">'
       +'<span class="dz-collab__body"><span class="dz-collab__name">'+esc(c.username)+'</span>'
       +'<span class="dz-collab__how">'+esc(how)+esc(occ)+'</span></span></a>';
   }
@@ -3298,7 +3329,7 @@ function renderMeCard(mount,p){
   +'<section class="dz-identity" aria-label="Identity">'
   +'<div class="me-emblem" style="--a1:'+em.a1+';--a2:'+em.a2+';--p1:'+em.p1+';--p2:'+em.p2+'"></div>'
   +'<div class="dz-identity-inner">'
-  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'"></div>'
+  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" data-hide-on-error="1"></div>'
   +'<div class="dz-namebloc">'+callsign+'<h1 class="dz-heroname">'+esc(p.github_username)+'</h1>'+desig+founding+'</div>'
   +'<div class="dz-rankpill"><div class="rank-name">'+esc(rankMeta[0])+'</div><div class="rank-sub">trust · '+esc(tier)+'</div></div>'
   +'</div>'+livebar+'</section>'
@@ -3345,7 +3376,7 @@ function renderMeCard(mount,p){
       +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
       +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
       +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
-      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
+      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" data-select-on-click="1">'
       +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. Allowed: custom properties, attribute and pseudo selectors, <code>calc()</code>/<code>clamp()</code>/gradients, and <code>@media</code>, <code>@supports</code>, <code>@container</code>, <code>@keyframes</code>. <code>@font-face</code> is kept only with same-origin or <code>data:</code> sources. Removed: <code>@import</code>, external <code>url()</code> fetches, CSS escapes, and legacy executable CSS. Add <code>&amp;report=1</code> to the style API URL for sanitizer details. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
     +'</div>'
     +meInviteSection(p)
@@ -3708,7 +3739,7 @@ function ccIssueLinkHTML(item,label,extraClass){
   var url=ccIssueURL(item);
   if(!url)return '<span class="'+(extraClass||'')+'">'+esc(label)+'</span>';
   return '<a class="cc-issue-link '+(extraClass||'')+'" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" '+
-    'title="Open on GitHub" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">'+
+    'title="Open on GitHub" data-stop-prop="1">'+
     esc(label)+
     '<svg class="cc-issue-link-ic" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'+
     '<path fill="currentColor" d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z"/>'+
@@ -4857,7 +4888,14 @@ function ccInitInterestsEditor(){
   }).catch(function(){});
 }
 
-function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
+// ccQueueKey is the identity the operator's HOLD and REORDER controls persist,
+// so it must be the server's canonical key (kubestellar/hive#4245). The server
+// now sends it as q.key: "owner/repo#42" for GitHub-backed work (unchanged) and
+// "owner/repo!ENG-123" for a string-keyed source. The fallback keeps rows from a
+// pre-#4245 server working; without the q.key preference an external item
+// produced "owner/repo#" — a key the server can never match, so holding or
+// reordering it silently did nothing.
+function ccQueueKey(q){return q.key||((q.repo||'')+'#'+(q.number||''));}
 
 // ccQueueSearch is the current VIEW filter text (lower-cased). It changes only what
 // is SHOWN — never the persisted order. Empty = show all. The reorder ACTIONS below
@@ -4972,10 +5010,13 @@ function ccRenderQueue(flip){
     // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
     // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
     // and simply omitted when no PR is linked — never blocks the queue render.
-    var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
+    // PR links are a GitHub-only observer: an item with no issue number has no
+    // GitHub issue for a PR to close, so it gets no badge rather than a lookup
+    // on a fabricated key (kubestellar/hive#4245).
+    var prBadge=q.number?ccPRBadgeHTML((q.repo||'')+'#'+q.number):'';
     var enterCls=isNewQ?' cc-q-enter':'';
     return '<div class="cc-q-item'+mineCls+heldCls+enterCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,ccQueueKey(q))+mineTag+heldTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
   // Adopt the freshly-painted key set so the NEXT render only pops-in new arrivals.
@@ -5471,23 +5512,51 @@ function ccTaskRefLink(task){
   if(!m)return '<span class="ref">'+esc(task)+'</span>';
   return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
 }
+// ccFormatLoadout renders one contributor's loadout suffix -- the SHARED
+// formatter for both Live Activity views (the Operations rail via ccNarrate and
+// the Onboarding feed below), so the two cannot drift apart again.
+//
+//   via codex CLI with gpt-5.6-terra (high)   -- everything known
+//   via codex CLI with gpt-5.6-terra          -- no effort
+//   via codex CLI (high)                      -- effort but no model
+//   via codex CLI                             -- backend only
+//   (empty)                                   -- no backend: nothing to say
+//
+// Effort is rendered INDEPENDENTLY of model: a contributor can set
+// AGENT_REASONING_EFFORT without AGENT_MODEL (codex then runs its default model
+// at that effort), and nesting the effort inside the model branch would drop
+// exactly the value this view exists to surface. Every branch is guarded, so a
+// bare '()' or a dangling 'with' can never be emitted.
+function ccFormatLoadout(e,cls){
+  if(!e||!e.cli)return '';
+  var m=e.model?esc(e.model):'';
+  var ef=e.effort?esc(e.effort):'';
+  var text='via '+esc(e.cli)+' CLI';
+  if(m)text+=' with '+m;
+  if(ef)text+=' ('+ef+')';
+  return ' <span class="'+(cls||'feed-cli')+'">'+text+'</span>';
+}
+window.ccFormatLoadout=ccFormatLoadout;
+window.esc=esc;
+
 function ccNarrate(e){
   var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
   var ic=icons[e.action]||'⚡';
   var who='<span class="who">'+esc(e.username||'someone')+'</span>';
   var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
   var pickedRef=e.task?' '+ccTaskRefLink(e.task):'';
+  var loadout=ccFormatLoadout(e,'ref');
   var body;
   switch(e.action){
-    case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
+    case 'joined': body=who+' entered the hive'; break;
     case 'left': body=who+' left the hive'; break;
     case 'picked up': body=who+' grabbed'+pickedRef; break;
-    case 'completed': body=who+' completed'+ref; break;
-    case 'failed': body=who+' hit a snag on'+ref; break;
+    case 'completed': body=who+' completed'+(e.task?' '+ccTaskRefLink(e.task):''); break;
+    case 'failed': body=who+' hit a snag on'+(e.task?' '+ccTaskRefLink(e.task):''); break;
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
     default: body=who+' '+esc(e.action)+ref;
   }
-  return {ic:ic,body:body,ts:e.timestamp};
+  return {ic:ic,body:body+loadout,ts:e.timestamp};
 }
 function ccRenderLog(){
   var el=document.getElementById('cc-log');if(!el)return;
@@ -5916,6 +5985,23 @@ window.addEventListener('scroll',function(){ccCloseQueueMenus();},true);
 </script>
 <script>
 let prevCount=0;
+// ── Cross-block helper resolution ────────────────────────────────────────────
+// esc() and ccFormatLoadout() are declared inside the OPERATIONS script block's
+// IIFE, so they are not in scope here; they reach this block only through the
+// window.* republish at the end of that IIFE. A BARE cross-IIFE reference is
+// exactly the shape that "threw ReferenceError on every dossier render" (see the
+// ccProjectName note at the top of that IIFE), and it fails closed: if that IIFE
+// ever throws before the republish -- it has regressed that way three times
+// (#2603/#2604/#2606) -- the reference throws, poll()'s catch swallows it, and
+// this feed silently freezes on a 3s loop with nothing in the console.
+// Resolve through window with REAL local fallbacks instead, so the worst case is
+// a feed that loses the loadout suffix rather than one that stops updating. The
+// esc fallback is a genuine escaper, never a pass-through: falling back to no
+// escaping would turn a rendering failure into an injection bug.
+const feedEsc=(typeof window!=='undefined'&&window.esc)||function(s){return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');};
+const feedLoadout=(typeof window!=='undefined'&&window.ccFormatLoadout)||function(){return '';};
 async function poll(){try{
 const[statusRes,actRes]=await Promise.all([fetch('/api/contribute/status'),fetch('/api/contribute/activity')]);
 const status=await statusRes.json();
@@ -5932,11 +6018,11 @@ const icons={joined:'🟢',left:'🔴','picked up':'🔧',completed:'✅',failed
 const verbs={joined:'entered the hive',left:'left the hive','picked up':'picked up','completed':'completed','failed':'failed'};
 const icon=icons[e.action]||'⚡';
 const verb=verbs[e.action]||e.action;
-const taskInfo=e.task?' <span class="feed-cli">'+e.task+'</span>':'';
-const role=e.role?' as <span class="feed-role">'+e.role+'</span>':'';
-const cliModel=e.cli?(e.model?' <span class="feed-cli">via '+e.cli+' CLI with '+e.model+'</span>':' <span class="feed-cli">via '+e.cli+' CLI</span>'):'';
+const taskInfo=e.task?' <span class="feed-cli">'+feedEsc(e.task)+'</span>':'';
+const role=e.role?' as <span class="feed-role">'+feedEsc(e.role)+'</span>':'';
+const cliModel=feedLoadout(e,'feed-cli');
 return '<div class="feed-entry"'+(i===0&&isNew?' style="background:rgba(63,185,80,.08)"':'')+'>'+
-'<div class="feed-text">'+icon+' <b>'+e.username+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
+'<div class="feed-text">'+icon+' <b>'+feedEsc(e.username)+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
 '<span class="feed-time">'+t+' '+tz+'</span></div>'
 }).join('');
 if(f.innerHTML!==html){f.innerHTML=html;if(isNew)f.scrollTop=0;}
@@ -7825,15 +7911,37 @@ func validateGitHubToken(token, apiURL string) string {
 }
 
 // handleAPIv1 wraps contribute API endpoints with GitHub token auth.
-// Accepts Authorization: Bearer <gh-personal-access-token>.
+//
+// Authentication accepts BOTH the bearer scheme (hosted clients) and the legacy
+// "token <pat>" scheme that `gh auth token` users and older hive CLIs send, so
+// upgrading a hive never breaks existing scripts. Credentials in the query
+// string (?token=) are NOT supported: query strings land in ingress and access
+// logs.
+//
+// Authorization: every /api/v1 path except /api/v1/me is gated on the hive's
+// authorized-users allowlist. The contributor data behind these reads
+// (knowledge base, contributor roster, activity feed) is hive-private, so a
+// merely-authenticated GitHub user must not be able to read it. /api/v1/me is
+// exempt because it only ever returns the caller's own profile.
 func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if strings.HasPrefix(token, "Bearer ") {
-		token = token[7:]
-	} else if strings.HasPrefix(token, "token ") {
-		token = token[6:]
-	} else {
-		token = r.URL.Query().Get("token")
+	// Defense in depth: strip any client-supplied identity headers up front so no
+	// downstream handler can ever observe a client-forged identity on this route.
+	r.Header.Del("X-Hive-User")
+	r.Header.Del("X-Hive-Role")
+	r.Header.Del(ownerRoleVerifiedHeader)
+
+	var token string
+	if auth := strings.Fields(r.Header.Get("Authorization")); len(auth) == 2 {
+		// Both schemes carry a GitHub PAT; "token" is kept for compatibility.
+		if strings.EqualFold(auth[0], "Bearer") || strings.EqualFold(auth[0], "token") {
+			token = auth[1]
+		}
+	}
+	if token == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
+		return
 	}
 
 	username := validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
@@ -7842,6 +7950,15 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
 		return
+	}
+
+	// Require allowlist authorization for every path except /api/v1/me, which is
+	// self-scoped. Fail closed: an empty allowlist authorizes nobody.
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/me") {
+		if _, ok := s.deps.Config.Dashboard.AuthorizedRole(username); !ok {
+			jsonError(w, "forbidden: not authorized for this endpoint", http.StatusForbidden)
+			return
+		}
 	}
 
 	subpath := strings.TrimPrefix(r.URL.Path, "/api/v1")
@@ -7878,9 +7995,42 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`{"error":"Not registered as a contributor. Run: just contribute-setup"}`))
 	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me"]}`))
+		if !strings.HasPrefix(subpath, "/prs/") || !strings.HasSuffix(subpath, "/queue-automerge") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")
+		if len(parts) != 4 || parts[3] != "queue-automerge" {
+			jsonError(w, "Unknown endpoint", http.StatusNotFound)
+			return
+		}
+		// queue-automerge mutates merge state, so it must never be reachable via
+		// GET (or any other safe method) — that would let a link or image tag
+		// trigger a merge and bypass the write gate.
+		if r.Method != http.MethodPost {
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		role, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
+		if !ok {
+			jsonError(w, "merger or owner access required", http.StatusForbidden)
+			return
+		}
+		// Identity and role are resolved server-side from the validated token and
+		// hive allowlist. Overwrite any client-supplied headers before reusing the
+		// dashboard queue handler and its repo, self-review, and exact-head guards.
+		r.Header.Set("X-Hive-User", username)
+		r.Header.Set("X-Hive-Role", role)
+		r.Header.Del(ownerRoleVerifiedHeader)
+		if isOwnerRole(role) {
+			r.Header.Set(ownerRoleVerifiedHeader, "true")
+		}
+		r.SetPathValue("owner", parts[0])
+		r.SetPathValue("repo", parts[1])
+		r.SetPathValue("number", parts[2])
+		s.handleQueuePRAutoMerge(w, r)
 	}
 }
 

@@ -296,7 +296,9 @@ func sandboxCommand(cfg configSnapshot, promptRel string) ([]string, error) {
 	case "copilot":
 		cmd = binary + " --no-auto-update --allow-all"
 		if cfg.Model != "" {
-			cmd += " --model " + shellQuote(cfg.Model)
+			// Canonicalize separator drift (claude-fable.5 -> claude-fable-5)
+			// so a stored bad id never reaches --model (#4262).
+			cmd += " --model " + shellQuote(CanonicalizeCopilotModel(cfg.Model))
 		}
 	default:
 		cmd = binary

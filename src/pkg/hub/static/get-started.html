@@ -450,14 +450,14 @@
       <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your repos, your infrastructure.</p>
     </div>
     <div class="alt-card">
-      <pre><code>git clone -b v4 https://github.com/kubestellar/hive.git
-cd hive/v2
+      <pre><code>git clone https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
-# Edit hive.yaml: set your org, repos, and GitHub token
+cp src/hive.yaml.example src/hive.yaml
+# Edit src/hive.yaml: set your org, repos, and GitHub token
 
-export HIVE_GITHUB_TOKEN=ghp_your_token_here
-docker compose up -d
+echo "HIVE_GITHUB_TOKEN=ghp_your_token_here" > .env
+docker compose -f src/docker-compose.yaml up -d
 
 # Open the dashboard
 open http://localhost:3001</code></pre>

@@ -55,7 +55,7 @@ Read the tree top to bottom and you can answer "who set this?" for any value:
 
 - **The platform owns the seed.** In Kubernetes, an init container re-copies the ConfigMap to `/etc/hive/hive.yaml` on every boot. The entrypoint then merges the dashboard overlay over it — but the ConfigMap stays authoritative for the hub/admin-managed keys (`acmm_level`, `hub.is_public`).
 - **You (via the dashboard) own the overlay.** Every dashboard save writes `/data/hive.yaml.dashboard`, so a LiteLLM endpoint or agent tweak survives pod restarts and upgrades.
-- **Secrets never enter YAML.** `hive.yaml` stores only env var *names* (`api_key_env`) and key file *paths* (`api_key_file`) — never key values. Values live in `/data/secrets/` (dashboard-entered) or `/secrets/` (Kubernetes Secret mounts). Because `Config.Save()` writes the whole config back to disk, a key value in YAML would be persisted in plaintext — so the code refuses the pattern entirely.
+- **Secrets never enter YAML.** `hive.yaml` stores only env var *names* (`api_key_env`) and key file *paths* (`api_key_file`, `governor.backup.key_file`) — never key values. Values live in `/data/secrets/` (dashboard-entered) or `/secrets/` (Kubernetes Secret mounts). Because `Config.Save()` writes the whole config back to disk, a key value in YAML would be persisted in plaintext — so the code refuses the pattern entirely.
 
 ## Anatomy of an agent
 

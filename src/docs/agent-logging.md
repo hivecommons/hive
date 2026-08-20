@@ -68,6 +68,28 @@ Session names follow Hive's `hive-<agent-name>` convention (e.g.
 `hive-brainstorm.jsonl` for the `brainstorm` agent). Each line is one JSON
 object, newline-delimited (JSONL), appended as the agent produces output.
 
+The file is written by a shell redirect, not by pluk. `pluk watch` classifies
+its stdin and prints events to stdout; it opens no file of its own. `tmux
+pipe-pane` feeds the pane into that command's stdin but does nothing with its
+stdout, so the publisher invocation in `pkg/agent/manager.go` has to end in
+`>> /var/run/pluk/logs/<session>.jsonl` for anything to be written at all. It
+did not between [#1759](https://github.com/kubestellar/hive/pull/1759) — which
+replaced the Go `pluk-publish` binary, a publisher that wrote the log itself,
+with the TypeScript `pluk watch` — and
+[#4285](https://github.com/kubestellar/hive/issues/4285). Throughout that
+window this directory was empty and every consumer below was reading files that
+did not exist.
+
+Hive pre-creates each session log `0660` and `dev:node` before attaching
+pipe-pane. `hive-panes` is run by one agent to read every *other* agent's log,
+and agent UIDs differ, so the shared `node` group is what makes cross-agent
+reads work — leaving creation to the shell's `>>` would take whatever umask the
+pane shell carries and a tight one yields a log no peer can read.
+
+Nothing rotates or caps these files. `hive-panes` only ever reads the last 2000
+lines and the inception subscriber seeks to the end, so no consumer needs the
+history, but the files themselves grow for the life of the container.
+
 The event envelope, as read by Hive's own code, is:
 
 ```json
@@ -79,13 +101,20 @@ keys depend on `type`. Hive's dashboard subscribes to this stream for the
 `brainstorm` session (`pkg/dashboard/inception_watcher.go`, `plukEvent`) and
 reacts to a subset of event types:
 
-- `raw_output` — captured pane output. `hive-panes.sh` reads the text from
-  `data.line`; the dashboard's own Go subscriber reads it from `data.message`
-  (see `handlePlukEvent` in `inception_watcher.go`). Both are read from real
-  pluk output in this codebase — if you are writing a new consumer, check
-  both keys rather than assuming one, since pluk's own event shape is outside
-  this repo's control and the two existing readers do not agree on the field
-  name.
+- `raw_output` — captured pane output. The text is on `data.line`, and only
+  there. Both readers now agree: `hive-panes.sh` has always read `data.line`,
+  and the dashboard's Go subscriber (`handlePlukEvent` in
+  `inception_watcher.go`) read `data.message` until
+  [#4285](https://github.com/kubestellar/hive/issues/4285) corrected it, which
+  had left its whole `raw_output` arm dead. Earlier revisions of this page
+  advised new consumers to check both keys; that was wrong, and generalised
+  from the `error`/`rate_limit` shape below. pluk builds the event as
+  `createEvent(..., 'raw_output', { line })` in `dist/classifier.js`.
+
+  `raw_output` is opt-in: `pluk watch` defaults `includeRaw` to false, so the
+  publisher has to pass `--include-raw` or no such event is ever emitted. It is
+  the only event type `hive-panes.sh` consumes, so peer awareness depends on
+  that flag.
 - `state_change` — `data.state` is `"working"` or `"idle"`. The inception
   watcher uses idle transitions to decide when to re-kick a stalled agent or
   fall back to auto-generating questions/facts.

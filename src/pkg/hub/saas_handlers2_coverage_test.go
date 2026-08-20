@@ -101,7 +101,7 @@ func TestHandleCreateHiveRejectsRepoTargetShapeWithMessage(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 body=%s", rec.Code, rec.Body.String())
 	}
-	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."
+	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Settings → Repos."
 	if !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("body = %q, want to contain %q", rec.Body.String(), want)
 	}

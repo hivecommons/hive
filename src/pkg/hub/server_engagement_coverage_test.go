@@ -217,6 +217,9 @@ func TestApplyUserLastActions_SkipsInvalidUsernames(t *testing.T) {
 }
 
 func TestFindContributeHive_ReturnsFirstEligible(t *testing.T) {
+	// L3: keep this hermetic — the eligible hive's public DashboardURL must
+	// resolve without an external DNS lookup.
+	stubPrivateURLResolver(t, "example.com")
 	s := engagementTestHub()
 	s.registry.Hives = []RegistryEntry{
 		{ID: "offline", Online: false, IsPublic: true, DashboardURL: "https://example.com", Owner: "u1"},
@@ -275,6 +278,9 @@ func TestHandleContributeStatus_NoHiveAvailable(t *testing.T) {
 }
 
 func TestHandleContributeStatus_HiveAvailable(t *testing.T) {
+	// L3: keep this hermetic — prod-1's public DashboardURL must resolve
+	// without an external DNS lookup.
+	stubPrivateURLResolver(t, "example.com")
 	s := engagementTestHub()
 	s.registry.Hives = []RegistryEntry{
 		{ID: "prod-1", Name: "ProdHive", Org: "acme", Online: true, IsPublic: true,

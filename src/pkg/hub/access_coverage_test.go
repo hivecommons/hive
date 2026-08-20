@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -181,6 +182,9 @@ func TestHandleAccessAddListRemove(t *testing.T) {
 	s.handleAccessRemove(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("remove-last-owner status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "at least one owner is required") {
+		t.Errorf("remove-last-owner body = %q, want clear last-owner error", rec.Body.String())
 	}
 }
 

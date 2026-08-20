@@ -170,13 +170,29 @@ type Issue struct {
 	// so fresh activity on a previously "nothing to ship" issue re-opens it for
 	// offers. Zero when produced by an older enumerator; consumers must fail
 	// OPEN (treat activity as unknown → do not suppress) in that case.
-	UpdatedAt      time.Time `json:"updated_at,omitempty"`
-	AgeMinutes     int       `json:"age_minutes"`
-	URL            string    `json:"url"`
-	IsTracker      bool      `json:"is_tracker"`
-	ComplexityTier string    `json:"complexity_tier,omitempty"`
-	ModelRec       string    `json:"model_recommendation,omitempty"`
-	Lane           string    `json:"lane,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+	AgeMinutes int       `json:"age_minutes"`
+	URL        string    `json:"url"`
+	IsTracker  bool      `json:"is_tracker"`
+	// SourceType and ExternalID carry the work source's own identity through
+	// this GitHub-shaped compatibility envelope (kubestellar/hive#4245).
+	//
+	// Non-default work sources (Linear, Jira) are projected into this struct by
+	// worksource.ToGitHubIssues so the scheduler, governor and dashboard keep
+	// ONE actionable list. Those items have no GitHub issue number, so Number is
+	// 0 — and before these fields existed that was ALL that survived the
+	// projection. Every downstream identity site then formatted "repo#0", so two
+	// unrelated Linear items shared one hold, one cooldown, one active-task slot.
+	//
+	// Both are additive and omitempty: an envelope written by GitHub enumeration
+	// leaves them empty, and an empty SourceType reads as "github". Consumers
+	// must build identity through worksource.Ref rather than reading these
+	// directly, so there is a single key implementation.
+	SourceType     string `json:"source_type,omitempty"`
+	ExternalID     string `json:"external_id,omitempty"`
+	ComplexityTier string `json:"complexity_tier,omitempty"`
+	ModelRec       string `json:"model_recommendation,omitempty"`
+	Lane           string `json:"lane,omitempty"`
 }
 
 type PullRequest struct {
@@ -572,7 +588,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			UpdatedAt:  issue.GetUpdatedAt().Time,
 			AgeMinutes: ageMinutes,
 			URL:        issue.GetHTMLURL(),
-			IsTracker:  isTracker(issue.GetTitle(), labels),
+			IsTracker:  isTracker(issue.GetTitle(), labels, issue.GetBody()),
 		})
 	}
 
@@ -1082,7 +1098,36 @@ func (c *Client) isExempt(labels []string) bool {
 	return false
 }
 
-func isTracker(title string, labels []string) bool {
+// trackerTaskListRe matches a Markdown task-list item whose subject is an issue
+// reference — "- [ ] #4199", "* [x] owner/repo#12". This is deliberately
+// STRUCTURAL rather than a prose match: GitHub renders these lists specially
+// (the "N of M" tracked-task-list widget), so the pattern is a first-class
+// convention an author opts into, not a phrase they happened to write. Prose
+// gets reworded; structure does not.
+var trackerTaskListRe = regexp.MustCompile(`(?m)^\s*[-*]\s*\[[ xX]\]\s*(?:[\w.-]+/[\w.-]+)?#\d+`)
+
+// trackerTaskListMin is how many task-list issue references a body needs before
+// the issue counts as a tracker. One or two can legitimately appear on ordinary
+// work (a blocked-on note, an acceptance criterion); three or more is a
+// tracking list by construction.
+const trackerTaskListMin = 3
+
+// isTracker reports whether an issue is coordination-only — an umbrella whose
+// children carry the actual work — and so must never be handed out as a single
+// task.
+//
+// body is consulted because the title/label markers below miss the common case.
+// kubestellar/hive#4188 carried no labels and an ordinary "✨ feature:" title
+// while its body said, in a callout, "This is a coordination-only umbrella. Do
+// not assign #4188 as one Hive task", above a 13-item task list of children. It
+// was offered to a contributor anyway, which burned the full 30-minute task
+// budget and booked a failure on work that cannot be completed by one agent
+// (only final integration closes such a parent).
+//
+// The callout text itself is NOT matched — free-text matching is brittle in the
+// direction that hurts. The task list is enough, and it is what GitHub itself
+// treats as the tracking signal.
+func isTracker(title string, labels []string, body string) bool {
 	if strings.HasPrefix(title, "[Tracker]") {
 		return true
 	}
@@ -1090,6 +1135,11 @@ func isTracker(title string, labels []string) bool {
 		if l == "meta-tracker" {
 			return true
 		}
+	}
+	// FindAllString with a cap: we only care whether the threshold is reached,
+	// not how many refs a long umbrella body carries.
+	if len(trackerTaskListRe.FindAllString(body, trackerTaskListMin)) >= trackerTaskListMin {
+		return true
 	}
 	return false
 }

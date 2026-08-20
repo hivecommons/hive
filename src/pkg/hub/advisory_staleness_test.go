@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -171,5 +172,23 @@ func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	}
 	if _, ok := m["advisory_error"]; ok {
 		t.Fatalf("advisory_error must be omitted when empty")
+	}
+}
+
+// A spoke that has NEVER posted since its last restart but reports a post error
+// is a participant with a broken digest path — exactly the #4167 shape, where
+// the advisory issue could not be resolved so nothing was ever posted. Gate 1
+// must accept the error alone as proof of participation, otherwise the wedge
+// stays invisible for as long as the process lives.
+func TestAdvisoryStale_NeverPostedButErroredIsStale(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = "" // no successful post since restart
+	e.AdvisoryError = "no advisory issue resolved for org/repo — digest not posted"
+	stale, reason := advisoryStale(e, advNow)
+	if !stale {
+		t.Fatal("a reported post error with no successful post must still flag the digest stale")
+	}
+	if !strings.Contains(reason, "no advisory issue resolved") {
+		t.Fatalf("the reason must carry the reported cause, got %q", reason)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const repoTargetFixCTA = "Fix in Governor Config → Repos."
+const repoTargetFixCTA = "Fix in Settings → Repos."
 
 // RepoTargetIssue is the operator-facing validation result for project.org,
 // project.repos, and project.primary_repo. It is safe to expose in API errors,

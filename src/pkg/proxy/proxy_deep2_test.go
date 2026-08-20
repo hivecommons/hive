@@ -385,11 +385,32 @@ func TestHandleConnectDirectAnthropicNoRoute(t *testing.T) {
 	p.inference = newInferenceRouter()
 	// No route set for any agent
 
+	// Create a local TCP server to tunnel to
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte("tunnel response"))
+	}()
+
+	addr := ln.Addr().String()
+	host, _, _ := net.SplitHostPort(addr)
+	RegisterAnthropicHost(host)
+	defer unregisterAnthropicHost(host)
+
 	clientConn, proxyClient := net.Pipe()
 	defer clientConn.Close()
 
-	req, _ := http.NewRequest("CONNECT", "http://api.anthropic.com:443", nil)
-	req.Host = "api.anthropic.com:443"
+	req, _ := http.NewRequest("CONNECT", "http://"+addr, nil)
+	req.Host = addr
 	req.Header.Set("Proxy-Authorization", "hive scanner")
 
 	go func() {
@@ -397,24 +418,15 @@ func TestHandleConnectDirectAnthropicNoRoute(t *testing.T) {
 		proxyClient.Close()
 	}()
 
-	// Without a route, Anthropic is not GitHub either, so tunnelDirect is called
-	// tunnel will fail to dial api.anthropic.com:443 => 502
-	buf := make([]byte, 4096)
-	var collected []byte
-	for {
-		clientConn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		n, err := clientConn.Read(buf)
-		if n > 0 {
-			collected = append(collected, buf[:n]...)
-		}
-		if err != nil {
-			break
-		}
+	// Without a route for scanner, Anthropic host is not GitHub, so tunnelDirect is called.
+	// tunnelDirect connects to local listener => 200 Connection established
+	reader := bufio.NewReader(clientConn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read response: %v", err)
 	}
-	// Should get either 200 (tunnel) or 502 (failed dial)
-	response := string(collected)
-	if !strings.Contains(response, "200") && !strings.Contains(response, "502") {
-		t.Errorf("expected 200 or 502, got: %s", response)
+	if !strings.Contains(line, "200") {
+		t.Errorf("expected 200, got: %s", line)
 	}
 }
 

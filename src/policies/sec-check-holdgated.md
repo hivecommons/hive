@@ -50,7 +50,7 @@ gh issue create --repo "$HIVE_REPO" \
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[sec-check] fix: <short description>" \
-  --body "## Security Fix\n\n<what this changes and why>\n\nFixes #<issue-number>\n\n---\n*Filed by sec-check agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## Security Fix\n\n<what this changes and why>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by sec-check agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
   --label "security,hold"
 ```
 

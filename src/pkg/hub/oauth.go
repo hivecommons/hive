@@ -467,13 +467,21 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		canonicalID string
 		avatarURL   string
 		email       string
+		displayName string // provider-asserted human name (OIDC name claim/userinfo)
 		ghToken     string // GitHub user access token, if any (stored encrypted)
 	)
 	if p.IsOIDC {
 		claims, err := p.Exchange(r.Context(), code, oauthRedirectURI, s.oidcNonceFromCookie(r))
 		s.clearOIDCNonceCookie(w)
 		if err != nil {
-			s.logger.Warn("OIDC: callback verification failed", "provider", p.Name, "error", err)
+			// Server-side diagnostics only: log which step failed (discovery /
+			// token_exchange / id_token_verify) and whether this browser still
+			// carried its nonce cookie. The user sees only the generic message.
+			s.logger.Warn("OIDC: callback verification failed",
+				"provider", p.Name,
+				"step", auth.FailedStep(err),
+				"nonce_cookie_present", s.oidcNonceFromCookie(r) != "",
+				"error", err)
 			http.Error(w, "login failed — could not verify your identity", http.StatusBadGateway)
 			return
 		}
@@ -486,6 +494,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		canonicalID = id
 		avatarURL = claims.AvatarURL
 		email = claims.Email
+		displayName = claims.Name
 		s.logger.Info("audit: hub OIDC login", "provider", p.Name, "user", canonicalID)
 	} else {
 		login, avatar, token, ok := s.exchangeGitHubLogin(w, code)
@@ -504,7 +513,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	// From here the two paths converge: mint the session cookie over the
 	// canonical id (the Ed25519 signing machinery signs an opaque string, so
 	// this is provider-agnostic) and persist the user record.
-	if !s.mintSessionCookies(w, canonicalID) {
+	if !s.mintSessionCookies(w, r, canonicalID) {
 		return // mintSessionCookies wrote the error
 	}
 
@@ -520,6 +529,14 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	if email != "" {
 		saasUser.Email = email
+	}
+	// Backfill-by-login: every completed login UPSERTS the display claims onto
+	// the existing record, so provider:sub users created before enrichment
+	// shipped get their name on their next sign-in — no migration. Only
+	// non-empty values overwrite, so a provider that stops sending a claim
+	// never blanks a previously-stored one.
+	if displayName != "" {
+		saasUser.DisplayName = displayName
 	}
 	// A completed callback IS a login — count it here and nowhere else.
 	// ensureSaaSUser already refreshed LastLogin; the count is the engagement
@@ -576,11 +593,15 @@ func (s *HubServer) resolveProvider(name string) *auth.Provider {
 // "nonce:provider:redirect". A two-part legacy state (nonce:redirect, from a
 // login begun before this deploy) yields provider "github" and treats the second
 // half as the redirect.
+//
+// Uses the SAME cookie-matched decoding as verifyOAuthStateNonce, so the
+// provider/redirect are always read from the exact state string whose nonce was
+// verified — never from a differently-decoded sibling.
 func (s *HubServer) parseCallbackState(r *http.Request) (provider, redirect string) {
 	provider = "github"
 	redirect = "/dashboard"
-	decoded, err := url.QueryUnescape(r.URL.Query().Get("state"))
-	if err != nil || decoded == "" {
+	decoded, _, ok, _ := s.matchedCallbackState(r)
+	if !ok || decoded == "" {
 		return provider, redirect
 	}
 	// Strip the already-verified nonce.
@@ -711,7 +732,7 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 // but has no revocation store, so a revoked session can still reach a spoke
 // until its expiry. Closing that requires the spoke to ask the hub on the
 // terminal path; it is tracked separately and called out in hub_session_revocation.go.
-func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string) bool {
+func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, canonicalID string) bool {
 	// ROTATION (master-key-rotation.md, follow-on PR #1): mint under the CURRENT
 	// generation and stamp its ID into the signed claims, so the verifier can
 	// select one key instead of trying each and so telemetry can see which key
@@ -735,6 +756,22 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
 		return false
 	}
+	setSessionCookies(w, r, cookieValue)
+	return true
+}
+
+// setSessionCookies issues the Set-Cookie pair for an already-minted session
+// value: the live hive_hub_user cookie scoped to sessionCookieDomain(r.Host),
+// preceded by an expiry of the legacy .hive.kubestellar.io-scoped copy.
+//
+// Factored out of mintSessionCookies (#4193) so the SAME cookies can be
+// re-issued outside the login callback: a session minted BEFORE the #4171
+// domain widening still rides a host-only or .hive.kubestellar.io-scoped
+// cookie the browser never sends to dibs.kubestellar.io, and only a fresh
+// Set-Cookie can rescope it. handleAuthUser re-issues the verified value on
+// every authenticated dashboard load for exactly that reason — no new crypto,
+// just the delivery scope.
+func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue string) {
 	// AUDIT F4, DELIBERATELY NOT CHANGED — read before "fixing" this.
 	//
 	// The audit asks for a host-only `__Host-` session cookie. That is correct
@@ -766,18 +803,53 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string
 	// hostile tenant can read it only if some other bug lets them (it stays
 	// HttpOnly + Secure), which is why the spoke-scoped-session redesign is
 	// tracked as follow-up rather than closed.
+	//
+	// #4171 WIDENS the Domain one level, from .hive.kubestellar.io to
+	// .kubestellar.io (derived, not hard-coded — sessionCookieDomain in
+	// saas.go), so first-party sibling products (dibs.kubestellar.io) receive
+	// the cookie and can SSO against /api/saas/whoami. This does not change the
+	// F4 analysis above: every host that received the cookie before (all
+	// *.hive.kubestellar.io spoke dashboards — deeper subdomains of the new
+	// parent scope) still receives it, and the hosts ADDED are exclusively
+	// hive-operated first-party services on *.kubestellar.io, not tenant-
+	// controlled origins. The tenant-side risk profile is therefore unchanged,
+	// and the same isSameOriginAsHub containment applies. Local/dev hosts get
+	// a host-only cookie instead (a browser rejects a non-covering Domain).
+	// SameSite=Lax stays correct: dibs.kubestellar.io and the hub are
+	// same-SITE (same registrable domain), so the browser attaches the cookie
+	// to dibs requests without needing SameSite=None.
+	domain := sessionCookieDomain(r.Host)
+	// Rollout hygiene (#4171): a pre-widening session cookie scoped
+	// Domain=.hive.kubestellar.io is a SEPARATE jar entry from the one minted
+	// below, and the browser would send both under the same name. Expire the
+	// legacy-scoped copy in the same response so a fresh login converges to
+	// exactly one session cookie. (Requests that still carry both in the
+	// interim are handled by hubSessionCookieValues, which tries every copy.)
+	// Emitted BEFORE the real cookie so anything scanning Set-Cookie in order
+	// finds the live session last.
+	if domain != "" && domain != hubDomainSuffix {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "hive_hub_user",
+			Value:    "",
+			Path:     "/",
+			Domain:   hubDomainSuffix,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 	cookie := &http.Cookie{
 		Name:     "hive_hub_user",
 		Value:    cookieValue,
 		Path:     "/",
-		Domain:   ".hive.kubestellar.io",
+		Domain:   domain,
 		MaxAge:   86400 * cookieMaxAgeDays,
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, cookie)
-	return true
 }
 
 // oidcNonceFromCookie returns the OIDC replay nonce this browser was issued at
@@ -806,9 +878,9 @@ func (s *HubServer) clearOIDCNonceCookie(w http.ResponseWriter) {
 // displayIdentity returns the human-facing login label and avatar URL for a
 // canonical (or legacy bare) identity. For a GitHub user this is the bare login
 // and the derived github.com/<login>.png avatar — byte-identical to the
-// pre-multi-provider behavior. For an OIDC user it prefers the STORED avatar
-// (Google/IBMid provide a picture) and a friendly display label (email, else
-// the canonical id), never nothing.
+// pre-multi-provider behavior. For an OIDC user it prefers the STORED
+// provider-asserted display name, then email, then the canonical id — and the
+// stored avatar (Google/Microsoft provide a picture) — never nothing.
 func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 	provider, subject, ok := parseCanonical(canonicalizeLegacy(identity))
 	if !ok {
@@ -821,7 +893,10 @@ func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 	// Non-GitHub: use the stored record for a good label + avatar.
 	login = identity
 	if u := loadSaaSUser(canonicalizeLegacy(identity)); u != nil {
-		if u.Email != "" {
+		switch {
+		case u.DisplayName != "":
+			login = u.DisplayName
+		case u.Email != "":
 			login = u.Email
 		}
 		avatarURL = u.AvatarURL
@@ -830,22 +905,43 @@ func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 }
 
 func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("hive_hub_user")
-	if err != nil || cookie.Value == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"authenticated":false}`))
-		return
-	}
-	// Trust the carried username only when its signature verifies; a legacy
+	// Trust a carried username only when its signature verifies; a legacy
 	// unsigned or forged cookie reports unauthenticated, prompting a re-login.
 	// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
 	// F10: also enforces a v3 cookie's signed expiry and revocation state.
-	username, ok := s.verifyHubUserCookie(cookie.Value)
-	if !ok || loadSaaSUser(username) == nil {
+	// #4171: every hive_hub_user copy is tried (the domain-widening rollout can
+	// briefly leave two in the jar), matching getRealAuthUser.
+	var username, sessionValue string
+	for _, value := range hubSessionCookieValues(r) {
+		if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
+			username = u
+			sessionValue = value
+			break
+		}
+	}
+	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"authenticated":false}`))
 		return
 	}
+	// #4193: re-scope the session cookie on every authenticated dashboard load.
+	// A session minted BEFORE the #4171 domain widening still rides a cookie
+	// scoped host-only or to .hive.kubestellar.io, which the browser never
+	// sends to dibs.kubestellar.io — SSO silently fails for exactly the users
+	// who were already signed in when the widening shipped, until they happen
+	// to log out and back in. Re-issuing the SAME verified value with
+	// Domain=sessionCookieDomain(r.Host) (plus the legacy-scope expiry) here
+	// converges those sessions without new crypto or a forced re-login.
+	//
+	// This endpoint and not every API call: the dashboard fetches
+	// /api/auth/user exactly once on load, so the Set-Cookie pair rides one
+	// cheap request per page view instead of spamming every poll. Re-setting
+	// an already-wide cookie is a no-op for the jar (same name/domain/path),
+	// and the refreshed MaxAge is only the browser-side hint — the session's
+	// real lifetime is the SIGNED expiry inside the value, which this does not
+	// touch. Dev/localhost hosts keep their host-only cookie via
+	// sessionCookieDomain, same as the login callback.
+	setSessionCookies(w, r, sessionValue)
 	isAdmin := isHubAdmin(username)
 	displayLogin, avatar := s.displayIdentity(username)
 	// Fold impersonation status into the auth payload the dashboard already
@@ -904,9 +1000,13 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	//
 	// The browser's copy is cleared unconditionally regardless, below: a client
 	// with a corrupt or expired cookie must still be able to clear it.
-	if c, err := r.Cookie("hive_hub_user"); err == nil && c.Value != "" {
-		if _, ok := s.verifyHubUserCookie(c.Value); ok {
-			s.revokeHubSessionCookie(c.Value)
+	// #4171: revoke EVERY verifiable copy — the domain-widening rollout can
+	// leave two hive_hub_user cookies (legacy .hive.kubestellar.io scope and
+	// the new parent scope) carrying different session IDs, and logging out
+	// must kill both sessions, not just whichever the jar sent first.
+	for _, value := range hubSessionCookieValues(r) {
+		if _, ok := s.verifyHubUserCookie(value); ok {
+			s.revokeHubSessionCookie(value)
 		} else {
 			// Not an error path worth surfacing to the client — an expired or
 			// already-revoked cookie logging out is entirely normal — but it is
@@ -915,16 +1015,26 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 			s.logger.Debug("logout: unverifiable session cookie, nothing to revoke")
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "hive_hub_user",
-		Value:    "",
-		Path:     "/",
-		Domain:   ".hive.kubestellar.io",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	// Clear the browser's copy under the SAME Domain minting used — a deletion
+	// only removes the jar entry whose domain matches. Also clear the legacy
+	// .hive.kubestellar.io-scoped entry (#4171 rollout: a pre-widening session
+	// is a separate jar entry that a parent-scoped deletion cannot remove).
+	clearDomains := []string{sessionCookieDomain(r.Host)}
+	if clearDomains[0] != "" && clearDomains[0] != hubDomainSuffix {
+		clearDomains = append(clearDomains, hubDomainSuffix)
+	}
+	for _, domain := range clearDomains {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "hive_hub_user",
+			Value:    "",
+			Path:     "/",
+			Domain:   domain,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
 }
@@ -966,20 +1076,92 @@ func oauthStateNonce() (string, error) {
 // Fails CLOSED: a missing cookie, a missing or malformed state, or any mismatch
 // is a rejection. Compared in constant time — the nonce is a secret, and a
 // length-or-content leak would let an attacker narrow it by timing.
+//
+// Logs (server-side only) WHY a rejection happened — no_cookie / no_state /
+// nonce_mismatch — and whether a non-standard decode depth matched, so a
+// provider that changes its state round-trip encoding is diagnosable from one
+// log line instead of a generic warn.
 func (s *HubServer) verifyOAuthStateNonce(r *http.Request) bool {
+	_, depth, ok, reason := s.matchedCallbackState(r)
+	if !ok {
+		s.logger.Warn("OAuth: state nonce rejected", "reason", reason)
+		return false
+	}
+	if depth != stateDecodeDepthStandard {
+		// Not a failure — the nonce DID match — but the provider round-tripped
+		// state at an unexpected encoding depth. Worth a log line: this is the
+		// canary for an IdP that starts re-encoding or pre-decoding state.
+		s.logger.Warn("OAuth: state matched at non-standard decode depth", "decode_depth", depth)
+	}
+	return true
+}
+
+// State decode depths, named for the matchedCallbackState log line. The hub
+// QueryEscapes state once and url.Values.Encode() escapes it again on the OIDC
+// authorize hop, so after Go's automatic query decode the STANDARD shape needs
+// exactly one more unescape (depth 1). Depth 0 is a provider that returned the
+// state pre-decoded (or the GitHub path, whose manual URL interpolation escapes
+// only once — a no-op second unescape). Depth 2 tolerates a provider that
+// re-encoded the state an extra time on the return trip.
+const (
+	stateDecodeDepthRaw      = 0
+	stateDecodeDepthStandard = 1
+	stateDecodeDepthExtra    = 2
+)
+
+// callbackStateCandidates returns plausible decodings of the callback's state
+// parameter, indexed by decode depth (see the depth constants). r.URL.Query()
+// already applied one decode; index 0 is that raw value, index 1 the standard
+// one-more-unescape shape, index 2 an extra tolerance pass. Candidates that
+// fail to unescape are simply absent — selection is gated on the cookie nonce
+// match, so a bogus candidate can never be chosen over a legitimate one.
+func callbackStateCandidates(r *http.Request) []string {
+	raw := r.URL.Query().Get("state")
+	if raw == "" {
+		return nil
+	}
+	out := []string{raw}
+	d1, err := url.QueryUnescape(raw)
+	if err != nil {
+		return out
+	}
+	out = append(out, d1)
+	if d2, err := url.QueryUnescape(d1); err == nil {
+		out = append(out, d2)
+	}
+	return out
+}
+
+// matchedCallbackState returns the decoded state whose leading nonce segment
+// matches this browser's state cookie, plus the decode depth it matched at.
+// The nonce comparison is constant-time per candidate; candidate strings derive
+// only from public URL structure, so trying up to three shapes leaks nothing.
+// On failure, reason is one of "no_cookie", "no_state", "nonce_mismatch".
+func (s *HubServer) matchedCallbackState(r *http.Request) (state string, depth int, ok bool, reason string) {
 	cookie, err := r.Cookie(oauthStateCookieName)
 	if err != nil || cookie.Value == "" {
-		return false
+		return "", 0, false, "no_cookie"
 	}
-	decoded, err := url.QueryUnescape(r.URL.Query().Get("state"))
-	if err != nil || decoded == "" {
-		return false
+	cands := callbackStateCandidates(r)
+	if len(cands) == 0 {
+		return "", 0, false, "no_state"
 	}
-	got, _, ok := strings.Cut(decoded, oauthStateSeparator)
-	if !ok || got == "" {
-		return false
+	// Standard depth first so, when several depths decode identically (a nonce
+	// is hex and unescapes to itself), the reported depth is the expected one.
+	order := []int{stateDecodeDepthStandard, stateDecodeDepthRaw, stateDecodeDepthExtra}
+	for _, i := range order {
+		if i >= len(cands) {
+			continue
+		}
+		nonce, _, found := strings.Cut(cands[i], oauthStateSeparator)
+		if !found || nonce == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(nonce), []byte(cookie.Value)) == 1 {
+			return cands[i], i, true, ""
+		}
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(cookie.Value)) == 1
+	return "", 0, false, "nonce_mismatch"
 }
 
 // clearOAuthStateCookie expires the login nonce, making it single-use.

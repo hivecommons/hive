@@ -1065,14 +1065,28 @@ func TestNormalizeModelName_EdgeCases(t *testing.T) {
 		{"no-hyphen", "no-hyphen"},
 		{"trailing-", "trailing-"},
 		{"-leading", "-leading"},
-		{"a-b-c-1", "a-b-c.1"},
-		{"just-123", "just.123"},
+		// Unknown copilot ids pass through VERBATIM (#4262): the old blind
+		// digit-suffix dot-rewrite is what corrupted the known claude-fable-5
+		// into the CLI-rejected claude-fable.5. Copilot ids are canonicalized
+		// against the CLI-accepted list instead (see CanonicalizeCopilotModel).
+		{"a-b-c-1", "a-b-c-1"},
+		{"just-123", "just-123"},
 		{"model", "model"},
 	}
 	for _, tt := range tests {
 		got := normalizeModelName(tt.input, "copilot")
 		if got != tt.want {
 			t.Errorf("normalizeModelName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+
+	// The digit-suffix dot-rewrite still applies to non-copilot CLI backends.
+	for _, tt := range []struct{ input, want string }{
+		{"a-b-c-1", "a-b-c.1"},
+		{"just-123", "just.123"},
+	} {
+		if got := normalizeModelName(tt.input, "gemini"); got != tt.want {
+			t.Errorf("normalizeModelName(%q, gemini) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

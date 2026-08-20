@@ -2,6 +2,20 @@
 # git-credential-hive.sh — Git credential helper that uses the GitHub App token.
 # Reads from the cached token file, refreshing if stale (>55 min old).
 #
+# MODE SEMANTICS (#4289): mode blocks NO LONGER suppress read credentials.
+# Git uses the same credential helper for fetch/clone AND push — the
+# credential protocol ("get") cannot distinguish them — so exiting 1 in
+# ADVISORY/ISSUES_ONLY/NO_GITHUB modes blocked all git reads, leaving
+# advisory agents with no repo read path at all. This helper now always
+# answers `get` with the per-agent SCOPED token. Write-prevention is
+# enforced by token scope server-side: sub-L3 tiers ("advisor",
+# "newcomer") are minted WITHOUT contents:write (src/pkg/github/app.go),
+# so a push authenticates but is rejected by GitHub with 403. The helper
+# still refuses loudly when the per-agent token is absent — it NEVER
+# falls back to the shared full-privilege App token (audit H3), which is
+# the one path that would hand an advisory agent a write-capable
+# credential.
+#
 # Install (github.com): git config --global credential.https://github.com.helper /usr/local/bin/git-credential-hive.sh
 # Install (GHE):         git config --global credential.https://<ghe-host>.helper /usr/local/bin/git-credential-hive.sh
 #
@@ -66,7 +80,16 @@ else
   AGENT="${HIVE_AGENT:-}"
 fi
 
-# ── Mode-based enforcement: block git push for agents without push capability ──
+# ── Mode awareness: NOTE, do not block (#4289) ──
+# Git invokes this helper for fetch/clone as well as push, and the credential
+# `get` operation cannot tell them apart. Exiting 1 here (as this script did
+# before) therefore blocked ALL git network operations for sub-push-capable
+# agents — including the reads that are an advisory agent's entire job.
+# Push-prevention does not need this block: the per-agent token at these
+# tiers is minted without contents:write, so GitHub itself rejects any push
+# with 403 (server-side enforcement that the agent cannot bypass). We emit a
+# one-line notice so an agent whose push just failed sees WHY and does not
+# loop retrying.
 
 # Read mode from file first (hot-reloadable), fallback to env var.
 # -r as well as -f: this script runs under `set -e`, so a mode file that exists
@@ -83,24 +106,17 @@ fi
 if [ -n "$AGENT_MODE" ]; then
   case "$AGENT_MODE" in
     NO_GITHUB|ADVISORY|ISSUES_ONLY)
-      echo "⛔ git push blocked: ${AGENT} is in ${AGENT_MODE} mode" >&2
-      echo "⛔ TERMINAL: this block is mode-enforced and retrying can NEVER succeed. Do NOT retry, loop, or seek workarounds. Record your intended change as an advisory finding (bd create / [FINDING]) and end this task." >&2
-      exit 1
+      echo "ℹ️  hive credential: ${AGENT} is in ${AGENT_MODE} mode — this credential is READ-ONLY for repo contents. git fetch/clone work; git push will be rejected by GitHub (403). Do NOT retry a failed push: record your intended change as an advisory finding (bd create / [FINDING]) instead." >&2
       ;;
   esac
 else
-  # Fallback: level-based enforcement
+  # Fallback: level-based awareness (same non-blocking semantics as above)
   ACMM="${HIVE_ACMM_LEVEL:-0}"
   if [ -n "$AGENT" ] && [ "$ACMM" -gt 0 ]; then
     if [ "$ACMM" -lt 3 ]; then
-      echo "⛔ git push blocked: ACMM L${ACMM} agents are advisory-only" >&2
-      echo "⛔ TERMINAL: this block is mode-enforced and retrying can NEVER succeed. Do NOT retry, loop, or seek workarounds. Record your intended change as an advisory finding (bd create / [FINDING]) and end this task." >&2
-      exit 1
-    fi
-    if [ "$ACMM" -eq 3 ] && [ "$AGENT" != "quality" ]; then
-      echo "⛔ git push blocked: only quality agent can push at ACMM L3" >&2
-      echo "⛔ TERMINAL: this block is mode-enforced and retrying can NEVER succeed. Do NOT retry, loop, or seek workarounds. Record your intended change as an advisory finding (bd create / [FINDING]) and end this task." >&2
-      exit 1
+      echo "ℹ️  hive credential: ACMM L${ACMM} agents are advisory-only — this credential is READ-ONLY for repo contents. git fetch/clone work; git push will be rejected by GitHub (403). Do NOT retry a failed push: record your intended change as an advisory finding (bd create / [FINDING]) instead." >&2
+    elif [ "$ACMM" -eq 3 ] && [ "$AGENT" != "quality" ]; then
+      echo "ℹ️  hive credential: only the quality agent can push at ACMM L3 — this credential is READ-ONLY for repo contents. git fetch/clone work; git push will be rejected by GitHub (403). Do NOT retry a failed push: record your intended change as an advisory finding (bd create / [FINDING]) instead." >&2
     fi
   fi
 fi

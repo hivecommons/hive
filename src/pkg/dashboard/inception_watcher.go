@@ -577,7 +577,15 @@ func (w *InceptionWatcher) handlePlukEvent(event plukEvent) {
 		}
 
 	case "raw_output":
-		line := event.Data["message"]
+		// #4285: pluk puts the pane text on "line" for raw_output, and only
+		// "line" — classifier.js builds the event as
+		// createEvent(..., 'raw_output', { line }). "message" is a real pluk key,
+		// but it belongs to rate_limit and error (handled above), which is
+		// evidently where this generalised from. Reading "message" here made the
+		// whole raw_output arm dead: every bd-create interception and every
+		// keyword re-poll below returned on the empty string.
+		// src/deploy/hive-panes.sh has always read data.line and was correct.
+		line := event.Data["line"]
 		if line == "" {
 			return
 		}

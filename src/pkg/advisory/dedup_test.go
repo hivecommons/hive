@@ -337,7 +337,7 @@ func TestFormatDigestMarkdown_ShowsRepeatCount(t *testing.T) {
 			}},
 		},
 	}
-	out := FormatDigestMarkdown(d, "kubestellar", "hive")
+	out := FormatDigestMarkdown(d, DigestOptions{Org: "kubestellar", PrimaryRepo: "hive"})
 	if !strings.Contains(out, "_(reported 29×)_") {
 		t.Errorf("digest does not surface the repeat count:\n%s", out)
 	}
@@ -351,7 +351,7 @@ func TestFormatDigestMarkdown_NoRepeatMarkerForSingleReport(t *testing.T) {
 			"quality": {{Agent: "quality", Type: "coverage-gap", Severity: "low", Title: "one-off finding"}},
 		},
 	}
-	out := FormatDigestMarkdown(d, "kubestellar", "hive")
+	out := FormatDigestMarkdown(d, DigestOptions{Org: "kubestellar", PrimaryRepo: "hive"})
 	if strings.Contains(out, "reported") {
 		t.Errorf("single-report finding was annotated with a count:\n%s", out)
 	}

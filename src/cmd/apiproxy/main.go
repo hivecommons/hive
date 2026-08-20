@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,16 +15,25 @@ import (
 
 const defaultProxyHost = "127.0.0.1"
 
-func proxyAuthTokenFromEnv(getenv func(string) string, warnf func(string, ...any)) string {
-	authToken := getenv("PROXY_AUTH_TOKEN")
-	if authToken != "" {
-		return authToken
+// errMissingClientAuthToken reports the fail-closed startup contract: without a
+// client auth token any co-resident loopback process could have its requests
+// fulfilled with the host upstream key, so the proxy refuses to start.
+var errMissingClientAuthToken = errors.New("PROXY_AUTH_TOKEN is required: without it the proxy would accept unauthenticated callers and grant them the host upstream key")
+
+// clientAuthTokenFromEnv returns the token callers must present to the proxy,
+// or an error when it is unset so the caller can fail closed.
+func clientAuthTokenFromEnv(getenv func(string) string) (string, error) {
+	token := getenv("PROXY_AUTH_TOKEN")
+	if token == "" {
+		return "", errMissingClientAuthToken
 	}
-	authToken = getenv("ANTHROPIC_API_KEY")
-	if authToken != "" {
-		warnf("[sec-check WARNING] PROXY_AUTH_TOKEN is unset; falling back to ANTHROPIC_API_KEY. Unauthenticated callers will be granted the host Anthropic key. Set PROXY_AUTH_TOKEN to restrict access.")
-	}
-	return authToken
+	return token, nil
+}
+
+// upstreamAPIKeyFromEnv returns the credential the proxy swaps in on the
+// outbound request when the caller has no upstream credential of its own.
+func upstreamAPIKeyFromEnv(getenv func(string) string) string {
+	return getenv("ANTHROPIC_API_KEY")
 }
 
 func main() {
@@ -74,8 +84,12 @@ func main() {
 		logWriter.Encode(entry)
 	}
 
-	authToken := proxyAuthTokenFromEnv(os.Getenv, log.Printf)
-	proxy, err := apiproxy.New(*upstream, handler, authToken)
+	clientAuthToken, err := clientAuthTokenFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatalf("[sec-check] refusing to start: %v", err)
+	}
+	upstreamAPIKey := upstreamAPIKeyFromEnv(os.Getenv)
+	proxy, err := apiproxy.New(*upstream, handler, upstreamAPIKey, clientAuthToken)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}

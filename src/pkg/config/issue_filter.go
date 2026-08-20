@@ -11,7 +11,7 @@ import "strings"
 //
 // This is deliberately ONLY the require half. The EXCLUDE polarity ("never
 // touch issues labeled X") already exists as governor.labels.exempt — the
-// dashboard's Governor Configuration → Labels tab — plus the permanent
+// dashboard's Settings → Labels tab — plus the permanent
 // hold/do-not-merge labels. There is exactly one exclusion mechanism and one
 // require mechanism; this type does not duplicate the former. Precedence is
 // by construction: fetchIssues applies hold/exempt BEFORE this filter, so an

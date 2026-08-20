@@ -1142,6 +1142,9 @@ func TestHandleContributeStatusNoHive(t *testing.T) {
 }
 
 func TestHandleContributeStatusWithPublicHive(t *testing.T) {
+	// L3: keep this hermetic — the hive's DashboardURL below must classify as
+	// public without an external DNS lookup.
+	stubPrivateURLResolver(t, "example.com")
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	now := time.Now().Format(time.RFC3339)
 	srv.mu.Lock()

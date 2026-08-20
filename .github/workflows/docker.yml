@@ -92,6 +92,41 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      # NOTE on Go compile caching (removed actions/cache transport, #4114):
+      # measurement showed the Go compile in this image is only ~25-50s, and
+      # the inject/extract transport never worked — every extract found the
+      # cache mounts empty (each actions/cache save was 273 bytes), so every
+      # "warm" run was actually cold while paying the transport's fixed cost.
+      # src/Dockerfile keeps its BuildKit cache mounts (free, and a no-op when
+      # empty) so any future runner-local BuildKit state still benefits, but we
+      # no longer round-trip them through actions/cache.
+      #
+      # LAYER CACHE STRATEGY: `no-cache-filters: builder,runtime` (the #3760
+      # stale-binary defense, see below) forces every layer of the builder and
+      # runtime stages to re-execute on every build — so a whole-image
+      # `cache-to: type=gha,mode=max` export bought almost nothing while
+      # costing 2-4 minutes per job to upload multi-GB layer sets. The ONLY
+      # stage that can legitimately be served from cache is `tmux-builder`
+      # (pinned base image + pinned tmux tarball; not listed in
+      # no-cache-filters). Warm exactly that stage: a targeted `--target
+      # tmux-builder` build seeds the builder's local layer cache from a small
+      # dedicated gha scope (and refreshes it with mode=max — cheap, tmux-stage
+      # layers only). The main build then hits those layers locally and does
+      # NO cache export at all. continue-on-error: pure optimization — if the
+      # gha cache service hiccups, the main build just recompiles tmux.
+      - name: Warm tmux-builder layer cache
+        continue-on-error: true
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: src/Dockerfile
+          platforms: ${{ matrix.platform }}
+          target: tmux-builder
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
+          cache-to: type=gha,scope=tmux-${{ steps.slug.outputs.slug }},mode=max
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -103,9 +138,7 @@ jobs:
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
           # STALE-BINARY FIX (unblocks the #3760 fix in the SHIPPED image).
-          # The GHA cache scope below is keyed on the platform slug only
-          # (linux-amd64 / linux-arm64), NOT the commit — so it persists across
-          # every commit on the branch. `no-cache-filters: builder` alone rebuilt
+          # `no-cache-filters: builder` alone rebuilt
           # a fresh /hive in the `builder` stage but let BuildKit serve the FINAL
           # (`runtime`) stage's `COPY --from=builder /hive` layer AND the
           # subsequent fresh-inode rewrite RUN from that persistent cache — so the
@@ -133,8 +166,54 @@ jobs:
           # branch build without pushing so the image is still validated (CI
           # gate) but nothing lands on GHCR.
           outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
-          cache-from: type=gha,scope=${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=${{ steps.slug.outputs.slug }},mode=max
+          # tmux-builder layers come from the local cache warmed above; every
+          # other stage is forced to re-execute by no-cache-filters, so there
+          # is nothing worth exporting — deliberately NO cache-to here (the
+          # whole-image mode=max export measured 130-225s per job for ~0 reuse)
+          cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
+
+      # FRESHNESS ASSERTION (#3760 regression guard): run the image this job
+      # just produced and assert the ldflags-embedded commit equals the commit
+      # being built. `hive --version` prints "hive 3.0.0 (commit <short7>,
+      # branch <b>)" where <short7> is baked from /repo/.git at compile time.
+      #
+      # - push builds: probe the EXACT pushed artifact by digest — the most
+      #   direct possible evidence that what landed on GHCR is fresh.
+      # - PR builds (push=false): nothing is pushed and push-by-digest output
+      #   doesn't load into the local daemon, so re-run the build with --load.
+      #   On this same builder every layer of the forced-fresh build above is
+      #   in local cache, so the rebuild is seconds and yields those exact
+      #   layers. If BuildKit ever resolved a STALE binary layer instead, the
+      #   embedded hash would differ from github.sha and this step fails loudly
+      #   — a stale layer can make this check fail, never silently pass.
+      - name: Assert embedded commit matches build (freshness guard)
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
+            IMG="ghcr.io/kubestellar/hive@${{ steps.build.outputs.digest }}"
+            docker pull "$IMG"
+          else
+            IMG=hive-freshness-probe:local
+            docker buildx build --load \
+              -f src/Dockerfile \
+              --build-arg GIT_HASH="$EXPECTED_SHA" \
+              --build-arg GIT_BRANCH="${{ github.ref_name }}" \
+              -t "$IMG" .
+          fi
+          ACTUAL=$(docker run --rm --entrypoint /usr/local/bin/hive "$IMG" --version)
+          echo "image reports: $ACTUAL"
+          echo "expected commit: ${EXPECTED_SHA::7} (from $EXPECTED_SHA)"
+          case "$ACTUAL" in
+            *"commit ${EXPECTED_SHA::7},"*)
+              echo "Freshness OK: embedded commit matches the built SHA"
+              ;;
+            *)
+              echo "::error::STALE BINARY: image reports '$ACTUAL' but this build is $EXPECTED_SHA. The published/validated image does not contain the code of this commit."
+              exit 1
+              ;;
+          esac
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'

@@ -254,3 +254,46 @@ func TestFleetSnapshot_LabelInterestsOmittedWhenEmpty(t *testing.T) {
 		t.Fatalf("label_interests should be omitted when empty: %s", raw)
 	}
 }
+
+// TestBuildTaskPrompt_InstructsDCOSignoff: DCO is enforced on this repo
+// (CONTRIBUTING.md) and an unsigned commit blocks the merge, but the prompt
+// used to leave sign-off entirely to whatever each agent inferred. That varies
+// even within one backend — two agy tasks produced one unsigned PR (#4127) and
+// one signed (#4176). Every other required step is spelled out in the prompt;
+// this pins that sign-off is too.
+func TestBuildTaskPrompt_InstructsDCOSignoff(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	if !strings.Contains(prompt, "git commit -s") {
+		t.Errorf("prompt must tell the agent to commit with -s; got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Signed-off-by") {
+		t.Errorf("prompt must name the Signed-off-by trailer; got: %q", prompt)
+	}
+	// The DCO bot compares the trailer's email to the commit author's, so a
+	// prompt that omits that turns a passing-looking sign-off into a failing
+	// check the contributor has to debug.
+	if !strings.Contains(prompt, "author") {
+		t.Errorf("prompt must state the trailer email matches the author; got: %q", prompt)
+	}
+}
+
+// TestBuildTaskPrompt_ForbidsDraftPR: a draft PR is auto-labelled
+// do-not-merge/work-in-progress and tide will not merge one, so a draft left
+// behind is a PR nobody is waiting on and nothing will land. The prompt used to
+// say only "open a PR", which `gh pr create --draft` satisfies perfectly well.
+//
+// Observed live: the task for #4188 scoped down to child #4205, ran
+// `gh pr create --draft`, verified isDraft: true, and reported "Draft PR #4242
+// is open" as a successful handoff. The contributor had to say "don't make them
+// draft" by hand.
+func TestBuildTaskPrompt_ForbidsDraftPR(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	if !strings.Contains(prompt, "ready for review") {
+		t.Errorf("prompt must ask for a PR ready for review; got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "--draft") {
+		t.Errorf("prompt must name the --draft flag it is forbidding; got: %q", prompt)
+	}
+}

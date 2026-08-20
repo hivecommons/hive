@@ -9,10 +9,9 @@ Start most investigations from the dashboard and the service logs, then drop to 
 Docker Compose deployments define `hive` and `gateway` services in `src/docker-compose.yaml`. The Hive process healthcheck calls `http://127.0.0.1:3002/api/health`; the gateway publishes `3001` and proxies to Hive. Start with:
 
 ```bash
-cd v2
-docker compose ps
-docker compose logs hive --tail=200
-docker compose logs gateway --tail=100
+docker compose -f src/docker-compose.yaml ps
+docker compose -f src/docker-compose.yaml logs hive --tail=200
+docker compose -f src/docker-compose.yaml logs gateway --tail=100
 ```
 
 Kubernetes deployments use namespace `hive`, Deployment `hive`, Service `hive`, and probes on `/api/health` and `/api/livez` in `src/deploy/k8s/deployment.yaml`:
@@ -46,7 +45,17 @@ When no token or App credentials are usable, v2 starts the dashboard but disable
 - `GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.`
 - `persisted user token is invalid or expired`
 
-Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md).
+Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls this the **Forge App** — the app for your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — under Governor Config → Forge App.
+
+## Hosted hive disappeared or its URL times out
+
+Hosted hives that never complete setup or go inactive are **reaped on a timer**: the hive vanishes from the hub's Usage view and the old `https://<id>.hive.kubestellar.io` URL times out permanently. This is expected reclamation, not an outage. Recovery:
+
+1. **Request a new hive** from the hub's `/get-started` wizard (hosted hub: `https://hive.kubestellar.io/get-started`, the **Request a hive** button). The old URL will not come back.
+2. **Install the Forge App immediately** on the new hive — the GitHub App on GitHub.com, or the same app on your GHE host for enterprise. See [GitHub App setup](github-app-setup.md) and the [getting-started guide's Step 0](getting-started.md#step-0--before-you-start-do-this-first).
+3. An installed Forge App plus regular heartbeats keeps the new hive from being reaped again.
+
+On GitHub Enterprise, a 404 from the install link usually means the hive is pointed at github.com instead of your GHE host (or vice versa) — check which source control host is configured under Governor Config → Forge App.
 
 ## Agents are stuck, paused, or need CLI login
 
@@ -148,8 +157,8 @@ There is no `uninstall.sh`/`install.sh` on the containerized runtime. To start f
 
 ```bash
 # Docker Compose (deletes the named /data volume — see Backup & restore first)
-docker compose down -v
-docker compose up -d
+docker compose -f src/docker-compose.yaml down -v
+docker compose -f src/docker-compose.yaml up -d
 
 # Kubernetes (deletes the PVC-backed state)
 kubectl -n hive delete deploy/hive
@@ -158,3 +167,7 @@ kubectl -n hive delete pvc -l app.kubernetes.io/name=hive
 ```
 
 `/data` holds the dashboard config overlay, persisted tokens, logs, and other state; deleting it discards dashboard edits and cached credentials. Back up first if you need any of it — see [Backup & restore](backup-restore.md).
+
+### "backup encryption key is not configured on this hive, so a backup would be unencrypted; refusing"
+
+Expected, and deliberate: the archive carries this hive's GitHub App private keys, so hive refuses to build one without a key. Set one in **Governor Config → Security → Backup → Set key** (`openssl rand -hex 32`) and retry — no deployment or cluster access is needed. `HIVE_BACKUP_KEY` on the deployment still works as a fallback for self-hosted hives. Escrow the key: it is not inside the archive, so a backup without it cannot be restored.

@@ -518,15 +518,8 @@ func TestConfirmMenuOption_SelectsOption(t *testing.T) {
 	m.mu.RUnlock()
 	agent.tmuxSession = session
 	// Render a menu: the title line, and a selected "❯" line whose text
-	// contains the wanted option. The "❯" line is typed WITHOUT the ": "
-	// comment prefix so it appears at column 0 (selectedMenuOption requires the
-	// trimmed line to start with "❯"). bash prints a harmless "command not
-	// found" below, but the typed line itself is visible in the pane.
-	if err := testTmuxCommand("send-keys", "-t", session, "-l", ": Bypass Permissions mode Enter to confirm").Run(); err != nil {
-		t.Fatal(err)
-	}
-	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
-	if err := testTmuxCommand("send-keys", "-t", session, "-l", "❯ 2. Yes I accept").Run(); err != nil {
+	// contains the wanted option. We print it with printf so the ❯ line is at column 0.
+	if err := testTmuxCommand("send-keys", "-t", session, "-l", "printf 'Bypass Permissions mode\\n❯ 2. Yes I accept\\n'").Run(); err != nil {
 		t.Fatal(err)
 	}
 	testTmuxCommand("send-keys", "-t", session, "Enter").Run()

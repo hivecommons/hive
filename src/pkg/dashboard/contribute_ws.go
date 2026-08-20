@@ -17,13 +17,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/kubestellar/hive/pkg/advisory"
 	"github.com/kubestellar/hive/pkg/config"
+	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
 
 const (
@@ -71,15 +75,16 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 type ContributorConnection struct {
-	ws           *websocket.Conn
-	profile      *ContributorProfile
-	cliBackend   string
-	model        string
-	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	clientRole   string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
-	assignedRole string // owner-selected role; "none" forces general work
-	connectedAt  time.Time
-	currentTask  *WSTaskAssign
+	ws              *websocket.Conn
+	profile         *ContributorProfile
+	cliBackend      string
+	model           string
+	reasoningEffort string
+	role            string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	clientRole      string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
+	assignedRole    string // owner-selected role; "none" forces general work
+	connectedAt     time.Time
+	currentTask     *WSTaskAssign
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -203,6 +208,7 @@ type WSMessage struct {
 	RegistrationToken string `json:"registration_token,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	TaskID            string `json:"task_id,omitempty"`
 	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
 	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
@@ -219,6 +225,18 @@ type WSMessage struct {
 	URL     string   `json:"url,omitempty"`
 	Labels  []string `json:"labels,omitempty"`
 	Prompt  string   `json:"prompt,omitempty"`
+	// TaskKey, SourceType and ExternalID carry the assigned item's canonical,
+	// source-aware identity (kubestellar/hive#4245). All additive and omitempty:
+	// a GitHub task_assign is byte-for-byte unchanged, and Repo/Number keep
+	// their existing meaning for every relay written before these existed.
+	//
+	// A relay that understands them can report completion against TaskKey; one
+	// that does not keeps echoing repo/number, which the hub still resolves
+	// through the connection's own assignment record rather than trusting the
+	// client to name the work.
+	TaskKey    string `json:"task_key,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
 	// GitHubToken carries the scoped, expiring credential. As of #2537 it is
 	// NEVER populated on task_assign — the credential is split OUT of the
 	// assignment message and delivered only AFTER the task's acceptance decision,
@@ -309,6 +327,47 @@ type WSTaskAssign struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
+	// Key, SourceType, ExternalID and URL carry the assigned item's canonical,
+	// source-aware identity (kubestellar/hive#4245). Additive and omitempty: a
+	// GitHub assignment is byte-for-byte what it was, and Number keeps its
+	// meaning for every existing consumer.
+	//
+	// Key is what the hub keys in-flight work on. Without it two different
+	// zero-numbered external items both resolved to "repo#0" and the
+	// double-assignment guard treated them as the SAME task — one would block
+	// the other, and a completion for one would settle the other.
+	Key        string `json:"key,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
+// identityKey returns the canonical identity of the assigned item. It prefers
+// the explicit Key and falls back to the GitHub "repo#number" spelling, so a
+// task assigned before this field existed — or restored from a persisted
+// pre-upgrade record — keys exactly as it always did.
+func (t *WSTaskAssign) identityKey() string {
+	if t == nil {
+		return ""
+	}
+	if t.Key != "" {
+		return t.Key
+	}
+	return worksource.Ref{Repo: t.Repo, Number: t.Number}.Key()
+}
+
+// ref reconstructs the assigned item's source-aware reference.
+func (t *WSTaskAssign) ref() worksource.Ref {
+	if t == nil {
+		return worksource.Ref{}
+	}
+	return worksource.Ref{
+		SourceType: t.SourceType,
+		Repo:       t.Repo,
+		ExternalID: t.ExternalID,
+		Number:     t.Number,
+		URL:        t.URL,
+	}
 }
 
 const maxActivityEntries = 50
@@ -320,6 +379,7 @@ type ActivityEntry struct {
 	Role      string `json:"role,omitempty"`
 	CLI       string `json:"cli,omitempty"`
 	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
 	Task      string `json:"task,omitempty"`
 }
 
@@ -485,12 +545,25 @@ type taskLease struct {
 	expiresAt time.Time
 }
 
-// leaseTTL is how long a hub-issued task lease remains re-adoptable after
-// assignment (kubestellar/hive C4). It is deliberately aligned with wsTaskTimeout
-// (the wedged-task backstop): a task that has been reclaimed by the lease-TTL
-// backstop is also past its re-adoption window, so a relay that reconnects after
-// its task was auto-released cannot resurrect ownership from the client side. A
-// resume presented after this window is treated as a stale/forged claim and
+// leaseTTL is how long a hub-issued task lease remains re-adoptable after the last
+// time the relay proved it was still working (kubestellar/hive C4). It is aligned
+// with wsTaskTimeout (the wedged-task backstop) and, since #4260, is measured from
+// the SAME event: recordLease stamps it at assignment and renewLease re-stamps it on
+// every accepted task_progress, exactly where reclaimExpiredLeases re-stamps
+// lastLeaseRenew. The two clocks therefore expire together, which is what makes the
+// intended invariant true — a task past its re-adoption window is also one the
+// wedged-task backstop has reclaimed, and a task the backstop considers alive is
+// still re-adoptable.
+//
+// #4260: before that renewal existed, expiresAt was stamped once at assignment and
+// never moved, so the alignment was only nominal. A perfectly healthy task that had
+// been reporting progress for longer than leaseTTL was NEVER reclaimed (correctly —
+// it was alive) yet its lease had silently expired, so the first socket drop after
+// that point could not be resumed: lookupLease rejected the reconnecting relay,
+// the hub sent task_revoke, and the same issue was re-assigned as a new task,
+// typing a fresh prompt into a pane whose CLI was still mid-turn.
+//
+// A resume presented after this window is treated as a stale/forged claim and
 // rejected; the relay simply asks for fresh work via "ready".
 const leaseTTL = wsTaskTimeout
 
@@ -516,6 +589,31 @@ func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int,
 		tier:      tier,
 		gen:       gen,
 		expiresAt: now.Add(leaseTTL),
+	}
+	h.leaseMu.Unlock()
+}
+
+// renewLease extends an identity's server-issued lease window when the relay proves
+// it is still working the task (kubestellar/hive#4260). It is the lease-registry half
+// of the lastLeaseRenew stamp that reclaimExpiredLeases reads: both are driven by the
+// same accepted task_progress, so "still alive" and "still re-adoptable" cannot drift
+// apart and a long-running task does not lose the ability to survive a reconnect
+// simply because it has been working for longer than leaseTTL.
+//
+// It grants NOTHING a caller did not already have. The lease is only touched when it
+// is already the one recorded for this identity AND is for this exact taskID, so a
+// connection can neither renew another identity's lease nor extend a lease for a task
+// it does not hold; a revoked lease is absent and stays absent. Only expiresAt moves —
+// the {task, repo, number, tier, generation} tuple lookupLease matches on is never
+// rewritten, so the C4 exact-match contract and the #2568 generation fence are
+// untouched.
+func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
+	if identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	if l, ok := h.leases[identity]; ok && l.taskID == taskID {
+		l.expiresAt = now.Add(leaseTTL)
 	}
 	h.leaseMu.Unlock()
 }
@@ -757,7 +855,7 @@ func (h *ContributeWSHub) saveActivity() {
 
 const activityDebounceSecs = 60
 
-func (h *ContributeWSHub) addActivity(username, action, role, cli, model, task string) {
+func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string) {
 	h.activityMu.Lock()
 	if len(h.activity) > 0 && (action == "joined" || action == "left") {
 		last := h.activity[len(h.activity)-1]
@@ -775,6 +873,7 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, task s
 		Role:      role,
 		CLI:       cli,
 		Model:     model,
+		Effort:    effort,
 		Task:      task,
 	}
 	h.activity = append(h.activity, entry)
@@ -1039,10 +1138,16 @@ func normalizeCompletionVerdict(reported, verifiedPR string) string {
 // or void it. Like every completion cooldown, the operator kill-switch
 // disables the exclusion entirely.
 func (h *ContributeWSHub) isSuppressedByNoWorkVerdict(repo string, number int, issueUpdatedAt time.Time) bool {
+	return h.isSuppressedByNoWorkVerdictKey(worksource.Ref{Repo: repo, Number: number}.Key(), issueUpdatedAt)
+}
+
+func (h *ContributeWSHub) isSuppressedByNoWorkVerdictKey(key string, issueUpdatedAt time.Time) bool {
 	if !h.cooldownEnabled() {
 		return false
 	}
-	key := fmt.Sprintf("%s#%d", repo, number)
+	if key == "" {
+		return false
+	}
 	h.completedMu.Lock()
 	rec, ok := h.noWorkVerdicts[key]
 	if !ok {
@@ -1258,7 +1363,17 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 // field — and for hubs where the verdict is later voided — is unchanged.
 // reporter/reason are audit-only and stored with the verdict.
 func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prURL, verdict, reporter, reason string) {
-	key := fmt.Sprintf("%s#%d", repo, number)
+	h.markTaskCompletedVerdictKey(worksource.Ref{Repo: repo, Number: number}.Key(), prURL, verdict, reporter, reason)
+}
+
+// markTaskCompletedVerdictKey books completion against the canonical identity
+// (kubestellar/hive#4245), so a Linear or Jira task's cooldown and verdict land
+// on that item rather than on a shared "repo#0" record that would suppress
+// every other zero-numbered item in the repository.
+func (h *ContributeWSHub) markTaskCompletedVerdictKey(key string, prURL, verdict, reporter, reason string) {
+	if key == "" {
+		return
+	}
 	// The WITH-PR period is operator-tunable (Config.Hub.ContributeCooldownHours,
 	// default completedTaskCooldownHours). We still RECORD this even when cooldown
 	// is disabled — isTaskInCooldown short-circuits the gating, so the history is
@@ -1363,15 +1478,23 @@ func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prUR
 // user-driven event, the relay can re-report on a later completion, and a
 // blocking retry would hold the hub read loop.
 func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsername string) bool {
+	return h.verifyReportedPRDetail(assignedRepo, prURL, contributorUsername).Verified
+}
+
+// verifyReportedPRDetail is verifyReportedPR's full result. Callers that need
+// more than the trust verdict — notably "was this PR actually MERGED, and what
+// was its title" — use this; everything about the verification itself is
+// identical, so the contract documented on verifyReportedPR holds unchanged.
+func (h *ContributeWSHub) verifyReportedPRDetail(assignedRepo, prURL, contributorUsername string) ghpkg.PRVerification {
 	if prURL == "" {
-		return false
+		return ghpkg.PRVerification{Reason: "no PR URL reported"}
 	}
 	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
 		// No GitHub client (hive booted without credentials, or a bare test hub):
 		// we cannot verify, so we must not grant trust. Degrade to unverified.
 		h.logger.Warn("[contribute-ws] PR verification skipped: no github client",
 			"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername)
-		return false
+		return ghpkg.PRVerification{Reason: "no github client configured"}
 	}
 	ctx := h.server.deps.Ctx
 	if ctx == nil {
@@ -1381,8 +1504,8 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 	if res.Verified {
 		h.logger.Info("[contribute-ws] reported PR verified",
 			"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername,
-			"author", res.Author, "base_repo", res.BaseRepo)
-		return true
+			"author", res.Author, "base_repo", res.BaseRepo, "merged", res.Merged)
+		return res
 	}
 	// Distinguish a clean negative from an API error only in the log; both
 	// downgrade to unverified.
@@ -1391,7 +1514,79 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 		logArgs = append(logArgs, "error", res.Err.Error())
 	}
 	h.logger.Warn("[contribute-ws] reported PR NOT verified — treating completion as no-PR", logArgs...)
-	return false
+	return res
+}
+
+// closeAdvisoryForMergedPR retires open advisory findings that a just-verified
+// PR addresses, matching on title similarity (see ClosePRLinkedAdvisoryBeads).
+//
+// Gated by governor.advisory.pr_autoclose (default on) so an operator who does
+// not want title-based closing can turn it off. Entirely best-effort: it never
+// affects the completion outcome, and a finding closed in error comes straight
+// back the next time an agent files it.
+func (h *ContributeWSHub) closeAdvisoryForMergedPR(prTitle string) {
+	if prTitle == "" || h.server == nil || h.server.deps == nil {
+		return
+	}
+	deps := h.server.deps
+	if len(deps.BeadStores) == 0 {
+		return
+	}
+	if deps.Config != nil && !deps.Config.Governor.Advisory.PRAutoCloseEnabled() {
+		return
+	}
+	if closed := advisory.ClosePRLinkedAdvisoryBeads(deps.BeadStores, prTitle); len(closed) > 0 {
+		h.logger.Info("[contribute-ws] closed advisory findings addressed by merged PR",
+			"pr_title", prTitle, "count", len(closed), "titles", strings.Join(closed, "; "))
+	}
+}
+
+// prAttributionReconcileTimeout bounds the detached reconcile. Two GitHub round
+// trips (get + edit), each already capped by the App client's own 30s timeout.
+const prAttributionReconcileTimeout = 90 * time.Second
+
+// reconcilePRAttribution reconciles the attribution trailer on a verified PR
+// reported by a contributor relay (kubestellar/hive#4083). It uses the hub's own
+// record of the connection (cliBackend, model, reasoningEffort) rather than
+// self-reported metadata.
+func (h *ContributeWSHub) reconcilePRAttribution(prURL string, contributor *ContributorConnection) {
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil || contributor == nil {
+		return
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Bound the work explicitly rather than inheriting the hub's process-lifetime
+	// context: this runs detached (see the call site), so without a deadline a
+	// stalled GitHub call would leak a goroutine holding a connection reference
+	// for as long as the hub runs.
+	ctx, cancel := context.WithTimeout(ctx, prAttributionReconcileTimeout)
+	defer cancel()
+	contributor.mu.Lock()
+	meta := ghpkg.InvocationMeta{
+		Agent:   contributor.role,
+		Backend: contributor.cliBackend,
+		Model:   ghpkg.RequestedModel(contributor.cliBackend, contributor.model),
+		Effort:  contributor.reasoningEffort,
+	}
+	if contributor.capabilities != nil && contributor.capabilities.AgentCLIVersion != "" {
+		meta.Tool = contributor.cliBackend
+		meta.ToolVersion = contributor.capabilities.AgentCLIVersion
+	}
+	username := ""
+	if contributor.profile != nil {
+		username = contributor.profile.GitHubUsername
+	}
+	contributor.mu.Unlock()
+
+	if err := h.server.deps.GHClient.ReconcilePRAttribution(ctx, prURL, meta); err != nil {
+		h.logger.Warn("[contribute-ws] PR attribution reconciliation failed",
+			"pr_url", prURL,
+			"username", username,
+			"error", err.Error(),
+		)
+	}
 }
 
 // cooldownEnabled reports whether post-completion cooldown gating is turned on
@@ -1432,7 +1627,15 @@ func (h *ContributeWSHub) cooldownForLocked(key string) time.Duration {
 	return h.configuredWithPRCooldown()
 }
 
+// isTaskInCooldown is the GitHub-shaped wrapper retained for the many call
+// sites that legitimately hold a repo and an issue number. Identity-keyed
+// callers (ReadyQueue, selectTask) use isTaskInCooldownKey directly so external
+// work gets its own cooldown instead of sharing "repo#0" (kubestellar/hive#4245).
 func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
+	return h.isTaskInCooldownKey(worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+func (h *ContributeWSHub) isTaskInCooldownKey(key string) bool {
 	// Operator kill-switch: when cooldown is disabled, no completed issue is ever
 	// gated out of the queue for cooldown. Completion HISTORY is still recorded by
 	// markTaskCompleted (stats/audit, #2356 duplicate detection) and failure
@@ -1440,7 +1643,9 @@ func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
 	if !h.cooldownEnabled() {
 		return false
 	}
-	key := fmt.Sprintf("%s#%d", repo, number)
+	if key == "" {
+		return false
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
 	t, ok := h.completedTasks[key]
@@ -1463,7 +1668,21 @@ func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
 // earns the longer quarantine window instead of being handed straight back out.
 // The counter is reset on completion (see markTaskCompleted).
 func (h *ContributeWSHub) recordTaskFailure(repo string, number int, permanent bool) {
-	key := fmt.Sprintf("%s#%d", repo, number)
+	h.recordTaskFailureKey(worksource.Ref{Repo: repo, Number: number}.Key(), permanent)
+}
+
+// recordTaskFailureForTask books a failure against the assignment's own
+// canonical identity (kubestellar/hive#4245). Every caller already holds the
+// WSTaskAssign, so routing through it keeps external work's failure history and
+// quarantine separate instead of merging onto "repo#0".
+func (h *ContributeWSHub) recordTaskFailureForTask(task *WSTaskAssign, permanent bool) {
+	h.recordTaskFailureKey(task.identityKey(), permanent)
+}
+
+func (h *ContributeWSHub) recordTaskFailureKey(key string, permanent bool) {
+	if key == "" {
+		return
+	}
 	weight := 1
 	if permanent {
 		weight = permanentFailureWeight
@@ -1471,6 +1690,37 @@ func (h *ContributeWSHub) recordTaskFailure(repo string, number int, permanent b
 	h.completedMu.Lock()
 	h.failedTasks[key] = time.Now()
 	h.consecutiveFailures[key] += weight
+	h.completedMu.Unlock()
+	h.saveFailedTasks()
+}
+
+// bookReleaseCooldown stamps the SAME short cooldown recordTaskFailure stamps, but
+// does NOT advance the issue's consecutive-failure counter (kubestellar/hive#4260).
+//
+// It exists for releases that are not failures OF THE ISSUE. The disconnect path
+// books a cooldown for one reason (#2356): while a relay is reconnecting, its issue
+// has dropped out of activeIssues — the only double-assign guard — and selectTask
+// could hand the same issue to a second session, so both reach "open a PR" and file
+// duplicates. That guarantee needs the timestamp and nothing else.
+//
+// Routing it through recordTaskFailure also incremented consecutiveFailures, so three
+// dropped sockets on one issue — unremarkable on a flaky connection across a long
+// session — pushed it past consecutiveFailureQuarantineThreshold and parked a
+// perfectly workable issue for quarantineCooldownHours with nothing having actually
+// failed. The counter also feeds recentFailureCount, which deprioritises the issue
+// behind never-failed peers in selectTask, so a disconnect quietly demoted work that
+// was progressing fine.
+//
+// The #2356 window is byte-for-byte unchanged: failedTasks carries the same timestamp,
+// isTaskInFailureCooldown reads it the same way, and with the count left at zero
+// failureCooldownForLocked returns the same failedTaskCooldownMinutes it always did.
+// Paths where the release IS evidence about the issue — task_failed, the relay's own
+// watchdog giving up via "ready", and the wedged-task lease backstop — deliberately
+// keep calling recordTaskFailure and keep counting.
+func (h *ContributeWSHub) bookReleaseCooldown(repo string, number int) {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	h.completedMu.Lock()
+	h.failedTasks[key] = time.Now()
 	h.completedMu.Unlock()
 	h.saveFailedTasks()
 }
@@ -1500,7 +1750,13 @@ func (h *ContributeWSHub) failureCooldownForLocked(key string) time.Duration {
 //     deprioritise it behind never-failed peers rather than instantly restoring
 //     it to the head of the queue. The count also resets on completion.
 func (h *ContributeWSHub) isTaskInFailureCooldown(repo string, number int) bool {
-	key := fmt.Sprintf("%s#%d", repo, number)
+	return h.isTaskInFailureCooldownKey(worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+func (h *ContributeWSHub) isTaskInFailureCooldownKey(key string) bool {
+	if key == "" {
+		return false
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
 	t, ok := h.failedTasks[key]
@@ -1530,7 +1786,13 @@ func (h *ContributeWSHub) isTaskInFailureCooldown(repo string, number int) bool 
 // before those that have failed recently — guaranteeing forward progress even if
 // the failure cooldown has just elapsed (#2435 remedy 3 backstop).
 func (h *ContributeWSHub) recentFailureCount(repo string, number int) int {
-	key := fmt.Sprintf("%s#%d", repo, number)
+	return h.recentFailureCountKey(worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+func (h *ContributeWSHub) recentFailureCountKey(key string) int {
+	if key == "" {
+		return 0
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
 	return h.consecutiveFailures[key]
@@ -1618,7 +1880,7 @@ func (h *ContributeWSHub) bookAndRevokeReleased(targets []releaseTarget, reason,
 		// the released issue is not instantly re-offered. Only real issue tasks are
 		// booked; synthetic pr-review tasks (Number == 0) must not poison an issue key.
 		if tgt.task.Number > 0 {
-			h.recordTaskFailure(tgt.task.Repo, tgt.task.Number, false)
+			h.recordTaskFailureForTask(&tgt.task, false)
 		}
 		username := ""
 		if tgt.conn.profile != nil {
@@ -1634,7 +1896,7 @@ func (h *ContributeWSHub) bookAndRevokeReleased(targets []releaseTarget, reason,
 		)
 		// #2568: record the operator's reason in the activity log so the release is
 		// auditable (the reason rides in the Task field alongside the task id).
-		h.addActivity(username, activityVerb+": "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		h.addActivity(username, activityVerb+": "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, tgt.task.TaskID)
 		// Push the EXISTING task_revoke message so the relay stops cleanly and
 		// re-readies. Best-effort: if the socket is already gone the disconnect path
 		// has (or will) release it anyway; the cooldown above is already booked. The
@@ -1702,17 +1964,31 @@ func (h *ContributeWSHub) DisconnectContributor(contributorID, reason string) in
 // The NUL separator cannot appear in a contributor id or a "repo#number" key, so the two
 // fields can never collide across a boundary.
 func yankExcludeKey(contributorID, repo string, number int) string {
-	return contributorID + "\x00" + fmt.Sprintf("%s#%d", repo, number)
+	return yankExcludeKeyFor(contributorID, worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+// yankExcludeKeyFor scopes a yank self-exclusion to (contributor, work item)
+// using the canonical identity, so two zero-numbered external items do not
+// share one exclusion (kubestellar/hive#4245).
+func yankExcludeKeyFor(contributorID, itemKey string) string {
+	return contributorID + "\x00" + itemKey
 }
 
 // isYankSelfExcluded reports whether repo#number is still within its brief yank
 // self-exclusion window for contributorID (set the item was just yanked off this
 // clanker). Expired entries are pruned lazily here. Caller must hold h.mu.
 func (h *ContributeWSHub) isYankSelfExcludedLocked(contributorID, repo string, number int) bool {
-	if number <= 0 || len(h.yankExclusions) == 0 {
+	if number <= 0 {
 		return false
 	}
-	key := yankExcludeKey(contributorID, repo, number)
+	return h.isYankSelfExcludedKeyLocked(contributorID, worksource.Ref{Repo: repo, Number: number}.Key())
+}
+
+func (h *ContributeWSHub) isYankSelfExcludedKeyLocked(contributorID, itemKey string) bool {
+	if itemKey == "" || len(h.yankExclusions) == 0 {
+		return false
+	}
+	key := yankExcludeKeyFor(contributorID, itemKey)
 	exp, ok := h.yankExclusions[key]
 	if !ok {
 		return false
@@ -1803,7 +2079,7 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (
 			username = tgt.conn.profile.GitHubUsername
 		}
 		taskDesc := fmt.Sprintf("%s %s#%d: %s", msg.Kind, msg.Repo, msg.Number, msg.Title)
-		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, taskDesc)
+		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, taskDesc)
 		h.logger.Info("[contribute-ws] clanker reassigned after yank",
 			"username", username, "task", msg.TaskID, "repo", msg.Repo, "number", msg.Number)
 		if !h.requireExplicitAccept() {
@@ -2014,19 +2290,20 @@ func (h *ContributeWSHub) SetContributorAgentRoleGrants(contributorID string, gr
 // carries only what the contributor handshake already put on the wire plus the
 // live connection timing the hub already tracks — no secrets, no new state.
 type FleetClanker struct {
-	ContributorID  string        `json:"contributor_id"`
-	GitHubUsername string        `json:"github_username,omitempty"`
-	CLIBackend     string        `json:"cli_backend,omitempty"`
-	Model          string        `json:"model,omitempty"`
-	Role           string        `json:"role,omitempty"`
-	ClientRole     string        `json:"client_role,omitempty"`
-	AssignedRole   string        `json:"assigned_agent_role,omitempty"`
-	RoleMismatch   string        `json:"role_mismatch,omitempty"`
-	TrustTier      string        `json:"trust_tier,omitempty"`
-	ConnectedAt    string        `json:"connected_at,omitempty"`
-	LastActivity   string        `json:"last_activity,omitempty"`
-	Stale          bool          `json:"stale,omitempty"`
-	CurrentTask    *WSTaskAssign `json:"current_task,omitempty"`
+	ContributorID   string        `json:"contributor_id"`
+	GitHubUsername  string        `json:"github_username,omitempty"`
+	CLIBackend      string        `json:"cli_backend,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+	Role            string        `json:"role,omitempty"`
+	ClientRole      string        `json:"client_role,omitempty"`
+	AssignedRole    string        `json:"assigned_agent_role,omitempty"`
+	RoleMismatch    string        `json:"role_mismatch,omitempty"`
+	TrustTier       string        `json:"trust_tier,omitempty"`
+	ConnectedAt     string        `json:"connected_at,omitempty"`
+	LastActivity    string        `json:"last_activity,omitempty"`
+	Stale           bool          `json:"stale,omitempty"`
+	CurrentTask     *WSTaskAssign `json:"current_task,omitempty"`
 	// IdleReason is the machine-readable reason this clanker currently has no work
 	// (#2546): one of the taskUnavailable* reasons last sent to it. Empty when the
 	// clanker is actively working (CurrentTask set) or has never been refused. It
@@ -2117,14 +2394,15 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 	for _, c := range h.connections {
 		c.mu.Lock()
 		fc := FleetClanker{
-			CLIBackend:   c.cliBackend,
-			Model:        c.model,
-			Role:         c.role,
-			ClientRole:   c.clientRole,
-			AssignedRole: c.assignedRole,
-			ConnectedAt:  c.connectedAt.UTC().Format(time.RFC3339),
-			LastActivity: c.lastPong.UTC().Format(time.RFC3339),
-			Stale:        time.Since(c.lastPong) > wsHeartbeatTimeout,
+			CLIBackend:      c.cliBackend,
+			Model:           c.model,
+			ReasoningEffort: c.reasoningEffort,
+			Role:            c.role,
+			ClientRole:      c.clientRole,
+			AssignedRole:    c.assignedRole,
+			ConnectedAt:     c.connectedAt.UTC().Format(time.RFC3339),
+			LastActivity:    c.lastPong.UTC().Format(time.RFC3339),
+			Stale:           time.Since(c.lastPong) > wsHeartbeatTimeout,
 		}
 		if c.assignedRole != "" && normalizeAgentRole(c.clientRole) != "" && normalizeAgentRole(c.clientRole) != effectiveAssignedAgentRole(c.assignedRole) {
 			if c.assignedRole == "none" {
@@ -2325,15 +2603,16 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	for _, c := range h.connections {
 		c.mu.Lock()
 		out = append(out, ContributorConnection{
-			profile:      c.profile,
-			cliBackend:   c.cliBackend,
-			model:        c.model,
-			role:         c.role,
-			clientRole:   c.clientRole,
-			assignedRole: c.assignedRole,
-			connectedAt:  c.connectedAt,
-			currentTask:  c.currentTask,
-			tmuxOutput:   append([]string{}, c.tmuxOutput...),
+			profile:         c.profile,
+			cliBackend:      c.cliBackend,
+			model:           c.model,
+			reasoningEffort: c.reasoningEffort,
+			role:            c.role,
+			clientRole:      c.clientRole,
+			assignedRole:    c.assignedRole,
+			connectedAt:     c.connectedAt,
+			currentTask:     c.currentTask,
+			tmuxOutput:      append([]string{}, c.tmuxOutput...),
 		})
 		c.mu.Unlock()
 	}
@@ -2432,23 +2711,31 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// window (BASE_RECONNECT_DELAY_MS..MAX_RECONNECT_DELAY_MS, i.e. 1s–60s)
 				// while the original relay — which keeps currentTask locally and
 				// re-asserts it via task_progress on reconnect — is still working it.
-				// Both sessions then reach "open a PR" and file duplicates. Mirror the
-				// task_failed path (#2435) and book the SHORT non-permanent failure
-				// cooldown so the issue is not instantly re-admissible. The short
+				// Both sessions then reach "open a PR" and file duplicates. Book the
+				// SHORT cooldown so the issue is not instantly re-admissible. The short
 				// window comfortably outlasts the reconnect backoff, so the returning
 				// session re-asserts and resumes (repopulating activeIssues) before the
-				// cooldown lapses; a completion later resets the failure ledger. Only
-				// real issue tasks are booked — synthetic pr-review tasks carry
-				// Number == 0 and must not poison an issue key.
+				// cooldown lapses — which is the contract #4260 restored by renewing
+				// the lease on every progress report, so a task alive longer than
+				// leaseTTL is still re-adoptable. Only real issue tasks are booked —
+				// synthetic pr-review tasks carry Number == 0 and must not poison an
+				// issue key.
+				//
+				// #4260: bookReleaseCooldown rather than recordTaskFailure. The window
+				// is identical; what is dropped is the consecutive-failure increment,
+				// which turned three dropped sockets on one issue into a
+				// quarantineCooldownHours quarantine of an issue nobody had failed.
+				// The #2356 duplicate-PR guarantee lives entirely in the timestamp and
+				// is unaffected.
 				if abandonedTask.Number > 0 {
-					h.recordTaskFailure(abandonedTask.Repo, abandonedTask.Number, false)
+					h.bookReleaseCooldown(abandonedTask.Repo, abandonedTask.Number)
 				}
 			}
 			h.mu.Lock()
 			delete(h.connections, connID)
 			h.mu.Unlock()
 			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
-			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, "")
+			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
 		}
 		conn.Close()
 	}()
@@ -2533,6 +2820,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if msg.Model != "" {
 				profile.Model = msg.Model
 			}
+			if msg.ReasoningEffort != "" {
+				profile.ReasoningEffort = msg.ReasoningEffort
+			}
 			if profile.AvatarURL == "" {
 				profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
 			}
@@ -2588,16 +2878,17 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			contributor = &ContributorConnection{
-				ws:           conn,
-				profile:      profile,
-				cliBackend:   msg.CLIBackend,
-				model:        msg.Model,
-				role:         requestedRole,
-				clientRole:   clientRole,
-				assignedRole: assignedRole,
-				connectedAt:  time.Now(),
-				lastPong:     time.Now(),
-				capabilities: caps,
+				ws:              conn,
+				profile:         profile,
+				cliBackend:      msg.CLIBackend,
+				model:           msg.Model,
+				reasoningEffort: msg.ReasoningEffort,
+				role:            requestedRole,
+				clientRole:      clientRole,
+				assignedRole:    assignedRole,
+				connectedAt:     time.Now(),
+				lastPong:        time.Now(),
+				capabilities:    caps,
 			}
 
 			// Hand the slot over from the pending counter to h.connections
@@ -2652,7 +2943,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				"cli", msg.CLIBackend,
 				"role", requestedRole,
 			)
-			h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, "")
+			h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, msg.ReasoningEffort, "")
 
 			select {
 			case authDone <- contributor:
@@ -2702,7 +2993,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// the very selectTask call below. Synthetic pr-review tasks carry
 				// Number == 0 and must not poison an issue key.
 				if abandoned.Number > 0 {
-					h.recordTaskFailure(abandoned.Repo, abandoned.Number, false)
+					h.recordTaskFailureForTask(abandoned, false)
 				}
 			}
 			h.logger.Info("[contribute-ws] ready for work",
@@ -2746,7 +3037,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				if task.Role != "" {
 					taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
 				}
-				h.addActivity(contributor.profile.GitHubUsername, "picked up", contributor.role, contributor.cliBackend, contributor.model, taskDesc)
+				h.addActivity(contributor.profile.GitHubUsername, "picked up", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, taskDesc)
 				h.logger.Info("[contribute-ws] task assigned",
 					"username", contributor.profile.GitHubUsername,
 					"task", task.TaskID,
@@ -2853,6 +3144,12 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.tmuxOutput = msg.TmuxOutput
 					contributor.mu.Unlock()
 
+					// #4260: a resume is itself proof of life, so restart the lease
+					// window alongside lastLeaseRenew. Without this a relay that
+					// reconnected twice inside one lease window would be refused the
+					// second time even though it never stopped working.
+					h.renewLease(identity, lease.taskID, time.Now())
+
 					h.logger.Info("[contribute-ws] task resumed from server-issued lease",
 						"username", contributor.profile.GitHubUsername,
 						"task", lease.taskID, "repo", lease.repo, "number", lease.number)
@@ -2881,6 +3178,25 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				contributor.tmuxOutput = msg.TmuxOutput
+				// #4117: the relay re-detects the running model from the CLI's own
+				// session transcript on every progress tick and piggybacks it here, so
+				// a mid-session model switch (claude `/model`) is reflected instead of
+				// staying stuck at the connect-time value. Same pattern as the
+				// auth-time handler: only non-empty values overwrite — an older relay
+				// omits both fields and nothing changes. Advisory display metadata,
+				// exactly like the auth_response values it refreshes.
+				if msg.Model != "" {
+					contributor.model = msg.Model
+					if contributor.profile != nil {
+						contributor.profile.Model = msg.Model
+					}
+				}
+				if msg.ReasoningEffort != "" {
+					contributor.reasoningEffort = msg.ReasoningEffort
+					if contributor.profile != nil {
+						contributor.profile.ReasoningEffort = msg.ReasoningEffort
+					}
+				}
 				// SECURITY (v4, kept over v2 #3153): v4 deliberately has NO
 				// client-driven resume path here. A task_progress for a task the hub
 				// does not already track is resumed ONLY through the authoritative
@@ -2893,7 +3209,22 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// never reclaimed) from "connected but wedged" (lease goes stale and
 				// cleanupLoop reclaims it after wsTaskTimeout).
 				contributor.lastLeaseRenew = time.Now()
+				// #4260: the task id is taken from the hub's OWN record of what this
+				// connection holds, never from msg.TaskID, so the renewal cannot be
+				// pointed at a task the client merely names. Captured here under the
+				// connection lock and applied below without it, matching how the other
+				// release paths call into the lease registry.
+				heldTaskID := ""
+				if contributor.currentTask != nil {
+					heldTaskID = contributor.currentTask.TaskID
+				}
 				contributor.mu.Unlock()
+				// #4260: keep the lease registry's expiry on the same clock as
+				// lastLeaseRenew above. Stamping it only at assignment meant a task
+				// still healthily reporting progress past leaseTTL was never reclaimed
+				// yet could no longer be re-adopted, so the next socket drop cost the
+				// relay its in-flight work.
+				h.renewLease(identityOf(contributor), heldTaskID, time.Now())
 			}
 
 		case "task_complete":
@@ -2967,8 +3298,34 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						h.revokeLease(identityOf(contributor), completedTask.TaskID)
 					}
 					verifiedPR := ""
-					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
+					var prDetail ghpkg.PRVerification
+					if completedTask != nil {
+						prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername)
+					}
+					if prDetail.Verified {
 						verifiedPR = msg.PRURL
+						// Off the read loop, deliberately. This is cosmetic
+						// best-effort work that gates NOTHING — unlike
+						// verifyReportedPR above, whose result decides the cooldown
+						// and trust credit and so must be awaited. Inline it would
+						// add up to two GitHub round trips (bounded by the App
+						// client's 30s timeout, so ~60s worst case) to this
+						// contributor's message loop, during which its pongs are not
+						// read; wsHeartbeatTimeout is 90s, so a slow GitHub could
+						// push a perfectly healthy contributor to `Stale` in the
+						// fleet view for the sake of a PR-body edit.
+						go h.reconcilePRAttribution(msg.PRURL, contributor)
+						// A MERGED fix retires the finding it addresses, so the
+						// digest stops carrying work that is already done. Gated
+						// on prDetail.Merged, not on verification alone: a PR
+						// that merely exists is a fix in review, and closing
+						// findings on it would retire them before anything
+						// landed. The PR's OWN title is matched — the
+						// assignment's issue title would match the finding it
+						// was minted from on the mere existence of a PR.
+						if prDetail.Merged {
+							h.closeAdvisoryForMergedPR(prDetail.Title)
+						}
 					}
 					// #3987: normalize the completion's verdict. A verified PR always
 					// wins (shipped); with none, only an explicit no_work_needed is
@@ -2983,10 +3340,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						// instantly re-offered in a tight loop). #3987: a no_work_needed
 						// verdict additionally books the durable offer-suppression
 						// verdict (see markTaskCompletedVerdict).
-						h.markTaskCompletedVerdict(completedTask.Repo, completedTask.Number, verifiedPR,
+						h.markTaskCompletedVerdictKey(completedTask.identityKey(), verifiedPR,
 							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 					}
-					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
+					completedDesc := msg.TaskID
+					if completedTask != nil && completedTask.Number > 0 {
+						completedDesc = fmt.Sprintf("%s %s#%d: %s", completedTask.Kind, completedTask.Repo, completedTask.Number, completedTask.Title)
+					}
+					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, completedDesc)
 					h.logger.Info("[contribute-ws] task complete",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
@@ -3021,6 +3382,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					promotedUser := contributor.profile.GitHubUsername
 					promotedCLI := contributor.cliBackend
 					promotedModel := contributor.model
+					promotedEffort := contributor.reasoningEffort
 					contributor.mu.Unlock()
 					// #2390-era command center: narrate the promotion as its own
 					// activity event so the Operations dev-log and achievement pops
@@ -3028,7 +3390,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// Read-only signalling — it changes no control behaviour and is
 					// emitted only on the real newcomer -> contributor transition.
 					if promoted {
-						h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, "contributor")
+						h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, promotedEffort, "contributor")
 					}
 					_ = saveContributorProfile(contributor.profile)
 				} else {
@@ -3091,7 +3453,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						// issue is not immediately re-admissible and handed straight
 						// back out ahead of the rest of the queue. A permanent failure
 						// counts more toward the quarantine threshold.
-						h.recordTaskFailure(failedTask.Repo, failedTask.Number, msg.Permanent)
+						h.recordTaskFailureForTask(failedTask, msg.Permanent)
 					}
 					// #2547: keep the failure reason instead of only logging it, so an
 					// operator can tell a work item that failed on its merits from one
@@ -3115,7 +3477,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					contributor.mu.Unlock()
 
-					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
+					failedDesc := msg.TaskID
+					if failedTask != nil && failedTask.Number > 0 {
+						failedDesc = fmt.Sprintf("%s %s#%d: %s", failedTask.Kind, failedTask.Repo, failedTask.Number, failedTask.Title)
+					}
+					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, failedDesc)
 					h.logger.Info("[contribute-ws] task failed",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
@@ -3520,7 +3886,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 		// lease so the wedged worker cannot re-adopt it via a later task_progress.
 		h.revokeLease(identityOf(tgt.conn), tgt.task.TaskID)
 		if tgt.task.Number > 0 {
-			h.recordTaskFailure(tgt.task.Repo, tgt.task.Number, false)
+			h.recordTaskFailureForTask(&tgt.task, false)
 		}
 		username := ""
 		if tgt.conn.profile != nil {
@@ -3533,7 +3899,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 			"number", tgt.task.Number,
 			"lease_ttl", wsTaskTimeout.String(),
 		)
-		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, tgt.task.TaskID)
 		if tgt.conn.ws != nil {
 			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",
@@ -3735,7 +4101,64 @@ func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
 // is safe to preview read-only in the ops tab (#2539). selectTask ships whatever
 // this returns, and the ops preview reads the very same string back off the
 // connection, so "what is previewed" always matches "what runs".
+// buildTaskPrompt is the GitHub-shaped entry point retained for existing call
+// sites (ops-tab prompt preview, tests). New identity-aware callers use
+// buildTaskPromptForRef.
 func buildTaskPrompt(repoFull string, number int, title string) string {
+	return buildTaskPromptForRef(worksource.Ref{Repo: repoFull, Number: number}, title)
+}
+
+// buildTaskPromptForRef renders the assignment prompt for any work source
+// (kubestellar/hive#4245).
+//
+// The issue reference used to be formatted "%s#%d" straight from repo+number,
+// so a Linear or Jira task told the agent to "Work on issue owner/repo#0" — a
+// reference to nothing, with the item's real key and URL nowhere in the prompt.
+// The reference is now the canonical key, and non-GitHub work additionally
+// carries its URL, because that is the only way an agent can actually open it:
+// there is no `gh issue view` for a Linear ticket.
+//
+// The repository instructions are unchanged and still name the GitHub repo —
+// external work is planned elsewhere but still landed as a PR here.
+func buildTaskPromptForRef(ref worksource.Ref, title string) string {
+	repoFull := ref.Repo
+	issueRef := ref.Key()
+	if issueRef == "" {
+		issueRef = repoFull
+	}
+	// An external item's URL is the agent's only route to the work item itself.
+	// GitHub-backed work needs no such hint: `owner/repo#42` is directly
+	// actionable, and appending a URL there would change every existing prompt.
+	sourceHint := ""
+	if !ref.IsGitHubIssue() && ref.URL != "" {
+		sourceHint = fmt.Sprintf(
+			" This work item lives in the %s work source, not in GitHub Issues; read it at %s.",
+			sourceLabel(ref.SourceType), ref.URL)
+	}
+	return buildTaskPromptBody(repoFull, issueRef, title, sourceHint)
+}
+
+// taskIDSegment is the per-item component of a task id. For GitHub-backed work
+// it is the decimal issue number, which keeps the id exactly the shape it has
+// always had; for a string-keyed source it is the native external id, so two
+// zero-numbered items minted in the same second get different ids.
+func taskIDSegment(ref worksource.Ref) string {
+	if ref.Number > 0 {
+		return strconv.Itoa(ref.Number)
+	}
+	return ref.ExternalID
+}
+
+// sourceLabel renders a work-source type for prose. An empty type means the
+// item came from GitHub enumeration, which predates the field.
+func sourceLabel(sourceType string) string {
+	if sourceType == "" {
+		return "github"
+	}
+	return sourceType
+}
+
+func buildTaskPromptBody(repoFull, issueRef, title, sourceHint string) string {
 	// The workspace contract (kubestellar/hive#2545): your tmux pane already
 	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
 	// launches the session with -c pointed there), but nothing had put a repo
@@ -3746,7 +4169,7 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 	// assignment slot stayed held. Spell out an actual clone into that known
 	// directory so there is a concrete first step rather than an implied one.
 	return fmt.Sprintf(
-		"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
+		"You are a contributor to the %s hive. Work on issue %s: \"%s\".%s "+
 			"You do NOT have push access to the upstream repo. "+
 			"Start by getting a real checkout on disk: "+
 			"'gh repo fork %s --clone=true --remote=true "+
@@ -3754,7 +4177,32 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 			"from a prior task, 'cd' into it and 'git fetch' instead of "+
 			"re-forking). Then 'cd' into that checkout, read the issue, "+
 			"understand what's needed, and take action. "+
+			// DCO is enforced on this repo (CONTRIBUTING.md) and an unsigned
+			// commit blocks the merge, but the prompt used to leave sign-off
+			// entirely to whatever each agent inferred from the repo. That
+			// varies even within one backend: two agy tasks produced one
+			// unsigned PR (#4127, fixed by hand) and one signed (#4176). Every
+			// other required step here is spelled out; this one was the
+			// exception, so say it.
+			"Commit with 'git commit -s' so every commit carries a Signed-off-by "+
+			"trailer — the DCO check blocks the merge without it, and the trailer's "+
+			"email must match the commit author's email. "+
+			// Open it READY, not draft. A draft trips the repo's
+			// do-not-merge/work-in-progress automation and tide will not merge
+			// one, so a draft left behind is a PR nobody is waiting on and
+			// nothing will land. The prompt used to say only "open a PR", which
+			// an agent can satisfy perfectly well with `gh pr create --draft`.
+			//
+			// Observed live: the task for #4188 scoped down to child #4205 and
+			// ran `gh pr create --draft`, then verified `isDraft: true` and
+			// reported "Draft PR #4242 is open" as a SUCCESSFUL handoff — it had
+			// no reason to think otherwise. The contributor had to intervene by
+			// hand ("don't make them draft. Make sure they are submitted and
+			// ready for review") to get it marked ready.
 			"Push your branch to your fork remote, then open a PR from your fork. "+
+			"Open it ready for review, not as a draft (do not pass --draft): a draft "+
+			"is auto-labelled do-not-merge/work-in-progress and cannot merge. If a PR "+
+			"is already open as a draft, mark it ready for review. "+
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN'). "+
 			// #3987: the no_work_needed sentinel. The relay scrapes this exact
 			// marker from the agent's output and reports it as the completion
@@ -3767,8 +4215,47 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 			"PRs already cover everything actionable — do NOT open a PR; instead print "+
 			"a single line of the exact form 'HIVE_VERDICT: no_work_needed — <short reason>' "+
 			"and stop.",
-		repoFull, repoFull, number, title, repoFull, repoFull,
+		repoFull, issueRef, title, sourceHint, repoFull, repoFull,
 	)
+}
+
+// attributionPromptInstruction renders the footer instruction appended to an
+// assignment prompt (kubestellar/hive#4105). It tells the agent — up front, using
+// the hub's handshake-recorded invocation values — the exact attribution trailer
+// its PR body must end with, so agent-produced PRs carry the footer without
+// waiting for the hub-side EnsurePRAttribution reconciliation (#4088), which
+// stays in place unchanged as an idempotent safety net. Like the rest of the
+// prompt this is a pure function of non-credential metadata, so it remains safe
+// to preview in the ops tab (#2539). Returns "" when the metadata renders no
+// trailer at all (all fields unknown) — a bare prefix instruction would ask the
+// agent to produce an empty footer.
+func attributionPromptInstruction(meta ghpkg.InvocationMeta) string {
+	trailer := meta.Trailer()
+	if trailer == "" {
+		return ""
+	}
+	return " At the bottom of your PR body, include exactly this line: '" + trailer + "'."
+}
+
+// promptInvocationMeta snapshots the hub's own handshake-recorded invocation
+// metadata for a connection (never relay-self-reported values), mirroring the
+// meta built by reconcilePRAttribution so the prompt instruction (#4105) and the
+// post-merge reconciliation trailer (#4088) always agree. Caller must NOT hold
+// c.mu. Nil-safe: a nil connection yields zero metadata (and hence no footer
+// instruction).
+func promptInvocationMeta(c *ContributorConnection) ghpkg.InvocationMeta {
+	if c == nil {
+		return ghpkg.InvocationMeta{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	meta := ghpkg.InvocationMeta{
+		Agent:   c.role,
+		Backend: c.cliBackend,
+		Model:   ghpkg.RequestedModel(c.cliBackend, c.model),
+		Effort:  c.reasoningEffort,
+	}
+	return meta
 }
 
 // canonicalRepoKey maps an arbitrary, possibly client-supplied repo string to the
@@ -3948,7 +4435,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	for _, conn := range h.connections {
 		conn.mu.Lock()
 		if conn.currentTask != nil {
-			activeIssues[fmt.Sprintf("%s#%d", conn.currentTask.Repo, conn.currentTask.Number)] = true
+			if key := conn.currentTask.identityKey(); key != "" {
+				activeIssues[key] = true
+			}
 			identityHolds[identityOf(conn)]++
 		}
 		conn.mu.Unlock()
@@ -4077,11 +4566,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	type candidate struct {
 		repoFull string
 		number   int
-		title    string
-		url      string
-		labels   []string
-		lane     string
-		isOwn    bool
+		// ref is the candidate's canonical, source-aware identity
+		// (kubestellar/hive#4245). Every exclusion below keys on ref.Key(), so
+		// two zero-numbered external items are distinct work rather than one
+		// shared "repo#0".
+		ref    worksource.Ref
+		title  string
+		url    string
+		labels []string
+		lane   string
+		isOwn  bool
 		// interestMatch is true when the issue carries a label the contributor has
 		// opted into (#2637). It is a SOFT priority tier below own-work: matching
 		// work is offered first, but a contributor with no match still gets other
@@ -4124,25 +4618,27 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				continue
 			}
 
-			number := 0
-			switch n := issue["number"].(type) {
-			case float64:
-				number = int(n)
-			case int:
-				number = n
-			}
-			if number == 0 {
-				h.logger.Info("[contribute-ws] skip: number=0", "repo", repo.Full)
+			// Canonical, source-aware identity (kubestellar/hive#4245). The old
+			// `number == 0` skip rejected every Linear and Jira item outright,
+			// so non-GitHub work could never be offered to a contributor at all.
+			// An item is now skipped only when it has NO identity — no issue
+			// number AND no external key — which is the one case where any key
+			// would be fabricated.
+			ref := refFromIssueMap(repo.Full, issue)
+			itemKey := ref.Key()
+			if itemKey == "" {
+				h.logger.Info("[contribute-ws] skip: item has no usable identity (no number, no external id)", "repo", repo.Full)
 				continue
 			}
+			number := ref.Number
 			// Operator HOLD (#queue-hold): skip a manually-parked issue outright. This
 			// is a persistent operator decision, DISTINCT from the time-based cooldown
 			// below — a held issue never becomes a candidate until the operator Resumes
 			// it. Keyed on the same canonical "%s#%d" as every other exclusion.
-			if _, isHeld := heldIssues[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
+			if _, isHeld := heldIssues[itemKey]; isHeld {
 				continue
 			}
-			if h.isTaskInCooldown(repo.Full, number) {
+			if h.isTaskInCooldownKey(itemKey) {
 				continue
 			}
 			// #3987: skip an issue with a live no_work_needed completion verdict
@@ -4150,16 +4646,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			// gated, no open PR left for the claim ledger to see). The verdict
 			// is voided the moment the issue shows activity newer than it, so a
 			// genuinely reopened issue comes straight back into the pool.
-			if h.isSuppressedByNoWorkVerdict(repo.Full, number, issueUpdatedAtFromMap(issue)) {
+			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
 				continue
 			}
 			// #2435: skip an issue still inside its short post-failure cooldown or
 			// its longer quarantine. This is the primary livelock fix — a failing
 			// issue at the head of the scan is no longer instantly re-admissible.
-			if h.isTaskInFailureCooldown(repo.Full, number) {
+			if h.isTaskInFailureCooldownKey(itemKey) {
 				continue
 			}
-			if activeIssues[fmt.Sprintf("%s#%d", repo.Full, number)] {
+			if activeIssues[itemKey] {
 				continue
 			}
 			// #3768: skip an issue that an open PR — from ANYONE, hive agent or
@@ -4177,6 +4673,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				repoFull: repo.Full,
 				repoName: repo.Name,
 				number:   number,
+				ref:      ref,
 			})
 			if !decision.admitted {
 				switch decision.reason {
@@ -4205,7 +4702,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			// contributor may still be offered the issue immediately. Guarded by h.mu.
 			if c.profile != nil {
 				h.mu.Lock()
-				selfExcluded := h.isYankSelfExcludedLocked(c.profile.ContributorID, repo.Full, number)
+				selfExcluded := h.isYankSelfExcludedKeyLocked(c.profile.ContributorID, itemKey)
 				h.mu.Unlock()
 				if selfExcluded {
 					continue
@@ -4218,6 +4715,29 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			lane, _ := issue["lane"].(string)
 			labels := stringSliceFromAny(issue["labels"])
 			assignees := stringSliceFromAny(issue["assignees"])
+
+			// A tracker/umbrella issue is coordination-only: its children carry
+			// the work and are queued independently, so handing the parent to one
+			// contributor is never right. The enumerator has flagged these all
+			// along (github.Issue.IsTracker) and this queue simply never read it —
+			// scheduler.go consumed the flag for a "[TRACKER]" prompt annotation
+			// and nothing else.
+			//
+			// Live cost of the omission: kubestellar/hive#4188 ("coordination-only
+			// umbrella. Do not assign #4188 as one Hive task", per its own body,
+			// above a 13-item child task list) was offered to a contributor, which
+			// spent the full 30-minute MAX_TASK_DURATION budget and booked a
+			// failure on an issue that only final integration can close. The agent
+			// behaved correctly throughout — it triaged the children and shipped
+			// one — but no agent can "complete" a parent like this.
+			//
+			// Logged rather than skipped silently: an issue that is never offered
+			// should not be a mystery to the operator watching the queue.
+			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
+				h.logger.Info("[contribute-ws] skipping tracker/umbrella issue",
+					"repo", repo.Full, "number", number, "title", title)
+				continue
+			}
 			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {
 				continue
 			}
@@ -4250,6 +4770,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			candidates = append(candidates, candidate{
 				repoFull: repo.Full,
 				number:   number,
+				ref:      ref,
 				title:    title,
 				url:      url,
 				// The issue's own labels travel with the candidate so the chosen
@@ -4265,7 +4786,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				interestMatch: interestMatchesLabels(labels),
 				// #2435: carry any lingering failure history so the ordering below
 				// can deprioritise a recently-failed issue within its bucket.
-				recentFailures: h.recentFailureCount(repo.Full, number),
+				recentFailures: h.recentFailureCountKey(itemKey),
 			})
 		}
 	}
@@ -4356,7 +4877,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		return h.taskUnavailable(taskUnavailableTokenMintFailed)
 	}
 
-	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
+	// The task id carries the item's own identity segment so two zero-numbered
+	// external items cannot mint the same id within one second
+	// (kubestellar/hive#4245). GitHub-backed work keeps its historical
+	// "ct-<repo>-<number>-<unix>" shape byte for byte.
+	taskID := fmt.Sprintf("ct-%s-%s-%d", chosen.repoFull, taskIDSegment(chosen.ref), time.Now().Unix())
 
 	// #2539: build the prompt through the shared, credential-free buildTaskPrompt
 	// so the exact text shipped in task_assign below can also be PREVIEWED
@@ -4365,10 +4890,15 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// the prompt), so previewing the prompt can never leak the token. buildTaskPrompt
 	// itself carries the #2545 workspace-clone instruction (real checkout into
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
-	prompt := buildTaskPrompt(chosen.repoFull, chosen.number, chosen.title)
+	prompt := buildTaskPromptForRef(chosen.ref, chosen.title)
 	if requestedRole != "" {
-		prompt = buildRoleTaskPrompt(chosen.repoFull, chosen.number, chosen.title, requestedRole, h.roleKickPrompt(requestedRole))
+		prompt = buildRoleTaskPromptForRef(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole))
 	}
+	// #4105: tell the agent up front — from the hub's own handshake-recorded
+	// invocation values — the exact attribution trailer its PR body must end
+	// with, so the footer is intentionally produced rather than appended only
+	// by the post-merge reconciliation safety net (#4088, unchanged).
+	prompt += attributionPromptInstruction(promptInvocationMeta(c))
 
 	// #2568: mint a fresh assignment generation for this task. It is stamped on the
 	// connection, shipped in task_assign below, and echoed back by the relay so a
@@ -4377,12 +4907,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 
 	c.mu.Lock()
 	c.currentTask = &WSTaskAssign{
-		TaskID: taskID,
-		Kind:   "issue",
-		Role:   requestedRole,
-		Repo:   chosen.repoFull,
-		Number: chosen.number,
-		Title:  chosen.title,
+		TaskID:     taskID,
+		Kind:       "issue",
+		Role:       requestedRole,
+		Repo:       chosen.repoFull,
+		Number:     chosen.number,
+		Title:      chosen.title,
+		Key:        chosen.ref.Key(),
+		SourceType: chosen.ref.SourceType,
+		ExternalID: chosen.ref.ExternalID,
+		URL:        chosen.url,
 	}
 	c.currentTaskGen = gen
 	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
@@ -4431,6 +4965,13 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		Number:  chosen.number,
 		Title:   chosen.title,
 		URL:     chosen.url,
+		// Source-aware identity (kubestellar/hive#4245). Additive: a GitHub
+		// assignment carries exactly the fields it always did, and these tell a
+		// relay working a Linear or Jira item what the item actually IS instead
+		// of leaving it to infer one from `number: 0`.
+		TaskKey:    chosen.ref.Key(),
+		SourceType: chosen.ref.SourceType,
+		ExternalID: chosen.ref.ExternalID,
 		// #2537: NO github_token / token_expires_at here. The scoped credential is
 		// split out of task_assign and delivered only after acceptance (see
 		// pendingToken / deliverTaskCredential). task_assign now carries exactly the

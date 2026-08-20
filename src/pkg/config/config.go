@@ -1006,7 +1006,12 @@ type GovernorConfig struct {
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.
-	Bob        BobConfig        `yaml:"bob"`
+	Bob BobConfig `yaml:"bob"`
+	// Backup holds the location of the self-service backup encryption key.
+	// It records a PATH only, never the key value: hosted spoke owners have no
+	// deployment-env access, so the key has to be settable through this
+	// (governor) config surface rather than only through HIVE_BACKUP_KEY.
+	Backup     BackupConfig     `yaml:"backup,omitempty" json:"backup,omitempty"`
 	Trajectory TrajectoryConfig `yaml:"trajectory"`
 	Replan     ReplanConfig     `yaml:"replan"`
 	// Gateways is the list of named model gateways (OpenAI-compatible endpoints
@@ -1034,6 +1039,156 @@ type GovernorConfig struct {
 	// See EffectiveThreshold for the resolution rules and why linear is the
 	// default.
 	ThresholdScaling string `yaml:"threshold_scaling,omitempty" json:"threshold_scaling,omitempty"`
+
+	// Advisory tunes the advisory digest experience: how many findings the
+	// digest shows, and how long a finding may go un-reconfirmed before the
+	// hive retires it. See AdvisoryConfig.
+	Advisory AdvisoryConfig `yaml:"advisory,omitempty" json:"advisory,omitempty"`
+
+	// WorkSource selects where hive reads work items (Step 01 of the loop).
+	// Absent or type="" defaults to GitHub Issues — backward-compatible for
+	// all existing hives.
+	WorkSource WorkSourceConfig `yaml:"work_source,omitempty" json:"work_source,omitempty"`
+
+	// Rotation configures automatic provider failover when a provider's
+	// subscription or credit is exhausted. See RFC #3958.
+	Rotation RotationConfig `yaml:"rotation,omitempty" json:"rotation,omitempty"`
+}
+
+// RotationConfig configures automatic provider failover (RFC #3958). When a
+// provider's subscription or credit is exhausted, agents are rotated onto a
+// different provider at the same capability tier.
+type RotationConfig struct {
+	// Enabled turns the rotation loop on. Default false — opt-in.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// ThresholdPct is the usage percentage at which a subscription provider
+	// is considered exhausted (0–100). Default 85.
+	ThresholdPct int `yaml:"threshold_pct,omitempty" json:"threshold_pct,omitempty"`
+	// Providers maps provider name → its class config.
+	Providers map[string]ProviderRotationConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
+	// HighVolumeCadenceS: agents with a cadence at or below this value (seconds)
+	// are high-volume and must NEVER rotate onto subscription providers.
+	// Default 1800 (30 min). Protects weekly subscription budgets.
+	HighVolumeCadenceS int `yaml:"high_volume_cadence_s,omitempty" json:"high_volume_cadence_s,omitempty"`
+	// AgentTiers maps agent name → capability tier ("T1","T2","T3").
+	// Rotation stays within tiers; drops only when nothing has headroom.
+	AgentTiers map[string]string `yaml:"agents,omitempty" json:"agents,omitempty"`
+}
+
+// ProviderRotationConfig describes one provider in the rotation set.
+type ProviderRotationConfig struct {
+	// Class is "subscription" or "metered".
+	Class string `yaml:"class" json:"class"`
+	// Backends lists which hive backend names front this provider
+	// (e.g. ["claude","pi"] for anthropic; ["litellm"] when litellm fronts deepseek).
+	Backends []string `yaml:"backends,omitempty" json:"backends,omitempty"`
+}
+
+// defaultRotationThresholdPct is the exhaustion threshold when unset.
+const defaultRotationThresholdPct = 85
+
+// defaultHighVolumeCadenceS is the high-volume cadence cutoff when unset.
+const defaultHighVolumeCadenceS = 1800
+
+// EffectiveThreshold returns the exhaustion threshold pct, defaulting to 85.
+func (r RotationConfig) EffectiveThreshold() int {
+	if r.ThresholdPct > 0 {
+		return r.ThresholdPct
+	}
+	return defaultRotationThresholdPct
+}
+
+// EffectiveHighVolumeCadenceS returns the high-volume cadence cutoff in
+// seconds, defaulting to 1800 (30 minutes).
+func (r RotationConfig) EffectiveHighVolumeCadenceS() int {
+	if r.HighVolumeCadenceS > 0 {
+		return r.HighVolumeCadenceS
+	}
+	return defaultHighVolumeCadenceS
+}
+
+// WorkSourceConfig selects where hive reads work items (Step 01 of the loop).
+// Absent or type="" defaults to GitHub Issues — backward-compatible for all
+// existing hives.
+type WorkSourceConfig struct {
+	// Type selects the work source: "" | "github" | "github_projects" | "linear" | "jira"
+	Type string `yaml:"type" json:"type"`
+	// GitHubProjects configures the GitHub Projects v2 adapter.
+	GitHubProjects GitHubProjectsSourceConfig `yaml:"github_projects,omitempty" json:"github_projects,omitempty"`
+	// Linear configures the Linear GraphQL adapter.
+	Linear LinearSourceConfig `yaml:"linear,omitempty" json:"linear,omitempty"`
+	// Jira configures the Jira Cloud REST v3 adapter.
+	Jira JiraSourceConfig `yaml:"jira,omitempty" json:"jira,omitempty"`
+}
+
+// GitHubProjectsSourceConfig configures the GitHub Projects v2 work source.
+type GitHubProjectsSourceConfig struct {
+	ProjectNumber  int      `yaml:"project_number" json:"project_number"`
+	Org            string   `yaml:"org,omitempty" json:"org,omitempty"`
+	States         []string `yaml:"states,omitempty" json:"states,omitempty"`
+	PriorityField  string   `yaml:"priority_field,omitempty" json:"priority_field,omitempty"`
+	IterationField string   `yaml:"iteration_field,omitempty" json:"iteration_field,omitempty"`
+	DefaultRepo    string   `yaml:"default_repo,omitempty" json:"default_repo,omitempty"`
+}
+
+// LinearSourceConfig configures the Linear GraphQL work source.
+type LinearSourceConfig struct {
+	APIKey     string                   `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Teams      []LinearTeamSourceConfig `yaml:"teams,omitempty" json:"teams,omitempty"`
+	HoldLabels []string                 `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+}
+
+// LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
+type LinearTeamSourceConfig struct {
+	Key    string   `yaml:"key" json:"key"`
+	Repo   string   `yaml:"repo" json:"repo"`
+	States []string `yaml:"states,omitempty" json:"states,omitempty"`
+}
+
+// JiraSourceConfig configures the Jira Cloud REST v3 work source.
+type JiraSourceConfig struct {
+	BaseURL     string   `yaml:"base_url" json:"base_url"`
+	Email       string   `yaml:"email" json:"email"`
+	APIToken    string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
+	ProjectKeys []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
+	JQL         string   `yaml:"jql,omitempty" json:"jql,omitempty"`
+	Repo        string   `yaml:"repo,omitempty" json:"repo,omitempty"`
+	HoldLabels  []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+}
+
+// AdvisoryConfig controls the advisory digest's size and the lifecycle of the
+// beads behind it.
+//
+// Two operator complaints motivate it: advisory beads never closed once filed,
+// so healed findings accumulated in the digest forever; and every finding was
+// rendered, so a repo owner opening the digest met dozens of items with no
+// indication of which few mattered.
+type AdvisoryConfig struct {
+	// MaxFindings caps how many findings the digest renders, chosen by severity
+	// then recency across all agents.
+	//
+	// 0 means UNSET and resolves to defaultAdvisoryMaxFindings on load — a
+	// plain int cannot tell "the operator asked for zero" from "the key is
+	// absent", and defaulting is the behavior an untouched hive must get. The
+	// way to lift the cap is therefore ShowAll, not max_findings: 0, which
+	// would silently revert to 10 on the next config reload.
+	MaxFindings int `yaml:"max_findings" json:"max_findings"`
+	// ShowAll bypasses MaxFindings entirely — the opt-in for owners who want
+	// the full list, and the ONLY supported way to render an uncapped digest.
+	ShowAll bool `yaml:"show_all" json:"show_all"`
+	// StalenessDays is how long an open advisory bead may go without being
+	// re-reported before the hive auto-closes it. Default
+	// defaultAdvisoryStalenessDays.
+	StalenessDays int `yaml:"staleness_days" json:"staleness_days"`
+	// PRAutoClose retires an advisory finding when a merged PR's title is
+	// close enough to the finding's title. *bool so absent is distinct from an
+	// explicit false; default true.
+	PRAutoClose *bool `yaml:"pr_autoclose,omitempty" json:"pr_autoclose,omitempty"`
+}
+
+// PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
+func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
+	return a.PRAutoClose == nil || *a.PRAutoClose
 }
 
 // Default governor mode thresholds, in queue items (actionable issues + open
@@ -1601,8 +1756,10 @@ const (
 // gateway, which entitlement-filters /v1/models per API key and hides
 // key-gated models from anonymous callers.
 type InferenceAuthConfig struct {
-	APIKeyEnv  string `yaml:"api_key_env"`  // env var NAME holding the key; never the key value
-	APIKeyFile string `yaml:"api_key_file"` // path to a file holding the key
+	APIKeyHeader string `yaml:"api_key_header,omitempty" json:"api_key_header,omitempty"` // header NAME the key is sent in (default "Authorization")
+	APIKeyEnv    string `yaml:"api_key_env" json:"api_key_env"`                           // env var NAME holding the key; never the key value
+	APIKeyFile   string `yaml:"api_key_file" json:"api_key_file"`                         // path to a file holding the key
+	Endpoint     string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`             // optional endpoint override for this backend
 }
 
 // ResolveAPIKey returns the backend's discovery API key using the
@@ -2003,7 +2160,14 @@ var defaultLoginPatterns = []string{
 	// gh / copilot / gemini: the commands their CLIs tell the user to run.
 	"gh auth login",
 	"claude login",
-	"copilot auth",
+	// "copilot auth login" is the Copilot CLI's full logged-out instruction.
+	// The bare 2-word fragment "copilot auth" false-positived: it also matched
+	// `copilot auth status` (an auth CHECK) and incidental doc/comment mentions
+	// (e.g. bin/copilot-models.mjs), pausing logged-IN agents — a live quality
+	// agent flapped on `(?i)copilot auth` for days (restart_count 83). Tightening
+	// to the full command matches the specificity of its `gh auth login` /
+	// `gemini auth login` siblings and still catches genuine Copilot logouts.
+	"copilot auth login",
 	"gemini auth login",
 	// bob: its API-key entry prompts.
 	"Enter Bob-Shell API Key",
@@ -3607,6 +3771,15 @@ const (
 	defaultLogMaxAgeDays          = 7
 	defaultLogMaxBackups          = 10
 	defaultLogLevel               = "info"
+
+	// defaultAdvisoryMaxFindings is the digest's default top-N cap. Ten fits
+	// in a screenful, which is the point: the digest is a "what should I look
+	// at next" list, not an inventory.
+	defaultAdvisoryMaxFindings = 10
+	// defaultAdvisoryStalenessDays is how long an advisory bead survives
+	// without being re-reported. Advisory agents re-scan far more often than
+	// weekly, so a finding untouched for a week is one no agent still sees.
+	defaultAdvisoryStalenessDays = 7
 )
 
 func (c *Config) applyDefaults() {
@@ -3841,6 +4014,16 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.Logging.Level == "" {
 		c.Governor.Logging.Level = defaultLogLevel
+	}
+	if c.Governor.Advisory.MaxFindings == 0 {
+		c.Governor.Advisory.MaxFindings = defaultAdvisoryMaxFindings
+	}
+	if c.Governor.Advisory.StalenessDays == 0 {
+		c.Governor.Advisory.StalenessDays = defaultAdvisoryStalenessDays
+	}
+	if c.Governor.Advisory.PRAutoClose == nil {
+		on := true
+		c.Governor.Advisory.PRAutoClose = &on
 	}
 
 	if c.Knowledge.Enabled {

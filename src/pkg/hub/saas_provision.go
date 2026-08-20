@@ -2883,6 +2883,31 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+  name: hive-api
+  namespace: {{.Namespace}}
+  annotations:
+    cert-manager.io/cluster-issuer: {{.CertIssuer}}
+spec:
+  ingressClassName: {{.IngressClass}}
+  rules:
+  - host: {{.DashboardHost}}
+    http:
+      paths:
+      - path: /api/v1
+        pathType: Prefix
+        backend:
+          service:
+            name: hive
+            port:
+              number: {{.DashboardPort}}
+  tls:
+  - hosts:
+    - {{.DashboardHost}}
+    secretName: hive-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
   name: hive-contribute
   namespace: {{.Namespace}}
   annotations:
@@ -3053,7 +3078,7 @@ spec:
 
 	// nginx: append a rule + TLS host to each existing Ingress via a JSON patch.
 	patched := 0
-	for _, ing := range []string{"hive", "hive-contribute", "hive-terminal"} {
+	for _, ing := range []string{"hive", "hive-api", "hive-contribute", "hive-terminal"} {
 		raw, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", ing, "-o", "json").Output()
 		if err != nil {
 			continue // not every spoke has all three

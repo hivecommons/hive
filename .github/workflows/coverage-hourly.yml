@@ -4,17 +4,16 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-  # The floor is only meaningful if it runs BEFORE code lands. Without this the
-  # gate was hourly-only, so a PR could drop a package below its floor and merge
-  # green — which is exactly what happened in #2350.
+  # No pull_request trigger anymore (#4112). The pre-merge half of this gate —
+  # added in #2350's aftermath and moved to v4 in #3903 — now lives in
+  # v2-tests.yml's `coverage` job, which parses the coverprofile emitted by the
+  # SAME sharded `go test -short -race -count=1` run that gates the PR, so PRs
+  # run the test suite exactly once instead of twice. This workflow remains the
+  # scheduled hourly monitor for the v4 branch, including the
+  # create-issue-on-coverage-drop machinery below.
   #
-  # v4 added here (#3903): development moved to v4 and this filter still said
-  # v2, so the pre-merge half of the gate had silently stopped covering every PR
-  # that actually lands. `src/**` is the Go module directory on BOTH branches —
-  # it is the module path, not the branch name — so the path filter is unchanged.
-  pull_request:
-    branches: [v2, v4]
-    paths: ['src/**']
+  # KEEP THE FLOORS IN SYNC: PKG_THRESHOLD below is duplicated in
+  # v2-tests.yml's coverage job; a floor change must land in both.
 
 permissions:
   contents: read
@@ -52,16 +51,23 @@ jobs:
       # escalation, forge, mint, planning, timeline, agentparse, outputschema),
       # so every one of them had never been subject to any floor.
       #
-      # On `pull_request` we must NOT pin a branch: a fixed `ref:` makes the
-      # runner do `git checkout --force -B <branch> refs/remotes/origin/<branch>`
-      # and measure the BASE branch, so the gate reports the base's numbers no
-      # matter what the PR changes. That made the gate simultaneously useless
-      # and misleading — a PR that fixed coverage still failed, and a PR that
-      # broke it would still have passed. Leaving `ref` empty checks out the PR
-      # merge commit, which is the code that is actually about to land.
+      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin explicitly
+      # to the branch whose floor this gate reports on hourly.
+      #
+      # That branch is now v4 (#3903). It was v2, and v2 is sunset — the fleet
+      # runs v4 and v2 is no longer a merge target, so the gate was measuring a
+      # branch nobody can fix. The practical effect was worse than "stale
+      # numbers": v4 carries 14 packages that do not exist on v2 at all
+      # (ioscan, sandbox, intent, pushbroker, tracing, review, retro,
+      # escalation, forge, mint, planning, timeline, agentparse, outputschema),
+      # so every one of them had never been subject to any floor.
+      #
+      # (This workflow no longer runs on pull_request — the pre-merge floor
+      # check lives in v2-tests.yml now, see #4112 — so the ref can be pinned
+      # unconditionally.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.ref || 'v4' }}
+          ref: 'v4'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -97,6 +103,9 @@ jobs:
           # floor so the gate still catches regressions below their real ceiling,
           # rather than blocking forever on untestable code. Raise these toward 90
           # as seams are added; do not add new entries without justification here.
+          #
+          # KEEP IN SYNC with the copy of this map in v2-tests.yml's coverage
+          # job (the pre-merge half of this gate, #4112).
           declare -A PKG_THRESHOLD=(
             [dashboard]=78   # ~20% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.

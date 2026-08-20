@@ -30,6 +30,13 @@ type oidcTestServer struct {
 	discoveryIssuer string
 	// idToken is what the token endpoint returns for any code.
 	idToken string
+	// accessToken is returned alongside idToken; empty means none.
+	accessToken string
+	// userInfo, when non-nil, is served as JSON from /userinfo (Bearer-gated).
+	userInfo map[string]any
+	// userInfoCalls counts /userinfo hits, for asserting the enrichment fetch
+	// did (or did not) happen.
+	userInfoCalls int
 }
 
 func newOIDCTestServer(t *testing.T) *oidcTestServer {
@@ -50,6 +57,7 @@ func newOIDCTestServer(t *testing.T) *oidcTestServer {
 			"authorization_endpoint": ots.issuer + "/authorize",
 			"token_endpoint":         ots.issuer + "/token",
 			"jwks_uri":               ots.issuer + "/jwks",
+			"userinfo_endpoint":      ots.issuer + "/userinfo",
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +71,19 @@ func newOIDCTestServer(t *testing.T) *oidcTestServer {
 		})
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"id_token": ots.idToken})
+		resp := map[string]string{"id_token": ots.idToken}
+		if ots.accessToken != "" {
+			resp["access_token"] = ots.accessToken
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		ots.userInfoCalls++
+		if ots.userInfo == nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		json.NewEncoder(w).Encode(ots.userInfo)
 	})
 	ots.srv = httptest.NewServer(mux)
 	ots.issuer = ots.srv.URL

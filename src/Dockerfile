@@ -9,9 +9,15 @@ FROM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a51
 RUN apk add --no-cache git
 WORKDIR /src
 
-# Layer 1: cache Go module downloads (only re-runs when go.mod/go.sum change)
+# Layer 1: cache Go module downloads (only re-runs when go.mod/go.sum change).
+# The cache MOUNT (id=hive-go-mod) makes the always-re-executed download (see
+# no-cache-filters in docker.yml) a no-op when the module cache is already
+# populated. Mount contents never become image layers, so nothing here can
+# ship a stale artifact — the mount is an input cache for `go`, which
+# verifies modules against go.sum regardless of where they come from.
 COPY src/go.mod src/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    go mod download
 
 # Layer 2: copy source and build (re-runs on any source change)
 COPY .git /repo/.git
@@ -19,7 +25,16 @@ COPY src/ .
 
 ARG GIT_HASH=unknown
 ARG GIT_BRANCH=unknown
-RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
+# Cache mounts for GOCACHE (/tmp/gobuild, matching the GOCACHE= below) and the
+# module cache. docker.yml's `no-cache-filters: builder,runtime` still forces
+# this RUN to re-execute on every build — that is the #3760 stale-binary
+# defense and it stays — the mounts only make the re-executed compile
+# INCREMENTAL. Correctness is `go`'s own: the build cache is keyed by content
+# hash of every input, so a stale or corrupted cache entry can never produce a
+# binary that differs from a cold build. The linker always writes /hive fresh.
+RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
+    --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     GIT_SHORT=$(git -C /repo rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive && \

@@ -131,6 +131,12 @@ type RegistryEntry struct {
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
 	AdvisoryError string `json:"advisoryError,omitempty"`
+	// AdvisoryFindingCount is the finding count in the spoke's last posted
+	// digest; AdvisoryOverflowCount is how many further findings the top-N cap
+	// withheld from it (0 = nothing capped, or an old spoke that does not report
+	// it). My Hives renders the pair so a capped digest never reads as complete.
+	AdvisoryFindingCount  int `json:"advisoryFindingCount,omitempty"`
+	AdvisoryOverflowCount int `json:"advisoryOverflowCount,omitempty"`
 	// InferenceAuthError is the log-safe cause set when the spoke's inference
 	// backend has rejected several consecutive calls with 401 (a stale gateway
 	// key). Empty = inference auth healthy / no inference backend / old spoke,
@@ -149,14 +155,18 @@ type RegistryEntry struct {
 	// RouteExists is the spoke's in-cluster confirmation that an Ingress or
 	// OpenShift Route exists for DashboardURL's host. Nil means an old spoke
 	// did not report it; unknown means it could not verify (for example RBAC).
-	RouteExists        *RouteExistenceCheck  `json:"routeExists,omitempty"`
-	SnapshotURL        string                `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int                   `json:"acmmLevel"`
-	AgentCount         int                   `json:"agentCount"`
-	GovernorMode       string                `json:"governorMode"`
-	TotalTokens24h     int64                 `json:"totalTokens24h"`
-	ActionableIssues   int                   `json:"actionableIssues"`
-	ActionablePRs      int                   `json:"actionablePRs"`
+	RouteExists      *RouteExistenceCheck `json:"routeExists,omitempty"`
+	SnapshotURL      string               `json:"snapshotUrl,omitempty"`
+	ACMMLevel        int                  `json:"acmmLevel"`
+	AgentCount       int                  `json:"agentCount"`
+	GovernorMode     string               `json:"governorMode"`
+	TotalTokens24h   int64                `json:"totalTokens24h"`
+	ActionableIssues int                  `json:"actionableIssues"`
+	ActionablePRs    int                  `json:"actionablePRs"`
+	// WorkSource is the spoke's configured non-default work source type
+	// ("github_projects", "linear", "jira"). Empty for GitHub Issues (the
+	// default) — the dashboard only shows a badge when non-empty.
+	WorkSource         string                `json:"workSource,omitempty"`
 	ContributorCount   int                   `json:"contributorCount"`
 	ActiveContributors int                   `json:"activeContributors"`
 	Owner              string                `json:"owner,omitempty"`
@@ -937,6 +947,14 @@ type HubServer struct {
 	// whether or not this sweep ever runs — so a missed tick delays rewriting
 	// hub-generations.json, never extends the acceptance window.
 	lastGenerationRetire time.Time
+	// lastAccessExpirySweep throttles the expired-access persistence sweep
+	// (access_expiry.go). Same rationale and same guarding mutex as the sweeps
+	// above: poller-loop-only state.
+	//
+	// NOTE this throttles PERSISTENCE AND THE TIMELINE EVENT ONLY. An expired
+	// grant stops being honored at read time via loadSaaSUser's prune, on the
+	// wall clock, whether or not this sweep ever runs.
+	lastAccessExpirySweep time.Time
 	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
 	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
 	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see
@@ -1097,6 +1115,13 @@ type HubServer struct {
 	// persisted to reachHistoryPath, read by /api/reach for before/after
 	// deltas. nil on bare test servers; every touch point is nil-safe.
 	reachHistory *reachHistoryStore
+
+	// dibsPublic caches "is this repo public on github.com?" verdicts for the
+	// dibs repo feed (#4233, dibs_public_check.go). Created lazily by
+	// dibsChecker on the first /api/saas/dibs/repos request; tests pre-set the
+	// field to point at a fake GitHub API before that first call.
+	dibsPublicOnce sync.Once
+	dibsPublic     *dibsPublicChecker
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1561,8 +1586,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
 		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
 		// it as UNKNOWN rather than stale.
-		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
-		AdvisoryError:        sanitizeProseField(payload.AdvisoryError),
+		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
+		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
+		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
@@ -1584,6 +1611,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TotalTokens24h:     clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:   clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:      clampInt(payload.Governor.PRs, 0, 10_000),
+		WorkSource:         sanitizeHeartbeatField(payload.Governor.WorkSource),
 		ContributorCount:   clampInt(payload.Contributors.Registered, 0, 10_000),
 		ActiveContributors: clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:              sanitizeHeartbeatField(payload.Owner),
@@ -1865,6 +1893,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.ComponentReach == nil && h.ComponentReach != nil {
 				entry.ComponentReach = h.ComponentReach
 			}
+			// Advisory post time survives a spoke restart — see
+			// carryAdvisoryPostTime for why that is the difference between a
+			// wedged digest being flagged and being invisible forever.
+			carryAdvisoryPostTime(&entry, h)
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {
 				branchForLatest = "v2"
@@ -3551,6 +3583,24 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 // slow or malicious DNS server cannot block the caller indefinitely.
 const privateURLDNSTimeout = 5 * time.Second
 
+// hostResolver is the DNS seam used by isPrivateURL. Production ALWAYS uses
+// defaultHostResolver — this indirection exists only so tests can supply a
+// deterministic resolution result and stay hermetic in a network-isolated CI
+// sandbox (audit finding L3, 2026-08-17 security review). Tests that override
+// it must restore it via t.Cleanup. The fail-closed contract below (a resolver
+// error means "private") is unchanged and must stay that way: swapping the
+// resolver changes only WHERE answers come from, never how failures are
+// treated. Mirrors the identical seam in pkg/dashboard.
+type hostResolver func(ctx context.Context, host string) ([]string, error)
+
+var privateURLResolver hostResolver = defaultHostResolver
+
+func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
+	defer cancel()
+	return (&net.Resolver{}).LookupHost(resolveCtx, host)
+}
+
 func isPrivateURL(ctx context.Context, rawURL string) bool {
 	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
 		if strings.HasPrefix(rawURL, scheme) {
@@ -3573,10 +3623,7 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 	}
 
 	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
-	defer cancel()
-	resolver := &net.Resolver{}
-	addrs, err := resolver.LookupHost(resolveCtx, host)
+	addrs, err := privateURLResolver(ctx, host)
 	if err != nil {
 		// If DNS fails, treat as private (fail-closed) to prevent bypass.
 		return true

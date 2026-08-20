@@ -89,3 +89,62 @@ func CloseHealedAppAuthFindings(stores map[string]*beads.Store) []string {
 	}
 	return closed
 }
+
+// prLinkedCloseReason is stamped into a bead's metadata when a merged PR
+// retires it.
+const prLinkedCloseReason = "auto-closed: a merged pull request addresses this finding"
+
+// prLinkThreshold is the Jaccard title similarity at or above which a merged
+// PR is taken to address an open advisory finding.
+//
+// It sits BELOW nearDuplicateThreshold (0.5) deliberately: that threshold
+// compares two statements of the same problem by the same kind of author, while
+// this compares a finding ("pr-verifier.yml fails on every PR") against a human
+// PR title ("fix pr-verifier workflow"), which shares fewer words by nature.
+// The cost asymmetry is the opposite of dedup's, too — a wrongly closed finding
+// re-opens the moment an agent re-files it (Upsert creates a fresh bead once
+// the old one is closed), whereas a finding that survives its own fix is the
+// permanent staleness this refactor exists to remove.
+const prLinkThreshold = 0.4
+
+// ClosePRLinkedAdvisoryBeads closes open advisory beads whose title is
+// sufficiently similar to the title of a recently merged PR, returning the
+// closed titles for logging.
+//
+// Called only after a PR is VERIFIED merged, so a fix that addresses a finding
+// retires it from the digest automatically instead of waiting out the staleness
+// window.
+func ClosePRLinkedAdvisoryBeads(stores map[string]*beads.Store, prTitle string) []string {
+	prTokens := findingTokens(prTitle)
+	if len(prTokens) == 0 {
+		return nil
+	}
+	var closed []string
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		for _, b := range store.List(beads.ListFilter{}) {
+			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
+				continue
+			}
+			// TypeAdvisory only, deliberately narrower than the digest's
+			// isAdvisoryBeadType: bug and feature beads are PLANNED WORK an
+			// agent or operator filed, and retiring one on a title resemblance
+			// would delete work nobody agreed was done. An advisory bead is a
+			// report of a condition, which a merged fix genuinely can end.
+			if b.Type != beads.TypeAdvisory {
+				continue
+			}
+			if jaccard(findingTokens(b.Title), prTokens) < prLinkThreshold {
+				continue
+			}
+			if err := store.Close(b.ID); err != nil {
+				continue
+			}
+			_ = store.SetMetadata(b.ID, closeReasonMetadataKey, prLinkedCloseReason)
+			closed = append(closed, b.Title)
+		}
+	}
+	return closed
+}

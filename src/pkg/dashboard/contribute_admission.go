@@ -3,12 +3,40 @@ package dashboard
 import (
 	"github.com/kubestellar/hive/pkg/convergence"
 	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
 
 type contributorAdmissionCandidate struct {
 	repoFull string
 	repoName string
 	number   int
+	// ref is the candidate's canonical, source-aware identity
+	// (kubestellar/hive#4245). repoFull/repoName/number remain for the
+	// GitHub-only observers below, which can act on nothing else; ref is what
+	// every identity-keyed surface (hold, cooldown, active, order, task key)
+	// uses, so a Linear or Jira candidate is no longer indistinguishable from
+	// every other zero-numbered item.
+	//
+	// A zero ref means the caller predates source-aware identity; isGitHubBacked
+	// falls back to the number so such a caller behaves exactly as before.
+	ref worksource.Ref
+}
+
+// isGitHubBacked reports whether this candidate may be handed to the two
+// deliberately GitHub-only observers: the open-PR claim ledger and the legacy
+// bead dependency gate.
+//
+// Both accept a repository plus a POSITIVE issue number and can infer nothing
+// from an external work item. Passing them a Linear or Jira candidate would
+// mean synthesising "#0", which either matches an unrelated record or invents
+// one — so such a candidate SKIPS both observers instead. That is a deliberate
+// scope boundary, not a gap: GitHub is the first operational observer here, not
+// the identity ontology.
+func (c contributorAdmissionCandidate) isGitHubBacked() bool {
+	if c.ref != (worksource.Ref{}) {
+		return c.ref.IsGitHubIssue()
+	}
+	return c.repoFull != "" && c.number > 0
 }
 
 type contributorAdmissionDecision struct {
@@ -48,6 +76,17 @@ const (
 // cheapest and most specific "someone is already on it" signal, and short-
 // circuiting it keeps its existing log line and reason unchanged.
 func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributorAdmissionSweep, candidate contributorAdmissionCandidate) contributorAdmissionDecision {
+	// A candidate with no GitHub issue number skips BOTH observers below and is
+	// admitted on their behalf (kubestellar/hive#4245). Neither can express a
+	// judgment about external work: the claim ledger is keyed by GitHub issue
+	// number and the bead observer resolves "repo#N" refs. Admitting is the
+	// correct default because this gate is additive over having no gate — the
+	// alternative, refusing everything they cannot see, would make every Linear
+	// and Jira item permanently unofferable.
+	if !candidate.isGitHubBacked() {
+		return contributorAdmissionDecision{admitted: true}
+	}
+
 	claim, claimed := h.issueClaimedByOpenPR(candidate.repoFull, candidate.repoName, candidate.number)
 	if claimed {
 		return contributorAdmissionDecision{

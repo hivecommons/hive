@@ -108,7 +108,7 @@ func TestSSEStreamsAppendedActivity(t *testing.T) {
 
 	// Append a real activity event — this is the exact fan-in point join/leave/
 	// pick-up/complete all funnel through.
-	hub.addActivity("kylerankin", "picked up", "contributor", "claude", "sonnet", "projectbluefin/common#796")
+	hub.addActivity("kylerankin", "picked up", "contributor", "claude", "sonnet", "", "projectbluefin/common#796")
 
 	// The event must reach the stream as an SSE data frame carrying the username.
 	waitFor(t, func() bool {
@@ -136,7 +136,7 @@ func TestSSEHelloReplaysRecentActivity(t *testing.T) {
 	s := NewServer(0, slog.Default())
 	s.registerContributeRoutes()
 	hub := s.contributeHub
-	hub.addActivity("castrojo", "completed", "trusted", "claude", "opus", "projectbluefin/common#707")
+	hub.addActivity("castrojo", "completed", "trusted", "claude", "opus", "", "projectbluefin/common#707")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

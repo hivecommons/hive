@@ -24,19 +24,19 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 - `bin/` — deterministic pipeline, supervision, enforcement, deployment, and maintainer helper scripts. See [`bin/README.md`](bin/README.md) for the script-by-script index.
 - `config/hive-project.yaml.example` — project metadata for the top-level
   deterministic shell pipeline; see [config/README.md](config/README.md). This
-  is separate from the v2 Go runtime config in `src/hive.yaml.example`.
+  is separate from the Go runtime config in `src/hive.yaml.example`.
 - `dashboard/`, `docs/`, `config/`, `systemd/`, `launchd/`, and top-level scripts — supporting assets for hub, dashboard, installation, and operational workflows.
 - `Justfile` — contributor relay recipes; see [Just recipes](docs/development.md#just-recipes).
 
 ## Branches
 
-Use `v2` as the base branch for Hive v2 work and PRs unless a maintainer asks otherwise. The `main` branch is not the active target for v2 changes. The `v4` branch is a separate forward-looking/synchronization line; do not target it for ordinary v2 fixes.
+Use `v4` as the base branch for Hive work and PRs unless a maintainer asks otherwise. The `main` branch is not the active target for changes.
 
 Before starting work:
 
 ```bash
 git fetch origin
-git switch -c <topic-branch> origin/v2
+git switch -c <topic-branch> origin/v4
 ```
 
 ## Local development
@@ -44,7 +44,7 @@ git switch -c <topic-branch> origin/v2
 See [docs/development.md](docs/development.md) for the full local setup guide. The short path is:
 
 ```bash
-cd v2
+cd src
 go build ./...
 go test ./...
 ```
@@ -102,7 +102,7 @@ The sign-off adds a `Signed-off-by:` trailer certifying that you have the right 
 
 ## Pull requests
 
-- Target `v2` for v2 code and documentation.
+- Target `v4` for all code and documentation contributions (the active development branch).
 - Start PR titles with the repository's emoji convention, for example `📖 docs: ...`, `🐛 fix: ...`, or `✨ feature: ...`.
 - Include `Fixes #<issue>` lines for issues the PR closes.
 - Describe what changed, why, and how you tested it.

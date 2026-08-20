@@ -129,6 +129,11 @@ type Server struct {
 	// carries key material.
 	advisoryLastPostedAt time.Time
 	advisoryLastFindings int
+	// advisoryLastOverflow is how many findings the top-N cap held BACK from the
+	// digest that was last posted (0 when nothing was capped). It rides to the
+	// hub alongside the finding count so My Hives can say "12 findings (top 10)"
+	// rather than implying the ten shown are all there are.
+	advisoryLastOverflow int
 	advisoryLastError    string
 
 	// decomposeKickerOverride is a test-only seam for the Phase 4 plan-from-issue
@@ -880,21 +885,20 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		//     nonces, so the #3863 startup-pre-gzip + strong-ETag design for the
 		//     SPA document is untouched.
 		//
-		//   script-src-attr 'unsafe-inline'  — inline on*= HANDLER attributes.
-		//     STAGED, not accepted: 426 on*= attributes in static/index.html
-		//     plus ~145 more built as strings and injected through 169
-		//     innerHTML/insertAdjacentHTML sites. Neither nonces nor elem-hashes
-		//     apply to attributes, so closing this half is an event-delegation
-		//     refactor of the SPA (#3848), and until then an injected on*=
-		//     attribute still executes. TestCSPScriptSrcAttrUnsafeInlineIsStaged
-		//     is the tripwire: invert it, never relax it.
+		//   script-src-attr 'none'  — inline on*= HANDLER attributes.
+		//     CLOSED by the #3848 event-delegation refactor: every former on*=
+		//     attribute in static/index.html and in Go-generated HTML now uses
+		//     data-action / data-* attributes dispatched by central document
+		//     listeners, so no markup-level handler attribute remains and an
+		//     injected on*= attribute never executes.
+		//     TestCSPScriptSrcAttrUnsafeInlineIsAbsent pins this closed.
 		//
-		//   script-src 'self' 'unsafe-inline'  — the CSP2 fallback, unchanged,
+		//   script-src 'self'  — the CSP2 fallback, now also without
+		//     'unsafe-inline' (nothing inline-attribute-based remains to allow),
 		//     and it must NEVER carry the hashes: a hash in this directive makes
 		//     hash-aware browsers ignore 'unsafe-inline' here, and a browser
 		//     that knows hashes but not script-src-elem/-attr (Firefox < 108)
 		//     would then block every inline handler and blank the dashboard.
-		//     Pre-CSP3 browsers keep exactly today's behaviour.
 		//
 		// The secret that 'unsafe-inline' used to expose is gone regardless: the
 		// dashboard token is never rendered into the page (see serveIndex in
@@ -910,10 +914,12 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// style-src (#3848 part 2) is scoped as TWO directives rather than one
 		// blanket allowance, because the two halves have different futures:
 		//
-		//   style-src-attr 'unsafe-inline'  — the 2061 inline style="" attributes.
-		//     ACCEPTED, permanently, and not a staging compromise: CSP has no
-		//     nonce or hash form for attribute-level styles, so there is no
-		//     policy that both allows them and constrains them. Closing this
+		//   style-src-attr 'unsafe-inline'  — the ~2,055 inline style="" attributes.
+		//     ACCEPTED, permanently, and not a staging compromise (ADR-0015/0016):
+		//     CSP has no nonce or hash form for attribute-level styles, so there
+		//     is no policy that both allows them and constrains them, and CSS
+		//     injection is not an XSS vector — an injected style attribute can
+		//     deface the page but cannot execute script. Closing this
 		//     would mean deleting every style attribute in the UI. See
 		//     ADR-0015 for the rationale and the residual risk.
 		//
@@ -928,7 +934,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// Both are listed AFTER the style-src fallback, which browsers without
 		// CSP3 support use instead; the effective policy is identical either way,
 		// so this split names the decision without changing behaviour.
-		scriptDirectives := "script-src 'self' 'unsafe-inline'; script-src-elem " + baseScriptSrcElem() + "; script-src-attr 'unsafe-inline'"
+		scriptDirectives := "script-src 'self'; script-src-elem " + baseScriptSrcElem() + "; script-src-attr 'none'"
 		if r.URL.Path == "/terminal" || strings.HasPrefix(r.URL.Path, "/terminal/") {
 			scriptDirectives = "script-src 'self' 'unsafe-inline'"
 		}
@@ -1012,6 +1018,20 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				if isOwnerRole(sess.Role) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
+			} else {
+				// No per-user session to scope this request down: the shared
+				// internal token IS the operator credential on this path (the
+				// local gateway authenticates the browser with the same token,
+				// strips client identity headers, then injects X-Hive-Internal).
+				// Grant owner with the server-set verified marker so owner-only
+				// mutations (budget save, pause, etc.) work for the operator.
+				// Inbound identity headers were already stripped above, so this
+				// cannot be reached by spoofing — only by presenting the secret,
+				// which is owner-equivalent by definition. Without this, the F14
+				// provenance hardening locked the real owner out of owner-gated
+				// endpoints on every shared-token deployment (#4134).
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
@@ -1092,6 +1112,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			expected := "Bearer " + s.authToken
 			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
 				trusted = true
+				// Same reasoning as the X-Hive-Internal path above: the shared
+				// dashboard token is the operator credential, and the dashboard
+				// UI itself authenticates with it (Authorization: Bearer from
+				// localStorage) on token-secured spokes reached directly. The
+				// per-user session path already ran and did not match, and
+				// inbound identity headers were stripped, so granting owner here
+				// requires possession of the secret — nothing less (#4134).
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
@@ -1203,6 +1232,11 @@ func isPublicPath(path string) bool {
 		// The trailing-slash boundary excludes /api/contributors while keeping the
 		// real public routes (register, the WS upgrade, status, etc.) public.
 		return true
+	case path == "/api/v1" || strings.HasPrefix(path, "/api/v1/"):
+		// GitHub bearer authentication is enforced by handleAPIv1. Keeping this
+		// versioned prefix outside dashboard session auth lets non-browser clients
+		// reach that handler without trusting cookies or X-Hive-* headers.
+		return true
 	case path == "/leaderboard" || strings.HasPrefix(path, "/leaderboard/"):
 		return true
 	case strings.HasPrefix(path, "/api/leaderboard"):
@@ -1273,13 +1307,13 @@ a:hover{text-decoration:underline}
   <h1>Hive</h1>
   <p class="subtitle">Sign in with GitHub to access this dashboard</p>
   <div id="step-start">
-    <button id="btn-start" onclick="startFlow()">Sign in with GitHub</button>
+    <button id="btn-start" data-action="startFlow">Sign in with GitHub</button>
   </div>
   <div id="step-code" style="display:none">
     <p class="instructions">Enter this code at GitHub:</p>
     <div class="code-wrap">
       <div class="code-box" id="user-code">--------</div>
-      <button class="copy-btn" id="copy-btn" onclick="copyAndOpen()">Copy &amp; Open</button>
+      <button class="copy-btn" id="copy-btn" data-action="copyAndOpen">Copy &amp; Open</button>
     </div>
     <p class="instructions"><a id="verify-link" href="#" target="_blank" rel="noopener">Open GitHub verification page ↗</a></p>
     <p class="status"><span class="spinner"></span> Waiting for authorization…</p>
@@ -1290,10 +1324,20 @@ a:hover{text-decoration:underline}
   </div>
   <div id="step-error" style="display:none">
     <p class="error" id="error-msg"></p>
-    <button onclick="location.reload()" style="margin-top:16px">Try again</button>
+    <button data-action="reload" style="margin-top:16px">Try again</button>
   </div>
 </div>
 <script>
+// Event delegation (no inline on*= attributes; CSP script-src-attr is 'none').
+document.addEventListener('click',function(e){
+  var el=e.target.closest('[data-action]');
+  if(!el)return;
+  switch(el.getAttribute('data-action')){
+    case 'startFlow':startFlow();break;
+    case 'copyAndOpen':copyAndOpen();break;
+    case 'reload':location.reload();break;
+  }
+});
 function showStep(id){['step-start','step-code','step-done','step-error'].forEach(
   s=>document.getElementById(s).style.display=s===id?'block':'none')}
 function showError(msg){document.getElementById('error-msg').textContent=msg;showStep('step-error')}
@@ -2440,6 +2484,24 @@ func (s *Server) RecordAdvisoryPost(findings int) {
 	s.advisoryLastPostedAt = time.Now()
 	s.advisoryLastFindings = findings
 	s.advisoryLastError = ""
+}
+
+// RecordAdvisoryOverflow records how many findings the top-N cap withheld from
+// the digest just posted. Kept separate from RecordAdvisoryPost so the
+// long-standing "a post happened, with this many findings" contract (and every
+// caller of it) is untouched; a hive that never caps simply reports 0.
+func (s *Server) RecordAdvisoryOverflow(n int) {
+	s.advisoryMu.Lock()
+	defer s.advisoryMu.Unlock()
+	s.advisoryLastOverflow = n
+}
+
+// AdvisoryCounts returns the finding count that went out in the last posted
+// digest and how many further findings the cap withheld.
+func (s *Server) AdvisoryCounts() (findings, overflow int) {
+	s.advisoryMu.RLock()
+	defer s.advisoryMu.RUnlock()
+	return s.advisoryLastFindings, s.advisoryLastOverflow
 }
 
 // RecordAdvisoryError records that a digest post ATTEMPT failed, with a

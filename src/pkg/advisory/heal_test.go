@@ -53,7 +53,7 @@ func TestAdvisoryFindingHealsOnPass(t *testing.T) {
 
 	// (1) While the condition holds (no successful App post yet), the finding
 	// is in the digest.
-	d := BuildDigestFromBeads(stores, "busy")
+	d := BuildDigestFromBeads(stores, "busy", DigestOptions{})
 	if d.TotalCount != 1 {
 		t.Fatalf("before heal: TotalCount = %d, want 1", d.TotalCount)
 	}
@@ -68,7 +68,7 @@ func TestAdvisoryFindingHealsOnPass(t *testing.T) {
 		t.Fatalf("healed = %v, want the one access finding", healed)
 	}
 
-	d = BuildDigestFromBeads(stores, "busy")
+	d = BuildDigestFromBeads(stores, "busy", DigestOptions{})
 	if d.TotalCount != 0 {
 		t.Errorf("after heal: TotalCount = %d, want 0", d.TotalCount)
 	}
@@ -78,7 +78,7 @@ func TestAdvisoryFindingHealsOnPass(t *testing.T) {
 
 	// (3) The zero-findings digest must still RENDER, so the pinned GitHub
 	// comment gets rewritten instead of freezing on the stale finding.
-	md := FormatDigestMarkdown(d, "acme", "widgets")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "acme", PrimaryRepo: "widgets"})
 	if md == "" {
 		t.Fatal("after heal: FormatDigestMarkdown returned empty — the stale comment would never update")
 	}
@@ -174,7 +174,7 @@ func TestPersistAsBeadsRecreatesAfterResolve(t *testing.T) {
 	if created := PersistAsBeads(findings, stores); created != 1 {
 		t.Fatalf("post-resolve persist created %d, want 1 (recurrence must not be suppressed)", created)
 	}
-	d := BuildDigestFromBeads(stores, "busy")
+	d := BuildDigestFromBeads(stores, "busy", DigestOptions{})
 	if d.TotalCount != 1 {
 		t.Errorf("digest after recurrence TotalCount = %d, want 1", d.TotalCount)
 	}
@@ -195,7 +195,7 @@ func TestBuildDigestFromBeadsDoneIsResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := BuildDigestFromBeads(map[string]*beads.Store{"scanner": store}, "busy")
+	d := BuildDigestFromBeads(map[string]*beads.Store{"scanner": store}, "busy", DigestOptions{})
 	if d.TotalCount != 0 {
 		t.Errorf("TotalCount = %d, want 0 (done beads are resolved)", d.TotalCount)
 	}
@@ -207,8 +207,81 @@ func TestBuildDigestFromBeadsDoneIsResolved(t *testing.T) {
 // TestFormatDigestMarkdownStillEmptyWhenNothingToSay pins the unchanged
 // behavior: no findings AND no recent resolutions renders nothing.
 func TestFormatDigestMarkdownStillEmptyWhenNothingToSay(t *testing.T) {
-	d := BuildDigestFromBeads(map[string]*beads.Store{}, "idle")
-	if md := FormatDigestMarkdown(d, "acme", "widgets"); md != "" {
+	d := BuildDigestFromBeads(map[string]*beads.Store{}, "idle", DigestOptions{})
+	if md := FormatDigestMarkdown(d, DigestOptions{Org: "acme", PrimaryRepo: "widgets"}); md != "" {
 		t.Errorf("expected empty markdown, got:\n%s", md)
+	}
+}
+
+// TestClosePRLinkedAdvisoryBeads is the "a fix retires its finding" path: a
+// merged PR whose title restates the finding closes it, while an unrelated PR
+// leaves every finding alone.
+func TestClosePRLinkedAdvisoryBeads(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	matched, err := store.Create("pr-verifier workflow fails on every pull request", beads.TypeAdvisory, beads.PriorityHigh, "ci-maintainer", "")
+	if err != nil {
+		t.Fatalf("creating matched bead: %v", err)
+	}
+	unrelated, err := store.Create("knowledge curator promotes facts without provenance", beads.TypeAdvisory, beads.PriorityMedium, "scanner", "")
+	if err != nil {
+		t.Fatalf("creating unrelated bead: %v", err)
+	}
+	stores := map[string]*beads.Store{"ci-maintainer": store}
+
+	closed := ClosePRLinkedAdvisoryBeads(stores, "fix the pr-verifier workflow so it stops failing on every pull request")
+	if len(closed) != 1 || closed[0] != matched.Title {
+		t.Fatalf("closed = %v, want exactly [%q]", closed, matched.Title)
+	}
+	got, err := store.Get(matched.ID)
+	if err != nil {
+		t.Fatalf("re-reading matched bead: %v", err)
+	}
+	if got.Status != beads.StatusClosed {
+		t.Errorf("matched bead status = %q, want %q", got.Status, beads.StatusClosed)
+	}
+	if reason := got.Meta(closeReasonMetadataKey); reason != prLinkedCloseReason {
+		t.Errorf("close_reason = %q, want %q", reason, prLinkedCloseReason)
+	}
+	other, err := store.Get(unrelated.ID)
+	if err != nil {
+		t.Fatalf("re-reading unrelated bead: %v", err)
+	}
+	if other.Status != beads.StatusOpen {
+		t.Errorf("unrelated bead status = %q, want %q — a dissimilar PR title must close nothing", other.Status, beads.StatusOpen)
+	}
+}
+
+// TestClosePRLinkedAdvisoryBeadsIgnoresDissimilarAndClosed guards the two ways
+// this could do damage: closing a finding a PR does not address, and touching
+// beads that are not advisory findings at all.
+func TestClosePRLinkedAdvisoryBeadsIgnoresDissimilarAndClosed(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	task, err := store.Create("refactor the dashboard websocket hub", beads.TypeTask, beads.PriorityMedium, "architect", "")
+	if err != nil {
+		t.Fatalf("creating task bead: %v", err)
+	}
+	stores := map[string]*beads.Store{"architect": store}
+
+	// Title-identical to the task bead, which is NOT an advisory finding.
+	if closed := ClosePRLinkedAdvisoryBeads(stores, "refactor the dashboard websocket hub"); len(closed) != 0 {
+		t.Fatalf("closed = %v, want none — task beads are not advisory findings", closed)
+	}
+	got, err := store.Get(task.ID)
+	if err != nil {
+		t.Fatalf("re-reading task bead: %v", err)
+	}
+	if got.Status != beads.StatusOpen {
+		t.Errorf("task bead status = %q, want %q", got.Status, beads.StatusOpen)
+	}
+
+	// An empty PR title carries no tokens and must be a no-op, not a mass close.
+	if closed := ClosePRLinkedAdvisoryBeads(stores, ""); len(closed) != 0 {
+		t.Fatalf("closed = %v on an empty PR title, want none", closed)
 	}
 }

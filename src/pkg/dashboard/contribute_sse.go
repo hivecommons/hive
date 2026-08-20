@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
 
 // ── Operations command center: live SSE broadcast + ready-work queue ──────────
@@ -72,6 +73,18 @@ type ReadyQueueItem struct {
 	Title  string   `json:"title"`
 	URL    string   `json:"url,omitempty"`
 	Labels []string `json:"labels,omitempty"`
+	// Key, SourceType and ExternalID carry the item's canonical, source-aware
+	// identity (kubestellar/hive#4245). All three are additive and omitempty, so
+	// a GitHub-only hive's payload is byte-for-byte what it was.
+	//
+	// Key is the identity every exclusion and the operator's hold/order controls
+	// match on: "owner/repo#42" for GitHub-backed work (unchanged), and
+	// "owner/repo!ENG-123" for a string-keyed source. Number stays 0 for
+	// external work — clients that only understand GitHub keep reading it and
+	// simply do not recognise those rows, rather than seeing a bogus "#0".
+	Key        string `json:"key,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
 	// MatchesInterest is set true, per VIEWER, when at least one of the issue's
 	// labels exactly matches (case-insensitive) a label the viewing contributor
 	// declared interest in (issue #2637). It is a SOFT signal the Operations tab
@@ -94,6 +107,17 @@ type ReadyQueueItem struct {
 	// Empty when the operator held with no note, so the badge falls back to its
 	// generic text. omitempty so a hold without a reason is byte-for-byte unchanged.
 	HeldReason string `json:"held_reason,omitempty"`
+}
+
+// identityKey returns the canonical identity this row is matched by. It prefers
+// the explicit Key, and falls back to the GitHub "repo#number" spelling so a
+// row built by older code (or by a test constructing the struct literally) still
+// matches operator hold and order entries exactly as it always did.
+func (it ReadyQueueItem) identityKey() string {
+	if it.Key != "" {
+		return it.Key
+	}
+	return worksource.Ref{Repo: it.Repo, Number: it.Number}.Key()
 }
 
 // sseSubscriber is one connected browser. events is the fan-out channel; done is
@@ -241,37 +265,41 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			if err := json.Unmarshal(b, &issue); err != nil {
 				continue
 			}
-			number := 0
-			switch n := issue["number"].(type) {
-			case float64:
-				number = int(n)
-			case int:
-				number = n
-			}
-			if number == 0 {
+			// Canonical, source-aware identity (kubestellar/hive#4245). The old
+			// code read only "number" and skipped zero, which dropped every
+			// Linear/Jira item from the queue outright. Now an item is skipped
+			// only when it has NO identity at all — no issue number AND no
+			// external key — because that is the one case where any key we
+			// invented would be a fabrication.
+			ref := refFromIssueMap(repo.Full, issue)
+			itemKey := ref.Key()
+			if itemKey == "" {
 				continue
 			}
+			number := ref.Number
 			// Operator HOLD (#queue-hold): a parked issue is never offered, so it is
 			// kept OUT of the offer-eligible `out` set. It is still collected into
 			// heldItems (tagged Held) so it stays visible-but-dimmed for the operator.
 			// Checked before cooldown/active so a held-AND-cooled issue still shows as
 			// held (the operator's manual decision is the stronger, persistent signal).
-			holdKey := fmt.Sprintf("%s#%d", repo.Full, number)
-			if _, isHeld := held[holdKey]; isHeld {
+			if _, isHeld := held[itemKey]; isHeld {
 				title, _ := issue["title"].(string)
 				url, _ := issue["url"].(string)
 				heldItems = append(heldItems, ReadyQueueItem{
 					Repo:       repo.Full,
 					Number:     number,
+					Key:        itemKey,
+					SourceType: ref.SourceType,
+					ExternalID: ref.ExternalID,
 					Title:      title,
 					URL:        url,
 					Labels:     stringSliceFromAny(issue["labels"]),
 					Held:       true,
-					HeldReason: holdReasons[holdKey], // "" when no note (map miss) — omitempty
+					HeldReason: holdReasons[itemKey], // "" when no note (map miss) — omitempty
 				})
 				continue
 			}
-			if h.isTaskInCooldown(repo.Full, number) {
+			if h.isTaskInCooldownKey(itemKey) {
 				continue
 			}
 			// #3987: a live no_work_needed verdict withholds the issue from the
@@ -279,19 +307,20 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			// that pool — the two surfaces must agree (same contract the claim
 			// ledger admission pins). The hive AGENT pipeline does not read
 			// this ledger anywhere.
-			if h.isSuppressedByNoWorkVerdict(repo.Full, number, issueUpdatedAtFromMap(issue)) {
+			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
 				continue
 			}
-			if h.isTaskInFailureCooldown(repo.Full, number) {
+			if h.isTaskInFailureCooldownKey(itemKey) {
 				continue
 			}
-			if active[fmt.Sprintf("%s#%d", repo.Full, number)] {
+			if active[itemKey] {
 				continue
 			}
 			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
 				repoFull: repo.Full,
 				repoName: repo.Name,
 				number:   number,
+				ref:      ref,
 			})
 			if !decision.admitted {
 				continue
@@ -320,11 +349,14 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			}
 
 			out = append(out, ReadyQueueItem{
-				Repo:   repo.Full,
-				Number: number,
-				Title:  title,
-				URL:    url,
-				Labels: labels,
+				Repo:       repo.Full,
+				Number:     number,
+				Key:        itemKey,
+				SourceType: ref.SourceType,
+				ExternalID: ref.ExternalID,
+				Title:      title,
+				URL:        url,
+				Labels:     labels,
 			})
 		}
 	}
@@ -413,7 +445,7 @@ func applyQueueOrder(items []ReadyQueueItem, order []string) {
 	// Unpinned items rank at len(idx) (all pinned ranks are < len(idx)), so they all
 	// sort behind every pinned item while SliceStable preserves their scan order.
 	rank := func(it ReadyQueueItem) int {
-		if r, ok := idx[fmt.Sprintf("%s#%d", it.Repo, it.Number)]; ok {
+		if r, ok := idx[it.identityKey()]; ok {
 			return r
 		}
 		return len(idx)

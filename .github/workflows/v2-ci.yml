@@ -63,6 +63,15 @@ jobs:
       - name: Supply-chain pin guard
         run: bash deploy/test_supply_chain_pins.sh
 
+      # #4206: the standalone stack's image references live in exactly one
+      # place, src/deploy/standalone-images.sh, so the Docker Compose assets
+      # and the Podman assets that land later cannot drift onto different
+      # images. Also blocks the retired v2-latest tag, which resolves to a
+      # different digest than the v4 channels, from coming back into any
+      # deployment asset. Pure string analysis: no registry is contacted.
+      - name: Standalone image-reference source of truth (#4206)
+        run: bash deploy/test_standalone_image_refs.sh
+
       # #3865: watchtower bind-mounted /var/run/docker.sock — the full daemon
       # API, including /exec, which reads the GitHub App private key out of the
       # hive container with no escalation at all. The socket now sits behind a
@@ -74,6 +83,17 @@ jobs:
       - name: Docker-socket containment guard (#3865)
         run: bash deploy/test_watchtower_socket_contract.sh
 
+      # #4204: the socket guard above covers the auto-update profile, and the
+      # pin guard covers build inputs — but nothing asserted anything about the
+      # two services an operator actually runs. Each invariant here is
+      # invisible at runtime when it breaks: a stack that publishes 7681 still
+      # serves the dashboard, it just also serves an unauthenticated root shell
+      # into the credential-holding container; /data on a bind mount still runs
+      # and just loses agent state on the next recreate. This is also the
+      # snapshot the Podman runtime work (#4188) has to keep passing.
+      - name: Standalone service deployment contract (#4204)
+        run: bash deploy/test_standalone_service_contract.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
@@ -83,6 +103,16 @@ jobs:
       - name: gh-wrapper gate tests
         working-directory: .
         run: bash bin/test_gh_wrapper_gates.sh
+
+      # #4289: git-credential-hive.sh is the fetch/clone AND push credential
+      # source for every agent. Its mode block used to exit 1 in ADVISORY/
+      # ISSUES_ONLY/NO_GITHUB modes, cutting off every git READ for advisory
+      # agents. This EXECUTES the helper and asserts `get` returns the scoped
+      # (contents:read-only) credential in those modes while the H3 refusals
+      # (no per-agent token, non-https) stay fail-closed.
+      - name: git-credential-hive helper tests (#4289)
+        working-directory: .
+        run: bash bin/test_git_credential_hive.sh
 
       # N14 (#3842): kick-agents.sh (the native/systemd-install path — no Go
       # AgentManager, no per-agent scoped token) used to instruct every kicked
@@ -107,6 +137,44 @@ jobs:
       - name: agent shell token scrub (#4045)
         working-directory: .
         run: bash bin/test_agent_env_scrub.sh
+
+      # #4205: standalone deployment selection is explicit and fail-closed.
+      # Docker remains the default; selecting Podman must never fall back to
+      # Docker because the Podman binary is missing or a command fails.
+      - name: Standalone runtime selection contract (#4205)
+        working-directory: .
+        run: bash bin/test_hive_standalone_runtime.sh
+
+      # #4207: Podman preflight must diagnose engine/version, the connection it
+      # is actually talking to, root mode, and cgroup version BEFORE Hive
+      # invokes a lifecycle implementation — and must run only when Podman is
+      # explicitly selected, so Docker's default path is untouched. The stub
+      # engine lets the whole matrix (old versions, rootful, cgroup v1, remote,
+      # missing binary) run on a host with no Podman installed.
+      - name: Podman preflight contract (#4207)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight.sh
+
+      # #4210: rootless Podman/Buildah share one store with the operator's
+      # unrelated containers, Distroboxes, and builds, so Hive cleanup must
+      # select only Hive-labelled resources and the broad store-wide prune,
+      # reset, and remove-all forms are rejected outright. See
+      # src/docs/podman-ownership-cleanup.md. The test analyses arguments only:
+      # it contacts no engine and deletes nothing.
+      - name: Podman ownership and cleanup contract (#4210)
+        working-directory: .
+        run: bash bin/test_hive_podman_cleanup.sh
+
+      # #4209: SELinux labeling, configuration/secrets readability, and host
+      # port conflicts are the operator-facing Podman failures that surface
+      # only after `podman run` has started making changes. Every input is
+      # mocked, so the enforcing/permissive/disabled matrix runs on a runner
+      # with no SELinux and no Podman. The suite also asserts the remediation
+      # never proposes disabling SELinux or widening a secret, and that the
+      # deployment fixture is byte-identical after every run.
+      - name: Podman SELinux, mount, secret, and port preflight (#4209)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight_host.sh
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

@@ -865,7 +865,7 @@ func TestHandleContributeActivityNilHub(t *testing.T) {
 func TestHandleContributeActivityWithHubExtra(t *testing.T) {
 	srv := newFullServer(t)
 	srv.contributeHub = NewContributeWSHub(slog.Default(), nil)
-	srv.contributeHub.addActivity("user1", "joined", "newcomer", "claude", "sonnet", "")
+	srv.contributeHub.addActivity("user1", "joined", "newcomer", "claude", "sonnet", "", "")
 
 	req := httptest.NewRequest("GET", "/api/contribute/activity", nil)
 	w := httptest.NewRecorder()

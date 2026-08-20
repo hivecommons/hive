@@ -174,12 +174,32 @@ func (ir *inferenceRouter) UpdateMaxContextLen(agentName, endpoint, model string
 
 // anthropicHosts are hosts that should be intercepted when an agent has
 // an inference route configured.
+var anthropicHostsMu sync.RWMutex
 var anthropicHosts = map[string]bool{
 	"api.anthropic.com": true,
 }
 
+// RegisterAnthropicHost adds a custom hostname to the Anthropic intercept map.
+func RegisterAnthropicHost(host string) {
+	if host == "" {
+		return
+	}
+	anthropicHostsMu.Lock()
+	anthropicHosts[host] = true
+	anthropicHostsMu.Unlock()
+}
+
+// unregisterAnthropicHost removes a hostname from the Anthropic intercept map (test cleanup).
+func unregisterAnthropicHost(host string) {
+	anthropicHostsMu.Lock()
+	delete(anthropicHosts, host)
+	anthropicHostsMu.Unlock()
+}
+
 // IsAnthropicHost returns true if the host is an Anthropic API endpoint.
 func IsAnthropicHost(host string) bool {
+	anthropicHostsMu.RLock()
+	defer anthropicHostsMu.RUnlock()
 	return anthropicHosts[host]
 }
 

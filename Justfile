@@ -443,6 +443,28 @@ contribute-hive backend="" mode="docker": check-version
         exit 1
       fi
 
+      # The hub's assignment prompt tells the agent to clone into
+      # "$HIVE_WORKSPACE_DIR/<owner>/<repo>" (buildTaskPrompt in
+      # src/pkg/dashboard/contribute_ws.go). Only the CONTAINER entrypoint
+      # (bin/contributor-agent.sh, via Dockerfile.contributor) ever gave that
+      # variable a value, and local mode does not run that script — so on this
+      # path it was unset and the prompt expanded to "/<owner>/<repo>", an
+      # unwritable path at filesystem root.
+      #
+      # What each agent did with that was its own improvisation. Observed live:
+      # agy silently worked in $PWD instead — which in local mode IS the hive
+      # checkout the relay was launched from, so a task branch-switched the
+      # relay's own source tree and left a nested clone inside it.
+      #
+      # agy is local-only (its Google OAuth flow cannot authenticate in a
+      # container, see contribute-k8s below), so every agy contributor is
+      # forced onto the one path that lacked this default.
+      #
+      # Same default and mkdir as the container entrypoint, so both paths agree.
+      export HIVE_WORKSPACE_DIR="${HIVE_WORKSPACE_DIR:-${HOME}/workspace}"
+      mkdir -p "$HIVE_WORKSPACE_DIR"
+      echo "Workspace: ${HIVE_WORKSPACE_DIR}"
+
       # Start ollama silently if needed for goose
       if [[ "$BACKEND" == "goose" && "${GOOSE_PROVIDER:-}" == "ollama" ]]; then
         if ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
@@ -505,9 +527,39 @@ contribute-hive backend="" mode="docker": check-version
       # directory (verified against tmux on Fedora 44). It is passed anyway
       # because it IS correct on a healthy server; the cd is what carries the
       # fix.
+      # ...but that cd must NOT land in this repo. In local mode $PWD is the hive
+      # checkout the relay was launched from — which is also a clone of the repo
+      # the agent is assigned to work on. The assignment prompt says to reuse an
+      # existing clone rather than re-fork ("if that directory already has a
+      # clone from a prior task, 'cd' into it"), so an agent that starts there
+      # reasonably concludes it is already in its checkout and works in place.
+      #
+      # Observed live on kubestellar/hive#4167 with HIVE_WORKSPACE_DIR correctly
+      # set and its directory present: agy never ran `gh repo fork` at all, and
+      # edited the relay's own source tree instead. An earlier task branch-
+      # switched the checkout out from under the running relay.
+      #
+      # The container entrypoint does not have this problem: it roots the
+      # session at the workspace and launches the CLI from a dedicated
+      # directory (bin/contributor-agent.sh). Mirror that here so both paths
+      # agree. That directory also satisfies the #4046 constraint above —
+      # nothing in the task lifecycle deletes or recreates it, unlike the
+      # workspace subtree the agent clones into.
+      #
+      # It is deliberately NOT $HOME, and local mode is why. In a container
+      # $HOME is /home/dev inside an ephemeral image with three read-only
+      # mounts; on the host it is the user's real home, holding .ssh, .gnupg
+      # and the contributor's own registration token in
+      # .config/hive/contributor.env. The agent runs unattended with its
+      # backend's skip-permissions flag, so its cwd is where every relative
+      # `ls`, `grep -r` and relative write lands. cwd is not a boundary — the
+      # process runs as the user regardless — but an empty dedicated directory
+      # costs nothing and keeps the default blast radius off the user's home.
+      export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
+      mkdir -p "$HIVE_AGENT_CWD"
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-      tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$PWD"
-      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$PWD") && ${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
+      tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
+      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && ${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
 
       # Surface a poisoned tmux server rather than letting the backend die a
       # silent, unexplained death 30 seconds into its first task.
@@ -584,7 +636,9 @@ contribute-hive backend="" mode="docker": check-version
       # on the contributor's HOST at their next CLI run.
       #
       # Networking: the relay only dials OUT (hub + GitHub + optional LiteLLM),
-      # so the default bridge network is sufficient. No host networking.
+      # so the default bridge network is sufficient. No host networking —
+      # with one narrow exception for the pi backend (see the pi) case below),
+      # which needs host networking to discover the host-local LLM server.
       NET_FLAGS=""
       if [[ "$RUNTIME" == "podman" ]]; then
         RUNTIME_FLAGS="--userns=keep-id"
@@ -658,6 +712,19 @@ contribute-hive backend="" mode="docker": check-version
             stage_copy "${HOME}/.pi" ".pi"
             CLI_MOUNTS="-v ${CLI_STAGE}/.pi:/home/dev/.pi${VOLSUF}"
           fi
+          # SECURITY (H6 / CWE-668) EXCEPTION: pi alone gets host networking.
+          # The lemonade-pi-plugin discovers host-local LLM models via a UDP
+          # beacon on port 13305 and HTTP fallbacks on localhost:8000/1234/
+          # 9000/8080. Under bridge networking, "localhost" inside the
+          # container is the container itself, so discovery fails with
+          # "No models available". Host networking lets the plugin reach the
+          # LLM server running on the contributor's host. The H6 protection
+          # that matters — never letting the container write into the
+          # contributor's real host CLI configs — is unaffected: ~/.pi is
+          # still copied into an ephemeral staging dir (above) that is
+          # destroyed in cleanup_container, so a poisoned agent still cannot
+          # plant config on the host.
+          NET_FLAGS="--network host"
           ;;
         agy)
           # agy 1.1.x keeps its state under ${HOME}/.gemini/antigravity-cli,

@@ -70,7 +70,7 @@ func TestFormatDigestMarkdownRendersStalePathAsOutdated(t *testing.T) {
 			Title: "install.md missing launcher OCI repo", File: "docs/install.md", PathStale: true},
 	}
 	d := BuildDigest(findings, "busy")
-	md := FormatDigestMarkdown(d, "acme", "widgets")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "acme", PrimaryRepo: "widgets"})
 
 	if strings.Contains(md, "`docs/install.md`") {
 		t.Errorf("stale file path was rendered as a live code span:\n%s", md)
@@ -90,7 +90,7 @@ func TestFormatDigestMarkdownCitesAnalyzedSnapshot(t *testing.T) {
 	sha := "8a804806a1306f01a911abefb1769c49f000eb35"
 	d.AnalyzedSnapshot = &Snapshot{Owner: "acme", Repo: "widgets", Branch: "main", SHA: sha}
 
-	md := FormatDigestMarkdown(d, "acme", "widgets")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "acme", PrimaryRepo: "widgets"})
 
 	if !strings.Contains(md, "Analyzed at") {
 		t.Errorf("digest does not cite analyzed snapshot:\n%s", md)
@@ -110,7 +110,7 @@ func TestFormatDigestMarkdownNoSnapshotNoFooter(t *testing.T) {
 		{Agent: "scanner", Severity: "high", Type: "bug", Title: "some bug"},
 	}
 	d := BuildDigest(findings, "busy")
-	md := FormatDigestMarkdown(d, "acme", "widgets")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "acme", PrimaryRepo: "widgets"})
 	if strings.Contains(md, "Analyzed at") {
 		t.Errorf("no snapshot set but footer was rendered:\n%s", md)
 	}

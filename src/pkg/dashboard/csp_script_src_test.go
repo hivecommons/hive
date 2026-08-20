@@ -26,12 +26,13 @@ import (
 //     TestCSPScriptSrcElemUnsafeInlineIsClosed plus the per-document coverage
 //     tests, which recompute every served inline script's hash and demand it
 //     be allowlisted.
-//   - script-src-attr: STAGED — 'unsafe-inline' remains for the 426+ inline
-//     on*= handler attributes until the event-delegation refactor (#3848).
-//     TestCSPScriptSrcAttrUnsafeInlineIsStaged is the new tripwire.
-//   - script-src: the CSP2 fallback stays 'self' 'unsafe-inline' and must stay
-//     HASH-FREE — a hash in that directive would make hash-aware pre-CSP3
-//     browsers ignore 'unsafe-inline' and blank the dashboard.
+//   - script-src-attr: CLOSED — 'none' after the #3848 event-delegation
+//     refactor replaced every inline on*= handler attribute with data-action
+//     dispatch. TestCSPScriptSrcAttrUnsafeInlineIsAbsent pins it closed.
+//   - script-src: the CSP2 fallback is 'self' only — 'unsafe-inline' dropped
+//     at the same moment as script-src-attr's — and must stay HASH-FREE: a
+//     hash in that directive would change semantics for hash-aware pre-CSP3
+//     browsers.
 
 // sha256SourceRe matches a CSP sha256 hash source token.
 var sha256SourceRe = regexp.MustCompile(`'sha256-[A-Za-z0-9+/]+=*'`)
@@ -48,20 +49,19 @@ func TestCSPScriptSrcScopedIntoElemAndAttr(t *testing.T) {
 		}
 	}
 
-	// The fallback must keep permitting what it always permitted: a pre-CSP3
-	// browser sees ONLY this directive, and tightening it is not this change's
-	// job (that is the event-delegation refactor's).
+	// The fallback keeps 'self' for pre-CSP3 browsers but no longer needs
+	// 'unsafe-inline': the #3848 event-delegation refactor removed every
+	// inline handler attribute, so there is nothing inline left to permit.
 	fallback := cspDirective(csp, "script-src")
-	if !strings.Contains(fallback, "'self'") || !strings.Contains(fallback, "'unsafe-inline'") {
-		t.Errorf("script-src fallback must stay permissive for pre-CSP3 browsers, got %q", fallback)
+	if !strings.Contains(fallback, "'self'") {
+		t.Errorf("script-src fallback must keep 'self' for same-origin script files, got %q", fallback)
 	}
 
 	// THE LOAD-BEARING NEGATIVE: the fallback must never carry a hash. Per
 	// CSP2, a hash source makes the browser ignore 'unsafe-inline' in the same
-	// directive — so a browser that understands hashes but not
-	// script-src-elem/-attr (Firefox < 108) would block all 426+ inline on*=
-	// handlers and blank the dashboard. The hashes belong in script-src-elem
-	// and ONLY there.
+	// directive — and keeping this directive semantically stable across
+	// hash-aware and hash-unaware pre-CSP3 browsers requires the hashes to
+	// live in script-src-elem and ONLY there.
 	if sha256SourceRe.MatchString(fallback) {
 		t.Errorf("script-src fallback carries a sha256 source (%q) — this DISABLES "+
 			"'unsafe-inline' on hash-aware pre-CSP3 browsers and blanks every inline "+
@@ -104,31 +104,30 @@ func TestCSPScriptSrcElemUnsafeInlineIsClosed(t *testing.T) {
 	}
 }
 
-// TestCSPScriptSrcAttrUnsafeInlineIsStaged is the TRIPWIRE for the half that is
-// NOT closed, replacing the old whole-directive tripwire per #3848's own
-// instruction to invert-not-relax as halves land.
+// TestCSPScriptSrcAttrUnsafeInlineIsAbsent is the INVERSION of the old staged
+// tripwire (TestCSPScriptSrcAttrUnsafeInlineIsStaged), landed with the #3848
+// event-delegation refactor: every inline on*= handler attribute in
+// static/index.html and in Go-generated HTML was replaced with data-action /
+// data-* attributes dispatched by central document listeners, so
+// script-src-attr is 'none' and an injected on*= attribute never executes.
 //
-// script-src-attr still carries 'unsafe-inline' because the SPA wires 426
-// inline on*= attributes (plus ~145 more built as strings and injected through
-// innerHTML sites), and CSP offers no nonce and no elem-hash form for handler
-// attributes. Until the event-delegation refactor lands, an injected on*=
-// attribute still executes — stated in ADR-0016 "Residual risk", not hidden.
-//
-// When that refactor lands, this test FAILS by design. Do not relax it —
-// INVERT it (assert 'unsafe-inline' absent from script-src-attr AND from the
-// script-src fallback, which becomes droppable at the same moment), and update
-// ADR-0016's status in the same PR.
-func TestCSPScriptSrcAttrUnsafeInlineIsStaged(t *testing.T) {
+// Do not relax this. If a new handler is needed, wire it through the
+// data-action dispatcher — never by reintroducing an inline attribute.
+func TestCSPScriptSrcAttrUnsafeInlineIsAbsent(t *testing.T) {
 	attr := cspDirective(servedCSP(t), "script-src-attr")
 	if attr == "" {
 		t.Fatal("CSP must declare script-src-attr explicitly (#3848, ADR-0016)")
 	}
-	if !strings.Contains(attr, "'unsafe-inline'") {
-		t.Fatalf("script-src-attr no longer has 'unsafe-inline' (got %q).\n"+
-			"This is GOOD NEWS: the event-delegation half of #3848 appears to have landed.\n"+
-			"Invert this test into an assertion that 'unsafe-inline' is ABSENT here and in "+
-			"the script-src fallback, so it can never come back, and update ADR-0016 in the "+
-			"same PR.", attr)
+	if strings.Contains(attr, "'unsafe-inline'") {
+		t.Fatalf("script-src-attr must not contain 'unsafe-inline' after the #3848 "+
+			"event-delegation refactor (got %q) — inline handler attributes are gone "+
+			"and must never come back", attr)
+	}
+	// The CSP2 fallback must also not carry unsafe-inline: it became droppable
+	// at the same moment the attribute half closed.
+	src := cspDirective(servedCSP(t), "script-src")
+	if strings.Contains(src, "'unsafe-inline'") {
+		t.Fatalf("script-src fallback must not contain 'unsafe-inline' after #3848 (got %q)", src)
 	}
 	// 'unsafe-hashes' would mean a hash per distinct handler-attribute value,
 	// regenerated on every UI edit — rejected in ADR-0016 exactly as ADR-0015

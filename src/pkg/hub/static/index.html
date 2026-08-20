@@ -321,6 +321,42 @@
       font-size: clamp(1.8rem, 3vw, 2.8rem);
       line-height: 1;
     }
+    /* ── Works-with-your-stack band: three integration groups (source
+       control / work sources / sign-in) rendered as pill badges. Cards reuse
+       the proof-card gradient/border treatment for visual consistency. ── */
+    .stack-groups {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+      display: grid;
+    }
+    .stack-group {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: 1.3rem;
+    }
+    .stack-group-label {
+      color: var(--green);
+      text-transform: uppercase;
+      font-weight: 900;
+      font-size: .78rem;
+      letter-spacing: .05em;
+      margin-bottom: .9rem;
+    }
+    .stack-badges { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .9rem; }
+    .stack-badge {
+      border: 1px solid var(--line);
+      background: var(--bg-soft);
+      color: var(--text);
+      border-radius: 999px;
+      padding: .38rem .85rem;
+      font-size: .88rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .stack-note { font-size: .9rem; margin: 0; }
+
     /* ── Comparison table ── */
     .compare-wrap { overflow-x: auto; margin-top: 2rem; border: 1px solid var(--line); border-radius: .8rem; background: linear-gradient(#17212deb, #0c1219eb); }
     .compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 860px; }
@@ -564,7 +600,7 @@
     /* ── Responsive ── */
     @media (max-width: 1100px) {
       .hero, .split { grid-template-columns: 1fr; }
-      .proof-grid, .safety-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .proof-grid, .safety-list, .stack-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 720px) {
       .site-header { grid-template-columns: 1fr; position: static; }
@@ -572,7 +608,7 @@
       .header-link { justify-self: start; }
       h1 { font-size: clamp(2.6rem, 12vw, 4rem); }
       .hero { min-height: auto; }
-      .metric-grid, .proof-grid, .safety-list { grid-template-columns: 1fr; }
+      .metric-grid, .proof-grid, .safety-list, .stack-groups { grid-template-columns: 1fr; }
       .loop-rail { grid-template-columns: repeat(7, minmax(7rem, 1fr)); }
     }
     @media (max-width: 480px) {
@@ -651,6 +687,7 @@
           <a class="button primary" href="/get-started">Request a Hive</a>
           <a class="button secondary" href="#how-it-works">See how it works</a>
           <a class="button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
+          <a class="button tertiary" href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer">📖 New to Hive? Getting Started Guide</a>
         </div>
         <div class="hero-proof" id="hero-proof">
           <div>
@@ -721,6 +758,46 @@
                "N available" and acting on it is one click. Anchor for the same
                keyboard/right-click reasons as the Public hives tile. -->
           <a href="/get-started" class="stat-jump" title="Request one of the available hives"><span>Available hives</span><strong id="stat-available">—</strong><span class="stat-cta">click to request one</span></a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Works with your stack: SCMs, work sources, sign-in providers ── -->
+    <section class="section-pad" id="integrations">
+      <div class="section-heading">
+        <p class="section-label">Works with your stack</p>
+        <h2>Plug in wherever your work already lives</h2>
+        <p>Hive meets your repos, your backlog, and your identity provider where they are &mdash; no migration required. Point it at the source control you already use, pull work from the trackers your team already fills, and sign in with the accounts you already have.</p>
+      </div>
+      <div class="stack-groups">
+        <div class="stack-group">
+          <p class="stack-group-label">Source control</p>
+          <div class="stack-badges">
+            <span class="stack-badge">GitHub</span>
+            <span class="stack-badge">GitHub Enterprise</span>
+            <span class="stack-badge">GitLab</span>
+            <span class="stack-badge">Gitea</span>
+          </div>
+          <p class="stack-note">Agents triage, branch, open PRs, and merge on green against any of them.</p>
+        </div>
+        <div class="stack-group">
+          <p class="stack-group-label">Work sources</p>
+          <div class="stack-badges">
+            <span class="stack-badge">GitHub Projects</span>
+            <span class="stack-badge">Jira</span>
+            <span class="stack-badge">Linear</span>
+          </div>
+          <p class="stack-note">Backlog items flow straight into the fleet &mdash; keep planning in the tracker you already use.</p>
+        </div>
+        <div class="stack-group">
+          <p class="stack-group-label">Sign-in</p>
+          <div class="stack-badges">
+            <span class="stack-badge">Microsoft</span>
+            <span class="stack-badge">GitHub</span>
+            <span class="stack-badge">IBM</span>
+            <span class="stack-badge">Google</span>
+          </div>
+          <p class="stack-note">Plus any other OIDC provider on request &mdash; bring the identity your org already trusts.</p>
         </div>
       </div>
     </section>

@@ -73,7 +73,7 @@ Steps:
 8. git commit -s -m "[scanner] fix: <short description covering all issues>"
 9. git push -u origin scanner/fix-<lowest-number>
 10. Open the PR with **`hive-open-pr`** (the hive opens it as the App bot):
-    `hive-open-pr --repo <org>/<repo> --head scanner/fix-<lowest-number> --title "[scanner] fix: <short description>" --body "Fixes #<n1>, Fixes #<n2>, Fixes #<n3>"` (repeat Fixes keyword for each issue).
+    `hive-open-pr --repo <org>/<repo> --head scanner/fix-<lowest-number> --title "[scanner] fix: <short description>" --body "Fixes #<n1>, Fixes #<n2>, Fixes #<n3>"` (repeat Fixes keyword for each issue -- only for issues this PR fully resolves; use Refs #<n> instead for any that are epics/multi-phase trackers).
     Do NOT use the GitHub MCP `create_pull_request` / `create_pull_request_with_copilot`, and do NOT run raw `gh pr create` — both author the PR as the login user. `hive-open-pr` is the only sanctioned way to open a PR; the hive opens it with the App token so it is authored by the App bot. `gh pr create` is auto-redirected to `hive-open-pr` for you, but call `hive-open-pr` directly.
 11. git worktree remove /tmp/scanner-fix-<lowest-number>
 12. Return immediately — do NOT wait for CI, do NOT merge, do NOT run build or lint

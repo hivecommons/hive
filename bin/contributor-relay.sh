@@ -12,7 +12,10 @@
 //                           hubs, provide one comma-separated token per hub in
 //                           the same order as HIVE_HUB
 //   AGENT_BACKEND          — CLI backend name (claude, copilot, gemini, etc.)
-//   AGENT_MODEL            — model override (optional)
+//   AGENT_MODEL            — model override (optional). When unset, the relay
+//                           auto-detects the running model from the CLI's own
+//                           session transcript for claude/copilot/bob (#4117);
+//                           other backends report no model, as before.
 //   AGENT_REASONING_EFFORT — reasoning effort override (optional). Consumed by
 //                           codex (-c model_reasoning_effort) and by agy
 //                           (--effort low|medium|high); ignored elsewhere.
@@ -44,6 +47,10 @@ const BACKEND = process.env.AGENT_BACKEND || 'claude';
 const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
 const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
+// Neutral directory both entrypoints launch the CLI from ($HOME). Used to pin
+// the cwd on relaunch; see launchCommandWithCwd for why the relay's own cwd is
+// the wrong answer in local mode.
+const AGENT_CWD = (process.env.HIVE_AGENT_CWD || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 // Where the hub-delivered, task-scoped token is written (injectGhToken). This
 // deliberately does NOT default to /var/run/hive-metrics/gh-app-token.cache:
@@ -469,16 +476,240 @@ function resolveBackend() {
   return cachedBackendResolution;
 }
 
+// modelFlagFor reports the --model flag this backend actually receives, or ''
+// when the backend takes no --model at all. Shared by the launch command and by
+// effectiveReasoningEffort() below, which must agree on whether a model is in
+// play — agy's effort is conditional on exactly that.
+function modelFlagFor() {
+  return MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
+}
+
+// effectiveReasoningEffort is the SINGLE source of truth for the effort actually
+// in effect for this launch — the value the CLI is really running with, not the
+// value the contributor happened to export.
+//
+// It exists because the effort now travels twice: onto the command line here,
+// and up to the hub in auth_response so the dashboard can show it (#4084).
+// Deriving it independently in those two places is the same drift this file
+// already warns about for the launch command itself (#2203 bug 1, the comment
+// above cachedLaunchCommand), and it would misreport in two concrete ways:
+//
+//   - agy WITHOUT a model gets no --effort flag at all, so reporting a raw
+//     AGENT_REASONING_EFFORT there advertises an effort agy never applied.
+//   - agy WITH a model gets agyEffort, which falls back to AGY_DEFAULT_EFFORT
+//     when AGENT_REASONING_EFFORT is unset or is a value agy rejects (codex's
+//     vocabulary is wider), so the raw env var is the wrong answer there too.
+//
+// Returns '' when nothing is in effect; auth_response omits the field entirely
+// in that case rather than sending an empty string.
+function effectiveReasoningEffort() {
+  // agy is the only backend whose effort is conditional on a model being passed.
+  if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
+  return REASONING_EFFORT || '';
+}
+
+// --- Model auto-detection from the CLI's own session transcript (#4117) ----
+//
+// AGENT_MODEL is optional and launch-time-only: most contributors never set it
+// (Live Activity then shows just "via claude CLI"), and even a set value goes
+// stale the moment the session switches models (`/model` in claude). For the
+// backends whose CLIs keep a local session transcript that records which model
+// served each turn — the same files src/pkg/tokens/*_scanner.go already reads
+// for cost attribution — the relay can report the model ACTUALLY in use.
+//
+// Precedence is explicit and fixed: AGENT_MODEL if set (the contributor's
+// intent overrides detection — e.g. a claude pointed at a LiteLLM proxy whose
+// transcript records a spoofed name) → the model detected from the CLI's own
+// transcript → '' (today's degrade, unchanged). Backends with no known local
+// transcript format (codex, agy, goose, pi, aider, litellm, …) always take the
+// last branch — no regression, no guess.
+//
+// Privacy: transcripts contain the task prompt and file contents. Detection
+// reads only the TAIL bytes needed to find the latest turn's model field,
+// extracts that single field, and never logs or transmits anything else.
+const MODEL_DETECT_HOME = process.env.HOME || require('os').homedir() || '';
+// Tail window per read. A transcript line is one JSON turn; 64 KiB comfortably
+// covers the last few turns of every observed format without pulling a whole
+// multi-megabyte session into memory.
+const MODEL_DETECT_TAIL_BYTES = 65536;
+const CLAUDE_PROJECTS_DIR = process.env.HIVE_CLAUDE_PROJECTS_DIR || path.join(MODEL_DETECT_HOME, '.claude', 'projects');
+const COPILOT_SESSIONS_DIR = process.env.HIVE_COPILOT_SESSIONS_DIR || path.join(MODEL_DETECT_HOME, '.copilot', 'session-state');
+const BOB_HOME_DIR = process.env.HIVE_BOB_DIR || path.join(MODEL_DETECT_HOME, '.bob');
+
+// readFileTail returns at most the last maxBytes of a file as UTF-8, without
+// reading the rest — the "minimal tail" privacy bound above.
+function readFileTail(file, maxBytes) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - maxBytes);
+    const len = size - start;
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// newestByMtime picks the most recently modified path from a list, or null.
+function newestByMtime(files) {
+  let best = null;
+  let bestMtime = -1;
+  for (const f of files) {
+    try {
+      const m = fs.statSync(f).mtimeMs;
+      if (m > bestMtime) { bestMtime = m; best = f; }
+    } catch (_) {}
+  }
+  return best;
+}
+
+// tailLinesReversed parses the tail of a JSONL file and yields each line's
+// parsed JSON from NEWEST to oldest, skipping unparseable lines (the first
+// tail line is usually a mid-line cut).
+function tailLinesReversed(file) {
+  const lines = readFileTail(file, MODEL_DETECT_TAIL_BYTES).split('\n');
+  const out = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    try { out.push(JSON.parse(line)); } catch (_) {}
+  }
+  return out;
+}
+
+// looksLikeModelName rejects placeholder values some transcripts record for
+// error/synthetic turns (claude logs "<synthetic>") — better no model than a
+// confidently wrong one.
+function looksLikeModelName(m) {
+  return typeof m === 'string' && m !== '' && !m.startsWith('<');
+}
+
+// detectClaudeModel: newest ~/.claude/projects/*/*.jsonl, latest assistant
+// turn's message.model (same source claude_scanner.go aggregates for cost).
+function detectClaudeModel() {
+  const files = [];
+  for (const d of fs.readdirSync(CLAUDE_PROJECTS_DIR, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(CLAUDE_PROJECTS_DIR, d.name);
+    for (const f of fs.readdirSync(dir)) {
+      if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
+    }
+  }
+  const newest = newestByMtime(files);
+  if (!newest) return '';
+  for (const obj of tailLinesReversed(newest)) {
+    const m = obj && obj.message && obj.message.model;
+    if (looksLikeModelName(m)) return m;
+  }
+  return '';
+}
+
+// detectCopilotModel: newest ~/.copilot/session-state/*/events.jsonl, latest
+// event carrying a model field (session.start selectedModel, per-tool model,
+// or shutdown currentModel — same fields copilot_scanner.go reads).
+function detectCopilotModel() {
+  const files = [];
+  for (const d of fs.readdirSync(COPILOT_SESSIONS_DIR, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    files.push(path.join(COPILOT_SESSIONS_DIR, d.name, 'events.jsonl'));
+  }
+  const newest = newestByMtime(files);
+  if (!newest) return '';
+  for (const obj of tailLinesReversed(newest)) {
+    const data = (obj && obj.data) || {};
+    const m = data.model || data.currentModel || data.selectedModel;
+    if (looksLikeModelName(m)) return m;
+  }
+  return '';
+}
+
+// Bob session recordings are one JSON document, not JSONL, so a byte tail
+// cannot be parsed. Cap what we are willing to read instead; sessions past
+// this size just report no model rather than ballooning relay memory.
+const BOB_MAX_SESSION_BYTES = 5242880; // 5 MiB
+// detectBobModel: newest ~/.bob/tmp/*/chats/*.json, last message with a
+// per-message model field (same shape bob_scanner.go reads).
+function detectBobModel() {
+  const files = [];
+  const tmpDir = path.join(BOB_HOME_DIR, 'tmp');
+  for (const d of fs.readdirSync(tmpDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const chats = path.join(tmpDir, d.name, 'chats');
+    let entries;
+    try { entries = fs.readdirSync(chats); } catch (_) { continue; }
+    for (const f of entries) {
+      if (f.endsWith('.json')) files.push(path.join(chats, f));
+    }
+  }
+  const newest = newestByMtime(files);
+  if (!newest) return '';
+  if (fs.statSync(newest).size > BOB_MAX_SESSION_BYTES) return '';
+  const session = JSON.parse(fs.readFileSync(newest, 'utf8'));
+  const messages = Array.isArray(session && session.messages) ? session.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (looksLikeModelName(messages[i] && messages[i].model)) return messages[i].model;
+  }
+  return '';
+}
+
+const MODEL_DETECTORS = { claude: detectClaudeModel, copilot: detectCopilotModel, bob: detectBobModel };
+
+// The last model detected from the transcript. Refreshed at auth and on every
+// progress tick, so a mid-session `/model` switch is reflected within one
+// PROGRESS_REPORT_INTERVAL_MS.
+let detectedModel = '';
+
+// detectRunningModel reads the transcript once and returns the model, or ''.
+// Never throws; never runs at all when AGENT_MODEL is set (explicit intent
+// wins, so there is nothing to detect) or the backend has no known transcript.
+function detectRunningModel() {
+  if (MODEL) return '';
+  const detector = MODEL_DETECTORS[BACKEND];
+  if (!detector) return '';
+  try { return sanitizeDeclaredValue(detector() || ''); } catch (_) { return ''; }
+}
+
+// refreshDetectedModel re-detects and returns the model currently in effect
+// under the fixed precedence (AGENT_MODEL → detected → '').
+function refreshDetectedModel() {
+  const m = detectRunningModel();
+  if (m && m !== detectedModel) {
+    detectedModel = m;
+    console.log(`Detected running model from ${BACKEND} session transcript: ${m}`);
+  }
+  return effectiveModel();
+}
+
+// effectiveModel is the model counterpart of effectiveReasoningEffort(): the
+// single source of truth for the model actually reported to the hub.
+function effectiveModel() {
+  return MODEL || detectedModel || '';
+}
+
+// progressModelFields returns the optional model/effort fields piggybacked on
+// periodic task_progress reports, so the hub can track a mid-session model
+// switch. Empty values are omitted entirely (an older hub ignores the fields).
+function progressModelFields() {
+  const out = {};
+  const model = effectiveModel();
+  const effort = effectiveReasoningEffort();
+  if (model) out.model = model;
+  if (effort) out.reasoning_effort = effort;
+  return out;
+}
+
 function buildLaunchCommand() {
   if (cachedLaunchCommand) return cachedLaunchCommand;
   const { cmd, perm } = resolveBackend();
-  const modelFlag = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
+  const modelFlag = modelFlagFor();
   const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
     ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
     : '';
   // Paired with modelFlag, never on its own: agy without --model needs no
   // --effort, and passing one alone would be a flag agy has no model to apply.
-  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${agyEffort}` : '';
+  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${effectiveReasoningEffort()}` : '';
   cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
@@ -664,6 +895,30 @@ function recoverWedgedShell() {
     execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
     execSync(`tmux send-keys -t ${TMUX_SESSION} C-u`, { timeout: 15000 });
     execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+  } catch (_) {}
+}
+
+// quitLiveCLI stops an agent CLI that is STILL RUNNING in the pane, so the
+// pane falls back to a shell and a subsequent relaunch types its command at a
+// shell prompt rather than into the CLI as a chat message.
+//
+// Why two Ctrl-Cs and not one: recoverWedgedShell() above sends a single C-c,
+// which is right for its case (a DEAD CLI leaving a wedged bash PS2 prompt).
+// For a LIVE agent CLI, one C-c only cancels the current turn — claude, codex
+// and agy all stay running — so the relaunch command that follows is delivered
+// to the CLI as a prompt. That is exactly the #2203 wedge shape. The second
+// C-c, with the same delays the memory-cleanup restart path has used since
+// #2596, is what actually exits the CLI.
+//
+// Best-effort by design: if tmux is unreachable the caller is already on a
+// failure path, and a relaunch that lands badly is recovered by the
+// armCLIReadyWait() contract rather than by anything here.
+function quitLiveCLI() {
+  try {
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
+    sleepMs(1000);
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
+    sleepMs(2000);
   } catch (_) {}
 }
 
@@ -1064,10 +1319,7 @@ function tmuxSendKeys(text) {
       // instead of restarting again (issue #2596).
       lastResetAtCount = tasksCompletedCount;
       console.log(`Restarting ${BACKEND} CLI for memory cleanup (task ${tasksCompletedCount})`);
-      execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
-      sleepMs(1000);
-      execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
-      sleepMs(2000);
+      quitLiveCLI();
       // Queue this prompt and hand delivery to the readiness callback.
       // Previously the restart set cliReady=false and then FELL THROUGH to the
       // send loop below, typing the prompt into a pane where the CLI had just
@@ -1116,11 +1368,14 @@ function shellQuote(s) {
 }
 
 function redactTokens(text) {
-  return text.replace(/gho_[A-Za-z0-9]{36}/g, 'gho_***REDACTED***')
-    .replace(/ghp_[A-Za-z0-9]{36}/g, 'ghp_***REDACTED***')
-    .replace(/ghs_[A-Za-z0-9]{36}/g, 'ghs_***REDACTED***')
-    .replace(/ghu_[A-Za-z0-9]{36}/g, 'ghu_***REDACTED***')
-    .replace(/ghr_[A-Za-z0-9]{36}/g, 'ghr_***REDACTED***');
+  // {36,} not {36}: GitHub documents that token length may grow, and an exact
+  // bound would redact only the first 36 characters of a longer token, leaking
+  // its tail into the hub log line (kubestellar/hive#4267).
+  return text.replace(/gho_[A-Za-z0-9]{36,}/g, 'gho_***REDACTED***')
+    .replace(/ghp_[A-Za-z0-9]{36,}/g, 'ghp_***REDACTED***')
+    .replace(/ghs_[A-Za-z0-9]{36,}/g, 'ghs_***REDACTED***')
+    .replace(/ghu_[A-Za-z0-9]{36,}/g, 'ghu_***REDACTED***')
+    .replace(/ghr_[A-Za-z0-9]{36,}/g, 'ghr_***REDACTED***');
 }
 
 function captureTmuxLines(n) {
@@ -1180,8 +1435,10 @@ function detectNoWorkVerdict(lines) {
   if (!Array.isArray(lines) || lines.length === 0) return null;
   // Anchored at line start: the task PROMPT quotes the marker mid-sentence
   // ("...the exact form 'HIVE_VERDICT: ...'"), and an anchored match keeps
-  // that instruction echo from reading as the agent's own verdict.
-  const VERDICT_RE = /^\s*HIVE_VERDICT:\s*no_work_needed\b[\s:—–-]*(.*)$/i;
+  // that instruction echo from reading as the agent's own verdict. Codex
+  // renders its completed assistant messages with a leading bullet, which is
+  // presentation chrome rather than part of the verdict.
+  const VERDICT_RE = /^\s*(?:•\s*)?HIVE_VERDICT:\s*no_work_needed\b[\s:—–-]*(.*)$/i;
   // Scan newest-first so the agent's final conclusion wins over anything it
   // merely quoted or considered earlier in the transcript.
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -1318,10 +1575,69 @@ function classifyTmuxPane(text) {
     hasCompletionMarker = true;
     isWorking = bobRunning && BOB_SPINNER.test(text);
   } else if (BACKEND === 'codex') {
+    // Codex retains prior tool rows in its long-lived pane.  Scope transient
+    // activity words to the tail so an old "Running" row cannot pin a
+    // completed turn in WORKING forever.
+    const codexTail = text.split('\n').slice(-15).join('\n');
     // Same marker mismatch as getCLIState(): '›' (U+203A), not '>'.
     hasIdlePrompt = /codex>|›|>\s*$/.test(text);
-    hasCompletionMarker = /completed|done|finished/i.test(text);
-    isWorking = /running|executing|thinking/i.test(text);
+    // Not a prose match. codex writes its own completion summary in whatever
+    // words the work calls for, and requiring "completed|done|finished" makes
+    // finishing a task depend on which English word it happened to reach for.
+    //
+    // Observed live: a task that ran to completion and opened
+    // kubestellar/hive#4259 ready for review summarised itself as "Opened
+    // ready-for-review PR #4259 … Conclusion: direct .kube reuse is not viable
+    // … Branch is pushed and clean … Worked for 6m 22s". None of the three
+    // words appear, and there is no no_work_needed verdict either (it shipped a
+    // PR), so hasCompletionMarker was false, the IDLE_COMPLETE arm could not be
+    // reached, and the pane fell through to PANE_STATE_WORKING with the agent
+    // sitting idle at its prompt.
+    //
+    // The same reliance on prose in the other direction produced #4182 for agy.
+    //
+    // codex's real state signal is its status row, which isWorking below reads:
+    // an in-flight turn renders "esc to interrupt", and an idle one does not.
+    // hasIdlePrompt cannot carry that distinction here — codex draws its "›"
+    // input line while it is working too — so gating completion on a completion
+    // WORD added nothing except a way to miss finished work. copilot, goose,
+    // agy and bob all set this true for the same reason.
+    hasCompletionMarker = true;
+    // Prefer codex's own status row over guessing from prose, exactly as the
+    // agy branch below does after #4182.
+    //
+    // The bare verbs are matched case-insensitively against the tail, and codex
+    // narrates in plain English — including in the summary it prints when a turn
+    // FINISHES. A summary that happens to say "I'm running the tests" or
+    // "executing the plan" pins a finished pane to WORKING, the relay keeps
+    // renewing the lease, and the task dies at the stall backstop or
+    // MAX_TASK_DURATION with its PR already open. That is #4182, which was the
+    // same latent shape on agy until a summary tripped it.
+    //
+    // Captured from a live pane, codex's markers are:
+    //
+    //   working -> "• Working (46s • esc to interrupt)"  AND  "› Ask Codex to…"
+    //   idle    ->                                             "› Ask Codex to…"
+    //
+    // so "esc to interrupt" is the ONLY discriminator; the "›" input line is
+    // drawn in both states, which is why hasIdlePrompt cannot carry this and
+    // why the verb list was doing the work.
+    //
+    // The second alternative keeps the protection the bare verbs were really
+    // providing, without the prose exposure. codex marks an in-flight tool call
+    // with its OWN bullet chrome — "• Running <cmd>", against "• Ran <cmd>" once
+    // finished — so anchoring to the bullet distinguishes codex saying it is
+    // running something from the model narrating that it ran something:
+    //
+    //   "• Running gh issue view 4066"        -> chrome, in flight   -> WORKING
+    //   "- While running the tests I ..."     -> prose, in a summary -> not
+    //
+    // That matters beyond this bug: it is what stops a stale
+    // "HIVE_VERDICT: no_work_needed" higher in the scrollback from being
+    // reported as the completion of a turn that has since started new work.
+    const codexBusyMarker = /esc to interrupt/i.test(codexTail) ||
+      /(?:^|\n)\s*[•·▸]\s*(?:Running|Executing|Thinking)\b/i.test(codexTail);
+    isWorking = codexBusyMarker;
   } else if (BACKEND === 'pi') {
     hasIdlePrompt = /pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text);
     hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
@@ -1343,9 +1659,52 @@ function classifyTmuxPane(text) {
     // busy agent as idle. The stall backstop in progressTick() covers whatever
     // this still misses.
     const agyTail = text.split('\n').slice(-15).join('\n');
-    hasIdlePrompt = /\? for shortcuts/.test(text);
+    // agy formerly ended idle turns with "? for shortcuts". Current Gemini
+    // builds render a bare input line followed by the model footer instead.
+    // Keep the bare ">" constrained to that footer so a Markdown quote in
+    // an in-flight response cannot be mistaken for an idle prompt.
+    //
+    // The input box is CLOSED by a second box-drawing rule between the ">" and
+    // the footer, so the gap is not pure whitespace and "\s*" cannot cross it.
+    // Observed live: a turn that finished and opened kubestellar/hive#4127 sat
+    // at this exact idle chrome, classified WORKING, and was killed 20 minutes
+    // later by the progressTick() stall backstop and reported as an
+    // `environment` FAILURE — for a task that had shipped a real PR. Allow the
+    // rule character (U+2500) in the gap so the footer is reachable.
+    //
+    // Safety direction is preserved by the footer itself: while a turn is in
+    // flight agy renders "esc to cancel" on that same line, which is neither
+    // whitespace nor a rule, so a busy pane still cannot match here.
+    hasIdlePrompt = /\? for shortcuts/.test(text) ||
+      /(?:^|\n)>\s*\n[\s─]*\n?\s*Gemini\b[^\n]*\s*$/m.test(agyTail);
     hasCompletionMarker = true;
-    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(agyTail);
+    // Prefer agy's OWN state markers over guessing from prose.
+    //
+    // The bare verb scan below is a case-insensitive word match, and agy
+    // narrates in plain English — including in the summary it prints when a
+    // turn FINISHES. Observed live: a completed task that opened
+    // kubestellar/hive#4181 ended with "Replaced inline token export
+    // instructions with writing HIVE_GITHUB_TOKEN to a local .env file". That
+    // "writing" is in the last 15 lines by construction (it is the summary),
+    // so isWorking stayed true, and because isWorking short-circuits before
+    // hasIdlePrompt is consulted the finished pane classified WORKING and the
+    // stall backstop failed a task whose PR was already open.
+    //
+    // Narrowing the verb list is the wrong lever: any word list will collide
+    // with prose eventually, and getting it wrong the other way (a busy agent
+    // read as idle) is the worse bug. Use the status bar instead, which agy
+    // renders itself and which says exactly one thing at a time:
+    //   in flight -> "esc to cancel"
+    //   at rest   -> "? for shortcuts", or the bare model footer
+    //
+    // Order matters. An explicit busy marker wins. Failing that, an explicit
+    // idle prompt means not working, whatever the transcript above it says.
+    // Only when neither marker is present — an agy build whose chrome we do
+    // not recognise — fall back to the verb heuristic, so an unknown UI still
+    // errs toward "busy" rather than reporting a working agent complete.
+    const agyBusyMarker = /esc to cancel/.test(agyTail);
+    isWorking = agyBusyMarker ||
+      (!hasIdlePrompt && /Running|Searching|Reading|Writing|Editing/i.test(agyTail));
   } else {
     hasIdlePrompt = />\s*$|\$\s*$/.test(text);
     hasCompletionMarker = /completed|done|finished/i.test(text);
@@ -1391,8 +1750,17 @@ function checkTmuxPaneState() {
 // shortly after its first task (agy exits 2; claude/codex/goose tolerate it).
 // The Justfile pins the cwd for the FIRST launch; without this, the first
 // relaunch would silently undo that.
+//
+// Prefer HIVE_AGENT_CWD, which both entrypoints export for exactly this: it is
+// the neutral directory they launch the CLI from ($HOME). process.cwd() is the
+// RELAY's directory, which in local mode is the hive checkout `just
+// contribute-hive` was run from — also a clone of the repo the agent is
+// assigned to work on. Relaunching there puts the agent back in the tree it
+// must not treat as its checkout, silently undoing the launch-side fix on the
+// first stall recovery. Fall back to process.cwd() so an older entrypoint that
+// does not export the variable keeps its previous behaviour.
 function launchCommandWithCwd(launchCmd) {
-  const cwd = process.cwd();
+  const cwd = AGENT_CWD || process.cwd();
   if (!cwd) return launchCmd;
   return `cd ${shellQuote(cwd)} && ${launchCmd}`;
 }
@@ -1434,12 +1802,35 @@ function relaunchCLI() {
 // test suite, a slow clone) for many minutes without drawing anything new.
 const PANE_STALL_TIMEOUT_MS = Number(process.env.HIVE_PANE_STALL_TIMEOUT_MS) || 20 * 60 * 1000;
 
+// Observed live (kubestellar/hive): a task crossed PANE_STALL_TIMEOUT_MS while
+// agy sat blocked on a slow `gh pr create` network round trip. The relay
+// declared it a failure and moved on to the next task, and the pane then, only
+// seconds to minutes later, printed the CLI's real completion summary — with a
+// genuine PR link. The pane fingerprint at the instant of the stall check
+// cannot contain output that has not streamed in yet, so checking it harder at
+// that single instant cannot fix this; giving the CLI a FEW more ticks to
+// reach a real PANE_STATE_IDLE_COMPLETE (which already runs full PR/no-work
+// detection, see detectPRURL/detectNoWorkVerdict below) can. So the stall
+// verdict must be CONFIRMED on this many consecutive ticks — each
+// PROGRESS_REPORT_INTERVAL_MS apart, and each one re-running
+// checkTmuxPaneState() first — before the relay gives up. A tick where the
+// pane has since gone idle-complete, or produced any new output, exits this
+// path before the confirm count is ever consulted.
+const PANE_STALL_CONFIRM_TICKS = Math.max(1, Number(process.env.HIVE_PANE_STALL_CONFIRM_TICKS) || 2);
+
 let lastPaneFingerprint = null;
 let lastPaneChangeAt = 0;
+// How many CONSECUTIVE ticks paneStalled() has now returned true. Distinct
+// from the fingerprint clock above: that clock says "how long has it been
+// unchanged", this says "how many chances has the CLI had to prove otherwise
+// since we first noticed". Reset by resetPaneStallClock() and by any tick
+// where paneStalled() is false (new output resets the whole stall story).
+let stallConfirmCount = 0;
 
 function resetPaneStallClock() {
   lastPaneFingerprint = null;
   lastPaneChangeAt = Date.now();
+  stallConfirmCount = 0;
   // A new task also starts with a clean CLI-liveness count: shell readings from
   // the previous task say nothing about this one.
   consecutiveShellReadings = 0;
@@ -1461,6 +1852,21 @@ function paneStalled(tmuxLines) {
   if (!fingerprint) return false;
   if (!lastPaneChangeAt) { lastPaneChangeAt = now; return false; }
   return now - lastPaneChangeAt >= PANE_STALL_TIMEOUT_MS;
+}
+
+// paneStallConfirmed wraps paneStalled() with the multi-tick confirmation
+// described above it. Any tick where paneStalled() is false (new output
+// appeared) resets the count — the CLI gets full credit for proving it is not
+// stuck, not just a one-shot escape. Kept separate from paneStalled() itself
+// so tests of the underlying timeout signal are unaffected by the confirm
+// gate, and vice versa.
+function paneStallConfirmed(tmuxLines) {
+  if (!paneStalled(tmuxLines)) {
+    stallConfirmCount = 0;
+    return false;
+  }
+  stallConfirmCount++;
+  return stallConfirmCount >= PANE_STALL_CONFIRM_TICKS;
 }
 
 function flushPendingTask() {
@@ -1575,6 +1981,11 @@ function progressTick() {
   if (!currentTask) return;
   if (Date.now() - taskAssignedAt < TASK_GRACE_PERIOD_MS) return;
 
+  // #4117: re-detect the running model each tick so a mid-session model switch
+  // (claude `/model`) reaches the hub within one progress interval, piggybacked
+  // on the task_progress reports below.
+  refreshDetectedModel();
+
   try {
     // See probeCLIPresence(): this asks the PANE what it is running, rather than
     // grepping the whole process table for the backend's name — a scan the
@@ -1633,7 +2044,7 @@ function progressTick() {
     // IS the completion signal (see cliExitIsNormal above).
     if (presence.isShell && !cliExitIsNormal) {
       console.warn(`Pane is at a shell prompt, not ${BACKEND} — awaiting confirmation before judging the task`);
-      send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: captureTmuxLines(TMUX_TAIL_LINES) });
+      send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: captureTmuxLines(TMUX_TAIL_LINES), ...progressModelFields() });
       return;
     }
   } catch (_) {}
@@ -1699,18 +2110,46 @@ function progressTick() {
       attention: true,
       summary: 'Agent is waiting for human input in the tmux pane',
       tmux_output: tmuxLines,
+      ...progressModelFields(),
     });
   } else {
     // Stall backstop: a pane frozen this long is not evidence of work, and
     // continuing to report "working" would renew the hub's lease forever.
-    if (paneStalled(tmuxLines)) {
+    // Confirmed over PANE_STALL_CONFIRM_TICKS ticks rather than acted on
+    // immediately — see the comment above PANE_STALL_CONFIRM_TICKS for why a
+    // single instant cannot distinguish "stuck" from "about to finish".
+    if (paneStallConfirmed(tmuxLines)) {
+      // The CLI may still be mid-turn on the task we are about to give up on
+      // (observed live: a slow `gh pr create` returned, with a real PR link,
+      // seconds after the stall verdict). Relaunch it so the NEXT task starts
+      // on a demonstrably fresh CLI, rather than risking its prompt landing on
+      // top of whatever the abandoned turn still produces.
+      //
+      // quitLiveCLI() FIRST, and that ordering is load-bearing. Reaching this
+      // line proves the CLI is alive: the `presence.isShell` guard earlier in
+      // this function returns before the completion check whenever the pane has
+      // fallen back to a shell, so a confirmed stall is by construction a pane
+      // whose foreground program is still the agent CLI. relaunchCLI() on its
+      // own only clears a wedged SHELL (recoverWedgedShell's single C-c); against
+      // a live CLI that cancels the turn without exiting, and the launch command
+      // is then typed into the CLI as a chat prompt — #2203 again, and worse here
+      // because the "prompt" is a shell command an agent may simply run.
+      quitLiveCLI();
+      try {
+        console.log(`Relaunching ${BACKEND} after a confirmed pane stall: ${relaunchCLI()}`);
+      } catch (e) {
+        console.error('Failed to relaunch after a confirmed pane stall:', e.message);
+      }
       failCurrentTask(
-        `no pane activity for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)} minutes — the agent CLI is not visibly working`,
+        `no pane activity for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)}+ minutes, confirmed over ${PANE_STALL_CONFIRM_TICKS} checks — the agent CLI is not visibly working`,
         { kind: 'environment' }
       );
       return;
     }
-    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines });
+    if (stallConfirmCount > 0) {
+      console.warn(`Pane unchanged for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)}+ minutes — confirming before giving up on ${currentTask.task_id} (${stallConfirmCount}/${PANE_STALL_CONFIRM_TICKS})`);
+    }
+    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines, ...progressModelFields() });
   }
 }
 
@@ -1731,8 +2170,11 @@ function handleMessage(data, hub) {
         seq: nextSeq(),
         registration_token: hub.regToken,
         cli_backend: BACKEND,
-        model: MODEL,
-        reasoning_effort: REASONING_EFFORT || undefined,
+        // #4117: AGENT_MODEL if set, else the model detected from the CLI's
+        // own session transcript, else '' (today's degrade for backends with
+        // no known transcript format).
+        model: refreshDetectedModel(),
+        reasoning_effort: effectiveReasoningEffort() || undefined,
         role: AGENT_ROLE,
         // #2547 declare half + #2567: additive, optional self-report of runtime
         // posture and protocol version. An older hub ignores these unknown fields.
@@ -2029,10 +2471,14 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     paneStalled,
+    paneStallConfirmed,
     resetPaneStallClock,
+    PANE_STALL_CONFIRM_TICKS,
+    getStallConfirmCount: () => stallConfirmCount,
     launchCommandWithCwd,
     cliProcessLooksGone,
     paneForegroundCommand,
+    quitLiveCLI,
     CLI_GONE_CONFIRMATIONS,
     PANE_STALL_TIMEOUT_MS,
     // Backdate the stall clock so a test can cross the timeout without
@@ -2044,6 +2490,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     cleanup,
     restartBackoffMs,
     NO_MODEL_FLAG_BACKENDS,
+    effectiveReasoningEffort,
+    // Model auto-detection from the CLI session transcript (#4117).
+    detectRunningModel,
+    refreshDetectedModel,
+    effectiveModel,
+    progressModelFields,
+    __setDetectedModel: (v) => { detectedModel = v; },
     MAX_TASK_CLI_RESTARTS,
     setCliReady: (v) => { cliReady = v; },
     getCliReady: () => cliReady,
@@ -2081,6 +2534,28 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     buildHeadlessArgv,
     runHeadlessTask,
     getHeadlessChild: () => headlessChild,
+    // Coverage for previously untested pure/isolated functions (#4267).
+    redactTokens,
+    detectNoWorkVerdict,
+    detectPRURL,
+    resolveBackend,
+    shellQuote,
+    looksLikeModelName,
+    taskKey,
+    tailLinesReversed,
+    readFileTail,
+    newestByMtime,
+    nextSeq,
+    modelFlagFor,
+    sleepMs,
+    isGivenUp,
+    recentPaneLines,
+    sendTo,
+    tmuxSendEnters,
+    GIVE_UP_MEMORY_MS,
+    // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
+    // expiry pruning can be exercised without waiting an hour.
+    __setGivenUp: (key, at) => { givenUpTasks.set(key, at); },
   };
 } else {
   // Warm the capability cache BEFORE the first hub connection. detectCapabilities()
