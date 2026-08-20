@@ -57,6 +57,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `hive-deploy.sh` | Deploy | Pulls the latest Hive repository and syncs scripts to `/usr/local/bin`; also restarts Discord bot components when their files change. |
 | `hive-standalone-runtime.sh` | Deploy | Selects the standalone container engine from `HIVE_DEPLOY_RUNTIME` (`docker` by default) and runs commands against it without ever falling back to the other engine. |
 | `hive-podman-cleanup.sh` | Deploy | Defines the Hive ownership labels for Podman containers, pods, networks, volumes, and images, and guards cleanup so it can never widen into a store-wide Podman/Buildah operation. See [`src/docs/podman-ownership-cleanup.md`](../src/docs/podman-ownership-cleanup.md). |
+| `hive-podman-preflight.sh` | Bootstrap | Read-only Podman diagnostics before a lifecycle runs: engine/version, the connection it is actually talking to, rootless vs rootful, and cgroup version. Runs only when `HIVE_DEPLOY_RUNTIME` selects podman; `hive-prereq-check.sh` invokes it. |
 | `federation-heartbeat.sh` | Federation | Sends live contributor and actionable-work stats to the Hive federation registry. |
 | `notify.sh` | Notifications | Shared Bash notification library for ntfy, Slack incoming webhooks, and Discord webhooks. |
 
@@ -88,3 +89,4 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
 | `test_hive_standalone_runtime.sh` | `hive-standalone-runtime.sh` engine selection: Docker default, explicit Podman, and no silent fallback. |
 | `test_hive_podman_cleanup.sh` | `hive-podman-cleanup.sh` ownership labels and cleanup guard. Analyses arguments only: it contacts no container engine and deletes nothing. |
+| `test_hive_podman_preflight.sh` | `hive-podman-preflight.sh` engine, connection, root-mode, and cgroup checks. Drives a stub engine, so the whole matrix runs on a host with no Podman installed. |

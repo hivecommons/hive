@@ -115,6 +115,16 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_standalone_runtime.sh
 
+      # #4207: Podman preflight must diagnose engine/version, the connection it
+      # is actually talking to, root mode, and cgroup version BEFORE Hive
+      # invokes a lifecycle implementation — and must run only when Podman is
+      # explicitly selected, so Docker's default path is untouched. The stub
+      # engine lets the whole matrix (old versions, rootful, cgroup v1, remote,
+      # missing binary) run on a host with no Podman installed.
+      - name: Podman preflight contract (#4207)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight.sh
+
       # #4210: rootless Podman/Buildah share one store with the operator's
       # unrelated containers, Distroboxes, and builds, so Hive cleanup must
       # select only Hive-labelled resources and the broad store-wide prune,

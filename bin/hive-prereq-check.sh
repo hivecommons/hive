@@ -227,6 +227,31 @@ else
     && pass "SSH root login: enabled"
 fi
 
+# ── Podman (only when explicitly selected) ─────────────────────────
+# Docker is the default and every Docker check above is untouched. When
+# HIVE_DEPLOY_RUNTIME selects podman, add engine/connection/root-mode/cgroup
+# diagnostics (#4207). hive-podman-preflight.sh self-gates on the same runtime
+# selector, so with Docker selected it prints one skip line and runs no Podman
+# command at all.
+PODMAN_PREFLIGHT="$(dirname "$0")/hive-podman-preflight.sh"
+if [[ -x "$PODMAN_PREFLIGHT" ]]; then
+  echo ""
+  # It exits 78 when a check fails; that is a result to fold in, not a reason
+  # to abort this script under `set -e`.
+  PREFLIGHT_OUT="$("$PODMAN_PREFLIGHT" 2>&1)" || true
+  grep -v '^SUMMARY:' <<<"$PREFLIGHT_OUT" || true
+
+  PREFLIGHT_SUMMARY="$(grep '^SUMMARY:' <<<"$PREFLIGHT_OUT" || true)"
+  if [[ -n "$PREFLIGHT_SUMMARY" ]]; then
+    P_PASS="${PREFLIGHT_SUMMARY#*pass=}"; P_PASS="${P_PASS%% *}"
+    P_WARN="${PREFLIGHT_SUMMARY#*warn=}"; P_WARN="${P_WARN%% *}"
+    P_FAIL="${PREFLIGHT_SUMMARY#*fail=}"; P_FAIL="${P_FAIL%% *}"
+    PASS=$((PASS + P_PASS))
+    WARN=$((WARN + P_WARN))
+    FAIL=$((FAIL + P_FAIL))
+  fi
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
