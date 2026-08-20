@@ -1638,8 +1638,10 @@ const (
 // gateway, which entitlement-filters /v1/models per API key and hides
 // key-gated models from anonymous callers.
 type InferenceAuthConfig struct {
-	APIKeyEnv  string `yaml:"api_key_env"`  // env var NAME holding the key; never the key value
-	APIKeyFile string `yaml:"api_key_file"` // path to a file holding the key
+	APIKeyHeader string `yaml:"api_key_header,omitempty" json:"api_key_header,omitempty"` // header NAME the key is sent in (default "Authorization")
+	APIKeyEnv    string `yaml:"api_key_env" json:"api_key_env"`                           // env var NAME holding the key; never the key value
+	APIKeyFile   string `yaml:"api_key_file" json:"api_key_file"`                         // path to a file holding the key
+	Endpoint     string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`             // optional endpoint override for this backend
 }
 
 // ResolveAPIKey returns the backend's discovery API key using the
