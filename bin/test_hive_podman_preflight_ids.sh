@@ -197,7 +197,7 @@ assert_eq 78 "$PREFLIGHT_RC" "NFS graphroot fails"
 assert_contains "$PREFLIGHT_OUT" "✗ Graphroot:" "NFS graphroot reported as a failure"
 assert_contains "$PREFLIGHT_OUT" "is on nfs, which container storage does not support" "NFS named explicitly"
 assert_contains "$PREFLIGHT_OUT" "storage.conf" "NFS remediation names the config to change"
-assert_contains "$PREFLIGHT_OUT" "podman system reset" "NFS remediation names the follow-up"
+assert_contains "$PREFLIGHT_OUT" "podman-system-reset(1)" "NFS remediation names the follow-up"
 
 # The other distributed filesystems are rejected the same way.
 for fs in nfs4 cifs fuse.sshfs 9p ceph glusterfs; do

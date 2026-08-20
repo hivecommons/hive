@@ -93,8 +93,8 @@ Remediation for an unsupported filesystem:
 graphroot = "/var/lib/my-local-disk/containers/storage"
 ```
 
-then `podman system reset`, which destroys existing local containers and
-images.
+then reset the container store — see `podman-system-reset(1)` — which destroys
+existing local containers and images.
 
 ### 3. Rootless networking
 

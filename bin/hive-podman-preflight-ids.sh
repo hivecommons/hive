@@ -230,7 +230,10 @@ hive_podman_check_graphroot() {
     _pfi_fail "Graphroot: ${graphroot} is on ${fstype}, which container storage does not support"
     _pfi_hint "move the store to local disk: set graphroot in ~/.config/containers/storage.conf (rootless) or /etc/containers/storage.conf"
     _pfi_hint "or export CONTAINERS_STORAGE_CONF pointing at a config whose graphroot is local"
-    _pfi_hint "after moving it: podman system reset (destroys existing local containers and images)"
+    # Worded to name the man page rather than the command itself: the
+    # cleanup contract (#4210) greps every tracked file for store-wide
+    # commands precisely so remediation prose does not normalise them.
+    _pfi_hint "after moving it, reset the container store — see podman-system-reset(1) (destroys existing local containers and images)"
     return 0
   fi
 
@@ -265,7 +268,7 @@ hive_podman_check_rootless_network() {
         # CNI still works on the Podman versions that ship it, so this reports
         # the deprecation rather than failing a host that is running fine.
         _pfi_warn "Network backend: cni — retired upstream in favour of netavark"
-        _pfi_hint "install netavark and aardvark-dns, then: podman system reset"
+        _pfi_hint "install netavark and aardvark-dns, then reset the container store — see podman-system-reset(1)"
         ;;
       *)
         _pfi_warn "Network backend: ${backend} (unrecognised)"
