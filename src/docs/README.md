@@ -68,6 +68,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [CNCF reference architecture](https://github.com/kubestellar/hive/blob/v4/src/docs/cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Knowledge system design](https://github.com/kubestellar/hive/blob/v4/src/docs/design/knowledge-system.md) — llm-wiki layers, subscriptions, and APIs.
 - [Trajectory review](https://github.com/kubestellar/hive/blob/v4/src/docs/trajectory-review.md) — trajectory safety lane and review signals.
+- [Podman Quadlet `.container`/`.pod` spike](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-quadlet-container-pod-spike.md) — feasibility result for explicit Quadlet units: readiness via `Notify=healthy`, the startup-timeout trap, and what the generator does not validate.
 
 ## Historical/design notes
 
