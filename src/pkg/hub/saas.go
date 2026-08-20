@@ -8614,6 +8614,13 @@ type dibsRepoEntry struct {
 	HiveID      string `json:"hiveID"`
 	Owner       string `json:"owner"`
 	Description string `json:"description,omitempty"`
+	// ContributeURL is the hive's public /contribute page (ClankeR, the
+	// contributor relay), built from the claimed vanity URL when present or
+	// the heartbeat-reported dashboard URL otherwise (#4238). Empty when the
+	// hive has reported no public base — dibs falls back to the hub's public
+	// hive directory. Public info: the hub's own public-hives table renders
+	// this same link to anonymous visitors.
+	ContributeURL string `json:"contributeURL,omitempty"`
 }
 
 // handleDibsRepos lists the PUBLIC hive-managed repos for dibs's idea-matching
@@ -8656,6 +8663,16 @@ type dibsRepoEntry struct {
 func (s *HubServer) handleDibsRepos(w http.ResponseWriter, r *http.Request) {
 	entries := []dibsRepoEntry{}
 	seen := map[string]bool{}
+	// Heartbeat-reported dashboard bases, snapshotted once so the hive loop
+	// never holds the registry lock while doing per-repo work.
+	dashByID := map[string]string{}
+	s.mu.RLock()
+	for i := range s.registry.Hives {
+		if u := s.registry.Hives[i].DashboardURL; u != "" {
+			dashByID[s.registry.Hives[i].ID] = u
+		}
+	}
+	s.mu.RUnlock()
 	for _, sh := range listSaaSHives() {
 		// GitHub family only — the pkg/forge adapters (gitlab/gitea) never
 		// point at github.com repos.
@@ -8690,6 +8707,18 @@ func (s *HubServer) handleDibsRepos(w http.ResponseWriter, r *http.Request) {
 		if provider, subject, ok := parseCanonical(canonicalizeLegacy(owner)); ok && provider == legacyProvider {
 			owner = subject
 		}
+		// The hive's public contribute page: claimed vanity URL first (the
+		// validated, user-facing host), else the heartbeat-reported dashboard
+		// URL. Private/unset bases yield no link — same guard the hub's own
+		// contribute proxy applies (findContributeHive).
+		contributeURL := ""
+		base := claimedVanityURL(&sh)
+		if base == "" {
+			base = dashByID[sh.ID]
+		}
+		if base != "" && !isPrivateURL(r.Context(), base) {
+			contributeURL = strings.TrimRight(base, "/") + "/contribute"
+		}
 		for _, repo := range append([]string{sh.PrimaryRepo}, sh.Repos...) {
 			if repo == "" {
 				continue
@@ -8713,10 +8742,11 @@ func (s *HubServer) handleDibsRepos(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			entries = append(entries, dibsRepoEntry{
-				RepoID:      repoID,
-				HiveID:      sh.ID,
-				Owner:       owner,
-				Description: sh.ProjectName,
+				RepoID:        repoID,
+				HiveID:        sh.ID,
+				Owner:         owner,
+				Description:   sh.ProjectName,
+				ContributeURL: contributeURL,
 			})
 		}
 	}

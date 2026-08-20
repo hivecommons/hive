@@ -246,3 +246,63 @@ func TestDibsReposTTLExpiryAndTransientFallback(t *testing.T) {
 	advance(dibsPublicCheckErrTTL + time.Minute)
 	waitForFeed(t, s, []string{})
 }
+
+// TestDibsReposContributeURL pins the contributeURL field (#4238): built from
+// the claimed vanity URL when present, else the heartbeat-reported dashboard
+// URL; suffixed /contribute; omitted when the base is missing or private
+// (fail-closed, same guard as findContributeHive).
+func TestDibsReposContributeURL(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHandlerHub()
+	gh := newFakeGitHubAPI(t, nil)
+	s.dibsPublic = newTestDibsChecker(gh.srv.URL)
+	stubPrivateURLResolver(t, "vanity.example.com", "dash.example.com")
+
+	// Vanity URL wins over the reported dashboard URL.
+	mkDibsHive(t, SaaSHive{
+		ID: "hosted-vanity", Owner: "octocat", Org: "acme",
+		PrimaryRepo: "vanity-repo", GitHubHost: "github.com", IsPublic: true,
+		VanityURL: "https://vanity.example.com/", Status: "active",
+	})
+	// No vanity: the registry's heartbeat-reported dashboard URL is used.
+	mkDibsHive(t, SaaSHive{
+		ID: "hosted-dash", Owner: "octocat", Org: "acme",
+		PrimaryRepo: "dash-repo", GitHubHost: "github.com", IsPublic: true,
+	})
+	// Private dashboard URL: fail closed, no link.
+	mkDibsHive(t, SaaSHive{
+		ID: "hosted-priv", Owner: "octocat", Org: "acme",
+		PrimaryRepo: "priv-repo", GitHubHost: "github.com", IsPublic: true,
+	})
+	// No base at all: no link.
+	mkDibsHive(t, SaaSHive{
+		ID: "hosted-none", Owner: "octocat", Org: "acme",
+		PrimaryRepo: "none-repo", GitHubHost: "github.com", IsPublic: true,
+	})
+	s.registry.Hives = append(s.registry.Hives,
+		RegistryEntry{ID: "hosted-dash", DashboardURL: "https://dash.example.com"},
+		RegistryEntry{ID: "hosted-priv", DashboardURL: "http://127.0.0.1:8080"},
+	)
+
+	got := dibsFeed(t, s)
+	want := map[string]string{
+		"acme/vanity-repo": "https://vanity.example.com/contribute",
+		"acme/dash-repo":   "https://dash.example.com/contribute",
+		"acme/priv-repo":   "",
+		"acme/none-repo":   "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("feed returned %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for _, e := range got {
+		w, ok := want[e.RepoID]
+		if !ok {
+			t.Errorf("unexpected entry %q", e.RepoID)
+			continue
+		}
+		if e.ContributeURL != w {
+			t.Errorf("%s contributeURL = %q, want %q", e.RepoID, e.ContributeURL, w)
+		}
+	}
+}
