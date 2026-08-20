@@ -90,6 +90,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
 | `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.sh` as JavaScript with stubs. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
+| `test_bin_suites_wired.sh` | Fails when a test suite in this directory is not run by any workflow, Justfile target, or hook (#4363). |
 | `test_hive_standalone_runtime.sh` | `hive-standalone-runtime.sh` engine selection: Docker default, explicit Podman, and no silent fallback. |
 | `test_hive_podman_cleanup.sh` | `hive-podman-cleanup.sh` ownership labels and cleanup guard. Analyses arguments only: it contacts no container engine and deletes nothing. |
 | `test_hive_podman_teardown.sh` | `hive-podman-teardown.sh` against a fake Podman whose store holds Hive's resources next to a Distrobox, an unrelated development container, and somebody's Postgres volume. Asserts the unowned resources survive every teardown, replays every command the teardown issued through the #4210 guard, and checks that a hostile resource name aborts the run instead of widening it. |

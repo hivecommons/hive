@@ -187,6 +187,36 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_preflight_host.sh
 
+      # #4208's suite, wired here because its two siblings above already were
+      # and it was left out (#4363). Subordinate UID/GID delegation is the
+      # rootless prerequisite operators get wrong most often, and the suite
+      # asserts the remediation never edits /etc/subuid or /etc/subgid itself.
+      - name: Podman subordinate-ID, graphroot, and network preflight (#4208)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight_ids.sh
+
+      # The gh wrapper's AUTHOR GATE, distinct from the mode/allowlist/merge
+      # gates covered above. 33 executable cases from #3072 and #3096: a
+      # spoofed HIVE_AGENT, identity-lookup failure, the marker trust boundary,
+      # and a cached-env spoof. This is a security boundary that was running
+      # only when someone remembered to run it (#4363) — a regression in it
+      # would have landed green.
+      - name: gh-wrapper author-gate tests (#3072, #3096)
+        working-directory: .
+        run: bash bin/gh-wrapper.test.sh
+
+      - name: hive-open-issue helper tests
+        working-directory: .
+        run: bash bin/test_hive_open_issue.sh
+
+      # The guard that keeps the three steps above from being the last time
+      # anyone notices: it fails when a bin/ suite exists and nothing runs it.
+      # Each omission it catches is individually invisible, because nothing
+      # fails when a test file is simply never named.
+      - name: Every bin/ test suite is wired into something (#4363)
+        working-directory: .
+        run: bash bin/test_bin_suites_wired.sh
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
