@@ -143,6 +143,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
 	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
+	s.mux.HandleFunc("GET /api/config/agent-sandbox", s.handleAgentSandboxGet)
+	s.mux.HandleFunc("PUT /api/config/agent-sandbox", s.handleAgentSandboxPut)
 	// Backup encryption key: presence-only status, set, and clear. The key
 	// value is never returned by any of these (#4129).
 	s.mux.HandleFunc("GET /api/config/governor/backup", s.handleBackupKeyStatus)

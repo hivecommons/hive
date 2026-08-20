@@ -19123,6 +19123,13 @@ function burnAreaChart() {
         </div>
         <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Per-agent opt-in lives on each agent's General tab. Current effective posture: ${Number(sec.sandboxedAgents || 0)}/${Number(sec.totalAgents || 0)} agents sandboxed.</p>`;
 
+      /* Agent Sandbox: painted asynchronously from the dedicated
+         /api/config/agent-sandbox endpoint so this tab stays in sync with the
+         top-level agent_sandbox config, not just the enabled bit. */
+      loadAgentSandboxConfig();
+      const agentSandbox = `
+        <div id="gov-agent-sandbox-host"><div style="color:var(--muted);font-size:0.8rem">Loading…</div></div>`;
+
       /* Backup encryption key: painted asynchronously from presence-only
          status so the key value never travels to the browser. */
       loadBackupKeyStatus();
@@ -19138,7 +19145,111 @@ function burnAreaChart() {
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
         ${renderSecuritySection('Isolation', isolation)}
+        ${renderSecuritySection('Agent Sandbox', agentSandbox)}
         ${renderSecuritySection('Backup', backupKey)}`;
+    }
+
+    /* loadAgentSandboxConfig fetches the top-level agent_sandbox config and
+       paints the Agent Sandbox panel. Same async-after-render pattern as
+       loadBackupKeyStatus: the DOM target is resolved AFTER the await. */
+    async function loadAgentSandboxConfig() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/agent-sandbox');
+        host = document.getElementById('gov-agent-sandbox-host');
+        if (!host) return;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderAgentSandboxPanel(host, d);
+      } catch (e) {
+        host = host || document.getElementById('gov-agent-sandbox-host');
+        if (host) host.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Failed to load agent sandbox config: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    /* renderAgentSandboxPanel paints the credential-free sandbox controls.
+       Saves go straight to PUT /api/config/agent-sandbox (overlay-persisted),
+       independent of the tab-level markDirty/save flow, and the panel is
+       repainted from the server's response so it always shows persisted
+       state. */
+    function renderAgentSandboxPanel(host, d) {
+      if (!host) return;
+      d = d || {};
+      const enabled = d.enabled === true;
+      const netMode = d.network_mode || 'none';
+      const netOpt = (v, label) => '<option value="' + v + '"' + (netMode === v ? ' selected' : '') + '>' + label + '</option>';
+      const warning = enabled
+        ? '<div style="border:1px solid var(--yellow,#f1c21b);border-radius:6px;padding:8px 10px;margin:0 0 10px;font-size:0.76rem;background:rgba(241,194,27,0.08)">\u26a0\ufe0f Sandbox mode changes how agents run. Test in a non-production hive first.</div>'
+        : '';
+      host.innerHTML = `
+        ${warning}
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${enabled ? 'on' : ''}" id="agent-sandbox-enabled-toggle"></div>
+          <span class="config-toggle-label">Enable credential-free agent sandbox <span class="config-info">i<span class="config-tooltip">Runs agent kicks inside a rootless container with no ambient credentials; only allowlisted environment variables are passed through.</span></span></span>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Container image</label><input type="text" id="agent-sandbox-image" value="${esc(d.image || '')}" placeholder="ghcr.io/kubestellar/hive-sandbox:latest"></div>
+          <div class="config-field"><label>Network mode</label>
+            <select id="agent-sandbox-network">${netOpt('none', 'none — no network (default)')}${netOpt('bridge', 'bridge — NATed network')}${netOpt('host', 'host — share host network')}</select>
+          </div>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Timeout (seconds)</label><input type="number" min="0" id="agent-sandbox-timeout" value="${Number(d.timeout_s) || ''}" placeholder="300"></div>
+          <div class="config-field"><label>Workspace directory</label><input type="text" id="agent-sandbox-workspace" value="${esc(d.workspace_dir || '')}" placeholder="leave empty for default"></div>
+        </div>
+        <div class="config-field"><label>Allowed environment variables <span style="font-weight:400;color:var(--muted)">(comma-separated names)</span></label><input type="text" id="agent-sandbox-env" value="${esc((d.env_allowlist || []).join(', '))}" placeholder="e.g. HOME, PATH, LANG"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <button id="agent-sandbox-save" style="padding:5px 16px;border:none;border-radius:6px;background:#0f62fe;color:#fff;cursor:pointer;font-size:0.76rem;font-weight:600">Save sandbox settings</button>
+          <span id="agent-sandbox-status" style="font-size:0.74rem;color:var(--muted)"></span>
+        </div>`;
+
+      let pendingEnabled = enabled;
+      const toggle = host.querySelector('#agent-sandbox-enabled-toggle');
+      if (toggle) toggle.addEventListener('click', () => {
+        pendingEnabled = !pendingEnabled;
+        toggle.classList.toggle('on', pendingEnabled);
+      });
+
+      const statusEl = host.querySelector('#agent-sandbox-status');
+      const setStatus = (msg, color) => {
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+      };
+      const saveBtn = host.querySelector('#agent-sandbox-save');
+      if (saveBtn) saveBtn.addEventListener('click', async () => {
+        const timeoutRaw = (host.querySelector('#agent-sandbox-timeout').value || '').trim();
+        const timeoutS = timeoutRaw === '' ? 0 : Number(timeoutRaw);
+        if (!Number.isFinite(timeoutS) || timeoutS < 0) {
+          setStatus('Timeout must be 0 or a positive number of seconds.', 'var(--red)');
+          return;
+        }
+        const body = {
+          enabled: pendingEnabled,
+          image: (host.querySelector('#agent-sandbox-image').value || '').trim(),
+          network_mode: host.querySelector('#agent-sandbox-network').value,
+          timeout_s: Math.floor(timeoutS),
+          workspace_dir: (host.querySelector('#agent-sandbox-workspace').value || '').trim(),
+          env_allowlist: parseSecurityList(host.querySelector('#agent-sandbox-env').value)
+        };
+        setStatus('Saving…');
+        try {
+          const r = await fetch('/api/config/agent-sandbox', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (!r.ok) {
+            let msg = 'HTTP ' + r.status;
+            try { msg = (await r.json()).error || msg; } catch (_) {}
+            throw new Error(msg);
+          }
+          const saved = await r.json();
+          renderAgentSandboxPanel(host, saved);
+          const st = host.querySelector('#agent-sandbox-status');
+          if (st) { st.textContent = 'Saved.'; st.style.color = 'var(--green)'; }
+        } catch (e) {
+          setStatus('Save failed: ' + e.message, 'var(--red)');
+        }
+      });
     }
 
     /* loadBackupKeyStatus fetches presence-only backup-key status and paints
