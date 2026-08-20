@@ -2801,12 +2801,17 @@ func (m *Manager) logOutputSignals(agent, line string) {
 }
 
 // Blocked-action thrash breaker: an agent that keeps hammering a policy wall
-// (e.g. git push in ADVISORY mode, blocked every ~3s by git-credential-hive)
-// burns model tokens indefinitely with zero possible output — observed live
-// 2026-08-04 on a hosted L2 hive whose guide agent retried a blocked push
-// every 3 seconds. The hub, not the model, breaks the loop: thrashThreshold
-// blocked-action lines within thrashWindow pauses the session (visible,
-// reversible, stops governor kicks) with the reason spelled out.
+// (e.g. a push with no per-agent token, blocked every ~3s by
+// git-credential-hive, or a proxy hard-deny) burns model tokens indefinitely
+// with zero possible output — observed live 2026-08-04 on a hosted L2 hive
+// whose guide agent retried a blocked push every 3 seconds. (Since #4289,
+// ADVISORY-mode pushes are no longer blocked by the credential helper — the
+// read-only token is served and GitHub rejects the push with 403 — but the
+// helper still emits "git push blocked:" for unknown-UID and missing-token
+// failures, which this breaker continues to catch.) The hub, not the model,
+// breaks the loop: thrashThreshold blocked-action lines within thrashWindow
+// pauses the session (visible, reversible, stops governor kicks) with the
+// reason spelled out.
 const (
 	thrashWindow    = 60 * time.Second
 	thrashThreshold = 5

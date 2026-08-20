@@ -286,9 +286,15 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	var perms *gh.InstallationPermissions
 	switch tier {
 	case "newcomer":
-		// Newcomers can comment on issues but not access code
+		// Newcomers (ISSUES_ONLY agents) can comment on and file issues, and
+		// READ code — filing a meaningful issue requires reading the repo it
+		// is about (#4289). Write remains impossible: contents:write is
+		// absent, so any push authenticates but is rejected server-side by
+		// GitHub with 403.
 		perms = &gh.InstallationPermissions{
-			Issues: gh.Ptr("write"),
+			Issues:   gh.Ptr("write"),
+			Contents: gh.Ptr("read"),
+			Metadata: gh.Ptr("read"),
 		}
 	case "contributor":
 		perms = &gh.InstallationPermissions{
@@ -306,9 +312,14 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Metadata:     gh.Ptr("read"),
 		}
 	case "advisor":
-		// Advisors review agent PRs — they only need to read, not write.
-		// Don't request issues permission at all to prevent creation.
+		// Advisors review agent PRs and audit repo contents — their core
+		// function is READING the repo, so Contents:read is required (#4289:
+		// without it every contents/tarball API call and git fetch 403s no
+		// matter what the installation grants). They must not write:
+		// contents:write is absent, so pushes are rejected server-side by
+		// GitHub. Don't request issues permission at all to prevent creation.
 		perms = &gh.InstallationPermissions{
+			Contents:     gh.Ptr("read"),
 			Metadata:     gh.Ptr("read"),
 			PullRequests: gh.Ptr("read"),
 		}

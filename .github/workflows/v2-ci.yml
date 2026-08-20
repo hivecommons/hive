@@ -104,6 +104,16 @@ jobs:
         working-directory: .
         run: bash bin/test_gh_wrapper_gates.sh
 
+      # #4289: git-credential-hive.sh is the fetch/clone AND push credential
+      # source for every agent. Its mode block used to exit 1 in ADVISORY/
+      # ISSUES_ONLY/NO_GITHUB modes, cutting off every git READ for advisory
+      # agents. This EXECUTES the helper and asserts `get` returns the scoped
+      # (contents:read-only) credential in those modes while the H3 refusals
+      # (no per-agent token, non-https) stay fail-closed.
+      - name: git-credential-hive helper tests (#4289)
+        working-directory: .
+        run: bash bin/test_git_credential_hive.sh
+
       # N14 (#3842): kick-agents.sh (the native/systemd-install path — no Go
       # AgentManager, no per-agent scoped token) used to instruct every kicked
       # agent to `cat` the shared, fleet-wide, full-privilege App token cache
