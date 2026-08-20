@@ -20,7 +20,9 @@ import (
 // earlier one partially, the daily spend chart pinned to the $100 clip every
 // day — and the hive noticed nothing. No advisory, no banner, no pause. It kept
 // launching scheduled runs against a gateway rejecting 100% of requests until
-// midnight reset the window, then did it again the next day.
+// the spend window rolled over, then did it again the next day. (That window,
+// it turned out, reset at the key's creation time of day — NOT at midnight.
+// Nothing here may assume any particular reset schedule; see below.)
 //
 // WHY THIS IS NOT THE RATE-LIMIT PATH. A transient 429 means "too fast, retry
 // shortly" and the existing 3-minute retry suppression is the right answer. A
@@ -36,9 +38,15 @@ import (
 // to withhold agent kicks, and agent kicks are what produce inference calls.
 // On a hive whose only kick source is the governor's cadence (the topology in
 // the field report), suppressing every kick therefore suppresses the very
-// traffic that would observe the provider's window resetting at midnight: the
+// traffic that would observe the provider's window resetting: the
 // signal would stay latched forever, and an alert promising recovery "when the
 // provider window resets" would describe something the mechanism cannot do.
+//
+// The probe is also deliberately SCHEDULE-AGNOSTIC. Providers do not reset on
+// a knowable clock — the field report's gateway rolled its daily window at the
+// key's creation time of day (8 PM local for that key), not at midnight, and
+// nothing configured it that way (#4294). Predicting the reset is a losing
+// game; retrying cheaply on a fixed cadence needs no prediction at all.
 //
 // So recovery is not left to chance. recordRebuff stamps lastRebuff on EVERY
 // rebuff, and the caller suppresses only while that stamp is fresh. Once it
@@ -158,10 +166,11 @@ func (s *inferenceBudgetState) recordRebuff(errMsg string, now time.Time) {
 	s.rebuffs++
 }
 
-// recordSuccess clears a latched rebuff. This is the self-heal: when the
-// provider's window resets (midnight for a daily dollar cap) the next
-// successful call takes the hive out of the suppressed state without operator
-// action. Cheap and unconditional — it runs on every 2xx.
+// recordSuccess clears a latched rebuff. This is the self-heal: whenever the
+// provider's window resets — on whatever schedule the provider keeps, which
+// hive never needs to know — the next successful call takes the hive out of
+// the suppressed state without operator action. Cheap and unconditional — it
+// runs on every 2xx.
 func (s *inferenceBudgetState) recordSuccess() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

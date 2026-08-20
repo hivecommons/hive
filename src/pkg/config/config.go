@@ -1015,8 +1015,11 @@ type ProviderBudgetConfig struct {
 	// Shorter probes recover faster after a reset but burn a run each time on a
 	// provider that is still clipped; longer probes waste less and notice later.
 	// 30 minutes costs at most ~48 rebuffed runs across a day-long clip — set
-	// against the field report's entire cadence firing all day, and against a
-	// daily window where being half an hour late to notice midnight is cheap.
+	// against the field report's entire cadence firing all day. The probe is
+	// how hive stays agnostic to WHEN the provider resets: reset schedules are
+	// not knowable (the field report's window rolled at the key's creation time
+	// of day, not at midnight — #4294), so hive never predicts one; it just
+	// retries cheaply until the provider serves again.
 	ProbeIntervalS int `yaml:"probe_interval_s,omitempty" json:"probe_interval_s,omitempty"`
 }
 

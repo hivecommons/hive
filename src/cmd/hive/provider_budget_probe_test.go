@@ -13,7 +13,8 @@ import (
 // The trap: the spend latch is cleared ONLY by a successful inference call, and
 // inference calls happen ONLY when an agent is kicked. Suppressing every kick
 // while latched therefore removed the only path back — on a hive whose sole
-// kick source is the governor cadence, the provider's midnight window reset was
+// kick source is the governor cadence, the provider's window reset (on
+// whatever schedule the provider keeps) was
 // unobservable and the hive stayed muted until an operator kicked it by hand or
 // restarted the process, while its alert claimed it would resume by itself.
 //

@@ -5155,8 +5155,8 @@ func runEvalCycle(
 	// PROVIDER SPEND REBUFF (#4294). When the inference gateway is refusing on a
 	// money limit, every kick launched this cycle is a run that cannot buy a
 	// single token — precisely the failure this addresses: a hive that kept
-	// firing its cadence into a gateway rejecting 100% of requests until
-	// midnight, all day, silently.
+	// firing its cadence into a gateway rejecting 100% of requests all day,
+	// silently, until the provider's spend window happened to roll over.
 	//
 	// The alert is raised HERE, before kick assembly, so an operator is told
 	// even on a cycle where nothing happened to be due. The actual suppression

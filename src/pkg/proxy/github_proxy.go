@@ -1613,9 +1613,11 @@ func (p *GitHubProxy) recordInferenceSuccess() {
 	if p.inferenceAuth != nil {
 		p.inferenceAuth.recordSuccess()
 	}
-	// Self-heal for the spend rebuff (#4294): when the provider's window resets
-	// — midnight for a daily dollar cap — the first call that succeeds takes the
-	// hive out of the suppressed state with no operator action.
+	// Self-heal for the spend rebuff (#4294): whenever the provider's window
+	// resets — hive neither knows nor assumes the schedule; the field report's
+	// gateway rolled over at the key's creation time of day, not at midnight
+	// (see #4294) — the first call that succeeds takes the hive out of the
+	// suppressed state with no operator action.
 	if p.inferenceBudget != nil {
 		p.inferenceBudget.recordSuccess()
 	}
