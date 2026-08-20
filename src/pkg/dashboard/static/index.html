@@ -5482,7 +5482,7 @@
       if (!s || !e || !s.value || !e.value) return;
       const start = new Date(s.value).getTime();
       const end = new Date(e.value).getTime();
-      if (!(end > start)) { hiveToast('Custom range: end must be after start', 'error'); return; }
+      if (!(end > start)) { showToast('Custom range: end must be after start', 'error'); return; }
       _costCustom = { start, end };
       try { localStorage.setItem('hiveCostCustom', JSON.stringify(_costCustom)); } catch {}
       if (_lastCost) renderCost(_lastCost);
@@ -6594,7 +6594,7 @@
       var raw = (input && input.value || '').trim();
       var id = parseInt(raw, 10);
       if (!raw || isNaN(id) || id <= 0) {
-        if (typeof hiveToast === 'function') hiveToast('Enter the numeric installation ID (from github.com/settings/installations/<ID>)', 'error');
+        showToast('Enter the numeric installation ID (from github.com/settings/installations/<ID>)', 'error');
         return;
       }
       if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
@@ -6608,22 +6608,22 @@
         });
         var data = await resp.json().catch(function(){ return {}; });
         if (!resp.ok) {
-          if (typeof hiveToast === 'function') hiveToast('Failed: ' + (data.error || resp.status), 'error');
+          showToast('Failed: ' + (data.error || resp.status), 'error');
           return;
         }
         if (data.reinit === 'ok') {
-          if (typeof hiveToast === 'function') hiveToast('Installation ID set and GitHub App connected', 'success');
+          showToast('Installation ID set and GitHub App connected', 'success');
           var banner = document.getElementById('gh-app-install-banner');
           if (banner) { banner.classList.remove('perm-issue'); banner.setAttribute('hidden', ''); banner.style.cssText = 'display:none'; }
         } else if (data.reinit === 'failed') {
-          if (typeof hiveToast === 'function') hiveToast('ID saved, but connect failed: ' + (data.reinit_error || 'check app install/permissions'), 'error');
+          showToast('ID saved, but connect failed: ' + (data.reinit_error || 'check app install/permissions'), 'error');
         } else {
           // Saved but reinit not attempted (e.g. app key missing) — re-check
           // will surface the remaining gap.
-          if (typeof hiveToast === 'function') hiveToast('Installation ID saved. Click Re-check to verify.', 'success');
+          showToast('Installation ID saved. Click Re-check to verify.', 'success');
         }
       } catch(e) {
-        if (typeof hiveToast === 'function') hiveToast('Error: ' + e.message, 'error');
+        showToast('Error: ' + e.message, 'error');
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Save Installation ID'; }
       }
@@ -7096,10 +7096,19 @@
     let budgetIgnored = false;
     // fetch('/api/budget-ignore') — deferred to _deferredInit
 
+    // Re-fetch /api/status and re-render so the budget bar/banners reflect the
+    // new server state without a full page reload. Render errors are swallowed:
+    // callers use this after an action already succeeded, so a refresh hiccup
+    // must never be reported as a failure of that action (the next SSE/poll
+    // cycle repaints anyway).
+    function refreshStatus() {
+      return fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
     function toggleBudgetIgnore() {
       budgetIgnored = !budgetIgnored;
       fetch('/api/budget-ignore', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ ignored: budgetIgnored }) })
-        .then(r => r.json()).then(d => { budgetIgnored = d.ignored; renderAll(); });
+        .then(r => r.json()).then(d => { budgetIgnored = d.ignored; refreshStatus(); });
     }
 
     // Opens a fresh budget window: spend re-anchors at 0, the exhausted gate
@@ -7107,18 +7116,24 @@
     // genuinely spent) budget is suppressing kicks — unlike "ignore budget",
     // which turns enforcement off entirely.
     async function resetBudgetWindow() {
+      // The try/catch covers only the API call: once the server has reset the
+      // window, a post-success UI refresh failure must not be mislabeled as
+      // "Failed to reset budget window" (that exact double-toast shipped once,
+      // when the success path called an undefined render helper).
+      let r;
       try {
-        const r = await fetch('/api/config/governor/budget/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
-          return;
-        }
-        showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
-        renderAll();
+        r = await fetch('/api/config/governor/budget/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
       } catch (e) {
         showToast('Failed to reset budget window: ' + e.message, 'error');
+        return;
       }
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
+        return;
+      }
+      showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
+      refreshStatus(); // repaint budget bar/banners in place; errors swallowed inside
     }
 
     function renderBudgetBar(budget) {
@@ -11488,18 +11503,18 @@ function burnAreaChart() {
       var q = (document.getElementById('audit-search').value || '').trim();
       if (!q) return;
       var saved = loadAuditSearches();
-      if (saved.indexOf(q) !== -1) { hiveToast('Search already saved', 'info'); return; }
+      if (saved.indexOf(q) !== -1) { showToast('Search already saved', 'info'); return; }
       saved.unshift(q);
       var MAX_SAVED_SEARCHES = 20;
       if (saved.length > MAX_SAVED_SEARCHES) saved = saved.slice(0, MAX_SAVED_SEARCHES);
       localStorage.setItem(AUDIT_SEARCHES_KEY, JSON.stringify(saved));
       renderAuditSearchDatalist();
-      hiveToast('Search saved', 'success');
+      showToast('Search saved', 'success');
     }
     function clearAuditSearches() {
       localStorage.removeItem(AUDIT_SEARCHES_KEY);
       renderAuditSearchDatalist();
-      hiveToast('Saved searches cleared', 'info');
+      showToast('Saved searches cleared', 'info');
     }
     renderAuditSearchDatalist();
 
