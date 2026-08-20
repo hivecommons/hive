@@ -6,21 +6,31 @@ name: Podman Rootless Contract
 # live-runner test would add. Does NOT change the runtime auto-detect
 # default (Option A is explicitly deferred pending broader coverage).
 
+# Triggers cover both maintained branches. This workflow used to name `v2`
+# alone; mainline moved to `v4` and it stopped running entirely (#4339) — a
+# guard that never executes reports green forever, which is the one failure
+# mode a guard cannot have. The branch list and the self-referencing path entry
+# below mirror .github/workflows/suid-contract.yml, the sibling static contract
+# check.
 on:
   push:
     branches:
       - v2
+      - v4
     paths:
       - 'Justfile'
       - 'src/scripts/check-podman-contract.sh'
       - 'src/docs/podman-rootless-ci.md'
+      - '.github/workflows/podman-contract.yml'
   pull_request:
     branches:
       - v2
+      - v4
     paths:
       - 'Justfile'
       - 'src/scripts/check-podman-contract.sh'
       - 'src/docs/podman-rootless-ci.md'
+      - '.github/workflows/podman-contract.yml'
   workflow_dispatch:
 
 permissions:
