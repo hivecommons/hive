@@ -160,6 +160,17 @@ SELinux at all.
 
 ### 5. Quadlet generator gate
 
+> **Built (#4338):** `.github/workflows/quadlet-gate.yml` runs
+> `src/deploy/test_quadlet_generator_gate.sh` per PR on `ubuntu-latest`. It
+> takes the generator from the official Podman image pinned by digest rather
+> than from `apt` — Ubuntu 24.04 packages podman 4.9.3, below the 5.0.0 that
+> ADR-0017 derives as its binding constraint — verifies the binary is present
+> before running anything, and dry-runs both rootful and `--user`. It fails on
+> any generator diagnostic rather than on the exit status alone, because the
+> generator warns about a short-name image while still exiting 0. No Quadlet
+> units exist yet, so what it gates today is the generator's presence and
+> dry-run capability; known-bad fixtures keep that from being a vacuous pass.
+
 Small and hosted, but it needs its own issue precisely because of the
 generator-absent finding. The lane must install the generator (the distribution
 `podman` package, or the generator binary alone) and then **verify it is

@@ -1,0 +1,157 @@
+name: Quadlet Generator Gate
+
+# The Quadlet generator syntax gate (#4338), lane 5 of the map in
+# src/docs/podman-ci-runner-map.md (#4211).
+#
+# ADR-0017 chose Quadlet `.container`/`.pod` units as the Podman persistent
+# lifecycle. A unit that fails to generate should fail CI rather than surface
+# at deploy time, so this job runs `quadlet --dryrun` in BOTH modes the ADR
+# installs into — rootful and `--user` — over whatever Quadlet units the
+# repository holds.
+#
+# THE TRAP #4211 NAMES. The generator is a separate binary from `podman`, and
+# the hosted runner has podman WITHOUT it: the runner image carries a
+# hand-installed /usr/local/bin/podman rather than the distribution package, so
+# /usr/libexec/podman/quadlet does not exist. A gate that runs `quadlet` only
+# when it happens to be there reports green while testing nothing. This job
+# therefore installs the generator, verifies it, and has no skip path at all —
+# every failure mode below is a red build.
+#
+# WHY THE GENERATOR COMES FROM A CONTAINER IMAGE. Two other ways to get it were
+# available and neither works:
+#
+#   * `apt-get install podman` on ubuntu-24.04 installs the generator, but at
+#     podman 4.9.3 (measured: `apt-cache policy podman`). ADR-0017's binding
+#     constraint is 5.0.0 — `.pod` units and `Notify=healthy` both first
+#     shipped there — so the packaged generator cannot express the layout this
+#     gate exists to check.
+#   * The runner's own podman 5.8.4 ships no generator to borrow.
+#
+# The official Podman image carries a matched generator (5.8.4, the same
+# version every #4201/#4202/#4203 spike measured), and pinning it by digest
+# makes the version this gate ran against explicit and reproducible instead of
+# something that drifts silently with the runner image. Only the generator
+# BINARY is used — no container is started by the gate, nothing is nested.
+#
+# WHAT THIS GATE IS NOT. `quadlet --dryrun` is a syntax and reference check,
+# not a semantic one. ADR-0017 records three things it exits 0 on:
+# `Notify=healthy` with no `HealthCmd`, `PublishPort=` on a pod member, and a
+# short-name image. The first two need Hive's own assertions and stay out of
+# scope; the third IS caught, because the generator warns about it while still
+# exiting 0 — so the gate fails on any generator diagnostic, not just on a
+# non-zero exit.
+#
+# NO UNITS YET, AND THE JOB SAYS SO. The repository holds no Quadlet units —
+# the deployment asset is a separate slice downstream of ADR-0017, and #4338's
+# boundary is explicitly a syntax gate rather than a unit. Per its stop
+# condition the gate covers the generator's presence and dry-run capability
+# only. That is not a vacuous pass: the script runs known-good AND known-bad
+# units through the same path the real ones will take, so the gate proves it
+# can fail today. When units land anywhere in the tree they are picked up with
+# no change to this workflow.
+#
+# No path filters, on purpose. #4339 is what a guard scoped into silence looks
+# like. No secrets, no pull_request_target, contents: read.
+
+on:
+  push:
+    branches:
+      - v2
+      - v4
+  pull_request:
+    branches:
+      - v2
+      - v4
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quadlet-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quadlet-gate:
+    name: quadlet --dryrun, rootful and --user
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # quay.io/podman/stable, podman 5.8.4. Pinned by index digest so the
+      # generator version is a property of this file rather than of whatever
+      # the tag points at today. To move it: pull the new tag, take
+      # `skopeo inspect --format '{{.Digest}}' docker://quay.io/podman/stable`,
+      # and update the version in this comment to match.
+      PODMAN_IMAGE: quay.io/podman/stable@sha256:312a77be1ff51c7a124da1ffd0456802f11aeb338319b3b8b9d37358f9903fc7
+      QUADLET_PATH: /usr/libexec/podman/quadlet
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the Quadlet generator
+        run: |
+          set -euo pipefail
+          podman pull -q "$PODMAN_IMAGE"
+          echo "pulled $PODMAN_IMAGE"
+
+      # AC: the job fails if the generator is missing rather than passing
+      # vacuously. This is its own step so that "the generator is there" is a
+      # visible, separately-reported fact and not something buried in the gate
+      # script's output.
+      - name: Verify the generator is present
+        id: verify
+        run: |
+          set -uo pipefail
+
+          if ! podman run --rm "$PODMAN_IMAGE" test -x "$QUADLET_PATH"; then
+            echo "::error::${PODMAN_IMAGE} has no executable at ${QUADLET_PATH}. #4211 names this as the trap: podman can be present without its generator, and a gate that skips here would report green while checking nothing."
+            exit 1
+          fi
+
+          version="$(podman run --rm "$PODMAN_IMAGE" "$QUADLET_PATH" -version 2>/dev/null | tr -d '[:space:]')"
+          if [ -z "$version" ]; then
+            echo "::error::the generator at ${QUADLET_PATH} did not report a version"
+            exit 1
+          fi
+
+          printf 'quadlet %s at %s\n' "$version" "$QUADLET_PATH"
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+
+          {
+            printf '### Quadlet generator gate\n\n'
+            printf '| | |\n| --- | --- |\n'
+            printf '| Generator | `quadlet %s` |\n' "$version"
+            printf '| Source | `%s` |\n' "$PODMAN_IMAGE"
+            printf '| Modes | rootful and `--user` |\n'
+            printf '| ADR-0017 floor | requires `5.0.0`, recommends `5.6.0` |\n'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # The gate's exit status is the result and this step does not swallow it:
+      # no continue-on-error, no `|| true`. The repository is mounted read-only
+      # — the gate reads units and writes its fixtures to the container's own
+      # /tmp, so it has no reason to touch the checkout. No SELinux relabeling
+      # flag is needed: #4211 measured hosted runners as having no SELinux at
+      # all (AppArmor instead).
+      - name: Run the gate
+        run: |
+          set -uo pipefail
+
+          set +e
+          podman run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace:ro" \
+            -w /workspace \
+            "$PODMAN_IMAGE" \
+            bash src/deploy/test_quadlet_generator_gate.sh
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "::notice::the Quadlet generator gate passed (quadlet ${{ steps.verify.outputs.version }})"
+            printf '\n✅ Generator present, and `--dryrun` proven able to fail in both modes.\n' >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::the Quadlet generator gate failed (exit ${status}); see the log for which assertion"
+            printf '\n❌ The Quadlet gate failed (exit %s).\n' "$status" >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+          exit "$status"
