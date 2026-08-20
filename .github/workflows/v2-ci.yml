@@ -108,6 +108,13 @@ jobs:
         working-directory: .
         run: bash bin/test_agent_env_scrub.sh
 
+      # #4205: standalone deployment selection is explicit and fail-closed.
+      # Docker remains the default; selecting Podman must never fall back to
+      # Docker because the Podman binary is missing or a command fails.
+      - name: Standalone runtime selection contract (#4205)
+        working-directory: .
+        run: bash bin/test_hive_standalone_runtime.sh
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
