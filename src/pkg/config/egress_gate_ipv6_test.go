@@ -117,6 +117,32 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 			t.Fatal(err)
 		}
 	}
+	// The routability probe prefers `ip` and only falls back to /proc, so the
+	// host's real `ip` would decide the result on any runner that has one —
+	// which is why these tests passed on macOS (no `ip`, no /proc, fail-safe
+	// branch) and failed on the IPv4-only Linux CI runner. Always install an
+	// `ip` shim so the fixture decides on every platform: routable by default
+	// for a stack-present pod, overridden to report nothing by "ip-noipv6".
+	if ipv6Stack {
+		hasIPShim := false
+		for _, n := range shims {
+			if n == "ip-noipv6" {
+				hasIPShim = true
+			}
+		}
+		if !hasIPShim {
+			if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(
+				"#!/bin/sh\n"+
+					"# routable fixture: a global address and a default route\n"+
+					"case \"$*\" in\n"+
+					"  *addr*) echo '    inet6 2001:db8::1/64 scope global';;\n"+
+					"  *route*) echo 'default via fe80::1 dev eth0 metric 1024';;\n"+
+					"esac\n"+
+					"exit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	// python3 (uid-map bookkeeping) and sleep (retry backoff) as no-ops, and a
 	// real basename for the shim itself.
 	for name, script := range map[string]string{
