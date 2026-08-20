@@ -161,3 +161,76 @@ func TestProviderBudgetProbeIntervalDefault(t *testing.T) {
 		t.Errorf("negative probe interval = %v, want the 30m default", got)
 	}
 }
+
+// TestProviderBudgetProbeReArmsOnRelease pins the gap between "the stamp went
+// stale" and "the probe's run produced evidence". An agent run takes minutes to
+// reach its first inference call; at a five-minute eval cadence, a gate that
+// keeps releasing kicks until the probe's rebuff finally lands would leak a
+// kick per cycle — a slice of the very burn this feature exists to stop.
+// Releasing a probe must therefore re-arm suppression immediately, with
+// freshness measured from the release itself.
+func TestProviderBudgetProbeReArmsOnRelease(t *testing.T) {
+	var probe providerBudgetProbeState
+	t.Cleanup(probe.reset)
+	const interval = 30 * time.Minute
+	rebuff := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+
+	// Stale stamp: the gate opens for a probe.
+	probeAt := rebuff.Add(interval + time.Minute)
+	if providerBudgetSuppresses(true, probe.freshest(rebuff), probeAt, interval) {
+		t.Fatal("a stale rebuff must open the gate for a probe")
+	}
+	probe.markReleased(probeAt)
+
+	// The very next cycles: the probe's run is still in flight and has not
+	// rebuffed yet, so lastRebuff is unchanged and stale — but the gate must
+	// hold, because a probe already flew.
+	for i := 1; i <= 5; i++ {
+		now := probeAt.Add(time.Duration(i) * 5 * time.Minute)
+		if !providerBudgetSuppresses(true, probe.freshest(rebuff), now, interval) {
+			t.Fatalf("cycle %d after a released probe leaked more kicks before the probe resolved", i)
+		}
+	}
+
+	// A full interval after the release with no new rebuff (the probe's run
+	// died without ever calling inference, say): the next probe may fly.
+	if providerBudgetSuppresses(true, probe.freshest(rebuff), probeAt.Add(interval), interval) {
+		t.Fatal("an interval after the released probe the gate must open again")
+	}
+
+	// Recovery clears the stamp so a NEW latch starts its clock from its own
+	// rebuffs rather than inheriting last week's probe time.
+	probe.reset()
+	if got := probe.freshest(rebuff); !got.Equal(rebuff) {
+		t.Fatalf("after reset freshest = %v, want the rebuff %v", got, rebuff)
+	}
+}
+
+// TestProviderBudgetNotifyResetReportsRecoveryOnce pins the recovery half of
+// transition-only notification: the operator who was paged when the clip began
+// is paged exactly once when it lifts — not every healthy cycle, and not at all
+// on a hive that was never clipped.
+func TestProviderBudgetNotifyResetReportsRecoveryOnce(t *testing.T) {
+	var st providerBudgetNotifyState
+
+	// Never latched: healthy cycles must not fabricate a recovery.
+	if st.reset() {
+		t.Fatal("a never-notified gate must not report a recovery")
+	}
+
+	latch := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+	if !st.shouldSend(latch) {
+		t.Fatal("a new clip must notify")
+	}
+
+	// The clip lifts: exactly one recovery crossing...
+	if !st.reset() {
+		t.Fatal("the first healthy cycle after a notified clip must report the recovery")
+	}
+	// ...and silence afterwards.
+	for i := 0; i < 200; i++ {
+		if st.reset() {
+			t.Fatalf("healthy cycle %d reported the recovery again", i+2)
+		}
+	}
+}
