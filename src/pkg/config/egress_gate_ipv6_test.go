@@ -59,10 +59,34 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 	// Rewrite absolute paths onto the temp root so the test never touches the
 	// real /proc or /tmp, and so the IPv6-stack presence check is controllable.
 	body = strings.ReplaceAll(body, "/proc/sys/net/ipv6", root+"/proc/sys/net/ipv6")
+	// Routability is probed via these two files when `ip` is absent. Rewrite
+	// them onto the temp root as well, so the probe is decided by the fixture
+	// rather than by the host: without this the same test passes on a machine
+	// with no /proc (macOS, where the fail-safe branch runs) and fails on an
+	// IPv4-only Linux CI runner, which is exactly the drift that let the
+	// unroutable-IPv6 case reach production.
+	body = strings.ReplaceAll(body, "/proc/net/if_inet6", root+"/proc/net/if_inet6")
+	body = strings.ReplaceAll(body, "/proc/net/ipv6_route", root+"/proc/net/ipv6_route")
 	body = strings.ReplaceAll(body, "/tmp/hive-ipt-err.log", root+"/hive-ipt-err.log")
 	body = strings.ReplaceAll(body, "/tmp/hive-ip6t-err.log", root+"/hive-ip6t-err.log")
 	if ipv6Stack {
 		if err := os.MkdirAll(filepath.Join(root, "proc/sys/net/ipv6"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A stack-present fixture is ROUTABLE by default: a global-scope
+		// address (if_inet6 scope field 00) and a ::/0 default route
+		// (ipv6_route destination prefix length 00). Tests that want the
+		// unroutable pod pass the "ip-noipv6" shim, which overrides this by
+		// putting an `ip` on PATH that reports neither.
+		if err := os.MkdirAll(filepath.Join(root, "proc/net"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "proc/net/if_inet6"),
+			[]byte("20010db8000000000000000000000001 02 40 00 80 eth0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "proc/net/ipv6_route"),
+			[]byte("00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
