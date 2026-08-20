@@ -142,6 +142,7 @@ The entrypoint installs an iptables REDIRECT of all outbound `:443` through the 
 
 - The hive/proxy process runs as user `dev` (UID 1001); each agent runs as its own UID from `HIVE_UID_BASE=2001` upward.
 - `su-exec` is mode **4750 `root:hive-launch`** — only root and members of the pinned `hive-launch` group (GID 1002) can exec it. This closes the earlier world-executable-setuid hole where any agent UID could become root in the pod. `HIVE_LAUNCH_GID=1002` is part of the deployment contract: Kubernetes `fsGroup` and Secret `defaultMode: 0440` rely on the numeric GID, and it must stay in sync across `src/deploy/k8s/*.yaml` and hub provisioning.
+- The MITM CA certificate is readable at `/data/proxy-ca.pem` so agent clients can trust forged certificates, but the CA private key is stored at `/data/.hive/proxy-ca-key.pem` in a `0700` directory with mode `0600`. It is never intentionally kept directly under the shared, agent-writable `/data` namespace. A legacy `/data/proxy-ca-key.pem` causes the old CA pair to be discarded on startup, because its key may already have been copied.
 
 ### Supply chain
 
