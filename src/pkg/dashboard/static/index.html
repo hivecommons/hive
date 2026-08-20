@@ -13432,11 +13432,19 @@ function burnAreaChart() {
 
       const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
       if (prompt) opts.body = JSON.stringify({ prompt });
-      const res = await fetch(`/api/kick/${agent}`, opts);
-      const data = await res.json();
-      if (!data.ok) { showToast('Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
-      showToast(`Kicked ${agent}`, 'success');
-      if (input) input.value = '';
+      // Acknowledge the click immediately with a persistent toast, then rewrite
+      // it into the result — mirrors planIssue() so a slow, failed, or thrown
+      // request still surfaces feedback instead of silently doing nothing.
+      const toast = showToast(`Kicking ${agent}...`, 'info', true);
+      try {
+        const res = await fetch(`/api/kick/${agent}`, opts);
+        const data = await res.json();
+        if (!data.ok) { dismissToast(toast, 'Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
+        dismissToast(toast, `Kicked ${agent}`, 'success');
+        if (input) input.value = '';
+      } catch (e) {
+        dismissToast(toast, 'Kick failed: ' + e.message, 'error');
+      }
     }
 
     // planIssue (Phase 4 "Plan this issue"): POST the issue to /api/plan/from-issue,
