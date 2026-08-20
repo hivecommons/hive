@@ -94,6 +94,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
+	// #4298: "for every recent reset, how much of the budget had been used".
+	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)
 	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
 	s.mux.HandleFunc("GET /api/timeseries", s.handleTimeSeries)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
@@ -7161,6 +7163,47 @@ func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.TrendHistory())
+}
+
+// handleBudgetHistory serves the per-budget-window report (#4298): one row per
+// CLOSED window, newest first, plus the window still open so an operator sees
+// the whole picture in one response rather than joining two endpoints.
+//
+// `windows` is ALWAYS an array, never null — a hive that has not yet seen a
+// roll returns `[]`, which a client renders as "no history yet" rather than
+// crashing on a nil. That is the compatibility requirement #4298 names: new
+// code must not break an environment that was never keeping this history.
+func (s *Server) handleBudgetHistory(w http.ResponseWriter, r *http.Request) {
+	windows := s.BudgetWindowHistory()
+	if windows == nil {
+		windows = []BudgetWindowEntry{}
+	}
+
+	resp := map[string]any{"windows": windows}
+
+	// The open window, straight from the live status, so the report reads
+	// continuously from "now" back through the closed rows.
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status != nil {
+		b := status.Budget
+		current := map[string]any{
+			"limit":     b.WeeklyBudget,
+			"used":      b.Used,
+			"pctUsed":   b.PctUsed,
+			"exhausted": b.Exhausted,
+		}
+		if b.WindowStartsAt != "" {
+			current["windowStart"] = b.WindowStartsAt
+		}
+		if b.WindowEndsAt != "" {
+			current["windowEnd"] = b.WindowEndsAt
+		}
+		resp["current"] = current
+	}
+
+	jsonResponse(w, resp)
 }
 
 // handleTimeSeries is the unified read endpoint over the sparkline histories.

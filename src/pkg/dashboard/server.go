@@ -98,6 +98,10 @@ type Server struct {
 	tokenHist *timeSeries[TokenSparklineEntry]
 	factHist  *timeSeries[FactHistoryEntry]
 	costHist  *timeSeries[CostHistoryEntry]
+	// budgetWindowHist records one row per CLOSED budget window (#4298). Lazily
+	// built like the sparkline rings so a zero-value Server works in tests.
+	budgetWindowOnce sync.Once
+	budgetWindowHist *budgetWindowTracker
 
 	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
@@ -556,6 +560,11 @@ type FrontendBudget struct {
 	// WindowEndsAt is when the current budget window rolls (RFC3339);
 	// empty unless a weekly limit is set and a window is open.
 	WindowEndsAt string `json:"WINDOW_ENDS_AT"`
+	// WindowStartsAt is when the current window opened (RFC3339), i.e. the last
+	// reset. Additive (#4298): it is what lets a usage graph mark where the
+	// resets fell, and what bounds each row of the per-window history. Empty
+	// under exactly the same conditions as WindowEndsAt.
+	WindowStartsAt string `json:"WINDOW_STARTS_AT,omitempty"`
 }
 
 type FrontendCadence struct {
@@ -1523,6 +1532,9 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
+	// #4298: fold the budget window into per-window history so a closed window's
+	// consumption survives the reset that erases the live number.
+	s.ObserveBudgetWindow(status)
 
 	data, err := json.Marshal(status)
 	if err != nil {

@@ -1202,6 +1202,17 @@ func main() {
 		}
 	}
 
+	// #4298: restore per-budget-window history so past resets survive a restart.
+	// A missing or unparseable file is ordinary on a hive upgrading into this
+	// feature — it simply starts with no history rather than failing to boot.
+	const budgetWindowHistoryPath = "/data/budget-window-history.json"
+	var pendingBudgetWindowSeed []dashboard.BudgetWindowEntry
+	if budgetData, err := os.ReadFile(budgetWindowHistoryPath); err == nil {
+		if err := json.Unmarshal(budgetData, &pendingBudgetWindowSeed); err == nil && len(pendingBudgetWindowSeed) > 0 {
+			logger.Info("budget window history loaded", "entries", len(pendingBudgetWindowSeed))
+		}
+	}
+
 	// Restore governor/repo/beads/system trend history from disk so those
 	// sparklines survive restarts and render for any viewer (previously kept
 	// only in the browser's localStorage).
@@ -1737,6 +1748,11 @@ func main() {
 	if len(pendingCostSeed) > 0 {
 		dashSrv.SeedCostHistory(pendingCostSeed)
 		logger.Info("cost history restored", "entries", len(pendingCostSeed))
+	}
+
+	if len(pendingBudgetWindowSeed) > 0 {
+		dashSrv.SeedBudgetWindowHistory(pendingBudgetWindowSeed)
+		logger.Info("budget window history restored", "entries", len(pendingBudgetWindowSeed))
 	}
 
 	if len(pendingTrendSeed) > 0 {
@@ -5909,6 +5925,16 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			trendData, err := json.Marshal(trendHist)
 			if err == nil {
 				atomicWrite("/data/trend-history.json", trendData)
+			}
+		}
+
+		// #4298: per-budget-window history. Written on the same cadence as the
+		// other series so a pod roll cannot lose more of one than the others.
+		budgetHist := dashSrv.BudgetWindowHistory()
+		if len(budgetHist) > 0 {
+			budgetData, err := json.Marshal(budgetHist)
+			if err == nil {
+				atomicWrite("/data/budget-window-history.json", budgetData)
 			}
 		}
 	}

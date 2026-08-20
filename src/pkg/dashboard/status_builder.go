@@ -1296,6 +1296,8 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		fb.Exhausted = used >= budget.WeeklyLimit
 		if !budget.ResetAt.IsZero() {
 			fb.WindowEndsAt = budget.ResetAt.Add(governor.BudgetWindowDuration).UTC().Format(time.RFC3339)
+			// ResetAt is the START of the current window (#4298).
+			fb.WindowStartsAt = budget.ResetAt.UTC().Format(time.RFC3339)
 		}
 	}
 
