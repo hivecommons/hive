@@ -188,8 +188,9 @@ Applies to every lane above.
   for deployment; it is equally wrong in CI, where the socket is the runner's.
 - **Cleanup uses the ownership contract**, not pruning. Hosted runners are
   ephemeral so cleanup barely matters there, but a self-hosted SELinux runner
-  is persistent and shares one store across jobs. `podman system prune` on that
-  machine destroys concurrent jobs. Use the label selectors in
+  is persistent and shares one store across jobs. A store-wide prune (`podman
+  system` with its prune subcommand) on that machine destroys concurrent jobs.
+  Use the label selectors in
   [the cleanup contract](podman-ownership-cleanup.md).
 - **Isolated storage for anything that pulls.** The #4199 probe builds a
   throwaway store with a private graphroot and runroot; a self-hosted lane
