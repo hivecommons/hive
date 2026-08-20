@@ -1578,8 +1578,28 @@ function classifyTmuxPane(text) {
     const codexTail = text.split('\n').slice(-15).join('\n');
     // Same marker mismatch as getCLIState(): '›' (U+203A), not '>'.
     hasIdlePrompt = /codex>|›|>\s*$/.test(text);
-    hasCompletionMarker = /completed|done|finished/i.test(text) ||
-      detectNoWorkVerdict(text.split('\n')) !== null;
+    // Not a prose match. codex writes its own completion summary in whatever
+    // words the work calls for, and requiring "completed|done|finished" makes
+    // finishing a task depend on which English word it happened to reach for.
+    //
+    // Observed live: a task that ran to completion and opened
+    // kubestellar/hive#4259 ready for review summarised itself as "Opened
+    // ready-for-review PR #4259 … Conclusion: direct .kube reuse is not viable
+    // … Branch is pushed and clean … Worked for 6m 22s". None of the three
+    // words appear, and there is no no_work_needed verdict either (it shipped a
+    // PR), so hasCompletionMarker was false, the IDLE_COMPLETE arm could not be
+    // reached, and the pane fell through to PANE_STATE_WORKING with the agent
+    // sitting idle at its prompt.
+    //
+    // The same reliance on prose in the other direction produced #4182 for agy.
+    //
+    // codex's real state signal is its status row, which isWorking below reads:
+    // an in-flight turn renders "esc to interrupt", and an idle one does not.
+    // hasIdlePrompt cannot carry that distinction here — codex draws its "›"
+    // input line while it is working too — so gating completion on a completion
+    // WORD added nothing except a way to miss finished work. copilot, goose,
+    // agy and bob all set this true for the same reason.
+    hasCompletionMarker = true;
     // Codex also signals an in-flight turn through its status row ("Working",
     // "esc to interrupt") without ever printing a tool verb.
     isWorking = /running|executing|thinking|\bworking\b|esc to interrupt/i.test(codexTail);

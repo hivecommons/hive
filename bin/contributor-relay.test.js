@@ -1891,6 +1891,32 @@ test('a bullet-prefixed Codex no-work verdict is reported as task_complete', () 
   } finally { teardown(relay); }
 });
 
+// A codex turn that finished and shipped a PR, reproduced from the pane of the
+// task that opened kubestellar/hive#4259. Note what it does NOT contain:
+// "completed", "done" or "finished". codex writes its summary in whatever words
+// the work calls for, so gating completion on a prose word means a finished task
+// is invisible whenever it reaches for different ones — the mirror of #4182,
+// where agy's prose made a finished pane look busy.
+const CODEX_SHIPPED_PR_IDLE_PANE = [
+  '\u2022 Opened ready-for-review PR #4259 (https://github.com/kubestellar/hive/pull/4259).',
+  '  - Conclusion: direct .kube reuse is not viable; native Quadlet units are recommended.',
+  '  - Added the measured compatibility report and documentation index link.',
+  '  - Commit c8ae4ddf includes a matching Signed-off-by trailer.',
+  '  - Branch is pushed and clean.',
+  '\u2500 Worked for 6m 22s \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+  '\u203a Ask Codex to do anything',
+  '  gpt-5.6-sol xhigh \u00b7 /home/dev/.local/state/hive/agent-cwd',
+].join('\n');
+
+test('a finished codex turn is COMPLETE even when its summary avoids completion words', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_SHIPPED_PR_IDLE_PANE });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(CODEX_SHIPPED_PR_IDLE_PANE), relay.PANE_STATE_IDLE_COMPLETE,
+      'a shipped-PR summary must not have to say "done" to count as finished');
+  } finally { teardown(relay); }
+});
+
 test('codex still reads as WORKING while activity is in the tail', () => {
   const relay = loadRelay({ backend: 'codex' });
   try {
