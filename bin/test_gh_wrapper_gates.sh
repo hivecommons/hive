@@ -518,6 +518,92 @@ assert_author "user token without trusted file still refuses a foreign author" \
   "$(run_author_wrapper "$USER_STUB" "${WORK}/no-such-login-file" -- issue list --repo owner/repo --author someone-else)" \
   "exit=1 last=api user --jq .login ::: *must match the authenticated GitHub identity*"
 
+# ── #4346: list-block wording + GHE/prompt env exports ───────────────────────
+# The two-line "gh <subcmd> list is disabled" message was read by live agents
+# as "ALL gh commands are blocked", so they silently skipped issue/PR creation.
+# The reworded message must state that only listing is blocked, that writes
+# remain allowed (naming hive-open-pr), and point at an actionable.json queue
+# snapshot. Pin the wording an agent's decision actually hinges on.
+echo "-- #4346: list-block message must not scare agents off writes --"
+
+# run_wrapper_text <args...> — like run_wrapper but returns the wrapper's raw
+# output for substring assertions on user-facing messages.
+run_wrapper_text() {
+  HIVE_GH_WRAPPER_REAL_GH="$STUB" \
+  STUB_LOG="$STUB_LOG" \
+  HIVE_AGENT="testagent" \
+  HIVE_AGENT_ID="testagent" \
+  HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+  HIVE_ACMM_LEVEL=5 \
+  HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+  HIVE_CONTRIBUTOR_MODE="false" \
+  bash "$WRAPPER" "$@" 2>&1
+  return 0
+}
+
+# assert_contains <label> <haystack> <needle...>
+assert_contains() {
+  local label="$1" haystack="$2"; shift 2
+  local needle ok=yes
+  for needle in "$@"; do
+    [[ "$haystack" == *"$needle"* ]] || { ok=no; break; }
+  done
+  if [ "$ok" = yes ]; then
+    echo "  PASS: $label"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $label"
+    echo "        output missing '$needle'"
+    echo "        got: $haystack"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+LIST_MSG="$(run_wrapper_text issue list --repo owner/repo)"
+assert_contains "issue-list block says only listing is blocked" "$LIST_MSG" \
+  "ONLY listing/enumeration is blocked"
+assert_contains "issue-list block says writes are still allowed" "$LIST_MSG" \
+  "gh issue create" "hive-open-pr" "still ALLOWED"
+# The hint must point at whichever queue snapshot exists on THIS host
+# (/data/last-actionable.json on container-hosted hives, the /var/run path
+# otherwise) — either way it must name an actionable.json to read.
+assert_contains "issue-list block points at an actionable.json queue" "$LIST_MSG" \
+  "actionable.json"
+
+PR_LIST_MSG="$(run_wrapper_text pr list --repo owner/repo)"
+assert_contains "pr-list block carries the same only-listing wording" "$PR_LIST_MSG" \
+  "ONLY listing/enumeration is blocked" "still ALLOWED"
+
+# GHE spokes: gh only reads GH_TOKEN for github.com; any other GH_HOST
+# authenticates from GH_ENTERPRISE_TOKEN. The wrapper must export it alongside
+# GH_TOKEN from the scoped cache, and GH_PROMPT_DISABLED=1 so a gh command
+# that would prompt fails loud instead of hanging a non-interactive agent.
+echo "-- #4346: scoped token exported for GHE + prompts disabled --"
+
+ENV_STUB="${WORK}/gh-env-stub"
+cat >"$ENV_STUB" <<'ENVEOF'
+#!/usr/bin/env bash
+printf 'ENV_GH_ENTERPRISE_TOKEN=%s\n' "${GH_ENTERPRISE_TOKEN:-unset}"
+printf 'ENV_GH_PROMPT_DISABLED=%s\n' "${GH_PROMPT_DISABLED:-unset}"
+exit 0
+ENVEOF
+chmod +x "$ENV_STUB"
+
+ENV_OUT="$(
+  HIVE_GH_WRAPPER_REAL_GH="$ENV_STUB" \
+  HIVE_AGENT="testagent" \
+  HIVE_AGENT_ID="testagent" \
+  HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+  HIVE_ACMM_LEVEL=5 \
+  HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+  HIVE_CONTRIBUTOR_MODE="false" \
+  bash "$WRAPPER" run list --repo owner/repo 2>&1
+)"
+assert_contains "GH_ENTERPRISE_TOKEN mirrors the scoped cache token" "$ENV_OUT" \
+  "ENV_GH_ENTERPRISE_TOKEN=ghs_stubtoken"
+assert_contains "GH_PROMPT_DISABLED=1 reaches gh" "$ENV_OUT" \
+  "ENV_GH_PROMPT_DISABLED=1"
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1
