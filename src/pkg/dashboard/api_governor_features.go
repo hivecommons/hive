@@ -303,3 +303,167 @@ func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 		"pr_autoclose":   a.PRAutoCloseEnabled(),
 	}
 }
+
+// handleGovernorWorkSourceGet returns the work_source config so the Governor
+// dialog's Work Source tab can prefill its controls. OWNER-ONLY, matching the
+// rest of the governor-config surface.
+func (s *Server) handleGovernorWorkSourceGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, workSourceSectionResponse(s.deps.Config))
+}
+
+// handleGovernorWorkSourcePut updates the work_source config. Only the type
+// and per-source credential/setting fields are accepted; team lists for Linear
+// are complex nested structures that remain YAML-only (same as the advisory
+// config's complex sub-structs).
+func (s *Server) handleGovernorWorkSourcePut(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Type           *string `json:"type"`
+		GitHubProjects *struct {
+			Org            *string  `json:"org"`
+			ProjectNumber  *int     `json:"project_number"`
+			States         []string `json:"states"`
+			PriorityField  *string  `json:"priority_field"`
+			IterationField *string  `json:"iteration_field"`
+			DefaultRepo    *string  `json:"default_repo"`
+		} `json:"github_projects"`
+		Linear *struct {
+			APIKey     *string  `json:"api_key"`
+			HoldLabels []string `json:"hold_labels"`
+		} `json:"linear"`
+		Jira *struct {
+			BaseURL     *string  `json:"base_url"`
+			Email       *string  `json:"email"`
+			APIToken    *string  `json:"api_token"`
+			ProjectKeys []string `json:"project_keys"`
+			JQL         *string  `json:"jql"`
+			Repo        *string  `json:"repo"`
+			HoldLabels  []string `json:"hold_labels"`
+		} `json:"jira"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// --- validate before mutating anything ---
+	if body.Type != nil {
+		switch *body.Type {
+		case "", "github", "github_projects", "linear", "jira":
+		default:
+			jsonError(w, "type must be one of: github, github_projects, linear, jira", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// --- apply ---
+	cfg := s.deps.Config
+	ws := &cfg.Governor.WorkSource
+	if body.Type != nil {
+		ws.Type = *body.Type
+	}
+	if body.GitHubProjects != nil {
+		g := body.GitHubProjects
+		if g.Org != nil {
+			ws.GitHubProjects.Org = *g.Org
+		}
+		if g.ProjectNumber != nil {
+			ws.GitHubProjects.ProjectNumber = *g.ProjectNumber
+		}
+		if g.States != nil {
+			ws.GitHubProjects.States = g.States
+		}
+		if g.PriorityField != nil {
+			ws.GitHubProjects.PriorityField = *g.PriorityField
+		}
+		if g.IterationField != nil {
+			ws.GitHubProjects.IterationField = *g.IterationField
+		}
+		if g.DefaultRepo != nil {
+			ws.GitHubProjects.DefaultRepo = *g.DefaultRepo
+		}
+	}
+	if body.Linear != nil {
+		l := body.Linear
+		if l.APIKey != nil {
+			ws.Linear.APIKey = *l.APIKey
+		}
+		if l.HoldLabels != nil {
+			ws.Linear.HoldLabels = l.HoldLabels
+		}
+	}
+	if body.Jira != nil {
+		j := body.Jira
+		if j.BaseURL != nil {
+			ws.Jira.BaseURL = *j.BaseURL
+		}
+		if j.Email != nil {
+			ws.Jira.Email = *j.Email
+		}
+		if j.APIToken != nil {
+			ws.Jira.APIToken = *j.APIToken
+		}
+		if j.ProjectKeys != nil {
+			ws.Jira.ProjectKeys = j.ProjectKeys
+		}
+		if j.JQL != nil {
+			ws.Jira.JQL = *j.JQL
+		}
+		if j.Repo != nil {
+			ws.Jira.Repo = *j.Repo
+		}
+		if j.HoldLabels != nil {
+			ws.Jira.HoldLabels = j.HoldLabels
+		}
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after work-source update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_work_source", auditDetail("section", "work_source"), "")
+	s.refreshAndPersist()
+	jsonResponse(w, workSourceSectionResponse(cfg))
+}
+
+// workSourceSectionResponse renders WorkSourceConfig for the dashboard's
+// Work Source tab and the governor config GET payload.
+func workSourceSectionResponse(cfg *config.Config) map[string]interface{} {
+	ws := cfg.Governor.WorkSource
+	return map[string]interface{}{
+		"type": ws.Type,
+		"github_projects": map[string]interface{}{
+			"org":             ws.GitHubProjects.Org,
+			"project_number":  ws.GitHubProjects.ProjectNumber,
+			"states":          ws.GitHubProjects.States,
+			"priority_field":  ws.GitHubProjects.PriorityField,
+			"iteration_field": ws.GitHubProjects.IterationField,
+			"default_repo":    ws.GitHubProjects.DefaultRepo,
+		},
+		"linear": map[string]interface{}{
+			"api_key":     ws.Linear.APIKey,
+			"hold_labels": ws.Linear.HoldLabels,
+		},
+		"jira": map[string]interface{}{
+			"base_url":     ws.Jira.BaseURL,
+			"email":        ws.Jira.Email,
+			"api_token":    ws.Jira.APIToken,
+			"project_keys": ws.Jira.ProjectKeys,
+			"jql":          ws.Jira.JQL,
+			"repo":         ws.Jira.Repo,
+			"hold_labels":  ws.Jira.HoldLabels,
+		},
+	}
+}

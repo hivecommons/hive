@@ -14764,7 +14764,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Advisory', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -15374,6 +15374,7 @@ function burnAreaChart() {
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
+        case 'Work Source': return renderGovWorkSource(d.work_source || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Forge App': return renderGovForgeApp();
         case 'Model Gateways': return renderGovGateways();
@@ -19408,6 +19409,139 @@ function burnAreaChart() {
             <span class="config-toggle-label">Close findings fixed by a merged PR <span style="color:var(--muted);font-weight:400">— match merged PR titles against open findings</span></span>
           </div>
         </div>`;
+    }
+
+    // markWorkSourceDirty records a work-source edit under the 'work-source'
+    // dirty section (the generic Save dispatcher PUTs it to
+    // /api/config/governor/work-source). Keys use dot notation for nested
+    // sub-source fields, e.g. 'github_projects.org' — split and merged into a
+    // nested object so the server receives the same shape as hive.yaml. The
+    // live _configState.data.work_source copy is updated too, so re-renders
+    // (the type dropdown swaps sub-forms) keep unsaved edits.
+    function markWorkSourceDirty(path, value) {
+      if (!_configState.dirty['work-source']) _configState.dirty['work-source'] = {};
+      if (!_configState.data.work_source) _configState.data.work_source = {};
+      const parts = path.split('.');
+      let dirtyObj = _configState.dirty['work-source'];
+      let dataObj = _configState.data.work_source;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!dirtyObj[parts[i]]) dirtyObj[parts[i]] = {};
+        if (!dataObj[parts[i]]) dataObj[parts[i]] = {};
+        dirtyObj = dirtyObj[parts[i]];
+        dataObj = dataObj[parts[i]];
+      }
+      dirtyObj[parts[parts.length - 1]] = value;
+      dataObj[parts[parts.length - 1]] = value;
+    }
+
+    // renderGovWorkSource renders the work_source settings: which external planning
+    // tool hive reads work items from (Step 01 of the loop). Saved to
+    // /api/config/governor/work-source.
+    function renderGovWorkSource(ws) {
+      ws = ws || {};
+      const type = ws.type || '';
+      const ghp = ws.github_projects || {};
+      const lin = ws.linear || {};
+      const jira = ws.jira || {};
+
+      const typeOpts = [
+        ['', 'GitHub Issues (default)'],
+        ['github_projects', 'GitHub Projects v2'],
+        ['linear', 'Linear'],
+        ['jira', 'Jira Cloud'],
+      ].map(([v, l]) => `<option value="${v}" ${type === v ? 'selected' : ''}>${l}</option>`).join('');
+
+      return `
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">
+          Choose where hive reads work items from. Steps 03–07 (fix agent, PR, review, merge) are
+          unaffected — agents still open pull requests on GitHub.
+        </p>
+
+        <div class="config-field" style="margin-bottom:20px">
+          <label>Work source <span class="config-info">i<span class="config-tooltip">GitHub Issues is the default and requires no config. GitHub Projects, Linear, and Jira are opt-in — add credentials below after selecting.</span></span></label>
+          <select onchange="markWorkSourceDirty('type',this.value);renderConfigTab('Work Source')">${typeOpts}</select>
+        </div>
+
+        ${type === 'github_projects' ? `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">GitHub Projects v2</div>
+          <div class="config-field">
+            <label>Org</label>
+            <input type="text" placeholder="my-org" value="${esc(ghp.org||'')}" onchange="markWorkSourceDirty('github_projects.org',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Project number</label>
+            <input type="number" min="1" step="1" value="${ghp.project_number||''}" placeholder="42" onchange="markWorkSourceDirty('github_projects.project_number',Number(this.value)||0)">
+          </div>
+          <div class="config-field">
+            <label>Status filter <span class="config-info">i<span class="config-tooltip">Comma-separated Status field values to include, e.g. "Todo, Backlog". Leave empty for all open items.</span></span></label>
+            <input type="text" placeholder="Todo, Backlog" value="${esc((ghp.states||[]).join(', '))}" onchange="markWorkSourceDirty('github_projects.states',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+          </div>
+          <div class="config-field">
+            <label>Priority field <span class="config-info">i<span class="config-tooltip">Name of the project's priority custom field, e.g. "Priority". Leave empty if not using priority.</span></span></label>
+            <input type="text" placeholder="Priority" value="${esc(ghp.priority_field||'')}" onchange="markWorkSourceDirty('github_projects.priority_field',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Iteration field <span class="config-info">i<span class="config-tooltip">Name of the project's sprint/iteration field. When set, only items in the current iteration are shown. Leave empty to include all.</span></span></label>
+            <input type="text" placeholder="Sprint" value="${esc(ghp.iteration_field||'')}" onchange="markWorkSourceDirty('github_projects.iteration_field',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Default repo <span class="config-info">i<span class="config-tooltip">Fallback repo (owner/name) agents clone when an issue has no repository. Usually leave empty if your project only tracks one repo.</span></span></label>
+            <input type="text" placeholder="my-org/my-repo" value="${esc(ghp.default_repo||'')}" onchange="markWorkSourceDirty('github_projects.default_repo',this.value.trim())">
+          </div>
+        </div>` : ''}
+
+        ${type === 'linear' ? `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Linear</div>
+          <div class="config-field">
+            <label>API key <span class="config-info">i<span class="config-tooltip">Linear personal API key (Settings → API → Personal API keys). Stored as a secret reference; use \${ENV_VAR} syntax to avoid putting the raw key in config.</span></span></label>
+            <input type="text" placeholder="\${LINEAR_API_KEY}" value="${esc(lin.api_key||'')}" onchange="markWorkSourceDirty('linear.api_key',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Hold labels <span class="config-info">i<span class="config-tooltip">Comma-separated Linear label names that gate an issue (like GitHub's "hold" label). Issues carrying any of these labels are excluded.</span></span></label>
+            <input type="text" placeholder="hold, blocked" value="${esc((lin.hold_labels||[]).join(', '))}" onchange="markWorkSourceDirty('linear.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+          </div>
+          <p style="font-size:0.72rem;color:var(--muted);margin:8px 0 0">Teams are configured in <code>hive.yaml</code> — each team maps to a GitHub repo agents clone.</p>
+        </div>` : ''}
+
+        ${type === 'jira' ? `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Jira Cloud</div>
+          <div class="config-field">
+            <label>Base URL</label>
+            <input type="text" placeholder="https://myorg.atlassian.net" value="${esc(jira.base_url||'')}" onchange="markWorkSourceDirty('jira.base_url',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Email</label>
+            <input type="email" placeholder="bot@myorg.com" value="${esc(jira.email||'')}" onchange="markWorkSourceDirty('jira.email',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>API token <span class="config-info">i<span class="config-tooltip">Atlassian API token from id.atlassian.com → Security → API tokens. Use \${JIRA_API_TOKEN} to reference an environment variable.</span></span></label>
+            <input type="text" placeholder="\${JIRA_API_TOKEN}" value="${esc(jira.api_token||'')}" onchange="markWorkSourceDirty('jira.api_token',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Project keys <span class="config-info">i<span class="config-tooltip">Comma-separated Jira project keys, e.g. "ENG, OPS". Used to build the default JQL query.</span></span></label>
+            <input type="text" placeholder="ENG, OPS" value="${esc((jira.project_keys||[]).join(', '))}" onchange="markWorkSourceDirty('jira.project_keys',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+          </div>
+          <div class="config-field">
+            <label>JQL override <span class="config-info">i<span class="config-tooltip">Optional. Leave empty to use the default: "project in (&lt;keys&gt;) AND statusCategory != Done AND issuetype != Epic".</span></span></label>
+            <input type="text" placeholder="project = ENG AND status = Todo" value="${esc(jira.jql||'')}" onchange="markWorkSourceDirty('jira.jql',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Repo <span class="config-info">i<span class="config-tooltip">GitHub repo (owner/name) agents clone for these issues.</span></span></label>
+            <input type="text" placeholder="my-org/my-repo" value="${esc(jira.repo||'')}" onchange="markWorkSourceDirty('jira.repo',this.value.trim())">
+          </div>
+          <div class="config-field">
+            <label>Hold labels</label>
+            <input type="text" placeholder="hold, blocked" value="${esc((jira.hold_labels||[]).join(', '))}" onchange="markWorkSourceDirty('jira.hold_labels',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+          </div>
+        </div>` : ''}
+
+        ${type === '' ? `
+        <div style="font-size:0.75rem;color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 20%,transparent);border-radius:6px;padding:10px 12px">
+          <b>Using GitHub Issues</b> — hive reads open issues from the repos listed in the Repos tab. No additional configuration needed.
+        </div>` : ''}`;
     }
 
     function addSensingItem(key, inputId) {
