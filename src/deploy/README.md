@@ -22,3 +22,24 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says n
 - `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
 - `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for non-Kubernetes deployments.
 - `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.
+
+## Deployment contract tests
+
+Three guards cover different parts of the standalone stack and deliberately do
+not overlap. All three run in CI and none of them starts a container.
+
+| Test | Covers |
+|---|---|
+| `test_standalone_service_contract.sh` | The `hive` and `gateway` services: published-port boundary (3001 published, 7681 never), `NET_ADMIN`, `/data` on a named volume, health checks and readiness ordering, read-only config and secret mounts. |
+| `test_watchtower_socket_contract.sh` | The opt-in auto-update profile: Docker-socket containment, profile gating, the proxy's ports/networks/API sections. |
+| `test_supply_chain_pins.sh` | Build inputs: base-image and toolchain digest pins. |
+
+```bash
+bash src/deploy/test_standalone_service_contract.sh
+bash src/deploy/test_watchtower_socket_contract.sh
+bash src/deploy/test_supply_chain_pins.sh
+```
+
+`test_standalone_service_contract.sh` is also the snapshot the Podman runtime
+work in #4188 has to keep passing: it is a focused subset, not a claim of
+Docker/Podman parity, and further invariants belong in separate small issues.

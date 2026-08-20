@@ -74,6 +74,17 @@ jobs:
       - name: Docker-socket containment guard (#3865)
         run: bash deploy/test_watchtower_socket_contract.sh
 
+      # #4204: the socket guard above covers the auto-update profile, and the
+      # pin guard covers build inputs — but nothing asserted anything about the
+      # two services an operator actually runs. Each invariant here is
+      # invisible at runtime when it breaks: a stack that publishes 7681 still
+      # serves the dashboard, it just also serves an unauthenticated root shell
+      # into the credential-holding container; /data on a bind mount still runs
+      # and just loses agent state on the next recreate. This is also the
+      # snapshot the Podman runtime work (#4188) has to keep passing.
+      - name: Standalone service deployment contract (#4204)
+        run: bash deploy/test_standalone_service_contract.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
