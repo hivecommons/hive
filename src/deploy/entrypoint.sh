@@ -945,6 +945,11 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
            && awk '$2 == "00" { found=1 } END { exit !found }' /proc/net/ipv6_route 2>/dev/null; then
           _ip6_routable=true
         fi
+      else
+        # Neither `ip` nor the /proc files are readable, so routability cannot
+        # be determined. Assume routable and let the gate decide: an
+        # indeterminate probe must not be the thing that disables enforcement.
+        _ip6_routable=true
       fi
     fi
     if [ ! -d /proc/sys/net/ipv6 ]; then

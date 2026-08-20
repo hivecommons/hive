@@ -78,6 +78,17 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 		"case \"$*\" in *-nL*) exit 1;; esac\n" +
 		"exit 0\n"
 	for _, name := range shims {
+		// "ip-noipv6" is not a netfilter shim: it installs an `ip` that reports
+		// neither a global IPv6 address nor a default route, so the routability
+		// probe sees an IPv4-only pod. Empty output + exit 0 is exactly what
+		// the real `ip -6 addr show scope global` prints there.
+		if name == "ip-noipv6" {
+			if err := os.WriteFile(filepath.Join(binDir, "ip"),
+				[]byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(shim), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -198,5 +209,33 @@ func TestGatePassesVacuouslyWithoutIPv6Stack(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?m)^ip6tables`).MatchString(calls) {
 		t.Fatalf("ip6tables was invoked despite no IPv6 stack:\n%s", calls)
+	}
+}
+
+// TestGatePassesVacuouslyWithoutRoutableIPv6 pins the production outage this
+// check exists for: a pod CAN have the IPv6 stack compiled in — /proc/sys/net/
+// ipv6 present, ::1 up for the gateway nginx and the proxy's /proc/net/tcp6
+// self-lookup — while having NO global IPv6 address and NO default route. It
+// cannot originate IPv6 egress, so there is no bypass to close.
+//
+// Fail-closing there crash-looped a healthy hive (exit 4) on an IPv4-only
+// OpenShift cluster whose nodes ALSO lack the ip6tables `owner`/`REJECT`
+// extensions, so the gate could not have been installed even in principle.
+// Stack presence is not the property that decides whether a bypass is
+// reachable; routability is.
+func TestGatePassesVacuouslyWithoutRoutableIPv6(t *testing.T) {
+	// `ip` present but reporting neither a global address nor a default route
+	// — exactly what `ip -6 addr show scope global` / `ip -6 route show
+	// default` print on the affected pods.
+	out, calls, code := runEgressGate(t, nil,
+		[]string{"iptables-nft", "ip6tables-nft", "ip-noipv6"}, true)
+	if code != 0 {
+		t.Fatalf("gate exited %d on a pod with no routable IPv6 — this is the certus crash-loop:\n%s", code, out)
+	}
+	if !strings.Contains(out, "not routable") {
+		t.Fatalf("the vacuous pass for unroutable IPv6 was not logged:\n%s", out)
+	}
+	if regexp.MustCompile(`(?m)^ip6tables`).MatchString(calls) {
+		t.Fatalf("ip6tables was invoked despite no routable IPv6 egress:\n%s", calls)
 	}
 }
