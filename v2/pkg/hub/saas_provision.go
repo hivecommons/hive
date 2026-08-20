@@ -1604,10 +1604,19 @@ func countUserHives(username string) int {
 // user record, so direct-route spokes enforce the same read/read-write/merger
 // tiers as hub-proxied spokes. Usernames are sanitized to guard the env value,
 // and the owner is de-duplicated so they appear exactly once.
+//
+// Identities are sanitized with sanitizeAllowlistIdentity, NOT the hive-id
+// sanitize() below: that one lower-cases and strips every character outside
+// [a-z0-9-], which DESTROYED canonical provider identities — "ibmid:310002BM0V"
+// became "ibmid310002bm0v", an entry that can never match the user's real
+// identity at login, so a non-GitHub grantee was silently locked out of the
+// spoke they were granted (part of the recurring "granted owner still denied"
+// class). The spoke parses entries on the LAST colon (splitAuthorizedEntry),
+// so a provider-prefixed name is safe to deliver verbatim.
 func authorizedUsersForHive(h *SaaSHive) string {
 	entries := make([]string, 0, 4)
 	seen := map[string]bool{}
-	owner := sanitize(h.Owner)
+	owner := sanitizeAllowlistIdentity(h.Owner)
 	if owner != "" {
 		entries = append(entries, owner+":"+saasRoleOwner)
 		seen[strings.ToLower(owner)] = true
@@ -1620,7 +1629,7 @@ func authorizedUsersForHive(h *SaaSHive) string {
 		if !config.ValidRole(role) {
 			role = saasRoleRead
 		}
-		name := sanitize(u.GitHubUsername)
+		name := sanitizeAllowlistIdentity(u.GitHubUsername)
 		if name == "" || seen[strings.ToLower(name)] {
 			continue
 		}
@@ -1628,6 +1637,22 @@ func authorizedUsersForHive(h *SaaSHive) string {
 		seen[strings.ToLower(name)] = true
 	}
 	return strings.Join(entries, ",")
+}
+
+// sanitizeAllowlistIdentity guards an identity destined for the allowlist env
+// value while PRESERVING it: letters (both cases — OIDC subjects are
+// case-sensitive), digits, and the identity charset ':', '.', '_', '-' pass;
+// everything else (spaces, commas, quotes, shell metacharacters) is dropped so
+// the comma-separated env value cannot be corrupted or escaped.
+func sanitizeAllowlistIdentity(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == ':' || c == '.' || c == '_' || c == '-' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }
 
 // provisionAppKey is one additional App key rendered into the provisioning

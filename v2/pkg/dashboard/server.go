@@ -785,10 +785,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			// sends the user back to log in — a bounce. This grants no extra
 			// access: everyone is already admitted on this branch.
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// Role comes from liveSessionRole, never sess.Role directly: a
+				// Manage Access change must not stay frozen in a 30-day session.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
 				}
 			} else if r.Header.Get("X-Hive-Role") == "" {
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
@@ -821,10 +825,19 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		trusted := internalTrusted
 		if internalTrusted {
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// Scope the shared-token request down to the session's user, at
+				// their LIVE allowlist role (liveSessionRole): a hub-side grant,
+				// downgrade, or revocation must take effect now, not when the
+				// 30-day session happens to expire. A revoked user (ok=false)
+				// gets no identity injected at all — possession of the internal
+				// token still authenticates the request, but it must not carry
+				// the revoked user's name or any role.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
 				}
 			}
 		}
@@ -882,12 +895,23 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// and each sees themselves — no shared identity.
 		if !trusted {
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// The role is re-resolved against the LIVE allowlist on every
+				// request (liveSessionRole), never read from the session record:
+				// the hub heartbeat keeps cfg.Dashboard.AuthorizedUsers in sync
+				// with Manage Access, and a grant/downgrade/revocation must bind
+				// now — not after the 30-day session expires. This is the fix for
+				// the recurring "owner access required for a granted owner" class
+				// (3rd report; see session_live_role.go). ok=false means the
+				// allowlist is enforced and the user was REVOKED: fall through
+				// unauthenticated instead of honoring the stale session.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
+					trusted = true
 				}
-				trusted = true
 			}
 		}
 

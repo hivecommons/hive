@@ -1876,21 +1876,20 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// keeps the spoke the authority on who may enter, even via SSO — a valid
 	// hub token for a user not on the allowlist is refused. The role comes from
 	// the allowlist (authoritative), not the token, so the hub can never
-	// escalate a user's role on the spoke.
-	role := tokenRole
-	if s.deps != nil && s.deps.Config != nil {
-		if allowRole, ok := s.deps.Config.Dashboard.AuthorizedRole(username); ok {
-			role = allowRole
-		} else if s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled() {
-			// Allowlist is enforced and this user isn't on it → deny.
-			if s.deps.Logger != nil {
-				s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
-			}
-			writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
-				"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
-				"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
-			return
+	// escalate a user's role on the spoke. liveAllowlistRole is the same shared
+	// rule authenticate re-applies on EVERY subsequent request
+	// (session_live_role.go), so the role minted here can never outlive a later
+	// Manage Access change.
+	role, authorized := s.liveAllowlistRole(username, tokenRole)
+	if !authorized {
+		// Allowlist is enforced and this user isn't on it → deny.
+		if s.deps != nil && s.deps.Logger != nil {
+			s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
 		}
+		writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
+			"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
+			"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
+		return
 	}
 	if role == "" {
 		role = config.RoleRead
