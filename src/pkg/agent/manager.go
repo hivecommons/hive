@@ -1780,7 +1780,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// gh-wrapper/proxy layer only, not what the MCP may write.
 			launchCmd = base + claudeGitHubWriteDenyFlags
 		case "copilot":
-			// model is passed verbatim to `copilot --model %s`. It may be a
+			// model arrives here already canonicalized by normalizeModelName
+			// (CanonicalizeCopilotModel: separator drift like claude-fable.5 is
+			// normalized to the CLI-accepted claude-fable-5, #4262) and is then
+			// passed as-is to `copilot --model %s`. It may be a
 			// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
 			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
 			// per task. Nothing here assumes a concrete id, so the sentinel flows
@@ -5500,8 +5503,10 @@ const claudeGitHubWriteDenyFlags = " --disallowed-tools 'mcp__github__create_pul
 //
 // No --model is passed, and that is load-bearing. bob auto-selects its own
 // model, and hive's normalizeModelName rewrites a trailing -<digits> to
-// .<digits> for every backend except claude/inference, so a configured
-// `claude-sonnet-4-6` reached bob as `claude-sonnet-4.6` — an id bob's backend
+// .<digits> for every backend except claude/copilot/inference (copilot uses
+// alias-based canonicalization instead, see CanonicalizeCopilotModel), so a
+// configured `claude-sonnet-4-6` reached bob as `claude-sonnet-4.6` — an id
+// bob's backend
 // does not know. Its model config came back undefined and every prompt died
 // with "🛑 Cannot read properties of undefined (reading 'maxTokens')". Verified
 // live: the same bob with no --model runs inference successfully.
@@ -5830,7 +5835,19 @@ func (m *Manager) ensureWorldWritable(root string) {
 
 // normalizeModelName converts YAML-friendly model names to the format each
 // CLI backend expects. Claude CLI uses hyphens (claude-opus-4-7), while
-// Copilot and other backends use dots (claude-opus-4.7).
+// gemini/goose/agy-style backends use dots (claude-opus-4.7).
+//
+// copilot does NOT take the blind trailing-digits dot-rewrite below: the
+// Copilot CLI's --model nomenclature mixes separators per model family
+// (claude-fable-5 is DASHED, claude-opus-4.6 is DOTTED), so the rewrite
+// corrupted every dashed-family id — verified live, copilot CLI v1.0.78
+// rejected the rewritten `claude-fable.5` ("is not available") and fell back
+// to a different model (#4262). copilot instead uses the alias-based
+// CanonicalizeCopilotModel (copilot_models.go), which normalizes separator
+// drift against the known CLI-accepted list in both directions and passes
+// unknown ids through verbatim. Applied here — at launch time — so an
+// already-stored bad id self-corrects on existing spokes without operator
+// action.
 //
 // Self-hosted inference backends (vllm, llm-d, litellm) are the outbound
 // gateway model id verbatim — the string must match an entitled model on the
@@ -5851,6 +5868,9 @@ func (m *Manager) ensureWorldWritable(root string) {
 func normalizeModelName(model, backend string) string {
 	if backend == "claude" || backend == bobBackend || IsInferenceBackend(backend) {
 		return model
+	}
+	if backend == "copilot" {
+		return CanonicalizeCopilotModel(model)
 	}
 	idx := strings.LastIndex(model, "-")
 	if idx < 0 || idx == len(model)-1 {
@@ -7459,6 +7479,15 @@ func (m *Manager) SetModelOverride(name, model string) error {
 	agent, ok := m.agents[name]
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
+	}
+
+	// Store the CLI-accepted spelling for copilot so the persisted selection,
+	// the dropdown preselect, and auto-heal all agree on one canonical id
+	// (separator drift like claude-fable.5 vs claude-fable-5, #4262). Launch
+	// re-applies the same canonicalization, so even ids stored before this
+	// existed self-correct there.
+	if agent.effectiveBackend() == "copilot" {
+		model = CanonicalizeCopilotModel(model)
 	}
 
 	// A pin blocks the governor's auto-selection, never a user's explicit

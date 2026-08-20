@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/beads"
 	"github.com/kubestellar/hive/pkg/classify"
 	"github.com/kubestellar/hive/pkg/config"
@@ -1309,6 +1310,12 @@ func (s *Server) validateModelForAgent(name, model string) error {
 	known := s.modelIDsForBackend(backend)
 	if len(known) == 0 {
 		return nil // cannot enumerate — do not block
+	}
+	// Copilot catalog/CLI nomenclature drifts between "." and "-" (#4262):
+	// the served list is canonical, so compare the canonicalized candidate
+	// rather than rejecting a dotted/dashed variant of an available model.
+	if backend == "copilot" {
+		model = agent.CanonicalizeCopilotModel(model)
 	}
 	for _, id := range known {
 		if id == model {

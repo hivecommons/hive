@@ -154,3 +154,72 @@ func TestProbeCopilotModelsSDK_HelperNotInstalled(t *testing.T) {
 		t.Skip("copilot SDK helper present on this machine; skipping absence check")
 	}
 }
+
+// TestDiscoverCopilotModels_CanonicalizesNomenclatureDrift verifies discovery
+// normalizes catalog ids whose version separator drifts from the copilot
+// CLI's --model nomenclature (#4262): a catalog sample carrying the dotted
+// claude-fable.5 is served as the CLI-accepted claude-fable-5, canonical
+// dotted ids (claude-opus-4.6, gpt-5.5, gemini-2.5-pro) are untouched, and
+// unknown ids pass through verbatim. Because the served list is canonical,
+// the stabilize/auto-heal retention keys can never see the same model under
+// two spellings (false "model revoked" churn).
+func TestDiscoverCopilotModels_CanonicalizesNomenclatureDrift(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
+		return []byte(`{"models":[
+			{"id":"claude-fable.5","policyState":"enabled"},
+			{"id":"claude-opus-4.6","policyState":"enabled"},
+			{"id":"gpt-5.5","policyState":"enabled"},
+			{"id":"gemini-2.5-pro","policyState":"enabled"},
+			{"id":"some-future-model.9","policyState":"enabled"}
+		]}`), nil
+	})
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.discoverCopilotModels()
+	if r.fallback {
+		t.Fatalf("SDK success must be a live result, got %+v", r)
+	}
+	want := []string{"claude-fable-5", "claude-opus-4.6", "gpt-5.5", "gemini-2.5-pro", "some-future-model.9"}
+	if !equalStrings(r.models, want) {
+		t.Fatalf("got %v, want canonicalized %v", r.models, want)
+	}
+}
+
+// TestStabilize_NomenclatureDriftNoChurn verifies alternating catalog samples
+// that flip a model's separator spelling do not accumulate duplicate retained
+// entries once discovery canonicalizes ids: both spellings collapse to one
+// retention key, so the same model can never be counted absent while present.
+func TestStabilize_NomenclatureDriftNoChurn(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	samples := [][]byte{
+		[]byte(`{"models":[{"id":"claude-fable.5","policyState":"enabled"}]}`),
+		[]byte(`{"models":[{"id":"claude-fable-5","policyState":"enabled"}]}`),
+		[]byte(`{"models":[{"id":"claude-fable.5","policyState":"enabled"}]}`),
+	}
+	i := 0
+	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
+		out := samples[i%len(samples)]
+		i++
+		return out, nil
+	})
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	for n := 0; n < 3; n++ {
+		s.cliModels.entries = map[string]cliModelCacheEntry{}
+		r := s.queryCLIModels("copilot")
+		if r.fallback {
+			t.Fatalf("sample %d: live result expected, got %+v", n, r)
+		}
+		count := 0
+		for _, m := range r.models {
+			if m == "claude-fable-5" {
+				count++
+			}
+			if m == "claude-fable.5" {
+				t.Fatalf("sample %d: non-canonical spelling served: %v", n, r.models)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("sample %d: want exactly one claude-fable-5, got %v", n, r.models)
+		}
+	}
+}

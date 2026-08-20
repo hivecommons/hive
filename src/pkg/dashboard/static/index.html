@@ -7218,6 +7218,12 @@
       // always-valid selection that reconcileModelsAfterDiscovery never heals.
       { value: 'auto', label: 'Auto (Copilot picks)' },
       { value: 'mai-code-1-flash-picker', label: 'MAI Code 1 Flash' },
+      // The -5 family is DASHED in copilot CLI nomenclature (claude-fable-5,
+      // not claude-fable.5) while the 4.x family is DOTTED — keep in sync with
+      // copilotCLIAcceptedModels in pkg/agent/copilot_models.go (#4262).
+      { value: 'claude-opus-5', label: 'Opus 5' },
+      { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'claude-fable-5', label: 'Fable 5' },
       { value: 'claude-opus-4.6', label: 'Opus 4.6' },
       { value: 'claude-sonnet-4.6', label: 'Sonnet 4.6' },
       { value: 'claude-sonnet-4.5', label: 'Sonnet 4.5' },
@@ -7613,7 +7619,12 @@
       }
     }
 
-    function _normalizeModel(m) { return (m || '').replace(/(\d+)\.(\d+)$/, '$1-$2'); }
+    // _normalizeModel collapses the "." vs "-" separator drift between the
+    // catalog and CLI spellings of the SAME model id (claude-fable.5 vs
+    // claude-fable-5, claude-opus-4.6 vs claude-opus-4-6, #4262). Applied to
+    // BOTH sides of every comparison, so mapping all dots to dashes is a pure
+    // equivalence key — never a display or launch value.
+    function _normalizeModel(m) { return (m || '').replace(/\./g, '-'); }
     function _modelsEqual(a, b) { return _normalizeModel(a) === _normalizeModel(b); }
 
     function _modelTier(model) {
