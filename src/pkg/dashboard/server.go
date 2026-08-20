@@ -98,6 +98,10 @@ type Server struct {
 	tokenHist *timeSeries[TokenSparklineEntry]
 	factHist  *timeSeries[FactHistoryEntry]
 	costHist  *timeSeries[CostHistoryEntry]
+	// budgetWindowHist records one row per CLOSED budget window (#4298). Lazily
+	// built like the sparkline rings so a zero-value Server works in tests.
+	budgetWindowOnce sync.Once
+	budgetWindowHist *budgetWindowTracker
 
 	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
@@ -556,6 +560,11 @@ type FrontendBudget struct {
 	// WindowEndsAt is when the current budget window rolls (RFC3339);
 	// empty unless a weekly limit is set and a window is open.
 	WindowEndsAt string `json:"WINDOW_ENDS_AT"`
+	// WindowStartsAt is when the current window opened (RFC3339), i.e. the last
+	// reset. Additive (#4298): it is what lets a usage graph mark where the
+	// resets fell, and what bounds each row of the per-window history. Empty
+	// under exactly the same conditions as WindowEndsAt.
+	WindowStartsAt string `json:"WINDOW_STARTS_AT,omitempty"`
 }
 
 type FrontendCadence struct {
@@ -977,10 +986,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			// sends the user back to log in — a bounce. This grants no extra
 			// access: everyone is already admitted on this branch.
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// Role comes from liveSessionRole, never sess.Role directly: a
+				// Manage Access change must not stay frozen in a 30-day session.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
 				}
 			} else if r.Header.Get("X-Hive-Role") == "" {
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
@@ -1013,10 +1026,19 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		trusted := internalTrusted
 		if internalTrusted {
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// Scope the shared-token request down to the session's user, at
+				// their LIVE allowlist role (liveSessionRole): a hub-side grant,
+				// downgrade, or revocation must take effect now, not when the
+				// 30-day session happens to expire. A revoked user (ok=false)
+				// gets no identity injected at all — possession of the internal
+				// token still authenticates the request, but it must not carry
+				// the revoked user's name or any role.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
 				}
 			} else {
 				// No per-user session to scope this request down: the shared
@@ -1088,12 +1110,23 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// and each sees themselves — no shared identity.
 		if !trusted {
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// The role is re-resolved against the LIVE allowlist on every
+				// request (liveSessionRole), never read from the session record:
+				// the hub heartbeat keeps cfg.Dashboard.AuthorizedUsers in sync
+				// with Manage Access, and a grant/downgrade/revocation must bind
+				// now — not after the 30-day session expires. This is the fix for
+				// the recurring "owner access required for a granted owner" class
+				// (3rd report; see session_live_role.go). ok=false means the
+				// allowlist is enforced and the user was REVOKED: fall through
+				// unauthenticated instead of honoring the stale session.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
+					trusted = true
 				}
-				trusted = true
 			}
 		}
 
@@ -1499,6 +1532,9 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
+	// #4298: fold the budget window into per-window history so a closed window's
+	// consumption survives the reset that erases the live number.
+	s.ObserveBudgetWindow(status)
 
 	data, err := json.Marshal(status)
 	if err != nil {
@@ -1578,10 +1614,14 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the acting user: a direct-route spoke has a per-user session
 	// cookie; a hub-proxied spoke gets identity injected as X-Hive-User /
-	// X-Hive-Role by nginx. Either establishes an authenticated user.
+	// X-Hive-Role by nginx. Either establishes an authenticated user. The role
+	// is the LIVE allowlist role (session_live_role.go): a revoked session
+	// must not keep dismissing banners under its stale identity.
 	username, role := "", ""
 	if sess := s.sessionFromRequest(r); sess != nil {
-		username, role = sess.Username, sess.Role
+		if live, ok := s.liveSessionRole(sess); ok {
+			username, role = sess.Username, live
+		}
 	} else if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
 		username, role = hubUser, r.Header.Get("X-Hive-Role")
 	}
@@ -1617,6 +1657,39 @@ func (s *Server) githubAppNotInstalled() bool {
 	s.githubAppMu.RLock()
 	defer s.githubAppMu.RUnlock()
 	return s.githubAppRequired && s.githubAppState == githubAppStateNotInstalledToken
+}
+
+// Operator-side pkg/github AppAuthState wire tokens (AppAuthState.
+// OperatorActionable()): credential failures only the hub operator can fix.
+// Kept as literals for the same reason as githubAppStateNotInstalledToken.
+const (
+	githubAppStateKeyMissingToken    = "key-missing"
+	githubAppStateKeyInvalidToken    = "key-invalid"
+	githubAppStateNoAppAssignedToken = "no-app-assigned"
+)
+
+// githubAppCredsUndelivered is the config-truth rule for the OPERATOR-SIDE
+// credential states, the exact sibling of githubAppNotInstalled: an App whose
+// private key never arrived (or cannot sign for it) can never mint, so
+// github_auth must fail in BOTH health surfaces even while a token-based
+// GHClient still works. Before this, a hive stuck on key-missing showed
+// github_auth ✓ ("token-based") for 8 days while its agents could not act as
+// the App at all — the green check is what let kelly-headwaters sit degraded
+// and unexamined (2026-08-12 → 2026-08-20). Returns the failure detail, or ""
+// when no operator-side state is in force.
+func (s *Server) githubAppCredsUndelivered() string {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	if !s.githubAppRequired {
+		return ""
+	}
+	switch s.githubAppState {
+	case githubAppStateKeyMissingToken, githubAppStateNoAppAssignedToken:
+		return "GitHub App credentials not delivered by the hub — agents cannot act as the App (operator action; no action needed from the hive owner)"
+	case githubAppStateKeyInvalidToken:
+		return "GitHub App private key does not match the App it authenticates as — GitHub rejects its JWT (operator must push the correct key)"
+	}
+	return ""
 }
 
 func (s *Server) SetGitHubAppRequired(required bool) {
@@ -1923,9 +1996,14 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		failCount++
 	}
 
-	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
+	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
 		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org"}
+		overall = "degraded"
+		failCount++
+	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail}
 		overall = "degraded"
 		failCount++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
@@ -2640,9 +2718,13 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		fails++
 	}
 
-	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
+	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org"})
+		fails++
+	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail})
 		fails++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {

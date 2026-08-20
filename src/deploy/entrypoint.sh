@@ -867,12 +867,91 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
       echo "[entrypoint] ERROR: iptables not found — cannot force proxy egress"
     fi
 
-    if [ "$_iptables_ok" != "true" ]; then
+    # ── IPv6 egress gate (#4319) ────────────────────────────────────────────
+    # The redirect above exists ONLY in the IPv4 nat table. On any network that
+    # gives the container a global IPv6 address, an agent that resolves an AAAA
+    # record reaches :443 over IPv6 and never meets it — a SILENT bypass of the
+    # capability model (no ADVISORY-ONLY warning fires, because the IPv4 gate
+    # installed successfully). The proxy listens on 127.0.0.1 only
+    # (proxy.GitHubProxy listenAddr), so mirroring the REDIRECT with ip6tables
+    # could not deliver the traffic anywhere; the IPv6 family is instead CLOSED
+    # with a filter-table REJECT carrying the SAME three exemptions — xt_owner
+    # and xt_mark are family-agnostic, and SO_MARK (stamped by the Go proxy's
+    # markDialer) marks IPv6 packets identically, so the proxy's own upstream
+    # dials stay exempt on IPv6-capable networks.
+    #
+    # REJECT --reject-with tcp-reset rather than DROP: dual-stack clients get an
+    # immediate RST and fall back to IPv4 (Happy Eyeballs), landing in the IPv4
+    # redirect above, instead of hanging through a timeout on every dial.
+    #
+    # sysctl net.ipv6.conf.all.disable_ipv6=1 was REJECTED as the mechanism:
+    # the image depends on IPv6 loopback internally (the gateway nginx binds
+    # `listen [::]:PORT` for ::1 clients — gateway_nginx_dualstack_test.go —
+    # and the proxy's self-lookup reads /proc/net/tcp6), and /proc/sys is
+    # read-only in most container runtimes anyway.
+    #
+    # A kernel with no IPv6 stack at all (/proc/sys/net/ipv6 absent) has no
+    # IPv6 route to gate; that case passes vacuously rather than failing a
+    # container that cannot carry the traffic in the first place.
+    _ip6tables_ok=false
+    if [ ! -d /proc/sys/net/ipv6 ]; then
+      echo "[entrypoint] IPv6 stack absent from kernel — no IPv6 egress to gate"
+      _ip6tables_ok=true
+    else
+      # Same binary-selection rationale as IPT above: prefer the explicit nft
+      # frontend on nft-mode kernels (OKE, OpenShift/RHEL9).
+      IP6T=""
+      if command -v ip6tables-nft >/dev/null 2>&1; then
+        IP6T="ip6tables-nft"
+      elif command -v ip6tables >/dev/null 2>&1; then
+        IP6T="ip6tables"
+      fi
+      if [ -n "$IP6T" ]; then
+        # Same jittered chain-creation retry as the IPv4 gate: one-shot
+        # creation turns transient netlink/xtables contention into a
+        # fail-closed crash-loop (see the 2026-08-13 note above).
+        _ip6_chain_ok=false
+        _ip6_try=0
+        while [ "$_ip6_try" -lt 5 ]; do
+          _ip6_try=$((_ip6_try + 1))
+          if $IP6T -nL HIVE_PROXY6 >/dev/null 2>&1; then
+            $IP6T -F HIVE_PROXY6 2>/dev/null || true
+            _ip6_chain_ok=true
+            break
+          fi
+          if $IP6T -w 10 -N HIVE_PROXY6 2>/tmp/hive-ip6t-err.log; then
+            _ip6_chain_ok=true
+            break
+          fi
+          echo "[entrypoint] WARN: ip6tables chain creation attempt ${_ip6_try}/5 failed: $(cat /tmp/hive-ip6t-err.log 2>/dev/null) — retrying"
+          sleep $(( _ip6_try * 2 + $$ % 3 ))
+        done
+        if [ "$_ip6_chain_ok" = "true" ]; then
+          # Exemptions mirror the IPv4 chain exactly, in the same order, for
+          # the same two-platform reasons (owner-UID where xt_owner exists,
+          # packet mark where it does not). `|| true` on the owner lines keeps
+          # their failure non-fatal on hosts without xt_owner.
+          $IP6T -A HIVE_PROXY6 -m owner --uid-owner 0 -j RETURN || true
+          $IP6T -A HIVE_PROXY6 -m owner --uid-owner "$PROXY_UID" -j RETURN || true
+          $IP6T -A HIVE_PROXY6 -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN
+          $IP6T -A HIVE_PROXY6 -p tcp --dport 443 -j REJECT --reject-with tcp-reset
+          $IP6T -A OUTPUT -j HIVE_PROXY6
+          echo "[entrypoint] ip6tables ($IP6T): outbound IPv6 :443 REJECTed (proxy has no IPv6 listener; proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
+          _ip6tables_ok=true
+        else
+          echo "[entrypoint] ERROR: ip6tables chain creation failed after ${_ip6_try} attempts: $(cat /tmp/hive-ip6t-err.log 2>/dev/null)"
+        fi
+      else
+        echo "[entrypoint] ERROR: ip6tables not found — IPv6 egress cannot be gated"
+      fi
+    fi
+
+    if [ "$_iptables_ok" != "true" ] || [ "$_ip6tables_ok" != "true" ]; then
       if [ "$PROXY_ADVISORY_OK" = "true" ]; then
         echo "[entrypoint] WARN: proxy egress enforcement is ADVISORY-ONLY (HIVE_PROXY_ADVISORY_OK=true set). Agents can bypass the MITM proxy — capability model is NOT enforced."
       else
-        echo "[entrypoint] FATAL: could not establish forced proxy egress (iptables redirect). The ACMM capability model would be advisory-only, allowing agents with raw tokens to bypass the MITM proxy." >&2
-        echo "[entrypoint] FATAL: refusing to start. Grant NET_ADMIN + install iptables, or set HIVE_PROXY_ADVISORY_OK=true to deliberately run in advisory mode." >&2
+        echo "[entrypoint] FATAL: could not establish forced proxy egress (IPv4 redirect established: ${_iptables_ok}; IPv6 gate established: ${_ip6tables_ok}). The ACMM capability model would be advisory-only for the failed family, allowing agents with raw tokens to bypass the MITM proxy." >&2
+        echo "[entrypoint] FATAL: refusing to start. Grant NET_ADMIN + install iptables/ip6tables, or set HIVE_PROXY_ADVISORY_OK=true to deliberately run in advisory mode." >&2
         # Distinguish root cause by exit code (#3760 follow-up): netfilter
         # chain manipulation itself requires CAP_NET_ADMIN, so if the
         # bounding set lacks it, that absence is BY ITSELF sufficient to

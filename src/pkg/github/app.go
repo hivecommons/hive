@@ -521,6 +521,34 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 	}, nil
 }
 
+// VerifyRepoRead proves the ADVISORY-TIER repository read path works for
+// owner/repo: it mints an advisor scoped token restricted to that single repo
+// (exactly the credential an L2 guide agent receives) and performs a real
+// Contents read with it. This is the verification gate for closing #2575's
+// "no clone mechanism / no repository access mechanism" findings — a digest
+// post only proves issues:write, while those findings are about Contents
+// read, which the advisor tier lacked entirely before #4291. A nil return
+// means the read demonstrably succeeded; any error means the finding's
+// condition may still hold and the caller must not close it.
+func (a *AppAuth) VerifyRepoRead(ctx context.Context, owner, repo string) error {
+	if owner == "" || repo == "" {
+		return fmt.Errorf("verifying repo read: owner and repo are required")
+	}
+	token, err := a.ScopedTokenForRepos(ctx, "advisor", []string{repo})
+	if err != nil {
+		return fmt.Errorf("minting advisor token for %s/%s: %w", owner, repo, err)
+	}
+	readCtx, cancel := mintContext(ctx)
+	defer cancel()
+	client := newTokenClient(token, a.apiURL)
+	// Root directory listing: works on any non-empty repo with Contents:read,
+	// unlike a README fetch, which 404s on repos without one.
+	if _, _, _, err := client.Repositories.GetContents(readCtx, owner, repo, "", nil); err != nil {
+		return fmt.Errorf("reading contents of %s/%s with advisor token: %w", owner, repo, err)
+	}
+	return nil
+}
+
 type appTransport struct {
 	auth *AppAuth
 	base http.RoundTripper

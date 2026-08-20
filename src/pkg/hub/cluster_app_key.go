@@ -1393,6 +1393,23 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		if strings.TrimSpace(payload.GitHubAppKeyFingerprint) != "" {
 			s.noteAppKeyConverged(payload.HiveID)
 		}
+		// A spoke POSITIVELY reporting it never received an App key, answered
+		// with no key: the hive is dead until an operator uploads one, and this
+		// beat is the ONLY place that fact is knowable. It used to pass in
+		// silence — no log line, no alert — which is how kelly-headwaters sat
+		// degraded on key-missing for 8 days (provisioned 2026-08-12, noticed
+		// 2026-08-20) while the hub answered nothing every 30 seconds. Said out
+		// loud with a remedy, exactly like the placeholder-sentinel warn above
+		// it in appKeyConfigForHeartbeat: an undeliverable state must never be
+		// the quiet case.
+		if s.logger != nil && payload.GitHubAppRequired && strings.TrimSpace(payload.GitHubAppState) == appStateKeyMissingToken {
+			s.logger.Warn("heartbeat: spoke reports its github app key was never delivered and the hub holds no key to deliver — hive cannot work until an operator uploads the App key",
+				"hive_id", payload.HiveID,
+				"cluster_id", clusterID,
+				"spoke_app_id", payload.GitHubAppID,
+				"remedy", "PUT /api/saas/admin/cluster-app-keys/"+clusterID+" with the App's PEM private key",
+			)
+		}
 		if cfg == nil {
 			// Nothing else to deliver: check for the one fault a converged app
 			// identity can still hide — a stale installation_id left behind by an

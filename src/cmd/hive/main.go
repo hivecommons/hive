@@ -1075,9 +1075,17 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	// preShutdownHook, when set, runs in the signal handler before the context
+	// is canceled. It is stored after the agent manager exists and archives
+	// every agent's in-flight kick log to /data so a pod roll or hive upgrade
+	// does not destroy the latest run's scrollback (#4296).
+	var preShutdownHook atomic.Pointer[func()]
 	go func() {
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig)
+		if fn := preShutdownHook.Load(); fn != nil {
+			(*fn)()
+		}
 		cancel()
 	}()
 
@@ -1191,6 +1199,17 @@ func main() {
 	if costData, err := os.ReadFile(costHistoryPath); err == nil {
 		if err := json.Unmarshal(costData, &pendingCostSeed); err == nil && len(pendingCostSeed) > 0 {
 			logger.Info("cost history loaded", "entries", len(pendingCostSeed))
+		}
+	}
+
+	// #4298: restore per-budget-window history so past resets survive a restart.
+	// A missing or unparseable file is ordinary on a hive upgrading into this
+	// feature — it simply starts with no history rather than failing to boot.
+	const budgetWindowHistoryPath = "/data/budget-window-history.json"
+	var pendingBudgetWindowSeed []dashboard.BudgetWindowEntry
+	if budgetData, err := os.ReadFile(budgetWindowHistoryPath); err == nil {
+		if err := json.Unmarshal(budgetData, &pendingBudgetWindowSeed); err == nil && len(pendingBudgetWindowSeed) > 0 {
+			logger.Info("budget window history loaded", "entries", len(pendingBudgetWindowSeed))
 		}
 	}
 
@@ -1343,6 +1362,10 @@ func main() {
 		AppAuthoredPRs:  cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
+	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
+	// the in-flight kick's scrollback; archive it to /data first (#4296).
+	archiveOnShutdown := func() { agentMgr.ArchiveAllKickLogs("shutdown") }
+	preShutdownHook.Store(&archiveOnShutdown)
 	agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 	// Treat any configured gateway name as an inference-routable backend so an
 	// agent with backend: <gateway> routes through it. Resolution is live
@@ -1725,6 +1748,11 @@ func main() {
 	if len(pendingCostSeed) > 0 {
 		dashSrv.SeedCostHistory(pendingCostSeed)
 		logger.Info("cost history restored", "entries", len(pendingCostSeed))
+	}
+
+	if len(pendingBudgetWindowSeed) > 0 {
+		dashSrv.SeedBudgetWindowHistory(pendingBudgetWindowSeed)
+		logger.Info("budget window history restored", "entries", len(pendingBudgetWindowSeed))
 	}
 
 	if len(pendingTrendSeed) > 0 {
@@ -5375,6 +5403,53 @@ func runEvalCycle(
 							logger.Info("closed healed GitHub App access findings after successful App digest post",
 								"count", len(healed), "titles", strings.Join(healed, "; "))
 						}
+						// Repo-ACCESS findings ("no clone mechanism", "no
+						// repository access mechanism in L2 advisory mode",
+						// …) are the second #2575 family: true before #4291
+						// gave advisory tiers Contents:read and a working
+						// credential-helper fetch, but a digest post only
+						// proves issues:WRITE, so they need their own proof.
+						// Verify with a real advisor-scoped Contents read of
+						// the repo each finding names (or the primary repo
+						// when it names none), memoized per repo — a finding
+						// about a repo the hive genuinely cannot read stays
+						// open.
+						readVerified := map[string]bool{}
+						canRead := func(ownerRepo string) bool {
+							target := ownerRepo
+							if target == "" {
+								target = primaryRepo
+							}
+							owner, name := cfg.Project.Org, target
+							if i := strings.LastIndex(target, "/"); i > 0 {
+								owner, name = target[:i], target[i+1:]
+							}
+							if owner == "" || name == "" {
+								return false
+							}
+							key := owner + "/" + name
+							if v, ok := readVerified[key]; ok {
+								return v
+							}
+							appAuth := ghClient.AppAuth()
+							if appAuth == nil {
+								// Static-token client: no advisor-tier token
+								// can be minted, so the read path cannot be
+								// verified — leave the finding open.
+								return false
+							}
+							err := appAuth.VerifyRepoRead(ctx, owner, name)
+							if err != nil {
+								logger.Info("repo-access finding left open: advisor read probe failed",
+									"repo", key, "error", err)
+							}
+							readVerified[key] = err == nil
+							return readVerified[key]
+						}
+						if healed := advisory.CloseHealedRepoAccessFindings(beadStores, canRead); len(healed) > 0 {
+							logger.Info("closed healed repo-access findings after verified advisory read path",
+								"count", len(healed), "titles", strings.Join(healed, "; "))
+						}
 					}
 				} else {
 					// No pinned advisory issue for this repo, yet there IS
@@ -5850,6 +5925,16 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			trendData, err := json.Marshal(trendHist)
 			if err == nil {
 				atomicWrite("/data/trend-history.json", trendData)
+			}
+		}
+
+		// #4298: per-budget-window history. Written on the same cadence as the
+		// other series so a pod roll cannot lose more of one than the others.
+		budgetHist := dashSrv.BudgetWindowHistory()
+		if len(budgetHist) > 0 {
+			budgetData, err := json.Marshal(budgetHist)
+			if err == nil {
+				atomicWrite("/data/budget-window-history.json", budgetData)
 			}
 		}
 	}

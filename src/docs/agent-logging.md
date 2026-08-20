@@ -222,6 +222,49 @@ terminal scrollback:
   agent card. Normal dashboard auth applies (any authenticated role); output
   passes through token redaction, so it is not a redaction bypass.
 
+The live capture is scoped to the agent's **current** tmux session: a restart
+kills and recreates the session, and a hive upgrade replaces the whole
+container. Per-kick log archiving (below) is what preserves run logs across
+those boundaries.
+
+## Per-kick log history
+
+Hive archives each kick's terminal output to a durable file so operators can
+read the logs of the last several runs — not just the latest —
+([#4296](https://github.com/kubestellar/hive/issues/4296),
+[#4295](https://github.com/kubestellar/hive/issues/4295)):
+
+- **When snapshots happen.** The scrollback is captured to a file *before*
+  it can be destroyed: when the next kick is delivered (the previous kick's
+  output is archived and the tmux history is cleared, so each archive covers
+  exactly one kick), before `kill-session` on an agent restart, and on
+  graceful shutdown (SIGTERM — pod roll or hive upgrade) for every agent
+  with un-archived kick output.
+- **Where they live.** `/data/logs/kicks/<agent>/<timestamp>-<reason>.log`
+  (override the root with `HIVE_KICK_LOG_DIR`). `/data` is the persistent
+  volume on hosted hives, so archives survive agent restarts, pod rolls, and
+  hive image upgrades. Each file starts with a small header (agent, archive
+  time, snapshot reason, kick start time, prompt snippet) followed by the raw
+  scrollback. `<reason>` is `kick`, `restart`, or `shutdown`.
+- **Retention.** Per agent, the newest **10** archives are kept
+  (`HIVE_KICK_LOG_RETENTION`; `0` disables archiving) within a **64 MiB**
+  per-agent size cap (`HIVE_KICK_LOG_MAX_BYTES`); the oldest files are pruned
+  first and the newest archive is never deleted. An agent with less history
+  than normal (fresh install, retention just lowered) simply lists fewer
+  entries — never an error.
+- **Dashboard access.** The `🕘 past kicks` control on the agent card opens
+  `GET /agents/{name}/kicks`, an index of the live log plus every archived
+  kick with view/download links. Programmatic access:
+  `GET /api/agents/{name}/kicks` (JSON list, newest first) and
+  `GET /api/agents/{name}/kicks/{id}` (`text/plain`; `?download=1` for an
+  attachment). Same auth rule as the full-log endpoint (any authenticated
+  role), and archived content passes through the same token redaction.
+- **Limitations.** Sandbox-executor kicks have no tmux session and are not
+  archived here. The archive holds at most the retained scrollback
+  (`history-limit`, 50000 lines by default), so an extremely long run
+  self-truncates from the top. A hard kill (SIGKILL, node loss) skips the
+  shutdown snapshot; the previous kicks' archives on `/data` are unaffected.
+
 ## Related
 
 - [`src/deploy/README.md`](../deploy/README.md) — `hive-panes.sh` inventory

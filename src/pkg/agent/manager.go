@@ -187,8 +187,13 @@ type AgentProcess struct {
 	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	launchGen          int       // increments per launch; stale deliverStartupKick goroutines check it and drop
 	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
-	actionNudgeSent    bool      // no-action watchdog: at most one action nudge per kick
-	ActionNudges       int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	// kickLogPending is true while the current tmux session holds kick output
+	// that has not yet been archived to a per-kick log file (see
+	// kick_logs.go). Set after every kick delivery; cleared when the
+	// scrollback is archived (next kick, restart, shutdown). Guarded by m.mu.
+	kickLogPending  bool
+	actionNudgeSent bool // no-action watchdog: at most one action nudge per kick
+	ActionNudges    int  // total prose-only-response action nudges sent (surfaced to the dashboard)
 	// sandboxResumeAfterCancel is set when an operator resumes a paused
 	// sandbox agent while the canceled sandbox goroutine is still draining.
 	// The completion handler then turns the expected cancellation into Idle
@@ -356,6 +361,16 @@ type Manager struct {
 	sendKeysForAgent     func(agent *AgentProcess, keys ...string)
 	promptDismissSleep   func(time.Duration)
 	promptDismissTimeout time.Duration
+
+	// Per-kick durable log archiving (#4296, #4295) — see kick_logs.go.
+	// kickLogDir/kickLogRetention/kickLogMaxBytes are resolved once in
+	// NewManager from env overrides; captureFullLogFn and clearHistoryFn are
+	// test seams over the tmux capture-pane / clear-history subprocesses.
+	kickLogDir       string
+	kickLogRetention int
+	kickLogMaxBytes  int64
+	captureFullLogFn func(agent *AgentProcess) (string, error)
+	clearHistoryFn   func(agent *AgentProcess)
 }
 
 // SetPersistPauseCallback wires a function that persists an agent's paused
@@ -884,6 +899,8 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 		logger.Info("no UID map found, agents will share dev UID", "path", UIDMapPath)
 	}
 
+	kickLogDir, kickLogRetention, kickLogMaxBytes := kickLogSettingsFromEnv()
+
 	m := &Manager{
 		agents:           make(map[string]*AgentProcess),
 		idToName:         make(map[string]string),
@@ -893,6 +910,9 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 		copilotAuthToken: copilotToken,
 		claudeAuthToken:  claudeToken,
 		uidMap:           uidMap,
+		kickLogDir:       kickLogDir,
+		kickLogRetention: kickLogRetention,
+		kickLogMaxBytes:  kickLogMaxBytes,
 	}
 
 	for name, cfg := range agents {
@@ -1874,6 +1894,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		now := time.Now()
 		agent.LastKick = &now
 		agent.LastKickMessage = bootstrapPrompt
+		agent.kickLogPending = true
 		snippet := bootstrapPrompt
 		const maxBootstrapSnippet = 200
 		snippet = truncateStr(snippet, maxBootstrapSnippet)
@@ -3167,16 +3188,7 @@ func (m *Manager) CaptureFullLog(name string) (string, error) {
 	if agent.tmuxSession == "" {
 		return "", fmt.Errorf("agent %s has no active session", name)
 	}
-	// -S -<n>: start n lines back into history; -E -: through the last visible
-	// line; -J: join wrapped lines so copied text is not hard-wrapped at the
-	// pane width; -p: print to stdout. -1: keep the tail behaviour bounded.
-	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
-		"-S", fmt.Sprintf("-%d", fullLogCaptureLines), "-E", "-")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("capturing pane for %s: %w", name, err)
-	}
-	return string(out), nil
+	return m.captureScrollbackForAgent(agent)
 }
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
@@ -3736,6 +3748,11 @@ func (m *Manager) SendKick(name string, message string) error {
 // (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
 // this function does no readiness checking of its own.
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
+	// Archive the PREVIOUS kick's scrollback and clear the history before any
+	// input touches the pane, so each archived kick log is cleanly delimited
+	// (#4296). Must be the first thing this function does.
+	m.rotateKickLogOnKickLocked(agent)
+
 	// Clear stale input before kick (Ctrl+C then Ctrl+U).
 	// Goose 1.37 exits on ^C — skip clear for goose backend.
 	if agent.Config.Backend != "goose" && agent.BackendOverride != "goose" {
@@ -3787,6 +3804,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	agent.LastKickMessage = message
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
+	// The session now holds this kick's output; the next rotation point
+	// (kick, restart, shutdown) must archive it before it is destroyed.
+	agent.kickLogPending = true
 
 	// Arm the post-kick watchdog for inference agents: the watcher loop
 	// sends a "continue" nudge if the pane freezes at an idle prompt, and
@@ -7186,6 +7206,13 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 		}
 	}
 
+	// Archive the outgoing session's kick output before the session is killed
+	// below — kill-session destroys the scrollback (#4295/#4296).
+	if agent.kickLogPending {
+		m.archiveKickLogLocked(agent, "restart")
+		agent.kickLogPending = false
+	}
+
 	// Terminate the agent's CLI process(es) before recreating the session.
 	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
 	// not UID isolation is enabled. killAgentProcesses (UID-based) is only safe
@@ -7469,6 +7496,14 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 		if agent.cancel != nil {
 			agent.cancel()
 		}
+	}
+
+	// Archive the outgoing session's kick output BEFORE anything below kills
+	// the CLI or the session — kill-session destroys the scrollback and with
+	// it the only record of the previous run (#4295/#4296).
+	if agent.kickLogPending {
+		m.archiveKickLogLocked(agent, "restart")
+		agent.kickLogPending = false
 	}
 
 	// Terminate the agent's CLI process(es) before recreating the session.

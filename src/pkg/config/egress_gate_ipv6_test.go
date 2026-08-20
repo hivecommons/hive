@@ -1,0 +1,202 @@
+package config
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// These tests pin the IPv6 half of the forced-proxy egress gate (#4319).
+//
+// The gate's IPv4 redirect lives in entrypoint.sh's iptables block; before
+// #4319 there was NO ip6tables path at all, so on any dual-stack network an
+// agent resolving an AAAA record reached :443 over IPv6 without ever meeting
+// the redirect — silently, because the IPv4 gate had installed successfully.
+//
+// Like entrypoint_boot_test.go, this extracts and EXECUTES the real gate block
+// rather than grepping for rule text: shim iptables/ip6tables binaries record
+// every invocation, so the assertions cover the branching logic the container
+// actually runs, not a paraphrase of it. Live packet-level verification needs
+// a Linux netns and is covered by src/deploy/probe_podman_ipv6_egress.sh.
+
+// runEgressGate executes ONLY the iptables/ip6tables gate block of
+// entrypoint.sh with shim netfilter binaries, returning the combined script
+// output, the shim invocation log, and the exit code.
+//
+// shims maps binary names (for example "iptables-nft") to an exit-code policy:
+// every invocation is appended to the log and succeeds, except `-nL <chain>`
+// existence probes, which fail so the creation path runs. Binaries absent from
+// the map are absent from PATH. ipv6Stack controls whether the block sees a
+// kernel IPv6 stack (/proc/sys/net/ipv6 is rewritten onto a temp root).
+func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stack bool) (out string, calls string, exitCode int) {
+	t.Helper()
+	src, err := os.ReadFile(entrypointPath)
+	if err != nil {
+		t.Skipf("entrypoint.sh not readable from this package: %v", err)
+	}
+	text := string(src)
+	start := strings.Index(text, "PROXY_PORT=18443")
+	if start < 0 {
+		t.Fatal("could not find the start of the egress gate block (PROXY_PORT=18443); the marker moved and this test would silently cover nothing")
+	}
+	end := strings.Index(text, "# Drop to non-root user")
+	if end < 0 || end < start {
+		t.Fatal("could not find the end of the egress gate block; the marker moved and this test would silently cover nothing")
+	}
+	body := text[start:end]
+	// The block sits inside an enclosing `if` whose opener is above the
+	// extraction start; drop the one unmatched trailing `fi`.
+	body = strings.TrimRight(body, " \t\n")
+	if !strings.HasSuffix(body, "fi") {
+		t.Fatalf("gate block does not end with the enclosing fi; got tail %q", body[len(body)-20:])
+	}
+	body = strings.TrimRight(strings.TrimSuffix(body, "fi"), " \t\n")
+
+	root := t.TempDir()
+	// Rewrite absolute paths onto the temp root so the test never touches the
+	// real /proc or /tmp, and so the IPv6-stack presence check is controllable.
+	body = strings.ReplaceAll(body, "/proc/sys/net/ipv6", root+"/proc/sys/net/ipv6")
+	body = strings.ReplaceAll(body, "/tmp/hive-ipt-err.log", root+"/hive-ipt-err.log")
+	body = strings.ReplaceAll(body, "/tmp/hive-ip6t-err.log", root+"/hive-ip6t-err.log")
+	if ipv6Stack {
+		if err := os.MkdirAll(filepath.Join(root, "proc/sys/net/ipv6"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(root, "calls.log")
+	shim := "#!/bin/sh\n" +
+		"echo \"$(basename \"$0\") $*\" >> " + callLog + "\n" +
+		"# Chain-existence probes must fail so the creation path is exercised.\n" +
+		"case \"$*\" in *-nL*) exit 1;; esac\n" +
+		"exit 0\n"
+	for _, name := range shims {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(shim), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// python3 (uid-map bookkeeping) and sleep (retry backoff) as no-ops, and a
+	// real basename for the shim itself.
+	for name, script := range map[string]string{
+		"python3": "#!/bin/sh\nexit 0\n",
+		"sleep":   "#!/bin/sh\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prelude := "set -e\n" +
+		"PATH=" + binDir + ":/usr/bin:/bin\n" +
+		"EXIT_NET_ADMIN_REQUIRED=77\n" +
+		"_cap_net_admin_in_bset=true\n" +
+		"PROXY_UID=1001\n" +
+		"HIVE_PROXY_EGRESS_MARK=0x1112\n"
+	cmd := exec.Command("sh", "-c", prelude+body)
+	cmd.Env = append(os.Environ(), "HIVE_PROXY_ADVISORY_OK=false")
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	outB, _ := cmd.CombinedOutput()
+	callsB, _ := os.ReadFile(callLog)
+	return string(outB), string(callsB), cmd.ProcessState.ExitCode()
+}
+
+// TestGateInstallsBothFamilies: with iptables AND ip6tables available and an
+// IPv6 stack present, the gate must establish BOTH families — the IPv4
+// redirect (re-confirmed per #4319's acceptance criteria) and the IPv6 REJECT
+// — and start cleanly.
+func TestGateInstallsBothFamilies(t *testing.T) {
+	out, calls, code := runEgressGate(t, nil,
+		[]string{"iptables-nft", "ip6tables-nft"}, true)
+	if code != 0 {
+		t.Fatalf("gate exited %d with both families available:\n%s", code, out)
+	}
+	// IPv4 redirect re-confirmed in the same run.
+	if !strings.Contains(calls, "iptables-nft -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports 18443") {
+		t.Fatalf("IPv4 :443 redirect was not installed:\n%s", calls)
+	}
+	// IPv6 family closed with the same three exemptions, in order, BEFORE the
+	// REJECT, and the chain hooked into OUTPUT.
+	wantSeq := []string{
+		"ip6tables-nft -w 10 -N HIVE_PROXY6",
+		"ip6tables-nft -A HIVE_PROXY6 -m owner --uid-owner 0 -j RETURN",
+		"ip6tables-nft -A HIVE_PROXY6 -m owner --uid-owner 1001 -j RETURN",
+		"ip6tables-nft -A HIVE_PROXY6 -m mark --mark 0x1112 -j RETURN",
+		"ip6tables-nft -A HIVE_PROXY6 -p tcp --dport 443 -j REJECT --reject-with tcp-reset",
+		"ip6tables-nft -A OUTPUT -j HIVE_PROXY6",
+	}
+	pos := -1
+	for _, want := range wantSeq {
+		i := strings.Index(calls, want)
+		if i < 0 {
+			t.Fatalf("missing ip6tables invocation %q:\n%s", want, calls)
+		}
+		if i < pos {
+			t.Fatalf("ip6tables invocation %q out of order (exemptions must precede the REJECT):\n%s", want, calls)
+		}
+		pos = i
+	}
+	if !strings.Contains(out, "outbound IPv6 :443 REJECTed") {
+		t.Fatalf("IPv6 gate success was not logged:\n%s", out)
+	}
+	if strings.Contains(out, "FATAL") {
+		t.Fatalf("unexpected FATAL with both families established:\n%s", out)
+	}
+}
+
+// TestGateFailsClosedWithoutIP6Tables: an IPv6-capable kernel with no
+// ip6tables binary means the IPv6 family CANNOT be gated — that is exactly the
+// silent bypass #4319 describes, so the container must refuse to start (the
+// same F5 fail-closed treatment the IPv4 redirect gets), not warn and proceed.
+func TestGateFailsClosedWithoutIP6Tables(t *testing.T) {
+	out, _, code := runEgressGate(t, nil, []string{"iptables-nft"}, true)
+	if code == 0 {
+		t.Fatalf("gate started with IPv6 unenforced (exit 0):\n%s", out)
+	}
+	if !strings.Contains(out, "ip6tables not found") {
+		t.Fatalf("missing ip6tables was not named as the cause:\n%s", out)
+	}
+	if !strings.Contains(out, "FATAL") {
+		t.Fatalf("no FATAL for an ungated IPv6 family:\n%s", out)
+	}
+}
+
+// TestGateAdvisoryOptOutCoversIPv6: HIVE_PROXY_ADVISORY_OK=true is the single
+// deliberate escape hatch; it must cover an IPv6-gate failure the same way it
+// covers an IPv4 one — with the loud ADVISORY-ONLY warning, never silently.
+func TestGateAdvisoryOptOutCoversIPv6(t *testing.T) {
+	out, _, code := runEgressGate(t,
+		map[string]string{"HIVE_PROXY_ADVISORY_OK": "true"},
+		[]string{"iptables-nft"}, true)
+	if code != 0 {
+		t.Fatalf("advisory opt-in still exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "ADVISORY-ONLY") {
+		t.Fatalf("advisory mode was entered without the ADVISORY-ONLY warning:\n%s", out)
+	}
+}
+
+// TestGatePassesVacuouslyWithoutIPv6Stack: a kernel with IPv6 compiled out or
+// disabled at boot (/proc/sys/net/ipv6 absent) cannot carry IPv6 traffic, so
+// there is nothing to gate; requiring ip6tables there would fail containers
+// that have no bypass to close.
+func TestGatePassesVacuouslyWithoutIPv6Stack(t *testing.T) {
+	out, calls, code := runEgressGate(t, nil, []string{"iptables-nft"}, false)
+	if code != 0 {
+		t.Fatalf("gate exited %d on an IPv6-less kernel:\n%s", code, out)
+	}
+	if !strings.Contains(out, "IPv6 stack absent") {
+		t.Fatalf("the vacuous pass was not logged:\n%s", out)
+	}
+	if regexp.MustCompile(`(?m)^ip6tables`).MatchString(calls) {
+		t.Fatalf("ip6tables was invoked despite no IPv6 stack:\n%s", calls)
+	}
+}

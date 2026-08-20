@@ -1,6 +1,6 @@
 # Hive documentation
 
-Documentation for the current Hive line (branch `v4`; the code and docs live under the `src/` directory). The `v2` branch was retired in August 2026.
+Documentation for the current Hive line (branch `v4`; the code and docs live under the `src/` directory). The `v2` branch was retired in August 2026 — operators upgrading a v2 deployment should start with the [v2 → v4 migration guide](migration-v2-v4.md).
 
 Start with [Architecture](architecture.md) for the system overview, then use the topic guides below. New users should start with the [getting-started guide](getting-started.md) — it covers setting up the Forge App (the app for your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) and what to do if an inactive hosted hive is reaped.
 
@@ -16,6 +16,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Environment variable reference](https://github.com/kubestellar/hive/blob/v4/src/docs/env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
 - [Troubleshooting](troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
 - [Cross-cluster migration](https://github.com/kubestellar/hive/blob/v4/src/docs/cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
+- [v2 → v4 migration](migration-v2-v4.md) — upgrading a v2 deployment: the config is compatible unmodified, and what actually changes is the image tag, the published `7681` port, and the Compose/Kubernetes security settings.
 - [Dashboard route and health checks](https://github.com/kubestellar/hive/blob/v4/src/docs/health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
 - [Network and port requirements](https://github.com/kubestellar/hive/blob/v4/src/docs/network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
 - [TLS, HTTPS, and certificates](https://github.com/kubestellar/hive/blob/v4/src/docs/tls-setup.md) — termination patterns and certificate ownership.
@@ -84,6 +85,7 @@ Some documents describe planned or design-only work rather than live features. T
 - [Security model — operator guide](security-model.md) — Ed25519-only sessions/SSO, per-hive keys, master key rotation, forced proxy egress and `CAP_NET_ADMIN`, privilege model, and supply-chain posture.
 - [Security threat model](https://github.com/kubestellar/hive/blob/v4/src/docs/security-threat-model.md) — actors, boundaries, layered defenses, known gaps, and reporting.
 - [Rootless Podman startup and exit-77 behavior](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootless-startup-spike.md) — measured rootless matrix: fail-closed exit 77, gate installation under `--cap-add NET_ADMIN`, proven interception, and what is still unproven.
+- [Rootful Podman egress-gate baseline](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootful-egress-baseline.md) — the rootful baseline the rootless result is measured against: fail-closed exit 77, redirect and ambient-capability evidence, and `SO_MARK` isolated from the owner-UID exemption.
 - [Architecture Decision Records](https://github.com/kubestellar/hive/blob/v4/src/docs/adr/README.md) — lightweight ADR process and records 0001-0010.
 - [Intent verification](https://github.com/kubestellar/hive/blob/v4/src/docs/intent-verification.md) — tier-based change authorization for merge eligibility.
 - [Rootless Podman CI seam](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootless-ci.md) — documented test intent and static contract for contributor-container runtime handling.

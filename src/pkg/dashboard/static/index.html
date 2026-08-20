@@ -4333,6 +4333,7 @@
           <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>
           <a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>
           <a href="${fullLogUrl(a.name, true)}" download class="terminal-link" title="Download the full retained log of this agent's latest run as a text file">⬇ log</a>
+          <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" title="Browse archived logs of this agent's previous kicks — history survives restarts and hive upgrades">🕘 past kicks</a>
           <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
           <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" style="font-size:1rem;opacity:0.7" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
           <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" style="margin-left:auto" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
@@ -5481,7 +5482,7 @@
       if (!s || !e || !s.value || !e.value) return;
       const start = new Date(s.value).getTime();
       const end = new Date(e.value).getTime();
-      if (!(end > start)) { hiveToast('Custom range: end must be after start', 'error'); return; }
+      if (!(end > start)) { showToast('Custom range: end must be after start', 'error'); return; }
       _costCustom = { start, end };
       try { localStorage.setItem('hiveCostCustom', JSON.stringify(_costCustom)); } catch {}
       if (_lastCost) renderCost(_lastCost);
@@ -5849,6 +5850,18 @@
       return `${proto}//${host}/api/agents/${encodeURIComponent(agentName)}/log${qs ? '?' + qs : ''}`;
     }
 
+    // kickHistoryUrl points at the server-rendered index of the agent's
+    // durable per-kick log archives (issue #4296): the last several kicks'
+    // logs, surviving agent restarts and hive upgrades. The token param
+    // mirrors fullLogUrl so it authenticates on direct-route spokes.
+    function kickHistoryUrl(agentName) {
+      const proto = window.location.protocol;
+      const host = window.location.host;
+      const t = localStorage.getItem('hive-token');
+      const tok = t ? `?token=${encodeURIComponent(t)}` : '';
+      return `${proto}//${host}/agents/${encodeURIComponent(agentName)}/kicks${tok}`;
+    }
+
     /* SINGLE source of truth for the 🔑 "needs login" badge. Mirrors the
        server-side precedence rule in pkg/agent/authprobe.go:
 
@@ -5937,7 +5950,7 @@
         const configTarget = a.replicaBase || a.name;
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${replicaBadge} ${toggleBtn} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" title="Full log of the latest run as selectable, searchable text">📄 full log</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${replicaBadge} ${toggleBtn} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" title="Full log of the latest run as selectable, searchable text">📄 full log</a> <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
@@ -6581,7 +6594,7 @@
       var raw = (input && input.value || '').trim();
       var id = parseInt(raw, 10);
       if (!raw || isNaN(id) || id <= 0) {
-        if (typeof hiveToast === 'function') hiveToast('Enter the numeric installation ID (from github.com/settings/installations/<ID>)', 'error');
+        showToast('Enter the numeric installation ID (from github.com/settings/installations/<ID>)', 'error');
         return;
       }
       if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
@@ -6595,22 +6608,22 @@
         });
         var data = await resp.json().catch(function(){ return {}; });
         if (!resp.ok) {
-          if (typeof hiveToast === 'function') hiveToast('Failed: ' + (data.error || resp.status), 'error');
+          showToast('Failed: ' + (data.error || resp.status), 'error');
           return;
         }
         if (data.reinit === 'ok') {
-          if (typeof hiveToast === 'function') hiveToast('Installation ID set and GitHub App connected', 'success');
+          showToast('Installation ID set and GitHub App connected', 'success');
           var banner = document.getElementById('gh-app-install-banner');
           if (banner) { banner.classList.remove('perm-issue'); banner.setAttribute('hidden', ''); banner.style.cssText = 'display:none'; }
         } else if (data.reinit === 'failed') {
-          if (typeof hiveToast === 'function') hiveToast('ID saved, but connect failed: ' + (data.reinit_error || 'check app install/permissions'), 'error');
+          showToast('ID saved, but connect failed: ' + (data.reinit_error || 'check app install/permissions'), 'error');
         } else {
           // Saved but reinit not attempted (e.g. app key missing) — re-check
           // will surface the remaining gap.
-          if (typeof hiveToast === 'function') hiveToast('Installation ID saved. Click Re-check to verify.', 'success');
+          showToast('Installation ID saved. Click Re-check to verify.', 'success');
         }
       } catch(e) {
-        if (typeof hiveToast === 'function') hiveToast('Error: ' + e.message, 'error');
+        showToast('Error: ' + e.message, 'error');
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Save Installation ID'; }
       }
@@ -7083,10 +7096,19 @@
     let budgetIgnored = false;
     // fetch('/api/budget-ignore') — deferred to _deferredInit
 
+    // Re-fetch /api/status and re-render so the budget bar/banners reflect the
+    // new server state without a full page reload. Render errors are swallowed:
+    // callers use this after an action already succeeded, so a refresh hiccup
+    // must never be reported as a failure of that action (the next SSE/poll
+    // cycle repaints anyway).
+    function refreshStatus() {
+      return fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
     function toggleBudgetIgnore() {
       budgetIgnored = !budgetIgnored;
       fetch('/api/budget-ignore', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ ignored: budgetIgnored }) })
-        .then(r => r.json()).then(d => { budgetIgnored = d.ignored; renderAll(); });
+        .then(r => r.json()).then(d => { budgetIgnored = d.ignored; refreshStatus(); });
     }
 
     // Opens a fresh budget window: spend re-anchors at 0, the exhausted gate
@@ -7094,18 +7116,24 @@
     // genuinely spent) budget is suppressing kicks — unlike "ignore budget",
     // which turns enforcement off entirely.
     async function resetBudgetWindow() {
+      // The try/catch covers only the API call: once the server has reset the
+      // window, a post-success UI refresh failure must not be mislabeled as
+      // "Failed to reset budget window" (that exact double-toast shipped once,
+      // when the success path called an undefined render helper).
+      let r;
       try {
-        const r = await fetch('/api/config/governor/budget/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
-          return;
-        }
-        showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
-        renderAll();
+        r = await fetch('/api/config/governor/budget/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
       } catch (e) {
         showToast('Failed to reset budget window: ' + e.message, 'error');
+        return;
       }
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
+        return;
+      }
+      showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
+      refreshStatus(); // repaint budget bar/banners in place; errors swallowed inside
     }
 
     function renderBudgetBar(budget) {
@@ -11475,18 +11503,18 @@ function burnAreaChart() {
       var q = (document.getElementById('audit-search').value || '').trim();
       if (!q) return;
       var saved = loadAuditSearches();
-      if (saved.indexOf(q) !== -1) { hiveToast('Search already saved', 'info'); return; }
+      if (saved.indexOf(q) !== -1) { showToast('Search already saved', 'info'); return; }
       saved.unshift(q);
       var MAX_SAVED_SEARCHES = 20;
       if (saved.length > MAX_SAVED_SEARCHES) saved = saved.slice(0, MAX_SAVED_SEARCHES);
       localStorage.setItem(AUDIT_SEARCHES_KEY, JSON.stringify(saved));
       renderAuditSearchDatalist();
-      hiveToast('Search saved', 'success');
+      showToast('Search saved', 'success');
     }
     function clearAuditSearches() {
       localStorage.removeItem(AUDIT_SEARCHES_KEY);
       renderAuditSearchDatalist();
-      hiveToast('Saved searches cleared', 'info');
+      showToast('Saved searches cleared', 'info');
     }
     renderAuditSearchDatalist();
 

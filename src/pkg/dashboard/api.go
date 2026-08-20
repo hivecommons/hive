@@ -68,6 +68,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
 	// Backs the Terminal's "view / download full log" controls.
 	s.mux.HandleFunc("GET /api/agents/{name}/log", s.handleAgentFullLog)
+	// Durable per-kick run-log history (#4296, #4295): list archived kick
+	// logs, fetch one, and a minimal HTML index page linked from agent cards.
+	s.mux.HandleFunc("GET /api/agents/{name}/kicks", s.handleAgentKickLogList)
+	s.mux.HandleFunc("GET /api/agents/{name}/kicks/{id}", s.handleAgentKickLog)
+	s.mux.HandleFunc("GET /agents/{name}/kicks", s.handleAgentKickHistoryPage)
 
 	s.mux.HandleFunc("GET /api/role", s.handleRole)
 
@@ -89,6 +94,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
+	// #4298: "for every recent reset, how much of the budget had been used".
+	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)
 	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
 	s.mux.HandleFunc("GET /api/timeseries", s.handleTimeSeries)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
@@ -520,8 +527,15 @@ func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	user := r.Header.Get("X-Hive-User")
 	if sess := s.sessionFromRequest(r); sess != nil {
-		user = sess.Username
-		role = sess.Role
+		// Live allowlist role, never the role frozen into the session at login
+		// (session_live_role.go): this endpoint drives what the UI believes the
+		// user may do, so a Manage Access grant/downgrade must show up here the
+		// moment the heartbeat delivers it — the same rule authenticate applies
+		// to every gated request. A revoked session reports no identity.
+		if live, ok := s.liveSessionRole(sess); ok {
+			user = sess.Username
+			role = live
+		}
 	}
 	if role == "" {
 		role = "owner"
@@ -1846,9 +1860,15 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 	// persisted token. On a direct-route spoke, resolving from the per-user
 	// session is the only correct answer — otherwise every visitor would see
 	// the last-authenticated user's identity (the reported vulnerability).
+	// The role is the LIVE allowlist role (session_live_role.go), not the one
+	// frozen into the session at login, so the UI's idea of the user's
+	// capabilities always matches what the gated endpoints will enforce; a
+	// revoked session reports logged-out rather than a ghost identity.
 	if sess := s.sessionFromRequest(r); sess != nil {
-		jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": sess.Role})
-		return
+		if live, ok := s.liveSessionRole(sess); ok {
+			jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": live})
+			return
+		}
 	}
 	// Hub-proxied path: nginx injects the per-user X-Hive-User/X-Hive-Role, so
 	// report THAT user rather than the single shared persisted token (which
@@ -2091,21 +2111,20 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// keeps the spoke the authority on who may enter, even via SSO — a valid
 	// hub token for a user not on the allowlist is refused. The role comes from
 	// the allowlist (authoritative), not the token, so the hub can never
-	// escalate a user's role on the spoke.
-	role := tokenRole
-	if s.deps != nil && s.deps.Config != nil {
-		if allowRole, ok := s.deps.Config.Dashboard.AuthorizedRole(username); ok {
-			role = allowRole
-		} else if s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled() {
-			// Allowlist is enforced and this user isn't on it → deny.
-			if s.deps.Logger != nil {
-				s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
-			}
-			writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
-				"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
-				"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
-			return
+	// escalate a user's role on the spoke. liveAllowlistRole is the same shared
+	// rule authenticate re-applies on EVERY subsequent request
+	// (session_live_role.go), so the role minted here can never outlive a later
+	// Manage Access change.
+	role, authorized := s.liveAllowlistRole(username, tokenRole)
+	if !authorized {
+		// Allowlist is enforced and this user isn't on it → deny.
+		if s.deps != nil && s.deps.Logger != nil {
+			s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
 		}
+		writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
+			"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
+			"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
+		return
 	}
 	if role == "" {
 		role = config.RoleRead
@@ -6393,7 +6412,12 @@ func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID 
 
 func (s *Server) requestHasGitHubSetupAdmin(r *http.Request) bool {
 	if sess := s.sessionFromRequest(r); sess != nil {
-		return config.RoleAtLeast(sess.Role, config.RoleReadWrite)
+		// Authz decision: use the LIVE allowlist role (session_live_role.go),
+		// never the role frozen into the session at login — a downgrade or
+		// revocation must strip GitHub-setup admin immediately, and a granted
+		// owner must gain it without re-login (same class as #4299).
+		live, ok := s.liveSessionRole(sess)
+		return ok && config.RoleAtLeast(live, config.RoleReadWrite)
 	}
 	role := r.Header.Get("X-Hive-Role")
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {
@@ -7170,6 +7194,47 @@ func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.TrendHistory())
+}
+
+// handleBudgetHistory serves the per-budget-window report (#4298): one row per
+// CLOSED window, newest first, plus the window still open so an operator sees
+// the whole picture in one response rather than joining two endpoints.
+//
+// `windows` is ALWAYS an array, never null — a hive that has not yet seen a
+// roll returns `[]`, which a client renders as "no history yet" rather than
+// crashing on a nil. That is the compatibility requirement #4298 names: new
+// code must not break an environment that was never keeping this history.
+func (s *Server) handleBudgetHistory(w http.ResponseWriter, r *http.Request) {
+	windows := s.BudgetWindowHistory()
+	if windows == nil {
+		windows = []BudgetWindowEntry{}
+	}
+
+	resp := map[string]any{"windows": windows}
+
+	// The open window, straight from the live status, so the report reads
+	// continuously from "now" back through the closed rows.
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status != nil {
+		b := status.Budget
+		current := map[string]any{
+			"limit":     b.WeeklyBudget,
+			"used":      b.Used,
+			"pctUsed":   b.PctUsed,
+			"exhausted": b.Exhausted,
+		}
+		if b.WindowStartsAt != "" {
+			current["windowStart"] = b.WindowStartsAt
+		}
+		if b.WindowEndsAt != "" {
+			current["windowEnd"] = b.WindowEndsAt
+		}
+		resp["current"] = current
+	}
+
+	jsonResponse(w, resp)
 }
 
 // handleTimeSeries is the unified read endpoint over the sparkline histories.

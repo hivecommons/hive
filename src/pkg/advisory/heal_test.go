@@ -285,3 +285,165 @@ func TestClosePRLinkedAdvisoryBeadsIgnoresDissimilarAndClosed(t *testing.T) {
 		t.Fatalf("closed = %v on an empty PR title, want none", closed)
 	}
 }
+
+// gee4veeRepoAccessTitles are the five exact guide-agent finding titles from
+// #2575 (comment 5359943936) that survived the #4291 fix — the repo-access
+// heal exists to retire precisely these once the read path is verified.
+var gee4veeRepoAccessTitles = []struct{ title, ref string }{
+	{"ACMM L2 guide agent lacks read-only repository access mechanism", "hive-infrastructure"},
+	{"Critical infrastructure gap: No repository workspace provisioning for advisory agents", "hive.yaml:repos"},
+	{"Critical: Repository access infrastructure missing - guide agent cannot audit documentation", "hive.yaml.runtime:repos"},
+	{"Guide agent cannot access target repository - no clone mechanism available", "github.ibm.com/devx-prod/epx-vscode-ext-poc"},
+	{"Guide agent blocked: No repository access mechanism in L2 advisory mode", "github.ibm.com/devx-prod/epx-vscode-ext-poc"},
+}
+
+func TestIsRepoAccessFinding(t *testing.T) {
+	for _, f := range gee4veeRepoAccessTitles {
+		if !IsRepoAccessFinding(f.title) {
+			t.Errorf("IsRepoAccessFinding(%q) = false, want true (the #2575 family must match)", f.title)
+		}
+	}
+	// Drift the agents plausibly produce must still match.
+	drift := []string{
+		"Advisory agent has no repository access path in ISSUES_ONLY mode",
+		"clone mechanism unavailable for L2 guide agents",
+		"Guide agent unable to fetch the target repository",
+		"Agent workspace lacks a git clone mechanism",
+	}
+	for _, title := range drift {
+		if !IsRepoAccessFinding(title) {
+			t.Errorf("IsRepoAccessFinding(%q) = false, want true (wording drift)", title)
+		}
+	}
+	// Code findings that merely mention repository access must NEVER match —
+	// closing one would silently retire a real finding.
+	negatives := []string{
+		"Repository access logs are not retained",
+		"Public read access to repository secrets endpoint not restricted",
+		"Workflow permissions overly broad in ci.yml",
+		"Add repository access checks to the admin API",
+		"Overly permissive repository access granted to all org members",
+		"Insufficient repo permissions", // app-auth family, handled by the other healer
+		"",
+	}
+	for _, title := range negatives {
+		if IsRepoAccessFinding(title) {
+			t.Errorf("IsRepoAccessFinding(%q) = true, want false", title)
+		}
+	}
+}
+
+func TestRepoFromFindingRef(t *testing.T) {
+	tests := []struct {
+		ref  string
+		want string
+		ok   bool
+	}{
+		{"github.ibm.com/devx-prod/epx-vscode-ext-poc", "devx-prod/epx-vscode-ext-poc", true},
+		{"acme/widgets", "acme/widgets", true},
+		{"hive.yaml:repos", "", false},
+		{"hive.yaml.runtime:repos", "", false},
+		{"hive-infrastructure", "", false},
+		{"src/main.go:12", "", false},
+		{"docs/install.md", "", false},
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		got, ok := RepoFromFindingRef(tt.ref)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("RepoFromFindingRef(%q) = (%q, %v), want (%q, %v)", tt.ref, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+// TestCloseHealedRepoAccessFindings is the #2575 follow-up regression test:
+// each of the five surviving guide-agent findings must close once the read
+// path is verified, while a finding about a repo that is GENUINELY unreadable
+// must stay open, as must code findings and non-advisory beads.
+func TestCloseHealedRepoAccessFindings(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stores := map[string]*beads.Store{"guide": store}
+
+	for _, f := range gee4veeRepoAccessTitles {
+		if _, err := store.Create(f.title, beads.TypeAdvisory, beads.PriorityHigh, "guide", f.ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A repo-access finding about a repo the verifier CANNOT read: real
+	// condition, must survive the heal.
+	locked, err := store.Create("Guide agent cannot access target repository - no clone mechanism available",
+		beads.TypeAdvisory, beads.PriorityHigh, "guide", "github.ibm.com/other-org/locked-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A code finding mentioning access must never be considered.
+	code, err := store.Create("Repository access logs are not retained", beads.TypeAdvisory, beads.PriorityMedium, "guide", "audit.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var probed []string
+	canRead := func(ownerRepo string) bool {
+		probed = append(probed, ownerRepo)
+		// "" = the hive's own primary repo (readable); the configured GHE
+		// repo is readable; anything else is not.
+		return ownerRepo == "" || ownerRepo == "devx-prod/epx-vscode-ext-poc"
+	}
+
+	healed := CloseHealedRepoAccessFindings(stores, canRead)
+	if len(healed) != len(gee4veeRepoAccessTitles) {
+		t.Fatalf("healed %d findings (%v), want the %d from #2575", len(healed), healed, len(gee4veeRepoAccessTitles))
+	}
+	for _, f := range gee4veeRepoAccessTitles {
+		found := false
+		for _, h := range healed {
+			if h == f.title {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("finding %q was not healed", f.title)
+		}
+	}
+	// The unreadable repo's probe must have been consulted and refused.
+	probedLocked := false
+	for _, p := range probed {
+		if p == "other-org/locked-repo" {
+			probedLocked = true
+		}
+	}
+	if !probedLocked {
+		t.Error("verification was never consulted for the unreadable repo")
+	}
+	got, _ := store.Get(locked.ID)
+	if got.Status != beads.StatusOpen {
+		t.Errorf("finding about unreadable repo status = %s, want open — a real access problem must never auto-close", got.Status)
+	}
+	gotCode, _ := store.Get(code.ID)
+	if gotCode.Status != beads.StatusOpen {
+		t.Errorf("code finding status = %s, want open", gotCode.Status)
+	}
+
+	// Closed beads carry the distinct repo-access close reason.
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Status != beads.StatusClosed {
+			continue
+		}
+		if reason := b.Meta(closeReasonMetadataKey); reason != repoAccessHealedCloseReason {
+			t.Errorf("close reason for %q = %q, want %q", b.Title, reason, repoAccessHealedCloseReason)
+		}
+	}
+
+	// Idempotent: nothing left to close on a second pass.
+	if again := CloseHealedRepoAccessFindings(stores, canRead); len(again) != 0 {
+		t.Errorf("second heal closed %v, want none", again)
+	}
+	// A nil verifier must close nothing, ever.
+	if closed := CloseHealedRepoAccessFindings(stores, nil); closed != nil {
+		t.Errorf("nil verifier closed %v, want none", closed)
+	}
+}
