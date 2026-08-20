@@ -13260,6 +13260,7 @@ function burnAreaChart() {
         case 'nousSetMode': nousSetMode(el.dataset.mode); break;
         case 'nousSetScope': nousSetScope(el.dataset.scope); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
+        case 'toggleEscalationEnabled': toggleEscalationEnabled(el); break;
         case 'removeListItem': removeListItem(el.dataset.section, el.dataset.key, parseInt(el.dataset.index, 10)); break;
         case 'toggleRestriction': { const cb = el.querySelector('input[type=checkbox]') || el; toggleRestriction(parseInt(el.dataset.index, 10), cb.checked); } break;
         case 'removeRestriction': removeRestriction(parseInt(el.dataset.index, 10)); break;
@@ -15226,6 +15227,9 @@ function burnAreaChart() {
       } else {
         body.innerHTML = renderGovernorTab(tabId);
         if (tabId === 'Hub') fetchQueueCount();
+        // The escalation breaker lives at the top level of hive.yaml, so the
+        // Health tab loads it from its own endpoint.
+        if (tabId === 'Health') loadEscalationConfig();
         // Opening the Model Gateways tab loads the live gateway list and
         // renders the manager into its container.
         if (tabId === 'Model Gateways') {
@@ -15372,7 +15376,7 @@ function burnAreaChart() {
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Security': return renderGovSecurity(d.security || {});
         case 'Access': return renderGovSecurity(d.security || {});
-        case 'Features': return renderGovFeatures(d.features || {});
+        case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
         case 'Hub': return renderGovHub(d.hub || {});
@@ -18282,7 +18286,9 @@ function burnAreaChart() {
       const currentId = (window._lastStatus || {}).hiveId || '';
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
       const attrib = (_configState.data || {}).attribution || {};
-      const attribOn = attrib.attributionTrailer !== false; // default on
+      const genAdv = (_configState.data || {}).general_advanced || {};
+      const attribOn = genAdv.attribution_trailer !== undefined ? genAdv.attribution_trailer !== false : attrib.attributionTrailer !== false; // default on
+      const evalInterval = genAdv.eval_interval_s || 0;
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
       const trajReady = traj.reviewerReady === true;
@@ -18315,9 +18321,14 @@ function burnAreaChart() {
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
           <div style="margin-top:8px">${securityPostureStripHtml()}</div>
         </div>
+        <div class="config-field" style="margin-top:14px">
+          <label>Eval interval (seconds) <span class="config-info">i<span class="config-tooltip">How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 60. Lower = more responsive, more API calls.</span></span></label>
+          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="60" onchange="saveGovGeneralAdvanced('eval_interval_s', this.value === '' ? null : parseInt(this.value,10))" style="width:140px">
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Changes take effect on next restart.</span>
+        </div>
         <div class="config-toggle" style="margin-top:14px">
-          <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="attribution" data-key="attributionTrailer"></div>
-          <span class="config-toggle-label">Attribution Trailer <span class="config-info">i<span class="config-tooltip">Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.</span></span></span>
+          <div class="config-toggle-switch ${attribOn ? 'on' : ''}" onclick="toggleAttributionTrailer(this)"></div>
+          <span class="config-toggle-label">Show attribution trailer on PRs/issues <span class="config-info">i<span class="config-tooltip">Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.</span></span></span>
         </div>
         <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -18359,6 +18370,45 @@ function burnAreaChart() {
             </div>
           </div>
         </div>`;
+    }
+
+    async function saveGovGeneralAdvanced(field, value) {
+      if (value === null) return; // empty input — leave the setting untouched
+      try {
+        const body = {}; body[field] = value;
+        const res = await fetch('/api/config/governor/general-advanced', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _configState.data.general_advanced = data;
+        showToast('Governor settings updated — effective on next restart');
+      } catch (err) {
+        showToast('Failed to update governor settings: ' + err.message, 'error');
+      }
+    }
+
+    async function toggleAttributionTrailer(el) {
+      const turningOn = !el.classList.contains('on');
+      el.classList.toggle('on');
+      try {
+        const res = await fetch('/api/config/governor/general-advanced', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ attribution_trailer: turningOn }),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _configState.data.general_advanced = data;
+        if (!_configState.data.attribution) _configState.data.attribution = {};
+        _configState.data.attribution.attributionTrailer = turningOn;
+        showToast('Attribution trailer ' + (turningOn ? 'enabled' : 'disabled'));
+      } catch (err) {
+        el.classList.toggle('on'); // revert on failure
+        showToast('Failed to update attribution trailer: ' + err.message, 'error');
+      }
     }
 
     async function toggleTrajectoryReview(el) {
@@ -18916,7 +18966,50 @@ function burnAreaChart() {
         <div class="config-toggle">
           <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
           <span class="config-toggle-label">Model Lock <span class="config-info">i<span class="config-tooltip">When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.</span></span></span>
+        </div>
+        ${renderEscalationSection(_configState.data.escalation)}`;
+    }
+
+    // Escalation breaker section on the Health tab. The config lives at the
+    // TOP level of hive.yaml (Config.Escalation, not GovernorConfig), so it is
+    // loaded from and saved to /api/config/escalation — see loadEscalationConfig
+    // and the escalation special-case in saveConfig. The Disabled flag is shown
+    // inverted: the toggle reads "enabled" and is ON when disabled=false.
+    function renderEscalationSection(e) {
+      if (!e) return `
+        <h4 style="margin:18px 0 8px">Escalation Breaker</h4>
+        <div style="font-size:0.75rem;color:var(--muted)">Loading…</div>`;
+      const enabled = !e.disabled;
+      const tip = 'When an agent hits this many consecutive red attempts, Hive escalates to a human. Disable only in test environments.';
+      return `
+        <h4 style="margin:18px 0 8px">Escalation Breaker</h4>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${enabled ? 'on' : ''}" data-action="toggleEscalationEnabled"></div>
+          <span class="config-toggle-label">Escalation breaker enabled <span class="config-info">i<span class="config-tooltip">${tip}</span></span></span>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field"><label>Red-attempt threshold <span class="config-info">i<span class="config-tooltip">${tip}</span></span></label><input type="number" min="0" placeholder="3" value="${e.threshold || ''}" onchange="markDirty('escalation','threshold',Number(this.value))"></div>
         </div>`;
+    }
+
+    // toggleEscalationEnabled inverts the toggle into the stored Disabled flag:
+    // toggle ON ⇒ disabled=false.
+    function toggleEscalationEnabled(el) {
+      const isOn = el.classList.toggle('on');
+      markDirty('escalation', 'disabled', !isOn);
+    }
+
+    // loadEscalationConfig fetches the top-level escalation section when the
+    // Health tab opens, then re-renders the tab (if still on Health) so the
+    // Escalation Breaker section replaces its loading placeholder.
+    async function loadEscalationConfig() {
+      if (_configState.data.escalation) return;
+      try {
+        const res = await fetch('/api/config/escalation');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        _configState.data.escalation = await res.json();
+        if (_configState.tab === 'Health') renderConfigTab('Health');
+      } catch (err) { /* section stays in loading state; save still works via dirty */ }
     }
 
     function renderGovSensing(s) {
@@ -19312,9 +19405,14 @@ function burnAreaChart() {
     // renderGovFeatures renders operational features that are not security posture
     // controls. ioscan moved to Security/Input Defense; OpenTelemetry and retro
     // stay here as observability/quality-loop settings.
-    function renderGovFeatures(f) {
+    function renderGovFeatures(f, am, rv) {
       f = f || {};
+      am = am || {};
+      rv = rv || {};
       const planOn = f.planFromLabel === true;
+      const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
+      const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
+      const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
       return `
         ${securityModelDatalistHtml()}
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Opt-in capabilities. Security-posture controls live in the Security tab; observability and quality-loop controls stay here.</p>
@@ -19369,6 +19467,71 @@ function burnAreaChart() {
             <span class="config-toggle-label">Auto-plan from label <span class="config-info">i<span class="config-tooltip">When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.</span></span></span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Auto-Merge <span class="config-info">i<span class="config-tooltip">Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.</span></span></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${amSelfOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="self_authored"></div>
+            <span class="config-toggle-label">Auto-merge App-authored PRs <span class="config-info">i<span class="config-tooltip">Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.</span></span></span>
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Max merges per sweep <span class="config-info">i<span class="config-tooltip">Caps how many PRs one sweep pass may merge. 0 or empty uses the default.</span></span></label>
+            <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="5" onchange="markDirty('auto-merge','max_merges',Number(this.value)||0)">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Required CI checks <span class="config-info">i<span class="config-tooltip">Comma-separated status-check/check-run names the sweep must see green before merging, e.g. build-gate. Empty falls back to the built-in allowlist.</span></span></label>
+            <input type="text" value="${esc(amChecks.join(', '))}" placeholder="build-gate, lint" onchange="markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+          </div>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Review Gate <span class="config-info">i<span class="config-tooltip">The review swarm gate runs designated reviewer agents on each PR and blocks merge until they approve. Used at ACMM L4+.</span></span></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${rv.require_approval ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="require_approval"></div>
+            <span class="config-toggle-label">Require review-swarm approval before merge</span>
+          </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${rv.fan_out ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fan_out"></div>
+            <span class="config-toggle-label">Fan out to multiple reviewers in parallel</span>
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Max parallel reviews <span class="config-info">i<span class="config-tooltip">Caps how many reviewer agents run concurrently when fan-out is on. 0 or empty uses the default.</span></span></label>
+            <input type="number" min="0" step="1" value="${rv.max_parallel_reviews || ''}" placeholder="3" onchange="markDirty('review','max_parallel_reviews',Number(this.value)||0)">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Reviewer agents <span class="config-info">i<span class="config-tooltip">Comma-separated agent names that review each PR, e.g. reviewer, security-reviewer.</span></span></label>
+            <input type="text" value="${esc(rvAgents.join(', '))}" placeholder="reviewer, security-reviewer" onchange="markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Fixer agent <span class="config-info">i<span class="config-tooltip">The agent kicked to address reviewer findings before re-review.</span></span></label>
+            <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="fixer" onchange="markDirty('review','fixer_agent',this.value.trim())">
+          </div>
+        </div>
+
+        ${renderGovReplanSection((_configState.data || {}).replan || {})}`;
+    }
+
+    // renderGovReplanSection renders the stall-replan lane settings: the
+    // periodic check that re-kicks the architect when an approved plan's
+    // sub-tasks stop progressing. Values are marked dirty under the 'replan'
+    // section, which the generic Save dispatcher PUTs to
+    // /api/config/governor/replan; enabled arrives pre-resolved (nil = on).
+    function renderGovReplanSection(rp) {
+      rp = rp || {};
+      const replanOn = rp.enabled !== false;
+      return `
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Stall Replan</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${replanOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="replan" data-key="enabled"></div>
+            <span class="config-toggle-label">Stall replan enabled <span class="config-info">i<span class="config-tooltip">Periodically scans approved plans whose sub-tasks have stopped progressing and re-kicks the architect to revise them, bounded by a per-plan cap. On by default; a no-op when there are no approved plans.</span></span></span>
+          </div>
+          <div class="config-field-row" style="margin-top:10px">
+            <div class="config-field"><label>Scan interval (s) <span class="config-info">i<span class="config-tooltip">How often the lane scans for stalled plans, in seconds. Runs off the governor tick, so the effective floor is the governor eval interval. 0 means the default (1800 = 30m).</span></span></label><input type="number" min="0" step="1" value="${rp.interval_s || 0}" placeholder="1800" onchange="markDirty('replan','interval_s',Number(this.value))"></div>
+            <div class="config-field"><label>Stall threshold (s) <span class="config-info">i<span class="config-tooltip">How long a plan may go without any child progressing before it is considered stalled, in seconds. 0 means the default (21600 = 6h).</span></span></label><input type="number" min="0" step="1" value="${rp.stall_threshold_s || 0}" placeholder="21600" onchange="markDirty('replan','stall_threshold_s',Number(this.value))"></div>
+          </div>
+          <div class="config-field"><label>Max replans per plan <span class="config-info">i<span class="config-tooltip">Caps replans per plan before the lane stops and escalates to a human. 0 means the default (5).</span></span></label><input type="number" min="0" step="1" value="${rp.max_replans || 0}" placeholder="5" onchange="markDirty('replan','max_replans',Number(this.value))"></div>
         </div>`;
     }
 
@@ -20058,6 +20221,24 @@ function burnAreaChart() {
               body: JSON.stringify({ id: values.hiveId })
             });
             if (!idRes.ok) throw new Error(await saveErrorMessage(idRes));
+          } else if (_configState.type === 'governor' && section === 'escalation') {
+            // Escalation is a top-level Config field, not under /governor.
+            const escRes = await fetch('/api/config/escalation', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!escRes.ok) throw new Error(await saveErrorMessage(escRes));
+            _configState.data.escalation = await escRes.json().catch(() => _configState.data.escalation);
+          } else if (_configState.type === 'governor' && section === 'auto-merge') {
+            // auto_merge is a TOP-LEVEL config block, not under governor —
+            // it saves through its own /api/config/auto-merge endpoint.
+            const amRes = await fetch('/api/config/auto-merge', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!amRes.ok) throw new Error(await saveErrorMessage(amRes));
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',

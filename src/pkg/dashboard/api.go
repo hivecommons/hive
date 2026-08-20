@@ -140,6 +140,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
 	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
+	s.mux.HandleFunc("GET /api/config/governor/replan", s.handleGovernorReplanGet)
+	s.mux.HandleFunc("PUT /api/config/governor/replan", s.handleGovernorReplanPut)
 	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
 	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
@@ -4120,6 +4122,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"classifier":  classifierSectionResponse(),
 		"features":    featuresSectionResponse(cfg),
 		"advisory":    advisorySectionResponse(cfg),
+		"replan":      replanSectionResponse(cfg),
 		"work_source": workSourceSectionResponse(cfg),
 		"security":    securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{

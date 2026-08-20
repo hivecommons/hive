@@ -304,6 +304,94 @@ func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 	}
 }
 
+// handleGovernorReplanGet returns the stall-replan lane settings so the
+// Governor dialog can prefill its controls. OWNER-ONLY, matching the rest of
+// the governor-config surface.
+func (s *Server) handleGovernorReplanGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, replanSectionResponse(s.deps.Config))
+}
+
+// handleGovernorReplanPut updates the stall-replan lane settings. Every field
+// is a pointer, so an absent key leaves that setting untouched — the same
+// "only what you send is changed" contract the other governor-config writers
+// use.
+func (s *Server) handleGovernorReplanPut(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Enabled         *bool `json:"enabled"`
+		IntervalS       *int  `json:"interval_s"`
+		StallThresholdS *int  `json:"stall_threshold_s"`
+		MaxReplans      *int  `json:"max_replans"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// --- validate before mutating anything ---
+	if body.IntervalS != nil && *body.IntervalS < 0 {
+		jsonError(w, "interval_s must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+	if body.StallThresholdS != nil && *body.StallThresholdS < 0 {
+		jsonError(w, "stall_threshold_s must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+	if body.MaxReplans != nil && *body.MaxReplans < 0 {
+		jsonError(w, "max_replans must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+
+	// --- apply ---
+	cfg := s.deps.Config
+	if body.Enabled != nil {
+		v := *body.Enabled
+		cfg.Governor.Replan.Enabled = &v
+	}
+	if body.IntervalS != nil {
+		cfg.Governor.Replan.IntervalS = *body.IntervalS
+	}
+	if body.StallThresholdS != nil {
+		cfg.Governor.Replan.StallThresholdS = *body.StallThresholdS
+	}
+	if body.MaxReplans != nil {
+		cfg.Governor.Replan.MaxReplans = *body.MaxReplans
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after replan update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_replan", auditDetail("section", "replan"), "")
+	s.refreshAndPersist()
+	jsonResponse(w, replanSectionResponse(cfg))
+}
+
+// replanSectionResponse renders ReplanConfig for the dashboard, resolving
+// enabled's tri-state (nil = on by default) to the boolean the hive actually
+// acts on so the UI never has to know the default.
+func replanSectionResponse(cfg *config.Config) map[string]interface{} {
+	rp := cfg.Governor.Replan
+	return map[string]interface{}{
+		"enabled":           rp.IsEnabled(),
+		"interval_s":        rp.IntervalS,
+		"stall_threshold_s": rp.StallThresholdS,
+		"max_replans":       rp.MaxReplans,
+	}
+}
+
 // handleGovernorWorkSourceGet returns the work_source config so the Governor
 // dialog's Work Source tab can prefill its controls. OWNER-ONLY, matching the
 // rest of the governor-config surface.
