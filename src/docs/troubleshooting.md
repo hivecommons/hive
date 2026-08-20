@@ -118,6 +118,54 @@ Liveness is judged by the governor's in-process health check, so an agent that k
 1. **Read the work counts, not just liveness.** If an agent reports "Issues triaged: 0" cycle after cycle in the logs, that is the signal — `kubectl -n hive logs deploy/hive | grep <agent>` or attach to the session.
 2. **Cross-check an external surface.** Confirm the effect the agent is supposed to produce (a GitHub API query for the PRs/issues it claims to have handled) rather than trusting its self-reported state.
 
+## An agent runs, but not the way I expect — why did it do that?
+
+Agents are told to act, not narrate: every policy carries an "Output Rules —
+Terse Mode" block, and on inference backends the agent manager appends an
+explicit `EXECUTE, DO NOT NARRATE` instruction to each kick. That rule earns
+its keep — weak models otherwise answer a kick with a plan for someone else to
+run — but it means the log shows *what* an agent did and never *why*, which is
+the one thing you need when the behaviour is wrong rather than absent.
+
+**Turn on explain mode for that one agent.** It asks the agent to record the
+reason for each tool call without relaxing the rule for anything else:
+
+```yaml
+agents:
+  scanner:
+    backend: claude
+    explain_mode: brief     # off | brief | full
+```
+
+`brief` adds one `EXPLAIN:` line before each tool call. `full` adds a closing
+block covering the goal as understood, the approach chosen, and the
+alternatives rejected. `HIVE_EXPLAIN_MODE` sets a hive-wide default for agents
+that leave the field unset.
+
+The explanation lands in the agent's ordinary log behind an `EXPLAIN:` prefix,
+so it is a read-time choice rather than a second stream:
+
+```sh
+# Just the reasoning
+curl -s "$HIVE/api/agents/<name>/log?explain=only"
+
+# The log as it would read with explanation off
+curl -s "$HIVE/api/agents/<name>/log?explain=hide"
+```
+
+`grep EXPLAIN:` works the same way on a log you have already downloaded.
+
+Two things worth knowing before you reach for it:
+
+- **It costs tokens on every kick**, which is why it is per-agent and off by
+  default. Turn it on for the agent you are debugging, not for the fleet.
+- **The agent still has to act.** A response containing only explanation is a
+  failure, and the prose-only watchdog still fires — explain mode does not
+  license narrating instead of working.
+
+Full reference, including the tri-state inheritance rules:
+[agent-configuration.md](agent-configuration.md#explain-mode-debugging-agent-behaviour).
+
 ## Switching an agent's model
 
 Model selection is a per-agent config field (`agent.<name>.model`), applied at **launch time** as the CLI's `--model` flag (`src/pkg/agent/manager.go`). There is no live in-session `/model` slash command sent over tmux; changing the model means changing the config and relaunching the agent. Do this through the supported paths, which handle the restart for you:
