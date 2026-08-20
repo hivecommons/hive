@@ -29,7 +29,20 @@ services:
       retries: 3
 
   hive:
-    image: ghcr.io/kubestellar/hive:v2-latest
+    # Image references for the standalone stack come from ONE source of truth,
+    # src/deploy/standalone-images.sh, so the Docker and Podman assets cannot
+    # drift apart. src/deploy/test_standalone_image_refs.sh fails the build if
+    # this line stops agreeing with it.
+    #
+    # Bumped off the retired `v2-latest` (#4206). That tag belonged to the v2
+    # branch and resolves to a different, older digest than the v4 channels;
+    # src/docs/operator-reference.md already told operators not to use it for
+    # new deployments and flagged this default as pending a bump, and
+    # src/deploy/k8s/backup-cronjob.yaml made the same move for the same reason
+    # (#3709). `stable` is the operator-blessed release channel; pin a digest
+    # here instead (`ghcr.io/kubestellar/hive@sha256:...`) for full
+    # reproducibility.
+    image: ghcr.io/kubestellar/hive:stable
     build:
       context: ..
       dockerfile: src/Dockerfile

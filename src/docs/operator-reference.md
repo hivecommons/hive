@@ -84,7 +84,28 @@ Pre-built images are published by [`.github/workflows/docker.yml`](../../.github
 
 PR and short-lived branch builds compile the image as a CI gate but only long-lived branches push tags, and only `v4` moves the release channels. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 
-> **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` may still reference it until its default is bumped.)
+> **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` was bumped off it in #4206; standalone image references now come from one source of truth, [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh).)
+
+### One source of truth for standalone assets
+
+Standalone deployment assets do not carry their own image references. They take
+them from [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh),
+which names the Hive, gateway, and auto-update-profile images in fully
+qualified form. Change a reference there rather than in an individual asset.
+
+Fully qualified is deliberate: `podman auto-update` refuses a short name, and
+Podman's Quadlet generator warns on one, so a reference that resolves through
+the host's `unqualified-search-registries` is not portable across the two
+runtimes. Docker may still spell the same image without the `docker.io/`
+prefix — the contract test compares the normalized forms, so the two spellings
+are equal as long as they name the same image. Digest pins are carried through
+unchanged and are checked for as well.
+
+[`src/deploy/test_standalone_image_refs.sh`](../deploy/test_standalone_image_refs.sh)
+runs in CI and fails the build when an asset stops agreeing with that file,
+when a digest pin is dropped, or when the retired `v2-latest` tag reappears. It
+already covers the Podman asset paths, so drift detection switches on by itself
+when those assets land.
 
 ### Choosing a tag
 

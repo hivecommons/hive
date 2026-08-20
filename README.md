@@ -23,7 +23,7 @@ docker compose -f src/docker-compose.yaml up -d
 
 Dashboard at `http://localhost:3001`.
 
-The pre-built image tag is documented in [src/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](src/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
+The pre-built image tag is documented in [src/docs/operator-reference.md#image-provenance-and-tags](src/docs/operator-reference.md#image-provenance-and-tags). Standalone image references come from one source of truth, [`src/deploy/standalone-images.sh`](src/deploy/standalone-images.sh).
 
 To build from source instead of pulling the pre-built image:
 

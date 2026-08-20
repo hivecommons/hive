@@ -63,6 +63,15 @@ jobs:
       - name: Supply-chain pin guard
         run: bash deploy/test_supply_chain_pins.sh
 
+      # #4206: the standalone stack's image references live in exactly one
+      # place, src/deploy/standalone-images.sh, so the Docker Compose assets
+      # and the Podman assets that land later cannot drift onto different
+      # images. Also blocks the retired v2-latest tag, which resolves to a
+      # different digest than the v4 channels, from coming back into any
+      # deployment asset. Pure string analysis: no registry is contacted.
+      - name: Standalone image-reference source of truth (#4206)
+        run: bash deploy/test_standalone_image_refs.sh
+
       # #3865: watchtower bind-mounted /var/run/docker.sock — the full daemon
       # API, including /exec, which reads the GitHub App private key out of the
       # hive container with no escalation at all. The socket now sits behind a
