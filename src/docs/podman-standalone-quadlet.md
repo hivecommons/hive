@@ -121,7 +121,14 @@ CONF=~/.config/hive
 
 mkdir -p "$CONF/secrets"
 cp src/hive.yaml "$CONF/hive.yaml"      # then edit it
-chmod 700 "$CONF/secrets"
+
+# The container reads keys as dev (1001) through the hive-launch group (1002),
+# so the directory needs the group traverse bit — 0700 would exclude the
+# container itself and read as an SELinux problem it is not (#4359).
+chmod 750 "$CONF/secrets"
+# rootless: container GID 1002 is not host GID 1002 — podman unshare translates
+podman unshare chown -R 0:1002 "$CONF/secrets"
+# rootful instead:  chgrp -R 1002 "$CONF/secrets"
 ```
 
 **`$CONF/hive.env` must exist**, even if it is empty:
