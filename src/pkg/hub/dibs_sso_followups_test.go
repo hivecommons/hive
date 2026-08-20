@@ -141,6 +141,14 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 		ID: "hosted-good-2", Owner: "hubber", Org: "some-org",
 		PrimaryRepo: "other-owner/tool", IsPublic: true,
 	})
+	// Included: the EXPLICIT "github.com" github_host production meta.json
+	// records actually store (spoke-heartbeat truth) means public GitHub,
+	// same as "" — the empty-only check excluded every production hive
+	// (#4233). Case-insensitive, and it outranks a cluster GHE default.
+	mkDibsHive(t, SaaSHive{
+		ID: "hosted-good-3", Owner: "prodder", Org: "prod-org",
+		PrimaryRepo: "prod-repo", IsPublic: true, GitHubHost: "GitHub.com",
+	})
 	// Excluded: not public.
 	mkDibsHive(t, SaaSHive{
 		ID: "hosted-private", Owner: "octocat", Org: "secretcorp",
@@ -169,6 +177,14 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/api/saas/dibs/repos", nil)
 	rec := httptest.NewRecorder()
+	// The non-is_public hive (hosted-private) reaches the public-repo verdict
+	// path; point it at a fake GitHub API that 404s everything so the test
+	// never touches the network and the repo stays excluded.
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer notFound.Close()
+	s.dibsPublic = newTestDibsChecker(notFound.URL)
 	s.handleDibsRepos(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -189,9 +205,10 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 		t.Fatalf("body is not the expected JSON array: %v (body %s)", err, rec.Body.String())
 	}
 	want := map[string]struct{ hive, owner string }{
-		"kubestellar/hive": {"hosted-good-1", "octocat"},
-		"kubestellar/dibs": {"hosted-good-1", "octocat"},
-		"other-owner/tool": {"hosted-good-2", "hubber"},
+		"kubestellar/hive":   {"hosted-good-1", "octocat"},
+		"kubestellar/dibs":   {"hosted-good-1", "octocat"},
+		"other-owner/tool":   {"hosted-good-2", "hubber"},
+		"prod-org/prod-repo": {"hosted-good-3", "prodder"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("feed lists %d repos %v, want exactly the %d public github.com repos", len(got), got, len(want))

@@ -8617,19 +8617,32 @@ type dibsRepoEntry struct {
 }
 
 // handleDibsRepos lists the PUBLIC hive-managed repos for dibs's idea-matching
-// registry (#4193). Dibs polls this server-to-server with no browser session,
-// so the endpoint is deliberately unauthenticated — which is safe only because
-// every fact it returns is already public, and the inclusion rules below are
-// what make that true. A hive contributes its repos only when ALL hold:
+// registry (#4193, policy revised in #4233). Dibs polls this server-to-server
+// with no browser session, so the endpoint is deliberately unauthenticated —
+// which is safe only because every fact it returns is already public, and the
+// inclusion rules below are what make that true. A hive contributes a repo
+// only when ALL hold:
 //
-//   - is_public: the operator opted the hive into registry visibility (the
-//     same flag that gates the public hive registry), so its project identity
-//     is already published;
-//   - it lives on PUBLIC github.com — the GitHub-family forge with no GHE
-//     host pinned at hive or cluster level (effectiveGitHubBaseURL == "").
-//     An enterprise repo's very NAME can be confidential, so GHE hives are
-//     excluded outright;
-//   - it has a real assigned identity: a non-placeholder org (the synthetic
+//   - the repo is PUBLIC: either the operator set is_public (the registry-
+//     visibility opt-in, an immediate include with no API call), or the repo
+//     is verifiably public on github.com right now — an unauthenticated
+//     GET api.github.com/repos/{owner}/{repo} answering 200 with
+//     "private": false. Verdicts are cached in memory with a TTL and checked
+//     lazily in the background (dibs_public_check.go), so this handler never
+//     blocks on the GitHub API: an unverified repo is excluded until its
+//     verdict lands and the feed converges across dibs's 5-minute polls.
+//     The opt-in-only policy this replaces could never populate the feed —
+//     is_public is false on every production hive;
+//   - it lives on PUBLIC github.com. github_host "" and "github.com" both
+//     mean public GitHub (the sameGitHubHost normalization; production
+//     records store the EXPLICIT "github.com" the spoke heartbeats, which the
+//     original empty-only check wrongly excluded as GHE). A real GHE host is
+//     excluded outright — an enterprise repo's very NAME can be confidential.
+//     A cluster-level GHE default also excludes, unless the hive's own
+//     github_host explicitly says github.com (the spoke-reported truth
+//     outranks the cluster fallback);
+//   - it is GitHub-family (not the gitlab/gitea forge adapters) and has a
+//     real assigned identity: a non-placeholder org (the synthetic
 //     "available-<id>" inventory org never names a repo) and at least one
 //     repo recorded.
 //
@@ -8644,20 +8657,27 @@ func (s *HubServer) handleDibsRepos(w http.ResponseWriter, r *http.Request) {
 	entries := []dibsRepoEntry{}
 	seen := map[string]bool{}
 	for _, sh := range listSaaSHives() {
-		if !sh.IsPublic {
-			continue
-		}
 		// GitHub family only — the pkg/forge adapters (gitlab/gitea) never
 		// point at github.com repos.
 		if sh.Forge != "" && sh.Forge != "github" {
 			continue
 		}
-		// GHE anywhere in the resolution chain (heartbeat-recorded host,
-		// hive-level pin, or cluster default) excludes the hive.
-		if sh.GitHubHost != "" {
+		// "" and "github.com" both mean public GitHub; anything else is a
+		// real GHE host and excludes the hive. Production meta.json records
+		// carry the explicit "github.com" the spoke heartbeats (#4233).
+		explicitPublicHost := sh.GitHubHost != "" && sameGitHubHost(sh.GitHubHost, publicGitHubHost)
+		if sh.GitHubHost != "" && !explicitPublicHost {
 			continue
 		}
+		// A GHE pin elsewhere in the resolution chain (hive-level
+		// github_base_url, or the cluster default) also excludes — except
+		// that an explicit github.com github_host outranks the CLUSTER
+		// fallback: the host is spoke-reported truth, the cluster value only
+		// a default for hives that never said.
 		cluster := s.clusters[sh.ClusterID]
+		if explicitPublicHost {
+			cluster = ClusterConfig{}
+		}
 		if effectiveGitHubBaseURL(&sh, &cluster) != "" {
 			continue
 		}
@@ -8685,6 +8705,13 @@ func (s *HubServer) handleDibsRepos(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			seen[repoID] = true
+			// is_public stays an immediate include (the operator already
+			// published the identity); everything else must be verifiably
+			// public on github.com per the cached verdict (#4233). isPublic
+			// never blocks — it answers from the cache and refreshes lazily.
+			if !sh.IsPublic && !s.dibsChecker().isPublic(repoID) {
+				continue
+			}
 			entries = append(entries, dibsRepoEntry{
 				RepoID:      repoID,
 				HiveID:      sh.ID,

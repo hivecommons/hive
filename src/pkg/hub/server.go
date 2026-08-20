@@ -1115,6 +1115,13 @@ type HubServer struct {
 	// persisted to reachHistoryPath, read by /api/reach for before/after
 	// deltas. nil on bare test servers; every touch point is nil-safe.
 	reachHistory *reachHistoryStore
+
+	// dibsPublic caches "is this repo public on github.com?" verdicts for the
+	// dibs repo feed (#4233, dibs_public_check.go). Created lazily by
+	// dibsChecker on the first /api/saas/dibs/repos request; tests pre-set the
+	// field to point at a fake GitHub API before that first call.
+	dibsPublicOnce sync.Once
+	dibsPublic     *dibsPublicChecker
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
