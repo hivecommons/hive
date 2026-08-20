@@ -146,6 +146,16 @@ diverge, that is itself the signal to widen the lane.
 
 ### 4. SELinux-enforcing — the only lane that needs new infrastructure
 
+> **Built (#4337):** not a workflow, on purpose — see below.
+> [The release qualification](podman-selinux-release-qualification.md) documents
+> a repeatable procedure and ships `src/deploy/qualify_podman_selinux.sh`, run
+> per release on an enforcing Fedora/CentOS Stream-class host. It covers the
+> `:z`/`:Z` mount forms, MCS label behaviour, and secret access, and gives
+> #4209's preflight its first coverage on a host where SELinux enforces
+> anything. The script refuses to run outside Enforcing and records the release
+> as UNEXECUTED rather than reporting a pass from a permissive host. The first
+> row is recorded in the ledger there.
+
 Hosted runners have no SELinux at all: no `getenforce`, no `/sys/fs/selinux`,
 AppArmor instead. There is no way to make an Ubuntu hosted runner enforce
 SELinux, so `:z`/`:Z` relabeling, mount labels, and secret access under
