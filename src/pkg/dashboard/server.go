@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -105,6 +106,16 @@ type Server struct {
 
 	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
+
+	// statusSeq / statusMutationEpoch power the stale-snapshot guard (#4348).
+	// statusSeq increments on every published full snapshot and travels in the
+	// payload so the frontend can drop out-of-order status responses.
+	// statusMutationEpoch increments on every state mutation; a snapshot
+	// rebuild that STARTED before the latest mutation is dropped at publish
+	// time, so no published snapshot can revert a mutation the operator has
+	// already been told succeeded. Both guarded by statusMu.
+	statusSeq           uint64
+	statusMutationEpoch uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -246,8 +257,17 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	Timestamp string           `json:"timestamp"`
-	HiveID    string           `json:"hiveId"`
+	Timestamp string `json:"timestamp"`
+	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
+	// any status payload whose seq is older than the last one it rendered,
+	// so a stale in-flight poll/SSE response can never repaint over a newer
+	// snapshot (e.g. reverting a just-reset restart counter).
+	StatusSeq uint64 `json:"statusSeq"`
+	// StatusInstance identifies the server process that produced the seq.
+	// Seqs restart at 1 when the spoke restarts; the frontend resets its
+	// guard counters when the instance changes instead of dropping forever.
+	StatusInstance string           `json:"statusInstance"`
+	HiveID         string           `json:"hiveId"`
 	Agents    []FrontendAgent  `json:"agents"`
 	Governor  FrontendGovernor `json:"governor"`
 	Tokens    FrontendTokens   `json:"tokens"`
@@ -1451,7 +1471,41 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 	})
 }
 
+// BeginStatusSnapshot returns the current mutation epoch. Callers that build
+// a full status snapshot should capture this BEFORE reading any state and
+// pass it to UpdateStatusIfFresh, which drops the snapshot if a mutation
+// landed while it was being built (#4348).
+func (s *Server) BeginStatusSnapshot() uint64 {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+	return s.statusMutationEpoch
+}
+
+// noteStatusMutation records that server-side state just changed. It returns
+// the minimum StatusSeq a published snapshot must carry to be guaranteed to
+// reflect the mutation — any snapshot published with a lower seq was built
+// before it. Mutation handlers hand this floor to the frontend so it can
+// discard stale in-flight status responses (#4348).
+func (s *Server) noteStatusMutation() uint64 {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	s.statusMutationEpoch++
+	return s.statusSeq + 1
+}
+
+// UpdateStatus publishes a snapshot unconditionally (epoch captured at entry).
+// Prefer BeginStatusSnapshot + UpdateStatusIfFresh when the snapshot build is
+// slow enough for a mutation to race it.
 func (s *Server) UpdateStatus(status *StatusPayload) {
+	s.UpdateStatusIfFresh(status, s.BeginStatusSnapshot())
+}
+
+// UpdateStatusIfFresh publishes the snapshot unless a state mutation happened
+// after buildEpoch was captured — a stale build must not overwrite (and then
+// broadcast) pre-mutation values the operator has already seen change.
+// Returns whether the snapshot was published; the mutation's own
+// refresh-after-mutation rebuild repaints shortly after a drop.
+func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) bool {
 	if s.deps != nil && s.deps.Config != nil {
 		status.ACMMLevel = detectACMMLevel(s.deps.Config)
 		status.ACMMPackAgents = buildACMMPackAgents(s.deps.Config)
@@ -1525,6 +1579,19 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.hubBannerMu.RUnlock()
 
 	s.statusMu.Lock()
+	if buildEpoch < s.statusMutationEpoch {
+		// A mutation landed after this snapshot's build began: its data may
+		// predate the mutation. Drop it — the mutation's own refresh rebuild
+		// (which began after the epoch bump) publishes the fresh state.
+		curEpoch := s.statusMutationEpoch
+		s.statusMu.Unlock()
+		s.logger.Debug("dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch)
+		return false
+	}
+	s.statusSeq++
+	status.StatusSeq = s.statusSeq
+	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	s.status = status
 	s.lastFullBroadcast = time.Now()
@@ -1539,10 +1606,11 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	data, err := json.Marshal(status)
 	if err != nil {
 		s.logger.Warn("failed to marshal status for SSE", "error", err)
-		return
+		return true
 	}
 
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+	return true
 }
 
 // AddSystemAlert adds a critical alert visible on the dashboard.

@@ -7154,6 +7154,11 @@
         showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
         return;
       }
+      // Same stale-snapshot race as the restart counter (#4348): raise the
+      // floor so a pre-reset poll can't repaint the exhausted budget bar
+      // before the post-reset snapshot lands. Body parse is best-effort.
+      const ok = await r.json().catch(() => ({}));
+      noteStatusMutation(ok.minStatusSeq);
       showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
       fetchBudgetHistory(); // a reset closes a window → new history row; refetch so the chart shows it
       refreshStatus(); // repaint budget bar/banners in place; errors swallowed inside
@@ -12120,6 +12125,21 @@ function burnAreaChart() {
     }
 
     let _hashScrollPending = false;
+
+    // ── Stale-snapshot guard state (#4348) ─────────────────────────────
+    // _lastStatusSeq: highest statusSeq applied to the DOM. _statusSeqFloor:
+    // snapshots below this were built before a mutation this client has
+    // already confirmed (e.g. restart-count / budget-window reset) and must
+    // never be rendered. See the guard at the top of render().
+    let _lastStatusSeq = 0;
+    let _statusSeqFloor = 0;
+    let _statusInstance = '';
+    // noteStatusMutation raises the floor from a mutation response's
+    // minStatusSeq so in-flight pre-mutation polls/SSE frames are discarded.
+    function noteStatusMutation(minSeq) {
+      const n = Number(minSeq);
+      if (Number.isFinite(n) && n > _statusSeqFloor) _statusSeqFloor = n;
+    }
     var SCROLL_SETTLE_DELAY_MS = 500;
     var _deferredLoadPromise = null;
     function _afterPaint(callback) {
@@ -12145,6 +12165,27 @@ function burnAreaChart() {
 
     function render(data) {
       if (!data || data.error || data.status === 'initializing') return;
+      // ── Stale-snapshot guard (#4348) ──────────────────────────────────
+      // Status payloads arrive from several racing sources (SSE pushes,
+      // periodic refetches, post-action refreshStatus calls). Two drops:
+      //  1. out-of-order: a response older than the newest one already
+      //     rendered must not repaint the page backwards;
+      //  2. pre-mutation: after a reset button confirms success, snapshots
+      //     built before that mutation (statusSeq below the server-supplied
+      //     minStatusSeq floor) would revert the optimistic 0 — discard them
+      //     until a post-mutation snapshot arrives.
+      // Payloads without statusSeq (older spoke server) apply as before.
+      if (data.statusSeq != null) {
+        if (data.statusInstance && data.statusInstance !== _statusInstance) {
+          // New server process: seqs restarted at 1 — reset the guard so a
+          // spoke restart doesn't freeze the page on pre-restart state.
+          _statusInstance = data.statusInstance;
+          _lastStatusSeq = 0;
+          _statusSeqFloor = 0;
+        }
+        if (data.statusSeq < _statusSeqFloor || data.statusSeq < _lastStatusSeq) return;
+        _lastStatusSeq = data.statusSeq;
+      }
       if (document.body.style.opacity === '0') document.body.style.opacity = '1';
       const scrollY = window.scrollY;
       const tsDt = new Date(data.timestamp);
@@ -13679,11 +13720,17 @@ function burnAreaChart() {
       const res = await fetch(`/api/reset-restarts/${agent}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Reset failed: ${data.error || 'unknown'}`, 'error'); return; }
+      // Raise the stale-snapshot floor BEFORE the optimistic patch so an
+      // in-flight pre-reset poll/SSE frame can't flip the counter back to
+      // the old value (#4348), then refetch so the real post-reset snapshot
+      // repaints everything; errors swallowed inside refreshStatus.
+      noteStatusMutation(data.minStatusSeq);
       const btn = document.querySelector(`.restart-reset[data-agent="${agent}"]`);
       if (btn) {
         const el = btn.closest('.value');
         if (el) { el.className = 'value'; el.innerHTML = '0<span class="restart-label">24h</span><span class="restart-spark"></span>'; }
       }
+      refreshStatus();
       dismissToast(toast, `${agent} restart counter reset`, 'success');
     }
 

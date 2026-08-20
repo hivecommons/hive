@@ -1907,6 +1907,12 @@ func main() {
 
 	var lastActionable atomic.Pointer[github.ActionableResult]
 	refreshDashboard := func() {
+		// Capture the mutation epoch BEFORE reading any state: if a mutation
+		// (e.g. a restart-count or budget-window reset) lands while this
+		// snapshot is being built, UpdateStatusIfFresh drops it so the stale
+		// values never overwrite what the mutation's own refresh will publish
+		// (#4348 — the restart-count flicker).
+		buildEpoch := dashSrv.BeginStatusSnapshot()
 		actionable := lastActionable.Load()
 		govState := gov.GetState()
 		agentStatuses := agentMgr.AllStatuses()
@@ -1925,7 +1931,7 @@ func main() {
 		if d := dashSrv.GetAdvisoryDigest(); d != nil {
 			payload.AdvisoryDigest = d
 		}
-		dashSrv.UpdateStatus(payload)
+		dashSrv.UpdateStatusIfFresh(payload, buildEpoch)
 	}
 
 	const cachedActionablePath = "/data/last-actionable.json"
@@ -5142,6 +5148,10 @@ func runEvalCycle(
 	// Scan agent panes for login-required patterns and pause + notify if detected
 	scanForLoginRequired(ctx, cfg, agentMgr, notifier, dashSrv, logger)
 
+	// Epoch captured before reading agent/governor state so a mutation that
+	// lands mid-build (restart-count/budget reset) drops this snapshot instead
+	// of letting it revert the mutation on the dashboard (#4348).
+	buildEpoch := dashSrv.BeginStatusSnapshot()
 	agentStatuses := agentMgr.AllStatuses()
 
 	statusPayload := dashboard.BuildFrontendStatus(
@@ -5487,7 +5497,7 @@ func runEvalCycle(
 		statusPayload.AdvisoryDigest = d
 	}
 
-	dashSrv.UpdateStatus(statusPayload)
+	dashSrv.UpdateStatusIfFresh(statusPayload, buildEpoch)
 
 	if agentStats := dashboard.CollectAgentStats(statusPayload); len(agentStats) > 0 {
 		gov.AttachAgentStats(agentStats)

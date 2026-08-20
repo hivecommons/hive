@@ -409,9 +409,20 @@ func (s *Server) resolveAgentParam(nameOrID string) string {
 }
 
 func (s *Server) refreshAfterMutation() {
+	s.refreshAfterMutationSeq()
+}
+
+// refreshAfterMutationSeq bumps the mutation epoch (so any in-flight snapshot
+// rebuild that started before this mutation is dropped at publish, #4348),
+// kicks an async rebuild, and returns the minimum StatusSeq of snapshots
+// guaranteed to reflect the mutation. Handlers whose UI patches the DOM
+// optimistically should return that floor to the frontend.
+func (s *Server) refreshAfterMutationSeq() uint64 {
+	floor := s.noteStatusMutation()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		go s.deps.RefreshFunc()
 	}
+	return floor
 }
 
 func (s *Server) persistAfterMutation() {
@@ -421,11 +432,19 @@ func (s *Server) persistAfterMutation() {
 }
 
 func (s *Server) refreshAndPersist() {
-	s.refreshAfterMutation()
+	s.refreshAndPersistSeq()
+}
+
+// refreshAndPersistSeq is refreshAndPersist returning the post-mutation
+// StatusSeq floor (see refreshAfterMutationSeq).
+func (s *Server) refreshAndPersistSeq() uint64 {
+	floor := s.refreshAfterMutationSeq()
 	s.persistAfterMutation()
+	return floor
 }
 
 func (s *Server) refreshAndPersistSync() {
+	s.noteStatusMutation()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		s.deps.RefreshFunc()
 	}
@@ -1719,8 +1738,11 @@ func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Logger.Info("audit: restart count reset", "agent", name, "trigger", "dashboard-api")
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "reset", "agent": name})
+	floor := s.refreshAndPersistSeq()
+	// minStatusSeq: status snapshots below this seq were built before the
+	// reset — the dashboard drops them so the zeroed counter can't flicker
+	// back to the stale value (#4348).
+	jsonResponse(w, map[string]any{"ok": true, "status": "reset", "agent": name, "minStatusSeq": floor})
 }
 
 // --- Token access audit log ---
@@ -4591,8 +4613,10 @@ func (s *Server) handleGovernorBudgetReset(w http.ResponseWriter, r *http.Reques
 	}
 	s.deps.Governor.ResetBudgetWindow()
 	s.auditFromRequest(r, "governor_budget_window_reset", auditDetail("section", "budget"), "")
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "reset"})
+	floor := s.refreshAndPersistSeq()
+	// minStatusSeq: see handleResetRestarts — lets the dashboard discard
+	// pre-reset status snapshots so the budget bar can't revert (#4348).
+	jsonResponse(w, map[string]any{"ok": true, "status": "reset", "minStatusSeq": floor})
 }
 
 func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Request) {
