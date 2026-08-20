@@ -176,6 +176,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Live key validation (pasted or saved key) — see bob_key_probe.go.
 	s.mux.HandleFunc("POST /api/config/governor/bob/test", s.handleGovernorBobKeyTest)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
+	s.mux.HandleFunc("GET /api/config/governor/inference-auth", s.handleGovernorInferenceAuthGet)
+	s.mux.HandleFunc("PUT /api/config/governor/inference-auth", s.handleGovernorInferenceAuthPut)
 	s.mux.HandleFunc("GET /api/config/governor/gateways", s.handleGovernorGatewaysList)
 	s.mux.HandleFunc("PUT /api/config/governor/gateways", s.handleGovernorGatewaysUpsert)
 	s.mux.HandleFunc("DELETE /api/config/governor/gateways/{name}", s.handleGovernorGatewaysDelete)

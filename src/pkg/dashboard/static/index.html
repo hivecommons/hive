@@ -15241,6 +15241,7 @@ function burnAreaChart() {
         // renders the manager into its container.
         if (tabId === 'Model Gateways') {
           loadGateways();
+          loadInferenceAuth();
         }
         // The Forge App tab renders a shell synchronously, then loads the
         // credential inventory (fingerprints only) from the spoke.
@@ -16106,7 +16107,73 @@ function burnAreaChart() {
         </div>
         <div id="openrouter-fund-host"></div>
         <div id="gateways-form-host"></div>
-        <div id="gateways-list-host"><div style="color:var(--muted);font-size:0.8rem">Loading gateways…</div></div>`;
+        <div id="gateways-list-host"><div style="color:var(--muted);font-size:0.8rem">Loading gateways…</div></div>
+        <div id="inference-auth-host"><div style="color:var(--muted);font-size:0.8rem">Loading inference auth…</div></div>`;
+    }
+
+    // ---- vLLM / llm-d discovery auth (#4217) --------------------------------
+    // governor.vllm / governor.llm-d (InferenceAuthConfig) were YAML-only while
+    // LiteLLM auth is exposed above. These sections take key REFERENCES only —
+    // a header NAME, an env var NAME, and an optional endpoint override — never
+    // a key value, matching the server's secret-free overlay contract.
+    async function loadInferenceAuth() {
+      const host = document.getElementById('inference-auth-host');
+      if (!host) return;
+      try {
+        const res = await fetch('/api/config/governor/inference-auth');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        host.innerHTML = renderInferenceAuthSection('vllm', 'vLLM', data.vllm || {})
+          + renderInferenceAuthSection('llmd', 'llm-d', data.llmd || {});
+      } catch (e) {
+        host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load inference auth: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function renderInferenceAuthSection(id, label, cfg) {
+      const defEnv = id === 'vllm' ? 'VLLM_API_KEY' : 'LLMD_API_KEY';
+      return `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
+          <div style="font-weight:600;font-size:0.9rem;margin-bottom:4px">${esc(label)} discovery auth</div>
+          <div style="font-size:0.74rem;color:var(--muted);margin-bottom:10px">
+            Optional auth for the ${esc(label)} backend's <code>/v1/models</code> discovery. Plain ${esc(label)}
+            servers need no key, but the endpoint may be a key-gated gateway. References only — the key value is
+            never stored in config.
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>API key header <span class="config-info">i<span class="config-tooltip">Header NAME the key is sent in. Leave blank for the default (Authorization).</span></span></label>
+            <input type="text" value="${esc(cfg.api_key_header || '')}" placeholder="Authorization" onchange="saveInferenceAuthField('${id}', 'api_key_header', this.value)" style="width:100%">
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>API key env var <span class="config-info">i<span class="config-tooltip">Environment variable NAME holding the key — never paste the key value here.</span></span></label>
+            <input type="text" value="${esc(cfg.api_key_env || '')}" placeholder="${esc(defEnv)}" onchange="saveInferenceAuthField('${id}', 'api_key_env', this.value)" style="width:100%">
+          </div>
+          <div class="config-field" style="margin-bottom:4px">
+            <label>Endpoint override (optional) <span class="config-info">i<span class="config-tooltip">OpenAI-compatible base URL used instead of the default for this backend. Leave blank to keep the default.</span></span></label>
+            <input type="text" value="${esc(cfg.endpoint || '')}" placeholder="https://…/v1" onchange="saveInferenceAuthField('${id}', 'endpoint', this.value)" style="width:100%">
+          </div>
+        </div>`;
+    }
+
+    async function saveInferenceAuthField(backend, field, value) {
+      const payload = {};
+      payload[backend] = {};
+      payload[backend][field] = value.trim();
+      try {
+        const res = await fetch('/api/config/governor/inference-auth', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showToast(data.error || ('Failed to save (HTTP ' + res.status + ')'), 'error');
+          return;
+        }
+        showToast((backend === 'vllm' ? 'vLLM' : 'llm-d') + ' auth saved', 'success');
+      } catch (e) {
+        showToast('Failed to save: ' + e.message, 'error');
+      }
     }
 
     // ---- OpenRouter scan-to-fund -------------------------------------------
