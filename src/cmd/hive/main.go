@@ -74,6 +74,7 @@ import (
 	"github.com/kubestellar/hive/pkg/pushbroker"
 	"github.com/kubestellar/hive/pkg/retro"
 	"github.com/kubestellar/hive/pkg/review"
+	"github.com/kubestellar/hive/pkg/rotation"
 	"github.com/kubestellar/hive/pkg/scheduler"
 	"github.com/kubestellar/hive/pkg/snapshot"
 	"github.com/kubestellar/hive/pkg/timeline"
@@ -2200,6 +2201,17 @@ func main() {
 		}
 	}
 
+	// Provider rotation (RFC #3958): opt-in automatic failover when a
+	// provider's subscription/credit is exhausted. Nil when disabled.
+	var rotationMgr *rotation.Manager
+	if cfg.Governor.Rotation.Enabled {
+		rotationMgr = rotation.NewManager(cfg.Governor.Rotation)
+		rotationMgr.Start(ctx)
+		logger.Info("provider rotation enabled",
+			"threshold_pct", cfg.Governor.Rotation.EffectiveThreshold(),
+			"providers", len(cfg.Governor.Rotation.Providers))
+	}
+
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
 		Config:           cfg,
 		AgentMgr:         agentMgr,
@@ -2212,6 +2224,7 @@ func main() {
 		Nous:             nousState,
 		Scheduler:        sched,
 		MetricsCollector: metricsCollector,
+		RotationMgr:      rotationMgr,
 		// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 		// the heartbeat reads, so its merge-success signal reuses the existing
 		// 30-minute collect loop instead of issuing a second GitHub fetch.
@@ -4223,6 +4236,7 @@ func main() {
 	// entries, and every cadenced agent is still kicked here, unchanged.
 	logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
+	runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 
@@ -4264,6 +4278,7 @@ func main() {
 				}
 			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
+			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
@@ -6094,6 +6109,73 @@ func trustedMergerFunc(cfg *config.Config) github.MergerAuthorizer {
 // trust, the trusted-merger tier gate (SetMergerAuthorizer), check
 // verification — live inside SweepQueuedAutoMerges; this function is only the
 // scheduler and the dashboard audit sink.
+// rotationTrigger is the PausedTrigger stamped on strand-pauses so rotation's
+// auto-resume never resumes a pause it did not create.
+const rotationTrigger = "provider-rotation"
+
+// runRotationCheck applies RFC #3958 provider rotation after an eval cycle:
+// for each agent not mid-task whose provider was positively measured as
+// exhausted, move it to a backend with headroom at the same tier; when
+// nothing has headroom, pause it loudly (strand). Stranded agents are
+// auto-resumed when their provider recovers headroom. Never runs mid-task:
+// only idle agents are candidates.
+func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.Manager, gov *governor.Governor, agentMgr *agent.Manager, logger *slog.Logger) {
+	if rotMgr == nil || !cfg.Governor.Rotation.Enabled {
+		return
+	}
+	govState := gov.GetState()
+	for name, proc := range agentMgr.AllStatuses() {
+		backend := proc.Config.Backend
+		if proc.BackendOverride != "" {
+			backend = proc.BackendOverride
+		}
+
+		// Auto-resume: a stranded agent whose provider recovered.
+		if proc.Paused && proc.PausedTrigger == rotationTrigger {
+			if rotMgr.StrandRecovered(backend) {
+				if err := agentMgr.Resume(ctx, name, rotationTrigger, "provider headroom recovered"); err != nil {
+					logger.Warn("rotation: auto-resume failed", "agent", name, "error", err)
+				} else {
+					logger.Info("rotation: auto-resumed stranded agent", "agent", name, "backend", backend)
+				}
+			}
+			continue
+		}
+		if proc.Paused {
+			continue // never touch an operator pause
+		}
+		// Never rotate mid-task: only idle agents are candidates.
+		if proc.State == agent.StateRunning {
+			continue
+		}
+
+		cadenceS := 0
+		if c, ok := govState.Cadences[name]; ok && c.Interval > 0 {
+			cadenceS = int(c.Interval / time.Second)
+		}
+
+		if !rotMgr.Exhausted(backend) {
+			continue
+		}
+		next := rotMgr.NextBackendForCadence(name, backend, cadenceS)
+		if next == "" {
+			// Strand loudly: pause so the agent burns nothing until a
+			// provider recovers; the loop above auto-resumes it.
+			if err := agentMgr.Pause(name, rotationTrigger, "no provider has headroom (RFC #3958)"); err != nil {
+				logger.Warn("rotation: strand-pause failed", "agent", name, "error", err)
+			} else {
+				logger.Info("rotation: stranding agent, no headroom anywhere", "agent", name, "backend", backend)
+			}
+			continue
+		}
+		if err := agentMgr.SetBackendOverride(name, next); err != nil {
+			logger.Warn("rotation: backend override failed", "agent", name, "to", next, "error", err)
+			continue
+		}
+		logger.Info("rotation: moved agent to new backend", "agent", name, "from", backend, "to", next)
+	}
+}
+
 func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
 	if ghClient == nil {
 		return

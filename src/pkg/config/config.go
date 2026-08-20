@@ -987,6 +987,62 @@ type GovernorConfig struct {
 	// Absent or type="" defaults to GitHub Issues — backward-compatible for
 	// all existing hives.
 	WorkSource WorkSourceConfig `yaml:"work_source,omitempty" json:"work_source,omitempty"`
+
+	// Rotation configures automatic provider failover when a provider's
+	// subscription or credit is exhausted. See RFC #3958.
+	Rotation RotationConfig `yaml:"rotation,omitempty" json:"rotation,omitempty"`
+}
+
+// RotationConfig configures automatic provider failover (RFC #3958). When a
+// provider's subscription or credit is exhausted, agents are rotated onto a
+// different provider at the same capability tier.
+type RotationConfig struct {
+	// Enabled turns the rotation loop on. Default false — opt-in.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// ThresholdPct is the usage percentage at which a subscription provider
+	// is considered exhausted (0–100). Default 85.
+	ThresholdPct int `yaml:"threshold_pct,omitempty" json:"threshold_pct,omitempty"`
+	// Providers maps provider name → its class config.
+	Providers map[string]ProviderRotationConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
+	// HighVolumeCadenceS: agents with a cadence at or below this value (seconds)
+	// are high-volume and must NEVER rotate onto subscription providers.
+	// Default 1800 (30 min). Protects weekly subscription budgets.
+	HighVolumeCadenceS int `yaml:"high_volume_cadence_s,omitempty" json:"high_volume_cadence_s,omitempty"`
+	// AgentTiers maps agent name → capability tier ("T1","T2","T3").
+	// Rotation stays within tiers; drops only when nothing has headroom.
+	AgentTiers map[string]string `yaml:"agents,omitempty" json:"agents,omitempty"`
+}
+
+// ProviderRotationConfig describes one provider in the rotation set.
+type ProviderRotationConfig struct {
+	// Class is "subscription" or "metered".
+	Class string `yaml:"class" json:"class"`
+	// Backends lists which hive backend names front this provider
+	// (e.g. ["claude","pi"] for anthropic; ["litellm"] when litellm fronts deepseek).
+	Backends []string `yaml:"backends,omitempty" json:"backends,omitempty"`
+}
+
+// defaultRotationThresholdPct is the exhaustion threshold when unset.
+const defaultRotationThresholdPct = 85
+
+// defaultHighVolumeCadenceS is the high-volume cadence cutoff when unset.
+const defaultHighVolumeCadenceS = 1800
+
+// EffectiveThreshold returns the exhaustion threshold pct, defaulting to 85.
+func (r RotationConfig) EffectiveThreshold() int {
+	if r.ThresholdPct > 0 {
+		return r.ThresholdPct
+	}
+	return defaultRotationThresholdPct
+}
+
+// EffectiveHighVolumeCadenceS returns the high-volume cadence cutoff in
+// seconds, defaulting to 1800 (30 minutes).
+func (r RotationConfig) EffectiveHighVolumeCadenceS() int {
+	if r.HighVolumeCadenceS > 0 {
+		return r.HighVolumeCadenceS
+	}
+	return defaultHighVolumeCadenceS
 }
 
 // WorkSourceConfig selects where hive reads work items (Step 01 of the loop).
