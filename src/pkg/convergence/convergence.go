@@ -144,6 +144,14 @@ type Observation struct {
 	// on one. DegradedReason is a short machine-readable note for logs.
 	Degraded       bool
 	DegradedReason string
+	// Outcome, when non-nil, binds this candidate to a declared canonical
+	// outcome (#4251): its key, the current desired generation, and the
+	// generation the observer read. Nil — every observation today, and every
+	// observation while the convergence mode toggle is off — leaves Evaluate's
+	// behavior byte-identical to the pre-outcome contract. Populated only via
+	// pkg/convergence/outcome.Record.AdmissionStatus, which is itself
+	// toggle-gated.
+	Outcome *OutcomeStatus
 }
 
 // Condition is one tri-state judgment with its reason, in the Kubernetes
@@ -175,6 +183,11 @@ type Decision struct {
 	// judged.
 	ObservedRecord     string
 	ObservedGeneration string
+	// Outcome echoes the bound outcome status the decision was judged
+	// against, as detached immutable values, so a status projection can say
+	// exactly which OutcomeRef, desired generation, and observed generation
+	// were in play. Nil for the (default) unbound case.
+	Outcome *OutcomeStatus
 	// Conditions are the full tri-state judgments, in a stable order
 	// (Observed, then Ready).
 	Conditions []Condition
@@ -248,6 +261,15 @@ func Evaluate(obs Observation) Decision {
 		return d
 	}
 
+	// Rule 1a (additive, #4251): a candidate bound to a declared outcome is
+	// gated on generation comparison BEFORE any dependency judgment. Evidence
+	// observed at any generation other than the current desired generation can
+	// never authorize a transition; removing this check must fail the guard
+	// tests. Unbound candidates (Outcome nil) skip this entirely.
+	if blocked, ok := evaluateOutcomeGate(obs); ok {
+		return blocked
+	}
+
 	// Rule 2: no record for this candidate means no declared dependency.
 	if !obs.Found {
 		d.Admitted = true
@@ -258,7 +280,7 @@ func Evaluate(obs Observation) Decision {
 			{Type: ConditionReady, Status: ConditionTrue, Reason: ReasonNoDeclaredDependencies,
 				Message: "admitted: candidate declares no dependencies"},
 		}
-		return d
+		return finishOutcome(d, obs)
 	}
 
 	observed := Condition{Type: ConditionObserved, Status: ConditionTrue, Reason: ReasonIntentObserved,
@@ -311,7 +333,18 @@ func Evaluate(obs Observation) Decision {
 		}}
 	}
 
-	return d
+	return finishOutcome(d, obs)
+}
+
+// finishOutcome appends the generation-match condition to a decision whose
+// observation carried a bound outcome that PASSED the gate. It changes no
+// verdict: a matched generation establishes only that the current declaration
+// generation was observed.
+func finishOutcome(d Decision, obs Observation) Decision {
+	if obs.Outcome == nil {
+		return d
+	}
+	return appendOutcomeMatch(d, obs.Outcome)
 }
 
 // recordMessage renders the observed-record note, including the generation when
