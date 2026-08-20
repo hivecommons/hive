@@ -2,6 +2,7 @@ package advisory
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/kubestellar/hive/pkg/beads"
 )
@@ -84,6 +85,143 @@ func CloseHealedAppAuthFindings(stores map[string]*beads.Store) []string {
 				continue
 			}
 			_ = store.SetMetadata(b.ID, closeReasonMetadataKey, appAuthHealedCloseReason)
+			closed = append(closed, b.Title)
+		}
+	}
+	return closed
+}
+
+// repoAccessHealedCloseReason is stamped into a bead's metadata when the hive
+// auto-closes it because the advisory-tier repository READ path demonstrably
+// works. Distinct from appAuthHealedCloseReason because the proof is different:
+// a digest post proves the App can WRITE issues, while this close requires an
+// actual verified Contents read.
+const repoAccessHealedCloseReason = "auto-closed: the hive verified an advisory-tier scoped token can read the repository, so this repo-access finding no longer holds"
+
+// repoAccessFindingPatterns recognize the #2575 finding family: advisory-tier
+// (guide/newcomer) agents reporting they have NO WAY TO READ the repository
+// they exist to audit — "no clone mechanism", "no repository access mechanism
+// in L2 advisory mode", "repository access infrastructure missing", "lacks
+// read-only repository access", "no repository workspace provisioning". These
+// were true findings before #4291 (the advisor/newcomer scoped-token tiers
+// omitted Contents:read and the credential helper blocked fetches), and agents
+// word them freely, so the patterns tolerate drift.
+//
+// Like appAuthFindingPatterns they must stay directional: every pattern
+// requires the LACK language ("no/missing/lacks/cannot") adjacent to the
+// access/clone subject, so a CODE finding that merely mentions repository
+// access ("Repository access logs are not retained", "read access to
+// repository secrets not restricted") never matches. And unlike the app-auth
+// healer, a title match alone is NOT sufficient to close — see
+// CloseHealedRepoAccessFindings, which additionally requires a verified read
+// of the repository the finding concerns.
+var repoAccessFindingPatterns = []*regexp.Regexp{
+	// "no clone mechanism available", "agent lacks a checkout mechanism"
+	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without|unavailable)\b[^.\n]*\b(clone|checkout|fetch)\s+mechanism\b`),
+	// "clone mechanism missing/unavailable/not available"
+	regexp.MustCompile(`(?i)\b(clone|checkout|fetch)\s+mechanism\b[^.\n]*\b(missing|unavailable|absent|not\s+available)\b`),
+	// "no repository access mechanism", "lacks read-only repository access
+	// mechanism", "no repo read access path"
+	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without|unavailable)\b[^.\n]*\brepo(sitory)?\s+(read\s+)?access\b[^.\n]*\b(mechanism|infrastructure|capabilit|path|method|provision)`),
+	// "repository access infrastructure missing"
+	regexp.MustCompile(`(?i)\brepo(sitory)?\s+(read\s+)?access\b[^.\n]*\b(mechanism|infrastructure|capabilit|path|method|provision)[a-z]*\b[^.\n]*\b(missing|unavailable|absent|lacking|not\s+available)\b`),
+	// "no repository workspace provisioning for advisory agents"
+	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without)\b[^.\n]*\brepo(sitory)?\s+workspace\s+provisioning\b`),
+	// "guide agent cannot access target repository", "unable to clone the repository"
+	regexp.MustCompile(`(?i)\b(cannot|can't|unable\s+to)\s+(access|read|clone|fetch)\b[^.\n]*\brepo(sitory)?\b`),
+}
+
+// IsRepoAccessFinding reports whether a finding title describes the hive's own
+// agents lacking a repository read path (clone/fetch/contents access), as
+// opposed to a code finding that merely mentions repository access. Titles
+// only, for the same reason as IsAppAuthFinding.
+func IsRepoAccessFinding(title string) bool {
+	if title == "" {
+		return false
+	}
+	for _, p := range repoAccessFindingPatterns {
+		if p.MatchString(title) {
+			return true
+		}
+	}
+	return false
+}
+
+// RepoFromFindingRef extracts an "owner/repo" from a finding's file reference
+// (Bead.ExternalRef), when the agent attributed the finding to a repository
+// rather than a file. Agents write refs like:
+//
+//	"github.ibm.com/devx-prod/epx-vscode-ext-poc" → devx-prod/epx-vscode-ext-poc
+//	"hive.yaml:repos", "src/main.go:12", "hive-infrastructure" → not a repo
+//
+// The parse is deliberately conservative: anything with a ":" is a file:line
+// or file:section ref, and a two-segment path only parses as owner/repo when
+// neither segment contains a "." (so "docs/install.md" never does). A ref
+// that fails to parse means "the finding is about the hive's own configured
+// repo", which is the safe default for the verification gate.
+func RepoFromFindingRef(ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || strings.Contains(ref, ":") {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(ref, "/"), "/")
+	switch len(parts) {
+	case 3:
+		// host/owner/repo — the leading segment must look like a hostname.
+		if strings.Contains(parts[0], ".") && parts[1] != "" && parts[2] != "" {
+			return parts[1] + "/" + parts[2], true
+		}
+	case 2:
+		if parts[0] != "" && parts[1] != "" && !strings.Contains(parts[0], ".") && !strings.Contains(parts[1], ".") {
+			return parts[0] + "/" + parts[1], true
+		}
+	}
+	return "", false
+}
+
+// CloseHealedRepoAccessFindings closes open advisory beads that report the
+// hive's agents lacking a repository READ path, but ONLY for repositories the
+// caller can PROVE are readable right now. canRead receives the "owner/repo"
+// the finding names (parsed from its ref), or "" when the finding names no
+// repo — meaning the hive's own primary repo. It must return true only after
+// an actual verified read (e.g. a Contents fetch with an advisory-tier scoped
+// token — the exact path #4291 fixed), and is consulted per bead so a finding
+// about a repo that is GENUINELY unreadable is never closed alongside healed
+// ones. Callers should memoize canRead: many findings name the same repo.
+//
+// Invoked after a successful App-authenticated digest post, like
+// CloseHealedAppAuthFindings — but the digest post only proves issues:write,
+// so the read verification is what actually gates each close here. A wrongly
+// surviving finding costs nothing (it heals next cycle); a wrongly closed one
+// re-opens only when an agent re-files it, so the gate errs toward staying
+// open. Returns the closed titles for logging.
+func CloseHealedRepoAccessFindings(stores map[string]*beads.Store, canRead func(ownerRepo string) bool) []string {
+	if canRead == nil {
+		return nil
+	}
+	var closed []string
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		for _, b := range store.List(beads.ListFilter{}) {
+			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
+				continue
+			}
+			if !isAdvisoryBeadType(b.Type) {
+				continue
+			}
+			if !IsRepoAccessFinding(b.Title) {
+				continue
+			}
+			repo, _ := RepoFromFindingRef(b.ExternalRef)
+			if !canRead(repo) {
+				continue
+			}
+			if err := store.Close(b.ID); err != nil {
+				continue
+			}
+			_ = store.SetMetadata(b.ID, closeReasonMetadataKey, repoAccessHealedCloseReason)
 			closed = append(closed, b.Title)
 		}
 	}

@@ -5375,6 +5375,53 @@ func runEvalCycle(
 							logger.Info("closed healed GitHub App access findings after successful App digest post",
 								"count", len(healed), "titles", strings.Join(healed, "; "))
 						}
+						// Repo-ACCESS findings ("no clone mechanism", "no
+						// repository access mechanism in L2 advisory mode",
+						// …) are the second #2575 family: true before #4291
+						// gave advisory tiers Contents:read and a working
+						// credential-helper fetch, but a digest post only
+						// proves issues:WRITE, so they need their own proof.
+						// Verify with a real advisor-scoped Contents read of
+						// the repo each finding names (or the primary repo
+						// when it names none), memoized per repo — a finding
+						// about a repo the hive genuinely cannot read stays
+						// open.
+						readVerified := map[string]bool{}
+						canRead := func(ownerRepo string) bool {
+							target := ownerRepo
+							if target == "" {
+								target = primaryRepo
+							}
+							owner, name := cfg.Project.Org, target
+							if i := strings.LastIndex(target, "/"); i > 0 {
+								owner, name = target[:i], target[i+1:]
+							}
+							if owner == "" || name == "" {
+								return false
+							}
+							key := owner + "/" + name
+							if v, ok := readVerified[key]; ok {
+								return v
+							}
+							appAuth := ghClient.AppAuth()
+							if appAuth == nil {
+								// Static-token client: no advisor-tier token
+								// can be minted, so the read path cannot be
+								// verified — leave the finding open.
+								return false
+							}
+							err := appAuth.VerifyRepoRead(ctx, owner, name)
+							if err != nil {
+								logger.Info("repo-access finding left open: advisor read probe failed",
+									"repo", key, "error", err)
+							}
+							readVerified[key] = err == nil
+							return readVerified[key]
+						}
+						if healed := advisory.CloseHealedRepoAccessFindings(beadStores, canRead); len(healed) > 0 {
+							logger.Info("closed healed repo-access findings after verified advisory read path",
+								"count", len(healed), "titles", strings.Join(healed, "; "))
+						}
 					}
 				} else {
 					// No pinned advisory issue for this repo, yet there IS
