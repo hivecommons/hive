@@ -1917,6 +1917,47 @@ test('a finished codex turn is COMPLETE even when its summary avoids completion 
   } finally { teardown(relay); }
 });
 
+// A FINISHED codex turn whose summary contains an activity verb. Same shape as
+// the agy case #4182 fixed: the verb is in the summary the agent prints when it
+// is DONE, so a bare word match reads a finished pane as busy. Captured markers
+// show "esc to interrupt" is the only thing that distinguishes the two states —
+// the "› Ask Codex to do anything" line is drawn while working too.
+const CODEX_DONE_SUMMARY_WITH_VERB = [
+  '\u2022 I finished the spike and pushed the branch.',
+  '  - While running the contract tests I confirmed the selector is deterministic.',
+  '  - Opened PR #4259 and verified DCO passes.',
+  '\u2500 Worked for 6m 22s \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+  '\u203a Ask Codex to do anything',
+  '  gpt-5.6-sol xhigh \u00b7 /home/dev/.local/state/hive/agent-cwd',
+].join('\n');
+
+// The same pane mid-turn. codex renders its status row, which is the ONLY
+// signal separating this from the pane above.
+const CODEX_WORKING_STATUS_ROW = [
+  '\u2022 Ran git status --short --branch',
+  '\u2022 Working (46s \u2022 esc to interrupt)',
+  '\u203a Ask Codex to do anything',
+  '  gpt-5.6-sol xhigh \u00b7 /home/dev/.local/state/hive/agent-cwd',
+].join('\n');
+
+test('a finished codex turn is COMPLETE even when its summary contains an activity verb', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_DONE_SUMMARY_WITH_VERB });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(CODEX_DONE_SUMMARY_WITH_VERB), relay.PANE_STATE_IDLE_COMPLETE,
+      'prose in a completion summary must not pin a finished codex pane to WORKING');
+  } finally { teardown(relay); }
+});
+
+test('codex mid-turn status row still reads as WORKING', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_WORKING_STATUS_ROW });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(CODEX_WORKING_STATUS_ROW), relay.PANE_STATE_WORKING,
+      'an in-flight codex turn must never be reported as finished');
+  } finally { teardown(relay); }
+});
+
 test('codex still reads as WORKING while activity is in the tail', () => {
   const relay = loadRelay({ backend: 'codex' });
   try {

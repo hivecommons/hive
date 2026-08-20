@@ -1600,9 +1600,41 @@ function classifyTmuxPane(text) {
     // WORD added nothing except a way to miss finished work. copilot, goose,
     // agy and bob all set this true for the same reason.
     hasCompletionMarker = true;
-    // Codex also signals an in-flight turn through its status row ("Working",
-    // "esc to interrupt") without ever printing a tool verb.
-    isWorking = /running|executing|thinking|\bworking\b|esc to interrupt/i.test(codexTail);
+    // Prefer codex's own status row over guessing from prose, exactly as the
+    // agy branch below does after #4182.
+    //
+    // The bare verbs are matched case-insensitively against the tail, and codex
+    // narrates in plain English — including in the summary it prints when a turn
+    // FINISHES. A summary that happens to say "I'm running the tests" or
+    // "executing the plan" pins a finished pane to WORKING, the relay keeps
+    // renewing the lease, and the task dies at the stall backstop or
+    // MAX_TASK_DURATION with its PR already open. That is #4182, which was the
+    // same latent shape on agy until a summary tripped it.
+    //
+    // Captured from a live pane, codex's markers are:
+    //
+    //   working -> "• Working (46s • esc to interrupt)"  AND  "› Ask Codex to…"
+    //   idle    ->                                             "› Ask Codex to…"
+    //
+    // so "esc to interrupt" is the ONLY discriminator; the "›" input line is
+    // drawn in both states, which is why hasIdlePrompt cannot carry this and
+    // why the verb list was doing the work.
+    //
+    // The second alternative keeps the protection the bare verbs were really
+    // providing, without the prose exposure. codex marks an in-flight tool call
+    // with its OWN bullet chrome — "• Running <cmd>", against "• Ran <cmd>" once
+    // finished — so anchoring to the bullet distinguishes codex saying it is
+    // running something from the model narrating that it ran something:
+    //
+    //   "• Running gh issue view 4066"        -> chrome, in flight   -> WORKING
+    //   "- While running the tests I ..."     -> prose, in a summary -> not
+    //
+    // That matters beyond this bug: it is what stops a stale
+    // "HIVE_VERDICT: no_work_needed" higher in the scrollback from being
+    // reported as the completion of a turn that has since started new work.
+    const codexBusyMarker = /esc to interrupt/i.test(codexTail) ||
+      /(?:^|\n)\s*[•·▸]\s*(?:Running|Executing|Thinking)\b/i.test(codexTail);
+    isWorking = codexBusyMarker;
   } else if (BACKEND === 'pi') {
     hasIdlePrompt = /pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text);
     hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
