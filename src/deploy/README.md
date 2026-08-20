@@ -21,6 +21,7 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says n
 - `inference/` — sample in-cluster OpenAI-compatible inference deployment and RBAC.
 - `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
 - `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for non-Kubernetes deployments.
+- `quadlet/` — Podman Quadlet units for the standalone deployment (ADR-0017). `hive.container` and `hive-data.volume` start the Hive service under `systemd`, rootful or rootless; see [the operator guide](../docs/podman-standalone-quadlet.md). Docker Compose remains the default runtime and is unaffected.
 - `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.
 
 ## Deployment contract tests

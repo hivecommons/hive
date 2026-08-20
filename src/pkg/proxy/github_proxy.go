@@ -179,6 +179,12 @@ type GitHubProxy struct {
 	// quiet. It latches only after inferenceAuthFailureThreshold failures and
 	// clears on the next success (self-heal). Never nil after NewGitHubProxy.
 	inferenceAuth *inferenceAuthState
+	// inferenceBudget tracks PROVIDER spending-limit refusals (a LiteLLM key
+	// past its daily dollar cap, a project out of quota). Distinct from
+	// inferenceAuth (a rejected key) and from the hive's own token budget in
+	// pkg/governor (denominated in tokens, blind to what the gateway charges).
+	// See inference_budget.go (kubestellar/hive#4294).
+	inferenceBudget *inferenceBudgetState
 
 	// tokenSink records per-agent token usage for bare-mode inference
 	// agents, whose usage the file-scanning token collector cannot see
@@ -273,6 +279,7 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		inference:       newInferenceRouter(),
 		entitlements:    newEntitlementStore(),
 		inferenceAuth:   &inferenceAuthState{},
+		inferenceBudget: &inferenceBudgetState{},
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -1585,6 +1592,20 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "status", status)
 	}
 
+	// PROVIDER SPEND REBUFF (#4294). Checked before the 403/entitlement branch
+	// below because that branch returns early for every non-403, which would
+	// skip the 429/400 statuses a budget refusal actually arrives on.
+	//
+	// Requires the body to name spend, so an ordinary 429 throttle keeps
+	// flowing to the existing transient-retry path untouched.
+	if p.inferenceBudget != nil && isInferenceBudgetRebuff(status, body) {
+		msg := inferenceBudgetMessage(route.Backend, status, truncateBytes(body, 200))
+		p.inferenceBudget.recordRebuff(msg, time.Now())
+		p.logger.Error("inference backend refused on a spending limit",
+			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint,
+			"status", status, "cause", msg)
+	}
+
 	if route.Backend != "litellm" || status != http.StatusForbidden {
 		return
 	}
@@ -1606,6 +1627,14 @@ func (p *GitHubProxy) recordInferenceSuccess() {
 	if p.inferenceAuth != nil {
 		p.inferenceAuth.recordSuccess()
 	}
+	// Self-heal for the spend rebuff (#4294): whenever the provider's window
+	// resets — hive neither knows nor assumes the schedule; the field report's
+	// gateway rolled over at the key's creation time of day, not at midnight
+	// (see #4294) — the first call that succeeds takes the hive out of the
+	// suppressed state with no operator action.
+	if p.inferenceBudget != nil {
+		p.inferenceBudget.recordSuccess()
+	}
 }
 
 // InferenceAuthError reports the current inference-backend auth-failure signal:
@@ -1619,6 +1648,24 @@ func (p *GitHubProxy) InferenceAuthError() (errMsg string, since time.Time) {
 		return "", time.Time{}
 	}
 	return p.inferenceAuth.snapshot()
+}
+
+// InferenceBudgetExceeded reports the current provider spending-limit signal:
+// a non-empty log-safe cause, when it first latched, when the most recent
+// rebuff arrived, and how many rebuffs have been observed since — all
+// zero-valued while the provider is serving normally.
+//
+// Callers use a non-empty cause as "this hive cannot buy inference right now",
+// which is a reason to stop kicking agents and to tell the operator, NOT a
+// reason to retry in a few minutes. lastRebuff is what bounds that: because
+// withholding kicks also withholds the calls that would clear the latch,
+// callers suppress only while lastRebuff is fresh and send a probe once it is
+// stale (see inference_budget.go). Safe on a nil receiver/tracker.
+func (p *GitHubProxy) InferenceBudgetExceeded() (errMsg string, since, lastRebuff time.Time, rebuffs int) {
+	if p == nil || p.inferenceBudget == nil {
+		return "", time.Time{}, time.Time{}, 0
+	}
+	return p.inferenceBudget.snapshot()
 }
 
 // ClearInferenceRoute removes an agent's inference backend override.

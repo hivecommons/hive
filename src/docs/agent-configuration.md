@@ -167,9 +167,67 @@ Rounding out the schema — fields you will rarely touch:
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
 | `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
+| `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit `HIVE_EXPLAIN_MODE` |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style) | none |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
+
+## Explain mode (debugging agent behaviour)
+
+Agents are told to act, not narrate. Every policy carries an "Output Rules — Terse Mode" block, and on inference backends the agent manager appends an explicit `EXECUTE, DO NOT NARRATE` instruction to each kick. That rule earns its keep — weak models otherwise answer a kick with a plan for someone else to run instead of running it — but it also means that when an agent does the wrong thing, there is nothing in the log saying *why*.
+
+`explain_mode` buys that visibility back for one agent at a time, without relaxing the rule for anything else.
+
+| Mode | What the agent is asked to add | Cost |
+| --- | --- | --- |
+| `off` | Nothing. Identical to the behaviour before this option existed. | none |
+| `brief` | One `EXPLAIN:` line before each tool call, giving the reason for that specific call. | small, per tool call |
+| `full` | `brief`, plus a closing `EXPLAIN:` block: the goal as understood, the approach chosen, alternatives rejected and why, and what evidence would have changed the decision. | larger, per kick |
+
+```yaml
+agents:
+  scanner:
+    backend: claude
+    explain_mode: brief
+```
+
+### What it does and does not change
+
+- **The agent still acts.** The instruction states that tool execution remains the requirement and that a response containing only explanation is a failure. It is appended *after* the `EXECUTE, DO NOT NARRATE` block, so it reads as a qualification of that rule rather than a replacement for it.
+- **Terse mode is suspended on `EXPLAIN:` lines only.** A caveman-compressed explanation would be useless to the human reading it, but the agent's real output — log lines, bead titles, PR descriptions — keeps whatever compression you configured.
+- **It is per-kick, not a prompt edit.** Nothing in `v2/policies/` or `examples/*/agents/*.md` changes, so toggling it does not alter any agent's actual instructions and does not require a redeploy.
+
+### Reading the explanation
+
+Explanation lands in the agent's ordinary log, tagged with the `EXPLAIN:` prefix. Agent logs are tmux pane scrapes, so there is no second channel to write to — but the prefix makes the split a read-time choice:
+
+| URL | Shows |
+| --- | --- |
+| `/api/agents/<name>/log` | The log as always: work and explanation interleaved. |
+| `/api/agents/<name>/log?explain=only` | Just the reasoning. |
+| `/api/agents/<name>/log?explain=hide` | The log as it would read with explanation off. |
+
+`grep EXPLAIN:` works the same way on a downloaded log.
+
+### Fleet-wide default
+
+Set `HIVE_EXPLAIN_MODE` on the hive to turn explanation on everywhere without editing each agent:
+
+```
+HIVE_EXPLAIN_MODE=brief
+```
+
+The per-agent field is a tri-state, and the difference matters:
+
+| `explain_mode` | With `HIVE_EXPLAIN_MODE=full` | Meaning |
+| --- | --- | --- |
+| unset | `full` | Inherit the hive default. |
+| `off` | `off` | Explicit opt-out; a fleet-wide default does not override it. |
+| `brief` | `brief` | Explicit per-agent choice wins. |
+
+An unrecognized value in either place resolves to `off`, so a typo degrades to the previous behaviour rather than to a mode nobody asked for. Hive injects the *resolved* mode into each agent process as `HIVE_EXPLAIN_MODE`, so an agent's own skills and scripts can branch on it without re-deriving the precedence rules.
+
+Leave it off outside of debugging: the explanation is extra output tokens on every kick.
 
 ## Caveman prompt compression
 

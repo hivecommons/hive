@@ -95,6 +95,17 @@ if ! _contributor_mode; then
   # login"), instead of the fail-loud this gate promises.
   if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" && -r "${HIVE_AGENT_TOKEN_CACHE}" && -s "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
     export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
+    # GHE spokes (github.ibm.com etc.): gh only reads GH_TOKEN for github.com;
+    # any other GH_HOST authenticates from GH_ENTERPRISE_TOKEN. Exporting both
+    # is harmless on github.com and makes the scoped token work on GHE — the
+    # missing export left every GHE gh call unauthenticated (401) even though
+    # token delivery itself worked (root-caused live 2026-08-20).
+    export GH_ENTERPRISE_TOKEN="$GH_TOKEN"
+    # Agents are non-interactive by definition: a gh command that would prompt
+    # (e.g. `gh issue create` with no --title after the agent's shell tool
+    # mangled a multiline command) hung until the tool timeout and read as a
+    # network failure. Fail loud and instant instead.
+    export GH_PROMPT_DISABLED=1
   else
     echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
     echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
@@ -471,8 +482,19 @@ if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" 
   elif _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
   else
-    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents." >&2
-    echo "Read /var/run/hive-metrics/actionable.json instead." >&2
+    # Root-caused in a live hive (2026-08-20): agents read this two-line
+    # message as "all gh $subcmd commands are blocked" and silently skipped
+    # `gh issue create` / PR creation for confirmed findings, and the single
+    # hardcoded path pointed at a file that (a) does not exist on the
+    # container-hosted model (which writes /data/last-actionable.json) and
+    # (b) sits outside the agent CLI's workspace sandbox for file-read tools.
+    # Be explicit: only LIST/enumeration is blocked, writes remain allowed,
+    # and point at whichever work-queue snapshot actually exists here.
+    _actionable_hint="/var/run/hive-metrics/actionable.json"
+    [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
+    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents — but ONLY listing/enumeration is blocked." >&2
+    echo "Write commands like 'gh issue create' and PR creation via 'hive-open-pr' are still ALLOWED — do not skip them because of this message." >&2
+    echo "For the pre-filtered issue/PR queue, read ${_actionable_hint} (use a shell command like 'cat', not a workspace file-read tool)." >&2
     exit 1
   fi
 fi

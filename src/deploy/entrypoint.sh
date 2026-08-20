@@ -913,9 +913,50 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
     # A kernel with no IPv6 stack at all (/proc/sys/net/ipv6 absent) has no
     # IPv6 route to gate; that case passes vacuously rather than failing a
     # container that cannot carry the traffic in the first place.
+    #
+    # The SAME reasoning applies one step further in, and the stack-presence
+    # check alone does not catch it (#4327 follow-up): a pod can have the IPv6
+    # stack compiled in — /proc/sys/net/ipv6 present, ::1 up for the gateway
+    # nginx and the proxy's /proc/net/tcp6 self-lookup — while having NO global
+    # IPv6 address and NO IPv6 default route. Such a pod cannot originate IPv6
+    # egress at all, so there is no bypass to close. Fail-closing there took
+    # down a healthy hive on an IPv4-only OpenShift cluster whose nodes also
+    # lack the ip6tables `owner`/`REJECT` extensions, so the gate could not be
+    # installed even though nothing could ever traverse it.
+    #
+    # Routability, not stack presence, is the property that decides whether an
+    # IPv6 bypass is reachable — so that is what is tested. A pod that later
+    # gains a global address gets the gate on its next start, and any pod that
+    # HAS IPv6 egress still fails closed exactly as before.
     _ip6tables_ok=false
+    _ip6_routable=false
+    if [ -d /proc/sys/net/ipv6 ]; then
+      # A global-scope address AND a default route are both required to send
+      # IPv6 off-host. Prefer `ip`; fall back to /proc for minimal images.
+      if command -v ip >/dev/null 2>&1; then
+        if ip -6 addr show scope global 2>/dev/null | grep -q 'inet6' \
+           && ip -6 route show default 2>/dev/null | grep -q .; then
+          _ip6_routable=true
+        fi
+      elif [ -r /proc/net/if_inet6 ] && [ -r /proc/net/ipv6_route ]; then
+        # if_inet6 scope 0x00 == global; ipv6_route holds a ::/0 default when
+        # the destination prefix length field (col 2) is 00.
+        if awk '$4 == "00" { found=1 } END { exit !found }' /proc/net/if_inet6 2>/dev/null \
+           && awk '$2 == "00" { found=1 } END { exit !found }' /proc/net/ipv6_route 2>/dev/null; then
+          _ip6_routable=true
+        fi
+      else
+        # Neither `ip` nor the /proc files are readable, so routability cannot
+        # be determined. Assume routable and let the gate decide: an
+        # indeterminate probe must not be the thing that disables enforcement.
+        _ip6_routable=true
+      fi
+    fi
     if [ ! -d /proc/sys/net/ipv6 ]; then
       echo "[entrypoint] IPv6 stack absent from kernel — no IPv6 egress to gate"
+      _ip6tables_ok=true
+    elif [ "$_ip6_routable" != "true" ]; then
+      echo "[entrypoint] IPv6 present but not routable (no global address and/or no default route) — no IPv6 egress to gate"
       _ip6tables_ok=true
     else
       # Same binary-selection rationale as IPT above: prefer the explicit nft

@@ -74,6 +74,14 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject an explain_mode the config loader would reject. Without this, a bad
+	// value is written to the agent file here and only surfaces at the NEXT
+	// config load, as a load failure far from the request that caused it.
+	if !config.ValidateExplainMode(body.Agent.ExplainMode) {
+		jsonError(w, "explain_mode must be one of: off, brief, full (or empty to inherit the hive default)", http.StatusBadRequest)
+		return
+	}
+
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return

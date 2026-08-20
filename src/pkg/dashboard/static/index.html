@@ -14971,6 +14971,15 @@ function burnAreaChart() {
     };
     const RESTART_STRATEGIES = ['immediate', 'backoff', 'none'];
     const CAVEMAN_MODES = ['', 'lite', 'full', 'ultra', 'wenyan'];
+    // Explain mode (#3887). '' inherits the hive-wide HIVE_EXPLAIN_MODE default;
+    // 'off' is an explicit opt-out that overrides it — the labels have to make
+    // that difference visible or operators cannot tell the two apart.
+    const EXPLAIN_MODES = [
+      { value: '', label: '(hive default)' },
+      { value: 'off', label: 'off — never explain' },
+      { value: 'brief', label: 'brief — one line per tool call' },
+      { value: 'full', label: 'full — brief + end-of-turn rationale' },
+    ];
     const MAX_AGENT_REPLICAS = 5;
 
     function openConfigDialog(type, agentName, initialTabOverride) {
@@ -17513,6 +17522,12 @@ function burnAreaChart() {
           <label>Caveman Mode <span class="config-info">i<span class="config-tooltip">Enable Caveman output compression to reduce token usage by ~65%. Modes: lite (removes filler), full (caveman-speak), ultra (telegraphic), wenyan (classical Chinese). Leave empty to disable.</span></span></label>
           <select id="cfg-caveman-mode" data-change-action="markDirty" data-arg0="general" data-arg1="cavemanMode" data-arg-types="s,s,v">
             ${CAVEMAN_MODES.map(m => `<option value="${m}" ${(g.cavemanMode || '') === m ? 'selected' : ''}>${m || '(disabled)'}</option>`).join('')}
+          </select>
+        </div>
+        <div class="config-field">
+          <label>Explain Mode <span class="config-info">i<span class="config-tooltip">Ask this agent to say WHY it made each tool call, for debugging. Reasoning is emitted on EXPLAIN: lines alongside the work — the agent still acts, it does not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. View the reasoning on its own with "?explain=only" on the agent's full log. "(hive default)" follows the HIVE_EXPLAIN_MODE setting; "off" opts this agent out even when the hive default is on.</span></span></label>
+          <select id="cfg-explain-mode" onchange="markDirty('general','explainMode',this.value)">
+            ${EXPLAIN_MODES.map(m => `<option value="${m.value}" ${(g.explainMode || '') === m.value ? 'selected' : ''}>${m.label}</option>`).join('')}
           </select>
         </div>
         <div class="config-field">
@@ -20422,6 +20437,7 @@ function burnAreaChart() {
           detect_keywords: generalData.detectKeywords || [],
           aliases: generalData.aliases || [],
           caveman_mode: generalData.cavemanMode || '',
+          explain_mode: generalData.explainMode || '',
         };
         // Create mode has a Prompt Template tab but no agent to PUT to yet, so
         // the edited template rides along in the create payload's kick_template.

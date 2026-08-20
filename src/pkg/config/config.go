@@ -662,6 +662,58 @@ type ConnectionConfig struct {
 	Options map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
 }
 
+// Agent explain modes (AgentConfig.ExplainMode / HIVE_EXPLAIN_MODE).
+//
+// Agents are told to act rather than narrate — see the "Output Rules — Terse
+// Mode" block in every agent policy and the EXECUTE, DO NOT NARRATE suffix the
+// agent manager appends on inference backends. That instruction exists to stop
+// weak models answering a kick with a plan for someone else to run instead of
+// running it, which is a real, observed failure and must be preserved. The cost
+// of preserving it is that an operator debugging an agent has no visibility
+// into WHY it chose what it chose (#3887, split from #3878).
+//
+// Explain mode buys that visibility back without relaxing the rule: the agent
+// still acts first, and the explanation rides ALONGSIDE the tool calls on
+// EXPLAIN-prefixed lines rather than replacing them.
+const (
+	// ExplainModeOff disables explanation. As an explicit per-agent value it
+	// also overrides a hive-wide default, which "" (unset) does not.
+	ExplainModeOff = "off"
+	// ExplainModeBrief asks for one short EXPLAIN line per tool call.
+	ExplainModeBrief = "brief"
+	// ExplainModeFull adds an end-of-turn EXPLAIN block covering the goal as
+	// understood, alternatives rejected, and what would change the decision.
+	ExplainModeFull = "full"
+)
+
+// ValidExplainModes are the accepted explain_mode values. "" means "inherit the
+// hive-wide default"; it is valid on an agent but is not a mode in itself.
+var ValidExplainModes = map[string]bool{
+	"":               true,
+	ExplainModeOff:   true,
+	ExplainModeBrief: true,
+	ExplainModeFull:  true,
+}
+
+// ExplainModeEnvVar is the hive-wide default for agents that leave
+// explain_mode unset. It is an env knob rather than a YAML block so an operator
+// debugging a misbehaving fleet can turn explanation on for every agent at once
+// without editing (and later having to unedit) each agent's config — the same
+// shape as HIVE_TMUX_HISTORY_LIMIT and HIVE_TMUX_PANE_WIDTH.
+const ExplainModeEnvVar = "HIVE_EXPLAIN_MODE"
+
+// ExplainLinePrefix marks a line the agent emitted as debugging explanation
+// rather than as ordinary output. It is the whole reason explanation can be a
+// SEPARATE stream without new capture infrastructure: agent logs are tmux pane
+// scrapes, so there is no second channel to write to, but a stable, greppable
+// prefix lets the full-log endpoint (and `grep`) split explanation from work
+// after the fact. Chosen to be ASCII, unlikely to collide with tool output, and
+// stable — the filter and the prompt must agree on it forever.
+const ExplainLinePrefix = "EXPLAIN:"
+
+// ValidateExplainMode reports whether v is an accepted explain_mode value.
+func ValidateExplainMode(v string) bool { return ValidExplainModes[v] }
+
 type AgentConfig struct {
 	ID           string `yaml:"id" json:"id,omitempty"`
 	Backend      string `yaml:"backend" json:"backend,omitempty"`
@@ -736,6 +788,16 @@ type AgentConfig struct {
 	Mode             string                  `yaml:"mode" json:"mode,omitempty"`
 	OnDemand         bool                    `yaml:"on_demand" json:"on_demand,omitempty"`
 	CavemanMode      string                  `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	// ExplainMode opts this agent into emitting EXPLAIN-prefixed reasoning
+	// lines alongside its tool calls, so an operator debugging "why did it do
+	// that" has something to read (#3887). Off by default because the
+	// explanation costs tokens on every kick.
+	//
+	// TRI-STATE, and the distinction matters: "" means "inherit the hive-wide
+	// default" (HIVE_EXPLAIN_MODE), while "off" is an explicit per-agent
+	// opt-OUT that survives an operator turning explanation on fleet-wide.
+	// Valid values: "" | off | brief | full — see ExplainMode* constants.
+	ExplainMode string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
 	// Sandbox opts this agent into phase-1 sandbox execution when the global
 	// agent_sandbox.enabled gate is also true.
 	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
@@ -991,6 +1053,51 @@ type GovernorConfig struct {
 	// Rotation configures automatic provider failover when a provider's
 	// subscription or credit is exhausted. See RFC #3958.
 	Rotation RotationConfig `yaml:"rotation,omitempty" json:"rotation,omitempty"`
+
+	// ProviderBudget tunes the response to a PROVIDER spending-limit refusal
+	// (#4294) — the gateway declining to spend more money, as distinct from the
+	// hive's own token Budget above. See ProviderBudgetConfig.
+	ProviderBudget ProviderBudgetConfig `yaml:"provider_budget,omitempty" json:"provider_budget,omitempty"`
+}
+
+// ProviderBudgetConfig tunes how long the hive keeps agent kicks suspended
+// after the inference provider refuses on a spending limit (#4294).
+//
+// There is exactly one knob because there is exactly one judgement call: how
+// much wasted spend to accept in exchange for noticing sooner that the
+// provider's window has reset. The hive cannot observe the reset passively —
+// the suppression that saves the money also withholds the inference calls that
+// would reveal the money is available again — so it periodically lets one
+// cycle's kicks through as a probe.
+type ProviderBudgetConfig struct {
+	// ProbeIntervalS is how long a spend rebuff suppresses kicks before one
+	// cycle is allowed through to test whether the provider is serving again.
+	// Default 1800 (30 min).
+	//
+	// Shorter probes recover faster after a reset but burn a run each time on a
+	// provider that is still clipped; longer probes waste less and notice later.
+	// 30 minutes costs at most ~48 rebuffed runs across a day-long clip — set
+	// against the field report's entire cadence firing all day. The probe is
+	// how hive stays agnostic to WHEN the provider resets: reset schedules are
+	// not knowable (the field report's window rolled at the key's creation time
+	// of day, not at midnight — #4294), so hive never predicts one; it just
+	// retries cheaply until the provider serves again.
+	ProbeIntervalS int `yaml:"probe_interval_s,omitempty" json:"probe_interval_s,omitempty"`
+}
+
+// defaultProviderBudgetProbeIntervalS is the spend-rebuff probe interval when
+// unset: 30 minutes.
+const defaultProviderBudgetProbeIntervalS = 1800
+
+// EffectiveProbeInterval returns the spend-rebuff probe interval, applying the
+// default when unset. A negative or zero value means "unset" rather than
+// "never probe": never probing is the deadlock this knob exists to prevent, so
+// it is not a reachable configuration.
+func (p ProviderBudgetConfig) EffectiveProbeInterval() time.Duration {
+	if p.ProbeIntervalS > 0 {
+		return time.Duration(p.ProbeIntervalS) * time.Second
+	}
+	return defaultProviderBudgetProbeIntervalS * time.Second
 }
 
 // RotationConfig configures automatic provider failover (RFC #3958). When a
@@ -4276,6 +4383,9 @@ func (c *Config) validate() error {
 		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
 		if !validCavemanModes[agent.CavemanMode] {
 			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)
+		}
+		if !ValidateExplainMode(agent.ExplainMode) {
+			return fmt.Errorf("agent %s: invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", name, agent.ExplainMode, ExplainModeEnvVar)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err

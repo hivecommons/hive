@@ -59,10 +59,34 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 	// Rewrite absolute paths onto the temp root so the test never touches the
 	// real /proc or /tmp, and so the IPv6-stack presence check is controllable.
 	body = strings.ReplaceAll(body, "/proc/sys/net/ipv6", root+"/proc/sys/net/ipv6")
+	// Routability is probed via these two files when `ip` is absent. Rewrite
+	// them onto the temp root as well, so the probe is decided by the fixture
+	// rather than by the host: without this the same test passes on a machine
+	// with no /proc (macOS, where the fail-safe branch runs) and fails on an
+	// IPv4-only Linux CI runner, which is exactly the drift that let the
+	// unroutable-IPv6 case reach production.
+	body = strings.ReplaceAll(body, "/proc/net/if_inet6", root+"/proc/net/if_inet6")
+	body = strings.ReplaceAll(body, "/proc/net/ipv6_route", root+"/proc/net/ipv6_route")
 	body = strings.ReplaceAll(body, "/tmp/hive-ipt-err.log", root+"/hive-ipt-err.log")
 	body = strings.ReplaceAll(body, "/tmp/hive-ip6t-err.log", root+"/hive-ip6t-err.log")
 	if ipv6Stack {
 		if err := os.MkdirAll(filepath.Join(root, "proc/sys/net/ipv6"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A stack-present fixture is ROUTABLE by default: a global-scope
+		// address (if_inet6 scope field 00) and a ::/0 default route
+		// (ipv6_route destination prefix length 00). Tests that want the
+		// unroutable pod pass the "ip-noipv6" shim, which overrides this by
+		// putting an `ip` on PATH that reports neither.
+		if err := os.MkdirAll(filepath.Join(root, "proc/net"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "proc/net/if_inet6"),
+			[]byte("20010db8000000000000000000000001 02 40 00 80 eth0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "proc/net/ipv6_route"),
+			[]byte("00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -78,8 +102,45 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 		"case \"$*\" in *-nL*) exit 1;; esac\n" +
 		"exit 0\n"
 	for _, name := range shims {
+		// "ip-noipv6" is not a netfilter shim: it installs an `ip` that reports
+		// neither a global IPv6 address nor a default route, so the routability
+		// probe sees an IPv4-only pod. Empty output + exit 0 is exactly what
+		// the real `ip -6 addr show scope global` prints there.
+		if name == "ip-noipv6" {
+			if err := os.WriteFile(filepath.Join(binDir, "ip"),
+				[]byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(shim), 0o755); err != nil {
 			t.Fatal(err)
+		}
+	}
+	// The routability probe prefers `ip` and only falls back to /proc, so the
+	// host's real `ip` would decide the result on any runner that has one —
+	// which is why these tests passed on macOS (no `ip`, no /proc, fail-safe
+	// branch) and failed on the IPv4-only Linux CI runner. Always install an
+	// `ip` shim so the fixture decides on every platform: routable by default
+	// for a stack-present pod, overridden to report nothing by "ip-noipv6".
+	if ipv6Stack {
+		hasIPShim := false
+		for _, n := range shims {
+			if n == "ip-noipv6" {
+				hasIPShim = true
+			}
+		}
+		if !hasIPShim {
+			if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(
+				"#!/bin/sh\n"+
+					"# routable fixture: a global address and a default route\n"+
+					"case \"$*\" in\n"+
+					"  *addr*) echo '    inet6 2001:db8::1/64 scope global';;\n"+
+					"  *route*) echo 'default via fe80::1 dev eth0 metric 1024';;\n"+
+					"esac\n"+
+					"exit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	// python3 (uid-map bookkeeping) and sleep (retry backoff) as no-ops, and a
@@ -198,5 +259,33 @@ func TestGatePassesVacuouslyWithoutIPv6Stack(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?m)^ip6tables`).MatchString(calls) {
 		t.Fatalf("ip6tables was invoked despite no IPv6 stack:\n%s", calls)
+	}
+}
+
+// TestGatePassesVacuouslyWithoutRoutableIPv6 pins the production outage this
+// check exists for: a pod CAN have the IPv6 stack compiled in — /proc/sys/net/
+// ipv6 present, ::1 up for the gateway nginx and the proxy's /proc/net/tcp6
+// self-lookup — while having NO global IPv6 address and NO default route. It
+// cannot originate IPv6 egress, so there is no bypass to close.
+//
+// Fail-closing there crash-looped a healthy hive (exit 4) on an IPv4-only
+// OpenShift cluster whose nodes ALSO lack the ip6tables `owner`/`REJECT`
+// extensions, so the gate could not have been installed even in principle.
+// Stack presence is not the property that decides whether a bypass is
+// reachable; routability is.
+func TestGatePassesVacuouslyWithoutRoutableIPv6(t *testing.T) {
+	// `ip` present but reporting neither a global address nor a default route
+	// — exactly what `ip -6 addr show scope global` / `ip -6 route show
+	// default` print on the affected pods.
+	out, calls, code := runEgressGate(t, nil,
+		[]string{"iptables-nft", "ip6tables-nft", "ip-noipv6"}, true)
+	if code != 0 {
+		t.Fatalf("gate exited %d on a pod with no routable IPv6 — this is the certus crash-loop:\n%s", code, out)
+	}
+	if !strings.Contains(out, "not routable") {
+		t.Fatalf("the vacuous pass for unroutable IPv6 was not logged:\n%s", out)
+	}
+	if regexp.MustCompile(`(?m)^ip6tables`).MatchString(calls) {
+		t.Fatalf("ip6tables was invoked despite no routable IPv6 egress:\n%s", calls)
 	}
 }

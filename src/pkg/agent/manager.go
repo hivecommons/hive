@@ -237,6 +237,14 @@ type ProjectContext struct {
 	ACMMLevel       int
 	PRsAllowed      bool
 	PolicyDir       string
+	// GHHost is the bare hostname of the source forge when it is NOT public
+	// github.com (e.g. "github.ibm.com" for a GHE spoke), derived from the
+	// configured github.api_url. Exported to agents as GH_HOST so the gh CLI
+	// targets the right host — without it every agent gh call went to
+	// api.github.com where the project's repos do not exist (root-caused live
+	// 2026-08-20: the security agent's issue/PR creation failed silently on
+	// every GHE-hosted hive). Empty ⇒ public github.com, nothing exported.
+	GHHost string
 	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
 	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
@@ -3776,9 +3784,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Append an action-forcing block here — where the effective backend is
 	// knowable — instead of editing the kick templates, which are shared
 	// with commercial CLI backends that do not need it.
-	if IsInferenceBackend(effectiveBackend(agent)) {
-		message += "\n\n" + inferenceKickActionSuffix
-	}
+	message = kickMessageWithSuffixes(message,
+		IsInferenceBackend(effectiveBackend(agent)),
+		resolveExplainMode(agent.Config))
 
 	// Send message in chunks (400 rune max per chunk, rune-safe)
 	runes := []rune(message)
@@ -4381,6 +4389,100 @@ const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
 	"a plan and stop. Begin immediately by running your first command. " +
 	"Every response that contains no tool execution is a failure."
 
+// explainKickSuffixBrief and explainKickSuffixFull are appended to a kick when
+// the agent's resolved explain mode is brief/full (#3887).
+//
+// The terseness instruction they sit next to has a real rationale — agents told
+// to explain themselves narrate INSTEAD of acting, which is why every policy
+// carries "Output Rules — Terse Mode" and why inferenceKickActionSuffix exists
+// at all. Relaxing that outright would trade one debugging problem for a worse
+// one, so these blocks are written to preserve it:
+//
+//   - Acting first is restated as the hard requirement, and an explanation with
+//     no tool call is named as a failure, so the block cannot be read as
+//     permission to reply with prose. This matters most on the inference
+//     backends, where both suffixes are present.
+//   - Explanation is confined to lines carrying config.ExplainLinePrefix, so it
+//     is separable from the agent's real output at read time instead of being
+//     interleaved into it (see handleAgentFullLog's explain filter).
+//   - Terse mode is suspended ONLY on those prefixed lines. Compressing the
+//     explanation to caveman-speak would defeat the point of asking for it,
+//     while leaving terse mode in force everywhere else keeps the agent's
+//     actual output — logs, bead titles, PR bodies — exactly as it was.
+//
+// Appended per-kick rather than baked into the policy files because the option
+// is per-agent and toggleable at runtime; editing prompts would make it a
+// fleet-wide, redeploy-gated behavior change, which the issue explicitly did
+// not want.
+const explainKickSuffixBrief = "EXPLAIN MODE (brief) — DEBUGGING AID, NOT A LICENCE TO NARRATE: " +
+	"Do the work exactly as you otherwise would; tool execution is still the " +
+	"requirement and a response that only explains is a failure. In addition, " +
+	"before each tool call emit ONE line starting with " + config.ExplainLinePrefix +
+	" giving your reason for that specific call (what you expect it to show or " +
+	"change). Keep every other line unchanged. Terse-mode output rules are " +
+	"suspended on " + config.ExplainLinePrefix + " lines only — write those in " +
+	"plain, complete sentences so a human debugging you can read them."
+
+const explainKickSuffixFull = explainKickSuffixBrief +
+	" Additionally, when the work for this kick is finished, emit a closing " +
+	"block of " + config.ExplainLinePrefix + " lines covering: the goal as you " +
+	"understood it, the approach you chose, the alternatives you considered and " +
+	"why you rejected them, and what evidence would have changed your decision. " +
+	"This block comes AFTER the work, never instead of it."
+
+// kickMessageWithSuffixes composes the message actually typed into an agent's
+// CLI from the caller's kick text plus the backend/mode-dependent suffixes.
+//
+// Split out of deliverKickLocked so the composition — in particular the ORDER
+// of the two suffixes — is testable without a tmux session. On an inference
+// backend both apply, and the action-forcing block must be read first: the
+// explain block then reads as a qualification of "execute, do not narrate"
+// rather than as a later instruction overriding it.
+func kickMessageWithSuffixes(message string, isInference bool, explainMode string) string {
+	if isInference {
+		message += "\n\n" + inferenceKickActionSuffix
+	}
+	if suffix := explainKickSuffix(explainMode); suffix != "" {
+		message += "\n\n" + suffix
+	}
+	return message
+}
+
+// explainKickSuffix returns the kick suffix for a resolved explain mode, or ""
+// when explanation is off. Modes are resolved by resolveExplainMode, so an
+// unknown value here is treated as off rather than defaulted to a mode.
+func explainKickSuffix(mode string) string {
+	switch mode {
+	case config.ExplainModeBrief:
+		return explainKickSuffixBrief
+	case config.ExplainModeFull:
+		return explainKickSuffixFull
+	default:
+		return ""
+	}
+}
+
+// resolveExplainMode returns the explain mode in force for an agent.
+//
+// Precedence, and the tri-state is the point: an explicit per-agent value —
+// INCLUDING "off" — always wins, so an operator who turned explanation on
+// fleet-wide via HIVE_EXPLAIN_MODE does not force it onto an agent that opted
+// out. Only an unset agent inherits the hive default. An invalid value in
+// either place resolves to off, so a typo degrades to today's behavior rather
+// than to an unexpected mode.
+func resolveExplainMode(cfg config.AgentConfig) string {
+	mode := cfg.ExplainMode
+	if mode == "" {
+		mode = strings.TrimSpace(os.Getenv(config.ExplainModeEnvVar))
+	}
+	switch mode {
+	case config.ExplainModeBrief, config.ExplainModeFull:
+		return mode
+	default:
+		return config.ExplainModeOff
+	}
+}
+
 const (
 	// inferenceKickStallTimeout is how long after a kick an unchanged, idle
 	// pane counts as a stalled kick (message swallowed without a response).
@@ -4449,12 +4551,53 @@ var expandedToolCallMarkers = []string{
 // The no-action watchdog compares the count after a kick against the count
 // recorded at kick delivery: scrollback keeps markers from work done before
 // the kick, so only an increase proves the model executed tools since.
+//
+// EXPLAIN lines are stripped first (#3887). toolSummaryRe matches ENGLISH
+// PHRASES — "read 3 files", "running 2 shell commands" — because that is how
+// the CLI renders its own collapsed tool summaries. An agent in explain mode is
+// asked to state, in plain English, what it is about to do, so it writes
+// exactly those phrases as narration:
+//
+//	EXPLAIN: reading 3 files under pkg/agent to find the kick handler.
+//
+// That counts as a tool marker, the watchdog concludes "real tool activity
+// since the kick", and the prose-only action nudge never fires — on precisely
+// the agents an operator turned explanation ON to debug, which is the worst
+// possible time to silently lose the check. Narration about a tool is not tool
+// execution, so an explanation line contributes nothing to the count.
+//
+// The whole line is dropped rather than just the prefix: a "⎿" or "⏺ Bash("
+// quoted INSIDE an explanation is the agent describing a tool call, not making
+// one.
 func countToolMarkers(pane string) int {
+	pane = stripExplainLines(pane)
 	n := len(toolSummaryRe.FindAllStringIndex(pane, -1))
 	for _, marker := range expandedToolCallMarkers {
 		n += strings.Count(pane, marker)
 	}
 	return n
+}
+
+// stripExplainLines removes the agent's explanation lines from captured pane
+// content, so pane analysis sees only what the agent actually did.
+//
+// Matching is on the TRIMMED line, mirroring the read-time filter in
+// pkg/dashboard (filterExplainLines): the CLI indents assistant output, so
+// anchoring at column 0 would miss every real line. Returns the input unchanged
+// when nothing matches, which is every pane on a hive with explain mode off.
+func stripExplainLines(pane string) string {
+	if !strings.Contains(pane, config.ExplainLinePrefix) {
+		return pane
+	}
+	lines := strings.Split(pane, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), config.ExplainLinePrefix) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // paneShowsActiveWork reports whether the CLI is mid-response: either the
@@ -6560,6 +6703,32 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if advisory := os.Getenv("HIVE_ADVISORY_ISSUE"); advisory != "" {
 		vars = append(vars, agentEnvPair{"HIVE_ADVISORY_ISSUE", advisory, false})
 	}
+	// HIVE_REPO / HIVE_REPOS: the shipped policy templates instruct agents to
+	// run `gh issue create --repo "$HIVE_REPO"`, but nothing ever exported it
+	// to hosted agents (only the OSS scheduler set a hardcoded "<org>/hive").
+	// Root-caused on a live hosted hive (2026-08-20): the sec-check agent saw
+	// HIVE_REPO unset, fell back to the git remote of its own workdir, and
+	// silently scanned only the primary repo — the other project repos were
+	// never touched. Export the primary repo and the full project repo list so
+	// templates and agents can target every configured repo.
+	if m.project.Org != "" && len(m.project.Repos) != 0 {
+		primary := m.project.PrimaryRepo()
+		if primary == "" {
+			primary = m.project.Repos[0]
+		}
+		vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
+		full := make([]string, len(m.project.Repos))
+		for i, r := range m.project.Repos {
+			full[i] = m.project.Org + "/" + r
+		}
+		vars = append(vars, agentEnvPair{"HIVE_REPOS", strings.Join(full, ","), false})
+	}
+	// GH_HOST: point the gh CLI at the configured forge host for GHE spokes.
+	// See ProjectContext.GHHost. The gh wrapper pairs this with
+	// GH_ENTERPRISE_TOKEN so the per-agent scoped token authenticates there.
+	if m.project.GHHost != "" {
+		vars = append(vars, agentEnvPair{"GH_HOST", m.project.GHHost, false})
+	}
 	if IsInferenceBackend(backend) {
 		const inferenceTranslatePort = 18444
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
@@ -6636,6 +6805,12 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if agent.Config.CavemanMode != "" {
 		vars = append(vars, agentEnvPair{"HIVE_CAVEMAN_MODE", agent.Config.CavemanMode, false})
 	}
+	// Export the RESOLVED explain mode, not the raw config value, so an agent's
+	// skills and helper scripts see the same answer the kick suffix acted on
+	// (including inheritance from the hive-wide default and the off fallback for
+	// an invalid value). Always exported, off included, so a script can branch on
+	// it without having to re-derive the precedence rules itself.
+	vars = append(vars, agentEnvPair{config.ExplainModeEnvVar, resolveExplainMode(agent.Config), false})
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
