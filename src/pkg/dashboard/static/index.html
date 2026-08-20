@@ -18282,7 +18282,9 @@ function burnAreaChart() {
       const currentId = (window._lastStatus || {}).hiveId || '';
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
       const attrib = (_configState.data || {}).attribution || {};
-      const attribOn = attrib.attributionTrailer !== false; // default on
+      const genAdv = (_configState.data || {}).general_advanced || {};
+      const attribOn = genAdv.attribution_trailer !== undefined ? genAdv.attribution_trailer !== false : attrib.attributionTrailer !== false; // default on
+      const evalInterval = genAdv.eval_interval_s || 0;
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
       const trajReady = traj.reviewerReady === true;
@@ -18315,9 +18317,14 @@ function burnAreaChart() {
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
           <div style="margin-top:8px">${securityPostureStripHtml()}</div>
         </div>
+        <div class="config-field" style="margin-top:14px">
+          <label>Eval interval (seconds) <span class="config-info">i<span class="config-tooltip">How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 60. Lower = more responsive, more API calls.</span></span></label>
+          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="60" onchange="saveGovGeneralAdvanced('eval_interval_s', this.value === '' ? null : parseInt(this.value,10))" style="width:140px">
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Changes take effect on next restart.</span>
+        </div>
         <div class="config-toggle" style="margin-top:14px">
-          <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="attribution" data-key="attributionTrailer"></div>
-          <span class="config-toggle-label">Attribution Trailer <span class="config-info">i<span class="config-tooltip">Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.</span></span></span>
+          <div class="config-toggle-switch ${attribOn ? 'on' : ''}" onclick="toggleAttributionTrailer(this)"></div>
+          <span class="config-toggle-label">Show attribution trailer on PRs/issues <span class="config-info">i<span class="config-tooltip">Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.</span></span></span>
         </div>
         <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -18359,6 +18366,45 @@ function burnAreaChart() {
             </div>
           </div>
         </div>`;
+    }
+
+    async function saveGovGeneralAdvanced(field, value) {
+      if (value === null) return; // empty input — leave the setting untouched
+      try {
+        const body = {}; body[field] = value;
+        const res = await fetch('/api/config/governor/general-advanced', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _configState.data.general_advanced = data;
+        showToast('Governor settings updated — effective on next restart');
+      } catch (err) {
+        showToast('Failed to update governor settings: ' + err.message, 'error');
+      }
+    }
+
+    async function toggleAttributionTrailer(el) {
+      const turningOn = !el.classList.contains('on');
+      el.classList.toggle('on');
+      try {
+        const res = await fetch('/api/config/governor/general-advanced', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ attribution_trailer: turningOn }),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        const data = await res.json();
+        _configState.data.general_advanced = data;
+        if (!_configState.data.attribution) _configState.data.attribution = {};
+        _configState.data.attribution.attributionTrailer = turningOn;
+        showToast('Attribution trailer ' + (turningOn ? 'enabled' : 'disabled'));
+      } catch (err) {
+        el.classList.toggle('on'); // revert on failure
+        showToast('Failed to update attribution trailer: ' + err.message, 'error');
+      }
     }
 
     async function toggleTrajectoryReview(el) {
