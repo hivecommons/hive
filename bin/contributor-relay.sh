@@ -1368,11 +1368,14 @@ function shellQuote(s) {
 }
 
 function redactTokens(text) {
-  return text.replace(/gho_[A-Za-z0-9]{36}/g, 'gho_***REDACTED***')
-    .replace(/ghp_[A-Za-z0-9]{36}/g, 'ghp_***REDACTED***')
-    .replace(/ghs_[A-Za-z0-9]{36}/g, 'ghs_***REDACTED***')
-    .replace(/ghu_[A-Za-z0-9]{36}/g, 'ghu_***REDACTED***')
-    .replace(/ghr_[A-Za-z0-9]{36}/g, 'ghr_***REDACTED***');
+  // {36,} not {36}: GitHub documents that token length may grow, and an exact
+  // bound would redact only the first 36 characters of a longer token, leaking
+  // its tail into the hub log line (kubestellar/hive#4267).
+  return text.replace(/gho_[A-Za-z0-9]{36,}/g, 'gho_***REDACTED***')
+    .replace(/ghp_[A-Za-z0-9]{36,}/g, 'ghp_***REDACTED***')
+    .replace(/ghs_[A-Za-z0-9]{36,}/g, 'ghs_***REDACTED***')
+    .replace(/ghu_[A-Za-z0-9]{36,}/g, 'ghu_***REDACTED***')
+    .replace(/ghr_[A-Za-z0-9]{36,}/g, 'ghr_***REDACTED***');
 }
 
 function captureTmuxLines(n) {
@@ -2479,6 +2482,28 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     buildHeadlessArgv,
     runHeadlessTask,
     getHeadlessChild: () => headlessChild,
+    // Coverage for previously untested pure/isolated functions (#4267).
+    redactTokens,
+    detectNoWorkVerdict,
+    detectPRURL,
+    resolveBackend,
+    shellQuote,
+    looksLikeModelName,
+    taskKey,
+    tailLinesReversed,
+    readFileTail,
+    newestByMtime,
+    nextSeq,
+    modelFlagFor,
+    sleepMs,
+    isGivenUp,
+    recentPaneLines,
+    sendTo,
+    tmuxSendEnters,
+    GIVE_UP_MEMORY_MS,
+    // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
+    // expiry pruning can be exercised without waiting an hour.
+    __setGivenUp: (key, at) => { givenUpTasks.set(key, at); },
   };
 } else {
   // Warm the capability cache BEFORE the first hub connection. detectCapabilities()
