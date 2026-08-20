@@ -1392,9 +1392,19 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if backend == "" || IsInferenceBackend(backend) {
 			backend = "claude"
 		}
-		pipePaneCmd := fmt.Sprintf("%s watch %s --cli=%s", plukPath, agent.tmuxSession, backend)
+		logFile, err := ensurePlukLogFile(plukRunDir, agent.tmuxSession)
+		if err != nil {
+			// Non-fatal, and deliberately not a reason to skip the attach: the
+			// shell's own `>>` will still create the file. It may land 0600 under
+			// a tight umask, which costs peer readability but not the agent's own
+			// logging, and that is strictly better than no publisher at all.
+			m.logger.Warn("pluk log file setup failed; peer agents may not be able to read this session's log",
+				"agent", agent.Name, "error", err)
+			logFile = plukSessionLogPath(plukRunDir, agent.tmuxSession)
+		}
+		pipePaneCmd := plukPipePaneCmd(plukPath, agent.tmuxSession, backend, logFile)
 		_ = m.tmuxCmd(agent, "pipe-pane", "-t", agent.tmuxSession, "-o", pipePaneCmd).Run()
-		m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend)
+		m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend, "log", logFile)
 	}
 
 	return nil
