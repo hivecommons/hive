@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // Explain mode (#3887) lets an operator ask an agent to say WHY it did what it

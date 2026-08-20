@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // Agent logs are tmux pane scrapes, so explanation (#3887) cannot go to a real
