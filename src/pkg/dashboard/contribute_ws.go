@@ -490,12 +490,25 @@ type taskLease struct {
 	expiresAt time.Time
 }
 
-// leaseTTL is how long a hub-issued task lease remains re-adoptable after
-// assignment (kubestellar/hive C4). It is deliberately aligned with wsTaskTimeout
-// (the wedged-task backstop): a task that has been reclaimed by the lease-TTL
-// backstop is also past its re-adoption window, so a relay that reconnects after
-// its task was auto-released cannot resurrect ownership from the client side. A
-// resume presented after this window is treated as a stale/forged claim and
+// leaseTTL is how long a hub-issued task lease remains re-adoptable after the last
+// time the relay proved it was still working (kubestellar/hive C4). It is aligned
+// with wsTaskTimeout (the wedged-task backstop) and, since #4260, is measured from
+// the SAME event: recordLease stamps it at assignment and renewLease re-stamps it on
+// every accepted task_progress, exactly where reclaimExpiredLeases re-stamps
+// lastLeaseRenew. The two clocks therefore expire together, which is what makes the
+// intended invariant true — a task past its re-adoption window is also one the
+// wedged-task backstop has reclaimed, and a task the backstop considers alive is
+// still re-adoptable.
+//
+// #4260: before that renewal existed, expiresAt was stamped once at assignment and
+// never moved, so the alignment was only nominal. A perfectly healthy task that had
+// been reporting progress for longer than leaseTTL was NEVER reclaimed (correctly —
+// it was alive) yet its lease had silently expired, so the first socket drop after
+// that point could not be resumed: lookupLease rejected the reconnecting relay,
+// the hub sent task_revoke, and the same issue was re-assigned as a new task,
+// typing a fresh prompt into a pane whose CLI was still mid-turn.
+//
+// A resume presented after this window is treated as a stale/forged claim and
 // rejected; the relay simply asks for fresh work via "ready".
 const leaseTTL = wsTaskTimeout
 
@@ -521,6 +534,31 @@ func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int,
 		tier:      tier,
 		gen:       gen,
 		expiresAt: now.Add(leaseTTL),
+	}
+	h.leaseMu.Unlock()
+}
+
+// renewLease extends an identity's server-issued lease window when the relay proves
+// it is still working the task (kubestellar/hive#4260). It is the lease-registry half
+// of the lastLeaseRenew stamp that reclaimExpiredLeases reads: both are driven by the
+// same accepted task_progress, so "still alive" and "still re-adoptable" cannot drift
+// apart and a long-running task does not lose the ability to survive a reconnect
+// simply because it has been working for longer than leaseTTL.
+//
+// It grants NOTHING a caller did not already have. The lease is only touched when it
+// is already the one recorded for this identity AND is for this exact taskID, so a
+// connection can neither renew another identity's lease nor extend a lease for a task
+// it does not hold; a revoked lease is absent and stays absent. Only expiresAt moves —
+// the {task, repo, number, tier, generation} tuple lookupLease matches on is never
+// rewritten, so the C4 exact-match contract and the #2568 generation fence are
+// untouched.
+func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
+	if identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	if l, ok := h.leases[identity]; ok && l.taskID == taskID {
+		l.expiresAt = now.Add(leaseTTL)
 	}
 	h.leaseMu.Unlock()
 }
@@ -1561,6 +1599,37 @@ func (h *ContributeWSHub) recordTaskFailure(repo string, number int, permanent b
 	h.saveFailedTasks()
 }
 
+// bookReleaseCooldown stamps the SAME short cooldown recordTaskFailure stamps, but
+// does NOT advance the issue's consecutive-failure counter (kubestellar/hive#4260).
+//
+// It exists for releases that are not failures OF THE ISSUE. The disconnect path
+// books a cooldown for one reason (#2356): while a relay is reconnecting, its issue
+// has dropped out of activeIssues — the only double-assign guard — and selectTask
+// could hand the same issue to a second session, so both reach "open a PR" and file
+// duplicates. That guarantee needs the timestamp and nothing else.
+//
+// Routing it through recordTaskFailure also incremented consecutiveFailures, so three
+// dropped sockets on one issue — unremarkable on a flaky connection across a long
+// session — pushed it past consecutiveFailureQuarantineThreshold and parked a
+// perfectly workable issue for quarantineCooldownHours with nothing having actually
+// failed. The counter also feeds recentFailureCount, which deprioritises the issue
+// behind never-failed peers in selectTask, so a disconnect quietly demoted work that
+// was progressing fine.
+//
+// The #2356 window is byte-for-byte unchanged: failedTasks carries the same timestamp,
+// isTaskInFailureCooldown reads it the same way, and with the count left at zero
+// failureCooldownForLocked returns the same failedTaskCooldownMinutes it always did.
+// Paths where the release IS evidence about the issue — task_failed, the relay's own
+// watchdog giving up via "ready", and the wedged-task lease backstop — deliberately
+// keep calling recordTaskFailure and keep counting.
+func (h *ContributeWSHub) bookReleaseCooldown(repo string, number int) {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	h.completedMu.Lock()
+	h.failedTasks[key] = time.Now()
+	h.completedMu.Unlock()
+	h.saveFailedTasks()
+}
+
 // failureCooldownForLocked returns how long, from the last failure time, an
 // issue should be excluded from selection. It is the SHORT
 // failedTaskCooldownMinutes normally, or the LONGER quarantineCooldownHours once
@@ -2521,16 +2590,24 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// window (BASE_RECONNECT_DELAY_MS..MAX_RECONNECT_DELAY_MS, i.e. 1s–60s)
 				// while the original relay — which keeps currentTask locally and
 				// re-asserts it via task_progress on reconnect — is still working it.
-				// Both sessions then reach "open a PR" and file duplicates. Mirror the
-				// task_failed path (#2435) and book the SHORT non-permanent failure
-				// cooldown so the issue is not instantly re-admissible. The short
+				// Both sessions then reach "open a PR" and file duplicates. Book the
+				// SHORT cooldown so the issue is not instantly re-admissible. The short
 				// window comfortably outlasts the reconnect backoff, so the returning
 				// session re-asserts and resumes (repopulating activeIssues) before the
-				// cooldown lapses; a completion later resets the failure ledger. Only
-				// real issue tasks are booked — synthetic pr-review tasks carry
-				// Number == 0 and must not poison an issue key.
+				// cooldown lapses — which is the contract #4260 restored by renewing
+				// the lease on every progress report, so a task alive longer than
+				// leaseTTL is still re-adoptable. Only real issue tasks are booked —
+				// synthetic pr-review tasks carry Number == 0 and must not poison an
+				// issue key.
+				//
+				// #4260: bookReleaseCooldown rather than recordTaskFailure. The window
+				// is identical; what is dropped is the consecutive-failure increment,
+				// which turned three dropped sockets on one issue into a
+				// quarantineCooldownHours quarantine of an issue nobody had failed.
+				// The #2356 duplicate-PR guarantee lives entirely in the timestamp and
+				// is unaffected.
 				if abandonedTask.Number > 0 {
-					h.recordTaskFailure(abandonedTask.Repo, abandonedTask.Number, false)
+					h.bookReleaseCooldown(abandonedTask.Repo, abandonedTask.Number)
 				}
 			}
 			h.mu.Lock()
@@ -2946,6 +3023,12 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.tmuxOutput = msg.TmuxOutput
 					contributor.mu.Unlock()
 
+					// #4260: a resume is itself proof of life, so restart the lease
+					// window alongside lastLeaseRenew. Without this a relay that
+					// reconnected twice inside one lease window would be refused the
+					// second time even though it never stopped working.
+					h.renewLease(identity, lease.taskID, time.Now())
+
 					h.logger.Info("[contribute-ws] task resumed from server-issued lease",
 						"username", contributor.profile.GitHubUsername,
 						"task", lease.taskID, "repo", lease.repo, "number", lease.number)
@@ -3005,7 +3088,22 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// never reclaimed) from "connected but wedged" (lease goes stale and
 				// cleanupLoop reclaims it after wsTaskTimeout).
 				contributor.lastLeaseRenew = time.Now()
+				// #4260: the task id is taken from the hub's OWN record of what this
+				// connection holds, never from msg.TaskID, so the renewal cannot be
+				// pointed at a task the client merely names. Captured here under the
+				// connection lock and applied below without it, matching how the other
+				// release paths call into the lease registry.
+				heldTaskID := ""
+				if contributor.currentTask != nil {
+					heldTaskID = contributor.currentTask.TaskID
+				}
 				contributor.mu.Unlock()
+				// #4260: keep the lease registry's expiry on the same clock as
+				// lastLeaseRenew above. Stamping it only at assignment meant a task
+				// still healthily reporting progress past leaseTTL was never reclaimed
+				// yet could no longer be re-adopted, so the next socket drop cost the
+				// relay its in-flight work.
+				h.renewLease(identityOf(contributor), heldTaskID, time.Now())
 			}
 
 		case "task_complete":
