@@ -52,7 +52,7 @@ func TestIssueLinkHelpersExistAndPreferURLField(t *testing.T) {
 		`target="_blank"`,
 		`rel="noopener noreferrer"`,
 		`title="Open on GitHub"`,
-		"event.stopPropagation();",
+		"data-stop-prop", // delegated stopPropagation for click+mousedown (#3848)
 		"cc-issue-link-ic", // the external-link icon
 	} {
 		if !strings.Contains(linkBody, want) {
@@ -142,10 +142,13 @@ func TestIssueLinkClickStopsPropagation(t *testing.T) {
 		t.Fatal("ccIssueLinkHTML is missing")
 	}
 	linkBody := body[linkStart : linkStart+strings.Index(body[linkStart:], "\n}")]
-	if !strings.Contains(linkBody, `onclick="event.stopPropagation();"`) {
-		t.Error("issue link does not stop click propagation — clicking it could trigger a parent row handler")
+	// #3848: propagation stopping is delegated — the link carries
+	// data-stop-prop and capture-phase click/mousedown listeners call
+	// event.stopPropagation() (see the delegation script block).
+	if !strings.Contains(linkBody, `data-stop-prop="1"`) {
+		t.Error("issue link does not carry data-stop-prop — clicking it could trigger a parent row handler or start a drag")
 	}
-	if !strings.Contains(linkBody, `onmousedown="event.stopPropagation();"`) {
-		t.Error("issue link does not stop mousedown propagation — clicking it could start a drag (dragstart begins on mousedown+move)")
+	if !strings.Contains(body, `[data-stop-prop]`) || !strings.Contains(body, "e.stopPropagation()") {
+		t.Error("delegated data-stop-prop handler is missing from the served page")
 	}
 }

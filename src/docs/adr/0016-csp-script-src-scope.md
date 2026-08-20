@@ -38,9 +38,9 @@ event-delegation refactor of the 21k-line SPA, which remains the open scope of
 `script-src` becomes three directives, on both emitters:
 
 ```text
-script-src      'self' 'unsafe-inline'      ← CSP2 fallback, UNCHANGED
+script-src      'self'                      ← CSP2 fallback (unsafe-inline dropped with #3848)
 script-src-elem 'self' 'sha256-…' …         ← inline <script> elements: CLOSED
-script-src-attr 'unsafe-inline'             ← on*= attributes: STAGED (#3848)
+script-src-attr 'none'                      ← on*= attributes: CLOSED (#3848 event delegation)
 ```
 
 - **`script-src-elem` carries a sha256 hash for every inline `<script>` this
@@ -56,19 +56,21 @@ script-src-attr 'unsafe-inline'             ← on*= attributes: STAGED (#3848)
   `hubURL` derives from the Host header; `/snapshot`, built at runtime) the
   handler stamps the allowlist from the finished document before the first
   write (`applyDocumentScriptSrcElem`).
-- **The CSP2 fallback `script-src` keeps `'unsafe-inline'` and must never
-  carry the hashes.** Per CSP2, the presence of a hash source makes a browser
-  ignore `'unsafe-inline'` in the same directive — so a browser that
-  understands hashes but not `script-src-elem`/`-attr` (Firefox < 108) would
-  block all 426+ inline handlers and blank the dashboard. Keeping the fallback
-  hash-free means pre-CSP3 browsers enforce exactly what they enforced before
-  this change: no regression, no new protection.
-- **`script-src-attr 'unsafe-inline'` is STAGED, not accepted.** Unlike
-  `style-src-attr` (a permanent acceptance, ADR-0015), the handler attributes
-  *can* be eliminated by refactoring the SPA to delegated `addEventListener`
-  wiring, and #3848 remains open for exactly that. The tripwire test
-  `TestCSPScriptSrcAttrUnsafeInlineIsStaged` fails the moment that refactor
-  lands, and must then be inverted — never relaxed.
+- **The CSP2 fallback `script-src` must never carry the hashes.** Per CSP2,
+  the presence of a hash source makes a browser ignore `'unsafe-inline'` in
+  the same directive, so the hashes belong in `script-src-elem` and only
+  there. Since the #3848 event-delegation refactor removed every inline
+  handler attribute, the fallback also dropped `'unsafe-inline'`: nothing
+  inline-attribute-based remains for any browser to permit.
+- **`script-src-attr` is now `'none'` — the attribute half is CLOSED.** The
+  #3848 event-delegation refactor replaced every inline `on*=` handler
+  attribute (in `static/index.html` and in Go-generated HTML) with
+  `data-action` / `data-*` attributes dispatched by central document-level
+  listeners, so an injected handler attribute never executes. Unlike
+  `style-src-attr` (a permanent acceptance, ADR-0015), this half was
+  eliminable and has been eliminated. The former staged tripwire
+  `TestCSPScriptSrcAttrUnsafeInlineIsStaged` was inverted into
+  `TestCSPScriptSrcAttrUnsafeInlineIsAbsent`, which pins the closed state.
 - Documents whose bytes this code never renders keep the blanket CSP2 policy:
   `/terminal` (ttyd's own UI, streamed through a reverse proxy) on both
   emitters, and on the Node proxy additionally the Go-rendered `/contribute`,
@@ -79,12 +81,10 @@ script-src-attr 'unsafe-inline'             ← on*= attributes: STAGED (#3848)
 
 What this ADR accepts, stated plainly:
 
-- **Injected `on*=` handler attributes still execute in every browser** while
-  `script-src-attr 'unsafe-inline'` stands — markup injection such as
-  `<img src=x onerror=…>` remains an executable XSS primitive. Closing it is
-  the remaining scope of #3848.
-- **Pre-CSP3 browsers (e.g. Firefox < 108) gain nothing**: they enforce only
-  the unchanged fallback.
+- **Injected `on*=` handler attributes no longer execute in CSP3 browsers**:
+  `script-src-attr` is `'none'` after the #3848 event-delegation refactor.
+  Pre-CSP3 browsers enforce the `script-src 'self'` fallback, which also
+  blocks inline handlers.
 - The dashboard credential still lives in `localStorage` (operator-pasted);
   moving it out is tracked separately in #3315's recommendation trail.
 - The hub SaaS SPA ([pkg/hub/saas.go](../../pkg/hub/saas.go)) serves no CSP
@@ -98,6 +98,8 @@ What this ADR accepts, stated plainly:
   must either be byte-stable (then its document belongs in the startup set) or
   call `applyDocumentScriptSrcElem` with the finished document; the
   hash-coverage tests in `csp_script_src_test.go` fail otherwise.
-- When #3848's event-delegation refactor lands, `script-src-attr` drops
-  `'unsafe-inline'`, the fallback `script-src` can finally drop it too, and
-  the tripwire is inverted to pin the closed state.
+- With #3848's event-delegation refactor landed, `script-src-attr` is
+  `'none'`, the fallback `script-src` dropped `'unsafe-inline'`, and the
+  tripwire is inverted (`TestCSPScriptSrcAttrUnsafeInlineIsAbsent`) to pin
+  the closed state. New UI handlers must be wired through the `data-action`
+  dispatcher, never as inline attributes.

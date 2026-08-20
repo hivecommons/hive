@@ -10,15 +10,18 @@ import path from 'path';
 // Covers the script-src half of kubestellar/hive#3848 (#3907) on the proxy —
 // the Node-side counterpart of csp_script_src_test.go, mirroring ADR-0016:
 //
-//   script-src      'self' 'unsafe-inline' …  <- CSP2 fallback, UNCHANGED and
-//                                               hash-free (a hash here disables
-//                                               'unsafe-inline' on hash-aware
-//                                               pre-CSP3 browsers and blanks
-//                                               every inline on*= handler)
+//   script-src      'self' …                  <- CSP2 fallback, now without
+//                                               'unsafe-inline' (#3848 closed
+//                                               the attribute half) and still
+//                                               hash-free (a hash here changes
+//                                               semantics on hash-aware
+//                                               pre-CSP3 browsers)
 //   script-src-elem 'self' cdn 'sha256-…'     <- inline <script> elements:
 //                                               CLOSED — only the SPA's own
 //                                               inline scripts can execute
-//   script-src-attr 'unsafe-inline'           <- on*= attributes: STAGED
+//   script-src-attr 'none'                    <- on*= attributes: CLOSED by
+//                                               the #3848 event-delegation
+//                                               refactor
 //
 // Go-rendered documents (/contribute, /leaderboard, /snapshot) and ttyd's UI
 // (/terminal) keep the blanket policy: the Go upstream stamps its own
@@ -160,16 +163,15 @@ async function main() {
       `script-src-elem must carry exactly the 2 inline-script hashes, got ${hashCount}: ${elem}`);
 
     const attr = directive(csp, 'script-src-attr');
-    assert.ok(attr.includes("'unsafe-inline'"),
-      `script-src-attr must keep 'unsafe-inline' until the #3848 event-delegation refactor — ` +
-      `dropping it silently kills every inline on*= handler: ${csp}`);
+    assert.ok(attr.includes("'none'") && !attr.includes("'unsafe-inline'"),
+      `script-src-attr must be 'none' after the #3848 event-delegation refactor — ` +
+      `inline on*= handlers are gone and must never come back: ${csp}`);
 
-    // The CSP2 fallback: unchanged, and LOAD-BEARINGLY hash-free — a hash in
-    // script-src makes hash-aware pre-CSP3 browsers (Firefox < 108) ignore
-    // 'unsafe-inline' and blank every inline handler.
+    // The CSP2 fallback: 'unsafe-inline' dropped with #3848, and
+    // LOAD-BEARINGLY hash-free — hashes belong only in script-src-elem.
     const fallback = directive(csp, 'script-src');
-    assert.ok(fallback.includes("'self'") && fallback.includes("'unsafe-inline'"),
-      `script-src fallback must stay permissive for pre-CSP3 browsers: ${fallback}`);
+    assert.ok(fallback.includes("'self'") && !fallback.includes("'unsafe-inline'"),
+      `script-src fallback must keep 'self' and drop 'unsafe-inline' after #3848: ${fallback}`);
     assert.ok(!/'sha256-/.test(fallback),
       `script-src fallback must NEVER carry hashes (disables 'unsafe-inline' on ` +
       `hash-aware pre-CSP3 browsers): ${fallback}`);
@@ -218,9 +220,9 @@ async function main() {
     //    it and trip the CSP2 'unsafe-inline'-suppression footgun.
     // -------------------------------------------------------------------
     const src = readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-    assert.ok(src.includes(`"script-src 'self' 'unsafe-inline' https://cdn.redoc.ly"`),
+    assert.ok(src.includes(`"script-src 'self' https://cdn.redoc.ly"`),
       'server.js must keep the literal, hash-free script-src fallback');
-    assert.ok(/script-src-attr 'unsafe-inline'/.test(src),
+    assert.ok(/script-src-attr 'none'/.test(src),
       'server.js must declare script-src-attr explicitly');
     console.log('  ok: source guard — fallback literal and hash-free');
   } finally {

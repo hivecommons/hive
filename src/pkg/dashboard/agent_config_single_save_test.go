@@ -58,7 +58,7 @@ func TestPromptTemplateDirtyTracking(t *testing.T) {
 	for _, snippet := range []string{
 		"function markPromptTemplateDirty(el)",
 		"function capturePromptTemplate()",
-		`oninput="markPromptTemplateDirty(this)"`,
+		`data-input-action="markPromptTemplateDirty"`,
 		"_configState.promptTemplateDirty = true;",
 		// Re-entering the tab must not clobber a pending edit with the server copy.
 		"if (el && !_configState.promptTemplateDirty) { el.value = data.prompt || ''; }",

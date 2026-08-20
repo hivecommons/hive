@@ -19,16 +19,16 @@ package dashboard
 //     request and defeat the ETag entirely. Hashes are a pure function of the
 //     bytes already being served, so the #3863 caching design is untouched.
 //
-//   - Inline on*= EVENT-HANDLER attributes (426 in static/index.html alone,
-//     plus ~145 more built as strings and injected through innerHTML sites)
-//     have no nonce and no hash form under script-src-elem semantics; only
-//     script-src-attr 'unsafe-hashes' could pin them, at a hash per distinct
-//     attribute value — rejected for the same reason ADR-0015 rejected it for
-//     styles. That half is STAGED as script-src-attr 'unsafe-inline' behind an
-//     event-delegation refactor of the SPA. See ADR-0016 and the tripwire
-//     TestCSPScriptSrcAttrUnsafeInlineIsStaged.
+//   - Inline on*= EVENT-HANDLER attributes have no nonce and no hash form
+//     under script-src-elem semantics; only script-src-attr 'unsafe-hashes'
+//     could pin them, at a hash per distinct attribute value — rejected for
+//     the same reason ADR-0015 rejected it for styles. That half is now
+//     CLOSED: the #3848 event-delegation refactor replaced every inline
+//     handler attribute with data-action dispatch, so script-src-attr is
+//     'none'. See ADR-0016 and TestCSPScriptSrcAttrUnsafeInlineIsAbsent.
 //
-//   - script-src itself stays 'self' 'unsafe-inline' as the CSP2 fallback, and
+//   - script-src itself is 'self' as the CSP2 fallback ('unsafe-inline'
+//     dropped with #3848), and
 //     MUST NOT carry the hashes: per CSP2 §7.15, the presence of a hash makes
 //     a browser ignore 'unsafe-inline' in the same directive, so a browser
 //     that understands hashes but not script-src-elem/-attr (Firefox < 108)

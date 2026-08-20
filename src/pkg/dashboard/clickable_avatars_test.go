@@ -90,7 +90,7 @@ func TestAvatarLinkDegradesWithoutUsername(t *testing.T) {
 // move into an anchor: a broken-image glyph inside a link reads as a dead
 // control.
 func TestAvatarOnErrorFallbackKept(t *testing.T) {
-	if !strings.Contains(indexHTML(t), `onerror="this.style.display='none'">`) {
+	if !strings.Contains(indexHTML(t), `data-error-action="gh19"`) {
 		t.Error("avatarImg no longer hides a broken avatar image")
 	}
 }
@@ -143,7 +143,7 @@ func TestAnonymousAuditActorIsNotLinked(t *testing.T) {
 // destination — and that the profile is reachable from a menu entry instead.
 func TestNavAvatarKeepsItsMenu(t *testing.T) {
 	html := indexHTML(t)
-	if !strings.Contains(html, `id="oc-gh-avatar"`) || !strings.Contains(html, `onclick="toggleGHUserMenu()"`) {
+	if !strings.Contains(html, `id="oc-gh-avatar"`) || !strings.Contains(html, `data-action="toggleGHUserMenu"`) {
 		t.Error("the top-bar avatar no longer opens the user menu")
 	}
 	if !strings.Contains(html, `id="oc-gh-menu-profile"`) {

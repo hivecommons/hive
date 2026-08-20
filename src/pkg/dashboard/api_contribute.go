@@ -773,7 +773,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
 			}
 		} else {
-			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
+			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" data-action="dismiss-parent">Dismiss</button></div>`
 		}
 	}
 
@@ -1878,7 +1878,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 </div>
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
 <label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
-<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" oninput="updateCmds()">
+<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" data-input-action="updateCmds">
 </div>
 <!-- #2549 Kubernetes-mode note. Hidden except in Kubernetes mode. States the two
      honest constraints up front: only headless-capable backends run in a cluster
@@ -1977,6 +1977,9 @@ function isHostOnly(c){return HOST_ONLY_BACKENDS.indexOf(c)>=0;}
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
+// Event delegation (#3848): replaces the former inline oninput= attribute so
+// CSP script-src-attr can be 'none'.
+if(modelInput){modelInput.addEventListener('input',updateCmds);}
 function update(){
 var os=osSel.value;
 var prereq=prereqByOS[os]||prereqByOS.macos;
@@ -2558,6 +2561,33 @@ It clears automatically when the period elapses. An operator can shorten or disa
 </footer>
 <script>
 (function(){
+// ── Event delegation (#3848) ─────────────────────────────────────────────────
+// Replaces former inline on*= handler attributes so CSP script-src-attr can be
+// 'none'. Behaviors are keyed off data-* attributes:
+//   data-action="dismiss-parent"  → remove the button's parent element
+//   data-hide-on-error="1"        → hide <img> whose load failed
+//   data-select-on-click="1"      → select input contents on click
+//   data-stop-prop="1"            → stop click/mousedown propagating to parents
+document.addEventListener('click',function(e){
+  if(!e.target.closest)return;
+  var d=e.target.closest('[data-action="dismiss-parent"]');
+  if(d&&d.parentElement){d.parentElement.remove();return;}
+  var s=e.target.closest('[data-select-on-click]');
+  if(s&&s.select){s.select();}
+});
+document.addEventListener('error',function(e){
+  var t=e.target;
+  if(t&&t.getAttribute&&t.getAttribute('data-hide-on-error')){t.style.visibility='hidden';}
+},true);
+['click','mousedown'].forEach(function(type){
+  document.addEventListener(type,function(e){
+    if(e.target.closest&&e.target.closest('[data-stop-prop]')){e.stopPropagation();}
+  },true);
+});
+})();
+</script>
+<script>
+(function(){
 // ── Init-order hoist (fixes the #2603/#2604/#2606 merge-interleaving regression) ──
 // These were declared FAR below their first use. var hoists the name but not the
 // value, so ADMIN_TIER_ORDER.map / ccActivitySeen[k] / ccActivity.length ran against
@@ -3105,7 +3135,7 @@ function meCollaborators(p){
     var occ=(c.occasions>1)?(' · '+c.occasions+' occasions'):'';
     out+='<a class="dz-collab" href="/contribute/dossier/'+encodeURIComponent(c.username)+'">'
       +'<img class="dz-collab__av" src="https://github.com/'+encodeURIComponent(c.username)+'.png" alt="" '
-        +'onerror="this.style.visibility=\'hidden\'">'
+        +'data-hide-on-error="1">'
       +'<span class="dz-collab__body"><span class="dz-collab__name">'+esc(c.username)+'</span>'
       +'<span class="dz-collab__how">'+esc(how)+esc(occ)+'</span></span></a>';
   }
@@ -3299,7 +3329,7 @@ function renderMeCard(mount,p){
   +'<section class="dz-identity" aria-label="Identity">'
   +'<div class="me-emblem" style="--a1:'+em.a1+';--a2:'+em.a2+';--p1:'+em.p1+';--p2:'+em.p2+'"></div>'
   +'<div class="dz-identity-inner">'
-  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'"></div>'
+  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" data-hide-on-error="1"></div>'
   +'<div class="dz-namebloc">'+callsign+'<h1 class="dz-heroname">'+esc(p.github_username)+'</h1>'+desig+founding+'</div>'
   +'<div class="dz-rankpill"><div class="rank-name">'+esc(rankMeta[0])+'</div><div class="rank-sub">trust · '+esc(tier)+'</div></div>'
   +'</div>'+livebar+'</section>'
@@ -3346,7 +3376,7 @@ function renderMeCard(mount,p){
       +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
       +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
       +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
-      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
+      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" data-select-on-click="1">'
       +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. Allowed: custom properties, attribute and pseudo selectors, <code>calc()</code>/<code>clamp()</code>/gradients, and <code>@media</code>, <code>@supports</code>, <code>@container</code>, <code>@keyframes</code>. <code>@font-face</code> is kept only with same-origin or <code>data:</code> sources. Removed: <code>@import</code>, external <code>url()</code> fetches, CSS escapes, and legacy executable CSS. Add <code>&amp;report=1</code> to the style API URL for sanitizer details. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
     +'</div>'
     +meInviteSection(p)
@@ -3709,7 +3739,7 @@ function ccIssueLinkHTML(item,label,extraClass){
   var url=ccIssueURL(item);
   if(!url)return '<span class="'+(extraClass||'')+'">'+esc(label)+'</span>';
   return '<a class="cc-issue-link '+(extraClass||'')+'" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" '+
-    'title="Open on GitHub" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">'+
+    'title="Open on GitHub" data-stop-prop="1">'+
     esc(label)+
     '<svg class="cc-issue-link-ic" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'+
     '<path fill="currentColor" d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z"/>'+

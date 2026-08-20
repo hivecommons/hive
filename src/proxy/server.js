@@ -782,13 +782,14 @@ async function snapshotFrameAncestors() {
 //   script-src-elem 'self' cdn + sha256 hashes — inline <script> ELEMENTS,
 //     CLOSED: only this proxy's own inline scripts (the SPA document's) can
 //     execute; an injected inline <script> matches no hash and is blocked.
-//   script-src-attr 'unsafe-inline' — the SPA's ~426 inline on*= handler
-//     attributes, STAGED behind an event-delegation refactor (#3848). Hashes
-//     and nonces do not exist for attributes.
-//   script-src (fallback) keeps 'self' 'unsafe-inline' UNCHANGED for pre-CSP3
-//     browsers, and must never carry the hashes: a hash there makes hash-aware
-//     browsers ignore 'unsafe-inline' in the same directive, blanking the UI
-//     on browsers that know hashes but not -elem/-attr (Firefox < 108).
+//   script-src-attr 'none' — inline on*= handler attributes, CLOSED by the
+//     #3848 event-delegation refactor: the SPA and Go-generated HTML use
+//     data-action / data-* dispatch, so no handler attribute remains and an
+//     injected one never executes.
+//   script-src (fallback) is 'self' (+ cdn) for pre-CSP3 browsers —
+//     'unsafe-inline' dropped with #3848 — and must never carry the hashes: a
+//     hash there makes hash-aware browsers ignore 'unsafe-inline' in the same
+//     directive on browsers that know hashes but not -elem/-attr (Firefox < 108).
 //
 // Hashes are computed from the exact index.html bytes this proxy serves —
 // lazily, because the dashboard file can be built after startup (see
@@ -833,9 +834,9 @@ app.use(async (req, res, next) => {
   const scriptDirectives = isUpstreamDocPath(req.path)
     ? ["script-src 'self' 'unsafe-inline' https://cdn.redoc.ly"]
     : [
-        "script-src 'self' 'unsafe-inline' https://cdn.redoc.ly",
+        "script-src 'self' https://cdn.redoc.ly",
         `script-src-elem ${["'self'", 'https://cdn.redoc.ly', ...spaScriptElemHashes()].join(' ')}`,
-        "script-src-attr 'unsafe-inline'",
+        "script-src-attr 'none'",
       ];
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",

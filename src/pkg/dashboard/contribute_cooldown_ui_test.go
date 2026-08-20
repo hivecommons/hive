@@ -18,7 +18,7 @@ func TestGovernorHubTabHasCooldownControl(t *testing.T) {
 		// Enable toggle wired to the same section/key the PUT round-trips.
 		`data-key="contribute_cooldown_enabled"`,
 		`Task Cooldown`,
-		`toggleCooldownEnabled(this)`,
+		`data-action="toggleCooldownEnabled"`,
 		`function toggleCooldownEnabled(`,
 		// Period input, marks the hub section dirty so Save PUTs it.
 		`id="hub-cooldown-hours"`,
