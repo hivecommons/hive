@@ -115,6 +115,16 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_standalone_runtime.sh
 
+      # #4210: rootless Podman/Buildah share one store with the operator's
+      # unrelated containers, Distroboxes, and builds, so Hive cleanup must
+      # select only Hive-labelled resources and the broad store-wide prune,
+      # reset, and remove-all forms are rejected outright. See
+      # src/docs/podman-ownership-cleanup.md. The test analyses arguments only:
+      # it contacts no engine and deletes nothing.
+      - name: Podman ownership and cleanup contract (#4210)
+        working-directory: .
+        run: bash bin/test_hive_podman_cleanup.sh
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
