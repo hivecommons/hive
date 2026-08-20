@@ -121,7 +121,7 @@ const (
 	// only after several consecutive 401s and clears on the next success — so
 	// the alert self-heals when the key is fixed.
 	AlertTypeInferenceAuthFailed = "inference-auth-failed"
-	// AlertTypeAppCredsUndelivered — a claimed, online hive requires GitHub App
+	// AlertTypeAppCredsUndelivered — a claimed hive requires GitHub App
 	// auth but reports an OPERATOR-SIDE credential state (key-missing,
 	// key-invalid or no-app-assigned; see operatorSideAppStates in journey.go).
 	// The hive owner cannot see, supply or correct the App private key — it is
@@ -983,17 +983,26 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		}
 
 		// --- Rule: GitHub App credentials are in an operator-side state. ---
-		// Claimed and ONLINE only: a placeholder has no App by design, and an
-		// offline hive's last-reported state is stale (and already raises
-		// offline, which is the actionable fact). Gated on the spoke's OWN
-		// GitHubAppRequired verdict plus an operator-side GitHubAppState
-		// (key-missing / key-invalid / no-app-assigned) — the exact states
-		// every owner-facing surface deliberately silences, which is why an
-		// operator alert is the ONLY active signal for them (#4316). Critical:
-		// the hive provably cannot work until the hub delivers a usable key.
-		// Self-clears once the key lands and the spoke stops reporting the
-		// state; the standard retention pass drops the condition and its ack.
-		if !h.IsPlaceholder && h.Online && h.GitHubAppRequired && appStateIsOperatorSide(h.GitHubAppState) {
+		// Claimed only: a placeholder has no App by design. Gated on the
+		// spoke's OWN GitHubAppRequired verdict plus an operator-side
+		// GitHubAppState (key-missing / key-invalid / no-app-assigned) — the
+		// exact states every owner-facing surface deliberately silences, which
+		// is why an operator alert is the ONLY active signal for them (#4316).
+		//
+		// Deliberately NOT gated on the hive being online (Danathar, #4322):
+		// an offline hive raises its own offline alert, but that alert cannot
+		// say WHY the hive never worked — and gating here would drop the
+		// credential alert exactly when the hive is worst off, still keyless
+		// and now not even heartbeating. The two answer different questions
+		// and an operator needs both. This also matches every other
+		// spoke-state rule above (health-check, advisory, inference), none of
+		// which gate on Online.
+		//
+		// Critical: the hive provably cannot work until the hub delivers a
+		// usable key. Self-clears once the key lands and the spoke stops
+		// reporting the state; the standard retention pass drops the
+		// condition and its ack.
+		if !h.IsPlaceholder && h.GitHubAppRequired && appStateIsOperatorSide(h.GitHubAppState) {
 			add(h.ID, h.Name, AlertTypeAppCredsUndelivered, AlertSeverityCritical,
 				appCredsUndeliveredReason(h))
 		}

@@ -37,7 +37,7 @@ func TestEvaluateAlerts_AppCredsUndeliveredRule(t *testing.T) {
 		{name: "an empty state does not fire", mutate: func(h *alertHive) { h.GitHubAppState = "" }, want: false},
 		{name: "a hive that never asked for App auth does not fire", mutate: func(h *alertHive) { h.GitHubAppRequired = false }, want: false},
 		{name: "a placeholder does not fire", mutate: func(h *alertHive) { h.IsPlaceholder = true }, want: false},
-		{name: "an offline hive does not fire on its stale state", mutate: func(h *alertHive) { h.Online = false }, want: false},
+		{name: "an offline stranded hive still fires", mutate: func(h *alertHive) { h.Online = false }, want: true},
 	}
 
 	for _, tc := range tests {
@@ -53,6 +53,26 @@ func TestEvaluateAlerts_AppCredsUndeliveredRule(t *testing.T) {
 				t.Errorf("severity = %q, want %q — the hive provably cannot work", a.Severity, AlertSeverityCritical)
 			}
 		})
+	}
+}
+
+// TestAppCredsUndelivered_FiresAlongsideOfflineForAStrandedOfflineHive pins
+// the deliberate deviation from #4316's wording ("claimed, ONLINE hive"),
+// adopted from Danathar's #4322: an offline keyless hive is worst off — still
+// keyless AND no longer heartbeating — and the offline alert alone cannot say
+// WHY the hive never worked. The two alerts answer different questions and an
+// operator needs both.
+func TestAppCredsUndelivered_FiresAlongsideOfflineForAStrandedOfflineHive(t *testing.T) {
+	h := appCredsHive("h1", appStateKeyMissingToken)
+	h.Online = false
+	h.LastHeartbeat = rfc3339(fixedNow.Add(-2 * alertOfflineThreshold))
+
+	summary := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	if !hasAlert(summary.Alerts, "h1", AlertTypeAppCredsUndelivered) {
+		t.Error("an offline keyless hive still needs its key uploaded; being offline must not suppress the credential alert")
+	}
+	if !hasAlert(summary.Alerts, "h1", AlertTypeOffline) {
+		t.Error("the offline rule must still fire independently — the two answer different questions")
 	}
 }
 
