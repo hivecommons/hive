@@ -68,6 +68,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 - [Architecture](architecture.md) — process model, governor loop, guardrails, hub/spoke, and walkthrough.
 - [CNCF reference architecture](https://github.com/kubestellar/hive/blob/v4/src/docs/cncf-reference-architecture.md) — CNCF submission/reference template.
+- [Podman CI runner map](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
 - [Knowledge system design](https://github.com/kubestellar/hive/blob/v4/src/docs/design/knowledge-system.md) — llm-wiki layers, subscriptions, and APIs.
 - [Podman Compose-provider selection spike](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-compose-provider-spike.md) — why `podman compose` must name its provider explicitly, and which provider needs no Docker tooling.
 - [Trajectory review](https://github.com/kubestellar/hive/blob/v4/src/docs/trajectory-review.md) — trajectory safety lane and review signals.
