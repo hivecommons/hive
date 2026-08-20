@@ -233,3 +233,98 @@ func TestJiraAuthHeader(t *testing.T) {
 		t.Errorf("Authorization = %q, want %q", gotAuth, want)
 	}
 }
+
+func TestJiraTimestampUnmarshal(t *testing.T) {
+	var ts jiraTimestamp
+	if err := ts.UnmarshalJSON([]byte(`"2026-01-02T15:04:05.000-0700"`)); err != nil {
+		t.Fatalf("jira format: %v", err)
+	}
+	if ts.Year() != 2026 {
+		t.Errorf("year = %d, want 2026", ts.Year())
+	}
+
+	var ts2 jiraTimestamp
+	if err := ts2.UnmarshalJSON([]byte(`"2026-01-02T15:04:05Z"`)); err != nil {
+		t.Fatalf("RFC3339: %v", err)
+	}
+
+	var ts3 jiraTimestamp
+	if err := ts3.UnmarshalJSON([]byte(`""`)); err != nil {
+		t.Fatalf("empty string: %v", err)
+	}
+	if !ts3.IsZero() {
+		t.Error("empty string should leave zero time")
+	}
+
+	var ts4 jiraTimestamp
+	if err := ts4.UnmarshalJSON([]byte(`"not-a-timestamp"`)); err == nil {
+		t.Error("expected error for unparseable timestamp")
+	}
+
+	var ts5 jiraTimestamp
+	if err := ts5.UnmarshalJSON([]byte(`12345`)); err == nil {
+		t.Error("expected error for non-string JSON")
+	}
+}
+
+func TestJiraIssueNullAssignee(t *testing.T) {
+	raw := `{"key":"ENG-1","fields":{"summary":"s","status":{"name":"To Do"},
+		"priority":null,"assignee":null,"reporter":null,"labels":[],
+		"created":"2026-01-02T15:04:05.000-0700","updated":"2026-01-02T15:04:05.000-0700"}}`
+	var it jiraIssue
+	if err := json.Unmarshal([]byte(raw), &it); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if it.Fields.Assignee != nil || it.Fields.Priority != nil || it.Fields.Reporter != nil {
+		t.Error("null fields should decode to nil pointers")
+	}
+}
+
+func TestNormalizeJiraPriority(t *testing.T) {
+	cases := map[string]string{
+		"Highest": "urgent", "Critical": "urgent", "Blocker": "urgent", "P0": "urgent",
+		"High": "high", "P1": "high",
+		"Medium": "medium", "P2": "medium",
+		"Low": "low", "Lowest": "low", "P3": "low", "P4": "low",
+		"whatever": "none", "": "none",
+	}
+	for in, want := range cases {
+		if got := normalizeJiraPriority(in); got != want {
+			t.Errorf("normalizeJiraPriority(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestJiraSearchPageErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"401", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, `{"errorMessages":["unauthorized"]}`, http.StatusUnauthorized)
+		}},
+		{"500", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}},
+		{"non-json body", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, "not json")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			src := NewJiraSource(JiraConfig{BaseURL: srv.URL, ProjectKeys: []string{"ENG"}, Repo: "o/r"})
+			if _, err := src.ListIssues(context.Background()); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestJiraRequestFailure(t *testing.T) {
+	src := NewJiraSource(JiraConfig{BaseURL: "http://127.0.0.1:1", ProjectKeys: []string{"ENG"}})
+	if _, err := src.ListIssues(context.Background()); err == nil {
+		t.Fatal("expected connection error, got nil")
+	}
+}

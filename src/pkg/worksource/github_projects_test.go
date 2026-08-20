@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // itemJSON builds a project item node for canned GraphQL responses.
@@ -247,5 +248,131 @@ func TestGitHubProjectsDefaultRepoFallback(t *testing.T) {
 	}
 	if len(issues) != 1 || issues[0].Repo != "my-org/default-repo" {
 		t.Errorf("unexpected issues: %+v", issues)
+	}
+}
+
+func TestInCurrentIteration(t *testing.T) {
+	today := time.Now().UTC().Format("2006-01-02")
+	old := time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")
+
+	cases := []struct {
+		name   string
+		values []gqlFieldValue
+		want   bool
+	}{
+		{"in current iteration", []gqlFieldValue{{StartDate: today, Duration: 7, Field: struct {
+			Name string `json:"name"`
+		}{"Sprint"}}}, true},
+		{"past iteration", []gqlFieldValue{{StartDate: old, Duration: 7, Field: struct {
+			Name string `json:"name"`
+		}{"Sprint"}}}, false},
+		{"wrong field name", []gqlFieldValue{{StartDate: today, Duration: 7, Field: struct {
+			Name string `json:"name"`
+		}{"Other"}}}, false},
+		{"empty start date", []gqlFieldValue{{Field: struct {
+			Name string `json:"name"`
+		}{"Sprint"}}}, false},
+		{"bad start date", []gqlFieldValue{{StartDate: "not-a-date", Duration: 7, Field: struct {
+			Name string `json:"name"`
+		}{"Sprint"}}}, false},
+		{"no values", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inCurrentIteration(tc.values, "Sprint"); got != tc.want {
+				t.Errorf("inCurrentIteration = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGitHubProjectsIterationFiltering(t *testing.T) {
+	today := time.Now().UTC().Format("2006-01-02")
+	old := time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")
+	current := fmt.Sprintf(`{
+		"id": "item-1", "type": "ISSUE",
+		"fieldValues": {"nodes": [{"field":{"name":"Sprint"},"startDate":%q,"duration":7}]},
+		"content": {"number": 1, "title": "current", "url": "u", "state": "OPEN",
+			"createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+			"author": {"login": "a"}, "labels": {"nodes": []}, "assignees": {"nodes": []},
+			"repository": {"nameWithOwner": "o/r"}}
+	}`, today)
+	stale := fmt.Sprintf(`{
+		"id": "item-2", "type": "ISSUE",
+		"fieldValues": {"nodes": [{"field":{"name":"Sprint"},"startDate":%q,"duration":7}]},
+		"content": {"number": 2, "title": "stale", "url": "u", "state": "OPEN",
+			"createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+			"author": {"login": "a"}, "labels": {"nodes": []}, "assignees": {"nodes": []},
+			"repository": {"nameWithOwner": "o/r"}}
+	}`, old)
+	srv := stubServer(t, []string{pageJSON(false, "", current, stale)})
+	defer srv.Close()
+
+	src := newTestSource(srv.URL, func(c *GitHubProjectsConfig) { c.IterationField = "Sprint" })
+	issues, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Number != 1 {
+		t.Fatalf("expected only current-iteration issue, got %+v", issues)
+	}
+}
+
+func TestNormalizePriority(t *testing.T) {
+	cases := map[string]string{
+		"P0": "urgent", "Urgent": "urgent", "Critical": "urgent",
+		"P1": "high", "High": "high",
+		"P2": "medium", "Medium": "medium",
+		"P3": "low", "Low": "low",
+		"Blocker": "none", "whatever": "none", "": "none",
+	}
+	for in, want := range cases {
+		if got := normalizePriority(in); got != want {
+			t.Errorf("normalizePriority(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestGitHubProjectsQueryPageHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	src := newTestSource(srv.URL, nil)
+	if _, err := src.ListIssues(context.Background()); err == nil {
+		t.Fatal("expected error for HTTP 500, got nil")
+	}
+}
+
+func TestGitHubProjectsQueryPageBadJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "not json")
+	}))
+	defer srv.Close()
+
+	src := newTestSource(srv.URL, nil)
+	if _, err := src.ListIssues(context.Background()); err == nil {
+		t.Fatal("expected error for non-JSON body, got nil")
+	}
+}
+
+func TestGitHubProjectsQueryPageGraphQLError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"errors":[{"message":"bad query"}]}`)
+	}))
+	defer srv.Close()
+
+	src := newTestSource(srv.URL, nil)
+	_, err := src.ListIssues(context.Background())
+	if err == nil {
+		t.Fatal("expected graphql error, got nil")
+	}
+}
+
+func TestGitHubProjectsRequestFailure(t *testing.T) {
+	src := newTestSource("http://127.0.0.1:1", nil)
+	if _, err := src.ListIssues(context.Background()); err == nil {
+		t.Fatal("expected connection error, got nil")
 	}
 }

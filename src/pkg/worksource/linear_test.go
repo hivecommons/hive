@@ -267,3 +267,46 @@ func TestLinearDefaultStates(t *testing.T) {
 		t.Errorf("states = %v, want %v", gotStates, want)
 	}
 }
+
+func TestLinearDoQueryErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"http 500", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}},
+		{"non-json body", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("not json"))
+		}},
+		{"graphql errors", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"errors":[{"message":"invalid api key"}]}`))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			src := worksource.NewLinearSource(worksource.LinearConfig{
+				APIKey:  "key",
+				BaseURL: srv.URL,
+				Teams:   []worksource.LinearTeamConfig{{Key: "ENG", Repo: "acme/app"}},
+			}, nil)
+			if _, err := src.ListIssues(context.Background()); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestLinearRequestFailure(t *testing.T) {
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:  "key",
+		BaseURL: "http://127.0.0.1:1",
+		Teams:   []worksource.LinearTeamConfig{{Key: "ENG", Repo: "acme/app"}},
+	}, nil)
+	if _, err := src.ListIssues(context.Background()); err == nil {
+		t.Fatal("expected connection error, got nil")
+	}
+}
