@@ -2098,7 +2098,14 @@ var defaultLoginPatterns = []string{
 	// gh / copilot / gemini: the commands their CLIs tell the user to run.
 	"gh auth login",
 	"claude login",
-	"copilot auth",
+	// "copilot auth login" is the Copilot CLI's full logged-out instruction.
+	// The bare 2-word fragment "copilot auth" false-positived: it also matched
+	// `copilot auth status` (an auth CHECK) and incidental doc/comment mentions
+	// (e.g. bin/copilot-models.mjs), pausing logged-IN agents — a live quality
+	// agent flapped on `(?i)copilot auth` for days (restart_count 83). Tightening
+	// to the full command matches the specificity of its `gh auth login` /
+	// `gemini auth login` siblings and still catches genuine Copilot logouts.
+	"copilot auth login",
 	"gemini auth login",
 	// bob: its API-key entry prompts.
 	"Enter Bob-Shell API Key",
