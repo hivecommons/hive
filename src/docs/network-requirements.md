@@ -15,7 +15,7 @@ This page is derived from the v2 code and manifests. Treat it as the operator-fa
 
 Notes:
 
-- `hive.yaml.example` defaults `dashboard.port` to 3001 for local/source runs. The Kubernetes ConfigMap sets it to 3002 because the cluster Service/Ingress owns the public edge.
+- `hive.yaml.example` defaults `dashboard.port` to 3001 for local/source runs. The Kubernetes ConfigMap sets it to 3002 because the cluster Service/Ingress owns the public edge. The Go default is 3002 (`defaultDashboardPort`), and the container deployments assume it: the Compose `hive` healthcheck and the Podman Quadlet unit's `HealthCmd=` both probe 3002, so a container install that keeps the example's 3001 never reports healthy — see [the Quadlet page](podman-standalone-quadlet.md#traps-measured-not-guessed).
 - Docker Compose publishes 3001 and 7681 from the `gateway` container and only `expose`s 3001/3002/7681 on the `hive` container.
 - The hub is also a Go HTTP server on 3001 unless `HIVE_HUB_PORT` is set. Contributor relay defaults to `wss://hive.kubestellar.io:3001/contribute`.
 

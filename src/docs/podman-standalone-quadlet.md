@@ -120,7 +120,19 @@ CONF=~/.config/hive
 # rootful:  CONF=/etc/hive
 
 mkdir -p "$CONF/secrets"
-cp src/hive.yaml "$CONF/hive.yaml"      # then edit it
+
+# src/hive.yaml is NOT in the repo — src/.gitignore excludes it, because it is
+# the file you create. Start from the shipped example, the way every other Hive
+# install does.
+cp src/hive.yaml.example "$CONF/hive.yaml"
+
+# REQUIRED, and not cosmetic. The example ships `dashboard.port: 3001` for local
+# source runs; this unit's HealthCmd probes 3002. Skipping this line costs a
+# silent 300-second hang with no container left to inspect — see Traps.
+sed -i 's/^  port: 3001$/  port: 3002/' "$CONF/hive.yaml"
+grep -A1 '^dashboard:' "$CONF/hive.yaml"        # -> dashboard: / port: 3002
+
+# then edit the rest of "$CONF/hive.yaml" for your project
 
 # The container reads keys as dev (1001) through the hive-launch group (1002),
 # so the directory needs the group traverse bit — 0700 would exclude the
@@ -130,6 +142,16 @@ chmod 750 "$CONF/secrets"
 podman unshare chown -R 0:1002 "$CONF/secrets"
 # rootful instead:  chgrp -R 1002 "$CONF/secrets"
 ```
+
+**`dashboard.port` has to agree with the port in `HealthCmd=`.** The unit probes
+`http://127.0.0.1:3002/api/health`. 3002 is where the Go default puts the API
+(`defaultDashboardPort` in `src/pkg/config/config.go`), where the `hive`
+service's healthcheck in `src/docker-compose.yaml` looks for it, and what
+`src/deploy/hive.yaml` sets. Deleting the `port:` line outright works too, since
+3002 is what the default gives you. What does not work is keeping the example's
+3001, and nothing in the install catches it: the config parses, the generator is
+happy, the container starts, and the failure arrives five minutes later. That is
+why the `sed` above is a step rather than a remark.
 
 **`$CONF/hive.env` must exist**, even if it is empty:
 
@@ -160,7 +182,8 @@ unauthenticated. Refusing to start. Set HIVE_DASHBOARD_TOKEN.
 With `Notify=healthy` that refusal surfaces the way it should: the unit stays
 in `activating` and then fails on timeout, rather than reporting a started
 service that is not serving. If a start hangs, this is the first thing to check
-— `journalctl --user -u hive.service` shows the line above.
+— `journalctl --user -u hive.service` shows the line above. The second thing to
+check is `dashboard.port`; see [Traps](#traps-measured-not-guessed).
 
 ### 2. The units
 
@@ -215,6 +238,20 @@ survive a reboot. Verify with `loginctl show-user "$USER" -p Linger`.
 
 ## Traps, measured not guessed
 
+**`dashboard.port` must be 3002, the port `HealthCmd=` probes.**
+`src/hive.yaml.example` sets it to 3001 for source runs, and that is the file an
+operator reaches for — `src/docs/network-requirements.md` describes it as the
+one "for local/source runs", which is what a standalone Podman install reads as.
+Install it unchanged and Hive comes up serving on 3001, so
+`curl -sf http://127.0.0.1:3002/api/health` never answers and `Notify=healthy`
+does exactly what it should: the unit stays in `activating` until
+`TimeoutStartSec=300` expires. The generated `ExecStart` carries `--rm`, so the
+container that would have shown you a perfectly healthy API on the wrong port is
+deleted on the way out. What is left is `Job for hive.service failed because a
+timeout was exceeded`, an empty `podman ps -a`, and a five-minute feedback loop
+per attempt. Measured on Fedora 44, Podman 5.8.4 rootless, SELinux enforcing
+(#4367).
+
 **`EnvironmentFile=` does not take systemd's `-` prefix.** Writing
 `EnvironmentFile=-%E/hive/hive.env` generates cleanly and then resolves to
 `<unit directory>/-%E/hive/hive.env`, a path that will never exist: the `-`
@@ -251,6 +288,15 @@ Dry-run generation is gated in CI: `.github/workflows/quadlet-gate.yml` runs
 `--user` modes, and fails on any generator diagnostic rather than on exit
 status alone. These units are picked up by it automatically.
 
+The generator gate cannot see the config coupling, because a mismatched
+`dashboard.port` generates perfectly — so that has its own gate.
+`src/deploy/test_quadlet_config_contract.sh` runs in `v2-ci.yml` and asserts the
+port in `HealthCmd=` against the Go default, `src/deploy/hive.yaml`, and the
+Compose healthcheck, that the unit still names `dashboard.port` where a reader
+will meet it, and that every file this page tells you to copy is one the repo
+actually tracks. Change any one of those and the PR fails instead of the
+operator's start (#4367).
+
 A **live rootless start was performed** on Fedora 44, Podman 5.8.4, cgroup v2,
 SELinux enforcing, against the real `ghcr.io/kubestellar/hive:stable` image:
 
@@ -269,6 +315,15 @@ half. On a first attempt with no `HIVE_DASHBOARD_TOKEN`, Hive refused to start,
 `ActiveState=activating` / `SubState=start` and never reported started. That is
 the behaviour ADR-0017 chose Quadlet for: a service that is not serving does
 not get to look started.
+
+#4367 confirmed it negatively a second time, from the other direction and on the
+same host. With `src/hive.yaml.example` installed as `$CONF/hive.yaml` — API on
+3001, probe on 3002, nothing else changed — the start failed after **300s** with
+`Result=timeout` and `podman ps -a` empty. With `dashboard.port: 3002` it
+returned **0 in 11s**, `ActiveState=active`, and `podman ps` showed
+`Up 11 seconds (healthy)`. (11s rather than the 52s above because the image was
+already pulled.) The unit was not changed between the two runs; only the port
+in the config was.
 
 Recorded honestly rather than left implied:
 

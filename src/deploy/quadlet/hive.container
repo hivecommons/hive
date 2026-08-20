@@ -90,6 +90,15 @@ EnvironmentFile=%E/hive/hive.env
 # READINESS. HealthCmd is required for Notify=healthy to mean anything; see the
 # header. /api/health is the same endpoint the Kubernetes readiness probe and
 # the Compose healthcheck use, so "healthy" means the same thing on all three.
+#
+# THE PORT BELOW IS COUPLED TO `dashboard.port` IN THE MOUNTED hive.yaml, and
+# nothing enforces the coupling. 3002 is the Go default (defaultDashboardPort in
+# pkg/config/config.go), what src/deploy/hive.yaml sets, and what the Compose
+# healthcheck probes — but src/hive.yaml.example ships 3001 for source runs.
+# Install that file unchanged and Hive serves on 3001, this probe never answers,
+# and Notify=healthy correctly holds the unit in `activating` for the whole
+# TimeoutStartSec below before --rm deletes the evidence. Change one, change the
+# other (#4367).
 Notify=healthy
 HealthCmd=curl -sf http://127.0.0.1:3002/api/health
 HealthInterval=10s

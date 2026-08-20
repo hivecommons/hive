@@ -94,6 +94,20 @@ jobs:
       - name: Standalone service deployment contract (#4204)
         run: bash deploy/test_standalone_service_contract.sh
 
+      # #4367: the Quadlet unit's HealthCmd= probes a port that lives in the
+      # OPERATOR's hive.yaml, and nothing at install time notices when the two
+      # disagree — the config parses, the generator exits 0, the container
+      # starts and is genuinely healthy on the other port, and Notify=healthy
+      # correctly holds the unit in `activating` until TimeoutStartSec=300
+      # expires and --rm deletes the evidence. Five minutes and no artifact for
+      # one wrong digit. Same shape as the guards above: invisible when it
+      # breaks, and no dry-run can catch it. Also asserts the install steps name
+      # files the repo actually TRACKS, which is the bug itself: the doc said
+      # `cp src/hive.yaml`, a gitignored path that exists only in a checkout
+      # where someone already followed the README.
+      - name: Quadlet config-coupling contract (#4367)
+        run: bash deploy/test_quadlet_config_contract.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
