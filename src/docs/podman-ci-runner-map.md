@@ -91,6 +91,15 @@ needs one.
 
 ### 1. Rootless, hosted — the primary lane
 
+> **Built (#4334):** `.github/workflows/podman-rootless-lane.yml` runs the
+> three-case matrix per PR on `ubuntu-latest`. It asserts the discovered Podman
+> version floor, rootless mode, and cgroup version before probing, reports the
+> exact version against the one recorded below, and does not swallow the
+> probe's exit status. What it does *not* do is build the PR's own image — it
+> probes a published one, so an unpublished change to `src/deploy/entrypoint.sh`
+> is not yet covered.
+
+
 Everything in the rootless matrix runs here: default startup and exit 77,
 `--cap-add NET_ADMIN` with the redirect installed, deliberate advisory mode,
 bypass resistance, the preflight checks, and Compose-provider selection.
@@ -209,9 +218,10 @@ Applies to every lane above.
 Deliberately not opened here; a maintainer can file them as-is. Each is
 `Part of #4188` and none should close it.
 
-1. **CI: rootless Podman lane on hosted amd64.** Wrap the #4199 probe script
-   in a workflow on `ubuntu-latest`. Assert the discovered Podman version and root mode. AC: the
-   three-case matrix runs per PR; a gate that fails to install fails the job.
+1. ~~**CI: rootless Podman lane on hosted amd64.**~~ **Done (#4334)** —
+   `.github/workflows/podman-rootless-lane.yml`. Wrapped the #4199 probe script
+   in a workflow on `ubuntu-latest`, asserting the discovered Podman version and
+   root mode.
 2. **CI: rootful Podman lane on hosted amd64.** `sudo podman`, the #4200
    baseline. AC: no secrets, no `pull_request_target`, rootful mode asserted.
 3. **CI: `arm64` build/pull and startup lane.** `ubuntu-24.04-arm`, scoped to
