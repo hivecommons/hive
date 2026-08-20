@@ -107,6 +107,15 @@ test.
 
 ### 2. Rootful, hosted
 
+> **Built (#4335):** `.github/workflows/podman-rootful-lane.yml` runs the #4200
+> probe per PR on `ubuntu-latest` under `sudo -n`. It asserts passwordless
+> sudo, the Podman version floor, and `rootless=false` before probing — so the
+> job cannot pass by quietly running rootless — and it does not swallow the
+> probe's exit status. It passes no `--store`, leaving the probe's throwaway
+> graphroot/runroot in place, and a post-run step checks that the runner's own
+> rootful store came back unchanged. Like lane 1 it probes a published image,
+> not the PR's own.
+
 `sudo -n` works and `sudo podman run` works. The rootful egress-gate baseline
 (#4200) belongs here.
 
