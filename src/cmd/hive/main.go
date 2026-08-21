@@ -3254,8 +3254,87 @@ func main() {
 			// spoke new enough to compute it, so the hub can distinguish
 			// "genuinely zero agents configured" from "old spoke, unknown".
 			agentsWithModel := agentMgr.CountAgentsWithModel()
+
+			// --- Quadrant signals ------------------------------------------
+			// All read from state this spoke already maintains on an existing
+			// timer: ZERO new GitHub API calls, which matters because the whole
+			// fleet shares one search quota. Every one stays nil unless its
+			// source has actually produced a measurement — the hub's scorer
+			// reads nil as absent evidence and a zero as a genuine low score,
+			// so emitting a zero for missing data would silently misinform
+			// operators rather than merely lose precision.
+
+			// Budget spend is uninterpretable without its window bounds (zero
+			// equally means "window just rolled" and "nothing consumed"), so
+			// the three travel together or not at all.
+			var budgetSpend *int64
+			var budgetWindowStartsAt, budgetWindowEndsAt string
+			if start, end, ok := gov.BudgetWindow(); ok {
+				spend := gov.GetBudget().CurrentSpend
+				budgetSpend = &spend
+				budgetWindowStartsAt = start.UTC().Format(time.RFC3339)
+				budgetWindowEndsAt = end.UTC().Format(time.RFC3339)
+			}
+			// BudgetExhausted and SLAViolations are both plain (non-pointer)
+			// governor state, so their zero values are indistinguishable from
+			// "never evaluated" at the source. LastEval is the only thing that
+			// tells the two apart: before the first eval — or before a restart
+			// restores one — false/0 are struct defaults, not readings. Gate
+			// both on it so a spoke still booting reports nil rather than
+			// asserting a healthy budget and a clean SLA it has not checked.
+			var budgetExhausted *bool
+			var slaViolations *int
+			if !govState.LastEval.IsZero() {
+				exhausted := govState.BudgetExhausted
+				violations := govState.SLAViolations
+				budgetExhausted, slaViolations = &exhausted, &violations
+			}
+
+			// Hold comes from the cached actionable result rather than
+			// govState.QueueHold: both carry the same number, but the cache is
+			// a nilable pointer, so a spoke that has not yet completed (or
+			// restored) a scan reports nil instead of an int zero that is
+			// indistinguishable from "nothing is on hold".
+			var holdTotal *int
+			if act := lastActionable.Load(); act != nil {
+				total := act.Hold.Total
+				holdTotal = &total
+			}
+
+			// Planning is unavailable below ACMM L5, where AwaitingReview is
+			// structurally zero rather than measured — report nil so the hub
+			// does not read "no plans are blocked on a human" into a hive that
+			// has no planning subsystem at all.
+			//
+			// architectPaused is passed false rather than resolved from agent
+			// statuses: it feeds only FrontendPlanning.ArchitectPaused, which
+			// this heartbeat does not send, and the resolver is unexported to
+			// pkg/dashboard. Passing false cannot perturb AwaitingReview.
+			var awaitingReview *int
+			if planning := dashboard.BuildPlanning(beadStores, false, acmmLvl); planning.Available {
+				n := planning.AwaitingReview
+				awaitingReview = &n
+			}
+
+			// Contributor-relay tasks over the trailing 7d, summed from the
+			// spoke's own 168 hourly buckets. nil until the store exists; a
+			// zero from an existing store is a real "no contributor finished
+			// anything" reading.
+			var tasksCompleted7d *int
+			if n, ok := dashSrv.TasksCompleted7d(); ok {
+				tasksCompleted7d = &n
+			}
+
 			return &hub.HeartbeatPayload{
-				AgentsWithModel: &agentsWithModel,
+				AgentsWithModel:      &agentsWithModel,
+				BudgetCurrentSpend:   budgetSpend,
+				BudgetWindowStartsAt: budgetWindowStartsAt,
+				BudgetWindowEndsAt:   budgetWindowEndsAt,
+				BudgetExhausted:      budgetExhausted,
+				HoldTotal:            holdTotal,
+				AwaitingReview:       awaitingReview,
+				SLAViolations:        slaViolations,
+				TasksCompleted7d:     tasksCompleted7d,
 				// Read-back for hub-funded gateways: the hub clears its pending
 				// record only when it sees the gateway named here, so a lost
 				// delivery is re-offered rather than dropped. Names only — the
