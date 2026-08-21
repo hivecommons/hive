@@ -24,18 +24,38 @@ on the same port.
 
 - Docker Engine 24+ with the Compose v2 plugin (`docker compose`, not the legacy `docker-compose`)
 - A Linux, macOS, or Windows (WSL2) host on `amd64` or `arm64` — the pre-built images are multi-arch
-- `git`, and a GitHub token (PAT or App) for the org you want the hive to work on
+- `git`, `openssl`, and a GitHub token (PAT or App) for the org you want the hive to work on
 
 ```bash
 git clone https://github.com/kubestellar/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
-echo "HIVE_GITHUB_TOKEN=ghp_..." > .env   # classic PAT: repo scope (see src/docs/github-app-setup.md#personal-access-token-pat-scopes)
+
+# src/.env, NOT ./.env. `-f src/docker-compose.yaml` makes `src/` the project
+# directory, and that is where Compose reads `.env` from — the same place the
+# compose file's own `./hive.yaml` and `./secrets` mounts resolve against. A
+# `.env` at the repo root is read by nothing, and since both paths are
+# gitignored, neither git nor Compose says so: the hive starts and then 401s on
+# every GitHub call, which reads like a bad token rather than an unread file.
+echo "HIVE_GITHUB_TOKEN=ghp_..." > src/.env   # classic PAT: repo scope (see src/docs/github-app-setup.md#personal-access-token-pat-scopes)
+
+# REQUIRED. The dashboard's auth proxy enforces this token and refuses to start
+# without one, so the gateway on :3001 would proxy to a port nothing is
+# listening on. See src/deploy/quadlet/hive.env.example, which is the contract
+# for both runtimes.
+printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
+
 docker compose -f src/docker-compose.yaml up -d
 ```
 
-Dashboard at `http://localhost:3001`.
+Dashboard at `http://localhost:3001`. Confirm it end to end rather than assuming
+the port answers — the gateway publishes 3001 whether or not the proxy behind it
+came up:
+
+```bash
+curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
+```
 
 The pre-built image tag is documented in [src/docs/operator-reference.md#image-provenance-and-tags](src/docs/operator-reference.md#image-provenance-and-tags). Standalone image references come from one source of truth, [`src/deploy/standalone-images.sh`](src/deploy/standalone-images.sh).
 

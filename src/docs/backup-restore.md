@@ -138,7 +138,7 @@ The `pkg/spokebackup` path works for a Compose spoke. It reads the data director
 - `GET /api/backup/status` reports whether a backup can run.
 - `POST /api/backup` builds and streams an encrypted archive.
 
-Both endpoints are owner-only. They require the `X-Hive-Role: owner` header. They require a 64-character hex AES-256 key from either source: set it from **Governor Config → Security → Backup** (stored on the `/data` volume, so it survives `docker compose up` cycles), or pass `HIVE_BACKUP_KEY` in the container environment. The shipped compose files do not pass `HIVE_BACKUP_KEY`; to use the env path, add it to `.env` and add `HIVE_BACKUP_KEY=${HIVE_BACKUP_KEY}` to the `environment` block of the `hive` service.
+Both endpoints are owner-only. They require the `X-Hive-Role: owner` header. They require a 64-character hex AES-256 key from either source: set it from **Governor Config → Security → Backup** (stored on the `/data` volume, so it survives `docker compose up` cycles), or pass `HIVE_BACKUP_KEY` in the container environment. The shipped compose files do not pass `HIVE_BACKUP_KEY`; to use the env path, add it to `src/.env` — the project directory `-f src/docker-compose.yaml` implies, and the only `.env` Compose reads (#4477) — and add `HIVE_BACKUP_KEY=${HIVE_BACKUP_KEY}` to the `environment` block of the `hive` service.
 
 Managing the key from the dashboard is also owner-only:
 
