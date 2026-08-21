@@ -22,6 +22,7 @@ whole result of this slice: those are two different signals.
 | Interaction with a #4378 digest pin? | The pin wins, **silently**: `UPDATED=false`, exit 0, unit untouched. |
 | Is it on by default? | **No**, per [#4188]. Opt-in only: `bin/hive-podman-update.sh autoupdate on`. |
 | `hive-data`? | Survived every direction, proven with a marker file. |
+| Both root modes? | **Yes, both executed.** Rootless first (#4411), then rootful under the system manager (#4447) — same trigger, same `is-failed` blind spot, same outcome. See [Rootful, under the system manager](#rootful-under-the-system-manager). |
 
 ## Why `is-failed` and podman's trigger are not the same thing
 
@@ -222,11 +223,90 @@ bin/hive-podman-update.sh autoupdate off
 bin/hive-podman-update.sh pin ghcr.io/kubestellar/hive@sha256:<last good>
 ```
 
-## Not executed here
+## Rootful, under the system manager
 
-- Rootful mode. The mechanism is the system manager rather than the user manager
-  and nothing in podman's rollback path is uid-dependent, but it was not run.
-  #4377 exercised the unit itself in both modes.
+Executed (#4447). The rootless run above left this as reasoning — "nothing in
+podman's rollback path is uid-dependent" — and rootful is the wrong half to leave
+unproven: it is the **enforcing** cell in
+[the support matrix](podman-support-matrix.md), the mode where the egress gate is
+fully installed.
+
+Same fixture and the same scaled timers as the rootless run, so the two are
+comparable: units installed to `/etc/containers/systemd/`, driven through
+`bin/hive-podman-update.sh ... --rootful`, which uses `sudo` against the system
+manager.
+
+**Arming it.** `autoupdate on --rootful` installed the drop-in, enabled the
+system timer, and — the part that matters, because it is what
+`podman auto-update` acts on — the recreated container really carries the label:
+
+```
+  PASS  installed /etc/containers/systemd/hive.container.d/20-autoupdate.conf
+  PASS  daemon-reload: the unit now carries AutoUpdate=registry
+  PASS  enabled podman-auto-update.timer
+  PASS  restart returned 0 after 6s, state active/running/success
+  PASS  container label: registry
+
+io.containers.autoupdate = 'registry'
+system timer             = enabled
+```
+
+**The bad update.** The same bad-but-startable image — one that runs and never
+becomes healthy, not one that fails to pull — published to the same tag:
+
+```
+UNIT          CONTAINER            IMAGE                              POLICY    UPDATED
+hive.service  0028344b7801 (hive)  127.0.0.1:5000/hivefixture:stable  registry  rolled back
+elapsed_s=37        (rootless was 36s, TimeoutStartSec=30)
+```
+
+```
+t+03s  active/running/success/0             is-failed=active
+t+06s  activating/start/success/0           is-failed=activating
+  …                                          (bad image running, never healthy)
+t+30s  activating/start/success/0           is-failed=activating
+t+33s  deactivating/stop-sigterm/timeout/0  is-failed=deactivating
+t+36s  activating/start/success/0           is-failed=activating
+t+39s  active/running/success/0             is-failed=active
+```
+
+**The rollback trigger is the same one**, which is the single thing most likely
+to differ between managers and the reason this row was worth executing rather
+than reasoning about. systemd's own record of the failed start, from the system
+journal:
+
+```
+hive.service: start operation timed out. Terminating.
+hive.service: Failed with result 'timeout'.
+Failed to start hive.service - Hive (4447 rootful auto-update fixture).
+```
+
+`Result=timeout`, visible in the sample at t+33s as well — and `ActiveState`
+never reaches `failed`. So podman rolled back on the start-job result under the
+system manager exactly as it did under the user manager.
+
+**The monitoring warning carries over, measured rather than assumed.**
+`systemctl is-failed` reported `active`, `activating` and `deactivating` and at
+no point `failed`, and `NRestarts` stayed `0` throughout. An alert keyed on
+`failed` does not fire on a rootful bad update either.
+
+**`hive-data` survived.** A marker written into the volume before the update was
+still there afterwards, with the container back on the good image:
+
+```
+container  : good
+hive-data  : rootful-marker-4447
+```
+
+**Reversal.** `autoupdate off --rootful` removed the drop-in and returned the
+system timer to `disabled / inactive`, which is what it was before the run:
+
+```
+  PASS  removed /etc/containers/systemd/hive.container.d/20-autoupdate.conf
+  PASS  disabled podman-auto-update.timer
+```
+
+## Not executed here
 - A genuinely broken published Hive image. The bad image is a stand-in, recorded
   plainly the way #4378 recorded its own — what is being measured is what the
   *unit* does when the new image never becomes healthy, which does not depend on
