@@ -4,6 +4,40 @@
 
 Hive can authenticate with either a personal access token or a GitHub App. Use a GitHub App for production hives because installation tokens are scoped to selected repositories and can author PRs as the app bot when `github.app_authored_prs` is enabled.
 
+## Personal access token (PAT) scopes
+
+The PAT path is `HIVE_GITHUB_TOKEN` (or `github.token` in `hive.yaml`); the App path is `github.app_id`/`github.key_file` as described below. If you set `app_id`/`key_file` this section does not apply — the App permission table further down does.
+
+Hive never validates token scopes at startup. A PAT with missing scopes fails **at request time** with generic GitHub 403 responses (fine-grained PATs typically say `Resource not accessible by personal access token`). The visible symptoms are agents reporting no actionable work, advisory digests not appearing on the tracking issue, empty fleet-stats widgets, or failed issue/PR writes in agent logs — none of which name the missing scope. If you see unexplained 403s, check the scopes below first.
+
+### Classic PATs
+
+Classic scopes are coarse, so one scope covers every ACMM tier:
+
+| ACMM tier | Minimum classic scopes | Why |
+| --- | --- | --- |
+| L1–L2 (advisory) | `repo` (private repos) or `public_repo` (public repos only) | Read issues/PRs/contents; post advisory digest comments to the pinned tracking issue (an issues **write**, even though the tier is otherwise read-only). |
+| L3–L4 (issue filing) | same | Create, label, comment on, and close issues. |
+| L5–L6 (PR/merge) | same, plus `workflow` if agent PRs may touch `.github/workflows/` | Push branches, open/update/merge PRs, read checks/statuses. GitHub rejects workflow-file pushes without `workflow`. |
+
+Add `read:org` when Hive should identify org members and contributor roles (recommended for org-owned hives).
+
+### Fine-grained PATs
+
+Fine-grained PATs are supported — the token is sent as a plain bearer, same as a classic PAT. Grant the token access to every repository the hive works on, with repository permissions mirroring the App table below:
+
+| Permission | L1–L2 (advisory) | L3–L4 (issues) | L5–L6 (PR/merge) |
+| --- | --- | --- | --- |
+| Metadata | Read | Read | Read |
+| Contents | Read | Read | Read and write |
+| Issues | Read and write | Read and write | Read and write |
+| Pull requests | Read | Read | Read and write |
+| Checks | Read | Read | Read |
+| Actions | Read | Read | Read |
+| Commit statuses | Read | Read | Read |
+
+Organization permission: **Members: Read** where contributor/owner identification is configured. Note that Issues read-and-write is needed even at advisory tiers because digests are posted as issue comments.
+
 ## Create the app
 
 In GitHub, open **Settings → Developer settings → GitHub Apps → New GitHub App** (or the equivalent organization settings page). On **GitHub Enterprise**, do this on your enterprise host (`https://<your-ghe-host>/settings/apps/new`), not github.com — the app, its install page (`https://<your-ghe-host>/github-apps/<app-slug>`), and the source control host Hive is configured for must all be the same host.

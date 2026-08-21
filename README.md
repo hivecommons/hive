@@ -17,7 +17,7 @@ git clone https://github.com/kubestellar/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
-echo "HIVE_GITHUB_TOKEN=ghp_..." > .env
+echo "HIVE_GITHUB_TOKEN=ghp_..." > .env   # classic PAT: repo scope (see src/docs/github-app-setup.md#personal-access-token-pat-scopes)
 docker compose -f src/docker-compose.yaml up -d
 ```
 

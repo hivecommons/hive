@@ -10,7 +10,7 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_MODE` | No | spoke/dashboard mode | Set to `hub` to run the hub server instead of the spoke dashboard. |
 | `HIVE_HUB_PORT` | No | `3001` | Hub listen port when `HIVE_MODE=hub`. |
 | `HIVE_SINGLETON_LOCK` | No | `/var/run/hive-metrics/hive.singleton.lock` when available, otherwise OS temp dir | Overrides the process singleton lock path. Set exactly `off` only for local development where duplicate processes are intentional. |
-| `HIVE_GITHUB_TOKEN` | Required unless GitHub App auth is configured | none | Main PAT fallback for `github.token`; also used by fleet/stat fallback paths and some deployment manifests. |
+| `HIVE_GITHUB_TOKEN` | Required unless GitHub App auth is configured | none | Main PAT fallback for `github.token`; also used by fleet/stat fallback paths and some deployment manifests. Missing PAT scopes surface as request-time 403s — see [Required PAT scopes](github-app-setup.md#personal-access-token-pat-scopes). |
 | `GH_APP_KEY_FILE` | No | configured `github.key_file`, then `/data/gh-app-key.pem` or `/secrets/gh-app-key.pem` in provisioned paths | GitHub App private-key file fallback. |
 | `DASHBOARD_AUTH_TOKEN` | No | none | Kubernetes/provisioned secret name for the dashboard shared token; used before `HIVE_DASHBOARD_TOKEN` when `dashboard.auth_token` is empty. |
 | `HIVE_DASHBOARD_TOKEN` | No | none | Dashboard/API shared-token fallback and default `hivectl --token-env` variable. See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](#generating-and-rotating-hive_dashboard_token). |
