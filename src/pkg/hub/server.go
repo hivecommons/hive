@@ -3065,9 +3065,14 @@ func isAvailableRegistryEntry(h RegistryEntry) bool {
 // repos are counted across hives (deduplicated by org/repo reference) so two
 // hives on the same repo don't double-count it.
 //
+// The PR and CVE counters are deduplicated the same way, for the same reason:
+// they are ORG-scoped, so several hives in one org each report that org's whole
+// output and summing them multiplies it. See fleetCountAccumulator.
+//
 // Caller must hold s.mu (read or write).
 func (s *HubServer) computeFleetStats() FleetStats {
 	var fs FleetStats
+	var counts fleetCountAccumulator
 	repoSet := make(map[string]struct{})
 	for _, h := range s.registry.Hives {
 		// An UNASSIGNED hive is a pre-provisioned placeholder nobody has claimed
@@ -3160,18 +3165,116 @@ func (s *HubServer) computeFleetStats() FleetStats {
 			continue
 		}
 		fs.Reporting++
-		if h.PRsMerged90d != nil {
-			fs.PRsMerged += *h.PRsMerged90d
-		}
-		if h.PRsRejected90d != nil {
-			fs.PRsRejected += *h.PRsRejected90d
-		}
-		if h.CVEsClosed != nil {
-			fs.CVEsClosed += *h.CVEsClosed
-		}
+		// Accumulate into the (org, ai-author) group rather than straight into
+		// the total. Only the group's MAX is summed at the end, so an org-wide
+		// counter reported by several hives lands in the public figure once.
+		//
+		// Reporting/Eligible/Stale above stay PER-HIVE on purpose: they measure
+		// collection coverage ("how much of the fleet answered"), which is a
+		// question about hives, not about work. Deduping them would understate
+		// how much of the fleet is healthy.
+		group := fleetCountGroup(h)
+		counts.add(group, h.PRsMerged90d, h.PRsRejected90d, h.CVEsClosed)
 	}
+	fs.PRsMerged, fs.PRsRejected, fs.CVEsClosed = counts.totals()
 	fs.ReposManaged = len(repoSet)
 	return fs
+}
+
+// fleetCountAccumulator sums org-scoped contribution counters while collapsing
+// hives that report the SAME underlying work down to a single contribution.
+//
+// Needed because FleetStatsCollector counts AI-author PRs across a whole ORG
+// (see NewFleetStatsCollector), so every hive in an org reports that org's
+// entire output as its own. Summing those with += multiplies one org's number
+// by its hive count — measured live, three hives each reported prsMerged90d
+// = 3746 and the public landing-page total carried 11238 for work done once.
+//
+// Grouping is by fleetCountGroup, the same (org, ai-author) key the quadrant's
+// population dedupe uses, so the two surfaces cannot drift into disagreeing
+// about which hives are duplicates of each other.
+type fleetCountAccumulator struct {
+	// merged/rejected/cves map a group key to the largest value seen for it.
+	// Absent key means no hive in that group has reported that counter, which
+	// is NOT the same as a reported zero — see add.
+	merged   map[string]int
+	rejected map[string]int
+	cves     map[string]int
+	// ungrouped holds the running sum for hives whose group is unknown. They
+	// cannot be shown to duplicate anyone, so each counts on its own.
+	ungroupedMerged   int
+	ungroupedRejected int
+	ungroupedCVEs     int
+}
+
+// add folds one reporting hive's counters in. Each counter is handled
+// independently because a hive may report some and not others.
+//
+// nil means "this hive never computed that counter" and is skipped entirely, so
+// dedupe can never turn an unreported counter into a participating zero — the
+// nil-vs-zero discipline the *int pointers exist to preserve. A group whose
+// members are all nil for a counter contributes nothing to it, exactly as
+// before dedupe.
+func (a *fleetCountAccumulator) add(group string, merged, rejected, cves *int) {
+	if group == "" {
+		if merged != nil {
+			a.ungroupedMerged += *merged
+		}
+		if rejected != nil {
+			a.ungroupedRejected += *rejected
+		}
+		if cves != nil {
+			a.ungroupedCVEs += *cves
+		}
+		return
+	}
+	// Keep the MAXIMUM, not the first or the mean. The counter is org-wide and
+	// identical by construction, so in the healthy case every choice agrees;
+	// they differ only when the group's collectors ran at different moments,
+	// and over a fixed trailing window the freshest collect is the largest.
+	// Taking the max therefore lets the most complete measurement stand instead
+	// of letting collection timing pick the answer.
+	//
+	// Staleness needs no separate group-level rule: the ageing check above runs
+	// PER HIVE before this point, so a stale member is already dropped and the
+	// group is represented by its surviving fresh members. A group whose
+	// members are ALL stale contributes no value at all and is counted in
+	// fs.Stale, which is the conservative reading — the group is excluded
+	// exactly when nothing fresh remains to speak for it.
+	a.merged = maxInto(a.merged, group, merged)
+	a.rejected = maxInto(a.rejected, group, rejected)
+	a.cves = maxInto(a.cves, group, cves)
+}
+
+// maxInto records v as group's representative if it beats what is already
+// stored, lazily allocating m. A nil v records nothing, so an unreported
+// counter never creates a zero-valued entry.
+func maxInto(m map[string]int, group string, v *int) map[string]int {
+	if v == nil {
+		return m
+	}
+	if m == nil {
+		m = make(map[string]int)
+	}
+	if cur, seen := m[group]; !seen || *v > cur {
+		m[group] = *v
+	}
+	return m
+}
+
+// totals sums each group's single representative alongside the ungrouped hives.
+func (a *fleetCountAccumulator) totals() (merged, rejected, cves int) {
+	return a.ungroupedMerged + sumValues(a.merged),
+		a.ungroupedRejected + sumValues(a.rejected),
+		a.ungroupedCVEs + sumValues(a.cves)
+}
+
+func sumValues(m map[string]int) int {
+	var total int
+	for _, v := range m {
+		total += v
+	}
+	return total
 }
 
 // FleetStatsTrustworthy reports whether ANY hive contributed a fresh count.
