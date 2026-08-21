@@ -276,13 +276,13 @@ type StatusPayload struct {
 	// guard counters when the instance changes instead of dropping forever.
 	StatusInstance string           `json:"statusInstance"`
 	HiveID         string           `json:"hiveId"`
-	Agents    []FrontendAgent  `json:"agents"`
-	Governor  FrontendGovernor `json:"governor"`
-	Tokens    FrontendTokens   `json:"tokens"`
-	Repos     []FrontendRepo   `json:"repos"`
-	Beads     FrontendBeads    `json:"beads"`
-	Planning  FrontendPlanning `json:"planning"`
-	Health    map[string]any   `json:"health"`
+	Agents         []FrontendAgent  `json:"agents"`
+	Governor       FrontendGovernor `json:"governor"`
+	Tokens         FrontendTokens   `json:"tokens"`
+	Repos          []FrontendRepo   `json:"repos"`
+	Beads          FrontendBeads    `json:"beads"`
+	Planning       FrontendPlanning `json:"planning"`
+	Health         map[string]any   `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -2097,7 +2097,15 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 			failCount++
 		}
 	} else if s.deps != nil && s.deps.GHClient != nil {
-		checks["github_auth"] = map[string]any{"status": "pass", "detail": "token-based"}
+		// Stays "pass": a too-narrow PAT authenticates fine, so the auth is not
+		// what is broken — a capability is. Reporting it as a fail would send
+		// an operator to re-issue working credentials. The detail carries the
+		// specific missing scope so the diagnosis is not left to a runtime 403.
+		detail := "token-based"
+		if s.deps.GHTokenScopes.Status == github.ScopeStatusMissing {
+			detail = "token-based — " + s.deps.GHTokenScopes.Detail
+		}
+		checks["github_auth"] = map[string]any{"status": "pass", "detail": detail}
 	} else {
 		checks["github_auth"] = map[string]any{"status": "fail", "detail": "no GitHub auth configured"}
 		overall = "degraded"
@@ -2822,7 +2830,12 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			checks = append(checks, check{Name: "github_auth", Status: "pass"})
 		}
 	} else if s.deps != nil && s.deps.GHClient != nil {
-		checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: "token"})
+		// See the /health counterpart above: pass with a scope-specific detail.
+		detail := "token"
+		if s.deps.GHTokenScopes.Status == github.ScopeStatusMissing {
+			detail = "token — " + s.deps.GHTokenScopes.Detail
+		}
+		checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: detail})
 	} else {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "no auth"})
 		fails++

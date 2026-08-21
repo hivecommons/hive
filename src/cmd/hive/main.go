@@ -595,6 +595,12 @@ type githubAuth struct {
 	// owner for a key WE failed to provision is precisely the mistake
 	// github.AppAuthState exists to prevent.
 	State github.AppAuthState
+	// TokenScopes is the boot-time PAT scope probe (see
+	// github.CheckTokenScopes). Zero value / ScopeStatusSkipped on the App
+	// path. It is advisory: a ScopeStatusMissing result never blocks startup,
+	// it only gives github_auth a specific detail string instead of leaving the
+	// operator to decode a runtime 403.
+	TokenScopes github.ScopeResult
 }
 
 // initGitHubAuth resolves this hive's GitHub credentials.
@@ -666,6 +672,21 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 	switch {
 	case ghToken != "":
 		out.Client = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
+		// PAT path only: introspect the token's granted scopes ONCE, here, so a
+		// too-narrow token is named at boot instead of surfacing hours later as
+		// a generic 403 inside an agent — or, worse, as an empty backlog that
+		// looks like "no work to do". Fail-soft and bounded (see
+		// CheckTokenScopes); it never blocks or fails startup. The App branch
+		// above returns before this point: Apps have permissions, not scopes.
+		// An unset acmm_level is passed through as github.ACMMLevelUnset rather
+		// than inferACMMLevel's L1 default: L1 requires no scopes at all, so
+		// defaulting to it would silently suppress every warning on exactly the
+		// hives whose intent we cannot read. See ACMMLevelUnset.
+		scopeLevel := github.ACMMLevelUnset
+		if cfg.ACMMLevel != nil {
+			scopeLevel = *cfg.ACMMLevel
+		}
+		out.TokenScopes = out.Client.LogTokenScopeCheck(ctx, logger, scopeLevel)
 	case out.Failure != "":
 		// Real App, unusable key. Already logged; leave Client nil so nothing
 		// tries to act on GitHub with credentials that do not work.
@@ -2270,6 +2291,7 @@ func main() {
 		Governor:         gov,
 		GHClient:         ghClient,
 		GHAppAuth:        appAuth,
+		GHTokenScopes:    ghAuth.TokenScopes,
 		Tokens:           tokenCollector,
 		Knowledge:        knowledgeAPI,
 		Inception:        inceptionEngine,

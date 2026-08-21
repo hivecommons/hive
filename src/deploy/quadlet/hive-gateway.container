@@ -110,7 +110,29 @@ HealthStartPeriod=30s
 # is smaller than hive.container's 300s because this unit only starts after
 # Hive is already healthy; nginx itself is up in under a second.
 TimeoutStartSec=120
-Restart=on-failure
+
+# Restart=always, matching Compose's `restart: unless-stopped` and the sibling
+# hive.container (#4415). They are the same statement: systemd never restarts a
+# unit that a `systemctl stop` job stopped, so a deliberate stop still stays
+# stopped, while an out-of-band removal is recovered after RestartSec.
+#
+# on-failure was strictly weaker HERE IN PARTICULAR, because this unit holds the
+# ONLY PUBLISHED PORT ON THE HOST. The pinned nginx image carries
+# `STOPSIGNAL SIGQUIT` — nginx's graceful shutdown — so an external
+# `podman stop hive-gateway` is a CLEAN, EXIT-0 shutdown. Measured on podman
+# 5.8.4 with this image and this [Service] block:
+#
+#   Restart=on-failure   inactive/dead/success, ExecMainStatus=0,
+#                        `systemctl is-failed` -> `inactive`, container never
+#                        returns. :3001 refuses connections and NOTHING is red.
+#   Restart=always       back up within RestartSec, unit stays active/running.
+#
+# NOTE the difference from hive.container, and do not copy its extra line here.
+# That unit needs `SuccessExitStatus=143 SIGTERM` because the Hive entrypoint
+# traps SIGTERM and exits 143, which is NOT in systemd's default success set.
+# nginx exits 0, which already is — so this unit needs the restart policy and
+# nothing else.
+Restart=always
 RestartSec=30
 
 [Install]

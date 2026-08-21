@@ -1,0 +1,94 @@
+name: Changelog Reminder
+
+# Why this exists
+#
+# CHANGELOG.md states its own rule — "maintainers should add notable user-facing
+# changes as PRs land" — and that rule quietly stopped being followed: the file
+# went eleven days and roughly a hundred and thirty merges without an entry, and
+# only a docs-sweep agent noticed. Backfilling it resets the clock but does not
+# stop the drift, so this reminds at the one moment somebody can act cheaply:
+# while the PR is still open.
+#
+# It is ADVISORY ON PURPOSE. Most PRs genuinely do not belong in a changelog
+# whose own guidance excludes routine refactors, test-only changes and
+# dependency churn, so a hard gate would fail honest work and train people to
+# ignore it — or worse, to add noise entries just to make it green. It comments
+# once and always succeeds; the judgement stays with the author.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  remind:
+    name: changelog reminder
+    # Drafts and bots are excluded: a draft is not ready for this question, and
+    # dependency bumps are exactly what the changelog guidance excludes.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'copilot-swe-agent[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether this PR touches CHANGELOG.md
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Paginate: a large PR can exceed one page, and a missed page would
+          # produce a false reminder on a PR that did update the changelog.
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          if printf '%s\n' "$files" | grep -qx 'CHANGELOG.md'; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Docs-only and CI-only changes are not user-facing in the sense the
+          # changelog means, so they are never worth a reminder.
+          if printf '%s\n' "$files" | grep -qvE '^(src/docs/|docs/|\.github/|README\.md$|CHANGELOG\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remind once
+        if: steps.check.outputs.touched == 'false' && steps.check.outputs.code == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          marker='<!-- changelog-reminder -->'
+          # Only ever comment once per PR. A reminder that reappears on every
+          # push is noise, and noise is how the previous convention died.
+          if gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[].body' \
+              | grep -qF "$marker"; then
+            echo "already reminded"
+            exit 0
+          fi
+          # Body built in a heredoc rather than inline: the text starts a line
+          # with '**', which YAML would read as an alias in a plain scalar.
+          body_file="$(mktemp)"
+          cat > "$body_file" <<EOF
+          $marker
+          **Changelog:** this PR changes code but does not touch \`CHANGELOG.md\`.
+
+          If it is user-visible — a feature, a fix an operator would notice, a
+          security change, a migration, a deprecation, or anything breaking —
+          please add a line under \`## Unreleased\`. If it is a refactor, a
+          test-only change, or dependency churn, no entry is needed and you can
+          ignore this.
+
+          This is a reminder, not a gate; it never blocks a merge.
+          EOF
+          # Strip the YAML block indentation the heredoc preserved.
+          sed -i 's/^          //' "$body_file"
+          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body_file"
