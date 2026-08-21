@@ -354,7 +354,40 @@ type SaaSUser struct {
 	//
 	// omitempty bool so every record that has not been through a deliberate
 	// pick — which today is all of them — round-trips byte-identical.
+	//
+	// STILL WRITTEN, not deprecated: CountrySource below is the finer-grained
+	// successor, but this boolean is what other readers and every record
+	// already on the PVC speak, so every user-chosen write keeps setting it.
 	CountrySetByUser bool `json:"country_set_by_user,omitempty"`
+
+	// CountrySource is the PROVENANCE of the country above — who put it there.
+	// One of countrySourceInferred / countrySourceAdmin / countrySourceUser, or
+	// "" for a record nothing has ever touched.
+	//
+	// A boolean stopped being enough the moment an ADMIN could assign a country
+	// on someone else's behalf, because that is a third kind of claim and it
+	// sits BETWEEN the two the boolean can express:
+	//
+	//   - It is not user-chosen. Stamping CountrySetByUser for an admin edit
+	//     would assert the user made a statement about themselves that they
+	//     never made, and — since that marker is also what suppresses ever
+	//     asking again — would permanently silence the question for them.
+	//   - But it must still outrank Accept-Language inference. An admin's
+	//     best-effort attribution is a human looking at evidence; the header is
+	//     a language preference. Letting the next login overwrite it would
+	//     re-introduce, in a new form, exactly the silent-clobber bug #4374 was
+	//     opened to fix.
+	//
+	// Precedence, strongest first: user > admin > inferred > unset. See
+	// countryProvenanceRank and mayOverwriteCountry in user_country.go, which
+	// are the single arbiters — no caller compares these strings by hand.
+	//
+	// BACKWARD COMPATIBILITY. Records written before this field exists carry
+	// only CountrySetByUser, so an ABSENT source is read through that boolean:
+	// CountrySetByUser=true with no source means user-chosen (see
+	// effectiveCountrySource). That is why this is omitempty and why nothing
+	// backfills it — an untouched record must still serialize byte-identically.
+	CountrySource string `json:"country_source,omitempty"`
 
 	// Engagement stats, admin-only (they ride /api/saas/admin/users, which is
 	// requireAdmin). Both omitempty ints so existing records round-trip
@@ -1514,6 +1547,18 @@ func (s *HubServer) handleImpersonationStatus(w http.ResponseWriter, r *http.Req
 // They are length-capped here — the last point before the value reaches the
 // PVC — and escaped on every dashboard render path.
 //
+// `country` rides this same body rather than a route of its own. It is the only
+// way the field can be set for the thousands of users who joined before it
+// existed: the wizard is a one-time gate already behind them, and the
+// self-service endpoint reaches only the acting user, so an admin looking at a
+// row with an empty Country column previously had no control at all. It carries
+// ADMIN provenance, never user provenance — see the block on the country branch
+// below, which is the load-bearing decision in this change.
+//
+// PRIVACY: the code rides the JSON BODY, never the path or a query string, for
+// the same reason the self-service endpoint does — a URL lands in access logs,
+// Referer headers and browser history.
+//
 // Registered behind requireAdmin; this handler does no auth of its own.
 func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
@@ -1530,11 +1575,21 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		FullName  *string `json:"full_name"`
 		SlackID   *string `json:"slack_id"`
 		Notes     *string `json:"notes"`
+		// Pointer like the rest, and for a sharper reason here: `""` is an
+		// explicit CLEAR ("remove this country"), while an absent key means the
+		// admin edited some other field and this one must not be touched. A
+		// plain string would collapse the two and let a quota edit silently
+		// wipe a country.
+		Country *string `json:"country"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// Whether the country branch below actually APPLIED, which is not the same
+	// as the key being present: a stronger user-chosen value declines the edit.
+	// Tracked so the audit line records what changed rather than what was asked.
+	countryEdited := false
 	if body.SaaSQuota != nil {
 		u.SaaSQuota = *body.SaaSQuota
 	}
@@ -1552,6 +1607,46 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	if body.Notes != nil {
 		u.Notes = truncateRunes(strings.TrimSpace(*body.Notes), maxContactNotesLen)
 	}
+	if body.Country != nil {
+		raw := strings.TrimSpace(*body.Country)
+		code := ""
+		if raw != "" {
+			// The SAME validator every other country path uses, so this
+			// endpoint cannot drift into accepting a shape the render sites
+			// reject. Not capped like the free-text fields above: a country is
+			// two letters or it is rejected outright, so there is nothing to
+			// truncate — a bad value must 400 rather than be silently reshaped
+			// into a different country.
+			code = normalizeCountryCode(raw)
+			if code == "" {
+				writeJSONError(w, http.StatusBadRequest, "country must be an ISO 3166-1 alpha-2 code (two letters), or \"\" to clear it")
+				return
+			}
+		}
+		// PROVENANCE — the whole point of this branch, and the easy thing to get
+		// wrong. An admin edit is countrySourceAdmin, NEVER countrySourceUser:
+		//
+		//   - It must not claim the user chose this. They did not; an admin
+		//     inferred it from a conference badge, an email domain, a
+		//     conversation. Marking it user-chosen would fabricate a statement
+		//     and would permanently suppress ever asking them for a real one.
+		//   - It must still outrank the login-path Accept-Language inference,
+		//     or the assignment is silently reverted the next time the user
+		//     signs in from a differently-configured browser — the #4374 bug in
+		//     a new form, and invisible in exactly the same way.
+		//
+		// mayOverwriteCountry is what keeps the admin from stepping on a value
+		// the USER stated about themselves. It is not an error to try: the edit
+		// is simply not applied to the country, the rest of the request still
+		// lands, and the response is still a 200 — the admin has changed
+		// nothing they were entitled to change. A 409 here would fail an
+		// otherwise-valid multi-field save over a field the admin may not even
+		// have meant to touch.
+		if mayOverwriteCountry(u, countrySourceAdmin) {
+			setUserCountry(u, code, countrySourceAdmin)
+			countryEdited = true
+		}
+	}
 	// A failed write is the one outcome the admin MUST hear about: the dashboard
 	// closes the editor on a 2xx, so reporting success here after the PVC write
 	// failed would silently discard the edit.
@@ -1562,8 +1657,19 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	}
 	// Do not log the note bodies — they are free text and may hold anything an
 	// admin jotted down. Log only that contact fields were touched.
-	s.logger.Info("audit: admin updated user", "target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
-		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil)
+	//
+	// The country VALUE is logged, unlike those bodies: it is a two-letter code
+	// from a closed shape, an admin assigning one on another person's behalf is
+	// exactly the attribution an audit trail exists to record, and "who decided
+	// this user is in GB" is unanswerable from a bare "countryEdited: true".
+	// Logged only when the write actually applied, so the line never claims a
+	// change that mayOverwriteCountry declined.
+	attrs := []any{"target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
+		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil}
+	if countryEdited {
+		attrs = append(attrs, "countryAssigned", u.Country, "countrySource", u.CountrySource)
+	}
+	s.logger.Info("audit: admin updated user", attrs...)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
@@ -7091,12 +7197,12 @@ func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
 	// record — but only when the request actually carries a choice. Re-normalize
 	// rather than trusting the stored request: it may predate the validation.
 	if code := normalizeCountryCode(pr.Country); code != "" {
-		user.Country = code
-		// The wizard pick is a deliberate statement, so stamp it as one — same
-		// marker the self-service endpoint sets. Without this, an approval
-		// would leave the record looking "inferred", and the priority rule
-		// would hold only by the accident of the value being non-empty.
-		user.CountrySetByUser = true
+		// The wizard pick is a deliberate statement BY THE USER, so it carries
+		// the same provenance the self-service endpoint stamps. Without this,
+		// an approval would leave the record looking "inferred", and the
+		// priority rule would hold only by the accident of the value being
+		// non-empty.
+		setUserCountry(user, code, countrySourceUser)
 	}
 }
 
@@ -17844,6 +17950,15 @@ const dashboardHTML = `<!DOCTYPE html>
     var CONTACT_W_NOTES_BASIS = '48%';
     var CONTACT_W_NOTES_MIN = '320px';
     var CONTACT_NOTES_GROW = 3;
+    /* Country is a two-letter code plus a live flag preview, so it is the
+       narrowest field in the panel and the only one with a fixed-ish basis: it
+       can never need more room than "GB  United Kingdom" takes to echo. */
+    var CONTACT_W_COUNTRY_BASIS = '12%';
+    var CONTACT_W_COUNTRY_MIN = '150px';
+    /* ISO 3166-1 alpha-2. Mirrors countryCodeLen in user_country.go — the
+       maxlength is a courtesy that stops a third letter being typed at all;
+       normalizeCountryCode on both sides is the actual control. */
+    var CONTACT_MAX_COUNTRY = 2;
 
     // Which users currently have their contact panel open, keyed by username.
     // Re-rendering on the admin poll must not slam a panel shut mid-edit.
@@ -17924,6 +18039,46 @@ const dashboardHTML = `<!DOCTYPE html>
     // id attribute or break querySelector.
     function contactPanelId(username) {
       return 'contact-panel-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    /* Same sanitizing rule as contactPanelId, for the country field's live
+       preview node. Separate id per user because every panel row is emitted for
+       every user up front (hidden until expanded), so a shared id would collide
+       across hundreds of rows and every lookup would find the first one. */
+    function contactCountryPreviewId(username) {
+      return 'contact-country-preview-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    /* countryPreviewHTML: what a typed code resolves to, as flag + English name.
+
+       Reuses countryFlagEmoji / countryDisplayName from the shared block above
+       rather than restating them, so the admin editor and the self-service
+       editor can never disagree about what a code means.
+
+       Three distinct states, deliberately worded so none of them reads as an
+       error the admin caused:
+         blank   -> "No flag" (a legitimate value: clearing the country)
+         partial -> "Two-letter code" (still typing; not a failure)
+         valid   -> the flag and the country's name
+
+       The code is escaped even though normalizeCountryCode has already reduced
+       it to [A-Z]{2}, and the name is escaped because Intl.DisplayNames returns
+       a localized string this render path does not own. */
+    function countryPreviewHTML(raw) {
+      var typed = String(raw == null ? '' : raw).trim();
+      if (!typed) return 'No flag';
+      var c = normalizeCountryCode(typed);
+      if (!c) return 'Two-letter code';
+      return countryFlagEmoji(c) + ' ' + esc(countryDisplayName(c));
+    }
+
+    /* refreshContactCountryPreview re-renders one user's preview from whatever
+       is currently in their input. Called on every keystroke, so it reads the
+       DOM rather than _allUsers — the point is to reflect the UNSAVED text. */
+    function refreshContactCountryPreview(username, value) {
+      var el = document.getElementById(contactCountryPreviewId(username));
+      if (!el) return;
+      el.innerHTML = countryPreviewHTML(value);
     }
 
     /* providerBadge renders the user's login method (auth provider) as a small
@@ -18093,6 +18248,33 @@ const dashboardHTML = `<!DOCTYPE html>
             '<label style="' + lbl + '">Slack ID</label>' +
             '<input type="text" data-contact-user="' + user + '" data-contact-field="slack_id"' +
               ' maxlength="' + CONTACT_MAX_SLACK + '" value="' + escAttr(u.slack_id || '') + '" style="' + fld + '">' +
+          '</div>' +
+          /* Country. An ADMIN ASSIGNMENT, not a statement by the user — the
+             hub records it as such (CountrySource "admin"), which is why the
+             hint says "on their behalf" rather than presenting it as their
+             choice. It is the only route to a country for every user who
+             joined before the field existed: the wizard is behind them and the
+             self-service editor reaches only the person themselves.
+
+             A free-text code rather than a 250-row <select>: the country list
+             lives in get-started.html and duplicating it into this raw string
+             would give the hub two lists to keep in step. The live preview
+             below turns the code into a flag and an English name as it is
+             typed, which is what makes two letters legible without a list. */
+          '<div style="flex:1 1 ' + CONTACT_W_COUNTRY_BASIS + ';min-width:' + CONTACT_W_COUNTRY_MIN + '">' +
+            '<label style="' + lbl + '">Country</label>' +
+            '<input type="text" data-contact-user="' + user + '" data-contact-field="country"' +
+              ' maxlength="' + CONTACT_MAX_COUNTRY + '" placeholder="GB"' +
+              ' aria-describedby="' + contactCountryPreviewId(u.github_username) + '"' +
+              ' value="' + escAttr(normalizeCountryCode(u.country) || '') + '"' +
+              ' style="' + fld + ';text-transform:uppercase">' +
+            /* Echoes what the typed code resolves to, so a typo is visible
+               BEFORE the blur-save rather than as a surprise flag in the row
+               afterwards. Rendered from the stored value on open so the panel
+               agrees with the table's Country column. */
+            '<div id="' + contactCountryPreviewId(u.github_username) + '"' +
+              ' style="margin-top:4px;font-size:0.66rem;color:var(--muted);min-height:1.1em">' +
+              countryPreviewHTML(u.country) + '</div>' +
           '</div>' +
           '<div style="flex:' + CONTACT_NOTES_GROW + ' 1 ' + CONTACT_W_NOTES_BASIS + ';min-width:' + CONTACT_W_NOTES_MIN + '">' +
             '<label style="' + lbl + '">Notes</label>' +
@@ -18273,6 +18455,10 @@ const dashboardHTML = `<!DOCTYPE html>
         el.addEventListener('input', function() {
           markContactEditing();
           _contactDirty[key] = el.value;
+          /* Country is the one field whose stored form (two letters) does not
+             say what it means, so it echoes as you type. The other fields are
+             their own preview. */
+          if (field === 'country') refreshContactCountryPreview(user, el.value);
         });
         // focus/blur also count as activity: tabbing between fields must not
         // leave a gap the poll can render into.
@@ -18351,6 +18537,17 @@ const dashboardHTML = `<!DOCTYPE html>
       var current = _allUsers ? (_allUsers.find(function(x) { return x.github_username === username; }) || {}) : {};
       var previous = (_contactLastSaved[key] !== undefined) ? _contactLastSaved[key] : (current[field] || '');
       var next = (value || '').trim();
+      /* Country is stored upper-cased by the server, so normalize it to the
+         SAME form here before the equality check. Without this, re-opening the
+         panel and typing "gb" over a stored "GB" would read as a change and fire
+         a pointless PUT, and the optimistic cache below would hold a value the
+         server never wrote. A half-typed or invalid code is left alone rather
+         than blanked, so the field still holds what was typed while the server
+         does the actual rejecting. */
+      if (field === 'country') {
+        var norm = normalizeCountryCode(next);
+        if (norm) next = norm;
+      }
       if (next === previous) return Promise.resolve(true);
       _contactLastSaved[key] = next;
       // Keep the in-memory copy in step so the next poll's signature check does

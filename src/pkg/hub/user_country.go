@@ -24,9 +24,17 @@ import (
 //     that has NO country and whose user has made no deliberate choice; it
 //     never overwrites, and never undoes, an explicit one.
 //
+//  4. ADMIN-ASSIGNED — a hub admin sets it for another user from the admin
+//     Users table (handleAdminUpdateUser). This is the only route for the
+//     thousands of users who signed up before the field existed and who will
+//     never open the wizard again; without it their country is unreachable by
+//     anyone but themselves.
+//
 // Sources 1 and 2 both stamp SaaSUser.CountrySetByUser, which is what tells
 // source 3 that an EMPTY country is a decision ("prefer not to say") rather
 // than an absence to be helpfully filled in.
+//
+// Source 4 does NOT stamp it — see the provenance block below.
 //
 // PRIVACY. Country is personal data, so the inference is deliberately the
 // weakest thing that works:
@@ -50,6 +58,125 @@ import (
 // The stored form is the two-letter code; the flag glyph is derived at render
 // time from regional-indicator code points, so the hub never depends on an
 // external image host for a flag.
+
+// ── Provenance ───────────────────────────────────────────────────────────────
+//
+// WHO put the country on the record, which is what decides whether the next
+// writer is allowed to replace it. Stored in SaaSUser.CountrySource.
+//
+// The boolean CountrySetByUser could express only "the user chose this" vs
+// "nobody did", and that was sufficient while the only two writers were the
+// user and the inference. An ADMIN assignment is a third kind of claim that
+// sits between them — a best-effort attribution BY SOMEONE ELSE — and it has to
+// be recorded as such, because the two things we need from it pull in opposite
+// directions on a boolean:
+//
+//   - It must not read as user-chosen. CountrySetByUser is a statement about
+//     what the USER said; setting it for an admin edit fabricates consent, and
+//     it also permanently suppresses the "we don't know, ask them" state, so
+//     the user would never again be prompted for a value they never gave.
+//   - It must still beat inference, or the admin's work is silently undone at
+//     the user's next login from a differently-configured browser. That is the
+//     #4374 bug in a new costume: invisible, and discovered a login later.
+//
+// Hence a small ordered enum. The values are stable strings on disk, so they
+// are named constants and never spelled inline.
+const (
+	// countrySourceInferred — the login path's Accept-Language guess. Weakest:
+	// evidence about a browser's language, not about a person.
+	countrySourceInferred = "inferred"
+	// countrySourceAdmin — a hub admin assigned it on the user's behalf.
+	countrySourceAdmin = "admin"
+	// countrySourceUser — the user said so themselves (self-service endpoint or
+	// the get-started wizard pick). Authoritative; nothing overrides it but
+	// another statement from the same user.
+	countrySourceUser = "user"
+)
+
+// countryProvenanceRank maps a source to its strength. Higher wins.
+//
+// Ranks rather than a chain of if-statements at each call site, so "user beats
+// admin beats inference" is asserted in exactly one place and a future source
+// slots in by picking a number instead of by auditing every comparison.
+func countryProvenanceRank(source string) int {
+	switch source {
+	case countrySourceUser:
+		return 3
+	case countrySourceAdmin:
+		return 2
+	case countrySourceInferred:
+		return 1
+	default:
+		// Unset — nothing has ever claimed this record. Weakest of all, so any
+		// writer may fill it.
+		return 0
+	}
+}
+
+// effectiveCountrySource is the provenance of a record as it should be READ,
+// bridging the pre-CountrySource era.
+//
+// LOAD-BEARING FOR BACKWARD COMPATIBILITY. Every record written before this
+// field existed carries only CountrySetByUser, and nothing backfills them — a
+// migration sweep would rewrite thousands of files on the PVC to encode
+// something derivable for free, and would break the round-trip-byte-identical
+// property the whole SaaSUser struct is built around. So the boolean is read as
+// the legacy spelling of countrySourceUser, which is precisely what it always
+// meant: the user chose this (a pick, or a deliberate clear).
+//
+// A record with a country and neither marker is a login-path inference from
+// before the source field shipped, so it reads as inferred and stays
+// overwritable — which matches how applyInferredCountry has always treated it.
+// Nil-safe: callers sit on the login path.
+func effectiveCountrySource(user *SaaSUser) string {
+	if user == nil {
+		return ""
+	}
+	if user.CountrySource != "" {
+		return user.CountrySource
+	}
+	if user.CountrySetByUser {
+		return countrySourceUser
+	}
+	if user.Country != "" {
+		return countrySourceInferred
+	}
+	return ""
+}
+
+// mayOverwriteCountry reports whether a writer claiming `source` is allowed to
+// replace what is already on the record.
+//
+// Ties are allowed: a user may always correct their own earlier pick, and an
+// admin may always correct an earlier admin assignment. Only a STRICTLY
+// stronger existing claim blocks the write — which is the whole precedence rule
+// (user > admin > inferred > unset) in one line.
+func mayOverwriteCountry(user *SaaSUser, source string) bool {
+	return countryProvenanceRank(source) >= countryProvenanceRank(effectiveCountrySource(user))
+}
+
+// setUserCountry is the ONE place a country and its provenance are written
+// together, so the two can never drift apart — a country stored without its
+// source, or a source stamped without the matching CountrySetByUser, is exactly
+// the state the precedence rules cannot reason about.
+//
+// It also keeps the legacy boolean honest: CountrySetByUser tracks
+// "source == user" in BOTH directions. Setting it for a user write keeps every
+// existing reader of that field correct; CLEARING it when an admin overwrites a
+// user's value is equally load-bearing, since leaving it true would leave a
+// record claiming the user chose a value an admin typed.
+//
+// `code` is stored as given and must already be normalized by the caller (each
+// one validates and reports its own 400), so this cannot become a second,
+// divergent validator.
+func setUserCountry(user *SaaSUser, code, source string) {
+	if user == nil {
+		return
+	}
+	user.Country = code
+	user.CountrySource = source
+	user.CountrySetByUser = source == countrySourceUser
+}
 
 // countryCodeLen is the length of an ISO 3166-1 alpha-2 code. Named because it
 // is load-bearing in three places (validation, the emoji derivation, and the
@@ -177,24 +304,32 @@ func inferCountryFromRequest(r *http.Request) string {
 // it — otherwise a user's stated country would silently flip when they travel
 // or borrow a laptop, which is both wrong and invisible.
 //
-// The CountrySetByUser half of the guard covers the case `Country != ""` alone
+// The provenance half of the guard covers the case `Country != ""` alone
 // cannot: an explicit CLEAR. A user who deliberately removes their country
 // leaves an empty field that is indistinguishable, by value, from "never asked"
-// — so without the marker the next login would quietly put a flag back and
+// — so without a marker the next login would quietly put a flag back and
 // "prefer not to say" would be unexpressible. Absence of a value is not the
 // same as absence of a decision.
+//
+// The guard is expressed through mayOverwriteCountry rather than by reading
+// CountrySetByUser directly, which is what extends it to the ADMIN case: an
+// admin-assigned country is empty-or-not just like a user's, and must survive
+// this pass for the same reason. It STACKS with the `Country != ""` test rather
+// than replacing it: a record that already carries a value is left alone
+// whatever its provenance, so an earlier inference is never re-guessed on a
+// later login from a differently-configured browser.
 //
 // Returns whether it changed the record, so the caller can tell a real update
 // from a no-op. Nil-safe: it sits on the login path beside other enrichment.
 func applyInferredCountry(user *SaaSUser, r *http.Request) bool {
-	if user == nil || user.Country != "" || user.CountrySetByUser {
+	if user == nil || user.Country != "" || !mayOverwriteCountry(user, countrySourceInferred) {
 		return false
 	}
 	code := inferCountryFromRequest(r)
 	if code == "" {
 		return false
 	}
-	user.Country = code
+	setUserCountry(user, code, countrySourceInferred)
 	return true
 }
 
@@ -298,11 +433,17 @@ func (s *HubServer) handleMyCountry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	user.Country = code
-	// Both a pick and a clear are deliberate, so BOTH set the marker. Setting
-	// it on the clear is the load-bearing half: it is what stops the next
-	// login's Accept-Language inference from undoing the removal.
-	user.CountrySetByUser = true
+	// Both a pick and a clear are deliberate, so BOTH stamp countrySourceUser
+	// (and, through setUserCountry, the legacy CountrySetByUser). Stamping it on
+	// the clear is the load-bearing half: it is what stops the next login's
+	// Accept-Language inference from undoing the removal.
+	//
+	// The user's own statement is the strongest source there is, so this write
+	// is unconditional — it overrides an admin's assignment as well as an
+	// inference. An admin attributing a country on someone's behalf is a
+	// best-effort guess about that person; the person themselves is not
+	// guessing, and must always be able to correct the record about themselves.
+	setUserCountry(user, code, countrySourceUser)
 	if err := saveSaaSUser(user); err != nil {
 		s.logger.Warn("handleMyCountry: save failed", "user", username, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "could not save country")
