@@ -401,6 +401,11 @@ type InferenceBackend struct {
 	Name      string   `json:"name"`
 	Inference bool     `json:"inference"`
 	Models    []string `json:"models"`
+	// ModelsFallback is true when Models is the static alias list because
+	// live /v1/models discovery failed (endpoint down, 403, etc). The UI
+	// must not treat a fallback list as evidence that models were actually
+	// added or removed (#toast storm on litellm 403).
+	ModelsFallback bool `json:"models_fallback,omitempty"`
 }
 
 type FrontendAgent struct {
@@ -793,17 +798,18 @@ func (s *Server) buildInferenceBackends() []InferenceBackend {
 		{"vllm", "vLLM (self-hosted)"},
 		{"llm-d", "llm-d (self-hosted)"},
 	} {
-		models := s.queryInferenceModels(b.id)
+		models, fallback := s.queryInferenceModelsDetailed(b.id)
 		backends = append(backends, InferenceBackend{
-			ID: b.id, Name: b.name, Inference: true, Models: models,
+			ID: b.id, Name: b.name, Inference: true, Models: models, ModelsFallback: fallback,
 		})
 	}
 	// litellm has no in-cluster default — include it only when an endpoint
 	// is registered, so an unconfigured backend isn't SSE-pushed empty.
 	if endpoints, ok := s.getInferenceEndpoints("litellm"); ok && len(endpoints) > 0 {
+		models, fallback := s.queryInferenceModelsDetailed("litellm")
 		backends = append(backends, InferenceBackend{
 			ID: "litellm", Name: "LiteLLM (proxy)", Inference: true,
-			Models: s.queryInferenceModels("litellm"),
+			Models: models, ModelsFallback: fallback,
 		})
 	}
 	return backends

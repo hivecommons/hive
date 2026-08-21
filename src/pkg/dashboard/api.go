@@ -6768,10 +6768,19 @@ var inferenceStaticModelAliases = []string{
 }
 
 func (s *Server) queryInferenceModels(backend string) []string {
+	models, _ := s.queryInferenceModelsDetailed(backend)
+	return models
+}
+
+// queryInferenceModelsDetailed additionally reports whether the returned
+// list is the static FALLBACK (discovery failed and no env override) rather
+// than a live-discovered or operator-configured set. Callers surfacing
+// model add/remove events must ignore diffs against a fallback list.
+func (s *Server) queryInferenceModelsDetailed(backend string) ([]string, bool) {
 	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
 		models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
 		if len(models) > 0 {
-			return models
+			return models, false
 		}
 	}
 	envVar := "HIVE_VLLM_MODELS"
@@ -6782,11 +6791,11 @@ func (s *Server) queryInferenceModels(backend string) []string {
 		envVar = "HIVE_LITELLM_MODELS"
 	}
 	if val := os.Getenv(envVar); val != "" {
-		return inferenceModelsFromEnv(envVar, "")
+		return inferenceModelsFromEnv(envVar, ""), false
 	}
 	// Discovery failed or the backend is unconfigured — fall back to the
 	// common static aliases (unverified against any endpoint/key).
-	return inferenceStaticModelAliases
+	return inferenceStaticModelAliases, true
 }
 
 const inferenceModelQueryTimeout = 5 * time.Second

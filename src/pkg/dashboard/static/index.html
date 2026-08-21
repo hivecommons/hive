@@ -7713,6 +7713,20 @@
     function updateInferenceModelsFromSSE(inferenceBackends) {
       if (!inferenceBackends) return;
       for (const b of inferenceBackends) {
+        /* A fallback list means /v1/models discovery FAILED (endpoint down,
+           gateway 403, ...) and the server substituted static aliases. That
+           is not evidence any model was added or removed — diffing against
+           it once flooded the dashboard with ~25 sticky "Model removed"
+           toasts when a litellm key lost /v1/models access. Keep the last
+           REAL list as the diff baseline so recovery diffs stay accurate,
+           and skip the toast machinery entirely. */
+        if (b.models_fallback) {
+          const fallbackModels = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
+          INFERENCE_MODELS[b.id] = fallbackModels;
+          _inferenceModelCache[b.id] = { models: fallbackModels, ts: Date.now() };
+          if (b.id === 'litellm') refreshLitellmDefaultModelField();
+          continue;
+        }
         const currentIds = (b.models || []).sort();
         const prevIds = (_lastKnownModels[b.id] || []).sort();
 
@@ -7728,10 +7742,16 @@
           });
 
           removed.forEach(m => {
-            showToast(`Model removed from ${b.id}: ${m.split('/').pop()}`, 'error');
+            /* Dedupe like additions, and auto-dismiss after 20s: a removed
+               model is worth a glance, not a permanent sticky requiring a
+               click per model — bulk removals otherwise wallpaper the UI. */
+            const key = `removed:${b.id}:${m}`;
+            if (_dismissedModelBanners.has(key)) return;
+            _dismissedModelBanners.add(key);
+            showToast(`Model removed from ${b.id}: ${m.split('/').pop()}`, 'error', false, TOAST_MODEL_CHANGE_MS);
             if (window._lastAgents) {
               (window._lastAgents || []).filter(a => a.cli === b.id && a.model === m).forEach(a => {
-                showToast(`⚠ ${a.displayName || a.name} uses removed model ${m.split('/').pop()} — update its model selection`, 'error');
+                showToast(`⚠ ${a.displayName || a.name} uses removed model ${m.split('/').pop()} — update its model selection`, 'error', false, TOAST_MODEL_CHANGE_MS);
               });
             }
           });
@@ -13533,6 +13553,9 @@ function burnAreaChart() {
 
     const TOAST_DURATION_MS = 3000;
     const TOAST_PROGRESS_MAX_MS = 60000;
+    /* Model add/remove notices: informational errors that self-clear — long
+       enough to read, never a permanent sticky per model. */
+    const TOAST_MODEL_CHANGE_MS = 20000;
     function hiveConfirm(message, title) {
       return new Promise(resolve => {
         const overlay = document.createElement('div');
@@ -13587,7 +13610,7 @@ function burnAreaChart() {
       el.appendChild(close);
       el.addEventListener('click', () => dismissToast(el, null, null, true));
     }
-    function showToast(msg, type = 'info', persistent = false) {
+    function showToast(msg, type = 'info', persistent = false, autoDismissMs = 0) {
       const container = document.getElementById('toast-container');
       const el = document.createElement('div');
       el.className = `toast ${type}`;
@@ -13603,9 +13626,13 @@ function burnAreaChart() {
       }
       if (type === 'error') {
         makeToastSticky(el);
+        /* autoDismissMs opts an error toast out of stick-forever: it keeps
+           the × for early dismissal but self-clears after the deadline
+           (forced — dismissToast ignores sticky toasts otherwise). */
+        if (autoDismissMs > 0) setTimeout(() => { if (el.parentNode) dismissToast(el, null, null, true); }, autoDismissMs);
         return el;
       }
-      setTimeout(() => dismissToast(el), TOAST_DURATION_MS);
+      setTimeout(() => dismissToast(el), autoDismissMs > 0 ? autoDismissMs : TOAST_DURATION_MS);
       return el;
     }
     function handleGitHubSetupToast() {
