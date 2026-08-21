@@ -69,8 +69,17 @@ services:
     environment:
       - HIVE_GITHUB_TOKEN=${HIVE_GITHUB_TOKEN}
       - HIVE_DASHBOARD_TOKEN=${HIVE_DASHBOARD_TOKEN}
-      - NTFY_SERVER=${NTFY_SERVER}
-      - NTFY_TOPIC=${NTFY_TOPIC}
+      # `:-` on the two OPTIONAL variables and deliberately not on the two
+      # tokens above (#4477). Compose warns once per command for every `${VAR}`
+      # it cannot resolve, and ntfy is off by default, so an ordinary quick
+      # start printed two permanent warnings that mean nothing — training the
+      # operator to skim past the line that says a variable is unset. That line
+      # is the ONLY signal Compose gives when the env file is not being read at
+      # all, which is how the quick start's `.env` sat unread at the repo root.
+      # Give a default to what is genuinely optional; leave the tokens bare so
+      # their warning still means something.
+      - NTFY_SERVER=${NTFY_SERVER:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
       - HIVE_LEVEL=${HIVE_LEVEL:-}
       - HIVE_REPO=${HIVE_REPO:-}
     labels:
