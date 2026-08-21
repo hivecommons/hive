@@ -3351,13 +3351,30 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// let the header polygon disagree with the rows it summarises.
 	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
 
+	// Server-side scoping (filter/sort/pagination) happens LAST, after every
+	// set-wide computation above (drift norm, alerts, outage suppression,
+	// quadrant percentiles) has run over the caller's full visible set — the
+	// page is a wire-level view, not a different fleet. No query params →
+	// full set, exactly as before.
+	hivesView := result
+	query := parseMyHivesQuery(r.URL.Query())
+	matched := len(result)
+	if query.active() {
+		hivesView, matched = applyMyHivesQuery(result, query)
+	}
+
 	resp := map[string]any{
-		"hives": result,
+		"hives": hivesView,
 		// The fleet average backs the reference polygon drawn behind every
 		// row's kite and the aggregate at the top of the dashboard. It is an
 		// aggregate over many hives and identifies none of them, so unlike the
 		// per-hive scores it is not gated on the caller's role.
-		"fleet_quadrant":           fleetQuadrant,
+		"fleet_quadrant": fleetQuadrant,
+		// Summary counts over the FULL visible set (never the page) so
+		// dashboard tiles stay truthful under any filter.
+		"hives_summary":            myHivesSummary(result),
+		"hives_total":              len(result),
+		"hives_matched":            matched,
 		"saas_quota":               user.SaaSQuota,
 		"saas_used":                saasCount,
 		"is_admin":                 isAdmin,
@@ -9306,6 +9323,18 @@ const dashboardHTML = `<!DOCTYPE html>
        normal state of the screen rather than an absence the eye has to infer.
        --alert-color is set inline per severity so one rule serves all three. */
     #fleet-alerts-panel { margin-bottom: 16px; }
+    /* ── Fleet summary tiles ── */
+    /* One-line fleet inventory above the alerts panel, fed by the server's
+       hives_summary (computed over the caller's FULL visible set, never the
+       current filter/page). Shown only past SUMMARY_TILES_MIN_HIVES so a
+       two-hive user never sees a dashboard cosplaying as a fleet console. */
+    #fleet-summary-tiles { margin-bottom: 12px; }
+    .fleet-tiles { display: flex; gap: 8px; flex-wrap: wrap; }
+    .fleet-tile { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 8px 14px; min-width: 84px; text-align: center; }
+    .fleet-tile-n { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .fleet-tile-label { font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+    .fleet-tile.warn { border-color: rgba(245,158,11,0.4); }
+    .fleet-tile.bad { border-color: rgba(248,81,73,0.45); }
     .alert-panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 12px 16px; }
     .alert-panel.has-critical { border-color: rgba(248,81,73,0.45); background: rgba(248,81,73,0.06); }
     .alert-panel.has-warning { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.05); }
@@ -9705,6 +9734,7 @@ const dashboardHTML = `<!DOCTYPE html>
          sit directly adjacent with no unrelated card between them. -->
     <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="hive-drift-summary" style="display:none"></div>
+    <div id="fleet-summary-tiles" style="display:none"></div>
     <div id="fleet-alerts-panel" style="display:none"></div>
     <div id="hive-view-bar" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
@@ -12680,6 +12710,9 @@ const dashboardHTML = `<!DOCTYPE html>
     var EMPTY_ALERT_SUMMARY = {alerts: [], countsBySeverity: {}, countsByType: {}, total: 0, acknowledgedTotal: 0};
 
     var _fleetAlerts = EMPTY_ALERT_SUMMARY;
+    /* Server-computed fleet inventory counts (hives_summary on the my-hives
+       payload). Null until the first load; renderSummaryTiles guards. */
+    var _hivesSummary = null;
     /* Active alert-type filter: '' = no alert filtering. Single-select, unlike
        the status chips — "show me the crash-looping hives" is a drill-down, and
        OR-ing several alert types back together just reproduces the full list. */
@@ -12923,6 +12956,47 @@ const dashboardHTML = `<!DOCTYPE html>
          it was deleted between the alert being evaluated and now). Say so rather
          than leaving a click that silently did nothing. */
       hiveToast('Could not find ' + (hiveName || hiveId) + ' in the hive list', 'error');
+    }
+
+    /* SUMMARY_TILES_MIN_HIVES gates the fleet tiles strip: below this many
+       visible hives the tiles restate what the eye already sees in the table,
+       so they stay hidden and the page keeps its small-user simplicity. */
+    var SUMMARY_TILES_MIN_HIVES = 8;
+
+    /* renderSummaryTiles draws the fleet inventory strip above the alerts
+       panel from the server-computed hives_summary — always the caller's FULL
+       visible set, never the active filter, so the numbers stay truthful
+       during any drill-down. Zero-count exception tiles self-suppress. */
+    function renderSummaryTiles() {
+      var el = document.getElementById('fleet-summary-tiles');
+      if (!el) return;
+      var s = _hivesSummary;
+      if (!s || (Number(s.total) || 0) < SUMMARY_TILES_MIN_HIVES) {
+        el.style.display = 'none';
+        return;
+      }
+      /* [key, label, css-class-when-nonzero, always-show] */
+      var defs = [
+        ['total', 'Hives', '', true],
+        ['online', 'Online', '', true],
+        ['offline', 'Offline', 'warn', true],
+        ['pool_available', 'Pool', '', false],
+        ['assigned_unclaimed', 'Unclaimed', 'warn', false],
+        ['provisioning', 'Provisioning', '', false],
+        ['upgrading', 'Upgrading', '', false],
+        ['upgrade_failed', 'Upgrade failed', 'bad', false],
+        ['errors', 'Errors', 'bad', false]
+      ];
+      var tiles = '';
+      for (var i = 0; i < defs.length; i++) {
+        var n = Number(s[defs[i][0]]) || 0;
+        if (!n && !defs[i][3]) continue;
+        var cls = n && defs[i][2] ? ' ' + defs[i][2] : '';
+        tiles += '<div class="fleet-tile' + cls + '"><div class="fleet-tile-n">' + n +
+          '</div><div class="fleet-tile-label">' + esc(defs[i][1]) + '</div></div>';
+      }
+      el.innerHTML = '<div class="fleet-tiles">' + tiles + '</div>';
+      el.style.display = '';
     }
 
     /* renderAlertsPanel draws the "Attention needed" panel above the hive list.
@@ -14533,6 +14607,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Alerts ride along on the same payload — see handleMyHives. Normalise
            to the empty summary so every consumer can iterate without guarding. */
         _fleetAlerts = data.alerts || EMPTY_ALERT_SUMMARY;
+        _hivesSummary = data.hives_summary || null;
         _latestSHA = data.latest_sha || _latestSHA;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
@@ -15338,6 +15413,7 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Drawn BEFORE the empty-state early-returns below: a fleet whose every
          hive is filtered out still has alerts worth showing, and the panel is
          how the operator gets back out of a drill-down. */
+      renderSummaryTiles();
       renderAlertsPanel();
       if (!allHives.length) {
         var driftEl0 = document.getElementById('hive-drift-summary');
