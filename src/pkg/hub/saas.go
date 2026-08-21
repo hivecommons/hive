@@ -3174,8 +3174,19 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		result[i].PRHistory = downsampleSpark(result[i].PRHistory, sparkWirePoints)
 	}
 
+	// Score the quadrant last, once every row is populated: the axes read
+	// fields the loop above fills in, and the scores are percentiles against
+	// this exact set of rows. Ranking against the whole registry instead would
+	// let the header polygon disagree with the rows it summarises.
+	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
+
 	resp := map[string]any{
-		"hives":                    result,
+		"hives": result,
+		// The fleet average backs the reference polygon drawn behind every
+		// row's kite and the aggregate at the top of the dashboard. It is an
+		// aggregate over many hives and identifies none of them, so unlike the
+		// per-hive scores it is not gated on the caller's role.
+		"fleet_quadrant":           fleetQuadrant,
 		"saas_quota":               user.SaaSQuota,
 		"saas_used":                saasCount,
 		"is_admin":                 isAdmin,
@@ -9225,6 +9236,22 @@ const dashboardHTML = `<!DOCTYPE html>
     .heartbeat-heart-flash { animation: heartbeatPulse 0.6s ease-in-out 3 forwards; }
     @keyframes heartbeatPulse { 0% { transform: scale(0.85); opacity: 0; } 30% { transform: scale(1.3); opacity: 1; } 70% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(0.9); opacity: 0; } }
     @media (prefers-reduced-motion: reduce) { .heartbeat-heart-flash { animation: none; } }
+    /* Quadrant hover: the same kite drawn large, with numbers. Hidden until
+       hover/focus rather than built on demand so there is no work on mouseover
+       and no layout thrash mid-render.
+
+       The panel is positioned RIGHT-aligned and above-anchored because the
+       Quadrant column is the last in a horizontally scrolling table — a
+       left-anchored panel on the final column would open off-screen. The
+       parent .table-wrap keeps overflow visible, so this escapes the cell. */
+    .quadrant-cell .quadrant-hover {
+      display: none; position: absolute; right: 0; bottom: calc(100% + 8px);
+      z-index: 60; width: 240px; padding: 10px 12px; text-align: left;
+      background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45); cursor: default; white-space: normal;
+      font-size: 0.72rem; line-height: 1.4; color: var(--text);
+    }
+    .quadrant-cell:hover .quadrant-hover, .quadrant-cell:focus-within .quadrant-hover { display: block; }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: 0.75rem; color: var(--muted); }
 
@@ -9573,6 +9600,167 @@ const dashboardHTML = `<!DOCTYPE html>
       var labels = { github_projects: 'GH Projects', linear: 'Linear', jira: 'Jira' };
       var cls = /^[a-z_]+$/.test(ws) ? ws : 'unknown';
       return '<span class="ws-badge ws-badge--' + cls + '" title="Work source: ' + escAttr(ws) + '">' + esc(labels[ws] || ws) + '</span>';
+    }
+
+    /* ---- Quadrant kite -------------------------------------------------
+       Trust / Efficiency / Satisfaction / Productivity, drawn as a four-axis
+       polygon. ONE renderer at two sizes: a ~22px shape in the table column and
+       the same shape at ~170px with labels and numbers in its hover. They must
+       never fork — the small kite is legible only because it is literally the
+       large one shrunk, so a shape learned in a hover is recognisable in the
+       column.
+
+       Axis positions are FIXED: Trust north, Productivity east, Satisfaction
+       south, Efficiency west. Reordering per row would make every previously
+       learned shape mean something else. QUADRANT_AXES mirrors Go's
+       QuadrantAxisOrder and the two must not drift. */
+    var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];
+    var QUADRANT_AXIS_LABELS = { trust: 'Trust', productivity: 'Prod', satisfaction: 'Satis', efficiency: 'Effic' };
+    /* Angles clockwise from north, index-aligned with QUADRANT_AXES. */
+    var QUADRANT_ANGLES = [0, 90, 180, 270];
+
+    /* quadrantAxis pulls one axis off a quadrant, returning an unscored stub
+       when absent so a partial payload can never throw mid-render. */
+    function quadrantAxis(q, name) {
+      var axes = (q && q.axes) || [];
+      for (var i = 0; i < axes.length; i++) {
+        if (axes[i] && axes[i].axis === name) return axes[i];
+      }
+      return { axis: name, score: 0, scored: false };
+    }
+
+    /* quadrantPoint maps an axis index and score to a coordinate.
+
+       An UNSCORED axis returns the exact centre, so the polygon visibly caves
+       in on that side. This is the visual half of the rule that absent evidence
+       is not a zero: a collapsed spoke reads as "not measured", where a small
+       symmetric shape would read as "mediocre everywhere". */
+    function quadrantPoint(idx, score, scored, cx, cy, radius) {
+      if (!scored) return [cx, cy];
+      var frac = Math.max(0, Math.min(1, (score || 0) / 100));
+      var rad = QUADRANT_ANGLES[idx % 4] * Math.PI / 180;
+      /* -cos on y because SVG grows downward and north must point up. */
+      return [cx + radius * frac * Math.sin(rad), cy - radius * frac * Math.cos(rad)];
+    }
+
+    function quadrantPolygonPoints(q, cx, cy, radius) {
+      var pts = [];
+      for (var i = 0; i < QUADRANT_AXES.length; i++) {
+        var a = quadrantAxis(q, QUADRANT_AXES[i]);
+        var p = quadrantPoint(i, a.score, a.scored, cx, cy, radius);
+        pts.push(p[0].toFixed(2) + ',' + p[1].toFixed(2));
+      }
+      return pts.join(' ');
+    }
+
+    /* quadrantSVG draws the kite. fleet is the reference polygon behind it, so
+       a row reads as a deviation from normal rather than an absolute the viewer
+       must calibrate; it is omitted when the fleet scored nothing, since an
+       empty reference would collapse to a dot and read as data. */
+    function quadrantSVG(q, fleet, size, labelled) {
+      var pad = labelled ? size * 0.26 : 2;
+      var cx = size / 2, cy = size / 2, radius = size / 2 - pad;
+      var s = '<svg viewBox="0 0 ' + size + ' ' + size + '" width="' + size + '" height="' + size +
+        '" role="img" aria-label="' + escAttr(quadrantAriaLabel(q)) + '" style="display:block;overflow:visible">';
+      /* Faint concentric rings orient the eye without competing with the data. */
+      [0.33, 0.66, 1].forEach(function(ring) {
+        var pts = [];
+        for (var i = 0; i < 4; i++) {
+          var p = quadrantPoint(i, 100, true, cx, cy, radius * ring);
+          pts.push(p[0].toFixed(2) + ',' + p[1].toFixed(2));
+        }
+        s += '<polygon points="' + pts.join(' ') + '" fill="none" stroke="var(--line)" stroke-width="0.5" opacity="0.35"/>';
+      });
+      if (labelled) {
+        for (var i = 0; i < 4; i++) {
+          var p = quadrantPoint(i, 100, true, cx, cy, radius);
+          s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + p[0].toFixed(2) + '" y2="' + p[1].toFixed(2) +
+            '" stroke="var(--line)" stroke-width="0.5" opacity="0.35"/>';
+        }
+      }
+      if (fleet && fleet.scored_axes > 0) {
+        s += '<polygon points="' + quadrantPolygonPoints(fleet, cx, cy, radius) +
+          '" fill="var(--muted)" fill-opacity="0.10" stroke="var(--muted)" stroke-width="0.75" stroke-dasharray="2,2" opacity="0.6"/>';
+      }
+      s += '<polygon points="' + quadrantPolygonPoints(q, cx, cy, radius) +
+        '" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>';
+      for (var i = 0; i < 4; i++) {
+        var a = quadrantAxis(q, QUADRANT_AXES[i]);
+        if (!a.scored) continue;
+        var p = quadrantPoint(i, a.score, true, cx, cy, radius);
+        s += '<circle cx="' + p[0].toFixed(2) + '" cy="' + p[1].toFixed(2) + '" r="' + (labelled ? 2.5 : 1.5) + '" fill="var(--accent)"/>';
+      }
+      if (labelled) {
+        for (var i = 0; i < 4; i++) {
+          var a = quadrantAxis(q, QUADRANT_AXES[i]);
+          var lp = quadrantPoint(i, 122, true, cx, cy, radius);
+          var anchor = QUADRANT_ANGLES[i] === 90 ? 'start' : (QUADRANT_ANGLES[i] === 270 ? 'end' : 'middle');
+          /* An unscored axis prints a dash, never a 0 — the whole point of
+             tracking scored separately from score. */
+          var val = '—';
+          if (a.scored) {
+            val = String(a.score);
+            if (a.delta) val += ' ' + (a.delta < 0 ? '−' : '+') + Math.abs(a.delta);
+          }
+          s += '<text x="' + lp[0].toFixed(2) + '" y="' + lp[1].toFixed(2) + '" text-anchor="' + anchor +
+            '" font-size="8" fill="var(--muted)" style="text-transform:uppercase;letter-spacing:0.5px">' +
+            esc(QUADRANT_AXIS_LABELS[QUADRANT_AXES[i]]) + '</text>';
+          s += '<text x="' + lp[0].toFixed(2) + '" y="' + (lp[1] + 9).toFixed(2) + '" text-anchor="' + anchor +
+            '" font-size="7.5" fill="var(--text)" opacity="0.85">' + esc(val) + '</text>';
+        }
+      }
+      return s + '</svg>';
+    }
+
+    /* A shape-only kite is invisible to a screen reader without this. */
+    function quadrantAriaLabel(q) {
+      if (!q || !q.scored_axes) return 'Quadrant: not enough data';
+      return 'Quadrant: ' + QUADRANT_AXES.map(function(name) {
+        var a = quadrantAxis(q, name);
+        return QUADRANT_AXIS_LABELS[name] + (a.scored ? ' ' + a.score : ' not measured');
+      }).join(', ');
+    }
+
+    /* quadrantCell is the table column: the small kite plus its own hover
+       panel, so a lopsided shape can be diagnosed without leaving the row.
+       Renders nothing at all for a hive with no quadrant — the server omits it
+       for callers who may not see it and for hives with nothing scored, and an
+       empty chart would imply a hive scoring zero everywhere. */
+    function quadrantCell(h) {
+      var q = h && h.quadrant;
+      if (!q) return '';
+      return '<span class="quadrant-cell" style="position:relative;display:inline-block;cursor:help">' +
+        quadrantSVG(q, _fleetQuadrant, 22, false) +
+        '<span class="quadrant-hover">' + quadrantPanelHTML(q) + '</span>' +
+        '</span>';
+    }
+
+    /* quadrantPanelHTML is the shared hover body — the same chart drawn large,
+       with the composite and whichever nudges apply. Used by BOTH the column
+       hover and the status hover so the two can never drift. */
+    function quadrantPanelHTML(q) {
+      if (!q) return '';
+      var nudges = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return a.nudge; })
+        .map(function(a) {
+          return '<div style="display:flex;gap:6px;align-items:flex-start;margin-top:4px">' +
+            '<span style="color:var(--accent);flex:0 0 auto">→</span><span>' + esc(a.nudge) + '</span></div>';
+        }).join('');
+      /* Reasons explain a collapsed spoke, so a gap reads as "not measured yet"
+         rather than as something the viewer has to interpret. */
+      var reasons = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return !a.scored && a.reason; })
+        .map(function(a) {
+          return '<div style="color:var(--muted);margin-top:2px">' +
+            esc(QUADRANT_AXIS_LABELS[a.axis]) + ': ' + esc(a.reason) + '</div>';
+        }).join('');
+      return '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">' +
+          quadrantSVG(q, _fleetQuadrant, 170, true) +
+          '<div style="font-size:0.7rem;color:var(--muted)">Composite <span style="color:var(--text);font-weight:600">' +
+            (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
+        '</div>' +
+        (nudges ? '<div style="font-size:0.7rem;margin-top:6px;border-top:1px solid var(--line);padding-top:6px">' + nudges + '</div>' : '') +
+        (reasons ? '<div style="font-size:0.65rem;margin-top:4px">' + reasons + '</div>' : '');
     }
 
     /* ---- Clickable user avatars ---------------------------------------
@@ -11182,6 +11370,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
+    /* Fleet-average quadrant for the CURRENT view, served alongside the rows.
+       Null until the first payload lands, which quadrantSVG handles by drawing
+       no reference polygon rather than an empty one collapsed at the centre. */
+    var _fleetQuadrant = null;
     /* Seeded to the A-Z default rather than '' (registry/arrival order) so the
        very first paint — including paintCachedHives, which runs before any
        network call — is already alphabetical. loadHiveSortPrefs overwrites both
@@ -11211,8 +11403,11 @@ const dashboardHTML = `<!DOCTYPE html>
        channel-pinned hive as its bare branch for the pre-network paint.
        v3 (#4041): agent rows carry pause provenance (pausedTrigger/
        pausedReason/pausedBy/pausedAt) rendered into the Agents tooltip; a
-       v2 cache would paint paused agents provenance-less until the poll. */
-    var HIVES_CACHE_VERSION = 3;
+       v2 cache would paint paused agents provenance-less until the poll.
+       v4: rows carry quadrant, and the cache carries the fleet average that
+       every kite is drawn against; a v3 cache would paint the new column empty
+       until the poll landed. */
+    var HIVES_CACHE_VERSION = 4;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -11243,7 +11438,11 @@ const dashboardHTML = `<!DOCTYPE html>
         window.localStorage.setItem(LS_HIVES_CACHE, JSON.stringify({
           version: HIVES_CACHE_VERSION,
           savedAt: Date.now(),
-          hives: rows
+          hives: rows,
+          /* Cached WITH the rows: the reference polygon is a property of the
+             population those rows came from, so pairing them keeps a cached
+             paint self-consistent even though the rows are truncated. */
+          fleetQuadrant: _fleetQuadrant
         }));
       } catch (e) {
         /* Quota errors are expected on large fleets — caching is best-effort. */
@@ -11261,6 +11460,7 @@ const dashboardHTML = `<!DOCTYPE html>
       try {
         _allDashHives = c.hives;
         _hiveRegistry = c.hives;
+        _fleetQuadrant = c.fleetQuadrant || null;
         renderHives(sortedDashHives(), true);
         return true;
       } catch (e) {
@@ -13297,6 +13497,21 @@ const dashboardHTML = `<!DOCTYPE html>
           if (rb2 === null) return -1;
           return _dashSortAsc ? ra - rb2 : rb2 - ra;
         }
+        if (key === 'quadrant' || key.indexOf('quadrant') === 0) {
+          /* Quadrant sorts rank by composite or by one axis. A hive with no
+             quadrant — unscored, or one the viewer may not see — sorts LAST in
+             both directions rather than clumping at whichever end 0 collates
+             to. It is the least informative row either way, so it stays out of
+             the operator's path whether they asked for strongest or weakest.
+             Sorting by weakest axis is the point of the column: it turns the
+             table into a worklist. */
+          var qa = quadrantSortValue(a, key);
+          var qb = quadrantSortValue(b, key);
+          if (qa === null && qb === null) return 0;
+          if (qa === null) return 1;
+          if (qb === null) return -1;
+          return _dashSortAsc ? qa - qb : qb - qa;
+        }
         var va = key === 'name' ? hiveNameSortValue(a) : ((a && a[key]) || '');
         var vb = key === 'name' ? hiveNameSortValue(b) : ((b && b[key]) || '');
         if (typeof va === 'number' && typeof vb === 'number') return _dashSortAsc ? va - vb : vb - va;
@@ -13425,6 +13640,22 @@ const dashboardHTML = `<!DOCTYPE html>
     function hiveNameSortValue(h) {
       var label = hiveLabel(h);
       return label.line2 ? label.line1 + ' ' + label.line2 : label.line1;
+    }
+
+    /* quadrantSortValue resolves a quadrant sort key to a number, or null when
+       the hive has nothing to rank on that key.
+
+       Null rather than 0 for an unscored axis, deliberately: zero is a real
+       score and would place an unmeasured hive among the genuinely weak ones,
+       which is precisely the confusion the whole scored/unscored split exists
+       to prevent. */
+    function quadrantSortValue(h, key) {
+      var q = h && h.quadrant;
+      if (!q || !q.scored_axes) return null;
+      if (key === 'quadrant') return q.composite;
+      var name = key.slice('quadrant'.length).toLowerCase();
+      var a = quadrantAxis(q, name);
+      return a.scored ? a.score : null;
     }
 
     function sortDashHives(key) {
@@ -13794,6 +14025,12 @@ const dashboardHTML = `<!DOCTYPE html>
         _userUsed = data.saas_used || 0;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
+        /* The fleet reference polygon behind every kite. Captured here rather
+           than derived in the browser: it is the average over the SAME
+           population the server scored, and recomputing it client-side from
+           the rows the caller may see would silently exclude the ones they may
+           not, quietly moving the reference. */
+        _fleetQuadrant = data.fleet_quadrant || null;
         /* Who is logged into their hive right now (admin-only in the payload) →
            the green-dashed avatar border. A Set of lowercased usernames so the
            avatar lookup is case-insensitive, matching GitHub handle semantics. */
@@ -14999,7 +15236,7 @@ const dashboardHTML = `<!DOCTYPE html>
         //   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts kept)
         // Counted against the <th> cells in the header and the <td> cells emitted
         // below (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 12;
+        var TOTAL_COLUMNS = 13;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -15140,6 +15377,9 @@ const dashboardHTML = `<!DOCTYPE html>
               '<div style="' + STACKED_LINE_STYLE + '" title="Active contributors"><span style="color:var(--muted);min-width:24px;display:inline-block">Ctr</span>' + (h.activeContributors || 0) + '</div>' +
             '</div>' +
           '</td>' +
+          /* QUADRANT: the small kite. Shape only at this size — the numbers
+             live in its hover, which is the same chart drawn large. */
+          '<td>' + quadrantCell(h) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
@@ -15147,9 +15387,9 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 12 after the 15-to-9 fold (PROV, DRIFT,
-         ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity). Must stay equal to
-         TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 12;
+         ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity), then 13 with the
+         Quadrant column. Must stay equal to TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 13;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -15301,6 +15541,10 @@ const dashboardHTML = `<!DOCTYPE html>
         '<th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th>' +
         /* ACTIVITY folds Issues, PRs and Contrib; each keeps its own sort ⇅. */
         '<th style="vertical-align:middle" title="Actionable issues, actionable PRs and active contributors">' + stackHeader('Activity', subSort('actionableIssues', 'Iss ⇅', 'Sort by actionable issues') + subSort('actionablePRs', 'PRs ⇅', 'Sort by actionable PRs') + subSort('activeContributors', 'Ctr ⇅', 'Sort by active contributors')) + '</th>' +
+        /* QUADRANT folds the four axis sorts plus the composite. Sorting by a
+           single axis is the point of the column: "weakest efficiency" turns
+           the table into a worklist rather than a picture. */
+        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */

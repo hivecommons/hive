@@ -364,8 +364,8 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 	// The colspan constants span the whole table; a stale value leaves the
 	// section separators and the pending-requests row visibly short.
 	for _, decl := range []string{
-		"var TOTAL_COLUMNS = 12;",
-		"var TOTAL_COLUMNS_HEADER = 12;",
+		"var TOTAL_COLUMNS = 13;",
+		"var TOTAL_COLUMNS_HEADER = 13;",
 	} {
 		if !strings.Contains(html, decl) {
 			t.Errorf("missing or stale colspan constant: %s", decl)
