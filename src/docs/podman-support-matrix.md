@@ -124,6 +124,41 @@ capability model is doing real access-control work. Choosing it is the
 operator's call; being surprised by it is not an available outcome, because the
 warning is printed on every start and recorded in the audit line.
 
+## Root-mode differences that are not about enforcement
+
+The matrix above grades one axis: whether the egress-gate claim was measured for
+a cell. An operator choosing a root mode is deciding more than that, and #4478
+found a difference that the units themselves cannot show — it is invisible in
+the asset, identical in both modes as written, and means two different things
+depending on which manager reads it.
+
+| | Rootful (system manager) | Rootless (user manager) |
+| --- | --- | --- |
+| `[Install] WantedBy=default.target` resolves to | the **boot transaction** | the *user* manager's default target, which logind reaches after the system boot has finished |
+| A Hive that never becomes healthy | **holds the boot** for `TimeoutStartSec` — 5min `hive.service`, 2min `hive-gateway.service` | delays nothing but Hive |
+| Measured | [lifecycle page](podman-quadlet-lifecycle.md#rootful-hive-is-inside-the-system-boot-transaction-rootless-is-not) (#4413, #4478) | same |
+
+Both units carry the same two lines, and the Quadlet generator installs
+`default.target.wants/hive.service` in **both** modes. On two real reboots of one
+host, systemd's own `FinishTimestampMonotonic` on the rootful boot was **549µs**
+after `hive-gateway.service` went active — the boot was not declared finished
+until Hive was serving — while the rootless boot finished at 9.2s with Hive not
+healthy until 18.5s.
+
+The failure case was inferred from that and is now measured directly, in a
+throwaway systemd container rather than by rebooting a host into a broken state
+(`src/deploy/probe_boot_transaction_coupling.sh`): a `Type=notify` unit reached
+through `default.target.wants/` that never sends READY held the boot for
+**20.188s** of a 20s `TimeoutStartSec`, against **0.133s** for the same unit with
+the same timeout left out of `default.target.wants/`.
+
+**This is not a support grade and does not move a cell.** It costs availability,
+not enforcement, and it is recorded here because it is the kind of difference
+that decides which mode an operator picks and is otherwise not written down
+anywhere they would look. Whether the units should change — `DefaultDependencies=`,
+different ordering, or a shorter rootful `TimeoutStartSec` — is open in #4478 and
+is deliberately not decided by this page.
+
 ## Fail-closed is the third state
 
 | Case | Container | Gate installed | Exit |
@@ -165,7 +200,7 @@ each already has a home, and none of them is closed by this document.
 | **IPv6 egress-gate bypass** | Measured real (#4319, [PR #4321](https://github.com/kubestellar/hive/pull/4321)) and **fixed** in [PR #4327](https://github.com/kubestellar/hive/pull/4327), which closes the v6 family with an `ip6tables` filter-table `REJECT` carrying the same three exemptions. Residual: the fix was observed on a rootful, ULA-only, amd64/netavark dual-stack network — **no rootless dual-stack measurement exists**, and no globally routable IPv6 path was available to either run. | [IPv6 egress-gate bypass](podman-ipv6-egress-bypass.md) |
 | **`arm64`** | Unmeasured everywhere. `amd64` only in both spikes. A hosted `ubuntu-24.04-arm` lane is identified but not built. | [Podman CI runner map](podman-ci-runner-map.md), #4336 |
 | **`slirp4netns`** | Unmeasured. Only `pasta` was exercised on rootless; rootless has no other network-helper evidence. | #4199 / [rootless spike](podman-rootless-startup-spike.md) |
-| **Restart, reboot, recreate** | Unmeasured in every cell. Both spikes were a single `podman run`; nothing says the gate re-installs reliably across a restart. | #4199, #4200; the lifecycle slice under #4188 |
+| **Restart, reboot, recreate** | **Narrowed, not closed.** The LIFECYCLE is now measured in both root modes — stop/start/restart/recreate (#4377) and an actual reboot of each (#4413), written up on the [lifecycle page](podman-quadlet-lifecycle.md). What those runs did not do is inspect the egress chain afterwards, so the part of this gap that belongs to this page — that the GATE re-installs reliably across a restart — is still unmeasured, and both spikes remain a single `podman run`. | #4199, #4200; [lifecycle page](podman-quadlet-lifecycle.md) (#4377, #4413) |
 | **Kernels without `xt_owner`** | Unmeasured. Deleting the owner `RETURN`s under rootful emulates the shape but not the kernel. Both exemptions stay in the chain regardless. | [rootful baseline](podman-rootful-egress-baseline.md) |
 | **`SO_MARK` on OKE-shaped platforms** | Not retired. The #2678 regression was the mark not sticking to the proxy's sockets on that platform — a property of the platform, not of the rule. The rootful isolation does not speak to it. | `src/pkg/proxy/somark_linux.go`, entrypoint comments |
 | **Gateway and pod topology** | Unmeasured. One container in isolation in both spikes — nothing about publishing 3001, withholding 7681, or two containers sharing a network. | the gateway/network slice under #4188 |
@@ -192,3 +227,4 @@ Neither supported cell is currently defended by CI.
 - [Security model — operator guide](security-model.md)
 - [Podman CI runner map](podman-ci-runner-map.md) — #4211.
 - [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](adr/0017-podman-quadlet-lifecycle.md) — the mechanism a supported cell gets installed with.
+- [Quadlet lifecycle: stop, start, restart, recreate, and boot persistence](podman-quadlet-lifecycle.md) — #4377, #4413, and the boot-transaction difference in #4478.
