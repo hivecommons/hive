@@ -1622,8 +1622,8 @@ func loadSaaSHive(id string) *SaaSHive {
 		return nil
 	}
 	path := filepath.Join(saasHivesDir, id, "meta.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
+	data, ok := readHiveMeta(path)
+	if !ok {
 		return nil
 	}
 	var h SaaSHive
@@ -1648,7 +1648,11 @@ func saveSaaSHive(h *SaaSHive) error {
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	storeHiveMeta(path, data)
+	return nil
 }
 
 // removeHiveRecord durably purges the hub-side, on-disk record for a deleted
@@ -1673,6 +1677,7 @@ func removeHiveRecord(id string, logger *slog.Logger) {
 		return
 	}
 	hiveDir := filepath.Join(saasHivesDir, id)
+	evictHiveMeta(filepath.Join(hiveDir, "meta.json"))
 	if err := os.RemoveAll(hiveDir); err != nil {
 		logger.Warn("removeHiveRecord: failed to remove hive directory", "path", hiveDir, "error", err)
 	}
