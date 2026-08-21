@@ -913,6 +913,11 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	upgradeURL := hubURL + "/api/saas/hives/" + url.PathEscape(hiveID) + "/upgrade"
 
+	user := r.Header.Get("X-Hive-User")
+	proof := s.authToken
+	if proof == "" && s.deps.Config.Dashboard.AuthToken != "" {
+		proof = s.deps.Config.Dashboard.AuthToken
+	}
 	cookie, _ := r.Cookie("hive_hub_user")
 	const upgradeTimeout = 30 * time.Second
 	client := &http.Client{Timeout: upgradeTimeout}
@@ -923,6 +928,15 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if cookie != nil {
 		req.AddCookie(cookie)
+	}
+	if user != "" {
+		req.Header.Set("X-Hive-User", user)
+	}
+	if role != "" {
+		req.Header.Set("X-Hive-Role", role)
+	}
+	if proof != "" {
+		req.Header.Set(proxyAuthHeader, proof)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://hive.kubestellar.io")

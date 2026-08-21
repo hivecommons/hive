@@ -568,7 +568,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// handleOpenHive does its own auth check + login redirect.
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.handleOpenHive)
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
-	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuth(s.handleUpgradeHive))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
@@ -803,6 +803,69 @@ func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// requireAuthOrSpokeUpgrade accepts the normal hub session for hub-dashboard
+// clicks and, for a hosted spoke dashboard, the spoke's server-to-server proof
+// plus the already-authenticated operator identity injected by that spoke.
+func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isCSRFSafe(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			return
+		}
+		if s.blockIfImpersonatingWrite(w, r) {
+			return
+		}
+		username := s.getAuthUser(r)
+		if username == "" {
+			if _, ok := s.trustedSpokeUpgradeUser(r, r.PathValue("id")); ok {
+				next(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"not authenticated"}`))
+			return
+		}
+		user := loadSaaSUser(username)
+		if user == nil {
+			ensureSaaSUser(username)
+			user = loadSaaSUser(username)
+		}
+		if user == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"unknown user — please log in again"}`))
+			return
+		}
+		if user.Blocked {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"account blocked"}`))
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (string, bool) {
+	username := r.Header.Get("X-Hive-User")
+	if username == "" || hiveID == "" || r.Header.Get("X-Hive-Role") != saasRoleOwner {
+		return "", false
+	}
+	proof := r.Header.Get(proxyAuthHeader)
+	expected := s.spokeProxyAuthToken(hiveID)
+	if proof == "" || expected == "" || !secureCompareHub(proof, expected) {
+		return "", false
+	}
+	user := loadSaaSUser(username)
+	if user == nil || user.Blocked {
+		return "", false
+	}
+	return username, true
 }
 
 // isCSRFSafe reports whether a request may be allowed to MUTATE state.
@@ -4308,6 +4371,9 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	username := s.getAuthUser(r)
+	if username == "" {
+		username, _ = s.trustedSpokeUpgradeUser(r, id)
+	}
 	h := loadSaaSHive(id)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
