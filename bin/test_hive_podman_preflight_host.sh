@@ -593,4 +593,147 @@ for forbidden in "${FORBIDDEN[@]}"; do
   assert_not_contains "$sweep_out" "$forbidden" "no case ever recommends '${forbidden}'"
 done
 
+# --- Layout detection (#4422) -------------------------------------------------
+#
+# The bug: this check knew only the source-tree layout, so a Quadlet install —
+# where nginx.conf sits FLAT in %E/hive rather than under deploy/ — reported
+# `✗ Gateway config: <dir>/deploy/nginx.conf does not exist` and exited 78 with
+# the file present one level up. These cases pin both layouts, the forced
+# override, and the fact that the two recommend DIFFERENT relabel options.
+
+QUADLET_FIXTURE="${TEST_TMP}/quadlet"
+mkdir -p "${QUADLET_FIXTURE}/secrets"
+echo "levels: []" >"${QUADLET_FIXTURE}/hive.yaml"
+echo "events {}" >"${QUADLET_FIXTURE}/nginx.conf"
+echo "-----BEGIN PRIVATE KEY-----" >"${QUADLET_FIXTURE}/secrets/gh-app-key.pem"
+printf '#HIVE_DASHBOARD_TOKEN=\n' >"${QUADLET_FIXTURE}/hive.env"
+chmod 750 "${QUADLET_FIXTURE}/secrets"
+chmod 600 "${QUADLET_FIXTURE}/secrets/gh-app-key.pem" "${QUADLET_FIXTURE}/hive.env"
+
+label_quadlet_container_readable() {
+  cat >"$STAT_MAP" <<EOF
+${QUADLET_FIXTURE}/hive.yaml||||system_u:object_r:container_file_t:s0
+${QUADLET_FIXTURE}/nginx.conf||||system_u:object_r:container_file_t:s0
+${QUADLET_FIXTURE}/secrets||||system_u:object_r:container_file_t:s0|${MAPPED_LAUNCH_GID}
+${QUADLET_FIXTURE}/secrets/gh-app-key.pem||||system_u:object_r:container_file_t:s0
+EOF
+}
+
+# Same runner, pointed at a chosen HIVE_SRC_DIR. The fixture-immutability
+# assertion in run_preflight only covers SRC_FIXTURE, so this snapshots the
+# quadlet fixture itself to keep "read-only" proven on this path too.
+run_preflight_dir() { # $1 = HIVE_SRC_DIR, rest = extra env
+  local dir="$1"; shift
+  local before after
+  before="$(find "$dir" -mindepth 0 -print0 | sort -z | xargs -0 "$REAL_STAT" -c '%n %a %u %g %s')"
+  : >"$CALL_LOG"
+  set +e
+  RUN_OUT="$(env PATH="$TEST_PATH" PODMAN_CALL_LOG="$CALL_LOG" FAKE_STAT_MAP="$STAT_MAP" \
+    HIVE_SRC_DIR="$dir" HIVE_PFH_SUBGID_FILE="$SUBGID_FIXTURE" \
+    HIVE_PFH_LABEL_PROBES="$LABEL_PROBE" FAKE_LABEL_PROBE="$LABEL_PROBE" \
+    HIVE_DEPLOY_RUNTIME=podman "$@" "$BASH_BIN" "$PREFLIGHT" 2>&1)"
+  RUN_STATUS=$?
+  set -e
+  after="$(find "$dir" -mindepth 0 -print0 | sort -z | xargs -0 "$REAL_STAT" -c '%n %a %u %g %s')"
+  [[ "$before" == "$after" ]] || fail "preflight modified ${dir}"
+  pass_count=$((pass_count + 1))
+}
+
+# THE BUG, as a test: a Quadlet layout must not report a missing gateway config.
+label_quadlet_container_readable
+run_preflight_dir "$QUADLET_FIXTURE"
+assert_contains "$RUN_OUT" "layout: quadlet (detected)" "quadlet layout is auto-detected"
+assert_contains "$RUN_OUT" "Gateway config: ${QUADLET_FIXTURE}/nginx.conf readable" \
+  "quadlet: the flat nginx.conf is found"
+assert_not_contains "$RUN_OUT" "deploy/nginx.conf does not exist" \
+  "quadlet: no false failure about deploy/nginx.conf"
+assert_eq "$RUN_STATUS" 0 "quadlet: a correctly prepared install exits 0, not 78"
+
+# The source tree keeps working exactly as before.
+label_all_container_readable
+run_preflight_dir "$SRC_FIXTURE"
+assert_contains "$RUN_OUT" "layout: source (detected)" "source layout is auto-detected"
+assert_contains "$RUN_OUT" "Gateway config: ${SRC_FIXTURE}/deploy/nginx.conf readable" \
+  "source: deploy/nginx.conf is still where it looks"
+assert_eq "$RUN_STATUS" 0 "source: unchanged, still exits 0"
+
+# Detection keys on the gateway config; hive.env is the tiebreak for a Quadlet
+# directory that has not had nginx.conf copied in yet.
+TIEBREAK_FIXTURE="${TEST_TMP}/tiebreak"
+mkdir -p "$TIEBREAK_FIXTURE"
+printf '#HIVE_DASHBOARD_TOKEN=\n' >"${TIEBREAK_FIXTURE}/hive.env"
+chmod 600 "${TIEBREAK_FIXTURE}/hive.env"
+run_preflight_dir "$TIEBREAK_FIXTURE"
+assert_contains "$RUN_OUT" "layout: quadlet (detected)" \
+  "hive.env alone is enough to identify a Quadlet directory"
+
+# An empty directory stays on the historical default rather than guessing.
+EMPTY_FIXTURE="${TEST_TMP}/empty-layout"
+mkdir -p "$EMPTY_FIXTURE"
+run_preflight_dir "$EMPTY_FIXTURE"
+assert_contains "$RUN_OUT" "layout: source (detected)" \
+  "a directory with neither shape falls back to the historical default"
+
+# The explicit override, for a directory mid-install.
+run_preflight_dir "$EMPTY_FIXTURE" HIVE_PODMAN_LAYOUT=quadlet
+assert_contains "$RUN_OUT" "layout: quadlet (HIVE_PODMAN_LAYOUT)" \
+  "HIVE_PODMAN_LAYOUT=quadlet forces the layout and says so"
+run_preflight_dir "$QUADLET_FIXTURE" HIVE_PODMAN_LAYOUT=source
+assert_contains "$RUN_OUT" "layout: source (HIVE_PODMAN_LAYOUT)" \
+  "HIVE_PODMAN_LAYOUT=source forces the layout even where quadlet would be detected"
+run_preflight_dir "$QUADLET_FIXTURE" HIVE_PODMAN_LAYOUT=sideways
+assert_eq "$RUN_STATUS" 64 "an unknown HIVE_PODMAN_LAYOUT is EX_USAGE"
+assert_contains "$RUN_OUT" "must be auto, source, or quadlet" "and says what the valid values are"
+
+# THE RELABEL RECOMMENDATION FLIPS WITH THE LAYOUT, and getting it backwards
+# would contradict the shipped units, which mount all three :ro,Z.
+cat >"$STAT_MAP" <<EOF
+${QUADLET_FIXTURE}/hive.yaml||||unconfined_u:object_r:config_home_t:s0
+${QUADLET_FIXTURE}/nginx.conf||||unconfined_u:object_r:config_home_t:s0
+${QUADLET_FIXTURE}/secrets||||system_u:object_r:container_file_t:s0|${MAPPED_LAUNCH_GID}
+${QUADLET_FIXTURE}/secrets/gh-app-key.pem||||system_u:object_r:container_file_t:s0
+EOF
+run_preflight_dir "$QUADLET_FIXTURE"
+assert_contains "$RUN_OUT" "Mount it with :Z" "quadlet: config files are recommended :Z, matching the units"
+assert_not_contains "$RUN_OUT" "Mount it with :z so Podman relabels it shared" \
+  "quadlet: never recommends the shared form for an operator-owned config file"
+cat >"$STAT_MAP" <<EOF
+${SRC_FIXTURE}/hive.yaml||||unconfined_u:object_r:user_home_t:s0
+${SRC_FIXTURE}/deploy/nginx.conf||||unconfined_u:object_r:user_home_t:s0
+${SRC_FIXTURE}/secrets||||system_u:object_r:container_file_t:s0|${MAPPED_LAUNCH_GID}
+${SRC_FIXTURE}/secrets/gh-app-key.pem||||system_u:object_r:container_file_t:s0
+EOF
+run_preflight_dir "$SRC_FIXTURE"
+assert_contains "$RUN_OUT" "Mount it with :z so Podman relabels it shared" \
+  "source: a checked-out config file is still recommended :z, not :Z"
+
+# --- hive.env, Quadlet only ---------------------------------------------------
+#
+# Not a bind source — EnvironmentFile= is read by systemd on the host and never
+# mounted, so it has no container label. It is checked because both ways it goes
+# wrong cost the whole start budget.
+label_quadlet_container_readable
+mv "${QUADLET_FIXTURE}/hive.env" "${TEST_TMP}/hive.env.stash"
+run_preflight_dir "$QUADLET_FIXTURE"
+assert_contains "$RUN_OUT" "Environment file: ${QUADLET_FIXTURE}/hive.env does not exist" \
+  "quadlet: a missing hive.env is a failure"
+assert_contains "$RUN_OUT" "podman run --env-file" "and says why podman run would fail"
+assert_eq "$RUN_STATUS" 78 "quadlet: a missing hive.env exits 78"
+mv "${TEST_TMP}/hive.env.stash" "${QUADLET_FIXTURE}/hive.env"
+
+run_preflight_dir "$QUADLET_FIXTURE"
+assert_contains "$RUN_OUT" "HIVE_DASHBOARD_TOKEN is not set" "quadlet: an unset dashboard token is reported"
+assert_eq "$RUN_STATUS" 0 "an unset dashboard token is a WARNING — a hub-hosted hive does not need one"
+
+printf 'HIVE_DASHBOARD_TOKEN=%s\n' "deadbeefcafe" >>"${QUADLET_FIXTURE}/hive.env"
+run_preflight_dir "$QUADLET_FIXTURE"
+assert_contains "$RUN_OUT" "HIVE_DASHBOARD_TOKEN is set in hive.env" "quadlet: a set dashboard token passes"
+assert_not_contains "$RUN_OUT" "deadbeefcafe" "the token VALUE is never printed"
+
+# The source layout has no hive.env and must not grow a check for one.
+label_all_container_readable
+run_preflight_dir "$SRC_FIXTURE"
+assert_not_contains "$RUN_OUT" "Environment file" "source: no hive.env row — it is a Quadlet-only file"
+assert_not_contains "$RUN_OUT" "HIVE_DASHBOARD_TOKEN" "source: no dashboard-token row either"
+
 printf 'PASS: %d Podman host preflight assertions\n' "$pass_count"

@@ -81,8 +81,6 @@ cd hive
 # that times out five minutes later.
 bin/hive-podman-preflight.sh
 bin/hive-podman-preflight-ids.sh
-# (hive-podman-preflight-host.sh checks SELinux labels and port 3001 too, but
-#  reads the source-tree layout rather than this one — see #4422.)
 
 CONF=~/.config/hive                       # rootful: CONF=/etc/hive
 mkdir -p "$CONF/secrets" && chmod 750 "$CONF/secrets"
@@ -106,6 +104,10 @@ printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> "$CONF/hive.env"
 # L5/L6 if agent PRs may touch `.github/workflows/`. See
 # src/docs/github-app-setup.md#personal-access-token-pat-scopes
 printf 'HIVE_GITHUB_TOKEN=%s\n'    'ghp_...'                 >> "$CONF/hive.env"
+
+# Now the host preflight, which checks what the steps above just created:
+# SELinux labels on the bind sources, secrets reachability, hive.env, port 3001.
+HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh
 
 # Pull before starting. The generated ExecStart pulls a missing image itself and
 # that pull is spent inside TimeoutStartSec; the Hive image is ~3.8GB.

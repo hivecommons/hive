@@ -138,15 +138,21 @@ remove `HealthCmd=`.
   bin/hive-podman-preflight-ids.sh      # subordinate IDs, graphroot, networking
   ```
 
-  `bin/hive-podman-preflight-host.sh` checks SELinux labels, config and secrets
-  readability, and port 3001 — but it looks for the **source-tree** layout
-  (`$HIVE_SRC_DIR/hive.yaml`, `$HIVE_SRC_DIR/deploy/nginx.conf`,
-  `$HIVE_SRC_DIR/secrets`, default `src/`). The Quadlet install below puts
-  `nginx.conf` flat in `%E/hive`, not under a `deploy/` subdirectory, so
-  pointing it at `%E/hive` reports a spurious
-  `✗ Gateway config: …/deploy/nginx.conf does not exist` and exits 78. Run it
-  against the source tree, or read its SELinux and port findings and ignore that
-  one row.
+  `bin/hive-podman-preflight-host.sh` is the third, and it is worth running
+  **after** step 1 below rather than here, because it checks the files that step
+  creates: SELinux labels on the bind sources, config and secrets readability,
+  `hive.env`, and port 3001. Point it at the configuration directory:
+
+  ```sh
+  HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh
+  ```
+
+  It recognises this layout — `nginx.conf` flat in `%E/hive` rather than under a
+  `deploy/` subdirectory — and says which one it picked on its first line
+  (`layout: quadlet (detected)`). It also recommends `:Z` for these files, which
+  is what the units mount them with, rather than the `:z` that suits a checked-out
+  source tree. Force either shape with `HIVE_PODMAN_LAYOUT=source|quadlet` if you
+  run it against a directory that is still mid-install (#4422).
 
 ## Unit search paths
 
