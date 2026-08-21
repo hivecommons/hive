@@ -206,6 +206,9 @@ func TestApplyDefaults_DataDirs(t *testing.T) {
 	if cfg.Data.LogsDir != "/data/logs" {
 		t.Errorf("Data.LogsDir = %q, want %q", cfg.Data.LogsDir, "/data/logs")
 	}
+	if cfg.Data.BobSessionsDir != "/data/home/.bob" {
+		t.Errorf("Data.BobSessionsDir = %q, want %q", cfg.Data.BobSessionsDir, "/data/home/.bob")
+	}
 }
 
 func TestApplyDefaults_AgentBeadsDir(t *testing.T) {
@@ -872,6 +875,9 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 	}
 	if cfg.Data.LogsDir != "/data/logs" {
 		t.Errorf("logs_dir = %q", cfg.Data.LogsDir)
+	}
+	if cfg.Data.BobSessionsDir != "/data/home/.bob" {
+		t.Errorf("bob_sessions_dir = %q", cfg.Data.BobSessionsDir)
 	}
 	if len(cfg.Governor.Labels.Exempt) == 0 {
 		t.Error("expected default exempt labels")

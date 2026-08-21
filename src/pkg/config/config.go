@@ -3469,6 +3469,7 @@ type DataConfig struct {
 	LogsDir            string `yaml:"logs_dir"`
 	ClaudeSessionsDir  string `yaml:"claude_sessions_dir"`
 	CopilotSessionsDir string `yaml:"copilot_sessions_dir"`
+	BobSessionsDir     string `yaml:"bob_sessions_dir"`
 	AgentsDir          string `yaml:"agents_dir"`
 }
 
@@ -3943,6 +3944,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Data.CopilotSessionsDir == "" {
 		c.Data.CopilotSessionsDir = "/data/home/.copilot/session-state"
+	}
+	if c.Data.BobSessionsDir == "" {
+		c.Data.BobSessionsDir = "/data/home/.bob"
 	}
 	if c.Data.AgentsDir == "" {
 		c.Data.AgentsDir = "/data/agent-configs"

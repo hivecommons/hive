@@ -185,7 +185,7 @@ func (c *Collector) scan() {
 	}
 
 	if c.bobSessionsDir != "" {
-		bobAgg, err := ScanBobSessions(c.bobSessionsDir)
+		bobAgg, err := ScanBobSessionsWithLogger(c.bobSessionsDir, c.logger)
 		if err != nil {
 			c.logger.Warn("bob session scan failed", "error", err)
 		} else if bobAgg != nil && bobAgg.SessionCount > 0 {

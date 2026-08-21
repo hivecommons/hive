@@ -1902,6 +1902,7 @@ func main() {
 	tokenCollector := tokens.NewCollector(cfg.Data.MetricsDir, logger)
 	tokenCollector.SetClaudeSessionsDir(cfg.Data.ClaudeSessionsDir)
 	tokenCollector.SetCopilotSessionsDir(cfg.Data.CopilotSessionsDir)
+	tokenCollector.SetBobSessionsDir(cfg.Data.BobSessionsDir)
 	if len(savedIssueCosts) > 0 {
 		tokenCollector.SeedIssueCosts(savedIssueCosts)
 		logger.Info("issue costs restored", "entries", len(savedIssueCosts))

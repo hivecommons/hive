@@ -1,7 +1,9 @@
 package tokens
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,7 @@ import (
 //	}
 type bobChatSession struct {
 	SessionID   string           `json:"sessionId"`
+	ProjectHash string           `json:"projectHash"`
 	StartTime   string           `json:"startTime"`
 	LastUpdated string           `json:"lastUpdated"`
 	Messages    []bobChatMessage `json:"messages"`
@@ -88,6 +91,14 @@ const maxBobSessionAge = 30 * 24 * time.Hour
 // directory (typically /data/home/.bob or ~/.bob) and returns an
 // AggregateSummary. It walks tmp/*/chats/*.json looking for session recordings.
 func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
+	return scanBobSessions(bobHomeDir, nil)
+}
+
+func ScanBobSessionsWithLogger(bobHomeDir string, logger *slog.Logger) (*AggregateSummary, error) {
+	return scanBobSessions(bobHomeDir, logger)
+}
+
+func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),
 		ByModel:       make(map[string]int64),
@@ -106,6 +117,7 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 	}
 
 	cutoff := time.Now().Add(-maxBobSessionAge)
+	agentsByHash := bobTrustedAgentsByProjectHash(bobHomeDir)
 
 	for _, path := range matches {
 		info, err := os.Stat(path)
@@ -121,6 +133,9 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 
 		sess, err := parseBobChatFile(path)
 		if err != nil || sess == nil {
+			if logger != nil {
+				logger.Warn("bob session parse failed", "path", path, "error", err)
+			}
 			continue
 		}
 
@@ -179,7 +194,11 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 			model = "bob-unknown"
 		}
 
-		const agentName = "bob"
+		projectHash := strings.TrimSpace(sess.ProjectHash)
+		if projectHash == "" {
+			projectHash = extractBobProjectHash(path)
+		}
+		agentName := bobAgentName(projectHash, agentsByHash)
 		agg.TotalTokens += total
 		agg.TotalMessages += messageCount
 		agg.SessionCount++
@@ -217,10 +236,78 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 			CacheRead:    cachedTokens,
 			TotalTokens:  total,
 			Messages:     messageCount,
+			LastActive:   bobSessionLastActive(sess),
 		})
 	}
 
 	return agg, nil
+}
+
+func bobSessionLastActive(sess *bobChatSession) int64 {
+	if sess == nil {
+		return 0
+	}
+	for _, raw := range []string{sess.LastUpdated, sess.StartTime} {
+		if ts, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw)); err == nil {
+			return ts.UnixMilli()
+		}
+	}
+	return 0
+}
+
+type bobTrustedFolders map[string]string
+
+func bobTrustedAgentsByProjectHash(bobHomeDir string) map[string]string {
+	out := make(map[string]string)
+	if bobHomeDir == "" {
+		return out
+	}
+	data, err := os.ReadFile(filepath.Join(bobHomeDir, "trustedFolders.json"))
+	if err != nil {
+		return out
+	}
+	var folders bobTrustedFolders
+	if err := json.Unmarshal(data, &folders); err != nil {
+		return out
+	}
+	for folder := range folders {
+		folder = strings.TrimSpace(folder)
+		if folder == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(folder))
+		if agent := strings.TrimSpace(filepath.Base(folder)); agent != "" && agent != "." && agent != string(filepath.Separator) {
+			out[hexLower(sum[:])] = agent
+		}
+	}
+	return out
+}
+
+func hexLower(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = digits[v>>4]
+		out[i*2+1] = digits[v&0x0f]
+	}
+	return string(out)
+}
+
+func bobAgentName(projectHash string, agentsByHash map[string]string) string {
+	if agent := agentsByHash[strings.TrimSpace(projectHash)]; agent != "" {
+		return agent
+	}
+	return "bob"
+}
+
+func extractBobProjectHash(path string) string {
+	dir := filepath.Dir(path) // .../chats
+	dir = filepath.Dir(dir)   // .../<projectHash>
+	base := filepath.Base(dir)
+	if base == "." || base == "/" || base == "tmp" {
+		return ""
+	}
+	return base
 }
 
 func parseBobChatFile(path string) (*bobChatSession, error) {
