@@ -1007,6 +1007,20 @@ func copilotSessionRefreshInterval() time.Duration {
 // store is EMPTY (or absent) — it never overwrites a token the CLI itself wrote
 // and is still using, so it can't clobber a live session.
 func (m *Manager) StartCopilotSessionRefresh(ctx context.Context) {
+	// Run once shortly after start rather than waiting a full interval for the
+	// first tick. Spokes that roll faster than the interval (ks/hive rolls every
+	// ~15-30m) would otherwise seldom reach the first tick before the pod dies,
+	// so a promote/seed could be perpetually deferred. The short settle delay
+	// lets the agents' CLIs write their config.json first, so a login done just
+	// before/at boot is visible to the promote path. Bounded by ctx so a fast
+	// shutdown does not block.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(copilotSessionRefreshStartDelay()):
+		m.refreshCopilotSessionToken()
+	}
+
 	ticker := time.NewTicker(copilotSessionRefreshInterval())
 	defer ticker.Stop()
 	for {
@@ -1017,6 +1031,25 @@ func (m *Manager) StartCopilotSessionRefresh(ctx context.Context) {
 			m.refreshCopilotSessionToken()
 		}
 	}
+}
+
+// copilotSessionRefreshStartDelay is how long to wait after boot before the
+// first session-token reconcile, giving agent CLIs time to write config.json.
+// Env-overridable (HIVE_COPILOT_SESSION_REFRESH_START_DELAY) mainly so tests
+// can drive it to near-zero.
+const defaultCopilotSessionRefreshStartDelay = 30 * time.Second
+
+// CopilotSessionRefreshStartDelayEnv overrides the start delay with a Go
+// duration. Non-positive/invalid values fall back to the default.
+const CopilotSessionRefreshStartDelayEnv = "HIVE_COPILOT_SESSION_REFRESH_START_DELAY"
+
+func copilotSessionRefreshStartDelay() time.Duration {
+	if v := os.Getenv(CopilotSessionRefreshStartDelayEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return defaultCopilotSessionRefreshStartDelay
 }
 
 // refreshCopilotSessionToken keeps the Copilot credential in sync between the
