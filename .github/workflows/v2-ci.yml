@@ -221,6 +221,18 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_preflight_ids.sh
 
+      # #4377: the Quadlet lifecycle contract. A clean `systemctl stop` used to
+      # leave the unit `failed` (the entrypoint exits 143 on SIGTERM), and
+      # `SuccessExitStatus=143` only works paired with `Restart=always` — split
+      # them and an externally removed container stays down reporting success.
+      # The suite also pins that boot wiring is read from the generator output
+      # and lingering rather than from `is-enabled`, which reports `generated`
+      # for these units no matter what. Every input is mocked, so this runs on
+      # a runner with no Podman and no lingering user.
+      - name: Podman Quadlet lifecycle probe (#4377)
+        working-directory: .
+        run: bash bin/test_hive_podman_lifecycle_probe.sh
+
       # The gh wrapper's AUTHOR GATE, distinct from the mode/allowlist/merge
       # gates covered above. 33 executable cases from #3072 and #3096: a
       # spoofed HIVE_AGENT, identity-lookup failure, the marker trust boundary,

@@ -114,7 +114,25 @@ HealthStartPeriod=120s
 # ExecStart carries --rm, so a timeout deletes the container that holds the
 # evidence of why it timed out.
 TimeoutStartSec=300
-Restart=on-failure
+
+# An intentional `systemctl stop` must not be recorded as a crash. The Hive
+# entrypoint handles SIGTERM, persists state, and exits 143 (128+SIGTERM) — the
+# conventional "terminated by signal" status. systemd's default success set is
+# exit 0 alone, so without this line a clean stop lands the unit in
+# `ActiveState=failed`, `Result=exit-code`, `ExecMainStatus=143`: it shows red
+# in `systemctl status`, trips `systemctl is-failed`, and puts the whole host
+# into `degraded`. Measured in BOTH root modes on Podman 5.8.4 (#4377).
+SuccessExitStatus=143 SIGTERM
+
+# Restart=always, NOT on-failure, and the two lines above are why. Making 143 a
+# success takes it out of on-failure's set, so with on-failure an external
+# `podman rm -f hive` or `podman stop hive` would leave the unit
+# `inactive/dead/success` — service down, nothing restarted, and nothing for
+# monitoring to see. Measured (#4377). Restart=always closes that: systemd
+# never restarts a unit that a `systemctl stop` job stopped, so a deliberate
+# stop still stays stopped and clean, while an external removal is recovered
+# after RestartSec.
+Restart=always
 RestartSec=30
 
 [Install]
