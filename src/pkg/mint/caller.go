@@ -36,11 +36,17 @@ import (
 //	            refusal.
 //
 // The third gap — verifying a Kubernetes ServiceAccount token via TokenReview —
-// is NOT implemented here on purpose. It requires k8s.io/client-go, which this
-// module does not depend on today, and adding a dependency of that weight is a
-// maintainer call rather than something to slip into a security fix. The
-// interface below is what makes that a contained, additive change when it is
-// made. See the issue for the trade-off.
+// is in tokenreview.go, added behind this interface with no change to the
+// handler and no new module dependency. It was deferred here on the assumption
+// that it needed k8s.io/client-go; it does not. TokenReview is one POST of a
+// small, stable JSON object to authentication.k8s.io/v1, so the standard
+// library covers it, and the maintainer decision about client-go is no longer
+// in the way of closing the finding.
+//
+// A shared-secret caller therefore still exists, but it is now a MIGRATION
+// STATE rather than the only option: run MultiAuthenticator with both, watch
+// the audit log until every caller arrives as a ServiceAccount, then drop the
+// secret from the list.
 
 // Identity is a verified caller of /mint.
 //

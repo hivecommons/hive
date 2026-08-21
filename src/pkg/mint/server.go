@@ -37,12 +37,16 @@ const (
 // Where Entitlements are configured the mint is deny-by-default per identity,
 // and the verified identity is recorded on every mint and every refusal.
 //
-// TODO(caller-auth): a Kubernetes TokenReview backend (validate the caller's
-// projected ServiceAccount token, audience-scoped so it cannot be replayed at
-// the API server) and/or an mTLS client-certificate backend. Both implement
-// CallerAuthenticator and need no change here. TokenReview needs
-// k8s.io/client-go, which this module does not depend on — that dependency is a
-// maintainer decision, which is why the seam landed first.
+// The Kubernetes TokenReview backend now exists behind that seam and needed no
+// change here, which was the point: see tokenreview.go for
+// TokenReviewAuthenticator (audience-scoped, so a token minted for the API
+// server cannot be replayed at the mint and vice versa) and
+// MultiAuthenticator, the dual-accept step for migrating off the shared secret
+// without a flag day. It needs no new module dependency.
+//
+// TODO(caller-auth): an mTLS client-certificate backend, for deployments with
+// no Kubernetes API server to ask. Same interface, same absence of changes
+// here.
 //
 // TODO(cloud-wif): the returned token is designed to be exchanged at a cloud
 // WIF provider (GCP STS / AWS AssumeRoleWithWebIdentity / Azure federated
