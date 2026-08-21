@@ -198,6 +198,15 @@ type Record struct {
 	Provenance  Provenance  `json:"provenance"`
 	// ObservedAt is the observation instant, RFC3339 in the persisted file.
 	ObservedAt time.Time `json:"observed_at"`
+	// Assumptions are the explicitly declared load-bearing input assumptions
+	// this judgment rests on (#4254): movement of the current authoritative
+	// value of a declared input makes THIS receipt non-current and touches no
+	// receipt that does not declare it. Persisted so the declaration survives
+	// restart; derived deterministically from the fingerprint for the v1
+	// predicate (see DeclaredAssumptions), with legacy receipts persisted
+	// before this field falling back to the same derivation — additive, never
+	// an exemption.
+	Assumptions []Assumption `json:"assumptions,omitempty"`
 }
 
 // Validate reports why a Record cannot serve as evidence. Malformed evidence
@@ -213,6 +222,9 @@ func (r Record) Validate() error {
 	if r.ObservedAt.IsZero() {
 		return fmt.Errorf("proof record requires an observation instant")
 	}
+	if err := r.validateAssumptions(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -224,6 +236,7 @@ func (r Record) Key() string { return r.Fingerprint.Key() }
 func (r Record) clone() Record {
 	out := r
 	out.Provenance.CheckRunIDs = append([]int64(nil), r.Provenance.CheckRunIDs...)
+	out.Assumptions = append([]Assumption(nil), r.Assumptions...)
 	return out
 }
 
@@ -313,6 +326,8 @@ func NormalizeCheckEvidence(fp Fingerprint, checks []CheckConclusion, observedAt
 			Query:       "ListCheckRunsForRef@" + fp.HeadSHA,
 		},
 		ObservedAt: observedAt,
+		// #4254: declare the load-bearing inputs on the durable receipt itself.
+		Assumptions: fp.DeclaredAssumptions(),
 	}
 	if err := rec.Validate(); err != nil {
 		return Record{}, err
