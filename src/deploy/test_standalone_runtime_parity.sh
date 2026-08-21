@@ -179,18 +179,6 @@ EXCEPTIONS = {
     ),
 
     # --- defect-tracked -------------------------------------------------------
-    "restart:gateway": (
-        "defect-tracked",
-        "Compose says unless-stopped, the unit says Restart=on-failure. "
-        "hive.container learned in #4377 that a clean external stop must still "
-        "be recovered and uses Restart=always (systemd never restarts a unit a "
-        "`systemctl stop` job stopped, so that is the exact equivalent of "
-        "unless-stopped); the gateway did not get the same treatment. A gateway "
-        "that exits 0 stays down under on-failure — nginx exits 0 on a clean "
-        "SIGTERM, so the only published port on the host goes away while "
-        "systemctl reports success — and would restart under Compose. Tracked "
-        "in #4415; not fixed here, #4404 is the check and not the fixes.",
-    ),
     "mount-target:gateway:/etc/nginx/upstream": (
         "defect-tracked",
         "Compose mounts the named volume gateway-upstream at /etc/nginx/upstream "
