@@ -608,10 +608,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	cached := s.cachedLatestHash
 	cachedMsg := s.cachedLatestMessage
 	cacheAge := time.Since(s.cachedLatestAt)
+	stableV4 := s.cachedStableV4Hash
+	stableV4Age := time.Since(s.cachedStableV4At)
 	s.versionMu.RUnlock()
 
-	const versionCacheTTL = 5 * time.Minute
-	if cacheAge > versionCacheTTL || cached == "" {
+	if cacheAge > dashboardVersionTipCacheTTL || cached == "" {
 		if latest, err := s.fetchLatestRemoteHash(); err == nil && latest != "" {
 			msg := s.fetchCommitMessage(latest)
 			s.versionMu.Lock()
@@ -621,6 +622,17 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			s.versionMu.Unlock()
 			cached = latest
 			cachedMsg = msg
+		}
+	}
+	if upstreamBranch() == dashboardStableReleaseBranch {
+		stableV4 = cached
+	} else if stableV4Age > dashboardVersionTipCacheTTL || stableV4 == "" {
+		if latest, err := s.fetchRemoteHashForBranch(dashboardStableReleaseBranch); err == nil && latest != "" {
+			s.versionMu.Lock()
+			s.cachedStableV4Hash = latest
+			s.cachedStableV4At = time.Now()
+			s.versionMu.Unlock()
+			stableV4 = latest
 		}
 	}
 
@@ -639,11 +651,86 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["latestMessage"] = cachedMsg
 		}
 	}
+	if stableV4 != "" {
+		stableShort := shortSHADashboard(stableV4)
+		resp["stableV4Hash"] = stableV4
+		resp["stableV4Short"] = stableShort
+		if sameCommitDashboard(versionHash, stableV4) {
+			resp["commitsBehind"] = 0
+		} else if ghcrTagExistsCached(stableShort) {
+			if count, ok := s.commitsBehindStableTip(versionHash, stableV4); ok {
+				resp["commitsBehind"] = count
+			}
+		}
+	}
 
 	jsonResponse(w, resp)
 }
 
+const dashboardVersionTipCacheTTL = 5 * time.Minute
+const dashboardStableReleaseBranch = "v4"
+
+func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
+	base = shortSHADashboard(base)
+	head = shortSHADashboard(head)
+	if base == "" || head == "" {
+		return 0, false
+	}
+	if sameCommitDashboard(base, head) {
+		return 0, true
+	}
+	key := base + "..." + head
+	s.versionMu.RLock()
+	if s.commitBehindCache != nil {
+		if count, ok := s.commitBehindCache[key]; ok {
+			s.versionMu.RUnlock()
+			return count, true
+		}
+	}
+	s.versionMu.RUnlock()
+	if s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
+		return 0, false
+	}
+	count, err := s.deps.GHClient.CompareAheadBy(s.deps.Ctx, "kubestellar", "hive", base, head)
+	if err != nil {
+		s.logger.Warn("failed to compare commits behind stable tip", "base", base, "head", head, "error", err)
+		return 0, false
+	}
+	s.versionMu.Lock()
+	if s.commitBehindCache == nil {
+		s.commitBehindCache = map[string]int{}
+	}
+	s.commitBehindCache[key] = count
+	s.versionMu.Unlock()
+	return count, true
+}
+
+func shortSHADashboard(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > hub.StandardSHALen {
+		return s[:hub.StandardSHALen]
+	}
+	return s
+}
+
+func sameCommitDashboard(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	return strings.EqualFold(a[:n], b[:n])
+}
+
 func (s *Server) fetchLatestRemoteHash() (string, error) {
+	return s.fetchRemoteHashForBranch(upstreamBranch())
+}
+
+func (s *Server) fetchRemoteHashForBranch(branch string) (string, error) {
 	if s.deps == nil || s.deps.GHClient == nil {
 		return "", fmt.Errorf("no github client")
 	}
@@ -651,7 +738,7 @@ func (s *Server) fetchLatestRemoteHash() (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("no context")
 	}
-	return s.deps.GHClient.LatestCommitHash(ctx, "kubestellar", "hive", upstreamBranch())
+	return s.deps.GHClient.LatestCommitHash(ctx, "kubestellar", "hive", branch)
 }
 
 // fetchCommitMessage returns the first line of the commit message for a given SHA.

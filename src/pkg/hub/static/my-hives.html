@@ -116,12 +116,13 @@
         <th>Hive</th>
         <th>ACMM</th>
         <th>Mode</th>
+        <th>Version</th>
         <th>Divergence (expects · running · able)</th>
         <th>Output (90d)</th>
       </tr>
     </thead>
     <tbody id="rows">
-      <tr><td colspan="6" class="status-msg" id="statusCell">Loading fleet…</td></tr>
+      <tr><td colspan="7" class="status-msg" id="statusCell">Loading fleet…</td></tr>
     </tbody>
   </table>
 </div>
@@ -166,6 +167,18 @@ function outputHTML(h) {
   if (!m && !rej && !cve) return '<span class="output">—</span>';
   return '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
     ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
+}
+function versionHTML(h) {
+  var sha = h.gitHash || "";
+  if (!sha) return '<span class="output">—</span>';
+  var behind = h.commitsBehindStableV4;
+  var badge = "";
+  if (behind != null && behind > 0) {
+    badge = ' <span class="badge" title="' + esc(behind) + ' commits behind stable v4 tip">' + esc(behind) + ' behind</span>';
+  } else if (behind == null) {
+    badge = ' <span class="badge" title="Could not compare this commit with stable v4 tip">? behind</span>';
+  }
+  return '<span style="font-family:monospace;color:var(--muted)">' + esc(sha) + '</span>' + badge;
 }
 function toggleHTML(a) {
   // A legacy/unknown spoke did not report enabled/paused meaningfully — render
@@ -281,6 +294,7 @@ function renderHives(hives) {
       '<td><span class="hdot ' + health + '" title="' + health + '"></span><span class="name">' + esc(h.name || h.id) + '</span></td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
+      '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
       '<td>' + outputHTML(h) + '</td>';
     tb.appendChild(tr);
@@ -300,6 +314,7 @@ function renderHives(hives) {
         '<td class="aname">' + esc(a.name) + (a.backend ? ' <span class="badge">' + esc(a.backend) + '</span>' : "") + '</td>' +
         '<td>' + toggleHTML(a) + '</td>' +
         '<td>' + runStateHTML(a) + '</td>' +
+        '<td></td>' +
         '<td>' + capHTML(a) + " " + deltaHTML(a) + '</td>' +
         '<td></td>';
       tb.appendChild(sub);
@@ -309,7 +324,7 @@ function renderHives(hives) {
       var empty = document.createElement("tr");
       empty.className = "agent";
       empty.style.display = open ? "" : "none";
-      empty.innerHTML = '<td></td><td class="aname" colspan="5"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
+      empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
       tb.appendChild(empty);
       subRows.push(empty);
     }
@@ -333,7 +348,7 @@ function renderHives(hives) {
       ? "No problems — every governor-expected agent is delivering."
       : (problemCount === 0 && !showHealthy ? "No problems. Healthy hives hidden — toggle “show healthy”." : "No hives.");
     var trE = document.createElement("tr");
-    trE.innerHTML = '<td colspan="6" class="status-msg">' + esc(msg) + '</td>';
+    trE.innerHTML = '<td colspan="7" class="status-msg">' + esc(msg) + '</td>';
     tb.appendChild(trE);
   }
 }

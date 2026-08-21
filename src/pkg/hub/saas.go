@@ -2882,6 +2882,7 @@ type MyHiveEntry struct {
 	// what both the alert evaluator (alertHiveFromEntry) and the JSON payload
 	// read. The spoke owns the consecutive-failure threshold and the self-heal,
 	// so there is nothing to compute on read the way AdvisoryStale is computed.
+	CommitsBehindStableV4 *int `json:"commitsBehindStableV4,omitempty"`
 
 	// InactiveAgents is how many of this hive's agents are RUNNING but not
 	// doing any work — session gone, sitting on a login prompt, or producing
@@ -3338,6 +3339,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// stalled where. Derived on read; never persisted on the registry entry.
 	journeyNow := time.Now()
 	for i := range result {
+		if count, known := commitsBehindStableV4(result[i].GitHash, s.logger); known {
+			result[i].CommitsBehindStableV4 = &count
+		}
+
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
@@ -3434,6 +3439,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"saas_used":                saasCount,
 		"is_admin":                 isAdmin,
 		"latest_sha":               getLatestSHA(),
+		"stable_v4_sha":            getLatestSHAForBranch(stableReleaseBranch),
 		"latest_shas":              getDisplaySHAs(),
 		"latest_sha_messages":      getDisplaySHAMessages(),
 		"latest_sha_image_status":  getImageStatuses(),
@@ -11940,6 +11946,7 @@ const dashboardHTML = `<!DOCTYPE html>
        leak — every name it can show was already in h.access. */
     var _currentUser = '';
     var _latestSHA = '';
+    var _stableV4SHA = '';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
     var _latestImageStatus = {};
@@ -14742,6 +14749,7 @@ const dashboardHTML = `<!DOCTYPE html>
         _fleetAlerts = data.alerts || EMPTY_ALERT_SUMMARY;
         _hivesSummary = data.hives_summary || null;
         _latestSHA = data.latest_sha || _latestSHA;
+        _stableV4SHA = data.stable_v4_sha || _stableV4SHA;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
@@ -15921,7 +15929,14 @@ const dashboardHTML = `<!DOCTYPE html>
           /* The drift dot rides on the SHA line, right of the current/behind
              glyph: "what commit is this hive on, and does it match the fleet" is
              one thought. It sets no extra line, so a drifting hive is no taller. */
-          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status + (driftDot ? ' ' + driftDot : '');
+          var behindKnown = h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null;
+          var behindBadge = '';
+          if (behindKnown && h.commitsBehindStableV4 > 0) {
+            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:0.6rem;background:rgba(210,153,34,0.14);color:var(--yellow);border:1px solid rgba(210,153,34,0.35);white-space:nowrap" title="' + escAttr(h.commitsBehindStableV4 + ' commits behind stable v4 tip ' + (_stableV4SHA || '')) + '">' + esc(h.commitsBehindStableV4) + ' behind</span>';
+          } else if (!behindKnown && _stableV4SHA && sha && !sameShaJS(sha, _stableV4SHA)) {
+            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:0.6rem;background:rgba(210,153,34,0.10);color:var(--yellow);border:1px solid rgba(210,153,34,0.25);white-space:nowrap" title="' + escAttr('Could not compare this commit with stable v4 tip ' + _stableV4SHA) + '">? behind</span>';
+          }
+          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status + behindBadge + (driftDot ? ' ' + driftDot : '');
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +

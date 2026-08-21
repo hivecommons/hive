@@ -14816,6 +14816,9 @@ function burnAreaChart() {
           html += ` <span title="${escapeHtml(pillTitle)}" style="display:inline-block;padding:1px 7px;margin-left:6px;border-radius:999px;font-size:0.62rem;font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle">${escapeHtml(pillText)}</span>`;
         }
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
+        const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
+          ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Stable v4 tip: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
+          : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase() ? ` <span class="git-behind" title="Could not compare this commit with stable v4 tip ${escapeHtml(v.stableV4Short || '?')}">? behind</span>` : '');
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
         } else if (_upgradeInProgress && v.hash === _upgradeTargetHash) {
@@ -14824,7 +14827,7 @@ function burnAreaChart() {
           showToast('Upgrade complete!', 'success');
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
         } else if (v.behind) {
-          html += ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
+          html += commitsBehindText || ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           if (v.autoUpgrade) {
             // Hub-managed: the hub rolls the upgrade automatically, so no manual
             // button — a passive state badge, worded to match the hub dashboard's
@@ -14839,6 +14842,7 @@ function burnAreaChart() {
         } else if (v.latestHash) {
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
         }
+        if (!v.behind) html += commitsBehindText;
         el.innerHTML = html;
         if (ocEl) ocEl.innerHTML = html;
       } catch (_) {}

@@ -1204,6 +1204,20 @@ func (c *Client) LatestCommitHash(ctx context.Context, owner, repo, branch strin
 	return ref.GetObject().GetSHA(), nil
 }
 
+// CompareAheadBy returns how many commits head is ahead of base according to
+// GitHub's compare endpoint. When head is the release tip and base is a running
+// build SHA, this is the "commits behind" count for that build.
+func (c *Client) CompareAheadBy(ctx context.Context, owner, repo, base, head string) (int, error) {
+	if c == nil || c.client == nil {
+		return 0, ErrNoGitHubClient
+	}
+	cmp, _, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, head, nil)
+	if err != nil {
+		return 0, fmt.Errorf("comparing commits %s/%s %s...%s: %w", owner, repo, base, head, err)
+	}
+	return cmp.GetAheadBy(), nil
+}
+
 // CommitMessage returns the first line of the commit message for the given SHA.
 func (c *Client) CommitMessage(ctx context.Context, owner, repo, sha string) (string, error) {
 	commit, _, err := c.client.Repositories.GetCommit(ctx, owner, repo, sha, nil)

@@ -202,6 +202,9 @@ type Server struct {
 	cachedLatestHash    string
 	cachedLatestMessage string
 	cachedLatestAt      time.Time
+	cachedStableV4Hash  string
+	cachedStableV4At    time.Time
+	commitBehindCache   map[string]int
 
 	contributeHub *ContributeWSHub
 
