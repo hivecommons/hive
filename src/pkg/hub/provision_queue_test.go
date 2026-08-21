@@ -12,10 +12,11 @@ import (
 // per-cluster cap, and (c) a burst for one cluster does not starve another
 // cluster's jobs.
 func TestProvisionQueueBoundsAndFairness(t *testing.T) {
+	t.Setenv("HIVE_PROVISION_WORKERS", "3")
+	t.Setenv("HIVE_PROVISION_PER_CLUSTER", "1")
+	helperRedirectScaleSettings(t)
 	q := &provisionQueueT{
-		inFlight:   make(map[string]int),
-		workers:    3,
-		perCluster: 1,
+		inFlight: make(map[string]int),
 	}
 	q.cond = sync.NewCond(&q.mu)
 

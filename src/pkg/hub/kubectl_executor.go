@@ -1,9 +1,7 @@
 package hub
 
 import (
-	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 )
 
@@ -18,29 +16,22 @@ import (
 // cheap and call sites are unchanged.
 
 // defaultKubectlMaxPerCluster is the per-cluster concurrent kubectl process
-// cap when HIVE_KUBECTL_MAX_PER_CLUSTER is unset or invalid.
+// cap when neither the dashboard Scale Controls value nor
+// HIVE_KUBECTL_MAX_PER_CLUSTER is set.
 const defaultKubectlMaxPerCluster = 8
 
 var (
-	kubectlSlotCapOnce sync.Once
-	kubectlSlotCap     int
-
-	kubectlSlotsMu sync.Mutex
-	kubectlSlots   = map[string]chan struct{}{}
+	kubectlSlotsMu   sync.Mutex
+	kubectlSlotsCond = sync.NewCond(&kubectlSlotsMu)
+	kubectlInUse     = map[string]int{}
 )
 
-// kubectlMaxPerCluster returns the per-cluster concurrency cap, overridable
-// via HIVE_KUBECTL_MAX_PER_CLUSTER (values < 1 fall back to the default).
+// kubectlMaxPerCluster returns the per-cluster concurrency cap: the
+// dashboard-saved Scale Controls value first, HIVE_KUBECTL_MAX_PER_CLUSTER
+// as the initial default. Consulted on every slot acquisition, so a saved
+// change takes effect live.
 func kubectlMaxPerCluster() int {
-	kubectlSlotCapOnce.Do(func() {
-		kubectlSlotCap = defaultKubectlMaxPerCluster
-		if v := os.Getenv("HIVE_KUBECTL_MAX_PER_CLUSTER"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n >= 1 {
-				kubectlSlotCap = n
-			}
-		}
-	})
-	return kubectlSlotCap
+	return settingOrEnv(getScaleSettings().KubectlPerCluster, "HIVE_KUBECTL_MAX_PER_CLUSTER", defaultKubectlMaxPerCluster)
 }
 
 // acquireKubectlSlot blocks until a per-cluster execution slot is free and
@@ -48,14 +39,17 @@ func kubectlMaxPerCluster() int {
 // the subprocess itself, and slots are always released on command completion.
 func acquireKubectlSlot(clusterID string) (release func()) {
 	kubectlSlotsMu.Lock()
-	sem, ok := kubectlSlots[clusterID]
-	if !ok {
-		sem = make(chan struct{}, kubectlMaxPerCluster())
-		kubectlSlots[clusterID] = sem
+	for kubectlInUse[clusterID] >= kubectlMaxPerCluster() {
+		kubectlSlotsCond.Wait()
 	}
+	kubectlInUse[clusterID]++
 	kubectlSlotsMu.Unlock()
-	sem <- struct{}{}
-	return func() { <-sem }
+	return func() {
+		kubectlSlotsMu.Lock()
+		kubectlInUse[clusterID]--
+		kubectlSlotsMu.Unlock()
+		kubectlSlotsCond.Broadcast()
+	}
 }
 
 // kubectlCmd wraps exec.Cmd so that the blocking execution methods acquire a

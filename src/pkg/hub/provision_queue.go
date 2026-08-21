@@ -37,13 +37,12 @@ type provisionJob struct {
 }
 
 type provisionQueueT struct {
-	mu         sync.Mutex
-	cond       *sync.Cond
-	jobs       []provisionJob
-	inFlight   map[string]int
-	workers    int
-	perCluster int
-	started    bool
+	mu       sync.Mutex
+	cond     *sync.Cond
+	jobs     []provisionJob
+	inFlight map[string]int
+	spawned  int
+	started  bool
 }
 
 var provisionQueue = newProvisionQueue()
@@ -57,12 +56,21 @@ func envInt(name string, def int) int {
 	return def
 }
 
+// provisionWorkerCount / provisionPerClusterCap resolve the queue bounds:
+// dashboard-saved Scale Controls value first, env var as the initial
+// default. The per-cluster cap is consulted on every job take (live); the
+// worker count applies at pool start and can GROW live via ensureWorkers —
+// shrinking waits for a hub restart.
+func provisionWorkerCount() int {
+	return settingOrEnv(getScaleSettings().ProvisionWorkers, "HIVE_PROVISION_WORKERS", defaultProvisionWorkers)
+}
+
+func provisionPerClusterCap() int {
+	return settingOrEnv(getScaleSettings().ProvisionPerCluster, "HIVE_PROVISION_PER_CLUSTER", defaultProvisionPerCluster)
+}
+
 func newProvisionQueue() *provisionQueueT {
-	q := &provisionQueueT{
-		inFlight:   make(map[string]int),
-		workers:    envInt("HIVE_PROVISION_WORKERS", defaultProvisionWorkers),
-		perCluster: envInt("HIVE_PROVISION_PER_CLUSTER", defaultProvisionPerCluster),
-	}
+	q := &provisionQueueT{inFlight: make(map[string]int)}
 	q.cond = sync.NewCond(&q.mu)
 	return q
 }
@@ -74,7 +82,21 @@ func (q *provisionQueueT) startLocked() {
 		return
 	}
 	q.started = true
-	for i := 0; i < q.workers; i++ {
+	for ; q.spawned < provisionWorkerCount(); q.spawned++ {
+		go q.worker()
+	}
+}
+
+// ensureWorkers grows the running pool up to the current configured worker
+// count. Called after an admin raises the bound in Scale Controls. A no-op
+// until the pool has started (first enqueue starts it at the right size).
+func (q *provisionQueueT) ensureWorkers() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.started {
+		return
+	}
+	for ; q.spawned < provisionWorkerCount(); q.spawned++ {
 		go q.worker()
 	}
 }
@@ -102,8 +124,9 @@ func (q *provisionQueueT) depth() int {
 // takeLocked pops the oldest job whose cluster is under the per-cluster cap,
 // or returns false when every queued job targets a saturated cluster.
 func (q *provisionQueueT) takeLocked() (provisionJob, bool) {
+	cap := provisionPerClusterCap()
 	for i, j := range q.jobs {
-		if q.inFlight[j.clusterID] < q.perCluster {
+		if q.inFlight[j.clusterID] < cap {
 			q.jobs = append(q.jobs[:i], q.jobs[i+1:]...)
 			q.inFlight[j.clusterID]++
 			return j, true

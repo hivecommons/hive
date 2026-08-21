@@ -65,14 +65,16 @@ func clusterHiveCount(clusterID string) int {
 	return n
 }
 
-// clusterAtMaxHives reports whether the cluster has reached its configured
-// max_hives ceiling (0 = unlimited), returning the current count for the
-// error message / log line. This is the hard per-cluster provisioning gate;
+// clusterAtMaxHives reports whether the cluster has reached its max_hives
+// ceiling (0 = unlimited), returning the current count for the error
+// message / log line. The dashboard Scale Controls override wins over the
+// clusters.json value. This is the hard per-cluster provisioning gate;
 // callers must check it before creating a new SaaS record on the cluster.
 func clusterAtMaxHives(cluster *ClusterConfig) (bool, int) {
-	if cluster == nil || cluster.MaxHives <= 0 {
+	max := effectiveMaxHives(cluster)
+	if cluster == nil || max <= 0 {
 		return false, 0
 	}
 	n := clusterHiveCount(cluster.ID)
-	return n >= cluster.MaxHives, n
+	return n >= max, n
 }

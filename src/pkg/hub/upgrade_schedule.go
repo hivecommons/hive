@@ -208,3 +208,16 @@ func shouldAutoUpgradeNow(mode, lastFiredDate string, now time.Time) autoUpgrade
 	}
 	return autoUpgradeDecision{Allowed: true, FireDate: today, Reason: "daily window open"}
 }
+
+// defaultUpgradeWaveSize bounds concurrent auto-upgrades per cluster (the
+// "wave"). At fleet scale an unbounded rollout is an image-pull and PVC IO
+// storm; ten pods at a time keeps a 40-hive cluster converging in a handful
+// of heartbeat cycles without saturating the node image pullers.
+const defaultUpgradeWaveSize = 10
+
+// upgradeWaveSize returns the per-cluster concurrent upgrade bound. The
+// dashboard-saved Scale Controls value wins; HIVE_UPGRADE_WAVE_SIZE is the
+// initial default. Read every trigger tick, so a saved change is live.
+func upgradeWaveSize() int {
+	return settingOrEnv(getScaleSettings().UpgradeWaveSize, "HIVE_UPGRADE_WAVE_SIZE", defaultUpgradeWaveSize)
+}

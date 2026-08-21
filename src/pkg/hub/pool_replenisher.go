@@ -63,7 +63,8 @@ func countCleanAvailable(clusterID string) int {
 func (s *HubServer) replenishPools() {
 	for id := range s.clusters {
 		cluster := s.clusters[id]
-		if cluster.PoolTarget <= 0 {
+		target := effectivePoolTarget(&cluster)
+		if target <= 0 {
 			continue // opt-in per cluster
 		}
 		if !cluster.KubectlReachable() {
@@ -79,17 +80,17 @@ func (s *HubServer) replenishPools() {
 		}
 
 		avail := countCleanAvailable(id)
-		min := cluster.PoolMin
+		min := effectivePoolMin(&cluster)
 		if min <= 0 {
-			min = cluster.PoolTarget // min unset → treat target as the floor
+			min = target // min unset → treat target as the floor
 		}
 		if avail >= min {
 			continue
 		}
-		want := cluster.PoolTarget - avail
+		want := target - avail
 		s.logger.Info("pool below watermark — replenishing",
 			"cluster", id, "available", avail, "pool_min", min,
-			"pool_target", cluster.PoolTarget, "provisioning", want)
+			"pool_target", target, "provisioning", want)
 		for i := 0; i < want; i++ {
 			// Re-check capacity per seed: earlier seeds in this burst count
 			// once their records exist.
@@ -99,7 +100,7 @@ func (s *HubServer) replenishPools() {
 			}
 			if full, n := clusterAtMaxHives(&cluster); full {
 				s.logger.Warn("pool replenish stopped — cluster at max_hives",
-					"cluster", id, "count", n, "max_hives", cluster.MaxHives)
+					"cluster", id, "count", n, "max_hives", effectiveMaxHives(&cluster))
 				break
 			}
 			if err := s.seedPlaceholder(&cluster); err != nil {

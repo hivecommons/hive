@@ -615,6 +615,8 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("PUT /api/saas/approve-provision/{username}", s.requireAdmin(s.handleApproveProvision))
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
 	s.mux.HandleFunc("GET /api/saas/admin/available-placeholders", s.requireAdmin(s.handleAvailablePlaceholders))
+	s.mux.HandleFunc("GET /api/saas/admin/scale-settings", s.requireAdmin(s.handleGetScaleSettings))
+	s.mux.HandleFunc("POST /api/saas/admin/scale-settings", s.requireAdmin(s.handleSetScaleSettings))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	// Aggregate geographic rollup of the user base (counts only, no usernames).
 	// Admin-gated like the rest of the CRM/Users surface: country is personal
@@ -3654,10 +3656,11 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	// Per-cluster ceiling — checked after the global cap so the more specific
 	// error wins only when the global gate passes.
 	if full, n := clusterAtMaxHives(&cluster); full {
+		max := effectiveMaxHives(&cluster)
 		s.logger.Warn("provision rejected — cluster at max_hives",
-			"cluster", cluster.ID, "count", n, "max_hives", cluster.MaxHives)
+			"cluster", cluster.ID, "count", n, "max_hives", max)
 		http.Error(w, fmt.Sprintf(`{"error":"cluster %s is at capacity (%d/%d hives) — pick another cluster or raise max_hives"}`,
-			cluster.ID, n, cluster.MaxHives), http.StatusServiceUnavailable)
+			cluster.ID, n, max), http.StatusServiceUnavailable)
 		return
 	}
 	subdomain := hiveID + "." + cluster.Domain
@@ -5607,6 +5610,29 @@ func (s *HubServer) triggerAutoUpgrades() {
 		return
 	}
 	hives := listSaaSHives()
+	// Upgrade waves: bound how many hives may be UPGRADING per cluster at
+	// once. A merge used to roll every behind hive simultaneously — observed
+	// live as a fleet-wide restart inside minutes, an image-pull + PVC IO
+	// storm. Count the in-flight upgrades per cluster first; the arming gate
+	// below starts new upgrades only while a cluster is under its wave size.
+	// Recovery/latch-clearing paths are deliberately NOT bounded (corrective,
+	// not disruptive), and wait-healthy is implicit: Upgrading clears when a
+	// spoke reports the target reached, freeing wave slots for the next tick.
+	upgradingByCluster := make(map[string]int)
+	s.mu.RLock()
+	upgradingIDs := make(map[string]bool)
+	for _, reg := range s.registry.Hives {
+		if reg.Upgrading {
+			upgradingIDs[reg.ID] = true
+		}
+	}
+	s.mu.RUnlock()
+	for i := range hives {
+		if upgradingIDs[hives[i].ID] {
+			upgradingByCluster[clusterIDForHive(&hives[i])]++
+		}
+	}
+	waveSize := upgradeWaveSize()
 	for _, h := range hives {
 		s.mu.RLock()
 		var currentSHA, branch, upgradeTarget, imageRef, lastHeartbeat string
@@ -5892,6 +5918,17 @@ func (s *HubServer) triggerAutoUpgrades() {
 			s.noteUncollectibleUpgrade(h.ID, latestSHA, reason)
 			continue
 		}
+		// Wave gate — evaluated AFTER every eligibility check so a slot is
+		// only ever spent on a hive that would actually arm, and BEFORE the
+		// fire-date persistence so a deferred daily/weekly hive keeps its
+		// window open and simply boards a later wave this same day.
+		if waveSize > 0 && upgradingByCluster[hiveCluster.ID] >= waveSize {
+			s.logger.Debug("auto-upgrade deferred — cluster upgrade wave is full",
+				"hive_id", h.ID, "cluster", hiveCluster.ID,
+				"in_flight", upgradingByCluster[hiveCluster.ID], "wave_size", waveSize)
+			continue
+		}
+		upgradingByCluster[hiveCluster.ID]++
 		// Record the day's fire BEFORE kicking the rollout. Persisting first
 		// means a hub crash between here and the restart cannot cause a second
 		// upgrade for the same ET day; at worst the hive waits for tomorrow's
@@ -9821,6 +9858,37 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div id="cluster-health-body" style="display:none">
         <div id="cluster-health-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px"></div>
+      </div>
+    </div>
+
+    <!-- Scale Controls: every fleet-scale tunable (upgrade wave size,
+         provisioning queue bounds, kubectl concurrency, per-cluster
+         capacity/pool watermarks) is edited HERE, not in env vars or config
+         files. Values persist server-side (scale_settings.json) and override
+         the env/clusters.json defaults, which remain only as initial values.
+         Admin-gated twice: hidden until the admin check passes, and the
+         endpoints are behind requireAdmin. -->
+    <div id="scale-controls-section" style="display:none;margin-top:48px">
+      <div onclick="toggleScaleControls()" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:16px">
+        <span id="scale-controls-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
+        <h2 style="font-size:1.3rem;color:var(--accent);margin:0">Scale Controls</h2>
+        <span id="scale-controls-summary" style="font-size:0.8rem;color:var(--muted);margin-left:8px"></span>
+      </div>
+      <div id="scale-controls-body" style="display:none">
+        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:12px">
+          Fleet throughput knobs. Blank/0 = use the default shown. Changes apply live
+          (worker-count reductions apply on the next hub restart).
+        </div>
+        <div id="scale-globals" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px"></div>
+        <div style="font-size:0.85rem;color:var(--text);margin:12px 0 8px;font-weight:600">Per-cluster limits</div>
+        <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
+          <th style="text-align:left">Cluster</th><th style="text-align:right">Hives</th><th style="text-align:right">Pool avail</th>
+          <th style="text-align:right">Max hives</th><th style="text-align:right">Pool min</th><th style="text-align:right">Pool target</th>
+        </tr></thead><tbody id="scale-clusters-body"></tbody></table></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:14px">
+          <button class="btn-primary" onclick="saveScaleSettings()">Save Scale Settings</button>
+          <span id="scale-save-status" style="font-size:0.8rem;color:var(--muted)"></span>
+        </div>
       </div>
     </div>
 
@@ -17441,6 +17509,126 @@ const dashboardHTML = `<!DOCTYPE html>
       if (toggle) toggle.style.transform = _clusterHealthCollapsed ? '' : 'rotate(90deg)';
     }
 
+    /* ---- Scale Controls (admin) ----
+       Renders inputs from GET /api/saas/admin/scale-settings and saves the
+       whole document via POST. The GET payload carries saved values,
+       EFFECTIVE values (after the saved > env > default chain) and the
+       built-in defaults, so each input can show what is actually in force. */
+    var _scaleControlsCollapsed = localStorage.getItem('hive-scale-controls-collapsed') !== 'false';
+    var _scaleData = null;
+    function toggleScaleControls() {
+      _scaleControlsCollapsed = !_scaleControlsCollapsed;
+      localStorage.setItem('hive-scale-controls-collapsed', _scaleControlsCollapsed ? 'true' : 'false');
+      var body = document.getElementById('scale-controls-body');
+      var toggle = document.getElementById('scale-controls-toggle');
+      if (body) body.style.display = _scaleControlsCollapsed ? 'none' : '';
+      if (toggle) toggle.style.transform = _scaleControlsCollapsed ? '' : 'rotate(90deg)';
+    }
+    var SCALE_GLOBAL_KNOBS = [
+      { key: 'upgrade_wave_size', label: 'Upgrade wave size', hint: 'auto-upgrades per cluster per tick' },
+      { key: 'provision_workers', label: 'Provision workers', hint: 'total concurrent provisions (grows live; shrink needs restart)' },
+      { key: 'provision_per_cluster', label: 'Provisions per cluster', hint: 'concurrent provisions per target cluster' },
+      { key: 'kubectl_per_cluster', label: 'kubectl per cluster', hint: 'concurrent kubectl processes per cluster' }
+    ];
+    function scaleNumInput(id, value, placeholder) {
+      return '<input type="number" min="0" max="10000" id="' + id + '" value="' + (value || '') + '"' +
+        ' placeholder="' + placeholder + '"' +
+        ' style="width:90px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;text-align:right">';
+    }
+    async function loadScaleSettings() {
+      if (!_isAdmin) return;
+      try {
+        var resp = await fetch('/api/saas/admin/scale-settings');
+        if (!resp.ok) { document.getElementById('scale-controls-section').style.display = 'none'; return; }
+        var data = await resp.json();
+        _scaleData = data;
+        document.getElementById('scale-controls-section').style.display = '';
+        var body = document.getElementById('scale-controls-body');
+        var toggle = document.getElementById('scale-controls-toggle');
+        if (body) body.style.display = _scaleControlsCollapsed ? 'none' : '';
+        if (toggle) toggle.style.transform = _scaleControlsCollapsed ? '' : 'rotate(90deg)';
+        var eff = data.effective || {};
+        document.getElementById('scale-controls-summary').textContent =
+          'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
+          ' · per-cluster ' + eff.provision_per_cluster + ' · kubectl ' + eff.kubectl_per_cluster;
+        /* Don't clobber in-progress edits: only re-render when collapsed or
+           on first load. */
+        if (document.activeElement && document.activeElement.id && document.activeElement.id.indexOf('scale-') === 0) return;
+        var saved = data.saved || {};
+        var defaults = data.defaults || {};
+        document.getElementById('scale-globals').innerHTML = SCALE_GLOBAL_KNOBS.map(function(k) {
+          return '<div style="padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">' +
+            '<div style="font-size:0.8rem;font-weight:600;margin-bottom:2px">' + k.label + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:8px">' + k.hint + '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+            scaleNumInput('scale-' + k.key, saved[k.key], 'default ' + defaults[k.key]) +
+            '<span style="font-size:0.75rem;color:var(--muted)">in force: ' + (eff[k.key] != null ? eff[k.key] : '?') + '</span>' +
+            '</div></div>';
+        }).join('');
+        var overrides = saved.clusters || {};
+        document.getElementById('scale-clusters-body').innerHTML = (data.clusters || []).map(function(c) {
+          var o = overrides[c.id] || {};
+          function cell(field, effective) {
+            var savedVal = (o[field] != null) ? o[field] : '';
+            return '<td style="text-align:right;padding:6px 4px">' +
+              scaleNumInput('scale-c-' + c.id + '-' + field, savedVal, String(effective)) + '</td>';
+          }
+          return '<tr><td style="padding:6px 4px">' + c.id + '</td>' +
+            '<td style="text-align:right;padding:6px 4px">' + c.hives + '</td>' +
+            '<td style="text-align:right;padding:6px 4px">' + c.available_placeholders + '</td>' +
+            cell('max_hives', c.max_hives) + cell('pool_min', c.pool_min) + cell('pool_target', c.pool_target) + '</tr>';
+        }).join('');
+      } catch (e) { /* transient — next poll retries */ }
+    }
+    async function saveScaleSettings() {
+      var status = document.getElementById('scale-save-status');
+      function intOrZero(id) {
+        var el = document.getElementById(id);
+        if (!el || el.value === '') return 0;
+        var n = parseInt(el.value, 10);
+        return isNaN(n) ? 0 : n;
+      }
+      var body = {
+        upgrade_wave_size: intOrZero('scale-upgrade_wave_size'),
+        provision_workers: intOrZero('scale-provision_workers'),
+        provision_per_cluster: intOrZero('scale-provision_per_cluster'),
+        kubectl_per_cluster: intOrZero('scale-kubectl_per_cluster'),
+        clusters: {}
+      };
+      ((_scaleData && _scaleData.clusters) || []).forEach(function(c) {
+        var row = {};
+        ['max_hives', 'pool_min', 'pool_target'].forEach(function(f) {
+          var el = document.getElementById('scale-c-' + c.id + '-' + f);
+          /* Blank = no override (fall back to clusters.json). An explicit
+             number — including 0 — is an override. */
+          if (el && el.value !== '') {
+            var n = parseInt(el.value, 10);
+            if (!isNaN(n)) row[f] = n;
+          }
+        });
+        if (Object.keys(row).length > 0) body.clusters[c.id] = row;
+      });
+      try {
+        var resp = await fetch('/api/saas/admin/scale-settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (!resp.ok) {
+          var err = {};
+          try { err = await resp.json(); } catch (_) {}
+          status.textContent = 'Save failed: ' + (err.error || resp.status);
+          status.style.color = 'var(--red)';
+          return;
+        }
+        status.textContent = 'Saved — in effect now.';
+        status.style.color = 'var(--green)';
+        setTimeout(function() { status.textContent = ''; }, 5000);
+        loadScaleSettings();
+      } catch (e) {
+        status.textContent = 'Save failed: ' + e;
+        status.style.color = 'var(--red)';
+      }
+    }
+
     function healthBarColor(pct, warnThreshold, dangerThreshold) {
       if (pct >= dangerThreshold) return 'var(--red)';
       if (pct >= warnThreshold) return 'var(--accent)';
@@ -18028,6 +18216,7 @@ const dashboardHTML = `<!DOCTYPE html>
       await loadAdminUsers();
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
+      loadScaleSettings();
       loadReach();
       loadClusters();
       handleOpenRouterReturn();
@@ -18040,6 +18229,7 @@ const dashboardHTML = `<!DOCTYPE html>
     startAssignCounterTicker();
     setInterval(loadAdminUsers, POLL_INTERVAL_MS);
     setInterval(loadClusterHealth, CLUSTER_HEALTH_POLL_MS);
+    setInterval(loadScaleSettings, CLUSTER_HEALTH_POLL_MS);
     setInterval(loadReach, REACH_POLL_MS);
     var _refreshTimer = null;
     var REFRESH_DEBOUNCE_MS = 500;
