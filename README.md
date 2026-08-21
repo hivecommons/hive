@@ -155,6 +155,10 @@ end, which also proves the gateway resolved `hive` over the shared network:
 
 ```bash
 curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
+
+# Post-install verification. Healthy NOW is not the same as back after a
+# reboot: this is what catches rootless Linger=no, which nothing else reports.
+bin/hive-podman-lifecycle-probe.sh check
 ```
 
 `daemon-reload` runs the generator, and `[Install] WantedBy=hive-boot.target`

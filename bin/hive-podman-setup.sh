@@ -53,7 +53,20 @@
 # Rootless by default; --rootful drives the system manager through sudo, the
 # same flag convention as bin/hive-podman-update.sh.
 #
+# BOOT PERSISTENCE (#4489). A rootless install only survives a reboot if
+# lingering is enabled for the user: at boot there is no session, so without it
+# the user manager never starts and Hive never runs — while every self-check an
+# operator would try (`is-enabled`, the wants/ symlinks the generator or the
+# gate enablement wrote) looks exactly the same either way. This script therefore
+# checks `loginctl show-user -p Linger` in rootless mode and says so, LOUDLY,
+# when it is off. It does not enable it by default — `loginctl enable-linger`
+# reconfigures the host, and this script's contract is that the host is never
+# modified to suit us (src/docs/podman-host-execution-gap.md) — but
+# --enable-linger opts in. Rootful needs none of this: the system manager is
+# PID 1.
+#
 # Run: bin/hive-podman-setup.sh [--rootful|--rootless] [--force] [--skip-pull]
+#                               [--enable-linger]
 # Exit codes: 0 installed and healthy, 64 unusable invocation (EX_USAGE),
 #             70 an assumption this script makes about the repo is broken
 #             (EX_SOFTWARE), 78 a step failed (EX_CONFIG)
@@ -104,6 +117,7 @@ HEALTH_DELAY="${HIVE_SETUP_HEALTH_DELAY:-2}"
 ROOTFUL=0
 FORCE=0
 SKIP_PULL=0
+ENABLE_LINGER=0
 STEP="startup"
 
 c_reset=""; c_bold=""; c_red=""; c_green=""; c_yellow=""
@@ -136,6 +150,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage: hive-podman-setup.sh [--rootful|--rootless] [--force] [--skip-pull]
+                            [--enable-linger]
 
 Installs the standalone Hive Podman deployment: runs the existing preflights,
 materialises the configuration, installs the four Quadlet units, and confirms
@@ -148,6 +163,11 @@ the gateway answers before returning.
                examples, overwriting what is there. NEVER touches secrets/.
   --skip-pull  do not pre-pull the image. The generated ExecStart will pull it
                instead, inside TimeoutStartSec, on an image of roughly 3.8GB.
+  --enable-linger
+               rootless only: run `loginctl enable-linger` so the install
+               survives a reboot. Off by default because it reconfigures the
+               host; without it a rootless install that finds Linger=no is
+               reported as NOT reboot-safe, with the fix, and still exits 0.
 
 Installs no packages, clones nothing, and generates no deployment description.
 A failing step stops the run and says which one; nothing is rolled back.
@@ -161,11 +181,20 @@ while [ $# -gt 0 ]; do
     --rootless)  ROOTFUL=0 ;;
     --force)     FORCE=1 ;;
     --skip-pull) SKIP_PULL=1 ;;
+    --enable-linger) ENABLE_LINGER=1 ;;
     -h|--help)   usage ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; usage ;;
   esac
   shift
 done
+
+# --enable-linger names a rootless-only mechanism; combined with --rootful it
+# means the operator misunderstands one of the two flags, which is worth
+# stopping on rather than silently ignoring.
+if [ "$ENABLE_LINGER" -eq 1 ] && [ "$ROOTFUL" -eq 1 ]; then
+  printf -- '--enable-linger is rootless-only: the rootful system manager is PID 1 and needs no lingering\n' >&2
+  exit "$EX_USAGE"
+fi
 
 # --- root mode --------------------------------------------------------------
 #
@@ -297,7 +326,7 @@ say "  units:   ${UNIT_DIR}"
 say "  source:  ${SRC_DIR}"
 
 # --- step 1: this really is the Podman path ---------------------------------
-step "1/7  Runtime selection"
+step "1/8  Runtime selection"
 
 # The standalone runtime selector (#4205) defaults to Docker. Refuse if an
 # operator has explicitly selected something else — this script speaks only to
@@ -347,7 +376,7 @@ fi
 info "image: ${HIVE_IMAGE}"
 
 # --- step 2: the host preflights, before anything is written ----------------
-step "2/7  Host preflight (engine, root mode, cgroups; subordinate IDs, storage, networking)"
+step "2/8  Host preflight (engine, root mode, cgroups; subordinate IDs, storage, networking)"
 
 # Their output IS the guidance. Restating it here would be a second copy to
 # keep in sync, and the copy would be the one the operator reads.
@@ -373,7 +402,7 @@ run_preflight hive-podman-preflight-ids.sh "Subordinate-ID/graphroot/network pre
 ok "both pre-write preflights passed"
 
 # --- step 3: configuration ---------------------------------------------------
-step "3/7  Configuration in ${CONF_DIR}"
+step "3/8  Configuration in ${CONF_DIR}"
 
 as_owner mkdir -p "$CONF_DIR" || die "$EX_CONFIG" "could not create ${CONF_DIR}"
 as_owner mkdir -p "$SECRETS_DIR" || die "$EX_CONFIG" "could not create ${SECRETS_DIR}"
@@ -417,7 +446,7 @@ fi
 info "HIVE_GITHUB_TOKEN is yours to add: see src/docs/github-app-setup.md for the PAT scopes."
 
 # --- step 4: the #4367 coupling, enforced -----------------------------------
-step "4/7  dashboard.port must equal the unit's HealthCmd port (#4367)"
+step "4/8  dashboard.port must equal the unit's HealthCmd port (#4367)"
 
 current="$(dashboard_port "${CONF_DIR}/hive.yaml")"
 if [ -z "$current" ]; then
@@ -445,7 +474,7 @@ fi
 ok "verified from the file that will be mounted: ${verified} == ${HEALTH_PORT}"
 
 # --- step 5: secrets the container can actually reach (#4359) ---------------
-step "5/7  Secrets directory mode and group (#4359)"
+step "5/8  Secrets directory mode and group (#4359)"
 
 as_owner chmod 750 "$SECRETS_DIR" || die "$EX_CONFIG" "could not chmod 750 ${SECRETS_DIR}"
 ok "mode 750 on ${SECRETS_DIR}"
@@ -467,7 +496,7 @@ fi
 info "Nothing under secrets/ is created or overwritten here; put your GitHub App key in it yourself."
 
 # --- step 6: the post-write preflight, then the units -----------------------
-step "6/7  Host preflight over what was just written, then install the units"
+step "6/8  Host preflight over what was just written, then install the units"
 
 # This one checks the files the steps above created — SELinux labels on the
 # bind sources, secrets reachability, hive.env, the gateway port — so it can
@@ -527,7 +556,7 @@ sctl enable hive-boot-gate.service || die "$EX_CONFIG" "systemctl enable hive-bo
 ok "hive-boot-gate.service enabled — Hive starts at boot without holding the boot (#4478)"
 
 # --- step 7: started is not the same as healthy -----------------------------
-step "7/7  Start, and confirm HEALTHY rather than started"
+step "7/8  Start, and confirm HEALTHY rather than started"
 
 # THE VOLUME MUST EXIST WITH ITS OWNERSHIP LABELS BEFORE ANYTHING STARTS
 # (#4485). systemd starts hive-data-volume.service only when it is inactive;
@@ -620,11 +649,82 @@ if [ "$answered" -ne 1 ]; then
 fi
 ok "gateway answered on ${GATEWAY_PORT} — healthy end to end"
 
+# --- step 8: healthy now is not the same as back after a reboot (#4489) ------
+step "8/8  Boot persistence — will this install survive a reboot?"
+
+# Rootless boot persistence hinges on ONE fact this script can read: lingering.
+# At boot there is no session, so with Linger=no logind never starts the user
+# manager and Hive never runs — while everything an operator would check looks
+# healthy: `is-enabled` proves nothing (measured in
+# src/docs/podman-quadlet-lifecycle.md), and the boot wiring installed above —
+# the generator's hive-boot.target.wants/ symlinks and the enabled
+# hive-boot-gate.service (#4478) — is present and unchanged whether or not the
+# user manager that would read it will ever start. Nothing else on the host
+# reports this, so the installer has to.
+LINGER_USER="$(id -un)"
+LINGER_OK=0
+if [ "$ROOTFUL" -eq 1 ]; then
+  LINGER_OK=1
+  ok "rootful needs no lingering — the system manager is PID 1"
+else
+  # Same read as bin/hive-podman-lifecycle-probe.sh, so the two can never
+  # disagree about what "on" means.
+  linger_state() {
+    loginctl show-user "$LINGER_USER" -p Linger --value 2>/dev/null || echo unknown
+  }
+  if ! command -v loginctl >/dev/null 2>&1; then
+    linger="unknown"
+    warn "loginctl not found — cannot determine whether lingering is enabled"
+  else
+    linger="$(linger_state)"
+  fi
+
+  if [ "$linger" != "yes" ] && [ "$ENABLE_LINGER" -eq 1 ]; then
+    say ""
+    say "  -> loginctl enable-linger ${LINGER_USER} (--enable-linger)"
+    if ! loginctl enable-linger "$LINGER_USER"; then
+      bad "loginctl enable-linger ${LINGER_USER} failed"
+      info "On some hosts enabling lingering needs privileges: sudo loginctl enable-linger ${LINGER_USER}"
+      info "The deployment itself is healthy and left running; only the boot wiring is missing."
+      die "$EX_CONFIG" "--enable-linger was asked for and could not be honoured"
+    fi
+    linger="$(linger_state)"
+    if [ "$linger" != "yes" ]; then
+      die "$EX_CONFIG" "loginctl enable-linger returned 0 but Linger reads back as '${linger}', not 'yes'"
+    fi
+  fi
+
+  if [ "$linger" = "yes" ]; then
+    LINGER_OK=1
+    ok "lingering is enabled for ${LINGER_USER} — logind starts the user manager at boot"
+  else
+    bad "lingering is OFF for ${LINGER_USER} — this install will NOT survive a reboot"
+    info "At boot there is no session, so the user manager never starts and Hive never runs."
+    info "Nothing installed above notices: 'is-enabled' reads the same either way, and the"
+    info "boot wiring (hive-boot.target, the enabled gate) is present but never read."
+    info "fix: loginctl enable-linger ${LINGER_USER}    (or re-run with --enable-linger)"
+    info "This script does not run it unasked: it reconfigures the host, and this installer"
+    info "never modifies the host to suit us. The deployment is healthy and running NOW."
+  fi
+fi
+
 head1 "Hive is running"
 say "  Dashboard:  http://localhost:${GATEWAY_PORT}"
 say "  Config:     ${CONF_DIR}/hive.yaml   (edit for your project, then: ${SCTL_LABEL} restart hive.service)"
 say "  Secrets:    ${SECRETS_DIR}          (mode 750, group ${LAUNCH_GID}; put your GitHub App key here)"
 say "  Tokens:     ${CONF_DIR}/hive.env    (HIVE_GITHUB_TOKEN, HIVE_DASHBOARD_TOKEN)"
+if [ "$LINGER_OK" -eq 1 ]; then
+  if [ "$ROOTFUL" -eq 1 ]; then
+    say "  Reboot:     survives a reboot — the system manager is PID 1"
+  else
+    say "  Reboot:     survives a reboot — lingering is enabled for ${LINGER_USER}"
+  fi
+else
+  say ""
+  say "  ${c_red}${c_bold}Reboot:     will NOT survive a reboot — lingering is off for ${LINGER_USER}${c_reset}"
+  say "  ${c_red}            fix now:  loginctl enable-linger ${LINGER_USER}${c_reset}"
+  say "              then verify: bin/hive-podman-lifecycle-probe.sh check"
+fi
 say ""
 say "  Update or roll back:  bin/hive-podman-update.sh status${MODE_FLAG}"
 say "  Remove:               bin/hive-podman-teardown.sh plan"

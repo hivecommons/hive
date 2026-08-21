@@ -474,6 +474,13 @@ loginctl show-user "$USER" -p Linger      # -> Linger=yes
 `loginctl enable-linger` is not optional for a rootless install that must
 survive a reboot. Rootful needs no equivalent; the system manager is PID 1.
 
+`bin/hive-podman-setup.sh` checks this at the end of every rootless install
+(#4489): with `Linger=no` it says, loudly, that the install will not survive a
+reboot and prints the command above, and its closing summary never claims
+reboot safety it did not read back from `loginctl`. It does not enable
+lingering unasked — that reconfigures the host — but `--enable-linger` opts
+in, and the flag failing is an install failure rather than a shrug.
+
 **Do not check any of this with `systemctl is-enabled hive.service`.** For a
 generated unit it reports `generated` — with lingering on, with lingering off,
 and with the symlink deleted. It cannot tell you whether Hive will come back.

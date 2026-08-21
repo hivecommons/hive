@@ -151,6 +151,27 @@ printf 'chgrp %s\n' "$*" >>"$FAKE_CALL_LOG"
 exit 0
 FAKE
 
+# loginctl: answers `show-user ... -p Linger --value` from FAKE_LINGER, unless a
+# state file says enable-linger already ran; `enable-linger` records itself and
+# creates that file, so the installer's read-back after enabling sees `yes`.
+# Faked because the real answer would be the CI host's, not the case's.
+cat >"${FAKE_BIN}/loginctl" <<'FAKE'
+#!/usr/bin/env bash
+printf 'loginctl %s\n' "$*" >>"$FAKE_CALL_LOG"
+case "${1:-}" in
+  show-user)
+    if [ -n "${FAKE_LINGER_STATE_FILE:-}" ] && [ -f "$FAKE_LINGER_STATE_FILE" ]; then
+      printf 'yes\n'
+    else
+      printf '%s\n' "${FAKE_LINGER:-no}"
+    fi ;;
+  enable-linger)
+    [ "${FAKE_LINGER_ENABLE_FAIL:-0}" = "1" ] && exit 1
+    [ -n "${FAKE_LINGER_STATE_FILE:-}" ] && : >"$FAKE_LINGER_STATE_FILE" ;;
+esac
+exit 0
+FAKE
+
 # Tripwires. #4470 is explicit that this must not install packages, clone
 # anything, or speak to Docker; each of these fails the run loudly if called.
 for tripwire in apt-get dnf yum apk zypper git docker; do
@@ -231,6 +252,7 @@ new_case() {
 # `env` on purpose: assignments that arrive by expanding "$@" are ordinary words
 # to the shell, so a bare prefix would try to EXECUTE "FAKE_CURL_FAIL=1".
 run_setup() {
+  # shellcheck disable=SC2086 # SETUP_ARGS is a deliberate optional flag list
   RUN_OUT="$(
     PATH="${FAKE_BIN}:${PATH}" \
     NO_COLOR=1 \
@@ -546,7 +568,61 @@ assert_lacks "$(cat "$CALL_LOG")" "start hive-gateway.service" \
 assert_lacks "$RUN_OUT" "Hive is running" "does not claim success"
 
 # ---------------------------------------------------------------------------
-# 12. Usage.
+# 12. Boot persistence (#4489). A rootless install with lingering off is
+#     healthy until the first reboot and then silently gone — and nothing an
+#     operator would check (`is-enabled`, the wants/ symlink) notices. The
+#     installer is the last thing that speaks before that reboot, so it must
+#     not claim reboot safety it did not verify, and must say the exact fix.
+# ---------------------------------------------------------------------------
+new_case "rootless with lingering off warns loudly and names the fix"
+SETUP_ARGS="" run_setup FAKE_LINGER=no
+assert_eq 0 "$RUN_RC" "still exits 0 — the deployment IS healthy now, only the boot wiring is missing"
+assert_contains "$RUN_OUT" "Hive is running" "still reports the deployment is up"
+assert_contains "$RUN_OUT" "will NOT survive a reboot" "says plainly that a reboot loses the install"
+assert_contains "$RUN_OUT" "loginctl enable-linger" "prints the exact remediation"
+assert_contains "$RUN_OUT" "hive-podman-lifecycle-probe.sh check" "points at the shipped check for verification"
+assert_lacks "$RUN_OUT" "survives a reboot —" "never claims reboot safety it did not verify"
+assert_lacks "$(cat "$CALL_LOG")" "loginctl enable-linger" "does not reconfigure the host unasked"
+
+new_case "rootless with lingering on reports reboot safety"
+SETUP_ARGS="" run_setup FAKE_LINGER=yes
+assert_eq 0 "$RUN_RC" "exits 0"
+assert_contains "$RUN_OUT" "lingering is enabled" "reports lingering as the reason it will come back"
+assert_contains "$RUN_OUT" "survives a reboot" "the summary can now say so"
+assert_lacks "$RUN_OUT" "will NOT survive" "no warning where none is due"
+
+new_case "--enable-linger enables it and verifies by reading it back"
+build_fixture
+SETUP_ARGS="--enable-linger" run_setup FAKE_LINGER=no FAKE_LINGER_STATE_FILE="${TEST_TMP}/linger-state"
+assert_eq 0 "$RUN_RC" "exits 0"
+assert_contains "$(cat "$CALL_LOG")" "loginctl enable-linger" "ran enable-linger, because it was asked to"
+assert_contains "$RUN_OUT" "lingering is enabled" "read the state back rather than trusting the exit code"
+assert_contains "$RUN_OUT" "survives a reboot" "and can then claim reboot safety"
+rm -f "${TEST_TMP}/linger-state"
+
+new_case "--enable-linger that fails is a failure, not a shrug"
+SETUP_ARGS="--enable-linger" run_setup FAKE_LINGER=no FAKE_LINGER_ENABLE_FAIL=1
+assert_eq 78 "$RUN_RC" "exits 78 (EX_CONFIG) — the operator asked for something that did not happen"
+assert_contains "$RUN_OUT" "could not be honoured" "says the flag was not honoured"
+assert_contains "$RUN_OUT" "sudo loginctl enable-linger" "points at the privileged form some hosts need"
+assert_lacks "$RUN_OUT" "survives a reboot" "claims nothing"
+
+new_case "rootful needs no lingering and is not checked for it"
+SETUP_ARGS="--rootful" run_setup
+assert_eq 0 "$RUN_RC" "exits 0"
+assert_contains "$RUN_OUT" "rootful needs no lingering" "says why: the system manager is PID 1"
+assert_contains "$RUN_OUT" "survives a reboot" "rootful may claim reboot safety outright"
+assert_lacks "$(cat "$CALL_LOG")" "loginctl" "never calls loginctl in rootful mode"
+assert_lacks "$RUN_OUT" "will NOT survive" "no rootless warning on the rootful path"
+
+new_case "--enable-linger with --rootful is a usage error"
+SETUP_ARGS="--rootful --enable-linger" run_setup
+assert_eq 64 "$RUN_RC" "exits 64 (EX_USAGE)"
+assert_contains "$RUN_OUT" "rootless-only" "says which flag misunderstands which"
+if [[ ! -e "${CONF}/hive.yaml" ]]; then pass "wrote nothing"; else fail "wrote config despite the usage error"; fi
+
+# ---------------------------------------------------------------------------
+# 13. Usage.
 # ---------------------------------------------------------------------------
 new_case "an unknown argument is a usage error"
 SETUP_ARGS="--wat" run_setup
