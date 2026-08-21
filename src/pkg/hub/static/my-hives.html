@@ -76,6 +76,8 @@
   .dot.on { background: var(--green); }
   .dot.off { background: var(--gray); }
   .name { font-weight: 600; }
+  a.name { color: inherit; text-decoration: none; }
+  a.name:hover { text-decoration: underline; }
   .chev { display: inline-block; width: 12px; color: var(--muted); transition: transform .1s; }
   tr.spoke.open .chev { transform: rotate(90deg); }
   .badge {
@@ -389,6 +391,12 @@ var advisoryFilter = "";
 var budgetFilter = "";
 
 function hiveKey(h) { return h.id || h.name; }
+function hiveNameHTML(h) {
+  var label = esc(h.name || h.id);
+  var dashboardURL = h.dashboardUrl || h.url || "";
+  if (!dashboardURL) return '<span class="name">' + label + '</span>';
+  return '<a class="name hive-link" href="' + esc(dashboardURL) + '" target="_blank" rel="noopener">' + label + '</a>';
+}
 
 function renderHives(hives) {
   var tb = document.getElementById("rows");
@@ -426,13 +434,15 @@ function renderHives(hives) {
     tr.className = "spoke health-" + health + (open ? " open" : "");
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span><span class="name">' + esc(h.name || h.id) + '</span></td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
       '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '</td>';
     tb.appendChild(tr);
+    var link = tr.querySelector(".hive-link");
+    if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
 
     var verdicts = h.agentVerdicts || [];
     var subRows = [];
