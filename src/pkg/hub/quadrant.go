@@ -100,17 +100,34 @@ type quadrantInputs struct {
 	reposEnrolled int
 	reposInOrg    int // 0 = unknown, so breadth is unscorable
 
-	// --- Efficiency ------------------------------------------------------
-	// tokensTotal is HeartbeatPayload.Tokens24h. Despite that name it is a
-	// LIFETIME cumulative token total, not a 24-hour window (see the comment at
-	// its source in cmd/hive/main.go). It is the only cost-shaped signal that
-	// reaches the hub at all — the USD figures in pkg/dashboard/cost.go are
-	// spoke-local and never sent.
+	// mergeAcceptance is merged / (merged + rejected) over the reported
+	// window, computed hub-side from counts that already travel.
 	//
-	// Tokens are arguably the better efficiency numerator regardless: they are
-	// provider-price-independent, so a hive's score does not move when a model
-	// is repriced or when two hives run different backends.
-	tokensTotal *int64
+	// Weighted as one criterion among several and never alone: the metric is
+	// Goodhart-gameable through PR size, and it is censored by construction
+	// because it counts only PRs that reached a verdict — it stayed green
+	// through a fleet-wide outage in which almost nothing was submitted.
+	mergeAcceptance *float64
+
+	// --- Efficiency ------------------------------------------------------
+	// tokensPerDay is the hive's CURRENT burn rate, derived from the governor's
+	// windowed budget spend normalised by elapsed window time.
+	//
+	// Normalising matters twice over: budget windows are per-spoke
+	// configuration (default 7 days but not fixed), and any given beat lands at
+	// an arbitrary point inside one. Comparing raw spend across hives would
+	// rank window length and beat timing rather than efficiency.
+	//
+	// Tokens rather than dollars is deliberate — the USD figures never leave
+	// the spoke, and tokens are provider-price-independent, so a hive's score
+	// does not move when a model is repriced or when two hives run different
+	// backends.
+	tokensPerDay *float64
+
+	// budgetExhausted reports the governor actively suppressing agent kicks.
+	// It bears on both efficiency and productivity: near-zero throughput means
+	// something very different when a hive is throttled than when it is idle.
+	budgetExhausted *bool
 
 	// prsMerged90d / prsRejected90d are the spoke's AI-author PR counts across
 	// its org, already travelling on the heartbeat via FleetStatsCollector.
@@ -130,10 +147,27 @@ type quadrantInputs struct {
 	// repo-wide github.PRIssueCounts is NOT available hub-side (it never leaves
 	// the spoke), and the outreach counter is -org: scoped, so neither of the
 	// two tempting alternatives is usable here even if they were reachable.
-	workSource          string
-	contributorCount    int
-	activeContributors  int
-	relayCompletedTasks *int
+	workSource         string
+	contributorCount   int
+	activeContributors int
+
+	// tasksCompleted7d is contributor-relay throughput, summed on the spoke
+	// from its hourly buckets. A flat zero is a real measurement for a hive
+	// with no contributors rather than a gap — read alongside contributorCount
+	// to tell the two apart.
+	tasksCompleted7d *int
+
+	// holdTotal and awaitingReview both measure work stalled on a HUMAN rather
+	// than on the agents, from opposite ends: items parked behind a hold label,
+	// and plans blocked on a decision. slaViolations is work aging past its
+	// threshold whatever the cause.
+	//
+	// These are inverse signals — more is worse — which the criteria below
+	// express through higherIsBetter rather than by negating the values, so the
+	// raw numbers stay readable in a debugger.
+	holdTotal      *int
+	awaitingReview *int
+	slaViolations  *int
 
 	// --- Satisfaction ----------------------------------------------------
 	// Intentionally empty. There is no satisfaction signal in the platform

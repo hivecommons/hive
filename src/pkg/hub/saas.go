@@ -2724,6 +2724,21 @@ type MyHiveEntry struct {
 	// not a critical dead-link chip.
 	PrivateURL       bool   `json:"privateUrl,omitempty"`
 	PrivateURLReason string `json:"privateUrlReason,omitempty"`
+
+	// Quadrant is this hive's four-axis score — trust, efficiency,
+	// satisfaction, productivity — computed on read and never persisted.
+	//
+	// It lives HERE rather than on RegistryEntry (where Journey sits) because
+	// unlike every other derived field on a row, a quadrant is not a property
+	// of the hive alone: the scores are percentiles against the other hives in
+	// the SAME view. Two requests over different filters legitimately produce
+	// different numbers for one hive, so caching it on the shared registry
+	// entry would let one caller's filtered population leak into another's.
+	//
+	// Nil when the caller is not entitled to see it, or when the population is
+	// too small to rank honestly — the browser renders nothing at all in that
+	// case rather than an empty chart.
+	Quadrant *Quadrant `json:"quadrant,omitempty"`
 }
 
 // myHivesRecentEventCount is how many timeline events ride the My Hives

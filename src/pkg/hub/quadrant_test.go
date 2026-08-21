@@ -10,8 +10,8 @@ import (
 // just quietly misinforms the operator. Each test below guards a specific way
 // that could happen.
 
-func iptr(v int) *int       { return &v }
-func i64ptr(v int64) *int64 { return &v }
+func iptr(v int) *int         { return &v }
+func fptr(v float64) *float64 { return &v }
 
 // fleetOf builds n hives with enough variation to exercise percentile ranking,
 // so tests are never accidentally run against a population below the floor.
@@ -57,7 +57,7 @@ func TestUnscoredIsNotZero(t *testing.T) {
 func TestCompositeExcludesUnscoredAxes(t *testing.T) {
 	in := fleetOf(10, func(i int, in *quadrantInputs) {
 		in.prsMerged90d = iptr(i)
-		in.relayCompletedTasks = iptr(i)
+		in.tasksCompleted7d = iptr(i)
 	})
 	qs := ScoreFleet(in)
 	for i, q := range qs {
@@ -92,15 +92,15 @@ func TestDecliningHiveDoesNotJoinPopulation(t *testing.T) {
 	// Six hives report relay activity; four decline entirely (nil).
 	withDecliners := fleetOf(10, func(i int, in *quadrantInputs) {
 		if i < 6 {
-			in.relayCompletedTasks = iptr(10 + i)
+			in.tasksCompleted7d = iptr(10 + i)
 		}
 	})
 	// Same six values, but the decliners report a real zero instead of nil.
 	withZeros := fleetOf(10, func(i int, in *quadrantInputs) {
 		if i < 6 {
-			in.relayCompletedTasks = iptr(10 + i)
+			in.tasksCompleted7d = iptr(10 + i)
 		} else {
-			in.relayCompletedTasks = iptr(0)
+			in.tasksCompleted7d = iptr(0)
 		}
 	})
 
@@ -178,7 +178,7 @@ func TestSmallFleetIsUnscored(t *testing.T) {
 // where the ratio reflects fixed setup spend rather than how the hive runs.
 func TestCostRatioFloor(t *testing.T) {
 	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.tokensTotal = i64ptr(500000)
+		in.tokensPerDay = fptr(50000)
 		in.prsMerged90d = iptr(2) // below minMergedPRsForCostRatio
 	}))
 	for i, q := range qs {

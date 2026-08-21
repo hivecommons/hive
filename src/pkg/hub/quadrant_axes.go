@@ -67,6 +67,26 @@ func trustCriteria(in quadrantInputs) []subCriterion {
 		})
 	}
 
+	// Merge acceptance: the share of agent PRs that reached a merge rather than
+	// a rejection. This is the humans' verdict on the agents' work, which is
+	// what makes it a trust signal rather than a throughput one.
+	//
+	// Deliberately one criterion among three, never decisive on its own — see
+	// the weaknesses documented on quadrantInputs.mergeAcceptance.
+	if in.mergeAcceptance != nil {
+		n := ""
+		if *in.mergeAcceptance < 0.7 {
+			n = fmt.Sprintf("%.0f%% of agent PRs are merged — tune the mission",
+				*in.mergeAcceptance*100)
+		}
+		out = append(out, subCriterion{
+			name:           "merge_acceptance",
+			value:          *in.mergeAcceptance,
+			higherIsBetter: true,
+			nudge:          n,
+		})
+	}
+
 	// Scope breadth: what fraction of the org's repos are enrolled. Scored as a
 	// ratio rather than a raw count so a 3-repo org enrolling everything is not
 	// beaten by a 200-repo org enrolling five.
@@ -104,18 +124,26 @@ func trustCriteria(in quadrantInputs) []subCriterion {
 func efficiencyCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
 
-	// Tokens per merged PR. Below the floor the ratio is dominated by fixed
-	// setup spend and says more about the hive's age than its efficiency.
-	//
-	// The window mismatch is real and deliberate: tokensTotal is lifetime while
-	// prsMerged90d covers 90 days, so a long-lived hive's ratio is inflated by
-	// history it has already paid for. It is still the only cost signal the hub
-	// receives, and it ranks hives usefully because every hive is distorted in
-	// the same direction. The hover must present it as approximate.
-	if in.tokensTotal != nil && in.prsMerged90d != nil && *in.prsMerged90d >= minMergedPRsForCostRatio {
+	// Burn rate: tokens per day in the current budget window. Both sides are
+	// now properly scoped — a rate rather than a lifetime total — so this is a
+	// genuine comparison rather than the approximate ranking an unnormalised
+	// cumulative figure would give.
+	if in.tokensPerDay != nil {
+		out = append(out, subCriterion{
+			name:           "tokens_per_day",
+			value:          *in.tokensPerDay,
+			higherIsBetter: false,
+			nudge:          "Token burn rate is high relative to the fleet",
+		})
+	}
+
+	// Burn per unit of output. The rate above says how fast budget leaves; this
+	// says whether anything came back for it, which is the difference between
+	// an expensive hive and a wasteful one.
+	if in.tokensPerDay != nil && in.prsMerged90d != nil && *in.prsMerged90d >= minMergedPRsForCostRatio {
 		out = append(out, subCriterion{
 			name:           "tokens_per_pr",
-			value:          float64(*in.tokensTotal) / float64(*in.prsMerged90d),
+			value:          *in.tokensPerDay / float64(*in.prsMerged90d),
 			higherIsBetter: false,
 			nudge:          "Token spend per merged PR is high relative to the fleet",
 		})
@@ -187,7 +215,14 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 	if in.prsMerged90d != nil {
 		n := ""
 		if *in.prsMerged90d == 0 {
-			n = "No agent-merged PRs in the last 90 days"
+			// A throttled hive is not underperforming, it is out of budget.
+			// Telling its owner to ship more would be both wrong and useless;
+			// the actionable fact is the budget, so say that instead.
+			if in.budgetExhausted != nil && *in.budgetExhausted {
+				n = "Budget exhausted — agent kicks are suppressed"
+			} else {
+				n = "No agent-merged PRs in the last 90 days"
+			}
 		}
 		out = append(out, subCriterion{
 			name:           "prs_merged",
@@ -236,17 +271,61 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 		})
 	}
 
-	// Contributor-relay throughput. Zero is a real measurement (the relay is
-	// configured but idle), so this reports whenever the count is present.
-	if in.relayCompletedTasks != nil {
+	// Contributor-relay throughput over the last seven days. Zero is a real
+	// measurement (the relay is configured but idle), so this reports whenever
+	// the count is present — but only nudge a hive that actually HAS
+	// contributors, since telling a solo hive its relay is idle is noise.
+	if in.tasksCompleted7d != nil {
 		n := ""
-		if *in.relayCompletedTasks == 0 {
+		if *in.tasksCompleted7d == 0 && in.contributorCount > 0 {
 			n = "Contributor relay is idle"
 		}
 		out = append(out, subCriterion{
-			name:           "relay",
-			value:          float64(*in.relayCompletedTasks),
+			name:           "relay_7d",
+			value:          float64(*in.tasksCompleted7d),
 			higherIsBetter: true,
+			nudge:          n,
+		})
+	}
+
+	// Human bottleneck: work parked behind a hold label or a pending plan
+	// decision. Both measure throughput lost to waiting on a person, which is
+	// the most addressable kind — the nudge points at a queue somebody can
+	// clear today rather than at a system to retune.
+	//
+	// Combined into one criterion because they are the same phenomenon seen
+	// from two ends, and scoring them separately would double their weight
+	// against the throughput criteria.
+	if in.holdTotal != nil || in.awaitingReview != nil {
+		blocked := 0
+		if in.holdTotal != nil {
+			blocked += *in.holdTotal
+		}
+		if in.awaitingReview != nil {
+			blocked += *in.awaitingReview
+		}
+		n := ""
+		if blocked > 0 {
+			n = fmt.Sprintf("%d items waiting on a human decision", blocked)
+		}
+		out = append(out, subCriterion{
+			name:           "human_blocked",
+			value:          float64(blocked),
+			higherIsBetter: false,
+			nudge:          n,
+		})
+	}
+
+	// Work aging past its service threshold, whatever the cause.
+	if in.slaViolations != nil {
+		n := ""
+		if *in.slaViolations > 0 {
+			n = fmt.Sprintf("%d items past their SLA", *in.slaViolations)
+		}
+		out = append(out, subCriterion{
+			name:           "sla_violations",
+			value:          float64(*in.slaViolations),
+			higherIsBetter: false,
 			nudge:          n,
 		})
 	}
