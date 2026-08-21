@@ -2467,6 +2467,17 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 		}
 		slots := int(totalSlots)
 		hiveCapacityRemaining = &slots
+		// Headroom alert: warn operators before the cluster fills. Fires when
+		// fewer than 10% of total estimated slots (current hives + remaining)
+		// are left. Cheap to emit here — this path is cached for 30s and only
+		// runs on health page loads.
+		if total := hiveCount + slots; total > 0 && logger != nil {
+			if slots*100 < total*capacityHeadroomWarnPct {
+				logger.Warn("cluster hive capacity headroom low",
+					"cluster", cluster.ID, "hives", hiveCount,
+					"slots_remaining", slots, "headroom_pct", slots*100/total)
+			}
+		}
 	}
 
 	// Build summary.
@@ -3621,6 +3632,15 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	cluster, clusterFound := s.clusters[clusterID]
 	if !clusterFound {
 		http.Error(w, `{"error":"unknown cluster_id"}`, http.StatusBadRequest)
+		return
+	}
+	// Per-cluster ceiling — checked after the global cap so the more specific
+	// error wins only when the global gate passes.
+	if full, n := clusterAtMaxHives(&cluster); full {
+		s.logger.Warn("provision rejected — cluster at max_hives",
+			"cluster", cluster.ID, "count", n, "max_hives", cluster.MaxHives)
+		http.Error(w, fmt.Sprintf(`{"error":"cluster %s is at capacity (%d/%d hives) — pick another cluster or raise max_hives"}`,
+			cluster.ID, n, cluster.MaxHives), http.StatusServiceUnavailable)
 		return
 	}
 	subdomain := hiveID + "." + cluster.Domain

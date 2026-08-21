@@ -162,26 +162,33 @@ var clustersConfigPath = "/data/saas/clusters.json"
 // hive spokes onto. Each cluster has its own kubeconfig, storage backend,
 // ingress style, and optional platform-specific settings (OCI, OpenShift).
 type ClusterConfig struct {
-	ID                string `json:"id" yaml:"id"`
-	Name              string `json:"name" yaml:"name"`
-	KubeconfigPath    string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
-	Context           string `json:"context" yaml:"context"`
-	InCluster         bool   `json:"in_cluster" yaml:"in_cluster"`
-	StorageClass      string `json:"storage_class" yaml:"storage_class"`
-	StorageType       string `json:"storage_type" yaml:"storage_type"`
-	NFSMountIP        string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
-	IngressType       string `json:"ingress_type" yaml:"ingress_type"`
-	IngressClass      string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
-	CertIssuer        string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
-	Domain            string `json:"domain" yaml:"domain"`
-	DomainPrefix      string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
-	OCICompartment    string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
-	OCIAvailDomain    string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
-	OCIMountTarget    string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
-	OCIExportSet      string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
-	RequiresSCC       bool   `json:"requires_scc" yaml:"requires_scc"`
-	SCCName           string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
-	HasGPU            bool   `json:"has_gpu" yaml:"has_gpu"`
+	ID             string `json:"id" yaml:"id"`
+	Name           string `json:"name" yaml:"name"`
+	KubeconfigPath string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
+	Context        string `json:"context" yaml:"context"`
+	InCluster      bool   `json:"in_cluster" yaml:"in_cluster"`
+	StorageClass   string `json:"storage_class" yaml:"storage_class"`
+	StorageType    string `json:"storage_type" yaml:"storage_type"`
+	NFSMountIP     string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
+	IngressType    string `json:"ingress_type" yaml:"ingress_type"`
+	IngressClass   string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
+	CertIssuer     string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
+	Domain         string `json:"domain" yaml:"domain"`
+	DomainPrefix   string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
+	OCICompartment string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
+	OCIAvailDomain string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
+	OCIMountTarget string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
+	OCIExportSet   string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
+	RequiresSCC    bool   `json:"requires_scc" yaml:"requires_scc"`
+	SCCName        string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
+	HasGPU         bool   `json:"has_gpu" yaml:"has_gpu"`
+	// MaxHives caps how many hosted hives (SaaS records, assigned or pooled)
+	// may exist on this cluster. 0 = unlimited. This is the HARD per-cluster
+	// gate: the bin-packed capacity estimate (hiveSlotsForNode) is advisory
+	// and can be optimistic, but routes/PVCs/namespaces and image-pull
+	// bandwidth all scale with hive COUNT, so operators need an explicit
+	// ceiling they can set per cluster as the fleet grows.
+	MaxHives          int    `json:"max_hives,omitempty" yaml:"max_hives,omitempty"`
 	Arch              string `json:"arch" yaml:"arch"`
 	ImageTag          string `json:"image_tag" yaml:"image_tag"`
 	ImagePullPolicy   string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
