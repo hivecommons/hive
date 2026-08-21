@@ -28,8 +28,19 @@ OWNED_STAGING="${OWNER_LABEL},io.kubestellar.hive.instance=staging,io.kubestella
 FAKE_BIN="${TEST_TMP}/bin"
 CALL_LOG="${TEST_TMP}/podman-calls.log"
 DOCKER_LOG="${TEST_TMP}/docker-calls.log"
+SYSTEMCTL_LOG="${TEST_TMP}/systemctl-calls.log"
+EVENT_LOG="${TEST_TMP}/events.log"
+UNIT_STATE="${TEST_TMP}/unit-state"
 STORE="${TEST_TMP}/store"
 mkdir -p "$FAKE_BIN"
+
+# The systemd scope the teardown selects for THIS test user; assertions must
+# not assume the suite never runs as root.
+if [[ "$(id -u)" -eq 0 ]]; then
+  SCTL_LABEL="systemctl"
+else
+  SCTL_LABEL="systemctl --user"
+fi
 
 pass_count=0
 
@@ -68,6 +79,7 @@ cat >"${FAKE_BIN}/podman" <<'FAKE'
 set -uo pipefail
 
 printf 'podman %s\n' "$*" >>"$PODMAN_CALL_LOG"
+printf 'podman %s\n' "$*" >>"${TEARDOWN_EVENT_LOG:-/dev/null}"
 
 store_kind=""
 verb=""
@@ -199,6 +211,88 @@ exit 1
 EOF
 chmod +x "${FAKE_BIN}/docker"
 
+# --- A fake systemctl with per-unit state -----------------------------------
+#
+# #4484: the teardown must stop the Quadlet-generated services BEFORE it
+# removes the resources they own. The fake keeps unit state in a file of
+# `unit|LoadState|ActiveState` lines and implements exactly the surface the
+# teardown uses (`show -p LoadState --value`, `stop`, `reset-failed`) plus
+# `start`, which reproduces the run-once semantics that made the bug: starting
+# hive-network.service creates the network ONLY when the unit is not already
+# active — an `active (exited)` network unit skips creation, which is exactly
+# how a post-teardown install used to hit `network not found`.
+
+cat >"${FAKE_BIN}/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+set -uo pipefail
+
+printf 'systemctl %s\n' "$*" >>"$SYSTEMCTL_CALL_LOG"
+printf 'systemctl %s\n' "$*" >>"${TEARDOWN_EVENT_LOG:-/dev/null}"
+
+declare -a args=()
+for token in "$@"; do
+  [[ "$token" == "--user" ]] && continue
+  args+=("$token")
+done
+
+verb="${args[0]:-}"
+unit="${args[${#args[@]}-1]}"
+
+unit_load=""
+unit_active=""
+while IFS='|' read -r name load active; do
+  [[ "$name" == "$unit" ]] || continue
+  unit_load="$load"
+  unit_active="$active"
+done <"$FAKE_UNIT_STATE"
+
+set_active() {
+  : >"${FAKE_UNIT_STATE}.tmp"
+  while IFS='|' read -r name load active; do
+    [[ -n "$name" ]] || continue
+    [[ "$name" == "$unit" ]] && active="$1"
+    printf '%s|%s|%s\n' "$name" "$load" "$active" >>"${FAKE_UNIT_STATE}.tmp"
+  done <"$FAKE_UNIT_STATE"
+  mv "${FAKE_UNIT_STATE}.tmp" "$FAKE_UNIT_STATE"
+}
+
+case "$verb" in
+  show)
+    printf '%s\n' "${unit_load:-not-found}"
+    ;;
+  is-active)
+    printf '%s\n' "${unit_active:-inactive}"
+    [[ "${unit_active:-inactive}" == "active" ]] || exit 3
+    ;;
+  stop)
+    if [[ -z "$unit_load" || "$unit_load" == "not-found" ]]; then
+      printf 'Failed to stop %s: Unit %s not loaded.\n' "$unit" "$unit" >&2
+      exit 5
+    fi
+    set_active "inactive"
+    ;;
+  reset-failed)
+    exit 0
+    ;;
+  start)
+    if [[ -z "$unit_load" || "$unit_load" == "not-found" ]]; then
+      printf 'Failed to start %s: Unit %s not found.\n' "$unit" "$unit" >&2
+      exit 5
+    fi
+    if [[ "$unit" == "hive-network.service" && "$unit_active" != "active" ]]; then
+      printf 'network|hive-net|io.kubestellar.hive.owned=true,io.kubestellar.hive.instance=default,io.kubestellar.hive.runtime=podman,io.kubestellar.hive.component=network\n' \
+        >>"$PODMAN_STORE"
+    fi
+    set_active "active"
+    ;;
+  *)
+    printf 'fake systemctl: unsupported invocation: %s\n' "$*" >&2
+    exit 125
+    ;;
+esac
+FAKE
+chmod +x "${FAKE_BIN}/systemctl"
+
 TEST_PATH="${FAKE_BIN}:/usr/bin:/bin"
 
 reset_store() {
@@ -217,7 +311,17 @@ network|distrobox-net|
 image|ghcr.io/kubestellar/hive:stable|${OWNED_DEFAULT},io.kubestellar.hive.component=hive
 image|docker.io/library/postgres:16|
 EOF
+  # The four Quadlet-generated services, loaded and running, as a healthy
+  # deployment leaves them.
+  cat >"$UNIT_STATE" <<EOF
+hive-gateway.service|loaded|active
+hive.service|loaded|active
+hive-data-volume.service|loaded|active
+hive-network.service|loaded|active
+EOF
   : >"$CALL_LOG"
+  : >"$SYSTEMCTL_LOG"
+  : >"$EVENT_LOG"
 }
 
 # The resources that must survive every teardown in this suite. If any of these
@@ -244,6 +348,8 @@ teardown() {
   local stdout_file="${TEST_TMP}/stdout" stderr_file="${TEST_TMP}/stderr"
   set +e
   env PATH="$TEST_PATH" PODMAN_STORE="$STORE" PODMAN_CALL_LOG="$CALL_LOG" \
+    SYSTEMCTL_CALL_LOG="$SYSTEMCTL_LOG" FAKE_UNIT_STATE="$UNIT_STATE" \
+    TEARDOWN_EVENT_LOG="$EVENT_LOG" \
     "$@" >"$stdout_file" 2>"$stderr_file"
   RUN_STATUS=$?
   set -e
@@ -469,7 +575,98 @@ if [[ -s "$DOCKER_LOG" ]]; then
 fi
 pass_count=$((pass_count + 1))
 
-# --- 9. deployment assets must label what they create -----------------------
+# --- 9. units are stopped first, and stay stopped (#4484) --------------------
+#
+# The Quadlet-generated services OWN the resources this teardown removes.
+# hive-network.service is run-once and sits `active (exited)` after creating
+# the network; removing the network underneath it leaves systemd convinced the
+# network exists, so the next install skips creation and dies with `network
+# not found`. The containers carry Restart=always, so a removal that races a
+# running unit is undone 30 seconds later. The contract is therefore ordering:
+# every unit is stopped (and reset-failed) BEFORE the first removal runs.
+
+reset_store
+teardown "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "run with units status (stderr: ${RUN_STDERR})"
+
+stopped_units="$(grep -E "^systemctl (--user )?stop " "$SYSTEMCTL_LOG" | awk '{print $NF}' | tr '\n' ' ')"
+assert_eq "hive-gateway.service hive.service hive-data-volume.service hive-network.service " \
+  "$stopped_units" "units are stopped in reverse start order"
+
+for unit in hive-gateway.service hive.service hive-data-volume.service hive-network.service; do
+  assert_contains "$(grep -E "reset-failed" "$SYSTEMCTL_LOG")" "$unit" "reset-failed clears ${unit}"
+  assert_contains "$(grep -F "${unit}|" "$UNIT_STATE")" "|inactive" "${unit} is inactive after teardown"
+done
+
+# Ordering: the LAST unit stop precedes the FIRST resource removal.
+last_stop="$(grep -nE "^systemctl (--user )?stop " "$EVENT_LOG" | tail -n1 | cut -d: -f1)"
+first_removal="$(grep -nE "^podman (rm|pod rm|volume rm|network rm) " "$EVENT_LOG" | head -n1 | cut -d: -f1)"
+[[ -n "$last_stop" && -n "$first_removal" && "$last_stop" -lt "$first_removal" ]] \
+  || fail "a removal ran before the units were stopped (last stop line ${last_stop:-none}, first removal line ${first_removal:-none})"
+pass_count=$((pass_count + 1))
+
+# --- 10. teardown → install cycle succeeds -----------------------------------
+#
+# The measured failure was: post-teardown, hive-network.service still `active
+# (exited)`, so the next start skips network creation. The fake reproduces
+# those run-once semantics: `start` creates the network only from a non-active
+# unit. After a correct teardown the start must therefore recreate it.
+
+assert_lacks "$(cat "$STORE")" "network|hive-net|" "no Hive network remains after teardown"
+env PATH="$TEST_PATH" PODMAN_STORE="$STORE" PODMAN_CALL_LOG="$CALL_LOG" \
+  SYSTEMCTL_CALL_LOG="$SYSTEMCTL_LOG" FAKE_UNIT_STATE="$UNIT_STATE" \
+  systemctl --user start hive-network.service \
+  || fail "starting hive-network.service after teardown failed"
+assert_contains "$(cat "$STORE")" "network|hive-net|" "a fresh start recreates the network — the install cycle holds"
+
+# Negative control, documenting the old failure mode: with the unit left
+# `active` and the network already gone, the same start creates nothing.
+reset_store
+grep -v "network|hive-net|" "$STORE" >"${STORE}.tmp" && mv "${STORE}.tmp" "$STORE"
+env PATH="$TEST_PATH" PODMAN_STORE="$STORE" PODMAN_CALL_LOG="$CALL_LOG" \
+  SYSTEMCTL_CALL_LOG="$SYSTEMCTL_LOG" FAKE_UNIT_STATE="$UNIT_STATE" \
+  systemctl --user start hive-network.service || true
+assert_lacks "$(cat "$STORE")" "network|hive-net|" "an active-but-skewed unit skips creation — the state teardown must never leave"
+
+# --- 11. re-running the teardown is safe -------------------------------------
+
+reset_store
+teardown "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "first teardown status (stderr: ${RUN_STDERR})"
+teardown "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "second teardown is idempotent (stderr: ${RUN_STDERR})"
+assert_unowned_survived "re-run teardown"
+
+# Units that were never installed — or removed since — are reported, not fatal.
+cat >"$UNIT_STATE" <<EOF
+hive-gateway.service|not-found|inactive
+hive.service|not-found|inactive
+hive-data-volume.service|not-found|inactive
+hive-network.service|not-found|inactive
+EOF
+: >"$SYSTEMCTL_LOG"
+teardown "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "teardown with no units installed succeeds"
+assert_contains "$RUN_STDOUT" "is not loaded" "missing units are reported, not stopped"
+assert_lacks "$(grep -E "^systemctl (--user )?stop " "$SYSTEMCTL_LOG" || true)" "stop" \
+  "no stop is issued for a unit that is not loaded"
+
+# --- 12. unit handling respects plan mode and instance scope -----------------
+
+reset_store
+teardown "$BASH_BIN" "$TEARDOWN" plan
+assert_eq "0" "$RUN_STATUS" "plan with units status"
+assert_contains "$RUN_STDOUT" "would run: ${SCTL_LABEL} stop hive-network.service" "plan announces the network unit stop"
+assert_eq "" "$(cat "$SYSTEMCTL_LOG")" "plan issues no systemctl call at all"
+assert_contains "$(grep -F "hive-network.service|" "$UNIT_STATE")" "|active" "plan leaves unit state untouched"
+
+reset_store
+teardown env HIVE_DEPLOY_INSTANCE=staging "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "staging teardown with units status"
+assert_eq "" "$(cat "$SYSTEMCTL_LOG")" "a non-default instance leaves the default's units alone"
+assert_contains "$RUN_STDOUT" "default instance" "the instance-scope skip says why"
+
+# --- 13. deployment assets must label what they create -----------------------
 #
 # #4326's first requirement is that every container, pod, network, and volume
 # the standalone path creates carries the #4210 label set. No standalone Podman

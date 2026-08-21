@@ -68,6 +68,29 @@ HIVE_TEARDOWN_IMAGE_KIND="images|images|rmi|{{.ID}}"
 # touch it, instead of saying something untrue.
 HIVE_TEARDOWN_KNOWN_VOLUMES=(hive-data)
 
+# The Quadlet-generated services that own the resources above, in STOP order —
+# the reverse of the dependency order in which setup starts them (#4484).
+#
+# They must be stopped before their resources are removed, for two measured
+# reasons. hive-network.service is a run-once unit that stays `active (exited)`
+# after creating the network; removing the network underneath it leaves systemd
+# believing the network exists, so the next install's `daemon-reload` + start
+# skips creation and `podman run --network hive` fails with `network not
+# found`. And the containers carry Restart=always / RestartSec=30, so
+# `podman rm --force` on a container whose unit is still running invites
+# systemd to recreate it 30 seconds later — or, with the network already gone,
+# to retry `network not found` forever, since nothing limits the restarts.
+#
+# These names exist only for the default instance: the Quadlet units in
+# src/deploy/quadlet/ hard-code io.kubestellar.hive.instance=default, so a
+# teardown scoped to another instance leaves them alone.
+HIVE_TEARDOWN_UNITS=(
+  hive-gateway.service
+  hive.service
+  hive-data-volume.service
+  hive-network.service
+)
+
 hive_podman_teardown_usage() {
   cat <<'EOF'
 Usage: hive-podman-teardown.sh plan [--images]
@@ -88,6 +111,13 @@ ownership label set from #4210 and nothing else, so an unlabelled container,
 pod, volume, or network cannot be reached from here. A volume carrying one of
 Hive's well-known names WITHOUT the labels is reported, never removed (#4485),
 so a labelling failure cannot read as "no Hive-owned volumes".
+
+Before removing anything, run stops the Quadlet-generated services that own
+the resources (hive-gateway, hive, hive-data-volume, hive-network), in the
+reverse of the order setup starts them, and clears their failed state. The
+unit FILES and the configuration under ~/.config/hive stay installed: a later
+`systemctl daemon-reload` + start (or bin/hive-podman-setup.sh) recreates the
+deployment from them.
 EOF
 }
 
@@ -252,6 +282,82 @@ _hive_podman_teardown_kind() {
   _hive_podman_teardown_exec podman "${remove[@]}" "${found[@]}"
 }
 
+# systemd scope follows who is running the teardown, exactly as the resources
+# do: a rootless deployment lives in the user manager, a rootful one in the
+# system manager. Same convention as bin/hive-podman-setup.sh, which the
+# operator ran with the matching privilege to install these units.
+_hive_podman_teardown_sctl() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    systemctl "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
+
+_hive_podman_teardown_sctl_label() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    printf 'systemctl'
+  else
+    printf 'systemctl --user'
+  fi
+}
+
+# Stops the Quadlet-generated services before their resources are removed
+# (#4484). See HIVE_TEARDOWN_UNITS for why the order is units-first.
+#
+# Idempotent by construction: a unit that is not loaded — never installed, or
+# already gone from an earlier teardown — is reported and skipped, never an
+# error. A unit that IS loaded but refuses to stop aborts the teardown, because
+# removing a resource from underneath a still-running unit is exactly the state
+# this phase exists to prevent.
+hive_podman_teardown_units() {
+  local instance="$1"
+  local sctl_label unit load_state
+
+  if [[ "$instance" != "default" ]]; then
+    printf 'instance %s: the Quadlet units belong to the default instance; leaving them alone\n' \
+      "$instance"
+    return 0
+  fi
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    printf 'systemctl not found: no systemd units to stop on this host\n'
+    return 0
+  fi
+
+  sctl_label="$(_hive_podman_teardown_sctl_label)"
+
+  if [[ "${HIVE_TEARDOWN_APPLY:-no}" != "yes" ]]; then
+    for unit in "${HIVE_TEARDOWN_UNITS[@]}"; do
+      printf 'would run: %s stop %s (if loaded), then reset-failed\n' "$sctl_label" "$unit"
+    done
+    return 0
+  fi
+
+  for unit in "${HIVE_TEARDOWN_UNITS[@]}"; do
+    load_state="$(_hive_podman_teardown_sctl show -p LoadState --value "$unit" 2>/dev/null)" \
+      || load_state=""
+    if [[ -z "$load_state" || "$load_state" == "not-found" || "$load_state" == "masked" ]]; then
+      printf 'unit %s is not loaded; nothing to stop\n' "$unit"
+      continue
+    fi
+
+    printf 'running: %s stop %s\n' "$sctl_label" "$unit" >&2
+    if ! _hive_podman_teardown_sctl stop "$unit"; then
+      printf 'ERROR: %s stop %s failed; refusing to remove resources the unit still owns.\n' \
+        "$sctl_label" "$unit" >&2
+      printf 'HINT: a resource removed underneath a running unit is how the next install breaks (#4484).\n' >&2
+      return 69
+    fi
+
+    # A unit that failed while it was being torn down must not be left in the
+    # `failed` state (or, with Restart=always, retrying forever against
+    # resources this script is about to remove).
+    _hive_podman_teardown_sctl reset-failed "$unit" >/dev/null 2>&1 || true
+    printf 'stopped %s\n' "$unit"
+  done
+}
+
 hive_podman_teardown_run() {
   local include_images="${1:-no}"
   local instance
@@ -266,6 +372,10 @@ hive_podman_teardown_run() {
   if [[ "${HIVE_TEARDOWN_APPLY:-no}" != "yes" ]]; then
     printf '(plan only — nothing is removed)\n'
   fi
+
+  # Units first: the resources below are owned by these units, and removing a
+  # resource from underneath its still-running unit is the #4484 bug.
+  hive_podman_teardown_units "$instance" || return
 
   local -a kinds=("${HIVE_TEARDOWN_KINDS[@]}")
   [[ "$include_images" == "yes" ]] && kinds+=("$HIVE_TEARDOWN_IMAGE_KIND")

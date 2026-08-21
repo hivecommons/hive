@@ -120,11 +120,23 @@ bin/hive-podman-teardown.sh run --yes        # remove it
 bin/hive-podman-teardown.sh run --yes --images
 ```
 
-What it does, in order: containers, then pods, then volumes, then networks.
-Images are opt-in behind `--images`, because an image is shared with every
-other deployment that pulled the same reference. `HIVE_DEPLOY_INSTANCE` scopes
-the whole run to one deployment, so two Hive installs on one host tear down
-separately.
+What it does, in order: first it stops the Quadlet-generated services that own
+the resources — `hive-gateway.service`, `hive.service`,
+`hive-data-volume.service`, `hive-network.service`, the reverse of the order
+setup starts them — and clears their failed state. Then it removes containers,
+then pods, then volumes, then networks. The order is load-bearing (#4484):
+`hive-network.service` is run-once and stays `active (exited)` after creating
+the network, so removing the network underneath it leaves systemd believing
+the network still exists and the next install fails with `network not found`;
+and the containers carry `Restart=always`, so a container removed while its
+unit runs is recreated 30 seconds later. The unit *files* and the
+configuration under `~/.config/hive` are left installed — a later
+`daemon-reload` + start, or `bin/hive-podman-setup.sh`, recreates the
+deployment from them. Images are opt-in behind `--images`, because an image is
+shared with every other deployment that pulled the same reference.
+`HIVE_DEPLOY_INSTANCE` scopes the whole run to one deployment, so two Hive
+installs on one host tear down separately; the Quadlet units belong to the
+default instance and are only stopped when tearing that instance down.
 
 Three properties are worth stating explicitly, because they are what the
 teardown is for:
