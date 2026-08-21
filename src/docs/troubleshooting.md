@@ -6,7 +6,7 @@ Start most investigations from the dashboard and the service logs, then drop to 
 
 ## Find the running service logs
 
-Docker Compose deployments define `hive` and `gateway` services in `src/docker-compose.yaml`. The Hive process healthcheck calls `http://127.0.0.1:3002/api/health`; the gateway publishes `3001` and proxies to Hive. Start with:
+Docker Compose deployments define `hive` and `gateway` services in `src/docker-compose.yaml`. The Hive process healthcheck calls **both** of the container's listeners — `http://127.0.0.1:3002/api/health` (the Go API) and `http://127.0.0.1:3001/api/health` (the Node auth proxy the gateway actually reaches). The gateway publishes `3001` and proxies to Hive. Start with:
 
 ```bash
 docker compose -f src/docker-compose.yaml ps
@@ -290,9 +290,12 @@ If API calls fail, check whether the request is going through the gateway on por
 Use the same endpoints as the probes:
 
 ```bash
-curl -fsS http://127.0.0.1:3002/api/health
+curl -fsS http://127.0.0.1:3002/api/health   # the Go API
+curl -fsS http://127.0.0.1:3001/api/health   # through the auth proxy — what the gateway reaches
 curl -fsS http://127.0.0.1:3002/api/livez
 ```
+
+Run both of the first two. They are the two halves of the container health probe, and they fail independently: a hive whose auth proxy refused to start answers the first and refuses the second ([#4476](https://github.com/kubestellar/hive/issues/4476)). Neither needs a credential — only mutating methods are authenticated.
 
 `/api/livez` is deliberately process-focused: the Kubernetes manifest notes that stale hub heartbeat state belongs in deeper health reporting and should not crash-loop a healthy pod.
 
@@ -323,14 +326,20 @@ Docker is the default runtime, so with `HIVE_DEPLOY_RUNTIME` unset all three pri
 
 The unit sits in `activating` for the whole `TimeoutStartSec` (300s for `hive.service`, 120s for the gateway) and then gives up. `Notify=healthy` is doing its job: it holds the unit until the healthcheck passes, so a healthcheck that will never pass costs the full budget in silence.
 
-The measured cause ([#4367](https://github.com/kubestellar/hive/issues/4367)) is a **port mismatch between the config and the unit's `HealthCmd`**: the unit probes `http://127.0.0.1:3002/api/health`, while `src/hive.yaml.example` ships `dashboard.port: 3001` for local source runs. Install the example unchanged and Hive serves on 3001, the probe never answers, and `--rm` deletes the container that held the evidence.
+The measured cause ([#4367](https://github.com/kubestellar/hive/issues/4367)) is a **port mismatch between the config and the unit's `HealthCmd`**: the unit's first probe is `http://127.0.0.1:3002/api/health`, while `src/hive.yaml.example` ships `dashboard.port: 3001` for local source runs. Install the example unchanged and Hive serves on 3001, the probe never answers, and `--rm` deletes the container that held the evidence.
 
 ```bash
 grep -A1 '^dashboard:' "$CONF/hive.yaml"    # must be 3002, or absent (3002 is the default)
 journalctl --user -u hive.service -n 100 --no-pager
 ```
 
-The other frequent cause is a missing `HIVE_DASHBOARD_TOKEN` in `%E/hive/hive.env` — Hive refuses to start without one unless the hive is hub-hosted, and `Notify=healthy` turns that refusal into the same silent `activating` wait. The journal carries the `[SECURITY]` line.
+The other frequent cause is a missing `HIVE_DASHBOARD_TOKEN` in `%E/hive/hive.env`. The Node auth proxy refuses to start without one unless the hive is hub-hosted, and `Notify=healthy` turns that refusal into the same silent `activating` wait. The journal carries the `[SECURITY]` line:
+
+```bash
+journalctl -u hive.service | grep '\[SECURITY\]'
+```
+
+**This one used to look different, and older notes may still describe it that way.** Until [#4476](https://github.com/kubestellar/hive/issues/4476) the probe read the Go API alone, so `hive.service` went `active` with its container `healthy` while the proxy was dead; the only red arrived 120s later on `hive-gateway.service`, as an nginx `connect() failed (111: Connection refused)` naming neither the port nor the variable. The probe now covers both listeners, so the wait and the journal line are on the same unit.
 
 ### `systemctl is-failed` says `activating`, not `failed`
 

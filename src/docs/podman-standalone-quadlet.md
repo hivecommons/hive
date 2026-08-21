@@ -234,8 +234,21 @@ proxies nothing. Its `upstream hive_api { server hive:3001; }` is what the
 shared network exists to make resolvable — leave the hostname alone unless you
 also change `ContainerName=` in `hive.container`.
 
-**`dashboard.port` has to agree with the port in `HealthCmd=`.** The unit probes
-`http://127.0.0.1:3002/api/health`. 3002 is where the Go default puts the API
+**`dashboard.port` has to agree with the FIRST port in `HealthCmd=`.** The unit
+probes two:
+
+```
+HealthCmd=curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health
+```
+
+3002 is the Go API and is the one `dashboard.port` is coupled to. 3001 is the
+Node auth proxy, whose port comes from `HIVE_PROXY_PORT` rather than from
+`hive.yaml`, and it is there because the unit used to report `healthy` while the
+dashboard was refusing connections (#4476 — see the trap below). Podman runs a
+`--health-cmd` that is not a JSON array under `/bin/sh -c`, so the `&&` is the
+shell's and either half failing is unhealthy.
+
+3002 is where the Go default puts the API
 (`defaultDashboardPort` in `src/pkg/config/config.go`), where the `hive`
 service's healthcheck in `src/docker-compose.yaml` looks for it, and what
 `src/deploy/hive.yaml` sets. Deleting the `port:` line outright works too, since
@@ -398,7 +411,7 @@ that advice.
 
 ## Traps, measured not guessed
 
-**`dashboard.port` must be 3002, the port `HealthCmd=` probes.**
+**`dashboard.port` must be 3002, the first port `HealthCmd=` probes.**
 `src/hive.yaml.example` sets it to 3001 for source runs, and that is the file an
 operator reaches for — `src/docs/network-requirements.md` describes it as the
 one "for local/source runs", which is what a standalone Podman install reads as.
@@ -411,6 +424,34 @@ deleted on the way out. What is left is `Job for hive.service failed because a
 timeout was exceeded`, an empty `podman ps -a`, and a five-minute feedback loop
 per attempt. Measured on Fedora 44, Podman 5.8.4 rootless, SELinux enforcing
 (#4367).
+
+**A missing `HIVE_DASHBOARD_TOKEN` used to leave `hive.service` reporting
+`healthy`.** The container has two listeners and the unit probed one of them.
+The Node proxy on 3001 enforces the token and *fails closed without it* —
+`Refusing to start. Set HIVE_DASHBOARD_TOKEN.` — so it never binds, while the Go
+API on 3002 answers 200 throughout. Measured, rootful, with the line omitted
+from `$CONF/hive.env`:
+
+```
+$ sudo systemctl is-active hive.service hive-gateway.service
+active                                   <- hive
+activating                               <- gateway, about to time out
+$ sudo podman ps
+hive   Up 2 minutes (healthy)            <- for the whole two minutes
+$ sudo podman exec hive curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/api/health
+000                                      <- nothing listening
+```
+
+The only red was `hive-gateway.service`, 120s later, as an nginx
+`connect() failed (111: Connection refused)` naming neither the port nor the
+variable — while the unit that owned the broken configuration was green. The
+`HealthCmd=` above now probes both listeners, so the failure surfaces on
+`hive.service`, where the cause is. `src/deploy/test_quadlet_config_contract.sh`
+holds the second port to what `nginx.conf` dials, and
+`src/proxy/health_probe.test.js` holds `GET /api/health` on 3001 to answering
+without a credential in every mode the proxy boots in — if it ever needed one,
+this probe could never pass and every start would hang for `TimeoutStartSec`
+(#4476).
 
 **Do not enable IPv6 on `hive.network`.** The forced-proxy egress gate that
 `src/deploy/entrypoint.sh` installs is `iptables-nft` only — the file contains
