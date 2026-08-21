@@ -75,6 +75,14 @@ type Client struct {
 	// MergeRequestAuthorizer / F4). nil fails closed. Set by
 	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
+	// issueAuthz gates issue-create/comment requests from the issue-request
+	// watcher against the per-agent mode policy (CanCreateIssues) +
+	// forge-resistance. nil fails closed. Set by StartIssueRequestWatcher.
+	issueAuthz IssueRequestAuthorizer
+	// issueRetries tracks per-request-file retry backoff for the issue-request
+	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
+	issueRetryMu sync.Mutex
+	issueRetries map[string]*issueRetryState
 	// mergerAuthz gates the label-queued auto-merge sweep on WHO queued the
 	// merge: it reports whether a login holds at least config.RoleMerger (audit
 	// F3). nil fails closed — SweepQueuedAutoMerges merges nothing. Guarded

@@ -6715,6 +6715,38 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 	return nil
 }
 
+// AuthorizeIssueOpen enforces the policy for the issue-request watcher,
+// mirroring AuthorizePROpen with the mode gates that govern the direct gh
+// paths: "issue" requests need CanCreateIssues() (mode >= ISSUES_ONLY);
+// "comment" requests need the same (commenting is an issue-write). The same
+// UID forge-resistance applies: the request file's owner must BE the claimed
+// agent. A nil manager or unknown agent is denied.
+func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string) error {
+	if strings.TrimSpace(agentName) == "" {
+		return fmt.Errorf("no agent named in the request")
+	}
+	if m.uidMap != nil && fileUID > 0 {
+		owner := m.uidMap.LookupByUID(fileUID)
+		if owner == "" {
+			return fmt.Errorf("request file owned by unknown uid %d (not a registered agent)", fileUID)
+		}
+		if owner != agentName {
+			return fmt.Errorf("request claims agent %q but file is owned by agent %q (uid %d)", agentName, owner, fileUID)
+		}
+	}
+	m.mu.RLock()
+	agent := m.agents[agentName]
+	m.mu.RUnlock()
+	if agent == nil {
+		return fmt.Errorf("unknown agent %q", agentName)
+	}
+	if !m.agentMode(agent).CanCreateIssues() {
+		return fmt.Errorf("agent %q may not create issues or comments at this ACMM level (mode %s)",
+			agentName, m.agentMode(agent).String())
+	}
+	return nil
+}
+
 // AuthorizeMerge enforces the policy for the hive-merges-PR watcher, mirroring
 // AuthorizePROpen but with the stricter CanMerge() gate: the request's agent
 // must own the request file (forge-resistance) AND be merge-capable at the

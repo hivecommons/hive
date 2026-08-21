@@ -947,12 +947,33 @@ if [[ -n "$AGENT_NAME" ]]; then
         *) [[ -z "$item_num" ]] && item_num="$arg" ;;
       esac
     done
+    # Explicit success: the loop's last iteration is often `[[ -z set ]] && …`
+    # (a trailing positional like a --body value), which evaluates false. Under
+    # `set -e` that non-zero return killed the whole wrapper — comments with a
+    # trailing free-text arg died with a silent exit 1.
+    return 0
   }
 
   case "$subcmd/$action" in
     issue/create|pr/create)
-      _ensure_labels
       _inject_identity
+      # ── Relay issue creation through the hive (issue-request watcher) ──
+      # The direct path rode the agent's shell tool: one GHE secondary-rate-
+      # limit stall, network blip, or mangled multiline command and the
+      # finding was silently lost (root-caused live 2026-08-21: sec-check's
+      # creates timed out mid-flight, repeatedly, and survived only as beads).
+      # hive-open-issue writes a request file (milliseconds, no network); the
+      # hive creates the issue server-side with the App token — retried with
+      # backoff, deduped by exact open-issue title, and gated by the SAME
+      # CanCreateIssues mode check + UID forge-resistance as this wrapper.
+      # Mode gates (NO_GITHUB/ADVISORY capture) have already run above, so an
+      # advisory agent's finding still lands in the digest, never the queue.
+      # Contributors are EXEMPT (they file under their own identity), mirroring
+      # the hive-open-pr redirect.
+      if [ "$subcmd" = "issue" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        exec hive-open-issue "${args[@]}" --label "$LABELS_CSV"
+      fi
+      _ensure_labels
       # `|| rc=$?` (not `cmd; rc=$?`): this script runs under `set -e`, so a
       # bare failing gh exited the wrapper BEFORE rc was ever read — the
       # unlabeled retry below was dead code, and a missing injected label
@@ -991,9 +1012,16 @@ if [[ -n "$AGENT_NAME" ]]; then
       exec "$REAL_GH" "$@"
       ;;
     issue/comment|pr/comment|pr/review)
-      _ensure_labels
       _inject_identity
       _extract_item
+      # ── Relay comments through the hive (same rationale as issue/create) ──
+      # A lost review/triage comment is a lost work product. pr/review keeps
+      # the direct path: its approve/request-changes event semantics don't map
+      # to a plain comment.
+      if [ "$action" = "comment" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        exec hive-open-issue comment "${args[@]}"
+      fi
+      _ensure_labels
       "$REAL_GH" "${args[@]}"
       exit_code=$?
       if [[ $exit_code -eq 0 && -n "$item_num" ]]; then

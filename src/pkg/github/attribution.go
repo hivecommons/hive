@@ -45,6 +45,12 @@ const (
 	// AuditActionAgentPRCreated is the audit action recorded when the
 	// PR-request watcher opens a PR on an agent's behalf.
 	AuditActionAgentPRCreated = "agent_pr_created"
+	// AuditActionAgentIssueCreated is the audit action recorded when the
+	// issue-request watcher creates an issue on an agent's behalf.
+	AuditActionAgentIssueCreated = "agent_issue_created"
+	// AuditActionAgentCommentCreated is the audit action recorded when the
+	// issue-request watcher posts an issue/PR comment on an agent's behalf.
+	AuditActionAgentCommentCreated = "agent_comment_created"
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"
