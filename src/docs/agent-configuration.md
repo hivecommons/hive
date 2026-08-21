@@ -96,6 +96,9 @@ agents:
     enabled: true                # default true; set false to keep it configured but off
     mode: ISSUES_AND_PRS         # GitHub interaction tier: ADVISORY | ISSUES_ONLY |
                                  #   ISSUES_AND_PRS | ISSUES_PRS_MERGE
+    converse: true               # let this agent comment on issues/PRs and leave PR
+                                 #   reviews, INDEPENDENTLY of mode. Off by default.
+                                 #   See "Conversation is not a tier" below.
     bead_role: worker            # worker | supervisor (supervisors sort first,
                                  #   monitor the others); default worker
     kick_template: scanner-holdgated.md
@@ -114,6 +117,51 @@ agents:
     lane_keywords: [bug, triage, fix]   # routes matching issues into this agent's lane
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
 ```
+
+#### Conversation is not a tier
+
+`mode` is a ladder: each rung is a strict superset of the one below, from
+"observe only" up to "merge on green CI". `converse` is not on that ladder. It
+grants exactly two things — posting a comment on an issue or PR, and leaving a
+PR review — and nothing else moves.
+
+It exists because those two operations had nowhere sensible to sit
+([#4492](https://github.com/kubestellar/hive/issues/4492)). Commenting was
+bundled with `ISSUES_ONLY`, alongside creating issues, editing issue bodies and
+relabelling; leaving a PR review was bundled with `ISSUES_AND_PRS`, alongside
+pushing branches. Both bundles are wrong in both directions:
+
+- An **ADVISORY** agent that spots something on a thread could not reply. It
+  could only emit a bead nobody outside the hive ever sees.
+- Letting it reply meant promoting it to `ISSUES_ONLY`, which also handed it the
+  ability to rewrite issue bodies and relabel — and a reviewer who wanted
+  comment-only had no way to ask for it.
+
+With `converse` those are separable:
+
+| What you want | Configuration |
+|---|---|
+| An agent that observes and can reply, but files and edits nothing | `mode: ADVISORY` + `converse: true` |
+| An agent that files issues but never speaks on a thread | `mode: ISSUES_ONLY` (the default — `converse` is off) |
+| A merge-capable agent that also reviews at ADVISORY-level trust | not expressible; reviews come with `ISSUES_AND_PRS` anyway |
+
+**It only ever widens.** `converse` is checked *beside* the mode tier, not
+instead of it, so an agent already at a tier that permits an operation keeps it.
+Turning `converse` on can never take anything away, and it cannot reach anything
+the tier ladder does not already gate: issue creation, editing, relabelling,
+pushing, opening a PR and merging all stay exactly where they were. The
+hard-denied routes (direct PR creation, direct merge) are unreachable by any
+capability at all.
+
+**It is off everywhere by default**, at every ACMM level, so a hive that does
+not mention it behaves exactly as it did. The only way an agent starts talking
+is an operator writing `converse: true`.
+
+Enforcement is the MITM proxy, over both REST and GraphQL — which matters,
+because `gh issue comment` and `gh pr review` send GraphQL, not REST. On the
+GraphQL side the grant is evaluated over the *whole* document: a mutation that
+comments **and** edits an issue, or comments and merges, is not conversation and
+is refused at the tier the non-conversational half requires.
 
 For prompt file resolution and the complete built-in `${VAR}` reference, see
 [Policy and prompt templates](../policies/README.md).

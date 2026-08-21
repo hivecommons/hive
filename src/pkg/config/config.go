@@ -789,8 +789,22 @@ type AgentConfig struct {
 	StatsDisplay     []StatsDisplayEntry     `yaml:"stats_display" json:"stats_display,omitempty"`
 	ACMMLevels       []int                   `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
 	Mode             string                  `yaml:"mode" json:"mode,omitempty"`
-	OnDemand         bool                    `yaml:"on_demand" json:"on_demand,omitempty"`
-	CavemanMode      string                  `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	// Converse opts this agent into the orthogonal `converse` capability
+	// (#4492): posting comments on issues and PRs, and leaving PR reviews,
+	// independently of Mode. It does not grant issue creation, editing,
+	// relabelling, pushing or merging — those stay on the Mode ladder.
+	//
+	// A POINTER so "unset" stays distinguishable from "explicitly false" across
+	// pack re-apply and the dashboard overlay, the same reason ModelOwner
+	// exists. Unset means off: `converse` is opt-in at every ACMM level, so an
+	// existing hive that says nothing behaves exactly as it did.
+	//
+	// The shape this exists for is `mode: ADVISORY` + `converse: true` — an
+	// agent that can reply on a thread it was mentioned in but cannot file,
+	// edit or relabel anything.
+	Converse    *bool  `yaml:"converse,omitempty" json:"converse,omitempty"`
+	OnDemand    bool   `yaml:"on_demand" json:"on_demand,omitempty"`
+	CavemanMode string `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
 	// ExplainMode opts this agent into emitting EXPLAIN-prefixed reasoning
 	// lines alongside its tool calls, so an operator debugging "why did it do
 	// that" has something to read (#3887). Off by default because the

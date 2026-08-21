@@ -384,7 +384,7 @@ func TestProxyHTTPRepoFilterBlocked(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// POST to a repo not in the allowed list, then close so proxyHTTP sees EOF
 	go func() {
@@ -441,7 +441,7 @@ func TestProxyHTTPGitPath(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// Send a git-upload-pack request (allowed at advisory mode)
 	go func() {
@@ -839,7 +839,7 @@ func TestProxyHTTPMultipleRequests(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// First: allowed GET
 	go func() {
@@ -1385,7 +1385,7 @@ func TestProxyHTTPGraphQLBlockedNonMutation(t *testing.T) {
 	defer upstreamConn.Close()
 
 	// Use mode below advisory to block even queries
-	go p.proxyHTTP(proxyClient, proxyUpstream, "blocked-agent", agent.AgentMode(-1))
+	go p.proxyHTTP(proxyClient, proxyUpstream, "blocked-agent", agent.AgentMode(-1), agent.AgentCapabilities{})
 
 	body := `{"query":"{ viewer { login } }"}`
 	fmt.Fprintf(clientConn, "POST /graphql HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: %d\r\n\r\n%s", len(body), body)

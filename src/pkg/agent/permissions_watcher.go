@@ -52,6 +52,13 @@ const (
 // matching WatchedHomeDirs/SharedRepoParent. Production value is unchanged.
 var ModeFileGlob = "/tmp/.hive-mode-*"
 
+// CapsFileGlob matches the per-agent capability files (/tmp/.hive-caps-<agent>,
+// #4492). They are repaired by the same scan and under the same rules as the
+// mode files: written by the hive uid, read on the enforcement path, and
+// world-readable so a future out-of-process reader (the shell wrappers already
+// read the mode file this way) is not locked out by a narrow umask.
+var CapsFileGlob = "/tmp/.hive-caps-*"
+
 // modeFileReadBits is `a+r` — the read access every mode-file consumer needs.
 // ORed into the existing perms, never narrowing owner bits, so an
 // already-correct 0644 file is left byte-identical and the scan idempotent.
@@ -272,12 +279,14 @@ func fixPermissions(logger *slog.Logger) {
 // the pathname cannot be swapped between the check and the chmod (CWE-59 /
 // CWE-367 — the same descriptor discipline writeAgentStateFile follows, #3175).
 func fixModeFiles(logger *slog.Logger) {
-	paths, err := filepath.Glob(ModeFileGlob)
-	if err != nil {
-		return
-	}
-	for _, path := range paths {
-		fixModeFile(path, logger)
+	for _, glob := range []string{ModeFileGlob, CapsFileGlob} {
+		paths, err := filepath.Glob(glob)
+		if err != nil {
+			continue
+		}
+		for _, path := range paths {
+			fixModeFile(path, logger)
+		}
 	}
 }
 

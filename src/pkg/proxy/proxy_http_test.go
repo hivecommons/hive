@@ -31,7 +31,7 @@ func TestProxyHTTPAllowedGET(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	go func() {
 		fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
@@ -72,7 +72,7 @@ func TestProxyHTTPBlockedPOST(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// Write request synchronously — blocked POST gets 403 back on same conn
 	fmt.Fprintf(clientConn, "POST /repos/org/repo/issues HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: 2\r\n\r\n{}")
@@ -109,7 +109,7 @@ func TestProxyHTTPGraphQLMutationBlocked(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	body := `{"query":"mutation { addStar(input: {}) { id } }"}`
 	go func() {
@@ -143,7 +143,7 @@ func TestProxyHTTPGraphQLQueryAllowed(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	body := `{"query":"{ viewer { login } }"}`
 	go func() {
@@ -183,7 +183,7 @@ func TestProxyHTTPClientClose(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	_, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	clientConn.Close()
 }

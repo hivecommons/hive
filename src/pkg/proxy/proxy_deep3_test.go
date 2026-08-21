@@ -435,7 +435,7 @@ func TestProxyHTTPUpstreamReadError(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	go func() {
 		fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
@@ -462,7 +462,7 @@ func TestProxyHTTPResponseWriteError(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	go func() {
 		fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")

@@ -317,7 +317,7 @@ func TestProxyHTTPGraphQLReadBodyError(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// Send a POST to /graphql with Content-Length but then close before sending body
 	go func() {
@@ -349,7 +349,7 @@ func TestProxyHTTPGitPathUpstreamFail(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// Send a git receive-pack request (write op, allowed at ISSUES_AND_PRS)
 	go func() {
@@ -615,7 +615,7 @@ func TestProxyHTTPSuccessfulRoundtrip(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// Request 1: allowed POST (create issue)
 	body := `{"title":"test"}`

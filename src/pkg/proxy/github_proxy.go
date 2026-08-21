@@ -36,6 +36,13 @@ const (
 	proxyListenPort        = 18443
 	InferenceTranslatePort = 18444
 	modeFilePrefix         = "/tmp/.hive-mode-"
+	// capsFilePrefix holds the per-agent ORTHOGONAL capability set (#4492) — the
+	// tokens agent.AgentCapabilities.String() writes. Deliberately a SECOND file
+	// rather than a richer format in the mode file: bin/gh-wrapper.sh reads
+	// /tmp/.hive-mode-<agent> under `set -e` and expects a bare mode string, so
+	// changing that content would break every gh call on every hive.
+	// A missing or empty file means no capabilities, which is the default.
+	capsFilePrefix         = "/tmp/.hive-caps-"
 	maxViolationLog        = 1000
 	maxGitHubWriteBodyScan = 2 << 20
 
@@ -472,6 +479,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 
 	mode := readAgentMode(agentName)
+	caps := readAgentCaps(agentName)
 
 	// MITM: forge a cert, TLS-wrap the client, connect to real upstream.
 	tlsCert, err := p.forgeCert(host)
@@ -502,7 +510,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer upstreamConn.Close()
 
-	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode)
+	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode, caps)
 }
 
 const tlsClientHelloMaxSize = 4096
@@ -808,6 +816,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	}
 
 	mode := readAgentMode(agentName)
+	caps := readAgentCaps(agentName)
 
 	// Tell client the tunnel is established.
 	if _, err := fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
@@ -854,7 +863,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	defer upstreamConn.Close()
 
 	// Proxy HTTP requests, inspecting each one.
-	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode)
+	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode, caps)
 }
 
 // proxyHTTP reads HTTP requests from the client, checks them against
@@ -872,7 +881,7 @@ func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
 	p.logger.Warn(msg, attrs...)
 }
 
-func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName string, mode agent.AgentMode) {
+func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) {
 	clientBuf := newBufferedConn(client)
 
 	for {
@@ -905,7 +914,7 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			allowed, isMutation := GraphQLAllowed(mode, body)
+			allowed, isMutation := GraphQLAllowedCaps(mode, caps, body)
 			if !allowed {
 				blocked = true
 				if isMutation {
@@ -921,7 +930,7 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			// autonomy. Its control-plane calls (App token mint, heartbeat)
 			// must not be gated as if they were agent writes. Repo-filter and
 			// canary-egress checks below still apply.
-		} else if !AllowedByMode(mode, req.Method, req.URL.Path) {
+		} else if !AllowedByModeCaps(mode, caps, req.Method, req.URL.Path) {
 			blocked = true
 			// An unidentified agent is silently treated as ADVISORY, which turns
 			// a permissions bug into an indistinguishable "policy denial". Say so
@@ -1286,6 +1295,21 @@ func extractAgentName(r *http.Request) string {
 }
 
 // readAgentMode reads the mode from the hot-reloadable mode file.
+// readAgentCaps loads the agent's orthogonal capability set (#4492) from
+// /tmp/.hive-caps-<agent>. Every failure path returns the zero value — no
+// capabilities — so an unreadable, missing or malformed file degrades toward
+// the tier check alone, which is the deny direction.
+func readAgentCaps(agentName string) agent.AgentCapabilities {
+	if agentName == "" {
+		return agent.AgentCapabilities{}
+	}
+	data, err := os.ReadFile(capsFilePrefix + agentName)
+	if err != nil {
+		return agent.AgentCapabilities{}
+	}
+	return agent.ParseCapabilities(strings.TrimSpace(string(data)))
+}
+
 func readAgentMode(agentName string) agent.AgentMode {
 	if agentName == "" {
 		return agent.ModeAdvisory

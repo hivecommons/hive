@@ -412,7 +412,7 @@ func TestProxyHTTPGitReceivePackBidirectional(t *testing.T) {
 			clientConn.Close()
 			return
 		}
-		p.proxyHTTP(clientConn, upstream, "scanner", agent.ModeIssuesAndPRs)
+		p.proxyHTTP(clientConn, upstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 	}()
 
 	conn, err := net.DialTimeout("tcp", clientLn.Addr().String(), time.Second)

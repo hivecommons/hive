@@ -421,6 +421,11 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	// does not re-apply stale pack modes when it reloads the file. Without
 	// this, Config.Save → fsnotify reload → old mode restored → governor
 	// kick writes wrong mode file.
+	//
+	// Only Mode is cleared. Converse (#4492) is deliberately left alone: it is
+	// an orthogonal, level-independent operator choice, not a pack-seeded tier,
+	// so clearing it here would silently revoke an opt-in every time the level
+	// moved.
 	for name, ac := range s.deps.Config.Agents {
 		ac.Mode = ""
 		s.deps.Config.Agents[name] = ac

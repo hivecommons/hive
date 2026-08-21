@@ -24,7 +24,7 @@ func TestProxyHTTPGitReceivePackStreaming(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	done := make(chan struct{})
 
@@ -76,7 +76,7 @@ func TestProxyHTTPGitUploadPack(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	done := make(chan struct{})
 

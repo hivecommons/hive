@@ -6897,6 +6897,37 @@ func (m *Manager) SyncModeFiles(level int) {
 		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
+		// The capability file rides the same sync (#4492). It is level-independent
+		// today, but writing it here is what makes a `converse` change take effect
+		// on the next reconcile instead of only at the next agent launch.
+		caps := DefaultCapabilities(mode, level)
+		if agent.Config.Converse != nil {
+			caps.Converse = *agent.Config.Converse
+		}
+		m.writeAgentCapsFile(name, caps)
+	}
+}
+
+// agentCapabilities returns the ORTHOGONAL capabilities for a given agent
+// (#4492). Unlike agentMode there is no per-level default table: `converse` is
+// opt-in everywhere, so an agent whose config says nothing gets the zero value
+// and behaves exactly as it did before capabilities existed.
+func (m *Manager) agentCapabilities(agent *AgentProcess) AgentCapabilities {
+	caps := DefaultCapabilities(m.agentMode(agent), m.project.ACMMLevel)
+	if agent.Config.Converse != nil {
+		caps.Converse = *agent.Config.Converse
+	}
+	return caps
+}
+
+// writeAgentCapsFile persists the capability set the proxy reads on the request
+// path. It is written for EVERY agent, including those with no capabilities, so
+// a cleared `converse` actually revokes: leaving a stale file behind would keep
+// granting the capability after the operator turned it off.
+func (m *Manager) writeAgentCapsFile(name string, caps AgentCapabilities) {
+	capsFile := fmt.Sprintf("/tmp/.hive-caps-%s", name)
+	if err := writeAgentStateFile(capsFile, []byte(caps.String())); err != nil {
+		m.logger.Warn("caps file write failed", "file", capsFile, "error", err)
 	}
 }
 
@@ -7240,6 +7271,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
+	m.writeAgentCapsFile(agent.Name, m.agentCapabilities(agent))
 	// Plain proxy URL without userinfo — Claude Code's native binary fails
 	// to open a socket when the URL contains username:password@ (FailedToOpenSocket).
 	// Agent identification uses UID-based /proc/net/tcp lookup instead of

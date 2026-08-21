@@ -174,7 +174,7 @@ func TestProxyHTTPGitPathUpstreamWriteError(t *testing.T) {
 
 	upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	fmt.Fprintf(clientConn, "POST /org/repo.git/info/refs HTTP/1.1\r\nHost: github.com\r\nContent-Length: 0\r\n\r\n")
 	time.Sleep(200 * time.Millisecond)

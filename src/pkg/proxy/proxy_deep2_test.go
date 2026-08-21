@@ -297,7 +297,7 @@ func TestProxyHTTPAllowedPOSTWithBody(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	body := `{"title":"test issue"}`
 	go func() {
@@ -342,7 +342,7 @@ func TestProxyHTTPGraphQLMutationAllowed(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesOnly)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesOnly, agent.AgentCapabilities{})
 
 	body := `{"query":"mutation { addStar(input: {}) { id } }"}`
 	go func() {
@@ -531,7 +531,7 @@ func TestProxyHTTPBlockedPOSTShowsPath(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// POST to pulls (blocked for advisory)
 	go func() {
@@ -715,7 +715,7 @@ func TestProxyHTTPUpstreamWriteError(t *testing.T) {
 		proxyUpstream.Close()
 	}()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
 	// proxyHTTP will fail writing to closed upstream and return
