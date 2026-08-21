@@ -289,8 +289,12 @@ func TestDashboardCountryFlagWiring(t *testing.T) {
 		// plausible-looking but wrong glyphs (letters, not flags).
 		"var REGIONAL_INDICATOR_BASE = 0x1F1E6;",
 		// ...and the flag must actually be rendered beside the nav avatar,
-		// reading the country off the auth payload.
-		"countryFlagHTML(data.country)",
+		// reading the country off the auth payload. The nav goes through
+		// countryNavHTML rather than countryFlagHTML directly: the signed-in
+		// viewer's own flag is a button (and renders even when unset, so a
+		// user with no country still has a way to add one), while
+		// countryFlagHTML stays the read-only glyph used for everyone else.
+		"countryNavHTML(data.country)",
 		// The CSS class the glyph is wrapped in must exist, or the flag renders
 		// at whatever size the surrounding text happens to be.
 		".country-flag {",
@@ -315,13 +319,18 @@ func TestDashboardCountryFlagWiring(t *testing.T) {
 	// Ordering: the helper must be DEFINED before the nav render that calls it.
 	// Both live in the same script, so a definition that drifted below its use
 	// inside an unhoisted expression would break the first paint.
-	def := strings.Index(html, "function countryFlagHTML(code)")
-	use := strings.Index(html, "countryFlagHTML(data.country)")
+	// Both helpers must be defined before the nav render, since countryNavHTML
+	// calls countryFlagEmoji on the way to painting the button.
+	def := strings.Index(html, "function countryNavHTML(code)")
+	use := strings.Index(html, "countryNavHTML(data.country)")
 	if def < 0 || use < 0 {
-		t.Fatalf("could not locate countryFlagHTML definition (%d) and use (%d)", def, use)
+		t.Fatalf("could not locate countryNavHTML definition (%d) and use (%d)", def, use)
 	}
 	if def > use {
-		t.Error("countryFlagHTML is defined after the nav render that calls it")
+		t.Error("countryNavHTML is defined after the nav render that calls it")
+	}
+	if glyph := strings.Index(html, "function countryFlagHTML(code)"); glyph < 0 {
+		t.Error("countryFlagHTML disappeared — it is still the read-only glyph for other users' flags")
 	}
 }
 

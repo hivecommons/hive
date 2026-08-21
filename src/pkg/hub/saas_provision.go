@@ -647,7 +647,9 @@ type SaaSHive struct {
 	// AutoUpgradeMode gates WHEN an enabled auto-upgrade may fire:
 	// AutoUpgradeModeInstant (or empty) upgrades as soon as the hive is seen
 	// behind latest; AutoUpgradeModeDaily upgrades at most once per ET calendar
-	// day, at or after autoUpgradeDailyHour. omitempty keeps existing meta.json
+	// day, at or after autoUpgradeDailyHour; AutoUpgradeModeWeekly upgrades at
+	// most once per ISO week, at or after autoUpgradeDailyHour on Tuesday.
+	// omitempty keeps existing meta.json
 	// records byte-identical until the operator actually picks a mode, and an
 	// absent field reads as instant — so the ~42 records already on the PVC keep
 	// today's behaviour exactly.

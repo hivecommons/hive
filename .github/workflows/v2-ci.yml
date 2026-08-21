@@ -106,6 +106,18 @@ jobs:
       - name: Standalone service deployment contract (#4204)
         run: bash deploy/test_standalone_service_contract.sh
 
+      # #4375: the guard above parses docker-compose.yaml and therefore cannot
+      # see a Quadlet unit at all. This is the same published-port boundary for
+      # src/deploy/quadlet/ — the gateway publishes 3001 and only 3001, nothing
+      # publishes 7681 on either side, hive and the gateway share one network,
+      # and the network leaves DisableDNS/Internal/IPv6 alone (an IPv6-enabled
+      # network is a measured egress bypass, since the forced-proxy gate has no
+      # ip6tables rules). The generator gate in quadlet-gate.yml checks that
+      # these units PARSE; this checks what they MEAN, which the generator
+      # exits 0 on. Pure text analysis: podman is not required.
+      - name: Quadlet published-port boundary (#4375)
+        run: bash deploy/test_quadlet_port_boundary.sh
+
       # #4367: the Quadlet unit's HealthCmd= probes a port that lives in the
       # OPERATOR's hive.yaml, and nothing at install time notices when the two
       # disagree — the config parses, the generator exits 0, the container

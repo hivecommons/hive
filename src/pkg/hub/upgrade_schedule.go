@@ -31,7 +31,23 @@ const (
 	// first poll cycle at or after autoUpgradeDailyHour local time in
 	// autoUpgradeTimezone.
 	AutoUpgradeModeDaily = "daily"
+
+	// AutoUpgradeModeWeekly upgrades at most once per ISO week, during the
+	// first poll cycle at or after autoUpgradeDailyHour on
+	// autoUpgradeWeeklyDay (Tuesday) in autoUpgradeTimezone. The window stays
+	// open for the REST of the week (same missed-window semantics as daily):
+	// a hub that was down across Tuesday 1pm fires on the next cycle it sees
+	// rather than leaving the hive knowingly behind for another week.
+	AutoUpgradeModeWeekly = "weekly"
 )
+
+// autoUpgradeWeeklyDay is the weekday the weekly window opens on. Tuesday is
+// deliberate: Monday absorbs the weekend's backlog (a bad roll would land on
+// the busiest triage day), and later in the week pushes a failed upgrade
+// toward Friday. Like autoUpgradeDailyHour, this is a single constant rather
+// than per-hive configuration, so every weekly hive moves together and no
+// data migration is ever needed to change it.
+const autoUpgradeWeeklyDay = time.Tuesday
 
 // autoUpgradeDailyHour is the hour (24h clock, in autoUpgradeTimezone) at or
 // after which a "daily" hive becomes eligible to upgrade. 13 = 1pm ET.
@@ -72,6 +88,7 @@ const autoUpgradeDateFormat = "2006-01-02"
 var validAutoUpgradeModes = map[string]bool{
 	AutoUpgradeModeInstant: true,
 	AutoUpgradeModeDaily:   true,
+	AutoUpgradeModeWeekly:  true,
 }
 
 // isValidAutoUpgradeMode reports whether mode is acceptable on the API. The
@@ -84,8 +101,9 @@ func isValidAutoUpgradeMode(mode string) bool {
 // normalizeAutoUpgradeMode maps a stored/legacy value onto a concrete mode.
 // Empty (a legacy record, or a client that never sent the field) is instant.
 func normalizeAutoUpgradeMode(mode string) string {
-	if mode == AutoUpgradeModeDaily {
-		return AutoUpgradeModeDaily
+	switch mode {
+	case AutoUpgradeModeDaily, AutoUpgradeModeWeekly:
+		return mode
 	}
 	return AutoUpgradeModeInstant
 }
@@ -138,7 +156,8 @@ type autoUpgradeDecision struct {
 // defeats the point of having auto-upgrade enabled at all. Only ONE upgrade is
 // ever owed, because the gate is "have we fired today", not a queue of windows.
 func shouldAutoUpgradeNow(mode, lastFiredDate string, now time.Time) autoUpgradeDecision {
-	if normalizeAutoUpgradeMode(mode) == AutoUpgradeModeInstant {
+	norm := normalizeAutoUpgradeMode(mode)
+	if norm == AutoUpgradeModeInstant {
 		// Instant hives are ungated and never record a fire date.
 		return autoUpgradeDecision{Allowed: true, Reason: "instant mode"}
 	}
@@ -151,6 +170,35 @@ func shouldAutoUpgradeNow(mode, lastFiredDate string, now time.Time) autoUpgrade
 
 	local := now.In(loc)
 	today := local.Format(autoUpgradeDateFormat)
+
+	if norm == AutoUpgradeModeWeekly {
+		// "Have we fired this ISO week" is the gate, evaluated in ET. The
+		// stored fire date is a concrete calendar day, so a hive switched
+		// from daily to weekly mid-week keeps a meaningful record.
+		if lastFiredDate != "" {
+			if fired, perr := time.ParseInLocation(autoUpgradeDateFormat, lastFiredDate, loc); perr == nil {
+				fy, fw := fired.ISOWeek()
+				ny, nw := local.ISOWeek()
+				if fy == ny && fw == nw {
+					return autoUpgradeDecision{Reason: "already upgraded this week"}
+				}
+			}
+			// An unparseable record is treated as "never fired" — firing a
+			// week early is a far better failure than never firing again.
+		}
+		// ISO day-of-week (Mon=1 … Sun=7): the window opens Tuesday at
+		// autoUpgradeDailyHour and stays open through Sunday, so a hub that
+		// missed the Tuesday hour still fires later the same week.
+		dayISO := int(local.Weekday())
+		if dayISO == 0 {
+			dayISO = 7
+		}
+		openDay := int(autoUpgradeWeeklyDay)
+		if dayISO < openDay || (dayISO == openDay && local.Hour() < autoUpgradeDailyHour) {
+			return autoUpgradeDecision{Reason: "before the weekly window"}
+		}
+		return autoUpgradeDecision{Allowed: true, FireDate: today, Reason: "weekly window open"}
+	}
 
 	if lastFiredDate == today {
 		return autoUpgradeDecision{Reason: "already upgraded today"}

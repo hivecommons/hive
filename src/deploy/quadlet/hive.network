@@ -1,0 +1,58 @@
+# The network the Hive service and its gateway share (#4375).
+#
+# This unit exists for exactly one reason: it is the boundary that lets the
+# gateway reach Hive while the host cannot. Podman's default `podman` network
+# would give container-to-container routing too, but it ships with DNS off —
+# `podman network inspect podman` reports `dns_enabled: false` — so
+# `server hive:3001;` in src/deploy/nginx.conf would not resolve there. A
+# user-defined netavark network gets aardvark-dns and container names become
+# resolvable inside it. That is why this is its own unit rather than "leave
+# the default network alone".
+#
+# THREE DEFAULTS ARE LOAD-BEARING AND ARE LEFT UNSET ON PURPOSE. Setting any of
+# them breaks something that is not obvious from the unit file:
+#
+#   DisableDNS=  — must stay false (the default). aardvark-dns is what makes
+#                  `hive` resolve for the gateway. With DNS off the gateway
+#                  starts, nginx fails to resolve its upstream, and :3001
+#                  serves 502s.
+#
+#   Internal=    — must stay false (the default). An internal network has no
+#                  route off the host, and Hive's agents have to reach GitHub
+#                  and the model APIs. `internal: true` is right for the
+#                  auto-update profile's docker-proxy network, where nothing
+#                  should ever leave; it is wrong here.
+#
+#   IPv6=        — must stay false (the default). src/deploy/entrypoint.sh
+#                  installs the forced-proxy egress redirect with iptables-nft
+#                  and contains zero ip6tables rules, so an address family the
+#                  gate does not cover is an egress bypass, not a feature. This
+#                  was measured, not assumed: 5/5 IPv4 connections to :443 hit
+#                  the redirect and 0/5 IPv6 connections did — see
+#                  src/docs/podman-ipv6-egress-bypass.md. Do not turn this on
+#                  to "fix" a dual-stack host.
+#
+# No Subnet=/Gateway= either: pinning one invites a collision with whatever
+# else the host runs, and nothing here depends on a particular address range.
+
+[Unit]
+Description=Hive container network
+
+[Network]
+# Set explicitly so the network is `hive` and not the `systemd-hive` Quadlet
+# would otherwise derive, for the same reason hive-data.volume sets
+# VolumeName=: an operator running `podman network inspect` during an incident
+# should find the name the documentation uses.
+NetworkName=hive
+
+# The #4210 ownership labels, matching hive_podman_labels in
+# bin/hive-podman-cleanup.sh. bin/hive-podman-teardown.sh (#4343) removes
+# networks by these labels and nothing else, so an unlabelled network would
+# survive every teardown and then collide with the next install.
+Label=io.kubestellar.hive.owned=true
+Label=io.kubestellar.hive.component=network
+Label=io.kubestellar.hive.instance=default
+Label=io.kubestellar.hive.runtime=podman
+
+[Install]
+WantedBy=default.target

@@ -335,6 +335,60 @@ type SaaSUser struct {
 	// browser that states a region.
 	Country string `json:"country,omitempty"`
 
+	// CountrySetByUser records that the country above was chosen DELIBERATELY
+	// by the user rather than inferred, and it is what makes an explicit CLEAR
+	// stick.
+	//
+	// Without it, "explicit" is inferred from `Country != ""` (see
+	// applyInferredCountry), which is fine for a pick but wrong for a clear: a
+	// user who removes their country via the self-service endpoint leaves an
+	// empty field, and the very next login's Accept-Language inference would
+	// silently put a flag back. "Prefer not to say" would become impossible to
+	// express — and impossible to notice failing, since the flag reappears a
+	// login later, far from the action that was supposed to remove it.
+	//
+	// Set only by the user's own writes: the self-service endpoint
+	// (handleMyCountry) and the wizard pick copied on approval
+	// (applyRequestContactToUser). NEVER set by the login-path inference, which
+	// is precisely the distinction this field exists to draw.
+	//
+	// omitempty bool so every record that has not been through a deliberate
+	// pick — which today is all of them — round-trips byte-identical.
+	//
+	// STILL WRITTEN, not deprecated: CountrySource below is the finer-grained
+	// successor, but this boolean is what other readers and every record
+	// already on the PVC speak, so every user-chosen write keeps setting it.
+	CountrySetByUser bool `json:"country_set_by_user,omitempty"`
+
+	// CountrySource is the PROVENANCE of the country above — who put it there.
+	// One of countrySourceInferred / countrySourceAdmin / countrySourceUser, or
+	// "" for a record nothing has ever touched.
+	//
+	// A boolean stopped being enough the moment an ADMIN could assign a country
+	// on someone else's behalf, because that is a third kind of claim and it
+	// sits BETWEEN the two the boolean can express:
+	//
+	//   - It is not user-chosen. Stamping CountrySetByUser for an admin edit
+	//     would assert the user made a statement about themselves that they
+	//     never made, and — since that marker is also what suppresses ever
+	//     asking again — would permanently silence the question for them.
+	//   - But it must still outrank Accept-Language inference. An admin's
+	//     best-effort attribution is a human looking at evidence; the header is
+	//     a language preference. Letting the next login overwrite it would
+	//     re-introduce, in a new form, exactly the silent-clobber bug #4374 was
+	//     opened to fix.
+	//
+	// Precedence, strongest first: user > admin > inferred > unset. See
+	// countryProvenanceRank and mayOverwriteCountry in user_country.go, which
+	// are the single arbiters — no caller compares these strings by hand.
+	//
+	// BACKWARD COMPATIBILITY. Records written before this field exists carry
+	// only CountrySetByUser, so an ABSENT source is read through that boolean:
+	// CountrySetByUser=true with no source means user-chosen (see
+	// effectiveCountrySource). That is why this is omitempty and why nothing
+	// backfills it — an untouched record must still serialize byte-identically.
+	CountrySource string `json:"country_source,omitempty"`
+
 	// Engagement stats, admin-only (they ride /api/saas/admin/users, which is
 	// requireAdmin). Both omitempty ints so existing records round-trip
 	// byte-identical until the user first logs in / opens a hive after this ships.
@@ -483,6 +537,17 @@ func (s *HubServer) registerSaaSRoutes() {
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
 	s.mux.HandleFunc("GET /api/saas/usage", s.requireAuth(s.handleUsage))
+	// Self-service country: the ONE field a non-admin may write on their own
+	// user record. requireAuth, not requireAdmin — that is the entire point,
+	// since every other SaaSUser write is admin-gated and the wizard is a
+	// one-time surface. The handler resolves the acting user from the SESSION
+	// and the body carries no identity, so this cannot reach anyone else's
+	// record. See handleMyCountry in user_country.go.
+	//
+	// PUT with a JSON body rather than a code in the path: country is personal
+	// data and a URL would put it in access logs, Referer headers and history.
+	s.mux.HandleFunc("GET /api/saas/me/country", s.requireAuth(s.handleMyCountry))
+	s.mux.HandleFunc("PUT /api/saas/me/country", s.requireAuth(s.handleMyCountry))
 	s.mux.HandleFunc("POST /api/saas/lite/enroll", s.requireAuth(s.handleLiteEnroll))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
@@ -551,6 +616,11 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
 	s.mux.HandleFunc("GET /api/saas/admin/available-placeholders", s.requireAdmin(s.handleAvailablePlaceholders))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
+	// Aggregate geographic rollup of the user base (counts only, no usernames).
+	// Admin-gated like the rest of the CRM/Users surface: country is personal
+	// data, so even the aggregate stays behind requireAdmin. Takes no query
+	// parameters — no country ever appears in a URL. See user_country_rollup.go.
+	s.mux.HandleFunc("GET /api/saas/admin/user-countries", s.requireAdmin(s.handleAdminUserCountries))
 	// #3234: fleet readiness for removing the N1/N2 legacy compatibility lanes.
 	s.mux.HandleFunc("GET /api/saas/admin/auth-rollout", s.requireAdmin(s.handleAuthRollout))
 	// Master-secret rotation (src/docs/design/master-key-rotation.md). Both are
@@ -1477,6 +1547,18 @@ func (s *HubServer) handleImpersonationStatus(w http.ResponseWriter, r *http.Req
 // They are length-capped here — the last point before the value reaches the
 // PVC — and escaped on every dashboard render path.
 //
+// `country` rides this same body rather than a route of its own. It is the only
+// way the field can be set for the thousands of users who joined before it
+// existed: the wizard is a one-time gate already behind them, and the
+// self-service endpoint reaches only the acting user, so an admin looking at a
+// row with an empty Country column previously had no control at all. It carries
+// ADMIN provenance, never user provenance — see the block on the country branch
+// below, which is the load-bearing decision in this change.
+//
+// PRIVACY: the code rides the JSON BODY, never the path or a query string, for
+// the same reason the self-service endpoint does — a URL lands in access logs,
+// Referer headers and browser history.
+//
 // Registered behind requireAdmin; this handler does no auth of its own.
 func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
@@ -1493,11 +1575,21 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		FullName  *string `json:"full_name"`
 		SlackID   *string `json:"slack_id"`
 		Notes     *string `json:"notes"`
+		// Pointer like the rest, and for a sharper reason here: `""` is an
+		// explicit CLEAR ("remove this country"), while an absent key means the
+		// admin edited some other field and this one must not be touched. A
+		// plain string would collapse the two and let a quota edit silently
+		// wipe a country.
+		Country *string `json:"country"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// Whether the country branch below actually APPLIED, which is not the same
+	// as the key being present: a stronger user-chosen value declines the edit.
+	// Tracked so the audit line records what changed rather than what was asked.
+	countryEdited := false
 	if body.SaaSQuota != nil {
 		u.SaaSQuota = *body.SaaSQuota
 	}
@@ -1515,6 +1607,46 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	if body.Notes != nil {
 		u.Notes = truncateRunes(strings.TrimSpace(*body.Notes), maxContactNotesLen)
 	}
+	if body.Country != nil {
+		raw := strings.TrimSpace(*body.Country)
+		code := ""
+		if raw != "" {
+			// The SAME validator every other country path uses, so this
+			// endpoint cannot drift into accepting a shape the render sites
+			// reject. Not capped like the free-text fields above: a country is
+			// two letters or it is rejected outright, so there is nothing to
+			// truncate — a bad value must 400 rather than be silently reshaped
+			// into a different country.
+			code = normalizeCountryCode(raw)
+			if code == "" {
+				writeJSONError(w, http.StatusBadRequest, "country must be an ISO 3166-1 alpha-2 code (two letters), or \"\" to clear it")
+				return
+			}
+		}
+		// PROVENANCE — the whole point of this branch, and the easy thing to get
+		// wrong. An admin edit is countrySourceAdmin, NEVER countrySourceUser:
+		//
+		//   - It must not claim the user chose this. They did not; an admin
+		//     inferred it from a conference badge, an email domain, a
+		//     conversation. Marking it user-chosen would fabricate a statement
+		//     and would permanently suppress ever asking them for a real one.
+		//   - It must still outrank the login-path Accept-Language inference,
+		//     or the assignment is silently reverted the next time the user
+		//     signs in from a differently-configured browser — the #4374 bug in
+		//     a new form, and invisible in exactly the same way.
+		//
+		// mayOverwriteCountry is what keeps the admin from stepping on a value
+		// the USER stated about themselves. It is not an error to try: the edit
+		// is simply not applied to the country, the rest of the request still
+		// lands, and the response is still a 200 — the admin has changed
+		// nothing they were entitled to change. A 409 here would fail an
+		// otherwise-valid multi-field save over a field the admin may not even
+		// have meant to touch.
+		if mayOverwriteCountry(u, countrySourceAdmin) {
+			setUserCountry(u, code, countrySourceAdmin)
+			countryEdited = true
+		}
+	}
 	// A failed write is the one outcome the admin MUST hear about: the dashboard
 	// closes the editor on a 2xx, so reporting success here after the PVC write
 	// failed would silently discard the edit.
@@ -1525,8 +1657,19 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	}
 	// Do not log the note bodies — they are free text and may hold anything an
 	// admin jotted down. Log only that contact fields were touched.
-	s.logger.Info("audit: admin updated user", "target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
-		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil)
+	//
+	// The country VALUE is logged, unlike those bodies: it is a two-letter code
+	// from a closed shape, an admin assigning one on another person's behalf is
+	// exactly the attribution an audit trail exists to record, and "who decided
+	// this user is in GB" is unanswerable from a bare "countryEdited: true".
+	// Logged only when the write actually applied, so the line never claims a
+	// change that mayOverwriteCountry declined.
+	attrs := []any{"target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
+		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil}
+	if countryEdited {
+		attrs = append(attrs, "countryAssigned", u.Country, "countrySource", u.CountrySource)
+	}
+	s.logger.Info("audit: admin updated user", attrs...)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
@@ -2741,6 +2884,21 @@ type MyHiveEntry struct {
 	// not a critical dead-link chip.
 	PrivateURL       bool   `json:"privateUrl,omitempty"`
 	PrivateURLReason string `json:"privateUrlReason,omitempty"`
+
+	// Quadrant is this hive's four-axis score — trust, efficiency,
+	// satisfaction, productivity — computed on read and never persisted.
+	//
+	// It lives HERE rather than on RegistryEntry (where Journey sits) because
+	// unlike every other derived field on a row, a quadrant is not a property
+	// of the hive alone: the scores are percentiles against the other hives in
+	// the SAME view. Two requests over different filters legitimately produce
+	// different numbers for one hive, so caching it on the shared registry
+	// entry would let one caller's filtered population leak into another's.
+	//
+	// Nil when the caller is not entitled to see it, or when the population is
+	// too small to rank honestly — the browser renders nothing at all in that
+	// case rather than an empty chart.
+	Quadrant *Quadrant `json:"quadrant,omitempty"`
 }
 
 // myHivesRecentEventCount is how many timeline events ride the My Hives
@@ -3176,8 +3334,19 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		result[i].PRHistory = downsampleSpark(result[i].PRHistory, sparkWirePoints)
 	}
 
+	// Score the quadrant last, once every row is populated: the axes read
+	// fields the loop above fills in, and the scores are percentiles against
+	// this exact set of rows. Ranking against the whole registry instead would
+	// let the header polygon disagree with the rows it summarises.
+	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
+
 	resp := map[string]any{
-		"hives":                    result,
+		"hives": result,
+		// The fleet average backs the reference polygon drawn behind every
+		// row's kite and the aggregate at the top of the dashboard. It is an
+		// aggregate over many hives and identifies none of them, so unlike the
+		// per-hive scores it is not gated on the caller's role.
+		"fleet_quadrant":           fleetQuadrant,
 		"saas_quota":               user.SaaSQuota,
 		"saas_used":                saasCount,
 		"is_admin":                 isAdmin,
@@ -4529,7 +4698,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	if !isValidAutoUpgradeMode(body.Mode) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\" or \"daily\")"}`)
+		fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\", \"daily\" or \"weekly\")"}`)
 		return
 	}
 	h.AutoUpgrade = body.AutoUpgrade
@@ -7054,7 +7223,12 @@ func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
 	// record — but only when the request actually carries a choice. Re-normalize
 	// rather than trusting the stored request: it may predate the validation.
 	if code := normalizeCountryCode(pr.Country); code != "" {
-		user.Country = code
+		// The wizard pick is a deliberate statement BY THE USER, so it carries
+		// the same provenance the self-service endpoint stamps. Without this,
+		// an approval would leave the record looking "inferred", and the
+		// priority rule would hold only by the accident of the value being
+		// non-empty.
+		setUserCountry(user, code, countrySourceUser)
 	}
 }
 
@@ -9061,6 +9235,19 @@ const dashboardHTML = `<!DOCTYPE html>
        of our own — the glyph carries its own, and the box is transparent, so
        this behaves identically in light and dark. */
     .country-flag { font-size: 0.95rem; line-height: 1; vertical-align: middle; margin-left: 2px; }
+    /* The viewer's OWN flag is a button, not a label — it opens the country
+       editor. Stripped of every default button chrome so it reads as the same
+       inline glyph the read-only .country-flag is, and only gains a background
+       on hover/focus to say it is interactive. Transparent by default and
+       var(--muted)/var(--text) otherwise, so it inherits the theme in both
+       light and dark rather than carrying colors of its own. */
+    .country-edit-btn { background: none; border: 0; padding: 0 2px; margin: 0; cursor: pointer;
+      line-height: 1; display: inline-flex; align-items: center; border-radius: 4px; color: var(--muted); }
+    .country-edit-btn:hover, .country-edit-btn:focus-visible { background: var(--surface); color: var(--text); }
+    /* The no-country state. A muted ＋ rather than a globe or a "??" box: it
+       reads as "add one", which is the action available, instead of pretending
+       to be a flag we do not have. */
+    .country-flag-empty { font-size: 0.8rem; line-height: 1; color: var(--muted); }
 
     /* ── Layout ── */
     .content { max-width: 1600px; margin: 0 auto; padding: 2.5rem clamp(1rem, 4vw, 4.5rem) 3rem; }
@@ -9260,6 +9447,22 @@ const dashboardHTML = `<!DOCTYPE html>
     .heartbeat-heart-flash { animation: heartbeatPulse 0.6s ease-in-out 3 forwards; }
     @keyframes heartbeatPulse { 0% { transform: scale(0.85); opacity: 0; } 30% { transform: scale(1.3); opacity: 1; } 70% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(0.9); opacity: 0; } }
     @media (prefers-reduced-motion: reduce) { .heartbeat-heart-flash { animation: none; } }
+    /* Quadrant hover: the same kite drawn large, with numbers. Hidden until
+       hover/focus rather than built on demand so there is no work on mouseover
+       and no layout thrash mid-render.
+
+       The panel is positioned RIGHT-aligned and above-anchored because the
+       Quadrant column is the last in a horizontally scrolling table — a
+       left-anchored panel on the final column would open off-screen. The
+       parent .table-wrap keeps overflow visible, so this escapes the cell. */
+    .quadrant-cell .quadrant-hover {
+      display: none; position: absolute; right: 0; bottom: calc(100% + 8px);
+      z-index: 60; width: 240px; padding: 10px 12px; text-align: left;
+      background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45); cursor: default; white-space: normal;
+      font-size: 0.72rem; line-height: 1.4; color: var(--text);
+    }
+    .quadrant-cell:hover .quadrant-hover, .quadrant-cell:focus-within .quadrant-hover { display: block; }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: 0.75rem; color: var(--muted); }
 
@@ -9527,6 +9730,15 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div id="admin-users-body" style="display:none">
         <div id="users-container"><div class="loading">Loading users...</div></div>
+        <!-- Fleet-wide geographic rollup of the user base. Lives directly under
+             the Users table because it is the same data aggregated: the table
+             answers "who", this answers "where, overall". Inside
+             admin-users-body so it collapses with the section, and admin-gated
+             twice over — the section is display:none until the admin check
+             passes, and the endpoint it reads is behind requireAdmin.
+             Rendered as a plain ranked bar list; no map, no charting library,
+             no external asset (the hub forbids external CDNs/images). -->
+        <div id="user-countries-container" style="margin-top:20px"></div>
       </div>
     </div>
 
@@ -9608,6 +9820,207 @@ const dashboardHTML = `<!DOCTYPE html>
       var labels = { github_projects: 'GH Projects', linear: 'Linear', jira: 'Jira' };
       var cls = /^[a-z_]+$/.test(ws) ? ws : 'unknown';
       return '<span class="ws-badge ws-badge--' + cls + '" title="Work source: ' + escAttr(ws) + '">' + esc(labels[ws] || ws) + '</span>';
+    }
+
+    /* ---- Quadrant kite -------------------------------------------------
+       Trust / Efficiency / Satisfaction / Productivity, drawn as a four-axis
+       polygon. ONE renderer at two sizes: a ~22px shape in the table column and
+       the same shape at ~170px with labels and numbers in its hover. They must
+       never fork — the small kite is legible only because it is literally the
+       large one shrunk, so a shape learned in a hover is recognisable in the
+       column.
+
+       Axis positions are FIXED: Trust north, Productivity east, Satisfaction
+       south, Efficiency west. Reordering per row would make every previously
+       learned shape mean something else. QUADRANT_AXES mirrors Go's
+       QuadrantAxisOrder and the two must not drift. */
+    var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];
+    var QUADRANT_AXIS_LABELS = { trust: 'Trust', productivity: 'Prod', satisfaction: 'Satis', efficiency: 'Effic' };
+    /* Angles clockwise from north, index-aligned with QUADRANT_AXES. */
+    var QUADRANT_ANGLES = [0, 90, 180, 270];
+
+    /* quadrantAxis pulls one axis off a quadrant, returning an unscored stub
+       when absent so a partial payload can never throw mid-render. */
+    function quadrantAxis(q, name) {
+      var axes = (q && q.axes) || [];
+      for (var i = 0; i < axes.length; i++) {
+        if (axes[i] && axes[i].axis === name) return axes[i];
+      }
+      return { axis: name, score: 0, scored: false };
+    }
+
+    /* quadrantPoint maps an axis index and score to a coordinate.
+
+       An UNSCORED axis returns the exact centre, so the polygon visibly caves
+       in on that side. This is the visual half of the rule that absent evidence
+       is not a zero: a collapsed spoke reads as "not measured", where a small
+       symmetric shape would read as "mediocre everywhere". */
+    function quadrantPoint(idx, score, scored, cx, cy, radius) {
+      if (!scored) return [cx, cy];
+      var frac = Math.max(0, Math.min(1, (score || 0) / 100));
+      var rad = QUADRANT_ANGLES[idx % 4] * Math.PI / 180;
+      /* -cos on y because SVG grows downward and north must point up. */
+      return [cx + radius * frac * Math.sin(rad), cy - radius * frac * Math.cos(rad)];
+    }
+
+    function quadrantPolygonPoints(q, cx, cy, radius) {
+      var pts = [];
+      for (var i = 0; i < QUADRANT_AXES.length; i++) {
+        var a = quadrantAxis(q, QUADRANT_AXES[i]);
+        var p = quadrantPoint(i, a.score, a.scored, cx, cy, radius);
+        pts.push(p[0].toFixed(2) + ',' + p[1].toFixed(2));
+      }
+      return pts.join(' ');
+    }
+
+    /* quadrantSVG draws the kite. fleet is the reference polygon behind it, so
+       a row reads as a deviation from normal rather than an absolute the viewer
+       must calibrate; it is omitted when the fleet scored nothing, since an
+       empty reference would collapse to a dot and read as data. */
+    function quadrantSVG(q, fleet, size, labelled) {
+      var pad = labelled ? size * 0.26 : 2;
+      var cx = size / 2, cy = size / 2, radius = size / 2 - pad;
+      var s = '<svg viewBox="0 0 ' + size + ' ' + size + '" width="' + size + '" height="' + size +
+        '" role="img" aria-label="' + escAttr(quadrantAriaLabel(q)) + '" style="display:block;overflow:visible">';
+      /* Faint concentric rings orient the eye without competing with the data. */
+      [0.33, 0.66, 1].forEach(function(ring) {
+        var pts = [];
+        for (var i = 0; i < 4; i++) {
+          var p = quadrantPoint(i, 100, true, cx, cy, radius * ring);
+          pts.push(p[0].toFixed(2) + ',' + p[1].toFixed(2));
+        }
+        s += '<polygon points="' + pts.join(' ') + '" fill="none" stroke="var(--line)" stroke-width="0.5" opacity="0.35"/>';
+      });
+      if (labelled) {
+        for (var i = 0; i < 4; i++) {
+          var p = quadrantPoint(i, 100, true, cx, cy, radius);
+          s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + p[0].toFixed(2) + '" y2="' + p[1].toFixed(2) +
+            '" stroke="var(--line)" stroke-width="0.5" opacity="0.35"/>';
+        }
+      }
+      if (fleet && fleet.scored_axes > 0) {
+        s += '<polygon points="' + quadrantPolygonPoints(fleet, cx, cy, radius) +
+          '" fill="var(--muted)" fill-opacity="0.10" stroke="var(--muted)" stroke-width="0.75" stroke-dasharray="2,2" opacity="0.6"/>';
+      }
+      s += '<polygon points="' + quadrantPolygonPoints(q, cx, cy, radius) +
+        '" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>';
+      for (var i = 0; i < 4; i++) {
+        var a = quadrantAxis(q, QUADRANT_AXES[i]);
+        if (!a.scored) continue;
+        var p = quadrantPoint(i, a.score, true, cx, cy, radius);
+        s += '<circle cx="' + p[0].toFixed(2) + '" cy="' + p[1].toFixed(2) + '" r="' + (labelled ? 2.5 : 1.5) + '" fill="var(--accent)"/>';
+      }
+      if (labelled) {
+        for (var i = 0; i < 4; i++) {
+          var a = quadrantAxis(q, QUADRANT_AXES[i]);
+          var lp = quadrantPoint(i, 122, true, cx, cy, radius);
+          var anchor = QUADRANT_ANGLES[i] === 90 ? 'start' : (QUADRANT_ANGLES[i] === 270 ? 'end' : 'middle');
+          /* An unscored axis prints a dash, never a 0 — the whole point of
+             tracking scored separately from score. */
+          var val = '—';
+          if (a.scored) {
+            val = String(a.score);
+            if (a.delta) val += ' ' + (a.delta < 0 ? '−' : '+') + Math.abs(a.delta);
+          }
+          s += '<text x="' + lp[0].toFixed(2) + '" y="' + lp[1].toFixed(2) + '" text-anchor="' + anchor +
+            '" font-size="8" fill="var(--muted)" style="text-transform:uppercase;letter-spacing:0.5px">' +
+            esc(QUADRANT_AXIS_LABELS[QUADRANT_AXES[i]]) + '</text>';
+          s += '<text x="' + lp[0].toFixed(2) + '" y="' + (lp[1] + 9).toFixed(2) + '" text-anchor="' + anchor +
+            '" font-size="7.5" fill="var(--text)" opacity="0.85">' + esc(val) + '</text>';
+        }
+      }
+      return s + '</svg>';
+    }
+
+    /* A shape-only kite is invisible to a screen reader without this. */
+    function quadrantAriaLabel(q) {
+      if (!q || !q.scored_axes) return 'Quadrant: not enough data';
+      return 'Quadrant: ' + QUADRANT_AXES.map(function(name) {
+        var a = quadrantAxis(q, name);
+        return QUADRANT_AXIS_LABELS[name] + (a.scored ? ' ' + a.score : ' not measured');
+      }).join(', ');
+    }
+
+    /* quadrantCell is the table column: the small kite plus its own hover
+       panel, so a lopsided shape can be diagnosed without leaving the row.
+       Renders nothing at all for a hive with no quadrant — the server omits it
+       for callers who may not see it and for hives with nothing scored, and an
+       empty chart would imply a hive scoring zero everywhere. */
+    function quadrantCell(h) {
+      var q = h && h.quadrant;
+      if (!q) return '';
+      return '<span class="quadrant-cell" style="position:relative;display:inline-block;cursor:help">' +
+        quadrantSVG(q, _fleetQuadrant, 22, false) +
+        '<span class="quadrant-hover">' + quadrantPanelHTML(q) + '</span>' +
+        '</span>';
+    }
+
+    /* quadrantPanelHTML is the shared hover body — the same chart drawn large,
+       with the composite and whichever nudges apply. Used by BOTH the column
+       hover and the status hover so the two can never drift. */
+    function quadrantPanelHTML(q) {
+      if (!q) return '';
+      var nudges = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return a.nudge; })
+        .map(function(a) {
+          return '<div style="display:flex;gap:6px;align-items:flex-start;margin-top:4px">' +
+            '<span style="color:var(--accent);flex:0 0 auto">→</span><span>' + esc(a.nudge) + '</span></div>';
+        }).join('');
+      /* Reasons explain a collapsed spoke, so a gap reads as "not measured yet"
+         rather than as something the viewer has to interpret. */
+      var reasons = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return !a.scored && a.reason; })
+        .map(function(a) {
+          return '<div style="color:var(--muted);margin-top:2px">' +
+            esc(QUADRANT_AXIS_LABELS[a.axis]) + ': ' + esc(a.reason) + '</div>';
+        }).join('');
+      return '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">' +
+          quadrantSVG(q, _fleetQuadrant, 170, true) +
+          '<div style="font-size:0.7rem;color:var(--muted)">Composite <span style="color:var(--text);font-weight:600">' +
+            (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
+        '</div>' +
+        (nudges ? '<div style="font-size:0.7rem;margin-top:6px;border-top:1px solid var(--line);padding-top:6px">' + nudges + '</div>' : '') +
+        (reasons ? '<div style="font-size:0.65rem;margin-top:4px">' + reasons + '</div>' : '');
+    }
+
+    /* fleetQuadrantHeaderHTML is the aggregate above the table: the same kite,
+       averaged over the CURRENT filtered view.
+
+       This is the surface that turns the instrument from per-hive feedback into
+       a platform signal. One hive with a collapsed efficiency spoke is that
+       hive's problem; thirty of them collapsed the same way is not thirty
+       nudges, it is one platform problem, and only the aggregate shows that.
+
+       It re-renders with the table, so narrowing the filter re-aggregates over
+       whatever is now in view — which is why the rows and this shape always
+       agree with each other.
+
+       Renders nothing when nothing scored, rather than an empty chart: at that
+       point there is no finding to show, and a collapsed aggregate would read
+       as a fleet failing on every axis. */
+    function fleetQuadrantHeaderHTML() {
+      var q = _fleetQuadrant;
+      if (!q || !q.scored_axes) return '';
+      var axes = QUADRANT_AXES.map(function(name) {
+        var a = quadrantAxis(q, name);
+        var val = a.scored ? String(a.score) : '—';
+        return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px">' +
+          '<span style="font-size:0.62rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">' +
+            esc(QUADRANT_AXIS_LABELS[name]) + '</span>' +
+          '<span style="font-size:0.95rem;font-weight:600;color:' + (a.scored ? 'var(--text)' : 'var(--muted)') + '">' +
+            esc(val) + '</span></div>';
+      }).join('');
+      /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
+         against itself would render two identical overlaid polygons. */
+      return '<div style="display:flex;align-items:center;gap:16px;margin:0 auto 12px;padding:10px 14px;' +
+          'background:var(--bg-soft);border:1px solid var(--line);border-radius:8px;width:fit-content">' +
+          quadrantSVG(q, null, 78, false) +
+          '<div>' +
+            '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:4px">' +
+              'Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</div>' +
+            '<div style="display:flex;gap:14px">' + axes + '</div>' +
+          '</div>' +
+        '</div>';
     }
 
     /* ---- Clickable user avatars ---------------------------------------
@@ -9811,6 +10224,151 @@ const dashboardHTML = `<!DOCTYPE html>
       var glyph = countryFlagEmoji(c);
       return '<span class="country-flag" title="' + escAttr(c) + '" ' +
         'role="img" aria-label="' + escAttr(c) + '">' + glyph + '</span>';
+    }
+
+    /* ---- Self-service country editor ------------------------------------
+       The nav flag is the affordance: clicking it opens a small overlay where
+       the signed-in user sets or clears their OWN country. It is the only such
+       surface — the get-started wizard is a one-time gate you pass before you
+       have a hive, so an existing user otherwise has no way to correct or
+       remove a country (including one the hub merely GUESSED from their
+       browser's language). See handleMyCountry in user_country.go.
+
+       Deliberately not a profile page. One field, one overlay, reusing the
+       overlay pattern the assign/timeline/prompt dialogs already use. */
+
+    /* countryDisplayName: the English name for a code, via Intl.DisplayNames —
+       a browser built-in, so the dashboard carries no 250-row country table of
+       its own and cannot drift from one. Falls back to the bare code where the
+       API is missing or the code is unassigned; a code is always better than an
+       empty label. */
+    function countryDisplayName(code) {
+      var c = normalizeCountryCode(code);
+      if (!c) return '';
+      try {
+        var dn = new Intl.DisplayNames(['en'], {type: 'region'});
+        return dn.of(c) || c;
+      } catch (e) { return c; }
+    }
+
+    /* The viewer's own country, mirrored from the auth payload so the editor
+       opens showing what is on file rather than blank. Updated in place after a
+       successful save so the nav and the next open agree without a reload. */
+    var _myCountry = '';
+
+    /* countryNavHTML: the nav's country control for the SIGNED-IN viewer.
+
+       Distinct from countryFlagHTML, which is the read-only glyph used wherever
+       someone ELSE's flag is shown. Here the flag is a button, and — the part
+       that matters for the fleet this endpoint exists to serve — when there is
+       NO country it still renders, as a muted outline, because a user with no
+       flag is exactly the user who needs a way to add one. An invisible control
+       would leave them in the same dead end as before.
+
+       var(--muted) for the empty state and no color of our own for the set
+       state (the emoji carries its own), so both are light- and dark-safe. */
+    function countryNavHTML(code) {
+      var c = normalizeCountryCode(code);
+      var inner, title;
+      if (c) {
+        inner = '<span class="country-flag">' + countryFlagEmoji(c) + '</span>';
+        title = countryDisplayName(c) + ' — click to change';
+      } else {
+        inner = '<span class="country-flag-empty">＋</span>';
+        title = 'Set your country';
+      }
+      return '<button type="button" class="country-edit-btn" onclick="openCountryEditor()" ' +
+        'title="' + escAttr(title) + '" aria-label="' + escAttr(title) + '">' + inner + '</button>';
+    }
+
+    /* openCountryEditor: the overlay. Reads the current value from _myCountry,
+       writes through PUT /api/saas/me/country.
+
+       The code rides the JSON BODY, never a path or query string: country is
+       personal data and a URL is the one place it would land in access logs,
+       Referer headers and browser history. Clearing sends an explicit empty
+       string — which the hub records as a DECISION, so the login-path
+       Accept-Language inference will not quietly put a flag back. */
+    function openCountryEditor() {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
+      var btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
+      var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;box-sizing:border-box;font-size:0.85rem;text-transform:uppercase';
+      overlay.innerHTML =
+        '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:400px;width:90%">' +
+        '<h3 style="margin:0 0 10px 0;font-size:1rem">Your country</h3>' +
+        '<p style="margin:0 0 12px 0;color:var(--muted);font-size:0.82rem;line-height:1.5">' +
+        'Shows a small flag beside your avatar. Two-letter country code (ISO 3166-1 alpha-2), ' +
+        'for example GB or JP. Leave it blank for no flag &mdash; we will not guess one for you.</p>' +
+        '<input id="_country-input" type="text" maxlength="2" autocomplete="country" ' +
+        'value="' + escAttr(_myCountry) + '" style="' + fld + '">' +
+        '<div id="_country-preview" style="margin-top:8px;font-size:0.82rem;color:var(--muted);min-height:1.2em"></div>' +
+        '<div id="_country-err" style="display:none;margin-top:8px;font-size:0.8rem;color:#f85149"></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">' +
+        '<button data-act="no" style="' + btn + ';background:transparent;color:var(--text)">Cancel</button>' +
+        '<button data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">Save</button>' +
+        '</div></div>';
+
+      function close() {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') close();
+        if (e.key === 'Enter') save();
+      }
+      /* Live echo of what the code resolves to, so a typo is visible BEFORE
+         saving rather than as a surprise flag afterwards. Blank input reads as
+         the explicit "no flag" state, not as an error. */
+      function preview() {
+        var el = document.getElementById('_country-input');
+        var pv = document.getElementById('_country-preview');
+        if (!el || !pv) return;
+        var c = normalizeCountryCode(el.value);
+        if (!el.value.trim()) { pv.textContent = 'No flag will be shown.'; return; }
+        if (!c) { pv.textContent = 'Not a two-letter country code yet.'; return; }
+        pv.textContent = countryFlagEmoji(c) + '  ' + countryDisplayName(c);
+      }
+      async function save() {
+        var el = document.getElementById('_country-input');
+        var err = document.getElementById('_country-err');
+        var raw = el ? el.value.trim() : '';
+        /* '' is a legitimate value here (clear); anything else must be a valid
+           code. Checked client-side for a fast message, and again server-side
+           because a client check is a convenience, never a control. */
+        if (raw !== '' && !normalizeCountryCode(raw)) {
+          if (err) { err.textContent = 'Enter a two-letter country code, or leave it blank.'; err.style.display = ''; }
+          return;
+        }
+        try {
+          var resp = await fetch('/api/saas/me/country', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({country: normalizeCountryCode(raw)})
+          });
+          var data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'save failed');
+          _myCountry = normalizeCountryCode(data.country);
+          var nav = document.getElementById('nav-country');
+          if (nav) nav.innerHTML = countryNavHTML(_myCountry);
+          close();
+        } catch (e) {
+          if (err) { err.textContent = 'Error: ' + e.message; err.style.display = ''; }
+        }
+      }
+
+      overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) { close(); return; }
+        var act = e.target.getAttribute && e.target.getAttribute('data-act');
+        if (act === 'yes') save();
+        else if (act === 'no') close();
+      });
+      overlay.addEventListener('input', preview);
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+      var inp = document.getElementById('_country-input');
+      if (inp) { inp.focus(); inp.select(); }
+      preview();
     }
 
     /* Rendered avatar sizes, in CSS pixels, one per surface. They differ because
@@ -11161,6 +11719,10 @@ const dashboardHTML = `<!DOCTYPE html>
              lowercased because GitHub usernames are case-insensitive and the
              roster and the auth payload can disagree on casing. */
           _currentUser = String(data.login || '').toLowerCase();
+          /* The viewer's own country, mirrored so the editor opens showing what
+             is on file. Absent from the payload for a user who has none, which
+             normalizes to '' and renders the empty ＋ control. */
+          _myCountry = normalizeCountryCode(data.country);
           var roleText = data.hub_admin ? 'Hub Admin' : 'User';
           /* The viewer's own face links to their own profile, like every other
              face in the dashboard. avatar_url comes from the auth payload (it is
@@ -11173,11 +11735,17 @@ const dashboardHTML = `<!DOCTYPE html>
             avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
               '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
               'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
-            /* The viewer's country flag, immediately after their face. Empty
-               string when the auth payload carries no country — which is the
-               common case today — so the nav renders exactly as before for a
-               user whose country is unknown. */
-            countryFlagHTML(data.country) +
+            /* The viewer's country, immediately after their face — and, unlike
+               every other flag in the dashboard, CLICKABLE, because this is the
+               viewer's own record. Wrapped in a stable #nav-country host so a
+               save can repaint just this control without re-rendering the whole
+               nav (and without a page reload).
+
+               countryNavHTML also renders in the EMPTY state, as a muted ＋.
+               countryFlagHTML returns '' there, which is right for someone
+               else's flag but would hide the control from precisely the users
+               who have no country and need to set one. */
+            '<span id="nav-country">' + countryNavHTML(data.country) + '</span>' +
             '<span style="font-size:0.85rem">' + esc(data.login) + '</span>' +
             '<span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + roleText + '</span>';
         }
@@ -11273,6 +11841,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
+    /* Fleet-average quadrant for the CURRENT view, served alongside the rows.
+       Null until the first payload lands, which quadrantSVG handles by drawing
+       no reference polygon rather than an empty one collapsed at the centre. */
+    var _fleetQuadrant = null;
     /* Seeded to the A-Z default rather than '' (registry/arrival order) so the
        very first paint — including paintCachedHives, which runs before any
        network call — is already alphabetical. loadHiveSortPrefs overwrites both
@@ -11302,8 +11874,11 @@ const dashboardHTML = `<!DOCTYPE html>
        channel-pinned hive as its bare branch for the pre-network paint.
        v3 (#4041): agent rows carry pause provenance (pausedTrigger/
        pausedReason/pausedBy/pausedAt) rendered into the Agents tooltip; a
-       v2 cache would paint paused agents provenance-less until the poll. */
-    var HIVES_CACHE_VERSION = 3;
+       v2 cache would paint paused agents provenance-less until the poll.
+       v4: rows carry quadrant, and the cache carries the fleet average that
+       every kite is drawn against; a v3 cache would paint the new column empty
+       until the poll landed. */
+    var HIVES_CACHE_VERSION = 4;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -11334,7 +11909,11 @@ const dashboardHTML = `<!DOCTYPE html>
         window.localStorage.setItem(LS_HIVES_CACHE, JSON.stringify({
           version: HIVES_CACHE_VERSION,
           savedAt: Date.now(),
-          hives: rows
+          hives: rows,
+          /* Cached WITH the rows: the reference polygon is a property of the
+             population those rows came from, so pairing them keeps a cached
+             paint self-consistent even though the rows are truncated. */
+          fleetQuadrant: _fleetQuadrant
         }));
       } catch (e) {
         /* Quota errors are expected on large fleets — caching is best-effort. */
@@ -11352,6 +11931,7 @@ const dashboardHTML = `<!DOCTYPE html>
       try {
         _allDashHives = c.hives;
         _hiveRegistry = c.hives;
+        _fleetQuadrant = c.fleetQuadrant || null;
         renderHives(sortedDashHives(), true);
         return true;
       } catch (e) {
@@ -13388,6 +13968,21 @@ const dashboardHTML = `<!DOCTYPE html>
           if (rb2 === null) return -1;
           return _dashSortAsc ? ra - rb2 : rb2 - ra;
         }
+        if (key === 'quadrant' || key.indexOf('quadrant') === 0) {
+          /* Quadrant sorts rank by composite or by one axis. A hive with no
+             quadrant — unscored, or one the viewer may not see — sorts LAST in
+             both directions rather than clumping at whichever end 0 collates
+             to. It is the least informative row either way, so it stays out of
+             the operator's path whether they asked for strongest or weakest.
+             Sorting by weakest axis is the point of the column: it turns the
+             table into a worklist. */
+          var qa = quadrantSortValue(a, key);
+          var qb = quadrantSortValue(b, key);
+          if (qa === null && qb === null) return 0;
+          if (qa === null) return 1;
+          if (qb === null) return -1;
+          return _dashSortAsc ? qa - qb : qb - qa;
+        }
         var va = key === 'name' ? hiveNameSortValue(a) : ((a && a[key]) || '');
         var vb = key === 'name' ? hiveNameSortValue(b) : ((b && b[key]) || '');
         if (typeof va === 'number' && typeof vb === 'number') return _dashSortAsc ? va - vb : vb - va;
@@ -13516,6 +14111,22 @@ const dashboardHTML = `<!DOCTYPE html>
     function hiveNameSortValue(h) {
       var label = hiveLabel(h);
       return label.line2 ? label.line1 + ' ' + label.line2 : label.line1;
+    }
+
+    /* quadrantSortValue resolves a quadrant sort key to a number, or null when
+       the hive has nothing to rank on that key.
+
+       Null rather than 0 for an unscored axis, deliberately: zero is a real
+       score and would place an unmeasured hive among the genuinely weak ones,
+       which is precisely the confusion the whole scored/unscored split exists
+       to prevent. */
+    function quadrantSortValue(h, key) {
+      var q = h && h.quadrant;
+      if (!q || !q.scored_axes) return null;
+      if (key === 'quadrant') return q.composite;
+      var name = key.slice('quadrant'.length).toLowerCase();
+      var a = quadrantAxis(q, name);
+      return a.scored ? a.score : null;
     }
 
     function sortDashHives(key) {
@@ -13885,6 +14496,12 @@ const dashboardHTML = `<!DOCTYPE html>
         _userUsed = data.saas_used || 0;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
+        /* The fleet reference polygon behind every kite. Captured here rather
+           than derived in the browser: it is the average over the SAME
+           population the server scored, and recomputing it client-side from
+           the rows the caller may see would silently exclude the ones they may
+           not, quietly moving the reference. */
+        _fleetQuadrant = data.fleet_quadrant || null;
         /* Who is logged into their hive right now (admin-only in the payload) →
            the green-dashed avatar border. A Set of lowercased usernames so the
            avatar lookup is case-insensitive, matching GitHub handle semantics. */
@@ -14490,6 +15107,7 @@ const dashboardHTML = `<!DOCTYPE html>
         '<button type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
         '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
         '<button type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Auto: daily 1pm ET</button>' +
+        '<button type="button" onclick="runBulkAction(\'weekly-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a week, Tuesday midday — the least disruptive cadence that still keeps the hive current">Auto: Tue 1pm ET</button>' +
         '<button type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
         branchPicker +
         '<button type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
@@ -14510,6 +15128,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'upgrade': 'Upgrade to latest',
       'enable-auto-upgrade': 'Enable instant auto-upgrade on',
       'daily-auto-upgrade': 'Enable daily 1pm ET auto-upgrade on',
+      'weekly-auto-upgrade': 'Enable weekly Tuesday 1pm ET auto-upgrade on',
       'disable-auto-upgrade': 'Disable auto-upgrade on',
       'switch-branch': 'Switch branch for'
     };
@@ -15022,7 +15641,9 @@ const dashboardHTML = `<!DOCTYPE html>
              escape quotes and is unsafe to interpolate into an attribute. */
           var autoUpgradeCheck = '';
           if (isHosted && h.role === 'owner') {
-            var mode = h.autoUpgrade ? (h.autoUpgradeMode === AUTO_UPGRADE_DAILY ? AUTO_UPGRADE_DAILY : AUTO_UPGRADE_INSTANT) : AUTO_UPGRADE_OFF;
+            var mode = h.autoUpgrade
+              ? ((h.autoUpgradeMode === AUTO_UPGRADE_DAILY || h.autoUpgradeMode === AUTO_UPGRADE_WEEKLY) ? h.autoUpgradeMode : AUTO_UPGRADE_INSTANT)
+              : AUTO_UPGRADE_OFF;
             var opts = '';
             for (var oi = 0; oi < AUTO_UPGRADE_OPTIONS.length; oi++) {
               var opt = AUTO_UPGRADE_OPTIONS[oi];
@@ -15090,7 +15711,7 @@ const dashboardHTML = `<!DOCTYPE html>
         //   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts kept)
         // Counted against the <th> cells in the header and the <td> cells emitted
         // below (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 12;
+        var TOTAL_COLUMNS = 13;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -15231,6 +15852,9 @@ const dashboardHTML = `<!DOCTYPE html>
               '<div style="' + STACKED_LINE_STYLE + '" title="Active contributors"><span style="color:var(--muted);min-width:24px;display:inline-block">Ctr</span>' + (h.activeContributors || 0) + '</div>' +
             '</div>' +
           '</td>' +
+          /* QUADRANT: the small kite. Shape only at this size — the numbers
+             live in its hover, which is the same chart drawn large. */
+          '<td>' + quadrantCell(h) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
@@ -15238,9 +15862,9 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 12 after the 15-to-9 fold (PROV, DRIFT,
-         ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity). Must stay equal to
-         TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 12;
+         ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity), then 13 with the
+         Quadrant column. Must stay equal to TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 13;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -15371,6 +15995,7 @@ const dashboardHTML = `<!DOCTYPE html>
         rows = hives.map(function(h, i) { return buildRow(h, i, 'all'); }).join('');
       }
       document.getElementById('hives-container').innerHTML =
+        fleetQuadrantHeaderHTML() +
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
@@ -15392,6 +16017,10 @@ const dashboardHTML = `<!DOCTYPE html>
         '<th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th>' +
         /* ACTIVITY folds Issues, PRs and Contrib; each keeps its own sort ⇅. */
         '<th style="vertical-align:middle" title="Actionable issues, actionable PRs and active contributors">' + stackHeader('Activity', subSort('actionableIssues', 'Iss ⇅', 'Sort by actionable issues') + subSort('actionablePRs', 'PRs ⇅', 'Sort by actionable PRs') + subSort('activeContributors', 'Ctr ⇅', 'Sort by active contributors')) + '</th>' +
+        /* QUADRANT folds the four axis sorts plus the composite. Sorting by a
+           single axis is the point of the column: "weakest efficiency" turns
+           the table into a worklist rather than a picture. */
+        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -15427,9 +16056,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var AUTO_UPGRADE_OFF = 'off';
     var AUTO_UPGRADE_INSTANT = 'instant';
     var AUTO_UPGRADE_DAILY = 'daily';
+    var AUTO_UPGRADE_WEEKLY = 'weekly';
     /* Copy is framed around DISRUPTION, not cron mechanics: the operator is
        choosing when it is acceptable to interrupt a hive that is working. */
-    var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day, after hours, so a stable hive is not disturbed mid-work.';
+    var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day at 1pm ET; Weekly restarts it at most once a week, Tuesday at 1pm ET, so a stable hive is disturbed as rarely as possible.';
     /* Icon-only labels. The "Auto:" prefix repeated on every row was the widest
        single element in the Version column and said nothing a scanning operator
        did not already know from the column it sits in — so it is carried by the
@@ -15456,7 +16086,8 @@ const dashboardHTML = `<!DOCTYPE html>
     var AUTO_UPGRADE_OPTIONS = [
       {value: AUTO_UPGRADE_OFF, label: '⦸ off', ariaLabel: 'Auto-upgrade: off'},
       {value: AUTO_UPGRADE_INSTANT, label: '⚡ instant', ariaLabel: 'Auto-upgrade: instantly when a new version lands'},
-      {value: AUTO_UPGRADE_DAILY, label: '🕐 1p', ariaLabel: 'Auto-upgrade: daily at 1pm ET'}
+      {value: AUTO_UPGRADE_DAILY, label: '🕐 1p', ariaLabel: 'Auto-upgrade: daily at 1pm ET'},
+      {value: AUTO_UPGRADE_WEEKLY, label: '🗓 tue 1p', ariaLabel: 'Auto-upgrade: weekly on Tuesday at 1pm ET'}
     ];
     /* Accessible name for the select itself, resolved from the CURRENT mode so
        the control announces what it is set to rather than only what it does. */
@@ -15486,7 +16117,7 @@ const dashboardHTML = `<!DOCTYPE html>
        concrete preference rather than leaving a blank to be re-interpreted. */
     async function setAutoUpgradeMode(id, value) {
       var enabled = value !== AUTO_UPGRADE_OFF;
-      var mode = (value === AUTO_UPGRADE_DAILY) ? AUTO_UPGRADE_DAILY : AUTO_UPGRADE_INSTANT;
+      var mode = (value === AUTO_UPGRADE_DAILY || value === AUTO_UPGRADE_WEEKLY) ? value : AUTO_UPGRADE_INSTANT;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/auto-upgrade', {
           method: 'PUT',
@@ -15495,7 +16126,8 @@ const dashboardHTML = `<!DOCTYPE html>
         });
         if (!resp.ok) { hiveToast('Failed to update auto-upgrade', 'error'); loadHives(); return; }
         var label = !enabled ? 'off'
-          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 1pm ET' : 'instant');
+          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 1pm ET'
+          : (mode === AUTO_UPGRADE_WEEKLY ? 'weekly on Tuesday at 1pm ET' : 'instant'));
         hiveToast(id + ' auto-upgrade: ' + label, 'success');
         loadHives();
       } catch(e) {
@@ -17462,6 +18094,10 @@ const dashboardHTML = `<!DOCTYPE html>
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
+        /* Rollup rides the same admin poll as the table it sits under, so the
+           two can never disagree about the roster. Not awaited: a slow or
+           failed rollup must not delay or break the users table. */
+        loadUserCountries();
       } catch(e) {
         if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
       } finally {
@@ -17471,6 +18107,103 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function filterUsers() {
       applySortUsers();
+    }
+
+    /* ---- Fleet country rollup -------------------------------------------
+       Where the hub's user base is, in aggregate. Reads
+       /api/saas/admin/user-countries, which is requireAdmin and returns COUNTS
+       only — no usernames — so this surface cannot be used to look up an
+       individual.
+
+       Deliberately NOT a map and NOT a chart: the hub ships no external CDN and
+       no external images, so a map would mean vendoring geometry and a charting
+       library would mean a script tag we cannot serve. A ranked bar list says
+       the same thing in less space and is readable at a glance.
+
+       The unknown bucket is rendered as its own row, always, with the same
+       weight as a country. Country is optional and best-effort, so early on
+       unknown IS the majority; hiding it would turn "3 of 200 users told us
+       they're in DE" into something that looks like "the fleet is German". */
+
+    /* Width of the widest bar, in percent of the list. The bars are scaled
+       against the LARGEST bucket rather than the total so the smaller
+       countries stay visible when one bucket dominates — which it will, since
+       unknown starts at ~100%. */
+    var COUNTRY_BAR_MAX_PCT = 100;
+
+    /* countryRollupRow renders one bucket. label is pre-built HTML (a flag+code
+       chip, or the plain "Unknown" text); everything else is numeric. */
+    function countryRollupRow(label, count, max, total) {
+      /* max is guaranteed >= 1 by the caller — see renderCountryRollup, which
+         returns early on an empty population. Guarding again here anyway
+         because a zero would silently produce NaN% and a bar that vanishes
+         rather than an error anyone would notice. */
+      var pct = (max > 0) ? Math.round((count / max) * COUNTRY_BAR_MAX_PCT) : 0;
+      var share = (total > 0) ? Math.round((count / total) * 100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+        '<div style="flex:none;width:72px;font-size:0.72rem;color:var(--text)">' + label + '</div>' +
+        '<div style="flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden">' +
+          '<div style="width:' + pct + '%;height:100%;background:var(--accent)"></div>' +
+        '</div>' +
+        '<div style="flex:none;width:84px;text-align:right;font-size:0.7rem;color:var(--muted)">' +
+          count + ' &middot; ' + share + '%</div>' +
+      '</div>';
+    }
+
+    function renderCountryRollup(data) {
+      var el = document.getElementById('user-countries-container');
+      if (!el) return;
+      var countries = (data && data.countries) || [];
+      var unknown = Number(data && data.unknown) || 0;
+      var total = Number(data && data.total) || 0;
+      /* No users at all is the only case with nothing to say. An all-unknown
+         population is NOT this case: it still renders, as a single 100% Unknown
+         bar, which is exactly the state the operator needs to see on day one. */
+      if (total <= 0) {
+        el.innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">No users yet.</div>';
+        return;
+      }
+      /* Scale against the biggest bucket, unknown included, so no bar can ever
+         exceed 100%. Floored at 1 so the divide is safe even if a future caller
+         reaches here with all-zero counts. */
+      var max = unknown;
+      countries.forEach(function(c) { if (Number(c.count) > max) max = Number(c.count); });
+      if (max < 1) max = 1;
+
+      var rows = countries.map(function(c) {
+        /* The server normalizes before sending; normalizing again is what
+           guarantees a legacy or hand-edited record can never emit half a code
+           point into the flag. A code that fails the check is dropped rather
+           than rendered raw. */
+        var code = normalizeCountryCode(c && c.code);
+        if (!code) return '';
+        var label = '<span style="display:inline-flex;align-items:center;gap:4px">' +
+          countryFlagHTML(code) + esc(code) + '</span>';
+        return countryRollupRow(label, Number(c.count) || 0, max, total);
+      }).join('');
+
+      /* Unknown is last (it is not a country and should not head a ranked list
+         of them) but always present, and labelled in --muted so it reads as an
+         absence rather than as a place. */
+      var unknownLabel = '<span style="color:var(--muted)">Unknown</span>';
+      rows += countryRollupRow(unknownLabel, unknown, max, total);
+
+      el.innerHTML =
+        '<div style="font-size:0.85rem;color:var(--accent);font-weight:600;margin-bottom:8px">' +
+          'Where users are &mdash; ' + countries.length + ' countr' + (countries.length === 1 ? 'y' : 'ies') +
+          ', ' + unknown + ' unknown of ' + total +
+        '</div>' + rows;
+    }
+
+    async function loadUserCountries() {
+      try {
+        var resp = await fetch('/api/saas/admin/user-countries');
+        /* 403 means not admin. Leave the container empty rather than writing an
+           error: a non-admin should learn nothing about this surface, not even
+           that it exists and refused them. */
+        if (!resp.ok) return;
+        renderCountryRollup(await resp.json());
+      } catch(e) {}
     }
 
     // --- Admin Users: contact / CRM fields -------------------------------
@@ -17484,7 +18217,8 @@ const dashboardHTML = `<!DOCTYPE html>
 
     // Number of columns in the admin users table. Panel/expand rows span the
     // full width, so this must track the <th> count in renderUsers.
-    var USERS_TABLE_COLSPAN = 8;
+    // 9 since the Country column landed.
+    var USERS_TABLE_COLSPAN = 9;
     // Rows of the notes textarea. Big enough for a short paragraph without
     // pushing the next user off screen. It is the only free-form prose field,
     // so it gets the height as well as the width; still user-resizable.
@@ -17516,6 +18250,15 @@ const dashboardHTML = `<!DOCTYPE html>
     var CONTACT_W_NOTES_BASIS = '48%';
     var CONTACT_W_NOTES_MIN = '320px';
     var CONTACT_NOTES_GROW = 3;
+    /* Country is a two-letter code plus a live flag preview, so it is the
+       narrowest field in the panel and the only one with a fixed-ish basis: it
+       can never need more room than "GB  United Kingdom" takes to echo. */
+    var CONTACT_W_COUNTRY_BASIS = '12%';
+    var CONTACT_W_COUNTRY_MIN = '150px';
+    /* ISO 3166-1 alpha-2. Mirrors countryCodeLen in user_country.go — the
+       maxlength is a courtesy that stops a third letter being typed at all;
+       normalizeCountryCode on both sides is the actual control. */
+    var CONTACT_MAX_COUNTRY = 2;
 
     // Which users currently have their contact panel open, keyed by username.
     // Re-rendering on the admin poll must not slam a panel shut mid-edit.
@@ -17598,6 +18341,46 @@ const dashboardHTML = `<!DOCTYPE html>
       return 'contact-panel-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
+    /* Same sanitizing rule as contactPanelId, for the country field's live
+       preview node. Separate id per user because every panel row is emitted for
+       every user up front (hidden until expanded), so a shared id would collide
+       across hundreds of rows and every lookup would find the first one. */
+    function contactCountryPreviewId(username) {
+      return 'contact-country-preview-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    /* countryPreviewHTML: what a typed code resolves to, as flag + English name.
+
+       Reuses countryFlagEmoji / countryDisplayName from the shared block above
+       rather than restating them, so the admin editor and the self-service
+       editor can never disagree about what a code means.
+
+       Three distinct states, deliberately worded so none of them reads as an
+       error the admin caused:
+         blank   -> "No flag" (a legitimate value: clearing the country)
+         partial -> "Two-letter code" (still typing; not a failure)
+         valid   -> the flag and the country's name
+
+       The code is escaped even though normalizeCountryCode has already reduced
+       it to [A-Z]{2}, and the name is escaped because Intl.DisplayNames returns
+       a localized string this render path does not own. */
+    function countryPreviewHTML(raw) {
+      var typed = String(raw == null ? '' : raw).trim();
+      if (!typed) return 'No flag';
+      var c = normalizeCountryCode(typed);
+      if (!c) return 'Two-letter code';
+      return countryFlagEmoji(c) + ' ' + esc(countryDisplayName(c));
+    }
+
+    /* refreshContactCountryPreview re-renders one user's preview from whatever
+       is currently in their input. Called on every keystroke, so it reads the
+       DOM rather than _allUsers — the point is to reflect the UNSAVED text. */
+    function refreshContactCountryPreview(username, value) {
+      var el = document.getElementById(contactCountryPreviewId(username));
+      if (!el) return;
+      el.innerHTML = countryPreviewHTML(value);
+    }
+
     /* providerBadge renders the user's login method (auth provider) as a small
        chip next to their name in the admin Users table, so an admin can see at a
        glance who signed in with GitHub vs Google vs IBMid vs Red Hat vs
@@ -17643,6 +18426,28 @@ const dashboardHTML = `<!DOCTYPE html>
         ' style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:9999px;' +
         'font-size:0.6rem;font-weight:600;color:' + meta.color + ';background:' + meta.bg + '">' +
         (logo ? logo : '') + esc(meta.label) + '</span>';
+    }
+
+    /* countryCell renders the user's country in the admin Users table as
+       flag + alpha-2 code, following the providerBadge chip above rather than
+       inventing a second visual language for a per-row attribute: same
+       inline-flex chip, same 4px gap, same small type.
+
+       Unknown or unset renders NOTHING — an empty cell, no globe, no dash, no
+       "unknown" chip. That is #4371's rule and it matters most here, where a
+       column of placeholders would read as data we have. The rollup below the
+       table is where the size of the unknown bucket is stated explicitly; the
+       row is not the place to repeat it 200 times.
+
+       countryFlagHTML already normalizes and escapes; the code is escaped again
+       for the visible text because the render path must not depend on the
+       validator upstream of it staying correct. Color is the --muted theme
+       token so the code recedes next to the name in both light and dark. */
+    function countryCell(u) {
+      var code = normalizeCountryCode(u && u.country);
+      if (!code) return '';
+      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--muted)">' +
+        countryFlagHTML(code) + esc(code) + '</span>';
     }
 
     // renderContactCell is the collapsed summary shown in the main user row.
@@ -17743,6 +18548,33 @@ const dashboardHTML = `<!DOCTYPE html>
             '<label style="' + lbl + '">Slack ID</label>' +
             '<input type="text" data-contact-user="' + user + '" data-contact-field="slack_id"' +
               ' maxlength="' + CONTACT_MAX_SLACK + '" value="' + escAttr(u.slack_id || '') + '" style="' + fld + '">' +
+          '</div>' +
+          /* Country. An ADMIN ASSIGNMENT, not a statement by the user — the
+             hub records it as such (CountrySource "admin"), which is why the
+             hint says "on their behalf" rather than presenting it as their
+             choice. It is the only route to a country for every user who
+             joined before the field existed: the wizard is behind them and the
+             self-service editor reaches only the person themselves.
+
+             A free-text code rather than a 250-row <select>: the country list
+             lives in get-started.html and duplicating it into this raw string
+             would give the hub two lists to keep in step. The live preview
+             below turns the code into a flag and an English name as it is
+             typed, which is what makes two letters legible without a list. */
+          '<div style="flex:1 1 ' + CONTACT_W_COUNTRY_BASIS + ';min-width:' + CONTACT_W_COUNTRY_MIN + '">' +
+            '<label style="' + lbl + '">Country</label>' +
+            '<input type="text" data-contact-user="' + user + '" data-contact-field="country"' +
+              ' maxlength="' + CONTACT_MAX_COUNTRY + '" placeholder="GB"' +
+              ' aria-describedby="' + contactCountryPreviewId(u.github_username) + '"' +
+              ' value="' + escAttr(normalizeCountryCode(u.country) || '') + '"' +
+              ' style="' + fld + ';text-transform:uppercase">' +
+            /* Echoes what the typed code resolves to, so a typo is visible
+               BEFORE the blur-save rather than as a surprise flag in the row
+               afterwards. Rendered from the stored value on open so the panel
+               agrees with the table's Country column. */
+            '<div id="' + contactCountryPreviewId(u.github_username) + '"' +
+              ' style="margin-top:4px;font-size:0.66rem;color:var(--muted);min-height:1.1em">' +
+              countryPreviewHTML(u.country) + '</div>' +
           '</div>' +
           '<div style="flex:' + CONTACT_NOTES_GROW + ' 1 ' + CONTACT_W_NOTES_BASIS + ';min-width:' + CONTACT_W_NOTES_MIN + '">' +
             '<label style="' + lbl + '">Notes</label>' +
@@ -17923,6 +18755,10 @@ const dashboardHTML = `<!DOCTYPE html>
         el.addEventListener('input', function() {
           markContactEditing();
           _contactDirty[key] = el.value;
+          /* Country is the one field whose stored form (two letters) does not
+             say what it means, so it echoes as you type. The other fields are
+             their own preview. */
+          if (field === 'country') refreshContactCountryPreview(user, el.value);
         });
         // focus/blur also count as activity: tabbing between fields must not
         // leave a gap the poll can render into.
@@ -18001,6 +18837,17 @@ const dashboardHTML = `<!DOCTYPE html>
       var current = _allUsers ? (_allUsers.find(function(x) { return x.github_username === username; }) || {}) : {};
       var previous = (_contactLastSaved[key] !== undefined) ? _contactLastSaved[key] : (current[field] || '');
       var next = (value || '').trim();
+      /* Country is stored upper-cased by the server, so normalize it to the
+         SAME form here before the equality check. Without this, re-opening the
+         panel and typing "gb" over a stored "GB" would read as a change and fire
+         a pointless PUT, and the optimistic cache below would hold a value the
+         server never wrote. A half-typed or invalid code is left alone rather
+         than blanked, so the field still holds what was typed while the server
+         does the actual rejecting. */
+      if (field === 'country') {
+        var norm = normalizeCountryCode(next);
+        if (norm) next = norm;
+      }
       if (next === previous) return Promise.resolve(true);
       _contactLastSaved[key] = next;
       // Keep the in-memory copy in step so the next poll's signature check does
@@ -18316,6 +19163,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
+          '<td>' + countryCell(u) + '</td>' +
           '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
@@ -18324,7 +19172,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('');
       document.getElementById('users-container').innerHTML =
         '<table class="hive-table"><thead><tr>' +
-        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
       // The contact panels are built as raw HTML above; wire their listeners
       // once the rows are actually in the DOM. Inline on* handlers are avoided

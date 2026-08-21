@@ -192,8 +192,8 @@ func TestHoverPanelReusesSharedRoleColor(t *testing.T) {
 // first and follow it here.
 func TestHiveTableColumnCountUnchanged(t *testing.T) {
 	for _, snippet := range []string{
-		"var TOTAL_COLUMNS = 12;",
-		"var TOTAL_COLUMNS_HEADER = 12;",
+		"var TOTAL_COLUMNS = 13;",
+		"var TOTAL_COLUMNS_HEADER = 13;",
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML is missing %q — did the hive table gain or lose a column?", snippet)
