@@ -11,6 +11,8 @@ It is **opt-in** and off by default:
 docker compose --profile auto-update up -d
 ```
 
+> **Running Podman?** This page does not apply to you, and the feature is not missing. The profile is built on the Docker socket and a filtered Docker API proxy, and [#4188](https://github.com/kubestellar/hive/issues/4188) keeps it deliberately Docker-only. The Podman equivalent is opt-in health-aware auto-update through `podman auto-update` — see [podman-auto-update.md](podman-auto-update.md).
+
 **Read this whole page before enabling it in production.** The profile trades a
 real, permanent increase in blast radius for the convenience of unattended
 updates, and the trade is worse on a hive host than on most hosts, because this

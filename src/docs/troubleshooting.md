@@ -22,6 +22,17 @@ kubectl -n hive logs deploy/hive --tail=200
 kubectl -n hive describe pod -l app.kubernetes.io/name=hive
 ```
 
+Podman (Quadlet) deployments run the same two containers as **systemd units**: `hive.service` and `hive-gateway.service`, generated from `src/deploy/quadlet/` (plus `hive-network.service` and `hive-data-volume.service`). Ask systemd first, not `podman logs`:
+
+```bash
+# rootless — drop --user for a rootful install
+systemctl --user status hive.service hive-gateway.service
+journalctl --user -u hive.service -n 200 --no-pager
+journalctl --user -u hive-gateway.service -n 100 --no-pager
+```
+
+**Why the unit and not the container.** `hive.container` sets `Notify=healthy`, so the unit stays in `activating` until `/api/health` answers — the unit's state, not the container's, is what tells you whether Hive is *serving*. And a start that times out is deleted: the generated `ExecStart` carries `--rm`, so a failed start leaves no container for `podman logs` to read, while the journal still holds why. `podman ps` / `podman logs hive` remain useful once the unit is `active`, for output the process wrote after it came up.
+
 The process also writes `hive.log` under the configured logs directory (default `/data/logs`, from `governor.logging.dir`, falling back to `data.logs_dir`), and tees the same lines to stdout — so `docker compose logs` / `kubectl logs` show everything the file does. The older per-agent `AGENT_LOG_FILE` heartbeat file from v1 is not used.
 
 ## Config fails to load or save
@@ -218,6 +229,75 @@ curl -fsS http://127.0.0.1:3002/api/livez
 
 `/api/livez` is deliberately process-focused: the Kubernetes manifest notes that stale hub heartbeat state belongs in deeper health reporting and should not crash-loop a healthy pod.
 
+## Podman (Quadlet) deployments: failure modes Docker does not have
+
+These are specific to running Hive as systemd units. Everything else in this guide applies unchanged; the install-side counterpart is the **Traps** section of [podman-standalone-quadlet.md](podman-standalone-quadlet.md).
+
+Commands are shown rootless. For a rootful install drop `--user` from `systemctl`/`journalctl`, and read `%E/hive` as `/etc/hive` rather than `~/.config/hive`. The examples below use `$CONF` for that configuration directory:
+
+```bash
+CONF=~/.config/hive     # rootful: CONF=/etc/hive
+```
+
+### It will not start at all
+
+Run the preflights before reading anything else — they diagnose most of the causes, and they are read-only:
+
+```bash
+export HIVE_DEPLOY_RUNTIME=podman   # WITHOUT this they exit 0 having checked nothing
+bin/hive-podman-preflight.sh        # engine, root mode, cgroups
+bin/hive-podman-preflight-ids.sh    # subordinate IDs, graphroot, networking
+HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh   # SELinux labels, config, secrets, port 3001
+```
+
+Docker is the default runtime, so with `HIVE_DEPLOY_RUNTIME` unset all three print `Podman preflight: skipped` and return success — which reads exactly like a pass.
+
+### `systemctl start` hangs, then fails five minutes later
+
+The unit sits in `activating` for the whole `TimeoutStartSec` (300s for `hive.service`, 120s for the gateway) and then gives up. `Notify=healthy` is doing its job: it holds the unit until the healthcheck passes, so a healthcheck that will never pass costs the full budget in silence.
+
+The measured cause ([#4367](https://github.com/kubestellar/hive/issues/4367)) is a **port mismatch between the config and the unit's `HealthCmd`**: the unit probes `http://127.0.0.1:3002/api/health`, while `src/hive.yaml.example` ships `dashboard.port: 3001` for local source runs. Install the example unchanged and Hive serves on 3001, the probe never answers, and `--rm` deletes the container that held the evidence.
+
+```bash
+grep -A1 '^dashboard:' "$CONF/hive.yaml"    # must be 3002, or absent (3002 is the default)
+journalctl --user -u hive.service -n 100 --no-pager
+```
+
+The other frequent cause is a missing `HIVE_DASHBOARD_TOKEN` in `%E/hive/hive.env` — Hive refuses to start without one unless the hive is hub-hosted, and `Notify=healthy` turns that refusal into the same silent `activating` wait. The journal carries the `[SECURITY]` line.
+
+### `systemctl is-failed` says `activating`, not `failed`
+
+Do not key monitoring on `failed` for these units. Measured in [#4378](https://github.com/kubestellar/hive/issues/4378): `Restart=always` moves the unit from a `TimeoutStartSec` expiry straight to `activating/auto-restart` and into the next attempt, so `is-failed` reports `activating` at every point during a bad update and `ActiveState` never reaches `failed`. An alert keyed on `failed` does not fire.
+
+What does move is `Result=timeout` during the auto-restart window, and `NRestarts` climbing — though not immediately, so a single sample that reads `NRestarts=0` has not shown the unit is healthy:
+
+```bash
+systemctl --user show hive.service -p ActiveState -p SubState -p Result -p NRestarts
+```
+
+For boot persistence specifically, `systemctl is-enabled` is not evidence either — it reports `generated` regardless. Use `bin/hive-podman-lifecycle-probe.sh check`; see [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md).
+
+### `systemctl cat hive.service` does not show my drop-in
+
+Expected. Quadlet merges `hive.container.d/*.conf` into `hive.container` **before** generating the service, so `systemctl cat` prints the merged result and never names the drop-in file that produced it. To see what is actually in force, read the generated `ExecStart` and the drop-in directory separately:
+
+```bash
+systemctl --user cat hive.service | grep -m1 '^ExecStart='
+ls -l ~/.config/containers/systemd/hive.container.d/
+```
+
+This matters most when an image pin is not taking effect — [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md) covers the pin, and `bin/hive-podman-update.sh status` prints the pinned digest, the running container's digest, and the unit state together.
+
+### SELinux denials on `/data` or the secrets directory
+
+On an enforcing host a mislabelled bind mount fails in ways that do not name SELinux — and a private-category denial records **no AVC at all**. The bind mounts carry `:Z` and the named volume deliberately carries **no** relabel suffix; adding `:Z` to the volume is the trap.
+
+Do not weaken SELinux to test the theory. The measured behaviour, including the restore, is in [podman-selinux-avc-evidence.md](podman-selinux-avc-evidence.md) and [podman-volume-persistence.md](podman-volume-persistence.md); `bin/hive-podman-preflight-host.sh` reports the labels and the secrets group-traverse check directly.
+
+### Auto-update rolled back, or is not updating
+
+Auto-update is opt-in and off by default. If it rolled back, the published image is bad and **will be retried on the next timer firing** — the unit's own state stays green throughout. If it reports success but changes nothing, a digest pin is probably in force. Both are covered in [podman-auto-update.md](podman-auto-update.md).
+
 ## Clean reset
 
 There is no `uninstall.sh`/`install.sh` on the containerized runtime. To start from a clean state, remove the process and its `/data` state, then bring it back:
@@ -231,7 +311,16 @@ docker compose -f src/docker-compose.yaml up -d
 kubectl -n hive delete deploy/hive
 kubectl -n hive delete pvc -l app.kubernetes.io/name=hive
 # then re-apply the manifests
+
+# Podman / Quadlet (rootless; drop --user for a rootful install)
+systemctl --user stop hive-gateway.service hive.service
+#  ⚠ DESTRUCTIVE — this line deletes all persisted Hive state. Everything
+#    else here is reversible; this is not. Back up FIRST (see below).
+podman volume rm hive-data
+systemctl --user start hive-gateway.service
 ```
+
+The Podman volume removal is the counterpart of `down -v`, and it is separated onto its own line for the same reason: stopping and starting the units is routine, and `podman volume rm hive-data` is not. `systemctl stop` alone does **not** delete the volume — the units can be stopped and started freely without losing state. To remove the units and every labelled resource as well, use [`bin/hive-podman-teardown.sh`](../../bin/hive-podman-teardown.sh), which selects by the `io.kubestellar.hive.*` ownership labels.
 
 `/data` holds the dashboard config overlay, persisted tokens, logs, and other state; deleting it discards dashboard edits and cached credentials. Back up first if you need any of it — see [Backup & restore](backup-restore.md).
 
