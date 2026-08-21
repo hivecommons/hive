@@ -289,6 +289,20 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_lifecycle_probe.sh
 
+      # #4490: the SELinux release qualification (#4337) read labels with bare
+      # `stat -c '%C'`, and under uutils coreutils — the default on the
+      # Fedora-atomic hosts that lane targets — that prints "unsupported for
+      # this operating system" to stdout with exit 0, so a healthy enforcing
+      # host was reported FAIL (2), ledger row included. The reader is now
+      # resolved by probing (src/deploy/selinux_label_reader.sh, shared with
+      # the AVC probe), and no reader means NOT QUALIFIABLE, never a verdict.
+      # The defect is in how the label is READ, so it reproduces on a runner
+      # with no SELinux at all — which is why this half can be CI while the
+      # qualification itself cannot (#4211).
+      - name: SELinux label reader is resolved, never assumed (#4490)
+        working-directory: .
+        run: bash src/deploy/test_selinux_label_reader.sh
+
       # #4470: the one-command Podman installer, which is the only script in
       # the family that WRITES to the host — so the suite is about what it
       # cannot be allowed to do. It pins the two traps that justified scripting

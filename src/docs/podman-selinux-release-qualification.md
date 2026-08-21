@@ -107,6 +107,13 @@ owner, and installs nothing.
 The script is a convenience; the qualification is these commands. Run them on
 the enforcing host to reproduce the result without it.
 
+The label reads below say `/usr/bin/stat` on purpose, not `stat`. On hosts
+where uutils coreutils is first on `PATH` — the Bluefin/Universal Blue default
+— `stat -c '%C'` prints `unsupported for this operating system` to stdout and
+exits 0, which is not a label (#4490). If `/usr/bin/stat` is not GNU either,
+use `getfattr -n security.selinux --only-values --absolute-names <path>`. The
+script resolves a working reader the same way and exits `78` if none exists.
+
 ```sh
 # 0. Establish the mode. If this is not "Enforcing", stop — see below.
 getenforce
@@ -115,25 +122,25 @@ getenforce
 D="$(mktemp -d -p "$HOME" hive-selinux-qual-XXXXXX)"
 printf 'qualification fixture' >"$D/secret.txt"
 chmod 600 "$D/secret.txt"
-stat -c '%C %a' "$D/secret.txt"      # unconfined_u:object_r:user_home_t:s0 600
+/usr/bin/stat -c '%C %a' "$D/secret.txt"  # unconfined_u:object_r:user_home_t:s0 600
 
 IMG=ghcr.io/kubestellar/hive:v4-latest
 read_it() { podman run --rm -v "$D:/mnt:ro${1:+,$1}" --entrypoint /bin/sh "$IMG" -c 'cat /mnt/secret.txt'; }
 
 # 2. CONTROL: no relabel flag. MUST be denied.
 read_it                              # cat: can't open '/mnt/secret.txt': Permission denied
-stat -c '%C' "$D/secret.txt"         # unchanged — a denied mount relabels nothing
+/usr/bin/stat -c '%C' "$D/secret.txt"  # unchanged — a denied mount relabels nothing
 
 # 3. :Z — private relabel. Reads, and takes an MCS category.
 read_it Z                            # qualification fixture
-stat -c '%C %a' "$D/secret.txt"      # ...:container_file_t:s0:cNNN,cNNN 600
+/usr/bin/stat -c '%C %a' "$D/secret.txt"  # ...:container_file_t:s0:cNNN,cNNN 600
 
 # 4. That category isolates: another container without it is denied.
 read_it                              # Permission denied
 
 # 5. :z — shared relabel. Reads, and carries no category.
 read_it z                            # qualification fixture
-stat -c '%C %a' "$D/secret.txt"      # ...:container_file_t:s0 600
+/usr/bin/stat -c '%C %a' "$D/secret.txt"  # ...:container_file_t:s0 600
 
 # 6. Shared means shared: another container reads it.
 read_it                              # qualification fixture
@@ -191,7 +198,10 @@ from such a host is worse than no row at all, because it looks like coverage.
 
 The script enforces this rather than trusting the operator: a missing
 `/sys/fs/selinux`, a missing `getenforce`, or a mode other than `Enforcing`
-exits `78` and reports no result.
+exits `78` and reports no result. So does a host where no candidate label
+reader (`stat -c %C`, `/usr/bin/stat -c %C`, `getfattr`) returns something
+shaped like a context — "I could not measure this" must never read as "this
+host failed", and it must never emit a ledger row (#4490).
 
 ## Results ledger
 

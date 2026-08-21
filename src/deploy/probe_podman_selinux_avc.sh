@@ -88,26 +88,15 @@ MODE="$(getenforce 2>/dev/null)"
   not_qualifiable "SELinux mode is ${MODE:-unknown}, not Enforcing. Do not setenforce 1 to make this run; record it unexecuted."
 
 # ── A label reader that is actually a label reader ───────────────────────────
-# `stat -c '%C'` is the obvious choice and is what #4337's suite uses, but on a
-# host where uutils coreutils shadows GNU coreutils on PATH — the default on
+# `stat -c '%C'` is the obvious choice and cannot be trusted bare: on a host
+# where uutils coreutils shadows GNU coreutils on PATH — the default on
 # Bluefin/Universal Blue, i.e. exactly the Fedora-atomic class this lane
 # targets — uutils `stat` does not implement %C and prints "unsupported for
-# this operating system", and `ls -Z` prints no context at all. That string
-# would then be compared against container_file_t as if it were a label. So the
-# reader is resolved by trying it on a known file rather than assumed.
-LABEL_READER=""
-_resolve_label_reader() {
-  local probe="$1" out
-  for cand in "stat -c %C" "/usr/bin/stat -c %C" "getfattr -n security.selinux --only-values --absolute-names"; do
-    out="$($cand "$probe" 2>/dev/null)" || continue
-    # A context is user:role:type:level — require the role field to be present.
-    [[ "$out" == *:object_r:* ]] || continue
-    LABEL_READER="$cand"
-    return 0
-  done
-  return 1
-}
-label_of() { $LABEL_READER "$1" 2>/dev/null; }
+# this operating system" to stdout with exit 0. The resolve-by-probing reader
+# this probe pioneered is now shared with #4337's suite (#4490).
+# shellcheck source=src/deploy/selinux_label_reader.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/selinux_label_reader.sh"
+label_of() { hive_selinux_label_of "$1"; }
 # Only the LEVEL field decides whether a private MCS category is present. A
 # naive *:c* over the whole context matches the ":container_file_t" in the type
 # field and reports every label as private (the bug #4337 caught in review).
@@ -230,8 +219,8 @@ trap cleanup EXIT
 printf 'qualification fixture\n' >"${FIXTURE}/secret.txt"
 chmod 600 "${FIXTURE}/secret.txt"
 
-_resolve_label_reader "${FIXTURE}/secret.txt" \
-  || not_qualifiable "no working SELinux label reader (tried stat -c %C, /usr/bin/stat, getfattr)"
+hive_selinux_resolve_label_reader "${FIXTURE}/secret.txt" \
+  || not_qualifiable "no working SELinux label reader (tried ${HIVE_SELINUX_LABEL_READERS})"
 
 START_LABEL="$(label_of "${FIXTURE}/secret.txt")"
 START_MODE="$(mode_of "${FIXTURE}/secret.txt")"
@@ -241,7 +230,7 @@ printf '  selinux     %s, policy %s\n' "$MODE" "$(sestatus 2>/dev/null | awk -F'
 pod info --format '  podman      {{.Version.Version}} (rootless={{.Host.Security.Rootless}}, selinux={{.Host.Security.SELinuxEnabled}}, runtime={{.Host.OCIRuntime.Name}})'
 printf '  store       %s (throwaway=%s)\n' "$STORE" "$OWN_STORE"
 printf '  fixture     %s\n' "$FIXTURE"
-printf '  label rdr   %s\n' "$LABEL_READER"
+printf '  label rdr   %s\n' "$HIVE_SELINUX_LABEL_READER"
 printf '  audit rdr   %s\n' "${AUDIT_READER:-NONE — AVC evidence will be UNMEASURED}"
 printf '  image       %s\n' "$IMAGE"
 

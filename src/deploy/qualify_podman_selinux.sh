@@ -72,6 +72,14 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
+# The label reader is resolved, never assumed (#4490). Bare `stat -c '%C'`
+# under uutils coreutils prints "unsupported for this operating system" to
+# stdout and exits 0, and this suite compared that sentence against
+# container_file_t and emitted FAIL (2) — plus a ledger row — on a healthy
+# enforcing host.
+# shellcheck source=src/deploy/selinux_label_reader.sh
+. "${REPO_ROOT}/src/deploy/selinux_label_reader.sh"
+
 # By default the host's OWN store is used: a release qualification is meant to
 # measure the host as it is actually configured. --store is for a run that must
 # leave the operator's storage untouched.
@@ -134,8 +142,16 @@ trap cleanup EXIT
 
 printf 'qualification fixture' >"${FIXTURE}/secret.txt"
 chmod 600 "${FIXTURE}/secret.txt"
+
+# Resolve the reader against the fixture itself. No working reader means no
+# verdict and no ledger row — "I could not measure this" and "this host
+# failed" must not produce the same output (#4490).
+hive_selinux_resolve_label_reader "${FIXTURE}/secret.txt" \
+  || not_qualifiable "no working SELinux label reader (tried ${HIVE_SELINUX_LABEL_READERS}). Under uutils coreutils, 'stat -c %C' prints an error to stdout and exits 0, so a label read that way is not a label. Install GNU coreutils or attr (getfattr), then re-run."
+
 START_MODE="$(stat -c '%a' "${FIXTURE}/secret.txt")"
-START_LABEL="$(stat -c '%C' "${FIXTURE}/secret.txt")"
+START_LABEL="$(hive_selinux_label_of "${FIXTURE}/secret.txt")"
+printf '  label rdr   %s\n' "$HIVE_SELINUX_LABEL_READER"
 printf '  fixture     %s (mode %s, %s)\n\n' "$FIXTURE" "$START_MODE" "$START_LABEL"
 
 if ! pod image exists "$IMAGE" 2>/dev/null; then
@@ -153,7 +169,7 @@ read_fixture() {
     -c 'cat /mnt/secret.txt' 2>&1)"
 }
 
-label_of() { stat -c '%C' "${FIXTURE}/secret.txt"; }
+label_of() { hive_selinux_label_of "${FIXTURE}/secret.txt"; }
 mode_of()  { stat -c '%a' "${FIXTURE}/secret.txt"; }
 # container_file_t at s0 with no cN category is the shared form; with one it is
 # private to a single container's MCS pair. Only the LEVEL field is examined —
