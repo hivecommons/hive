@@ -133,3 +133,52 @@ approximated.
 3. Derive-on-read attach in `saas.go` (Journey pattern) + `quadrantSortValue`.
 4. Kite SVG renderer (one function, three mounts) + folded column w/ subSort chips.
 5. Header aggregate over the FILTERED set.
+
+## Heartbeat trace — MAJOR revision to the plumbing plan
+
+Traced the spoke->hub path. Three findings change the build:
+
+**1. FleetStatsCollector ALREADY sends agent-attributed PR counts.**
+`HeartbeatPayload.PRsMerged90d` / `PRsRejected90d` / `CVEsClosed` (+
+`FleetStatsCollectedAt`) travel every beat and land on RegistryEntry
+(server.go:300-310). These are org-wide AI-author PR search on a 30-min timer —
+exactly the agent attribution Productivity needs. **No new plumbing required for
+the Productivity axis.**
+
+**2. Rework rate IS available after all.** `PRsRejected90d` is the
+closed-unmerged count I previously recorded as missing. Efficiency can score its
+rework sub-criterion: rejected / (merged + rejected).
+
+**3. `tokens_24h` is NOT a 24h window.** Despite the name it is a lifetime
+cumulative total (comment at main.go:3332). It is the only cost-ish signal that
+reaches the hub — `pkg/dashboard/cost.go` (USD) is spoke-local and NOT sent.
+
+### Consequence for Efficiency
+Cost-per-PR in USD would need new plumbing (cost.go -> heartbeat). But
+`Tokens24h` (cumulative tokens) already travels, and tokens-per-merged-PR is
+arguably the BETTER efficiency metric anyway — it is provider-price-independent,
+so it does not shift when a model's pricing changes or when hives run different
+backends. Use `Tokens24h / PRsMerged90d`.
+CAVEAT: numerator is lifetime, denominator is 90d — mismatched windows. Either
+normalize or accept it as a rough ratio; must be stated in the hover, not hidden.
+
+### Revised plumbing verdict
+NOTHING NEEDS NEW HEARTBEAT FIELDS for a first version. All four axes can be
+computed from what the hub already receives:
+- Trust: ACMMLevel, GovernorMode, Repos (all on RegistryEntry)
+- Productivity: PRsMerged90d, WorkSource, ContributorCount/ActiveContributors
+- Efficiency: Tokens24h / PRsMerged90d, PRsRejected90d rework, AgentCount
+- Satisfaction: unscored by design
+
+This removes the spoke-side change from the critical path entirely.
+
+### Other trace facts worth keeping
+- Spoke shares `hub.HeartbeatPayload` directly (no separate DTO) — package hub
+  is compiled into the spoke binary. Adding a field is a one-struct change.
+- Interval 2 min (main.go:3202); hub stale threshold 5 min; 10s collect budget
+  with stale-payload fallback.
+- No separate registration POST — the hub auto-registers on FIRST heartbeat
+  (server.go:1476-1530).
+- `MetricsCollector` (mttr, prIssueCounts) is spoke-LOCAL only; never sent.
+  So `github.PRIssueCounts` is NOT available hub-side — the repo-wide cost
+  denominator I originally planned does not exist at the hub.

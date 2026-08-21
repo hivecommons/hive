@@ -101,20 +101,39 @@ type quadrantInputs struct {
 	reposInOrg    int // 0 = unknown, so breadth is unscorable
 
 	// --- Efficiency ------------------------------------------------------
-	costUSD        *float64 // all-time cumulative spend
-	mergedPRs      *int     // repo-wide, all-time (github.PRIssueCounts)
-	closedIssues   *int     // repo-wide, all-time
+	// tokensTotal is HeartbeatPayload.Tokens24h. Despite that name it is a
+	// LIFETIME cumulative token total, not a 24-hour window (see the comment at
+	// its source in cmd/hive/main.go). It is the only cost-shaped signal that
+	// reaches the hub at all — the USD figures in pkg/dashboard/cost.go are
+	// spoke-local and never sent.
+	//
+	// Tokens are arguably the better efficiency numerator regardless: they are
+	// provider-price-independent, so a hive's score does not move when a model
+	// is repriced or when two hives run different backends.
+	tokensTotal *int64
+
+	// prsMerged90d / prsRejected90d are the spoke's AI-author PR counts across
+	// its org, already travelling on the heartbeat via FleetStatsCollector.
+	// Nil means "not computed yet", which the existing hub code is careful to
+	// distinguish from zero — the same discipline this struct uses throughout.
+	//
+	// NOTE the window mismatch: tokensTotal is lifetime while these are 90-day.
+	// The resulting ratio is therefore approximate, and the hover must say so
+	// rather than presenting it as an exact cost-per-PR.
+	prsMerged90d   *int
+	prsRejected90d *int
 	agentCount     int
-	agentMergedPRs *int // agent-attributed, in-org (SearchPRCount)
 
 	// --- Productivity ----------------------------------------------------
-	// Agent-attributed, IN-ORG counts. Must come from SearchPRCount, never
-	// SearchOutreachPRCount: the latter is -org: scoped (external outreach
-	// only) and would omit essentially all of a hive's real output.
-	agentMergedPRsWeekly    *float64
-	agentClosedIssuesWeekly *float64
-	workSource              string
-	relayCompletedTasks     *int
+	// Throughput reuses prsMerged90d above: it is org-wide and attributed to
+	// the AI author, which is exactly the attribution this axis requires. The
+	// repo-wide github.PRIssueCounts is NOT available hub-side (it never leaves
+	// the spoke), and the outreach counter is -org: scoped, so neither of the
+	// two tempting alternatives is usable here even if they were reachable.
+	workSource          string
+	contributorCount    int
+	activeContributors  int
+	relayCompletedTasks *int
 
 	// --- Satisfaction ----------------------------------------------------
 	// Intentionally empty. There is no satisfaction signal in the platform
@@ -132,14 +151,16 @@ type quadrantInputs struct {
 // "how much output before a cost-per-PR figure means anything" — that a future
 // reader will want to find and argue with.
 const (
-	// minMergedPRsForCostRatio is how many merged PRs a repo needs before
-	// cost-per-PR is meaningful. With one or two merges the ratio is dominated
-	// by fixed setup spend and says more about when the hive was created than
-	// how efficiently it runs.
+	// minMergedPRsForCostRatio is how many merged PRs a hive needs before
+	// tokens-per-PR is meaningful. With one or two merges the ratio is
+	// dominated by fixed setup spend and says more about when the hive was
+	// created than how efficiently it runs.
 	minMergedPRsForCostRatio = 5
 
-	// minClosedIssuesForCostRatio is the same floor for cost-per-issue.
-	minClosedIssuesForCostRatio = 5
+	// minPRsForReworkRate is the smallest merged+rejected total that gives a
+	// stable rejection rate. Below it a single rejection swings the figure by
+	// tens of percent, which would flag hives for noise.
+	minPRsForReworkRate = 4
 
 	// minFleetForPercentile is the smallest population in which a percentile
 	// is honest. Ranking three hives against each other produces scores of 0,

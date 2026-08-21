@@ -104,25 +104,45 @@ func trustCriteria(in quadrantInputs) []subCriterion {
 func efficiencyCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
 
-	// Cost per merged PR. Below the floor the ratio is dominated by fixed
+	// Tokens per merged PR. Below the floor the ratio is dominated by fixed
 	// setup spend and says more about the hive's age than its efficiency.
-	if in.costUSD != nil && in.mergedPRs != nil && *in.mergedPRs >= minMergedPRsForCostRatio {
+	//
+	// The window mismatch is real and deliberate: tokensTotal is lifetime while
+	// prsMerged90d covers 90 days, so a long-lived hive's ratio is inflated by
+	// history it has already paid for. It is still the only cost signal the hub
+	// receives, and it ranks hives usefully because every hive is distorted in
+	// the same direction. The hover must present it as approximate.
+	if in.tokensTotal != nil && in.prsMerged90d != nil && *in.prsMerged90d >= minMergedPRsForCostRatio {
 		out = append(out, subCriterion{
-			name:           "cost_per_pr",
-			value:          *in.costUSD / float64(*in.mergedPRs),
+			name:           "tokens_per_pr",
+			value:          float64(*in.tokensTotal) / float64(*in.prsMerged90d),
 			higherIsBetter: false,
-			nudge:          "Cost per merged PR is high relative to the fleet",
+			nudge:          "Token spend per merged PR is high relative to the fleet",
 		})
 	}
 
-	// Cost per closed issue, same floor and same reasoning.
-	if in.costUSD != nil && in.closedIssues != nil && *in.closedIssues >= minClosedIssuesForCostRatio {
-		out = append(out, subCriterion{
-			name:           "cost_per_issue",
-			value:          *in.costUSD / float64(*in.closedIssues),
-			higherIsBetter: false,
-			nudge:          "Cost per closed issue is high relative to the fleet",
-		})
+	// Rework: PRs the agent opened that were rejected rather than merged. This
+	// is budget spent on work nobody wanted, which is the most actionable form
+	// of inefficiency — it points at mission tuning rather than at throttling.
+	//
+	// Requires a meaningful denominator; with two or three total PRs the rate
+	// swings wildly on a single rejection.
+	if in.prsMerged90d != nil && in.prsRejected90d != nil {
+		total := *in.prsMerged90d + *in.prsRejected90d
+		if total >= minPRsForReworkRate {
+			rate := float64(*in.prsRejected90d) / float64(total)
+			n := ""
+			if rate > 0.25 {
+				n = fmt.Sprintf("%d of %d agent PRs were rejected — tune the mission",
+					*in.prsRejected90d, total)
+			}
+			out = append(out, subCriterion{
+				name:           "rework_rate",
+				value:          rate,
+				higherIsBetter: false,
+				nudge:          n,
+			})
+		}
 	}
 
 	// Idle burn: agents that exist but are not shipping. Measured as merged PRs
@@ -131,12 +151,12 @@ func efficiencyCriteria(in quadrantInputs) []subCriterion {
 	//
 	// Requires at least one agent; a hive with zero agents is not inefficient,
 	// it is simply not running, which the Productivity axis already expresses.
-	if in.agentCount > 0 && in.agentMergedPRs != nil {
-		perAgent := float64(*in.agentMergedPRs) / float64(in.agentCount)
+	if in.agentCount > 0 && in.prsMerged90d != nil {
+		perAgent := float64(*in.prsMerged90d) / float64(in.agentCount)
 		n := ""
 		if perAgent < 1 {
 			n = fmt.Sprintf("%d agents but %d merged PRs — consider pausing idle agents",
-				in.agentCount, *in.agentMergedPRs)
+				in.agentCount, *in.prsMerged90d)
 		}
 		out = append(out, subCriterion{
 			name:           "output_per_agent",
@@ -163,24 +183,38 @@ func efficiencyCriteria(in quadrantInputs) []subCriterion {
 func productivityCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
 
-	if in.agentMergedPRsWeekly != nil {
+	// Agent-merged PR throughput over the reporting window.
+	if in.prsMerged90d != nil {
 		n := ""
-		if *in.agentMergedPRsWeekly == 0 {
-			n = "No agent-merged PRs this week"
+		if *in.prsMerged90d == 0 {
+			n = "No agent-merged PRs in the last 90 days"
 		}
 		out = append(out, subCriterion{
-			name:           "prs_weekly",
-			value:          *in.agentMergedPRsWeekly,
+			name:           "prs_merged",
+			value:          float64(*in.prsMerged90d),
 			higherIsBetter: true,
 			nudge:          n,
 		})
 	}
 
-	if in.agentClosedIssuesWeekly != nil {
+	// Contributor engagement: how many of the hive's known contributors are
+	// actually active. A hive with many enrolled but few active contributors is
+	// under-using the relay, which is a different problem from having none.
+	//
+	// Scored as a ratio so a hive with three engaged contributors is not beaten
+	// by one with thirty enrolled and three engaged.
+	if in.contributorCount > 0 {
+		ratio := float64(in.activeContributors) / float64(in.contributorCount)
+		n := ""
+		if in.activeContributors < in.contributorCount {
+			n = fmt.Sprintf("%d of %d contributors active",
+				in.activeContributors, in.contributorCount)
+		}
 		out = append(out, subCriterion{
-			name:           "issues_weekly",
-			value:          *in.agentClosedIssuesWeekly,
+			name:           "contributor_engagement",
+			value:          ratio,
 			higherIsBetter: true,
+			nudge:          n,
 		})
 	}
 

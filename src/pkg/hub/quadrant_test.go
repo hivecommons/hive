@@ -1,14 +1,17 @@
 package hub
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // These tests pin the invariants that are SILENT when broken. A quadrant that
 // scores wrongly still renders a plausible kite, so nothing throws — the chart
 // just quietly misinforms the operator. Each test below guards a specific way
 // that could happen.
 
-func f64(v float64) *float64 { return &v }
-func iptr(v int) *int        { return &v }
+func iptr(v int) *int       { return &v }
+func i64ptr(v int64) *int64 { return &v }
 
 // fleetOf builds n hives with enough variation to exercise percentile ranking,
 // so tests are never accidentally run against a population below the floor.
@@ -53,7 +56,7 @@ func TestUnscoredIsNotZero(t *testing.T) {
 // would cap every hive at 75 and make the whole fleet look mediocre.
 func TestCompositeExcludesUnscoredAxes(t *testing.T) {
 	in := fleetOf(10, func(i int, in *quadrantInputs) {
-		in.agentMergedPRsWeekly = f64(float64(i))
+		in.prsMerged90d = iptr(i)
 		in.relayCompletedTasks = iptr(i)
 	})
 	qs := ScoreFleet(in)
@@ -128,7 +131,7 @@ func TestDecliningHiveDoesNotJoinPopulation(t *testing.T) {
 // a strong axis trains people to ignore nudges everywhere.
 func TestNudgeOnlyWhenWeak(t *testing.T) {
 	qs := ScoreFleet(fleetOf(12, func(i int, in *quadrantInputs) {
-		in.agentMergedPRsWeekly = f64(float64(i * 3))
+		in.prsMerged90d = iptr(i * 3)
 		in.workSource = "issues"
 	}))
 	for i, q := range qs {
@@ -145,7 +148,7 @@ func TestNudgeOnlyWhenWeak(t *testing.T) {
 // Ranking three hives yields 0/50/100 no matter how close they really are.
 func TestSmallFleetIsUnscored(t *testing.T) {
 	qs := ScoreFleet(fleetOf(3, func(i int, in *quadrantInputs) {
-		in.agentMergedPRsWeekly = f64(float64(i))
+		in.prsMerged90d = iptr(i)
 	}))
 	for i, q := range qs {
 		for _, a := range q.Axes {
@@ -158,7 +161,7 @@ func TestSmallFleetIsUnscored(t *testing.T) {
 	// Positive control: the same shape at fleet size 10 DOES score, proving the
 	// floor is what suppressed it rather than the inputs being unscorable.
 	big := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.agentMergedPRsWeekly = f64(float64(i))
+		in.prsMerged90d = iptr(i)
 	}))
 	any := false
 	for _, q := range big {
@@ -175,14 +178,61 @@ func TestSmallFleetIsUnscored(t *testing.T) {
 // where the ratio reflects fixed setup spend rather than how the hive runs.
 func TestCostRatioFloor(t *testing.T) {
 	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.costUSD = f64(500)
-		in.mergedPRs = iptr(2) // below minMergedPRsForCostRatio
-		in.closedIssues = iptr(2)
+		in.tokensTotal = i64ptr(500000)
+		in.prsMerged90d = iptr(2) // below minMergedPRsForCostRatio
 	}))
 	for i, q := range qs {
 		for _, a := range q.Axes {
 			if a.Axis == AxisEfficiency && a.Scored {
 				t.Errorf("hive %d: efficiency scored on 2 merged PRs — below the floor", i)
+			}
+		}
+	}
+}
+
+// TestReworkRateRanksRejectionAsBad guards the direction of the rework
+// criterion. If it inverts, the hives wasting the most budget on PRs nobody
+// merged would score BEST on efficiency — rewarding exactly the behaviour the
+// axis exists to flag, while still drawing a perfectly plausible kite.
+func TestReworkRateRanksRejectionAsBad(t *testing.T) {
+	// Hive 0 is clean (10 merged, 0 rejected); hive 9 is mostly rework.
+	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
+		in.prsMerged90d = iptr(10)
+		in.prsRejected90d = iptr(i * 2)
+	}))
+	effOf := func(q Quadrant) (int, bool) {
+		for _, a := range q.Axes {
+			if a.Axis == AxisEfficiency {
+				return a.Score, a.Scored
+			}
+		}
+		return 0, false
+	}
+	clean, ok1 := effOf(qs[0])
+	messy, ok2 := effOf(qs[9])
+	if !ok1 || !ok2 {
+		t.Fatal("expected efficiency to score for both hives")
+	}
+	if clean <= messy {
+		t.Errorf("rework ranking inverted: clean hive %d, high-rework hive %d — "+
+			"wasted effort is scoring as efficiency", clean, messy)
+	}
+}
+
+// TestReworkFloorSuppressesNoise stops a single rejection out of two PRs
+// reading as a 50%% rework rate and flagging a hive that has barely started.
+func TestReworkFloorSuppressesNoise(t *testing.T) {
+	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
+		in.prsMerged90d = iptr(1)
+		in.prsRejected90d = iptr(1) // total 2, below minPRsForReworkRate
+	}))
+	for i, q := range qs {
+		for _, a := range q.Axes {
+			if a.Axis != AxisEfficiency || !a.Scored {
+				continue
+			}
+			if strings.Contains(a.Nudge, "rejected") {
+				t.Errorf("hive %d: rework nudge fired on a 2-PR sample: %q", i, a.Nudge)
 			}
 		}
 	}
