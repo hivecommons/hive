@@ -104,6 +104,8 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 		Org:                  "acme",
 		Online:               true,
 		AdvisoryLastPostedAt: now.Add(-advisoryIssueStaleAfter - time.Hour).Format(time.RFC3339),
+		BudgetCurrentSpend:   int64ptr(87),
+		BudgetLimit:          int64ptr(100),
 	}}
 
 	rec := httptest.NewRecorder()
@@ -116,6 +118,7 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 		Hives []struct {
 			ID                    string                `json:"id"`
 			AdvisoryIssueActivity AdvisoryIssueActivity `json:"advisoryIssueActivity"`
+			BudgetHealth          BudgetHealth          `json:"budgetHealth"`
 		} `json:"hives"`
 		Summary map[string]int `json:"hives_summary"`
 	}
@@ -123,8 +126,10 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 		t.Fatalf("unmarshal my-hives: %v", err)
 	}
 	byID := map[string]AdvisoryIssueActivity{}
+	budgetByID := map[string]BudgetHealth{}
 	for _, h := range resp.Hives {
 		byID[h.ID] = h.AdvisoryIssueActivity
+		budgetByID[h.ID] = h.BudgetHealth
 	}
 	if byID["h1"].Bucket != advisoryIssueBucketStale || byID["h1"].LastActivityAt == "" {
 		t.Fatalf("h1 activity = %+v, want stale with timestamp", byID["h1"])
@@ -134,5 +139,14 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 	}
 	if resp.Summary["advisory_issue_stale"] != 1 || resp.Summary["advisory_issue_unknown"] != 1 {
 		t.Fatalf("summary = %#v, want stale=1 unknown=1", resp.Summary)
+	}
+	if budgetByID["h1"].Bucket != budgetBucketWarning || budgetByID["h1"].UsedTokens != 87 || budgetByID["h1"].LimitTokens != 100 {
+		t.Fatalf("h1 budget = %+v, want warning with numbers", budgetByID["h1"])
+	}
+	if budgetByID["hosted-empty"].Bucket != budgetBucketUnknown {
+		t.Fatalf("placeholder budget = %+v, want unknown/n/a", budgetByID["hosted-empty"])
+	}
+	if resp.Summary["budget_warning"] != 1 || resp.Summary["budget_unknown"] != 1 {
+		t.Fatalf("summary = %#v, want budget_warning=1 budget_unknown=1", resp.Summary)
 	}
 }

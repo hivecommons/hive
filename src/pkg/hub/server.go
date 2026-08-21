@@ -319,9 +319,11 @@ type RegistryEntry struct {
 	// governor.budget.period_days (default 7d), so it must be normalised before
 	// being compared with the 90-day PR counters above.
 	BudgetCurrentSpend   *int64    `json:"budgetCurrentSpend,omitempty"`
+	BudgetLimit          *int64    `json:"budgetLimit,omitempty"`
 	BudgetWindowStartsAt time.Time `json:"budgetWindowStartsAt,omitempty"`
 	BudgetWindowEndsAt   time.Time `json:"budgetWindowEndsAt,omitempty"`
 	BudgetExhausted      *bool     `json:"budgetExhausted,omitempty"`
+	BudgetIgnored        *bool     `json:"budgetIgnored,omitempty"`
 	// HoldTotal / AwaitingReview / SLAViolations measure work stalled on a
 	// human or aging past its threshold; TasksCompleted7d is relay throughput
 	// summed on the spoke from its hourly buckets.
@@ -1759,9 +1761,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// being clamped to zero, which would be indistinguishable from a real
 		// measurement and would quietly drag the hive's score.
 		BudgetCurrentSpend:   clampQuadrantSpend(payload.BudgetCurrentSpend),
+		BudgetLimit:          clampQuadrantSpend(payload.BudgetLimit),
 		BudgetWindowStartsAt: parseHeartbeatTime(payload.BudgetWindowStartsAt),
 		BudgetWindowEndsAt:   parseHeartbeatTime(payload.BudgetWindowEndsAt),
 		BudgetExhausted:      payload.BudgetExhausted,
+		BudgetIgnored:        payload.BudgetIgnored,
 		HoldTotal:            clampFleetCount(payload.HoldTotal),
 		AwaitingReview:       clampFleetCount(payload.AwaitingReview),
 		SLAViolations:        clampFleetCount(payload.SLAViolations),
@@ -1963,8 +1967,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				entry.BudgetWindowStartsAt = h.BudgetWindowStartsAt
 				entry.BudgetWindowEndsAt = h.BudgetWindowEndsAt
 			}
+			if entry.BudgetLimit == nil && h.BudgetLimit != nil {
+				entry.BudgetLimit = h.BudgetLimit
+			}
 			if entry.BudgetExhausted == nil && h.BudgetExhausted != nil {
 				entry.BudgetExhausted = h.BudgetExhausted
+			}
+			if entry.BudgetIgnored == nil && h.BudgetIgnored != nil {
+				entry.BudgetIgnored = h.BudgetIgnored
 			}
 			if entry.HoldTotal == nil && h.HoldTotal != nil {
 				entry.HoldTotal = h.HoldTotal

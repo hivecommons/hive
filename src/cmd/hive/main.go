@@ -3369,9 +3369,16 @@ func main() {
 			// equally means "window just rolled" and "nothing consumed"), so
 			// the three travel together or not at all.
 			var budgetSpend *int64
+			var budgetLimit *int64
+			var budgetIgnored *bool
 			var budgetWindowStartsAt, budgetWindowEndsAt string
+			budget := gov.GetBudget()
+			limit := budget.WeeklyLimit
+			ignored := budget.IgnoreAll
+			budgetLimit = &limit
+			budgetIgnored = &ignored
 			if start, end, ok := gov.BudgetWindow(); ok {
-				spend := gov.GetBudget().CurrentSpend
+				spend := budget.CurrentSpend
 				budgetSpend = &spend
 				budgetWindowStartsAt = start.UTC().Format(time.RFC3339)
 				budgetWindowEndsAt = end.UTC().Format(time.RFC3339)
@@ -3429,9 +3436,11 @@ func main() {
 			return &hub.HeartbeatPayload{
 				AgentsWithModel:      &agentsWithModel,
 				BudgetCurrentSpend:   budgetSpend,
+				BudgetLimit:          budgetLimit,
 				BudgetWindowStartsAt: budgetWindowStartsAt,
 				BudgetWindowEndsAt:   budgetWindowEndsAt,
 				BudgetExhausted:      budgetExhausted,
+				BudgetIgnored:        budgetIgnored,
 				HoldTotal:            holdTotal,
 				AwaitingReview:       awaitingReview,
 				SLAViolations:        slaViolations,

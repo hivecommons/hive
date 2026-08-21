@@ -715,6 +715,7 @@ type HeartbeatPayload struct {
 	// anything fixed — so consumers must normalise (e.g. per day) before
 	// comparing against the 90-day PR counters above.
 	BudgetCurrentSpend   *int64 `json:"budget_current_spend,omitempty"`
+	BudgetLimit          *int64 `json:"budget_limit,omitempty"`
 	BudgetWindowStartsAt string `json:"budget_window_starts_at,omitempty"`
 	BudgetWindowEndsAt   string `json:"budget_window_ends_at,omitempty"`
 	// BudgetExhausted reports that the governor is actively suppressing agent
@@ -722,6 +723,7 @@ type HeartbeatPayload struct {
 	// productivity signal: throughput near zero means something very different
 	// when the hive is being throttled than when it is merely idle.
 	BudgetExhausted *bool `json:"budget_exhausted,omitempty"`
+	BudgetIgnored   *bool `json:"budget_ignored,omitempty"`
 
 	// HoldTotal is issues and PRs parked behind a hold label awaiting human
 	// review, and AwaitingReview is plans blocked on a human decision. Both

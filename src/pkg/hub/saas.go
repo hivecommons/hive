@@ -2873,6 +2873,11 @@ type MyHiveEntry struct {
 	// "unknown" so every row renders an explicit n/a instead of disappearing.
 	AdvisoryIssueActivity AdvisoryIssueActivity `json:"advisoryIssueActivity"`
 
+	// BudgetHealth is this hive's current governor budget-window usage, bucketed
+	// for the fleet row. It includes the underlying spend/limit/window numbers so
+	// the UI can explain the dot without reverse-engineering RegistryEntry.
+	BudgetHealth BudgetHealth `json:"budgetHealth"`
+
 	// AdvisoryStale is true when this hive SHOULD be posting advisory digests
 	// but its digest has quietly gone stale — computed on read by advisoryStale()
 	// so the browser never re-derives the threshold or the gating (advisory-mode
@@ -3349,6 +3354,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
 		result[i].AdvisoryIssueActivity = advisoryIssueActivityFor(result[i].RegistryEntry, journeyNow)
+		result[i].BudgetHealth = budgetHealthFor(result[i].RegistryEntry)
 
 		// Advisory-staleness pill, computed on read (same as Journey) so the
 		// gating — advisory-mode participation, app-can-write, past-threshold —

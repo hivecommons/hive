@@ -79,6 +79,12 @@
   .advisory-activity.aging .light { background: var(--amber); }
   .advisory-activity.stale .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
   .advisory-activity.unknown .light { background: var(--gray); }
+  .budget-health { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; }
+  .budget-health .light { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .budget-health.ok .light { background: var(--green); }
+  .budget-health.warning .light { background: var(--amber); }
+  .budget-health.critical .light, .budget-health.exhausted .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .budget-health.unknown .light { background: var(--gray); }
   .status-msg { padding: 40px 0; text-align: center; color: var(--muted); }
   a.reload { color: var(--accent); text-decoration: none; }
   [title] { cursor: help; }
@@ -102,7 +108,7 @@
 <body>
 <header>
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when agents cannot work or advisory/issue output is stale</span>
+  <span class="sub">a hive is a <b>problem</b> when agents cannot work, output is stale, or budget is depleted</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
@@ -116,13 +122,24 @@
         <option value="fresh">fresh</option>
       </select>
     </label>
+    <label>budget
+      <select id="budgetFilter">
+        <option value="">all</option>
+        <option value="exhausted">exhausted</option>
+        <option value="critical">critical</option>
+        <option value="warning">warning</option>
+        <option value="unknown">unknown/n/a</option>
+        <option value="ok">ok</option>
+      </select>
+    </label>
   </span>
 </header>
 <div class="wrap">
   <div class="legend">
     <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting)</span>
     <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
-    <span><span class="delta problem">PROBLEM</span> agents cannot work or output is stale · <span class="delta quiet">quiet</span> paused / off by schedule</span>
+    <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
+    <span><span class="delta problem">PROBLEM</span> agents cannot work, output is stale, or budget is depleted · <span class="delta quiet">quiet</span> paused / off by schedule</span>
     <span><b>capability:</b> <span style="color:var(--green)">green</span> able · <span style="color:var(--amber)">amber</span> partial · <span style="color:var(--red)">red</span> blocked · <span style="color:var(--gray)">gray</span> unknown</span>
   </div>
   <table>
@@ -193,6 +210,18 @@ function advisoryActivityHTML(a) {
   return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory/issue activity ' + esc(rel) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
+function budgetHealthHTML(b) {
+  b = b || {};
+  var bucket = b.bucket || "unknown";
+  var pct = Math.round(b.percentUsed || 0);
+  var label = bucket === "unknown" ? (b.ignored ? "budget ignored" : "budget n/a") : "budget " + pct + "%";
+  var title = bucket === "unknown"
+    ? label
+    : "budget " + pct + "% used this window (" + (b.usedTokens || 0) + " / " + (b.limitTokens || 0) + " tokens)";
+  if (b.exhausted) title += " — exhausted; governor may throttle";
+  return '<span class="budget-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
+    '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
+}
 function toggleHTML(a) {
   // A legacy/unknown spoke did not report enabled/paused meaningfully — render
   // "unknown", never "off" (the Bluefin false-off bug).
@@ -254,6 +283,8 @@ function deltaHTML(a) {
 // every agent stuck.
 function hiveHealth(h) {
   if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
+  var budget = ((h.budgetHealth || {}).bucket || "");
+  if (budget === "critical" || budget === "exhausted") return "problem";
   var r = h.fleetRollup;
   if (!r) return h.online ? "unknown" : "offline";
   if ((r.problems || 0) > 0) return "problem";
@@ -269,6 +300,7 @@ var expanded = {};      // hive id -> true when its agent rows are open
 var problemsOnly = false;
 var showHealthy = false; // when false, healthy hives are hidden to cut noise
 var advisoryFilter = "";
+var budgetFilter = "";
 
 function hiveKey(h) { return h.id || h.name; }
 
@@ -294,6 +326,7 @@ function renderHives(hives) {
     if (problemsOnly && health !== "problem") return;
     if (!problemsOnly && !showHealthy && health === "ok") return;
     if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return;
+    if (budgetFilter && ((h.budgetHealth || {}).bucket || "unknown") !== budgetFilter) return;
     shown++;
 
     var isProblem = health === "problem";
@@ -311,7 +344,7 @@ function renderHives(hives) {
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
-      '<td>' + outputHTML(h) + '</td>';
+      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '</td>';
     tb.appendChild(tr);
 
     var verdicts = h.agentVerdicts || [];
@@ -374,6 +407,8 @@ function wireControls() {
   if (sh) sh.addEventListener("change", function () { showHealthy = sh.checked; load(); });
   var af = document.getElementById("advisoryFilter");
   if (af) af.addEventListener("change", function () { advisoryFilter = af.value; renderHives(lastHives); });
+  var bf = document.getElementById("budgetFilter");
+  if (bf) bf.addEventListener("change", function () { budgetFilter = bf.value; renderHives(lastHives); });
 }
 
 var lastHives = [];
