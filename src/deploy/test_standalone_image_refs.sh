@@ -173,16 +173,61 @@ while IFS= read -r asset; do
 done < <(collect_assets)
 
 # --- 4. The Hive image tracks a live channel --------------------------------
+#
+# `v4-latest` is deliberately NOT accepted here. It is the same digest as
+# `stable` today (src/docs/release-channels.md), but the channels split the
+# day a soak/promotion policy lands (#3702) — and accepting both spellings is
+# what let the probes hard-code `v4-latest` while the deployment ran `stable`
+# without CI noticing (#4486).
 
 hive_ref="$(hive_standalone_image hive)"
 case "$hive_ref" in
-  ghcr.io/kubestellar/hive:stable|ghcr.io/kubestellar/hive:v4-latest|ghcr.io/kubestellar/hive@sha256:*|ghcr.io/kubestellar/hive:*@sha256:*)
+  ghcr.io/kubestellar/hive:stable|ghcr.io/kubestellar/hive@sha256:*|ghcr.io/kubestellar/hive:*@sha256:*)
     ok
     ;;
   *)
     fail "the Hive image should track a live release channel or a pinned digest, got: ${hive_ref}"
     ;;
 esac
+
+# --- 5. Probes and the release qualification defer to the source of truth ---
+#
+# #4486: every Podman probe and the SELinux release qualification hard-coded
+# `v4-latest` while the deployment assets ran `stable`. The two are the same
+# digest today (src/docs/release-channels.md), so nothing failed — but on the
+# day the channels split (#3702) the probes would silently measure code the
+# operators are not running, which is exactly the drift this file exists to
+# prevent. Each script must source standalone-images.sh for its default and
+# must not carry a literal Hive reference; --image / IMAGE stay the overrides.
+
+PROBE_SCRIPTS=(
+  "src/deploy/probe_arm64_image_startup.sh"
+  "src/deploy/probe_podman_ipv6_egress.sh"
+  "src/deploy/probe_podman_rootful_netadmin.sh"
+  "src/deploy/probe_podman_rootless_netadmin.sh"
+  "src/deploy/probe_podman_selinux_avc.sh"
+  "src/deploy/qualify_podman_selinux.sh"
+)
+
+for script in "${PROBE_SCRIPTS[@]}"; do
+  if [[ ! -f "${ROOT}/${script}" ]]; then
+    fail "probe script named in the source-of-truth check does not exist: ${script}"
+    continue
+  fi
+
+  if grep -q 'standalone-images\.sh' "${ROOT}/${script}" \
+    && grep -Eq '\$\{?HIVE_STANDALONE_IMAGE_HIVE\}?' "${ROOT}/${script}"; then
+    ok
+  else
+    fail "${script} does not take its image default from src/deploy/standalone-images.sh (#4486)"
+  fi
+
+  if grep -Eq 'ghcr\.io/kubestellar/hive[:@]' "${ROOT}/${script}"; then
+    fail "${script} hard-codes a Hive image reference; the default must come from standalone-images.sh, with --image / IMAGE as the overrides (#4486)"
+  else
+    ok
+  fi
+done
 
 if [[ "$failures" -gt 0 ]]; then
   printf '\n%d standalone image-reference contract failure(s)\n' "$failures" >&2

@@ -37,7 +37,13 @@
 
 set -uo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/kubestellar/hive:v4-latest}"
+# The image default comes from the #4206 source of truth, so the probe
+# measures the same reference the deployment assets run (#4486). IMAGE in the
+# environment or --image stays the deliberate override.
+# shellcheck source=src/deploy/standalone-images.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standalone-images.sh"
+
+IMAGE="${IMAGE:-$HIVE_STANDALONE_IMAGE_HIVE}"
 GATE_TIMEOUT="${GATE_TIMEOUT:-120}"
 PROBE_PREFIX="hive-ipv6-probe-$$"
 NET_NAME="${PROBE_PREFIX}-net"

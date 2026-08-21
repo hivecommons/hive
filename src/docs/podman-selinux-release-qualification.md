@@ -83,7 +83,7 @@ Useful flags:
 
 | Flag | Use |
 | --- | --- |
-| `--image REF` | qualify a specific release image (default `ghcr.io/kubestellar/hive:v4-latest`) |
+| `--image REF` | qualify a specific release image (default: the hive reference in `src/deploy/standalone-images.sh`, the #4206 source of truth — `ghcr.io/kubestellar/hive:stable` today) |
 | `--store DIR` | pull into a throwaway store instead of the host's own |
 | `--fixture DIR` | parent directory for the throwaway fixture (default `$HOME`) |
 | `--skip-preflight` | do not run `bin/hive-podman-preflight-host.sh` |
@@ -124,7 +124,9 @@ printf 'qualification fixture' >"$D/secret.txt"
 chmod 600 "$D/secret.txt"
 /usr/bin/stat -c '%C %a' "$D/secret.txt"  # unconfined_u:object_r:user_home_t:s0 600
 
-IMG=ghcr.io/kubestellar/hive:v4-latest
+# The image the release ships — the same default the script reads out of
+# src/deploy/standalone-images.sh (#4206).
+IMG="$(bash src/deploy/standalone-images.sh get hive)"
 read_it() { podman run --rm -v "$D:/mnt:ro${1:+,$1}" --entrypoint /bin/sh "$IMG" -c 'cat /mnt/secret.txt'; }
 
 # 2. CONTROL: no relabel flag. MUST be denied.

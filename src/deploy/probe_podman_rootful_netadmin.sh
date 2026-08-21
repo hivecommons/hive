@@ -28,7 +28,13 @@
 
 set -uo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/kubestellar/hive:v4-latest}"
+# The image default comes from the #4206 source of truth, so the probe
+# measures the same reference the deployment assets run (#4486). IMAGE in the
+# environment or --image stays the deliberate override.
+# shellcheck source=src/deploy/standalone-images.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standalone-images.sh"
+
+IMAGE="${IMAGE:-$HIVE_STANDALONE_IMAGE_HIVE}"
 CASE_TIMEOUT="${CASE_TIMEOUT:-90}"
 PROBE_PREFIX="hive-rootful-probe-$$"
 STORE="${STORE:-}"
@@ -40,7 +46,7 @@ while [[ $# -gt 0 ]]; do
     --somark) SOMARK="true"; shift ;;
     --store)  STORE="$2"; shift 2 ;;
     --image)  IMAGE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 64 ;;
   esac
 done

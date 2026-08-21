@@ -245,7 +245,7 @@ report silence it could not observe.
 ```sh
 S=$(mktemp -d -p /var/tmp store-XXXX); mkdir -p $S/graph $S/run
 POD="podman --root $S/graph --runroot $S/run"
-IMG=ghcr.io/kubestellar/hive:v4-latest
+IMG=$(bash src/deploy/standalone-images.sh get hive)   # the #4206 source of truth
 F=$(mktemp -d -p /var/tmp fix-XXXX); printf 'x\n' > $F/f; chmod 600 $F/f
 
 # 0. Baseline, BEFORE any container. Hosts of this class carry ambient denials.

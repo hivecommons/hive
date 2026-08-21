@@ -44,7 +44,7 @@
 # Usage:
 #   src/deploy/qualify_podman_selinux.sh [options]
 #
-#   --image REF   image to test with (default ghcr.io/kubestellar/hive:v4-latest)
+#   --image REF   image to test with (default: the hive ref in standalone-images.sh)
 #   --fixture DIR parent directory for the throwaway fixture (default $HOME)
 #   --store DIR   pull into a throwaway store here instead of the host's own
 #   --skip-preflight  do not run bin/hive-podman-preflight-host.sh
@@ -54,7 +54,13 @@
 
 set -uo pipefail
 
-IMAGE="ghcr.io/kubestellar/hive:v4-latest"
+# The image default comes from the #4206 source of truth, so the qualification
+# measures the same reference the release ships (#4486). IMAGE in the
+# environment or --image stays the deliberate override.
+# shellcheck source=src/deploy/standalone-images.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standalone-images.sh"
+
+IMAGE="${IMAGE:-$HIVE_STANDALONE_IMAGE_HIVE}"
 FIXTURE_PARENT="${HOME:-/root}"
 RUN_PREFLIGHT="true"
 STORE=""

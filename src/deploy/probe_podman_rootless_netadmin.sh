@@ -20,7 +20,7 @@
 # Usage:
 #   src/deploy/probe_podman_rootless_netadmin.sh [options]
 #
-#   --image REF     image to probe (default ghcr.io/kubestellar/hive:v4-latest)
+#   --image REF     image to probe (default: the hive ref in standalone-images.sh)
 #   --store DIR     reuse a probe store instead of creating one (kept on exit)
 #   --shared-store  deliberately use the caller's default Podman store
 #   --bypass        additionally probe interception from an agent UID (needs egress)
@@ -31,7 +31,13 @@
 
 set -uo pipefail
 
-IMAGE="ghcr.io/kubestellar/hive:v4-latest"
+# The image default comes from the #4206 source of truth, so the probe
+# measures the same reference the deployment assets run (#4486). IMAGE in the
+# environment or --image stays the deliberate override.
+# shellcheck source=src/deploy/standalone-images.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standalone-images.sh"
+
+IMAGE="${IMAGE:-$HIVE_STANDALONE_IMAGE_HIVE}"
 STORE=""
 SHARED_STORE="false"
 BYPASS="false"
@@ -47,7 +53,7 @@ while [[ $# -gt 0 ]]; do
     --shared-store) SHARED_STORE="true"; shift ;;
     --bypass) BYPASS="true"; shift ;;
     --timeout) CASE_TIMEOUT="${2:?--timeout needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'ERROR: unknown argument %q\n' "$1" >&2; exit 78 ;;
   esac
 done

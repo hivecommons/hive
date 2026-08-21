@@ -39,7 +39,7 @@
 # Usage:
 #   src/deploy/probe_arm64_image_startup.sh [options]
 #
-#   --image REF     image to probe (default ghcr.io/kubestellar/hive:v4-latest)
+#   --image REF     image to probe (default: the hive ref in standalone-images.sh)
 #   --arch ARCH     architecture to require and pull (default arm64)
 #   --store DIR     reuse a probe store instead of creating one (kept on exit)
 #   --shared-store  deliberately use the caller's default Podman store
@@ -51,7 +51,13 @@
 
 set -uo pipefail
 
-IMAGE="ghcr.io/kubestellar/hive:v4-latest"
+# The image default comes from the #4206 source of truth, so the probe
+# measures the same reference the deployment assets run (#4486). IMAGE in the
+# environment or --image stays the deliberate override.
+# shellcheck source=src/deploy/standalone-images.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standalone-images.sh"
+
+IMAGE="${IMAGE:-$HIVE_STANDALONE_IMAGE_HIVE}"
 ARCH="arm64"
 STORE=""
 SHARED_STORE="false"
@@ -70,7 +76,7 @@ while [[ $# -gt 0 ]]; do
     --shared-store) SHARED_STORE="true"; shift ;;
     --port) HOST_PORT="${2:?--port needs a value}"; shift 2 ;;
     --timeout) HEALTH_TIMEOUT="${2:?--timeout needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'ERROR: unknown argument %q\n' "$1" >&2; exit 78 ;;
   esac
 done
