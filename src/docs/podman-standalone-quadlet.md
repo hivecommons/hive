@@ -126,8 +126,27 @@ remove `HealthCmd=`.
   `hive`, so `:3001` serves 502s. It ships alongside `netavark` on Fedora and
   most distributions; `podman info --format '{{.Host.NetworkBackend}}'` should
   say `netavark`.
-- Run the preflight first: `bin/hive-podman-preflight.sh`,
-  `bin/hive-podman-preflight-ids.sh`, `bin/hive-podman-preflight-host.sh`.
+- Run the preflight first — **and export `HIVE_DEPLOY_RUNTIME=podman` before you
+  do**, or all three exit 0 having checked nothing. Docker is the default
+  runtime, and with it selected they print
+  `Podman preflight: skipped — HIVE_DEPLOY_RUNTIME selects docker` and return
+  success, which reads exactly like a pass:
+
+  ```sh
+  export HIVE_DEPLOY_RUNTIME=podman
+  bin/hive-podman-preflight.sh          # engine, root mode, cgroups
+  bin/hive-podman-preflight-ids.sh      # subordinate IDs, graphroot, networking
+  ```
+
+  `bin/hive-podman-preflight-host.sh` checks SELinux labels, config and secrets
+  readability, and port 3001 — but it looks for the **source-tree** layout
+  (`$HIVE_SRC_DIR/hive.yaml`, `$HIVE_SRC_DIR/deploy/nginx.conf`,
+  `$HIVE_SRC_DIR/secrets`, default `src/`). The Quadlet install below puts
+  `nginx.conf` flat in `%E/hive`, not under a `deploy/` subdirectory, so
+  pointing it at `%E/hive` reports a spurious
+  `✗ Gateway config: …/deploy/nginx.conf does not exist` and exits 78. Run it
+  against the source tree, or read its SELinux and port findings and ignore that
+  one row.
 
 ## Unit search paths
 

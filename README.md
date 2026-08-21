@@ -4,6 +4,20 @@ AI agent orchestration for open source projects. A single Go binary enumerates G
 
 Hive separates decisions into two layers: a **deterministic pipeline** of shell scripts handles filtering, classification, merge-gating, and enforcement before any LLM sees the work. Agents only handle judgment calls — reading code, reasoning about fixes, writing PRs.
 
+## Quick Start
+
+Two supported standalone runtimes. **Docker Compose is the default** and is what
+the rest of this README assumes; **Podman** is a parallel supported choice, not
+an experiment and not a recommendation over Docker. Pick one — they install the
+same two services (Hive plus its authenticating gateway) and land the dashboard
+on the same port.
+
+| | [Docker Compose](#quick-start-docker-compose) | [Podman](#quick-start-podman) |
+| --- | --- | --- |
+| Lifecycle | `docker compose up -d` | Quadlet units under systemd |
+| Runs as | the Docker daemon | rootful **or** rootless |
+| Update path | pull and recreate; optional Watchtower profile | [pinned by digest, with rollback](src/docs/podman-quadlet-update-rollback.md) |
+
 ## Quick Start (Docker Compose)
 
 **Prerequisites**
@@ -31,6 +45,130 @@ To build from source instead of pulling the pre-built image:
 docker compose -f src/docker-compose.yaml build
 docker compose -f src/docker-compose.yaml up -d
 ```
+
+## Quick Start (Podman)
+
+Same two services as the Compose stack, run as systemd units through Quadlet, so
+`systemctl start` returning means Hive answered `/api/health` rather than merely
+that a process was spawned. Docker is not required and is not used.
+
+**Prerequisites**
+
+- **Podman 5.0.0+** (ADR-0017 recommends **5.6.0**; the verified floor is
+  unknown — see [the requirements note](src/docs/podman-standalone-quadlet.md#requirements))
+- **systemd**, and **cgroup v2** — `podman info --format '{{.Host.CgroupsVersion}}'`
+- The **Quadlet generator** at `/usr/libexec/podman/quadlet`. It ships with the
+  distribution `podman` package; a hand-installed podman binary may not carry it.
+- **`aardvark-dns`** — `podman info --format '{{.Host.NetworkBackend}}'` should
+  say `netavark`. Without it the gateway starts and cannot resolve `hive`, so
+  `:3001` serves 502s.
+- `git`, `openssl`, and a GitHub token (PAT or App) for the org the hive works on
+
+The block below is **rootless**. For rootful, set `CONF=/etc/hive`, drop the
+`podman unshare` line in favour of the `chgrp` beside it, install the units into
+`/etc/containers/systemd/` with `sudo`, and drop `--user` from every `systemctl`.
+
+```bash
+# Selects the Podman path. WITHOUT THIS the preflights below exit 0 having
+# checked nothing — they default to Docker and skip.
+export HIVE_DEPLOY_RUNTIME=podman
+
+git clone https://github.com/kubestellar/hive.git
+cd hive
+
+# Engine, root mode, cgroups; then subordinate IDs, graphroot, networking.
+# A missing subuid range or cgroup v1 host fails HERE rather than as a start
+# that times out five minutes later.
+bin/hive-podman-preflight.sh
+bin/hive-podman-preflight-ids.sh
+# (hive-podman-preflight-host.sh checks SELinux labels and port 3001 too, but
+#  reads the source-tree layout rather than this one — see #4422.)
+
+CONF=~/.config/hive                       # rootful: CONF=/etc/hive
+mkdir -p "$CONF/secrets" && chmod 750 "$CONF/secrets"
+podman unshare chown -R 0:1002 "$CONF/secrets"    # rootful: chgrp -R 1002 "$CONF/secrets"
+
+cp src/hive.yaml.example "$CONF/hive.yaml"
+# REQUIRED. The example ships 3001 for local source runs; the unit's healthcheck
+# probes 3002. Keeping 3001 costs a silent 300-second hang with no container
+# left to inspect.
+sed -i 's/^  port: 3001$/  port: 3002/' "$CONF/hive.yaml"
+# then edit the rest of "$CONF/hive.yaml" for your project
+
+cp src/deploy/nginx.conf "$CONF/nginx.conf"
+
+# Must EXIST, even if every line stays commented out: EnvironmentFile= becomes
+# `podman run --env-file`, which fails on a missing file.
+cp src/deploy/quadlet/hive.env.example "$CONF/hive.env"
+chmod 600 "$CONF/hive.env"
+printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> "$CONF/hive.env"
+printf 'HIVE_GITHUB_TOKEN=%s\n'    'ghp_...'                 >> "$CONF/hive.env"
+
+# Pull before starting. The generated ExecStart pulls a missing image itself and
+# that pull is spent inside TimeoutStartSec; the Hive image is ~3.8GB.
+podman pull ghcr.io/kubestellar/hive:stable
+
+# All four units — the gateway will not generate without the network it names.
+install -Dm644 src/deploy/quadlet/hive.container         ~/.config/containers/systemd/hive.container
+install -Dm644 src/deploy/quadlet/hive-data.volume       ~/.config/containers/systemd/hive-data.volume
+install -Dm644 src/deploy/quadlet/hive.network           ~/.config/containers/systemd/hive.network
+install -Dm644 src/deploy/quadlet/hive-gateway.container ~/.config/containers/systemd/hive-gateway.container
+systemctl --user daemon-reload
+
+# Starting the gateway pulls Hive, the network and the volume up in order.
+systemctl --user start hive-gateway.service
+```
+
+In a logged-in session the stack may already be up before you reach that last
+line: `daemon-reload` runs the generator, which writes the
+`default.target.wants/` symlinks from `[Install]`, and systemd starts
+newly-wanted units of an already-active target. The `start` is then a no-op that
+returns 0, and is worth running anyway as the confirmation that it did.
+
+Dashboard at `http://localhost:3001`, the same port and the same single
+published port as the Compose stack — Hive's own 3001/3002 and the raw ttyd
+terminal on 7681 stay inside the container network. Confirm the stack end to
+end, which also proves the gateway resolved `hive` over the shared network:
+
+```bash
+curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
+```
+
+`daemon-reload` runs the generator, and `[Install] WantedBy=default.target`
+inside the units is what wires them to boot — there is nothing to `systemctl
+enable`, and trying fails, because generated units cannot be enabled. **Rootless
+additionally needs `loginctl enable-linger "$USER"`** or the user manager never
+starts at boot. Check with `bin/hive-podman-lifecycle-probe.sh check`, not with
+`systemctl is-enabled`, which reports `generated` either way.
+
+**Security posture — pick deliberately.** The shipped unit requests
+`CAP_NET_ADMIN`, so the forced-proxy egress gate is *enforced* by default. Where
+that capability is unavailable, `HIVE_PROXY_ADVISORY_OK=true` in `$CONF/hive.env`
+starts Hive with the gate **not installed**; without either, Hive refuses to
+start with exit 77 rather than running an unenforced capability model.
+
+| | Enforcing (default) | Advisory (`HIVE_PROXY_ADVISORY_OK=true`) |
+| --- | --- | --- |
+| **Rootful** | **Supported** | Supported as a deliberate choice, **unenforced** |
+| **Rootless** | **Experimental** | Supported as a deliberate choice, **unenforced** |
+
+Advisory mode is **not** a weaker grade of enforcing and **not** a fallback:
+agents can bypass the MITM proxy and the ACMM capability model is not enforced.
+Choose it knowingly. Full matrix and the evidence behind each cell:
+[src/docs/podman-support-matrix.md](src/docs/podman-support-matrix.md).
+
+To build from source instead of pulling the pre-built image, build and tag it
+under the name the unit already names, then start as above:
+
+```bash
+podman build -t ghcr.io/kubestellar/hive:stable -f src/Dockerfile .
+```
+
+Full install detail — unit search paths, the traps behind each step above, boot
+persistence, and what was measured in both root modes — is in
+**[src/docs/podman-standalone-quadlet.md](src/docs/podman-standalone-quadlet.md)**.
+Update and rollback: [src/docs/podman-quadlet-update-rollback.md](src/docs/podman-quadlet-update-rollback.md).
+Teardown: `bin/hive-podman-teardown.sh`.
 
 ## Kubernetes Deployment
 
