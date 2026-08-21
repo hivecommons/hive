@@ -188,6 +188,23 @@ ADR-0017 warns that `%h` expands to `/root` in a system unit, so a unit written
 with `%h` is not portable across the rootful/rootless boundary. `%E` is, and it
 puts the operator's files where each mode already expects them.
 
+`%E` is the difference the unit file *shows* you. There is a second one it
+cannot, because the two modes read the same line differently:
+
+| | `[Install] WantedBy=default.target` means | A Hive that never becomes healthy |
+| --- | --- | --- |
+| rootful (system unit) | the **boot transaction** | **holds the boot** until the unit gives up — `TimeoutStartSec` is 5min for `hive.service`, 2min for `hive-gateway.service` |
+| rootless (`--user` unit) | the *user* manager's default target, which logind reaches after the system boot has already finished | delays nothing but Hive |
+
+Measured on two real reboots of one host: on the rootful boot systemd's own
+`FinishTimestampMonotonic` was **549µs** after `hive-gateway.service` went
+active — the boot was not declared finished until Hive was serving — while the
+rootless boot finished at 9.2s with Hive not healthy until 18.5s. The failure
+case is measured too, and the cost is the unit's whole `TimeoutStartSec`. See
+[Boot persistence](#4-boot-persistence) below for what to do about it and
+[the lifecycle page](podman-quadlet-lifecycle.md#rootful-hive-is-inside-the-system-boot-transaction-rootless-is-not)
+for the numbers (#4478).
+
 ## Install
 
 Below, `%E/hive` means `/etc/hive` if you are installing rootful and
@@ -383,6 +400,29 @@ loginctl show-user "$USER" -p Linger      # -> Linger=yes
 
 `loginctl enable-linger` is not optional for a rootless install that must
 survive a reboot. Rootful needs no equivalent; the system manager is PID 1.
+
+**That is also rootful's cost, and it is worth knowing before you pick.** Being
+wired into PID 1's `default.target` means being wired into the *boot
+transaction*: systemd does not declare the boot finished until Hive is healthy.
+On a good boot that is invisible — 549µs between the gateway going active and
+the boot finishing, measured. On a bad one it is the whole
+`TimeoutStartSec`: **5 minutes for `hive.service`, 2 for
+`hive-gateway.service`**, on **every** boot until the cause is fixed. A wrong
+`dashboard.port`, an unreachable registry, or a missing
+`HIVE_DASHBOARD_TOKEN` all reach it — see [Traps](#traps-measured-not-guessed).
+
+The rootless install pays the same timeout, but off the boot: the user manager's
+`default.target` is reached after the system boot is already over, so a Hive
+that never comes up delays nothing but itself.
+
+Neither is a defect and nothing here needs changing to install either mode —
+you asked for Hive at boot and systemd is waiting for it to be ready. It is
+recorded because it is invisible in the unit, identical in both modes as
+written, and one of the few things that genuinely differs between them
+([#4478](https://github.com/kubestellar/hive/issues/4478)). If a rootful host
+must not wait, the lever is `TimeoutStartSec` in a drop-in — shortening it
+trades a bounded boot delay for less headroom on a slow first pull, and the
+first pull of a ~3.8GB image is exactly what that headroom is for.
 
 **Do not check any of this with `systemctl is-enabled`.** For a generated unit
 it reports `generated` — with lingering on, with lingering off, and with the

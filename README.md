@@ -146,6 +146,14 @@ additionally needs `loginctl enable-linger "$USER"`** or the user manager never
 starts at boot. Check with `bin/hive-podman-lifecycle-probe.sh check`, not with
 `systemctl is-enabled`, which reports `generated` either way.
 
+Rootful's counterpart to that requirement is a cost rather than a step:
+`default.target` in the system manager is the **boot transaction**, so a rootful
+Hive that never becomes healthy holds the boot for its `TimeoutStartSec` — up to
+five minutes, on every boot, until the cause is fixed. Rootless pays the same
+timeout off the boot and delays nothing but Hive. Measured, and it is one of the
+few things that genuinely differs between the modes:
+[Boot persistence](src/docs/podman-standalone-quadlet.md#4-boot-persistence).
+
 **Security posture — pick deliberately.** The shipped unit requests
 `CAP_NET_ADMIN`, so the forced-proxy egress gate is *enforced* by default. Where
 that capability is unavailable, `HIVE_PROXY_ADVISORY_OK=true` in `$CONF/hive.env`
