@@ -463,6 +463,131 @@ Exactly one container uses these paths. See the
 [SELinux release qualification](podman-selinux-release-qualification.md) for
 the measured difference.
 
+## Docker-free: the quick start run with Docker scrubbed
+
+`README.md`'s Quick Start (Podman) asserts *"Docker is not required and is not
+used."* That was a design statement. This is the measurement, and it closes one
+of [#4188](https://github.com/kubestellar/hive/issues/4188)'s acceptance criteria
+— **but not the other**; see [what stays open](#what-this-does-not-establish)
+below.
+
+### The host's Docker facts, first
+
+Whether `/usr/bin/docker` is the real CLI or the `podman-docker` compatibility
+shim changes what a scrub proves, and #4188 names the shim as disqualifying in
+its own right. So it is recorded rather than assumed:
+
+```
+$ command -v docker
+/usr/bin/docker
+
+$ rpm -qf /usr/bin/docker
+docker-ce-cli-29.7.2-1.fc44.x86_64
+
+$ file /usr/bin/docker
+/usr/bin/docker: ELF 64-bit LSB pie executable, x86-64 …
+
+$ docker version
+Client: Docker Engine - Community
+ Version:           29.7.2
+```
+
+Real Docker CLI, not the shim — the same package family
+`podman-compose-provider-spike.md` measured for #4201.
+
+### The scrub
+
+Docker was **removed rather than trusted to be absent**, the method that spike
+established: on a host where Docker is present, an accidental dependency is
+exercised and fails loudly, whereas on a clean host it is simply never reached.
+
+`PATH` was rebuilt as a directory mirroring every binary from `/usr/bin`,
+`/bin`, `/usr/sbin`, `/sbin` and `/usr/local/bin` — 3014 of them — **omitting
+`docker`, `dockerd` and `docker-proxy`**. Mirroring everything else matters: a
+curated allow-list would make a missing ordinary tool look like a Docker-free
+failure. `DOCKER_HOST` was pointed at a socket that does not exist.
+
+```
+$ command -v docker
+<not found>
+
+$ docker version
+bash: command not found: docker
+
+DOCKER_HOST=unix:///nonexistent/docker.sock
+```
+
+### The run
+
+`README.md`'s Quick Start (Podman), verbatim, under that environment. Only the
+`git clone` was skipped, an existing checkout standing in for it — recorded
+because it is a deviation, though cloning is not what is under test.
+
+| step | result |
+| --- | --- |
+| `bin/hive-podman-preflight.sh` | `pass=4 warn=0 fail=0` |
+| `bin/hive-podman-preflight-ids.sh` | `pass=4 warn=0 fail=0` |
+| config + secrets staging, `dashboard.port` rewrite | `port:3002` |
+| `HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh` | `pass=8 warn=3 fail=0` |
+| `podman pull ghcr.io/kubestellar/hive:stable` | exit 0 |
+| four `install -Dm644` + `daemon-reload` | all four services `generated` |
+| `systemctl --user start hive-gateway.service` | **exit 0, 13s** |
+
+End state — and `Notify=healthy` means `active` already implies serving, so both
+were checked rather than one inferred from the other:
+
+```
+Id=hive.service          ActiveState=active  SubState=running  Result=success
+Id=hive-gateway.service  ActiveState=active  SubState=running  Result=success
+
+$ curl -sf http://127.0.0.1:3001/api/health
+{"status":"ok"}
+
+hive          Up 28 seconds (healthy)  ghcr.io/kubestellar/hive:stable
+hive-gateway  Up 17 seconds (healthy)  docker.io/library/nginx@sha256:4a73073b…
+```
+
+The `curl` went through the **published** port to the gateway, which proxied it
+to Hive over the shared network — so it also proves name resolution worked.
+
+### No Docker socket anywhere
+
+#4188's socket-isolation rule, checked by enumerating every mount rather than
+grepping the unit files:
+
+```
+hive mounts:
+  …/volumes/hive-data/_data          -> /data
+  …/.config/hive/hive.yaml           -> /etc/hive/hive.yaml
+  …/.config/hive/secrets             -> /secrets
+hive-gateway mounts:
+  …/.config/hive/nginx.conf          -> /etc/nginx/nginx.conf
+
+docker socket references across both: 0
+```
+
+### What this does not establish
+
+**#4188's second criterion is still open**, and this run cannot close it:
+
+> A clean supported Linux host with Podman and **no Docker installation** can
+> start the real Hive and gateway services using only documented commands.
+
+Docker Engine is installed on this host. Scrubbing `PATH` and `DOCKER_HOST`
+proves the Quadlet path *does not reach for* Docker — the "no Docker Engine,
+daemon, socket, CLI shim or Compose provider" criterion. It does not prove what
+happens on a machine where Docker was never installed: a shared library, a
+`containers.conf` default, or a package dependency pulled in alongside Docker
+could still be doing work here invisibly. That needs a genuinely Docker-free
+host, and it remains unexecuted.
+
+Recording that gap is part of this result, not a shortfall against it.
+
+Everything created by this run was removed afterwards and the host verified back
+to its prior state: units, containers, the `hive-data` volume, the `hive`
+network, and the configuration directory — which on this host also holds live
+contributor-relay credentials and was restored from a backup taken first.
+
 ## What was verified
 
 Dry-run generation is gated in CI: `.github/workflows/quadlet-gate.yml` runs
