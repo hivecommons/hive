@@ -21,11 +21,18 @@ import (
 )
 
 type Dependencies struct {
-	Config           *config.Config
-	AgentMgr         *agent.Manager
-	Governor         *governor.Governor
-	GHClient         *ghpkg.Client
-	GHAppAuth        *ghpkg.AppAuth
+	Config    *config.Config
+	AgentMgr  *agent.Manager
+	Governor  *governor.Governor
+	GHClient  *ghpkg.Client
+	GHAppAuth *ghpkg.AppAuth
+	// GHTokenScopes is the boot-time PAT scope probe result (see
+	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
+	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not
+	// OAuth scopes. github_auth reports it as a DETAIL on an otherwise-passing
+	// check: a narrow token still authenticates, so failing the check would
+	// misreport the fault — what is broken is a capability, not the auth.
+	GHTokenScopes    ghpkg.ScopeResult
 	Tokens           *tokens.Collector
 	Knowledge        *knowledge.KnowledgeAPI
 	Inception        *knowledge.InceptionEngine
