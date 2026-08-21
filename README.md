@@ -68,8 +68,12 @@ kubectl create namespace hive
 ```bash
 kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_... \
-  --from-literal=HIVE_DASHBOARD_TOKEN=your-dashboard-auth-token
+  --from-literal=HIVE_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
 ```
+
+The dashboard token is an opaque shared secret with no server-side strength
+check — always generate it with a CSPRNG as above, never a hand-typed value.
+See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](src/docs/env-vars.md#generating-and-rotating-hive_dashboard_token).
 
 For GitHub App auth (recommended for production), add the private key:
 

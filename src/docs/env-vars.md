@@ -13,7 +13,7 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_GITHUB_TOKEN` | Required unless GitHub App auth is configured | none | Main PAT fallback for `github.token`; also used by fleet/stat fallback paths and some deployment manifests. |
 | `GH_APP_KEY_FILE` | No | configured `github.key_file`, then `/data/gh-app-key.pem` or `/secrets/gh-app-key.pem` in provisioned paths | GitHub App private-key file fallback. |
 | `DASHBOARD_AUTH_TOKEN` | No | none | Kubernetes/provisioned secret name for the dashboard shared token; used before `HIVE_DASHBOARD_TOKEN` when `dashboard.auth_token` is empty. |
-| `HIVE_DASHBOARD_TOKEN` | No | none | Dashboard/API shared-token fallback and default `hivectl --token-env` variable. |
+| `HIVE_DASHBOARD_TOKEN` | No | none | Dashboard/API shared-token fallback and default `hivectl --token-env` variable. See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](#generating-and-rotating-hive_dashboard_token). |
 | `HIVE_AUTHORIZED_USERS` | No | none | Comma-separated direct-route dashboard allowlist, with optional `user:role` entries. Used when `dashboard.authorized_users` is empty. |
 | `HIVE_REPO` | No | none | Bootstrap shortcut in `owner/repo` form; fills `project.org`, `project.repos`, and `project.primary_repo` if missing. |
 | `HIVE_LEVEL` | No | config/pack value | ACMM level bootstrap/override used by hosted flows and the entrypoint pack selection. |
@@ -34,6 +34,48 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_FEDERATION_REGISTRY_PATH` | No | `/data/federation/registry.json` | Federation registry path override. |
 | `HIVE_WEBHOOK_SECRET` | No | none | HMAC secret for the spoke `/webhook` channel. |
 | `GITHUB_WEBHOOK_SECRET` | No | `/data/saas/webhook-secret.key` when present | Hub GitHub webhook HMAC secret. |
+
+## Generating and rotating `HIVE_DASHBOARD_TOKEN`
+
+`HIVE_DASHBOARD_TOKEN` (and the `dashboard.auth_token` config key it falls back
+to) is an opaque shared secret. The server does **not** enforce any format:
+
+- **Format**: any non-empty string is accepted. It is not parsed as a UUID,
+  JWT, or hex value — it is compared byte-for-byte (in constant time) against
+  the `Authorization: ******` value on each API request.
+- **Validation**: there is no startup validation and no minimum-length or
+  entropy check. A weak or predictable value is accepted silently, so the
+  burden of picking a strong value is entirely on the operator.
+- **What it protects**: on a self-hosted (non-direct-route) hive this token is
+  the *only* API credential — it gates agent logs, kick controls, and config
+  reads/writes, and it doubles as the server-to-server `X-Hive-Internal`
+  credential used by the local proxy. Treat it like a root password for the
+  hive. On direct-route or hub-proxied spokes identity is per-user and the
+  shared token is server-to-server only.
+- **Empty value**: leaving it unset leaves the dashboard API unauthenticated
+  (unless direct-route per-user authorization is configured). Never deploy an
+  internet-reachable hive without it.
+
+Generate a strong value with a CSPRNG; 32 bytes (256 bits) of entropy is
+recommended:
+
+```sh
+openssl rand -hex 32
+# or
+head -c 32 /dev/urandom | base64 | tr -d '=+/'
+```
+
+Placeholders like `your-dashboard-auth-token` in deployment examples must be
+replaced — any string "works", but a guessable token is a full-access
+credential.
+
+**Rotation**: the token is read at process start and compared per request, so
+rotating is: update the env var / Kubernetes Secret / `config.env`, then
+restart the container or pod. The old token stops being accepted as soon as
+the process restarts with the new value; there is no separate session
+invalidation step (browser device-flow sessions use their own cookies and are
+unaffected). Update any `hivectl` environments and other API clients to the
+new value at the same time.
 
 ## Deployment entrypoint and proxy knobs
 

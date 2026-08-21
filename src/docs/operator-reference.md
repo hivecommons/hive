@@ -193,7 +193,7 @@ installation instead of broadening the PAT.
 |---|---|
 | `HIVE_GITHUB_TOKEN` | Main PAT fallback when `github.token` is empty; also used for token identity/fleet stats fallback. |
 | `GH_APP_KEY_FILE` | GitHub App private-key path fallback when `github.key_file` is empty. |
-| `HIVE_DASHBOARD_TOKEN` | Shared dashboard/API token fallback for `dashboard.auth_token`. |
+| `HIVE_DASHBOARD_TOKEN` | Shared dashboard/API token fallback for `dashboard.auth_token`. Any non-empty string is accepted with no strength check — generate one with `openssl rand -hex 32`; see [env-vars.md](env-vars.md#generating-and-rotating-hive_dashboard_token). |
 
 ### Hosted-spoke and fleet metadata
 
