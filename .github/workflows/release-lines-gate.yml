@@ -1,0 +1,68 @@
+name: Release Lines Gate
+
+# The release-line carry-forward guard (#4405, under #4188).
+#
+# WHAT IT CHECKS. .github/release-lines.yaml declares which release lines are
+# live. Nine workflows pin their triggers to a hand-maintained list of those
+# branch names, and docker.yml hand-writes the same names a second time in its
+# push policy. This job asserts the lists still agree with the declaration, in
+# both directions: a release line missing from a list, and a list still naming a
+# line that has been retired.
+#
+# WHY. Mainline moved from v2 to v4 while podman-contract.yml still named v2
+# alone, so it stopped running entirely — #4339, whose own header records the
+# lesson: "a guard that never executes reports green forever, which is the one
+# failure mode a guard cannot have". Adding v4 to that one list fixed the
+# instance, not the class. Cutting a release line is now ONE edit in
+# release-lines.yaml, and this job names every file that has not caught up.
+#
+# WHY IT TRIGGERS ON EVERYTHING, AND WHY IT HAS NO PATH FILTER. Both are
+# load-bearing rather than lazy. A guard against "pinned to a branch name that
+# went away" which was itself pinned to branch names would be #4339 one level
+# up. A path filter would be the same mistake in the other axis: cutting a
+# release line is an edit to release-lines.yaml, but so is renaming the env var
+# docker.yml keeps its push policy in, or adding a workflow that pins branches
+# and declares nothing — and a filter narrow enough to be worth having is narrow
+# enough to miss one of those. src/pkg/releaselines/releaselines_test.go asserts
+# this file has neither, so the exemption cannot be quietly withdrawn.
+#
+# Cost is one Go package test on a hosted runner; running it on every push is
+# cheaper than the failure mode it exists to prevent.
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-lines-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  carry-forward:
+    name: release-line carry-forward
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25'
+          cache-dependency-path: src/go.sum
+
+      # -v so the report reaches the log on a PASS too: an undecided release
+      # line is an open maintainer question and is printed as a ::notice:: on
+      # every run, which is the point — a question settled by silence is settled
+      # the wrong way.
+      - name: Check release-line carry-forward
+        run: go test -v ./pkg/releaselines/...

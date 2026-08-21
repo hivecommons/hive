@@ -1,0 +1,142 @@
+# Release lines, and every CI file that hand-writes their branch names.
+#
+# WHY THIS FILE EXISTS (#4405, under #4188). Nine workflows pin their triggers
+# to a hand-maintained list of version-branch names, and docker.yml hand-writes
+# the same names again in its push policy. Nothing checked that those lists
+# agreed with reality, so when mainline moved from `v2` to `v4` the Podman
+# contract gate kept naming `v2` alone and simply stopped running — #4339. Its
+# header now records the lesson:
+#
+#   a guard that never executes reports green forever, which is the one failure
+#   mode a guard cannot have.
+#
+# That fix added `v4` to one list. It did not change the fact that the lists are
+# hand-maintained, so the same failure was queued up for the day `v5` is cut —
+# on which the Docker image would keep building on every branch while both CI
+# workflows, both security contract gates and all five Podman lanes reported
+# nothing at all. Not red. Absent.
+#
+# THIS FILE IS THE SOURCE OF TRUTH. `release_lines` below is the answer to "what
+# are the live release lines"; everything else is checked against it by
+# src/pkg/releaselines, which .github/workflows/release-lines-gate.yml runs on
+# every branch as `go test ./pkg/releaselines/...`. Cutting a release line is
+# therefore ONE edit here, and CI then names every file that has not caught up.
+#
+# WHY ASSERT THE SET RATHER THAN DROP THE PINS. #4405 offered a second shape:
+# trigger on `v*` so new lines are covered by construction. It was not chosen.
+# A glob silently widens what runs on any branch that happens to start with
+# "v", it does not fit scorecard.yml's `main`, it cannot express docker.yml's
+# push policy at all — and, decisively, it can only ever add: a glob has no way
+# to notice that a line has been RETIRED and should stop being built. Asserting
+# the set costs one edit per release line and catches both directions.
+
+# ── The release lines ────────────────────────────────────────────────────────
+#
+# `status` is documentation with one behavioural effect: an `undecided` line
+# makes the check print a notice on every run, so an open question stays
+# visible instead of being settled by silence. It never fails the build.
+release_lines:
+  - branch: v4
+    status: current
+    note: >
+      Mainline. This is the branch `stable`, `candidate` and `edge` are cut
+      from, and the one the hub's branch switcher assigns hives to by default.
+
+  - branch: v2
+    status: undecided
+    note: >
+      MAINTAINER DECISION NEEDED. Whether `v2` is still a supported release
+      line is not something #4405 was scoped to answer, and this file does not
+      answer it: `v2` is listed because every pinned workflow currently names
+      it, so listing it is what records the status quo rather than quietly
+      changing it. If the answer is "no longer supported", deleting these three
+      lines is the whole change on this side — the check will then name each
+      workflow that still pins `v2` and each list that still carries it.
+
+# ── Workflows that pin their triggers to branch names ────────────────────────
+#
+# Every workflow under .github/workflows whose `on.push` / `on.pull_request` /
+# `on.pull_request_target` carries a `branches:` filter must appear here. Both
+# YAML spellings are in use and both are handled — `branches: [v2, v4]` (flow
+# sequence, v2-ci.yml and v2-tests.yml) and the block sequence everything else
+# uses — because the check parses the YAML rather than pattern-matching text.
+#
+#   pinned: true    the filter is a list of literal branch names. Every release
+#                   line above must appear in it, unless named in `omits`; every
+#                   literal that is NOT a release line must appear in `extra`.
+#   pinned: false   the filter is a glob. Deliberate, and `reason` says why.
+#
+# A workflow that has no `branches:` filter at all runs on every branch and
+# needs no entry — it cannot fall out of sync.
+workflows:
+  - file: v2-ci.yml
+    pinned: true
+
+  - file: v2-tests.yml
+    pinned: true
+
+  - file: scorecard.yml
+    pinned: true
+    extra: [main]
+    omits: [v2]
+    note: >
+      Recorded as observed, not endorsed. This workflow names `main` — which is
+      not a release line in this repository — and omits `v2`. Both predate this
+      check, and calling either one deliberate would be a guess, so they are
+      declared here to describe today's state and are listed in #4405 for
+      maintainers to confirm or correct.
+
+  - file: podman-rootful-lane.yml
+    pinned: true
+
+  - file: podman-rootless-lane.yml
+    pinned: true
+
+  - file: podman-arm64-lane.yml
+    pinned: true
+
+  - file: podman-contract.yml
+    pinned: true
+
+  - file: quadlet-gate.yml
+    pinned: true
+
+  - file: suid-contract.yml
+    pinned: true
+
+  - file: docker.yml
+    pinned: false
+    reason: >
+      Triggers on '**' with bot branches excluded, on purpose: a PR's image
+      must BUILD on any branch, because that build is itself the CI gate
+      proving the tree compiles. Widening is the safe direction here, so this
+      trigger cannot be dropped by a release line being cut. Its push policy is
+      a different matter — see `branch_lists` below.
+
+  - file: release-lines-gate.yml
+    pinned: false
+    reason: >
+      Triggers on '**' because this is the check itself. #4339 was a guard
+      pinned to a branch name that went away; a guard against that failure
+      which was pinned the same way would be #4339 one level up, so this one is
+      deliberately reachable from every branch.
+
+# ── Other hand-written release-line lists ────────────────────────────────────
+#
+# Not every carry-forward hazard is a trigger. #4405's table calls docker.yml
+# "the outlier that does not have the problem", and that is true of its
+# TRIGGER — but the same nine branch names are hand-written a second time in
+# its push policy, where being out of sync is worse than a skipped guard: on
+# the day `v5` is cut, docker.yml would keep building `v5` and never publish
+# `v5-latest`, so no hive could be assigned to the new line through the hub's
+# branch switcher at all. The image would look healthy the entire time.
+branch_lists:
+  - file: docker.yml
+    env: LONG_LIVED
+    extra: [mk, dd]
+    note: >
+      The `gate` job's push policy: only long-lived branches push to GHCR, so
+      that a temporary PR branch does not leave an orphaned <branch>-latest tag
+      behind when it merges and is deleted. `mk` and `dd` are standing
+      experimental branches, not release lines, which is why they are declared
+      as extras here rather than added above.
