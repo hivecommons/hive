@@ -741,19 +741,19 @@ const (
 	// to the default.
 	AgentTokenRefreshIntervalEnv = "HIVE_AGENT_TOKEN_REFRESH_INTERVAL"
 
-	// defaultCopilotTokenWatchdogInterval is how often the Copilot-token
-	// watchdog checks that the durable device-flow token file still exists on a
-	// Copilot-backend hive. It is a slow health check (a missing file is a
-	// standing condition until an operator re-logs in, not a fast-moving one),
+	// defaultCredentialWatchdogInterval is how often the credential watchdog
+	// checks that each in-use backend's durable credential file still exists
+	// and is usable. It is a slow health check (a missing/expired credential is
+	// a standing condition until an operator re-logs in, not a fast-moving one),
 	// so a coarse interval keeps the Audit Log signal-not-noise while still
 	// catching a post-upgrade-roll loss within a few minutes.
-	defaultCopilotTokenWatchdogInterval = 5 * time.Minute
-	// CopilotTokenWatchdogIntervalEnv overrides the watchdog interval with a Go
+	defaultCredentialWatchdogInterval = 5 * time.Minute
+	// CredentialWatchdogIntervalEnv overrides the watchdog interval with a Go
 	// duration string. Invalid or non-positive values fall back to the default;
 	// a value of "0" does NOT disable the watchdog (use the parse-failure path
 	// only for overrides) — disabling is intentionally not offered so the
 	// safety net cannot be silently turned off.
-	CopilotTokenWatchdogIntervalEnv = "HIVE_COPILOT_TOKEN_WATCHDOG_INTERVAL"
+	CredentialWatchdogIntervalEnv = "HIVE_CREDENTIAL_WATCHDOG_INTERVAL"
 )
 
 // agentTokenRefreshInterval resolves the per-agent token refresh interval
@@ -792,103 +792,153 @@ func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
 	}
 }
 
-// copilotTokenWatchdogInterval resolves the watchdog interval from
-// CopilotTokenWatchdogIntervalEnv, falling back to the default.
-func copilotTokenWatchdogInterval() time.Duration {
-	if v := os.Getenv(CopilotTokenWatchdogIntervalEnv); v != "" {
+// credentialWatchdogInterval resolves the watchdog interval from
+// CredentialWatchdogIntervalEnv, falling back to the default.
+func credentialWatchdogInterval() time.Duration {
+	if v := os.Getenv(CredentialWatchdogIntervalEnv); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
 		}
 	}
-	return defaultCopilotTokenWatchdogInterval
+	return defaultCredentialWatchdogInterval
 }
 
-// StartCopilotTokenWatchdog periodically verifies that the durable Copilot
-// device-flow token file (CopilotUserTokenPath) is present and non-empty on a
-// Copilot-backend hive, and emits an audit event + logs a warning when it is
+// credentialWatch describes one CLI backend whose usable credential lives in a
+// durable file on the hive PVC that the hive relies on but does NOT itself keep
+// alive. Only backends of this shape belong here: bob resolves its key at
+// launch and fails loudly, and gemini/codex/goose/pi/inference backends keep
+// their creds under the agent's own $HOME (or do no CLI login at all), so there
+// is no hive-managed file for a presence check to watch.
+//
+// probe reports (ok, reason): ok=true means the credential is usable; when
+// false, reason is a short human string ("missing" / "invalid or expired") for
+// the audit detail and log. It must only stat/parse the file — never emit,
+// mutate, or return token material.
+type credentialWatch struct {
+	backend     string
+	path        string
+	auditAction string
+	probe       func(path string) (ok bool, reason string)
+}
+
+// copilotTokenUsable reports whether the durable Copilot device-flow token file
+// is present and non-empty. It reads only the file's presence and size — never
+// its contents.
+func copilotTokenUsable(path string) (bool, string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return false, "missing"
+	}
+	return true, ""
+}
+
+// claudeTokenUsable reports whether the Claude credentials file holds a valid,
+// non-expired token. Unlike copilot's, a Claude credential can be PRESENT but
+// unusable (expired), so a bare presence check is insufficient — it delegates
+// to claude.HasValidToken, which parses the file and checks expiry. It
+// distinguishes an absent file ("missing") from a present-but-stale one
+// ("invalid or expired") for a more actionable alert.
+func claudeTokenUsable(path string) (bool, string) {
+	if _, err := os.Stat(path); err != nil {
+		return false, "missing"
+	}
+	if !claude.HasValidToken(path) {
+		return false, "invalid or expired"
+	}
+	return true, ""
+}
+
+// credentialWatches is the set of durable-credential files the watchdog guards,
+// keyed by backend. Adding a new CLI backend of the same shape is a one-line
+// entry here — nothing else in the loop changes.
+func credentialWatches() []credentialWatch {
+	return []credentialWatch{
+		{backend: "copilot", path: CopilotUserTokenPath, auditAction: AuditCopilotTokenMissing, probe: copilotTokenUsable},
+		{backend: "claude", path: claude.CredentialsPath, auditAction: AuditClaudeTokenMissing, probe: claudeTokenUsable},
+	}
+}
+
+// StartCredentialWatchdog periodically verifies that each in-use CLI backend's
+// durable credential file (Copilot device-flow token, Claude OAuth credentials)
+// is present and usable, and emits an audit event + logs a warning when it is
 // not. It is a SAFETY NET, not a fixer: it never reads, writes, or otherwise
 // touches token material (recovery is an operator dashboard device-flow login,
 // per the manual-login rule). It exists because the loudest failure mode we
 // see is silent: a fresh agent pod after an upgrade roll finds no durable
-// token, every agent CLI hangs at /login, and — absent this — the only signal
-// is agents quietly ceasing work for hours. Turning that into an immediate,
-// queryable Audit Log entry is the whole point.
+// credential, every agent CLI hangs at its login prompt, and — absent this —
+// the only signal is agents quietly ceasing work for hours. Turning that into
+// an immediate, queryable Audit Log entry is the whole point.
 //
-// Gating: the check only fires when at least one configured agent uses the
-// copilot backend. Claude/gateway-only hives have no Copilot token to miss, so
-// a missing file there is not a fault and must not alert.
+// Gating: each backend's check only fires when at least one configured agent
+// uses that backend. A Claude-only hive never alerts on a missing Copilot
+// token, and vice versa; gateway/inference-only hives alert on neither.
 //
 // Safe to start unconditionally at boot: like StartAgentTokenRefresh it tracks
 // live state each tick rather than a boot-time snapshot, so a hive that gains
-// or loses copilot agents via config reload is evaluated correctly.
-func (m *Manager) StartCopilotTokenWatchdog(ctx context.Context) {
-	ticker := time.NewTicker(copilotTokenWatchdogInterval())
+// or loses a backend via config reload is evaluated correctly.
+func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
+	ticker := time.NewTicker(credentialWatchdogInterval())
 	defer ticker.Stop()
-	// Track the last observed state so we log/audit on TRANSITIONS (present ->
-	// missing and back) rather than every tick — a standing missing-file
-	// condition would otherwise flood the Audit Log at the tick rate.
-	lastMissing := false
+	// Per-backend transition tracker so we log/audit on TRANSITIONS (usable ->
+	// unusable and back) rather than every tick — a standing condition would
+	// otherwise flood the Audit Log at the tick rate.
+	lastUnusable := make(map[string]bool)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			missing, checked := m.copilotTokenMissing()
-			if !checked {
-				// No copilot-backend agent configured: nothing to watch. Reset
-				// the transition tracker so a later config change that adds a
-				// copilot agent with a missing file alerts on its first miss.
-				lastMissing = false
-				continue
+			for _, w := range credentialWatches() {
+				m.evalCredentialWatch(w, lastUnusable)
 			}
-			if missing && !lastMissing {
-				m.logger.Warn("copilot token watchdog: durable device-flow token missing",
-					"path", CopilotUserTokenPath,
-					"impact", "copilot agents cannot auto-refresh; new pods hang at /login",
-					"recovery", "operator dashboard device-flow login")
-				m.audit(AuditCopilotTokenMissing, "", auditFields(
-					"outcome", "missing",
-					"path", CopilotUserTokenPath,
-					"trigger", "watchdog",
-				))
-			} else if !missing && lastMissing {
-				m.logger.Info("copilot token watchdog: durable device-flow token restored",
-					"path", CopilotUserTokenPath)
-			}
-			lastMissing = missing
 		}
 	}
 }
 
-// copilotTokenMissing reports whether the durable Copilot token file is absent
-// or empty. checked is false when no configured agent uses the copilot backend
-// (in which case missing is meaningless and callers must not alert). It reads
-// only the file's presence and size — never its contents — so it can never
-// leak or mutate token material.
-func (m *Manager) copilotTokenMissing() (missing, checked bool) {
-	return m.copilotTokenMissingAt(CopilotUserTokenPath)
+// evalCredentialWatch runs one backend's probe (only if that backend is in
+// use) and emits a transition-edge log + audit event. lastUnusable carries the
+// previous observation per backend across ticks.
+func (m *Manager) evalCredentialWatch(w credentialWatch, lastUnusable map[string]bool) {
+	if !m.backendInUse(w.backend) {
+		// Not in use: nothing to watch. Reset the tracker so a later config
+		// change that adds this backend with a bad credential alerts on its
+		// first miss rather than being masked as "no transition".
+		delete(lastUnusable, w.backend)
+		return
+	}
+	ok, reason := w.probe(w.path)
+	unusable := !ok
+	if unusable && !lastUnusable[w.backend] {
+		m.logger.Warn("credential watchdog: durable credential unusable",
+			"backend", w.backend,
+			"path", w.path,
+			"reason", reason,
+			"impact", "agents on this backend hang at login; new pods cannot start work",
+			"recovery", "operator dashboard device-flow login")
+		m.audit(w.auditAction, "", auditFields(
+			"outcome", reason,
+			"backend", w.backend,
+			"path", w.path,
+			"trigger", "watchdog",
+		))
+	} else if !unusable && lastUnusable[w.backend] {
+		m.logger.Info("credential watchdog: durable credential restored",
+			"backend", w.backend, "path", w.path)
+	}
+	lastUnusable[w.backend] = unusable
 }
 
-// copilotTokenMissingAt is copilotTokenMissing parameterized on the token path
-// so tests can point it at a temp file (the production path is a fixed const).
-func (m *Manager) copilotTokenMissingAt(path string) (missing, checked bool) {
+// backendInUse reports whether any configured agent runs on the named backend
+// (honoring a runtime BackendOverride).
+func (m *Manager) backendInUse(backend string) bool {
 	m.mu.RLock()
-	usesCopilot := false
+	defer m.mu.RUnlock()
 	for _, a := range m.agents {
-		if effectiveBackend(a) == "copilot" {
-			usesCopilot = true
-			break
+		if effectiveBackend(a) == backend {
+			return true
 		}
 	}
-	m.mu.RUnlock()
-	if !usesCopilot {
-		return false, false
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.Size() == 0 {
-		return true, true
-	}
-	return false, true
+	return false
 }
 
 // RefreshAgentTokens immediately rewrites every running agent's per-agent
