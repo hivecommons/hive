@@ -22,10 +22,15 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
+// report renders findings for a test log WITHOUT Actions annotations. Only the
+// live check may annotate: every other test here reports on a hypothetical set
+// of release lines, and turning those into ::error:: lines would decorate real
+// workflow files with failures that are not happening — on a job that passed.
+// A guard that cries wolf on a green run is a guard people learn to ignore.
 func report(t *testing.T, findings []Finding) string {
 	t.Helper()
 	var sb strings.Builder
-	Report(&sb, findings, os.Getenv("GITHUB_ACTIONS") == "true")
+	Report(&sb, findings, false)
 	return sb.String()
 }
 
@@ -40,7 +45,11 @@ func TestRepositoryIsInSync(t *testing.T) {
 	}
 	// Notices are printed on every run, pass or fail: an undecided release line
 	// is an open maintainer question, and staying visible is the whole point.
-	t.Log("\n" + report(t, findings))
+	// This is the one test whose findings describe the repository as it really
+	// is, so it is the only one that emits Actions annotations.
+	var sb strings.Builder
+	Report(&sb, findings, os.Getenv("GITHUB_ACTIONS") == "true")
+	t.Log("\n" + sb.String())
 	if errs := Errors(findings); len(errs) > 0 {
 		t.Fatalf("%d branch list(s) out of sync with %s", len(errs), ConfigPath)
 	}
