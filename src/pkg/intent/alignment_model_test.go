@@ -187,6 +187,7 @@ func TestExtractJSONObject(t *testing.T) {
 		{`{"a":1}`, `{"a":1}`},
 		{`prefix {"a":1} suffix`, `{"a":1}`},
 		{`no braces`, ""},
+		{``, ""},
 		{`}{`, ""},
 		{`only open {`, ""},
 		{`{"outer":{"inner":1}}`, `{"outer":{"inner":1}}`},
@@ -337,6 +338,15 @@ func TestReview(t *testing.T) {
 		})
 		if _, err := r.Review(context.Background(), ac); err == nil {
 			t.Error("expected invalid-status error")
+		}
+	})
+
+	t.Run("cancelled context", func(t *testing.T) {
+		r, _ := newTestReviewer(t, func(http.ResponseWriter, *http.Request) {})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := r.Review(ctx, ac); err == nil {
+			t.Error("expected error for cancelled context")
 		}
 	})
 
