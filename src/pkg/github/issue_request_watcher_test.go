@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -333,8 +334,22 @@ func TestIssueRequestWatcher_StartLoop(t *testing.T) {
 	nilClient.StartIssueRequestWatcher(context.Background(), nil, nil) // must not panic
 	nilClient.ProcessIssueRequestsOnce(context.Background())           // must not panic
 
-	created := 0
-	srv := newIssueMockServer(t, "", &created, nil, nil)
+	// The watcher goroutine processes concurrently with this test, so the
+	// counter must be atomic (the shared newIssueMockServer uses a plain int).
+	var created atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 	dir := withIssueDir(t)
@@ -353,11 +368,11 @@ func TestIssueRequestWatcher_StartLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for created == 0 && time.Now().Before(deadline) {
+	for created.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if created != 1 {
-		t.Fatalf("ticker loop never processed the request (created=%d)", created)
+	if got := created.Load(); got != 1 {
+		t.Fatalf("ticker loop never processed the request (created=%d)", got)
 	}
 	cancel() // loop exit path
 	time.Sleep(50 * time.Millisecond)
