@@ -6544,6 +6544,38 @@ func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
 	return nil
 }
 
+// AgentCapabilities reports whether the named agent is ABLE — at the hive's
+// current ACMM level and the agent's effective mode — to create issues, open
+// PRs, and merge PRs. These are the EXACT gates AuthorizePROpen (CanPush) and
+// AuthorizeMerge (CanMerge) enforce, so a hub capability badge derived from
+// these can never claim a capability the merge/PR relay would actually refuse.
+// ok=false when the agent is unknown to the manager (the caller then reports
+// "unknown", not a false negative). Read-only under RLock.
+func (m *Manager) AgentCapabilities(agentName string) (canOpenIssue, canOpenPR, canMerge, ok bool) {
+	m.mu.RLock()
+	agent, exists := m.agents[agentName]
+	m.mu.RUnlock()
+	if !exists || agent == nil {
+		return false, false, false, false
+	}
+	mode := m.agentMode(agent)
+	return mode.CanCreateIssues(), mode.CanPush(), mode.CanMerge(), true
+}
+
+// EffectiveBackend reports the named agent's effective backend, honoring any
+// runtime BackendOverride (see effectiveBackend). ok=false when the agent is
+// unknown. Read-only under RLock — a small exported wrapper so callers outside
+// the package (the heartbeat builder) need not reach into unexported state.
+func (m *Manager) EffectiveBackend(agentName string) (backend string, ok bool) {
+	m.mu.RLock()
+	agent, exists := m.agents[agentName]
+	m.mu.RUnlock()
+	if !exists || agent == nil {
+		return "", false
+	}
+	return effectiveBackend(agent), true
+}
+
 // InvocationMetadata reports the effective backend, model, and reasoning effort
 // the hive invokes for the named agent, accounting for runtime overrides — the
 // launch-time truth the invocation-attribution trail records (see pkg/github/attribution

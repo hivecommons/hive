@@ -300,6 +300,39 @@ type AgentSummary struct {
 	// "running and working" from "running and producing nothing" — State,
 	// StartedAt and the kick log all keep their values while a CLI sits idle.
 	LastActivityAt string `json:"lastActivityAt,omitempty"`
+
+	// --- Fleet-divergence signals (the EXPECTED and ABLE legs) ---
+	// These let the hub show the gap between what the GOVERNOR expects running,
+	// what is ACTUALLY running, and what is ABLE to fulfill its mission. They
+	// are the minimum raw truths the hub cannot derive; every composite verdict
+	// (run-state, blocked reason, stuck/impotent, rollup) is derived hub-side.
+	// All are zero-valued on a legacy spoke that predates them, which the hub
+	// reads as UNKNOWN — never as a fault.
+
+	// ExpectedActive is true when the governor's CURRENT mode schedules this
+	// agent on a kicking cadence right now (config.ExpectedActive): the mode's
+	// cadence for this agent is not pause/off/0/"on demand" and the agent is
+	// not on-demand. It is the EXPECTED leg — the governor's intent — which the
+	// hub otherwise cannot see (it never receives per-mode Cadences).
+	ExpectedActive bool `json:"expectedActive,omitempty"`
+	// CanOpenIssue / CanOpenPR / CanMerge are the agent's capability at the
+	// hive's current ACMM level and effective mode — the EXACT gates the spoke
+	// enforces (AgentMode.CanCreateIssues/CanPush/CanMerge, the same checks
+	// AuthorizePROpen/AuthorizeMerge use). Sent as booleans so the hub needs no
+	// ACMM-level→mode mapping and the badge cannot claim a capability the relay
+	// would refuse.
+	CanOpenIssue bool `json:"canOpenIssue,omitempty"`
+	CanOpenPR    bool `json:"canOpenPR,omitempty"`
+	CanMerge     bool `json:"canMerge,omitempty"`
+	// Backend is the agent's effective backend (honoring BackendOverride). The
+	// hub needs it to interpret NeedsLogin (interactive CLI vs inference key)
+	// and to phrase a blocked reason.
+	Backend string `json:"backend,omitempty"`
+	// Enabled distinguishes "configured and meant to run" from "not running":
+	// a config-enabled-but-stopped agent is otherwise indistinguishable from an
+	// unconfigured one, which is exactly the STUCK-vs-disabled ambiguity the
+	// fleet view exists to resolve.
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // AgentActivity is the per-agent liveness evidence the spoke has and the hub
@@ -317,6 +350,13 @@ type AgentActivity struct {
 	SessionMissing bool
 	StartedAt      time.Time
 	LastActivityAt time.Time
+	// Fleet-divergence signals — see the matching AgentSummary fields.
+	ExpectedActive bool
+	CanOpenIssue   bool
+	CanOpenPR      bool
+	CanMerge       bool
+	Backend        string
+	Enabled        bool
 }
 
 // NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
@@ -333,6 +373,12 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		PausedBy:       act.PausedBy,
 		NeedsLogin:     act.NeedsLogin,
 		SessionMissing: act.SessionMissing,
+		ExpectedActive: act.ExpectedActive,
+		CanOpenIssue:   act.CanOpenIssue,
+		CanOpenPR:      act.CanOpenPR,
+		CanMerge:       act.CanMerge,
+		Backend:        act.Backend,
+		Enabled:        act.Enabled,
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)

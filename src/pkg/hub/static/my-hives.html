@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet — Expected vs Actual vs Able</title>
+<style>
+  :root {
+    --bg: #0d1420; --panel: #131c2b; --line: #22304a; --ink: #d7e2f2;
+    --muted: #8ba0bd; --green: #3fb968; --amber: #e0a800; --red: #e5484d;
+    --gray: #5a6b84; --accent: #4a9eff; --chip: #17212d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 16px 22px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .wrap { padding: 16px 22px; max-width: 1200px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .legend b { color: var(--ink); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr.spoke { cursor: pointer; }
+  tr.spoke:hover { background: #16202f; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+  .dot.on { background: var(--green); }
+  .dot.off { background: var(--gray); }
+  .name { font-weight: 600; }
+  .chev { display: inline-block; width: 12px; color: var(--muted); transition: transform .1s; }
+  tr.spoke.open .chev { transform: rotate(90deg); }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
+    background: var(--chip); border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .rollup { font-variant-numeric: tabular-nums; }
+  .rollup .n { font-weight: 700; color: var(--ink); }
+  .rollup .warn { color: var(--amber); }
+  .rollup .bad { color: var(--red); }
+  .rollup .sep { color: var(--muted); margin: 0 4px; }
+  .output { color: var(--muted); font-size: 12px; }
+  /* agent sub-rows */
+  tr.agent td { background: #101825; border-bottom: 1px solid #1a2537; font-size: 13px; }
+  tr.agent .aname { padding-left: 26px; font-weight: 500; }
+  .rs { display: inline-flex; align-items: center; gap: 6px; }
+  .rs .swatch { width: 8px; height: 8px; border-radius: 50%; }
+  .rs.working .swatch { background: var(--green); }
+  .rs.idle-at-prompt .swatch { background: var(--amber); }
+  .rs.stuck-at-login .swatch { background: var(--red); }
+  .rs.session-gone .swatch { background: var(--red); }
+  .rs.dead .swatch { background: var(--gray); }
+  .rs.quiet-by-design .swatch { background: transparent; border: 1px solid var(--green); }
+  .rs.unknown .swatch { background: var(--gray); }
+  .cap { display: inline-flex; align-items: center; gap: 6px; }
+  .cap .light { width: 9px; height: 9px; border-radius: 50%; }
+  .cap.green .light { background: var(--green); }
+  .cap.amber .light { background: var(--amber); }
+  .cap.red .light { background: var(--red); }
+  .cap.gray .light { background: var(--gray); }
+  .ticks { font-size: 11px; color: var(--muted); }
+  .tick.yes { color: var(--green); }
+  .tick.no { color: var(--red); }
+  .delta { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
+  .delta.stuck { background: rgba(229,72,77,.15); color: var(--red); border: 1px solid rgba(229,72,77,.4); }
+  .delta.impotent { background: rgba(224,168,0,.15); color: var(--amber); border: 1px solid rgba(224,168,0,.4); }
+  .delta.quiet { color: var(--muted); }
+  .rel { color: var(--muted); font-size: 11px; }
+  .status-msg { padding: 40px 0; text-align: center; color: var(--muted); }
+  a.reload { color: var(--accent); text-decoration: none; }
+  [title] { cursor: help; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fleet — Expected vs Actual vs Able</h1>
+  <span class="sub">what the governor expects running · what is actually running · what can fulfill its mission</span>
+</header>
+<div class="wrap">
+  <div class="legend">
+    <span><span class="dot on"></span><b>on</b> / <span class="dot off"></span>off</span>
+    <span><b>run-state:</b> working · idle · stuck-at-login · session-gone · dead · <span style="border:1px solid var(--green);border-radius:50%;display:inline-block;width:7px;height:7px"></span> quiet-by-design</span>
+    <span><b>capability:</b> <span style="color:var(--green)">green</span> able · <span style="color:var(--amber)">amber</span> partial · <span style="color:var(--red)">red</span> blocked · <span style="color:var(--gray)">gray</span> unknown</span>
+    <span><span class="delta stuck">STUCK</span> expected-on, not running · <span class="delta impotent">IMPOTENT</span> running, can't work</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22px"></th>
+        <th>Hive</th>
+        <th>ACMM</th>
+        <th>Mode</th>
+        <th>Divergence (expects · running · able)</th>
+        <th>Output (90d)</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="6" class="status-msg" id="statusCell">Loading fleet…</td></tr>
+    </tbody>
+  </table>
+</div>
+<script>
+"use strict";
+// Inert shell: no data is baked in. Everything comes from the authenticated
+// API; a 401 means "not signed in" and redirects to the OAuth login.
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function relTime(iso) {
+  if (!iso) return "";
+  var t = Date.parse(iso);
+  if (isNaN(t)) return "";
+  var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return s + "s ago";
+  var m = Math.floor(s / 60); if (m < 60) return m + "m ago";
+  var h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+function acmmBadge(lvl) { return '<span class="badge">L' + esc(lvl == null ? "?" : lvl) + '</span>'; }
+function modeBadge(m) { return '<span class="badge">' + esc(m || "—") + '</span>'; }
+
+function rollupHTML(r) {
+  if (!r) return '<span class="output">no agents reported</span>';
+  var exp = r.expected || 0, run = r.running || 0, able = r.able || 0;
+  var runCls = run < exp ? "warn" : "", ableCls = able < run ? "bad" : "";
+  var extra = "";
+  if (r.stuck) extra += ' <span class="delta stuck" title="expected active but not running">' + r.stuck + ' stuck</span>';
+  if (r.impotent) extra += ' <span class="delta impotent" title="running but unable to work">' + r.impotent + ' impotent</span>';
+  return '<span class="rollup">expects <span class="n">' + exp + '</span>' +
+    '<span class="sep">·</span><span class="n ' + runCls + '">' + run + '</span> running' +
+    '<span class="sep">·</span><span class="n ' + ableCls + '">' + able + '</span> able' + extra + '</span>';
+}
+function outputHTML(h) {
+  var m = h.prsMerged90d || 0, rej = h.prsRejected90d || 0, cve = h.cvesClosed || 0;
+  if (!m && !rej && !cve) return '<span class="output">—</span>';
+  return '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
+    ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
+}
+function toggleHTML(a) {
+  if (a.paused) {
+    var prov = [];
+    if (a.pausedBy || a.pausedTrigger) prov.push("by " + (a.pausedBy || a.pausedTrigger));
+    if (a.pausedAt) prov.push(relTime(a.pausedAt));
+    if (a.pausedReason) prov.push("— " + a.pausedReason);
+    return '<span class="badge" title="' + esc(prov.join(" ")) + '">paused</span>';
+  }
+  if (a.enabled) return '<span><span class="dot on"></span>on</span>';
+  return '<span><span class="dot off"></span>off</span>';
+}
+function runStateHTML(a) {
+  var rs = a.runState || "unknown";
+  var label = rs.replace(/-/g, " ");
+  var rel = a.lastActivityAt ? ' <span class="rel">' + esc(relTime(a.lastActivityAt)) + '</span>' : "";
+  return '<span class="rs ' + esc(rs) + '"><span class="swatch"></span>' + esc(label) + '</span>' + rel;
+}
+function capHTML(a) {
+  var tier = a.capabilityTier || "gray";
+  function tick(ok, lbl) { return '<span class="tick ' + (ok ? "yes" : "no") + '">' + (ok ? "✓" : "✗") + " " + lbl + "</span>"; }
+  var ticks = '<span class="ticks">' + tick(a.canOpenIssue, "issue") + " " +
+    tick(a.canOpenPR, "PR") + " " + tick(a.canMerge, "merge") + "</span>";
+  var t = a.blockedReason ? ' title="' + esc(a.blockedReason) + '"' : "";
+  return '<span class="cap ' + esc(tier) + '"' + t + '><span class="light"></span></span> ' + ticks;
+}
+function deltaHTML(a) {
+  if (a.stuck) return '<span class="delta stuck" title="expected active, not running">STUCK</span>';
+  if (a.impotent) return '<span class="delta impotent"' + (a.blockedReason ? ' title="' + esc(a.blockedReason) + '"' : "") + '>IMPOTENT' + (a.blockedReason ? ": " + esc(a.blockedReason) : "") + '</span>';
+  if (a.quietByDesign) return '<span class="delta quiet">quiet by design</span>';
+  return "";
+}
+
+function renderHives(hives) {
+  var tb = document.getElementById("rows");
+  tb.innerHTML = "";
+  if (!hives || !hives.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="status-msg">No hives.</td></tr>';
+    return;
+  }
+  hives.forEach(function (h, idx) {
+    var online = h.online ? "on" : "off";
+    var tr = document.createElement("tr");
+    tr.className = "spoke";
+    tr.innerHTML =
+      '<td><span class="chev">▶</span></td>' +
+      '<td><span class="dot ' + online + '"></span><span class="name">' + esc(h.name || h.id) + '</span></td>' +
+      '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
+      '<td>' + modeBadge(h.governorMode) + '</td>' +
+      '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
+      '<td>' + outputHTML(h) + '</td>';
+    tb.appendChild(tr);
+
+    var verdicts = h.agentVerdicts || [];
+    var subRows = [];
+    verdicts.forEach(function (a) {
+      var sub = document.createElement("tr");
+      sub.className = "agent";
+      sub.style.display = "none";
+      sub.innerHTML =
+        '<td></td>' +
+        '<td class="aname">' + esc(a.name) + (a.backend ? ' <span class="badge">' + esc(a.backend) + '</span>' : "") + '</td>' +
+        '<td>' + toggleHTML(a) + '</td>' +
+        '<td>' + runStateHTML(a) + '</td>' +
+        '<td>' + capHTML(a) + " " + deltaHTML(a) + '</td>' +
+        '<td></td>';
+      tb.appendChild(sub);
+      subRows.push(sub);
+    });
+    if (!verdicts.length) {
+      var empty = document.createElement("tr");
+      empty.className = "agent";
+      empty.style.display = "none";
+      empty.innerHTML = '<td></td><td class="aname" colspan="5"><span class="output">no per-agent detail reported (spoke may predate this view)</span></td>';
+      tb.appendChild(empty);
+      subRows.push(empty);
+    }
+    tr.addEventListener("click", function () {
+      var open = tr.classList.toggle("open");
+      subRows.forEach(function (s) { s.style.display = open ? "" : "none"; });
+    });
+  });
+}
+
+function load() {
+  fetch("/api/saas/my-hives", { credentials: "same-origin", headers: { "Accept": "application/json" } })
+    .then(function (r) {
+      if (r.status === 401) {
+        window.location.href = "/login?redirect=" + encodeURIComponent("/my-hives");
+        throw new Error("redirecting to login");
+      }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) { renderHives(d.hives || []); })
+    .catch(function (e) {
+      if (e && e.message === "redirecting to login") return;
+      var c = document.getElementById("statusCell");
+      if (c) c.innerHTML = "Failed to load: " + esc(e.message) + ' — <a class="reload" href="/my-hives">retry</a>';
+    });
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

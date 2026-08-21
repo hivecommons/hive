@@ -2882,6 +2882,17 @@ type MyHiveEntry struct {
 	InactiveAgents       int    `json:"inactiveAgents,omitempty"`
 	InactiveAgentsReason string `json:"inactiveAgentsReason,omitempty"`
 
+	// FleetRollup / AgentVerdicts carry the three-way divergence view — what the
+	// governor EXPECTS running, what is ACTUALLY running, and what is ABLE to
+	// fulfill its mission — computed on read from the per-agent heartbeat
+	// signals + this hive's blocker fields. FleetRollup is the per-spoke header
+	// ("expects N · M running · K able"); AgentVerdicts is the per-agent
+	// drill-down. Both stay nil for a hive with no reported agents. Computed on
+	// read (deriveAgentVerdict/rollupAgents) so the browser never re-derives the
+	// state machine and cannot drift from the Go rule.
+	FleetRollup   *agentFleetRollup  `json:"fleetRollup,omitempty"`
+	AgentVerdicts []AgentVerdictJSON `json:"agentVerdicts,omitempty"`
+
 	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
 	// serve on the last several probes — the link in this very table is dead.
 	// Computed on read from the auth-audit loop's observations, so the browser
@@ -3336,6 +3347,25 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if rep := evaluateInactiveAgents(result[i].Agents, queuedWork, journeyNow); rep.Count > 0 {
 			result[i].InactiveAgents = rep.Count
 			result[i].InactiveAgentsReason = rep.Reason
+		}
+
+		// Fleet-divergence view: derive the three-way picture (expected vs
+		// actual vs able) and the per-agent verdicts from the same per-agent
+		// heartbeat signals plus this hive's blocker fields. Derived on read so
+		// the browser never re-runs the state machine (shares classifyInactive‐
+		// Agent with the block above, so the two can never disagree).
+		if len(result[i].Agents) > 0 {
+			blockers := hiveBlockers{
+				GitHubAppRequired:       result[i].GitHubAppRequired,
+				GitHubAppPermIssue:      result[i].GitHubAppPermIssue,
+				GitHubAppState:          result[i].GitHubAppState,
+				RepoTargetMisconfigured: result[i].RepoTargetMisconfigured,
+				RepoTargetIssue:         result[i].RepoTargetIssue,
+				InferenceAuthError:      result[i].InferenceAuthError,
+			}
+			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
+			result[i].FleetRollup = &rollup
+			result[i].AgentVerdicts = buildAgentVerdicts(result[i].Agents, blockers, queuedWork, journeyNow)
 		}
 
 		// Sparkline history dominated this payload: at 42 hives the two series
@@ -12004,8 +12034,11 @@ const dashboardHTML = `<!DOCTYPE html>
        v2 cache would paint paused agents provenance-less until the poll.
        v4: rows carry quadrant, and the cache carries the fleet average that
        every kite is drawn against; a v3 cache would paint the new column empty
-       until the poll landed. */
-    var HIVES_CACHE_VERSION = 4;
+       until the poll landed.
+       v5: rows carry the fleet-divergence view (fleetRollup + agentVerdicts:
+       expected/actual/able per agent); a v4 cache would omit the new per-agent
+       drill-down until the first poll landed. */
+    var HIVES_CACHE_VERSION = 5;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;

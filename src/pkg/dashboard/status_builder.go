@@ -459,7 +459,15 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 		// dot so operators do not mistake a governor-paused agent for a running
 		// one. On-demand agents are excluded — they are intentionally not on a
 		// cadence and carry their own on-demand styling.
-		offByCadence := (cadence == cadencePause || cadence == cadenceOff) &&
+		//
+		// Derived from the shared cadence resolver so it agrees exactly with the
+		// heartbeat's ExpectedActive (config.ExpectedActive): both read the same
+		// per-mode cadence and the same IsPaused semantics. offByCadence is the
+		// stricter "has a pause/off ENTRY" form (an ABSENT cadence is not off),
+		// which is why it checks the resolved cadence directly rather than
+		// negating ExpectedActive.
+		modeCadence := cfg.CadenceValueForMode(name, currentMode)
+		offByCadence := modeCadence != "" && modeCadence.IsPaused() &&
 			!proc.Config.OnDemand && !onDemandSet[name]
 
 		pinnedCli := proc.PinnedCLI != "" || proc.Config.CLIPinned

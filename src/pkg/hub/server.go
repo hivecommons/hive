@@ -1428,6 +1428,11 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
 	// reference-architecture draft, shareable without artifact permissions.
 	s.mux.HandleFunc("GET /cncf-reference-architecture", s.serveStatic("static/cncf-reference-architecture.html"))
+	// Fleet-divergence view. The HTML shell is inert (no data) and served
+	// unauthenticated like every other static page; all sensitive data comes
+	// from GET /api/saas/my-hives, which is requireAuth-gated. On a 401 the page
+	// redirects to the OAuth login (see static/my-hives.html).
+	s.mux.HandleFunc("GET /my-hives", s.serveStatic("static/my-hives.html"))
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
 	// Open Graph preview image for shared links. Registered here rather than in
 	// registerOAuth because that function returns early when OAuth is
@@ -1697,6 +1702,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].PausedBy = sanitizeHeartbeatField(payload.Agents[i].PausedBy)
 				payload.Agents[i].PausedReason = sanitizeProseField(payload.Agents[i].PausedReason)
 				payload.Agents[i].PausedAt = sanitizeField(payload.Agents[i].PausedAt)
+				// Fleet-divergence signals (#hub-fleet-view). Backend is a spoke-
+				// reported identifier (claude/copilot/gemini/…) and is sanitized
+				// like State/Mode. The remaining new signals — ExpectedActive,
+				// CanOpenIssue, CanOpenPR, CanMerge, Enabled — are bools with no
+				// injectable surface, so they pass through unchanged; they are
+				// acknowledged here so a future reader sees every new field was
+				// considered by the sanitize pass.
+				payload.Agents[i].Backend = sanitizeHeartbeatField(payload.Agents[i].Backend)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
