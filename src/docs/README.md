@@ -102,3 +102,4 @@ Some documents describe planned or design-only work rather than live features. T
 - [Architecture Decision Records](https://github.com/kubestellar/hive/blob/v4/src/docs/adr/README.md) — lightweight ADR process and records 0001-0017.
 - [Intent verification](https://github.com/kubestellar/hive/blob/v4/src/docs/intent-verification.md) — tier-based change authorization for merge eligibility.
 - [Rootless Podman CI seam](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootless-ci.md) — documented test intent and static contract for contributor-container runtime handling.
+- [Release-line carry-forward guard](release-line-guard.md) — the nine workflows pinned to hardcoded version-branch names, the single source of truth they are asserted against, and what to edit when a new release line is cut.

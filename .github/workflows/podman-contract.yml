@@ -11,7 +11,9 @@ name: Podman Rootless Contract
 # guard that never executes reports green forever, which is the one failure
 # mode a guard cannot have. The branch list and the self-referencing path entry
 # below mirror .github/workflows/suid-contract.yml, the sibling static contract
-# check.
+# check. The branch list is no longer trusted to stay correct by hand: it is
+# asserted against .github/release-lines.yml by release-line-guard.yml (#4405),
+# so cutting the next release line fails CI until this block is updated too.
 on:
   push:
     branches:
