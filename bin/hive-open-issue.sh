@@ -74,8 +74,11 @@ if [ -n "$BODY_FILE" ]; then
 fi
 
 if [ "$KIND" = "issue" ]; then
-  if [ -z "$REPO" ] || [ -z "$TITLE" ]; then
-    echo "hive-open-issue: --repo and --title are required" >&2
+  # --body stays required (matching the original shim contract pinned by
+  # bin/test_hive_open_issue.sh): an issue with an empty body is always an
+  # agent bug, and catching it here beats a watcher-side .bad quarantine.
+  if [ -z "$REPO" ] || [ -z "$TITLE" ] || [ -z "$BODY" ]; then
+    echo "hive-open-issue: --repo, --title, and --body are required" >&2
     exit 2
   fi
 else
@@ -122,8 +125,9 @@ if kind == "comment":
 else:
     req["title"] = title
     req["body"] = body
-    if labels:
-        req["labels"] = labels
+    # Always present (even empty) — the original shim contract, pinned by
+    # bin/test_hive_open_issue.sh; the watcher accepts both shapes.
+    req["labels"] = labels
 with open(temporary, "w") as fh:
     json.dump(req, fh)
 os.replace(temporary, path)
