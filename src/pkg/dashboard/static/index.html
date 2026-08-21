@@ -1416,6 +1416,14 @@
       max-height: 8000px; opacity: 1;
     }
     .cost-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
+    /* Collapsible cost subsections (usage by sandbox / cost per session) — same chevron + max-height idiom. */
+    .cost-subtable-title.cost-sub-toggle { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+    .cost-subtable-title.cost-sub-toggle:hover { opacity: 0.85; }
+    .cost-sub-body {
+      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
+      max-height: 8000px; opacity: 1;
+    }
+    .cost-sub-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .cost-subtitle { font-size: 0.7rem; color: var(--muted); margin-bottom: 12px; }
     .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .cost-stat { text-align: left; }
@@ -8312,6 +8320,51 @@ function burnAreaChart() {
       }
     }
 
+    // ── Collapsible cost subsections (usage by sandbox / cost per session) ──
+    // Same localStorage + re-apply-after-render idiom as the cost panel above:
+    // the tables are always rendered into the DOM on every poll (collapse is
+    // CSS-only via max-height), so a collapsed subsection keeps receiving fresh
+    // data and shows current numbers the moment it is re-expanded. Defaults on
+    // first visit: "cost per session" collapsed, "usage by sandbox" expanded.
+    const COST_SUB_LS_PREFIX = 'hive-cost-sub-';
+    const COST_SUB_DEFAULT_COLLAPSED = { session: true, sandbox: false };
+    function isCostSubCollapsed(key) {
+      const v = localStorage.getItem(COST_SUB_LS_PREFIX + key);
+      if (v === null) return !!COST_SUB_DEFAULT_COLLAPSED[key];
+      return v === '1';
+    }
+    function setCostSubCollapsed(key, collapsed) {
+      // Store explicitly (never remove) so a user choice that matches the
+      // default's opposite survives reloads for both subsections.
+      localStorage.setItem(COST_SUB_LS_PREFIX + key, collapsed ? '1' : '0');
+    }
+    /** Reflect each subsection's persisted collapsed state onto the current DOM. */
+    function applyCostSubCollapse() {
+      for (const sec of document.querySelectorAll('#cost-panel [data-cost-sub]')) {
+        const key = sec.dataset.costSub;
+        const collapsed = isCostSubCollapsed(key);
+        const body = sec.querySelector('.cost-sub-body');
+        const chevron = sec.querySelector('.cost-chevron');
+        const header = sec.querySelector('.cost-sub-toggle');
+        if (body) body.classList.toggle('collapsed', collapsed);
+        if (chevron) chevron.classList.toggle('collapsed', collapsed);
+        if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      }
+    }
+    /** Toggle one subsection's collapsed state and persist. */
+    function toggleCostSub(key) {
+      setCostSubCollapsed(key, !isCostSubCollapsed(key));
+      applyCostSubCollapse();
+    }
+    /** Single click + keyboard entry point (toggleWelcomeCheck idiom): Enter/Space or click. */
+    function costSubToggle(ev, key) {
+      if (ev && ev.type === 'keydown') {
+        if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+        ev.preventDefault();
+      }
+      toggleCostSub(key);
+    }
+
     function renderCost(cost) {
       const el = document.getElementById('cost-panel');
       if (!el) return;
@@ -8427,12 +8480,15 @@ function burnAreaChart() {
           <td class="cnum">${usdCell}</td>
         </tr>`;
       }).join('');
-      const sandboxTable = `
-        <div class="cost-subtable-title" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price)">usage by sandbox</div>
+      const sandboxTable = `<div class="cost-subsection" data-cost-sub="sandbox">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>usage by sandbox</div>
+        <div class="cost-sub-body" id="cost-sub-sandbox-body">
         <table class="cost-table">
           <thead><tr><th>sandbox (agent)</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
           <tbody>${sandboxRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
-        </table>`;
+        </table>
+        </div>
+      </div>`;
 
       // ── Cost per session ──
       // Each row is one agent run (session) inside its sandbox, priced from its
@@ -8457,12 +8513,15 @@ function burnAreaChart() {
           <td class="cnum">${usdCell}</td>
         </tr>`;
       }).join('');
-      const sessionTable = `
-        <div class="cost-subtable-title" title="Estimated cost for each individual agent session (sandbox run), most expensive first (token × list price)">cost per session</div>
+      const sessionTable = `<div class="cost-subsection" data-cost-sub="session">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), most expensive first (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
+        <div class="cost-sub-body" id="cost-sub-session-body">
         <table class="cost-table">
           <thead><tr><th>session</th><th>sandbox</th><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
           <tbody>${sessionRows || '<tr><td colspan="6" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
-        </table>`;
+        </table>
+        </div>
+      </div>`;
 
       el.innerHTML = `<div class="cost-panel">
         <div class="cost-title cost-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-panel-body" data-action="toggleCostPanel" data-keydown-action="costHeaderKey" data-arg-types="e" data-keys="*" title="Collapse / expand the cost panel">
@@ -8491,6 +8550,7 @@ function burnAreaChart() {
       </div>`;
       // Re-apply the persisted collapsed state so a poll re-render never resets it.
       applyCostCollapse();
+      applyCostSubCollapse();
     }
 
     async function fetchCost() {
