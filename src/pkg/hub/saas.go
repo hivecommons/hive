@@ -2983,6 +2983,14 @@ type MyHiveEntry struct {
 	InactiveAgents       int    `json:"inactiveAgents,omitempty"`
 	InactiveAgentsReason string `json:"inactiveAgentsReason,omitempty"`
 
+	// AllAgentsQuiet is true when EVERY agent this hive reports is deliberately
+	// quiet — paused or off-schedule. This is "hive not in use": nothing is
+	// broken, nothing will be produced, and the same condition suppresses the
+	// advisory-staleness pill (allAgentsQuietByDesign). Computed on read so the
+	// browser never re-derives the pause/off-schedule rule; the fleet page
+	// renders it as a distinct state chip rather than health or fault.
+	AllAgentsQuiet bool `json:"allAgentsQuiet,omitempty"`
+
 	// FleetRollup / AgentVerdicts carry the three-way divergence view — what the
 	// governor EXPECTS running, what is ACTUALLY running, and what is ABLE to
 	// fulfill its mission — computed on read from the per-agent heartbeat
@@ -3457,6 +3465,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result[i].InactiveAgents = rep.Count
 			result[i].InactiveAgentsReason = rep.Reason
 		}
+
+		// "Hive not in use": every reported agent deliberately quiet. Same
+		// predicate that suppresses the advisory-stale pill, surfaced as its
+		// own state so an entirely-parked hive reads as PARKED, not healthy
+		// and not broken.
+		result[i].AllAgentsQuiet = allAgentsQuietByDesign(result[i].RegistryEntry)
 
 		// Fleet-divergence view: derive the three-way picture (expected vs
 		// actual vs able) and the per-agent verdicts from the same per-agent

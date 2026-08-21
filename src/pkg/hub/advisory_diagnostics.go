@@ -43,6 +43,10 @@ const (
 	// advisoryClassAppCannotWrite: an aged timestamp suppressed because the App
 	// cannot write and the spoke reported no error to prove it even tried.
 	advisoryClassAppCannotWrite = "suppressed-app-cannot-write"
+	// advisoryClassAgentsQuiet: an aged timestamp suppressed because EVERY
+	// agent on the hive is deliberately quiet (paused / off-schedule) — no
+	// agents, no findings, no digest: the operator's own choice, not a wedge.
+	advisoryClassAgentsQuiet = "suppressed-agents-quiet"
 	// advisoryClassUnknownTimestamp: a reported post time that will not parse.
 	advisoryClassUnknownTimestamp = "unknown-timestamp"
 )
@@ -131,6 +135,10 @@ func diagnoseAdvisory(e RegistryEntry, now time.Time) AdvisoryDiagnosis {
 	case !appCanWriteForAdvisory(e):
 		d.Class = advisoryClassAppCannotWrite
 		d.Reason = "aged digest suppressed because the GitHub App cannot write"
+		d.HiddenStale = aged
+	case allAgentsQuietByDesign(e):
+		d.Class = advisoryClassAgentsQuiet
+		d.Reason = "aged digest suppressed because every agent is paused or off-schedule"
 		d.HiddenStale = aged
 	case parseErr != nil:
 		d.Class = advisoryClassUnknownTimestamp

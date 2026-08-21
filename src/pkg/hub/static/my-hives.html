@@ -159,6 +159,19 @@
   .hdot.ok { background: var(--green); }
   .hdot.unknown { background: var(--gray); }
   .hdot.offline { background: transparent; border: 1px solid var(--gray); }
+  .hdot.parked { background: transparent; border: 1px dashed var(--gray); }
+  .parked-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
+  /* Signed-in avatar + its menu, matching the spoke dashboard's nav avatar:
+     the image is the affordance, the dialog is right-anchored so extra width
+     grows leftward and stays on screen. Shown on hover AND kept open by
+     click (touch/keyboard operable), never hover-only. */
+  #nav-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green, #46a758); vertical-align: middle; }
+  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line, #2a2e37); border-radius: 8px; padding: 4px 0; min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
+  #nav-avatar-wrap.open #nav-user-menu, #nav-avatar-wrap:hover #nav-user-menu { display: block; }
+  #nav-user-menu > div#nav-menu-user { padding: 8px 16px; border-bottom: 1px solid var(--line, #2a2e37); font-weight: 600; font-size: .85rem; }
+  #nav-user-menu > div#nav-menu-role { padding: 2px 16px 6px; border-bottom: 1px solid var(--line, #2a2e37); font-size: .72rem; color: var(--gray); }
+  #nav-user-menu > a, #nav-user-menu > button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: 8px 16px; background: none; border: none; color: inherit; text-decoration: none; font-size: .82rem; cursor: pointer; }
+  #nav-user-menu > a:hover, #nav-user-menu > button:hover { background: rgba(255,255,255,.06); }
   /* Problem hives get a red left border so the eye lands on them. */
   tr.spoke.health-problem td:first-child { border-left: 3px solid var(--red); }
   tr.spoke.health-problem { background: rgba(229,72,77,.05); }
@@ -195,6 +208,17 @@
   </nav>
   <div class="header-right">
     <span id="hub-version"></span>
+    <span id="nav-avatar-wrap" style="display:none;position:relative">
+      <img id="nav-avatar" src="" alt="" title="">
+      <div id="nav-user-menu" role="menu">
+        <div id="nav-menu-user"></div>
+        <div id="nav-menu-role" style="display:none"></div>
+        <a href="#" id="nav-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none">GitHub profile ↗</a>
+        <a href="/dashboard">My Hives</a>
+        <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Docs ↗</a>
+        <button type="button" id="nav-menu-signout">Sign out</button>
+      </div>
+    </span>
     <a href="#" class="header-link" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
   </div>
 </header>
@@ -238,7 +262,7 @@
 </header>
 <div class="wrap">
   <div class="legend">
-    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting)</span>
+    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting) · <span class="hdot parked"></span> parked (all agents quiet by design — hive not in use)</span>
     <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
     <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
     <span><b>gh app:</b> <span class="github-app-health ok"><span class="light"></span>ok</span> · <span class="github-app-health degraded"><span class="light"></span>stale</span> · <span class="github-app-health broken"><span class="light"></span>broken</span> · <span class="github-app-health unknown"><span class="light"></span>n/a</span></span>
@@ -408,10 +432,15 @@ function deltaHTML(a) {
 // → unknown; else ok. Online/offline is NOT health — a spoke can be online with
 // every agent stuck.
 function hiveHealth(h) {
-  if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
+  // Parked — every agent deliberately quiet (hive not in use). Checked before
+  // the output-side signals: a hive nobody is running produces no advisories
+  // and burns no budget, so stale/exhausted readings are the pause's own
+  // consequence, not faults. A broken GitHub App still outranks parked — auth
+  // infrastructure is broken whether or not anyone is using the hive.
   if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
-  var budget = ((h.budgetHealth || {}).bucket || "");
-  if (budget === "critical" || budget === "exhausted") return "problem";
+  if (h.allAgentsQuiet) return "parked";
+  if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
+  if (((h.budgetHealth || {}).bucket || "") === "critical" || ((h.budgetHealth || {}).bucket || "") === "exhausted") return "problem";
   var r = h.fleetRollup;
   if (!r) return h.online ? "unknown" : "offline";
   if ((r.problems || 0) > 0) return "problem";
@@ -452,7 +481,7 @@ function renderHives(hives) {
   hives = hives || [];
 
   // Rank: problems first, then unknown, then ok; stable within a rank by name.
-  var rank = { problem: 0, unknown: 1, offline: 2, ok: 3 };
+  var rank = { problem: 0, unknown: 1, offline: 2, parked: 3, ok: 4 };
   var rows = hives.map(function (h) { return { h: h, health: hiveHealth(h) }; });
   rows.sort(function (a, b) {
     var d = (rank[a.health] || 9) - (rank[b.health] || 9);
@@ -487,7 +516,7 @@ function renderHives(hives) {
     tr.className = "spoke health-" + health + (open ? " open" : "");
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + '</td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
@@ -587,6 +616,43 @@ function load() {
 wireControls();
 load();
 setInterval(load, 30000);
+
+// Signed-in avatar + menu, same identity source the hub landing page uses
+// (/api/auth/user: login, avatar_url, hub_admin, optional country code).
+(function () {
+  fetch("/api/auth/user", { credentials: "same-origin" })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.authenticated) return;
+      var wrap = document.getElementById("nav-avatar-wrap");
+      var img = document.getElementById("nav-avatar");
+      if (!wrap || !img) return;
+      img.src = d.avatar_url || "";
+      img.alt = d.login || "";
+      img.title = d.login || "";
+      // Country code → flag glyph, derived the same way the dashboard does
+      // (two regional-indicator symbols), shown beside the login in the menu.
+      var flag = "";
+      if (d.country && /^[A-Za-z]{2}$/.test(d.country)) {
+        var cc = d.country.toUpperCase();
+        flag = " " + String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65, 0x1F1E6 + cc.charCodeAt(1) - 65);
+      }
+      document.getElementById("nav-menu-user").textContent = (d.login || "") + flag;
+      var role = document.getElementById("nav-menu-role");
+      if (role) { role.textContent = d.hub_admin ? "hub admin" : "member"; role.style.display = ""; }
+      var prof = document.getElementById("nav-menu-profile");
+      if (prof && d.login) { prof.href = "https://github.com/" + encodeURIComponent(d.login); prof.style.display = ""; }
+      var out = document.getElementById("nav-menu-signout");
+      if (out) out.addEventListener("click", function () {
+        fetch("/api/auth/logout", { method: "POST" }).then(function () { location.href = "/"; });
+      });
+      // Click pins the menu open (touch/keyboard); hover is handled in CSS.
+      img.addEventListener("click", function (e) { e.stopPropagation(); wrap.classList.toggle("open"); });
+      document.addEventListener("click", function () { wrap.classList.remove("open"); });
+      wrap.style.display = "";
+    })
+    .catch(function () {});
+})();
 </script>
 </body>
 </html>
