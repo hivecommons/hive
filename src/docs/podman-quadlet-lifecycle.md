@@ -345,10 +345,46 @@ The consequence is worth stating plainly, because it is the operational cost of
 choosing rootful: a Hive that never becomes healthy holds a rootful boot for its
 `TimeoutStartSec` — 5min for `hive.service`, 2min for `hive-gateway.service`.
 The 120s is not hypothetical — the first rootful start attempt here sat in
-`activating` for exactly that before timing out — though it was reached from an
-interactive `systemctl start`, not from a boot; a deliberately-broken rootful
-boot was not executed. On rootless the same failure delays nothing but Hive
-itself. Filed as #4478, since which mode an operator picks may turn on it.
+`activating` for exactly that before timing out. On rootless the same failure
+delays nothing but Hive itself. Filed as #4478, since which mode an operator
+picks may turn on it.
+
+#### The held boot was inferred, and is now measured
+
+The paragraph above once ended "a deliberately-broken rootful boot was not
+executed", because executing it meant rebooting the measuring host into a
+broken state. It is executed now, somewhere disposable: a systemd container,
+whose PID 1 runs the same system manager and the same job transaction.
+`src/deploy/probe_boot_transaction_coupling.sh` is the probe; three cases differ
+in exactly one thing, whether the unit is reached through
+`default.target.wants/`.
+
+| case | in `default.target.wants/` | READY | boot finished |
+| --- | --- | --- | --- |
+| control | yes | sent at once | **+0.154s** — 8.1ms after the unit went active |
+| broken | yes | **never sent** | **+20.315s** — held **20.188s**, the unit's whole `TimeoutStartSec` |
+| unwired | **no** | never sent | **+0.133s** |
+
+`TimeoutStartSec=20s` throughout, to keep the probe short; the shape is what
+scales, not the number.
+
+The control reproduces the 549µs coupling of the real rootful reboot above: the
+manager does not declare the boot finished until a `WantedBy=default.target`
+`Type=notify` unit is ready. The broken case is the consequence — `Result=timeout`,
+and the whole timeout spent inside the boot transaction.
+
+**The third case is the argument.** Without it, the second only shows that a
+failing unit takes `TimeoutStartSec` to fail, which nobody doubted. The same
+unit with the same timeout, not wired into `default.target`, finishes the boot
+in 0.133s; starting it by hand afterwards blocks the caller for 20s. The cost
+does not vanish on rootless, it moves off the boot and onto whoever asked.
+
+**What this does and does not establish.** It establishes the *manager*
+behaviour, which is the half that was inferred. It is not a bare-metal boot —
+no firmware, no initrd — and the stand-in unit is a `sleep`, not a Hive. The
+Hive half is what the two real reboots above already measured. What was missing
+was the link between them, and the link is a property of systemd, not of the
+image.
 
 ### The tag moved mid-experiment, and that is why the rows are pinned
 
