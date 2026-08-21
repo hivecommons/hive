@@ -231,15 +231,22 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	loginBlocked := a.NeedsLogin && interactiveLoginBackend(a.Backend)
 	hiveBlocked := blockers.any()
 
-	// Able = "can do everything this agent's mode grants". The CanOpen*/CanMerge
-	// booleans already encode the mode's ceiling (an advisory issues-only agent
-	// simply reports CanMerge=false — not being able to merge is not a fault for
-	// it). The only things that can TAKE AWAY a granted capability are an
-	// interactive login block or a hive-level blocker; either makes the agent
-	// unable to exercise its writes. We require CanOpenIssue as the floor: an
-	// agent that cannot even open an issue at this ACMM level has no reachable
-	// mission.
-	v.Able = a.CanOpenIssue && !loginBlocked && !hiveBlocked
+	// capable = "if this agent were working, could it exercise its mission?"
+	// The CanOpen*/CanMerge booleans already encode the mode's ceiling (an
+	// advisory issues-only agent simply reports CanMerge=false — not being able
+	// to merge is not a fault for it). The only things that TAKE AWAY a granted
+	// capability are an interactive login block or a hive-level blocker. We
+	// require CanOpenIssue as the floor: an agent that cannot even open an issue
+	// at this ACMM level has no reachable mission. This drives the badge TIER,
+	// which is about capability regardless of whether the pane is live.
+	capable := a.CanOpenIssue && !loginBlocked && !hiveBlocked
+
+	// Able = actually able to fulfill its mission RIGHT NOW: capable AND truly
+	// working. A capable-but-stopped or capable-but-paused agent is not doing
+	// its mission, so it must not inflate the "K able" count next to "M
+	// running". This makes the header read as a subset chain (expected ⊇
+	// running ⊇ able) and makes IMPOTENT = running − able coherent.
+	v.Able = capable && v.RunState == runWorking
 
 	// Reason + tier.
 	switch {
@@ -251,8 +258,11 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 		v.BlockedReason = "no write capability at this ACMM level"
 	}
 
+	// Tier reflects CAPABILITY (would it work if running), not liveness — a
+	// healthy-but-paused agent still shows green so the badge answers "can this
+	// agent do its job" independent of the run-state column beside it.
 	switch {
-	case v.Able:
+	case capable:
 		v.CapabilityTier = tierGreen
 	case a.CanOpenIssue && !loginBlocked && !hiveBlocked:
 		// Can still do part of its job (open issues) but a write it would
@@ -271,7 +281,11 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 			// Only "stuck" when the governor actually expects it active now.
 			v.Stuck = a.ExpectedActive
 		}
-		if running && !v.Able {
+		// IMPOTENT: running but not capable of its mission (blocked/gated). Uses
+		// `capable`, not v.Able, because v.Able already requires runWorking —
+		// an idle-at-prompt running agent that is blocked should still read as
+		// impotent.
+		if running && !capable {
 			v.Impotent = true
 		}
 	}

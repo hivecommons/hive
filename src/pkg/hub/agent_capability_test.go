@@ -93,22 +93,28 @@ func TestVerdict_HiveBlockerMakesImpotent(t *testing.T) {
 }
 
 // An inference backend that reports NeedsLogin is NOT treated as login-blocked
-// (those backends never sit on a CLI login prompt).
-func TestVerdict_InferenceBackendIgnoresNeedsLogin(t *testing.T) {
+// for CAPABILITY (those backends never sit on a CLI login prompt), so its
+// badge tier stays green — even though the shared run-state classifier still
+// keys off NeedsLogin regardless of backend (a pre-existing behavior we do not
+// change here). Capability (would it work) is distinct from run-state (is the
+// pane live).
+func TestVerdict_InferenceBackendNotLoginBlockedForCapability(t *testing.T) {
 	now := time.Now()
 	a := modernWorking(now)
 	a.Backend = "llm-d"
 	a.NeedsLogin = true
 	a.CanOpenIssue, a.CanOpenPR, a.CanMerge = true, true, true
 	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
-	if v.RunState == runStuckAtLogin {
-		// classifyInactiveAgent still keys off NeedsLogin regardless of backend;
-		// that is a pre-existing behavior. What matters for capability is that
-		// the inference backend is not counted as login-blocked for Able.
-		t.Log("note: run-state still login per shared classifier")
+	if v.CapabilityTier != tierGreen {
+		t.Errorf("inference backend must not be login-blocked for capability; tier=%s reason=%q",
+			v.CapabilityTier, v.BlockedReason)
 	}
-	if !v.Able {
-		t.Error("inference backend must not be login-blocked for capability")
+	if v.BlockedReason != "" {
+		t.Errorf("inference backend must carry no blocked reason, got %q", v.BlockedReason)
+	}
+	// It must NOT be flagged impotent, because it is not capability-blocked.
+	if v.Impotent {
+		t.Error("inference backend with a stray needsLogin must not be IMPOTENT")
 	}
 }
 
