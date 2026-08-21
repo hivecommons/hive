@@ -18,6 +18,7 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Fixed
 
+- Governor threshold scaling now reaches hives that have applied an ACMM level. Applying a pack seeds explicit `surge`/`busy`/`quiet` thresholds, and because "an explicit threshold is never scaled" could not tell a pack-seeded default from a number an operator typed, scaling by repo count silently did nothing on what is the normal path — including, plausibly, the large multi-repo fleets it was built for. Config now records where the thresholds came from: pack-seeded values are treated as per-repo *bases* and scale, while anything you set yourself is still used verbatim. Existing hives are unchanged on upgrade; re-apply the level to turn scaling on, and editing any threshold hands the whole set back to you ([#4037](https://github.com/kubestellar/hive/issues/4037)).
 - `DASHBOARD_AUTH_TOKEN` was documented as holding a Kubernetes secret *name*; it holds the token *value* itself. An operator following the old wording would have set their dashboard token to the literal name of the Secret ([#4427](https://github.com/kubestellar/hive/pull/4427)).
 
 ## 2026-08-21
