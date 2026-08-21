@@ -9763,6 +9763,46 @@ const dashboardHTML = `<!DOCTYPE html>
         (reasons ? '<div style="font-size:0.65rem;margin-top:4px">' + reasons + '</div>' : '');
     }
 
+    /* fleetQuadrantHeaderHTML is the aggregate above the table: the same kite,
+       averaged over the CURRENT filtered view.
+
+       This is the surface that turns the instrument from per-hive feedback into
+       a platform signal. One hive with a collapsed efficiency spoke is that
+       hive's problem; thirty of them collapsed the same way is not thirty
+       nudges, it is one platform problem, and only the aggregate shows that.
+
+       It re-renders with the table, so narrowing the filter re-aggregates over
+       whatever is now in view — which is why the rows and this shape always
+       agree with each other.
+
+       Renders nothing when nothing scored, rather than an empty chart: at that
+       point there is no finding to show, and a collapsed aggregate would read
+       as a fleet failing on every axis. */
+    function fleetQuadrantHeaderHTML() {
+      var q = _fleetQuadrant;
+      if (!q || !q.scored_axes) return '';
+      var axes = QUADRANT_AXES.map(function(name) {
+        var a = quadrantAxis(q, name);
+        var val = a.scored ? String(a.score) : '—';
+        return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px">' +
+          '<span style="font-size:0.62rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">' +
+            esc(QUADRANT_AXIS_LABELS[name]) + '</span>' +
+          '<span style="font-size:0.95rem;font-weight:600;color:' + (a.scored ? 'var(--text)' : 'var(--muted)') + '">' +
+            esc(val) + '</span></div>';
+      }).join('');
+      /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
+         against itself would render two identical overlaid polygons. */
+      return '<div style="display:flex;align-items:center;gap:16px;margin:0 auto 12px;padding:10px 14px;' +
+          'background:var(--bg-soft);border:1px solid var(--line);border-radius:8px;width:fit-content">' +
+          quadrantSVG(q, null, 78, false) +
+          '<div>' +
+            '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:4px">' +
+              'Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</div>' +
+            '<div style="display:flex;gap:14px">' + axes + '</div>' +
+          '</div>' +
+        '</div>';
+    }
+
     /* ---- Clickable user avatars ---------------------------------------
        Every face in this dashboard is a link to that person's GitHub profile.
        The avatar IS the affordance: a separate ↗ glyph or a separately-linked
@@ -15520,6 +15560,7 @@ const dashboardHTML = `<!DOCTYPE html>
         rows = hives.map(function(h, i) { return buildRow(h, i, 'all'); }).join('');
       }
       document.getElementById('hives-container').innerHTML =
+        fleetQuadrantHeaderHTML() +
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */

@@ -133,6 +133,32 @@ func TestQuadrantUnscoredRendersDashNotZero(t *testing.T) {
 	}
 }
 
+// TestFleetQuadrantHeaderWiring asserts the aggregate renders above the table.
+//
+// The header is what turns the instrument from per-hive feedback into a
+// platform signal — thirty hives collapsed on the same axis is one problem, not
+// thirty nudges — so losing it silently reduces the feature to a row decoration.
+func TestFleetQuadrantHeaderWiring(t *testing.T) {
+	html := dashScript(t)
+	for _, snippet := range []string{
+		"function fleetQuadrantHeaderHTML()",
+		// It must actually be mounted above the table, not merely defined.
+		"fleetQuadrantHeaderHTML() +",
+		// No fleet ghost behind the aggregate: it IS the fleet, and passing one
+		// would draw two identical overlaid polygons.
+		"quadrantSVG(q, null, 78, false)",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("dashboardHTML is missing %q — the fleet quadrant header is not wired", snippet)
+		}
+	}
+	// An unscored fleet must render nothing rather than a collapsed chart,
+	// which would read as a fleet failing on every axis.
+	if !strings.Contains(html, "if (!q || !q.scored_axes) return '';") {
+		t.Error("the fleet header does not suppress itself when nothing scored")
+	}
+}
+
 // TestQuadrantUnscoredCollapsesToCentre is the visual half of the same rule: an
 // unscored axis must plot at the origin so the polygon visibly caves in, rather
 // than drawing a small symmetric shape that reads as uniformly mediocre.
