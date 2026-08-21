@@ -230,16 +230,22 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 
 	loginBlocked := a.NeedsLogin && interactiveLoginBackend(a.Backend)
 	hiveBlocked := blockers.any()
+	blocked := loginBlocked || hiveBlocked
 
-	// capable = "if this agent were working, could it exercise its mission?"
+	// modeGrantsWrite: the agent's mode grants at least one write action (open
+	// PR or merge) beyond opening issues. An advisory issues-only agent does
+	// not — so it is fully able the moment it can open issues, and a write
+	// blocker cannot make it "partial".
+	modeGrantsWrite := a.CanOpenPR || a.CanMerge
+
+	// capable = "if this agent were working, could it exercise its FULL mission?"
 	// The CanOpen*/CanMerge booleans already encode the mode's ceiling (an
 	// advisory issues-only agent simply reports CanMerge=false — not being able
 	// to merge is not a fault for it). The only things that TAKE AWAY a granted
 	// capability are an interactive login block or a hive-level blocker. We
 	// require CanOpenIssue as the floor: an agent that cannot even open an issue
-	// at this ACMM level has no reachable mission. This drives the badge TIER,
-	// which is about capability regardless of whether the pane is live.
-	capable := a.CanOpenIssue && !loginBlocked && !hiveBlocked
+	// at this ACMM level has no reachable mission.
+	capable := a.CanOpenIssue && !blocked
 
 	// Able = actually able to fulfill its mission RIGHT NOW: capable AND truly
 	// working. A capable-but-stopped or capable-but-paused agent is not doing
@@ -261,12 +267,16 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// Tier reflects CAPABILITY (would it work if running), not liveness — a
 	// healthy-but-paused agent still shows green so the badge answers "can this
 	// agent do its job" independent of the run-state column beside it.
+	//
+	//   green — fully capable of its mission.
+	//   amber — can still open issues, but a blocker takes away a WRITE its mode
+	//           would otherwise grant (partial: half its job works).
+	//   red   — cannot even open an issue (blocked at the floor, or no capability
+	//           at this ACMM level).
 	switch {
 	case capable:
 		v.CapabilityTier = tierGreen
-	case a.CanOpenIssue && !loginBlocked && !hiveBlocked:
-		// Can still do part of its job (open issues) but a write it would
-		// otherwise be granted is gated/blocked.
+	case a.CanOpenIssue && blocked && modeGrantsWrite:
 		v.CapabilityTier = tierAmber
 	default:
 		v.CapabilityTier = tierRed
