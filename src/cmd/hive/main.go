@@ -1490,6 +1490,12 @@ func main() {
 	// upgrade roll" outage — into an immediate Audit Log signal instead of a
 	// silent multi-hour stall.
 	go agentMgr.StartCredentialWatchdog(ctx)
+	// Keep the Copilot CLI's config.json copilotTokens populated from the
+	// durable user token, so agents never sit stuck at "Please use /login"
+	// while a valid token exists (CLI 1.0.78 does not re-populate the emptied
+	// store from the injected env token on its own). Self-gates on a copilot
+	// backend and only writes when the store is empty; never runs a login.
+	go agentMgr.StartCopilotSessionRefresh(ctx)
 	if ghClient != nil {
 		agentMgr.SetSandboxPRClient(ghClient)
 	}

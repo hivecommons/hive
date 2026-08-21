@@ -966,6 +966,88 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 	}
 }
 
+// defaultCopilotSessionRefreshInterval is how often the Copilot session-token
+// refresh loop ensures the CLI's config.json copilotTokens map is populated
+// from the durable user token. Chosen well under the ~hour that a stored token
+// stays fresh so an emptied map is re-seeded long before an agent next reads
+// it, and low-cost (a small file read + conditional write) so a tight interval
+// is cheap.
+const defaultCopilotSessionRefreshInterval = 10 * time.Minute
+
+// CopilotSessionRefreshIntervalEnv overrides the interval with a Go duration.
+const CopilotSessionRefreshIntervalEnv = "HIVE_COPILOT_SESSION_REFRESH_INTERVAL"
+
+func copilotSessionRefreshInterval() time.Duration {
+	if v := os.Getenv(CopilotSessionRefreshIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultCopilotSessionRefreshInterval
+}
+
+// StartCopilotSessionRefresh keeps the Copilot CLI's config.json copilotTokens
+// map populated from the durable user token, so agents never sit stuck at
+// "Please use /login" while a VALID token exists.
+//
+// The failure it fixes: clearExpiredTokens (on an auth-error diagnostic) and a
+// config rewrite on an upgrade roll leave copilotTokens EMPTY, and CLI 1.0.78
+// does NOT re-populate it from the injected COPILOT_GITHUB_TOKEN on its own —
+// it just prompts /login. A restart does not help (it re-reads the empty map).
+// Every roll churns fresh agent pods, so absent this the whole hive can go dark
+// on Copilot with a perfectly good token sitting on disk.
+//
+// It is NOT a login: it never runs a device flow and never mints or fetches a
+// token. It only re-uses the token the operator already provided (m.copilotAuth‐
+// Token / the durable file), writing it into the store the CLI reads. When the
+// hive holds no Copilot token it does nothing — recovery there is still the
+// operator's manual dashboard login.
+//
+// Gating: only runs on hives with a copilot-backend agent. Only writes when the
+// store is EMPTY (or absent) — it never overwrites a token the CLI itself wrote
+// and is still using, so it can't clobber a live session.
+func (m *Manager) StartCopilotSessionRefresh(ctx context.Context) {
+	ticker := time.NewTicker(copilotSessionRefreshInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.refreshCopilotSessionToken()
+		}
+	}
+}
+
+// refreshCopilotSessionToken seeds config.json's copilotTokens from the durable
+// user token when the map is empty on a copilot-backend hive. One tick's work;
+// safe to call from the timer or ad hoc.
+func (m *Manager) refreshCopilotSessionToken() {
+	if !m.backendInUse("copilot") {
+		return
+	}
+	// Already populated (the CLI's own token or a prior restore is in place):
+	// leave it alone so we never overwrite a live session.
+	if copilotConfigHasTokens() {
+		return
+	}
+	m.mu.RLock()
+	token := m.copilotAuthToken
+	m.mu.RUnlock()
+	if strings.TrimSpace(token) == "" {
+		// No token to restore from — this is the genuinely-logged-out case the
+		// StartCredentialWatchdog alert covers; recovery is a manual login.
+		return
+	}
+	if err := restoreCopilotTokens(sharedCopilotConfigPath, token); err != nil {
+		m.logger.Warn("copilot session refresh: failed to restore copilotTokens",
+			"path", sharedCopilotConfigPath, "error", err)
+		return
+	}
+	m.logger.Info("copilot session refresh: re-seeded empty copilotTokens from durable user token",
+		"path", sharedCopilotConfigPath)
+}
+
 // evalCredentialWatch runs one backend's probe (only if that backend is in
 // use) and emits a transition-edge log + audit event. lastUnusable carries the
 // previous observation per backend across ticks.
@@ -5542,35 +5624,98 @@ func copilotCredentialFileHasTokens(path string) bool {
 	return false
 }
 
-// clearExpiredTokens removes stored copilot tokens from config.json.
-// An expired gho_ token causes copilot to hang during auth through the
-// MITM proxy instead of falling through to the /login prompt.
-func clearExpiredTokens() error {
-	data, err := os.ReadFile(sharedCopilotConfigPath)
+// copilotConfigHeader is the two-line // preamble the Copilot CLI writes atop
+// its JSONC config.json. We preserve it byte-for-byte on every rewrite so the
+// file keeps reading as the CLI's own managed file rather than a foreign one.
+const copilotConfigHeader = "// User settings belong in settings.json.\n// This file is managed automatically.\n"
+
+// readCopilotConfig loads config.json, strips the CLI's // comment lines, and
+// unmarshals the remainder. Returns an empty (non-nil) map when the file is
+// absent so a caller can populate a fresh config.
+func readCopilotConfig(path string) (map[string]interface{}, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		if os.IsNotExist(err) {
+			return map[string]interface{}{}, nil
+		}
+		return nil, err
 	}
 	var cleaned []byte
 	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
 			continue
 		}
 		cleaned = append(cleaned, []byte(line+"\n")...)
 	}
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(cleaned, &cfg); err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+	return cfg, nil
+}
+
+// writeCopilotConfig marshals cfg back to config.json with the CLI's // header
+// preserved and the CLI-expected mode. Written via a temp file + rename so a
+// concurrent CLI read never sees a half-written file.
+func writeCopilotConfig(path string, cfg map[string]interface{}) error {
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	content := copilotConfigHeader + string(out)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), sharedConfigDesiredMode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// clearExpiredTokens removes stored copilot tokens from config.json.
+// An expired gho_ token causes copilot to hang during auth through the
+// MITM proxy instead of falling through to the /login prompt.
+func clearExpiredTokens() error {
+	cfg, err := readCopilotConfig(sharedCopilotConfigPath)
+	if err != nil {
 		return err
 	}
 	cfg["copilotTokens"] = map[string]interface{}{}
 	cfg["loggedInUsers"] = []interface{}{}
 	delete(cfg, "lastLoggedInUser")
-	out, err := json.MarshalIndent(cfg, "", "  ")
+	return writeCopilotConfig(sharedCopilotConfigPath, cfg)
+}
+
+// restoreCopilotTokens writes token into config.json's copilotTokens map so the
+// Copilot CLI has a usable credential without an interactive /login.
+//
+// This closes the loop that leaves agents stuck at "Please use /login" while a
+// VALID user token exists: clearExpiredTokens (and a config rewrite on roll)
+// leave copilotTokens EMPTY, and CLI 1.0.78 does NOT re-populate it from the
+// injected COPILOT_GITHUB_TOKEN on its own — it just prompts /login. Seeding
+// copilotTokens from the durable user token gives the CLI the credential it
+// would otherwise wait for a human to supply. It never performs a device-flow
+// login (that stays the operator's manual path); it only re-uses a token the
+// operator already provided.
+//
+// The token is stored under the "github.com" host key in the object shape the
+// CLI reads ({"github.com":{"token":"…"}}) — the same shape the credential
+// reader (copilotCredentialFileHasTokens) already accepts. A blank token is a
+// no-op (nothing to restore); use clearExpiredTokens to empty the map.
+func restoreCopilotTokens(path, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	cfg, err := readCopilotConfig(path)
 	if err != nil {
 		return err
 	}
-	content := "// User settings belong in settings.json.\n// This file is managed automatically.\n" + string(out)
-	return os.WriteFile(sharedCopilotConfigPath, []byte(content), sharedConfigDesiredMode)
+	cfg["copilotTokens"] = map[string]interface{}{
+		"github.com": map[string]interface{}{"token": token},
+	}
+	return writeCopilotConfig(path, cfg)
 }
 
 // cliReadyIndicators prove copilot finished startup.
@@ -5793,11 +5938,30 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 				continue
 			}
 			if matchesAuthError(output) {
-				m.logger.Warn("diagnostic: auth error detected, clearing token",
-					"agent", agent.Name, "output_snippet", truncateStr(output, 200))
 				agent.LastError = "auth token expired or invalid"
-				if err := clearExpiredTokens(); err != nil {
-					m.logger.Warn("diagnostic: failed to clear tokens", "error", err)
+				// Prefer to RESTORE the stored token over merely clearing it: an
+				// empty copilotTokens leaves CLI 1.0.78 stuck at /login (it does
+				// not re-populate from the injected env token), and every roll
+				// re-hits this. If we hold a durable user token, seed it so the
+				// relaunch below comes up authenticated; otherwise fall back to
+				// the historical clear (which lets the CLI reach /login instead
+				// of hanging on the MITM proxy on a stale token).
+				m.mu.RLock()
+				userTok := m.copilotAuthToken
+				m.mu.RUnlock()
+				if strings.TrimSpace(userTok) != "" {
+					m.logger.Warn("diagnostic: auth error detected, restoring token from durable user token",
+						"agent", agent.Name, "output_snippet", truncateStr(output, 200))
+					if err := restoreCopilotTokens(sharedCopilotConfigPath, userTok); err != nil {
+						m.logger.Warn("diagnostic: failed to restore tokens, clearing instead", "error", err)
+						_ = clearExpiredTokens()
+					}
+				} else {
+					m.logger.Warn("diagnostic: auth error detected, clearing token (no durable token to restore)",
+						"agent", agent.Name, "output_snippet", truncateStr(output, 200))
+					if err := clearExpiredTokens(); err != nil {
+						m.logger.Warn("diagnostic: failed to clear tokens", "error", err)
+					}
 				}
 			} else if paneShowsCLIReady(strings.Split(output, "\n")) {
 				m.logger.Info("diagnostic: copilot started successfully in bare mode", "agent", agent.Name)
