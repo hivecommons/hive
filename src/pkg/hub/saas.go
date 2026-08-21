@@ -317,6 +317,14 @@ type SaaSUser struct {
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
+	// Company is ADMIN-entered CRM free text — the user's company/organization.
+	// Like FullName/SlackID/Notes it is operator-maintained (never asserted by a
+	// login) and is deliberately NOT collected in the hive request/provision
+	// form; the operator fills it in manually from the admin Users table. Same
+	// escaping + length-cap discipline as the other contact fields
+	// (maxContactCompanyLen); omitempty so existing records round-trip
+	// byte-identical until an admin sets it.
+	Company string `json:"company,omitempty"`
 
 	// Country is an OPTIONAL ISO 3166-1 alpha-2 code (uppercase, e.g. "GB"),
 	// rendered as a small flag beside the user's avatar. Two sources, in
@@ -436,6 +444,9 @@ const (
 	// are ~11 chars (U01ABCDEF23); the headroom allows an @handle or a
 	// workspace-qualified form.
 	maxContactSlackIDLen = 64
+	// maxContactCompanyLen bounds the company/organization name — an identifier
+	// like the name/Slack fields, sized generously for long legal entity names.
+	maxContactCompanyLen = 128
 	// maxContactNotesLen bounds the free-text notes field — the longest of the
 	// three, sized for a few paragraphs of admin scratch notes per user.
 	maxContactNotesLen = 8192
@@ -1577,6 +1588,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		FullName  *string `json:"full_name"`
 		SlackID   *string `json:"slack_id"`
 		Notes     *string `json:"notes"`
+		Company   *string `json:"company"`
 		// Pointer like the rest, and for a sharper reason here: `""` is an
 		// explicit CLEAR ("remove this country"), while an absent key means the
 		// admin edited some other field and this one must not be touched. A
@@ -1608,6 +1620,9 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	}
 	if body.Notes != nil {
 		u.Notes = truncateRunes(strings.TrimSpace(*body.Notes), maxContactNotesLen)
+	}
+	if body.Company != nil {
+		u.Company = truncateRunes(strings.TrimSpace(*body.Company), maxContactCompanyLen)
 	}
 	if body.Country != nil {
 		raw := strings.TrimSpace(*body.Country)
@@ -1667,7 +1682,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	// Logged only when the write actually applied, so the line never claims a
 	// change that mayOverwriteCountry declined.
 	attrs := []any{"target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
-		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil}
+		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil || body.Company != nil}
 	if countryEdited {
 		attrs = append(attrs, "countryAssigned", u.Country, "countrySource", u.CountrySource)
 	}
@@ -18381,7 +18396,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var filtered = (_allUsers || []).filter(function(u) {
         if (!q) return true;
         if (!u) return false;
-        var hay = [u.github_username, u.display_name, u.email, u.full_name, u.slack_id, u.notes]
+        var hay = [u.github_username, u.display_name, u.email, u.full_name, u.slack_id, u.company, u.notes]
           .filter(function(v) { return !!v; }).join(' ').toLowerCase();
         return hay.includes(q);
       });
@@ -18598,6 +18613,49 @@ const dashboardHTML = `<!DOCTYPE html>
        maxlength is a courtesy that stops a third letter being typed at all;
        normalizeCountryCode on both sides is the actual control. */
     var CONTACT_MAX_COUNTRY = 2;
+    var CONTACT_MAX_COMPANY = 128;
+    var CONTACT_W_COMPANY_BASIS = '18%';
+    var CONTACT_W_COMPANY_MIN = '170px';
+
+    /* ISO 3166-1 alpha-2 codes for the Country dropdown. We do NOT ship a
+       250-row name table (the reason the field used to be free text): the codes
+       are a compact closed list, and countryDisplayName() turns each into its
+       localized English name via the browser's Intl.DisplayNames at render
+       time — so the <select> options are labeled without a duplicated table and
+       stay in step with the same name source the flag/preview already use. */
+    var ISO_COUNTRY_CODES = ("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW").split(" ");
+
+    // countrySelectOptionsHTML builds the <option>s for the Country dropdown,
+    // sorted by localized display name, marking the current code selected and
+    // a leading blank ("— none —") so an admin can clear a country.
+    function countrySelectOptionsHTML(current) {
+      var cur = (normalizeCountryCode(current) || '');
+      var opts = ISO_COUNTRY_CODES.map(function (code) {
+        return { code: code, name: countryDisplayName(code) || code };
+      }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+      var html = '<option value=""' + (cur ? '' : ' selected') + '>— none —</option>';
+      opts.forEach(function (o) {
+        html += '<option value="' + escAttr(o.code) + '"' + (o.code === cur ? ' selected' : '') +
+          '>' + esc(o.name) + ' (' + esc(o.code) + ')</option>';
+      });
+      return html;
+    }
+
+    // companyDatalistOptionsHTML builds the autocomplete suggestions for the
+    // Company combobox from the DISTINCT company values already entered across
+    // all loaded users — so the list "compiles as you enter them" without any
+    // server-side vocabulary. _allUsers is the admin roster the Users table
+    // already holds. The field stays a free-text <input list=…>, so a brand-new
+    // company can always be typed and becomes a suggestion on the next render.
+    function companyDatalistOptionsHTML() {
+      var seen = {};
+      (_allUsers || []).forEach(function (u) {
+        var c = (u && u.company ? String(u.company).trim() : '');
+        if (c) seen[c] = true;
+      });
+      return Object.keys(seen).sort(function (a, b) { return a.localeCompare(b); })
+        .map(function (c) { return '<option value="' + escAttr(c) + '"></option>'; }).join('');
+    }
 
     // Which users currently have their contact panel open, keyed by username.
     // Re-rendering on the admin poll must not slam a panel shut mid-edit.
@@ -18793,6 +18851,7 @@ const dashboardHTML = `<!DOCTYPE html>
     function renderContactCell(u) {
       var bits = [];
       if (u.full_name) bits.push('<span style="font-size:0.78rem">' + esc(u.full_name) + '</span>');
+      if (u.company) bits.push('<span style="font-size:0.7rem;color:var(--muted)">' + esc(u.company) + '</span>');
       if (u.slack_id) bits.push('<span style="font-size:0.7rem;color:var(--muted)">slack: ' + esc(u.slack_id) + '</span>');
       if (u.notes) {
         var preview = u.notes.length > CONTACT_NOTES_PREVIEW_CHARS
@@ -18888,29 +18947,28 @@ const dashboardHTML = `<!DOCTYPE html>
             '<input type="text" data-contact-user="' + user + '" data-contact-field="slack_id"' +
               ' maxlength="' + CONTACT_MAX_SLACK + '" value="' + escAttr(u.slack_id || '') + '" style="' + fld + '">' +
           '</div>' +
-          /* Country. An ADMIN ASSIGNMENT, not a statement by the user — the
-             hub records it as such (CountrySource "admin"), which is why the
-             hint says "on their behalf" rather than presenting it as their
-             choice. It is the only route to a country for every user who
-             joined before the field existed: the wizard is behind them and the
-             self-service editor reaches only the person themselves.
-
-             A free-text code rather than a 250-row <select>: the country list
-             lives in get-started.html and duplicating it into this raw string
-             would give the hub two lists to keep in step. The live preview
-             below turns the code into a flag and an English name as it is
-             typed, which is what makes two letters legible without a list. */
+          /* Company. Admin-entered CRM free text, NOT collected in the hive
+             request form (operator fills it manually). A combobox: a plain
+             <input> backed by a <datalist> of the company names already entered
+             across users (companyDatalistOptionsHTML), so it autocompletes from
+             the growing set as they are entered while still accepting a new one. */
+          '<div style="flex:1 1 ' + CONTACT_W_COMPANY_BASIS + ';min-width:' + CONTACT_W_COMPANY_MIN + '">' +
+            '<label style="' + lbl + '">Company</label>' +
+            '<input type="text" data-contact-user="' + user + '" data-contact-field="company"' +
+              ' list="contact-company-suggestions"' +
+              ' maxlength="' + CONTACT_MAX_COMPANY + '" value="' + escAttr(u.company || '') + '" style="' + fld + '">' +
+          '</div>' +
+          /* Country. An ADMIN ASSIGNMENT on the user's behalf (recorded as
+             CountrySource "admin"). Now a <select> of ISO 3166-1 codes labeled
+             with their localized names via Intl.DisplayNames — no duplicated
+             250-row table (countrySelectOptionsHTML), a blank "— none —" clears
+             it. The live preview still echoes the flag + name for the current
+             selection so the row's Country column agrees on open. */
           '<div style="flex:1 1 ' + CONTACT_W_COUNTRY_BASIS + ';min-width:' + CONTACT_W_COUNTRY_MIN + '">' +
             '<label style="' + lbl + '">Country</label>' +
-            '<input type="text" data-contact-user="' + user + '" data-contact-field="country"' +
-              ' maxlength="' + CONTACT_MAX_COUNTRY + '" placeholder="GB"' +
+            '<select data-contact-user="' + user + '" data-contact-field="country"' +
               ' aria-describedby="' + contactCountryPreviewId(u.github_username) + '"' +
-              ' value="' + escAttr(normalizeCountryCode(u.country) || '') + '"' +
-              ' style="' + fld + ';text-transform:uppercase">' +
-            /* Echoes what the typed code resolves to, so a typo is visible
-               BEFORE the blur-save rather than as a surprise flag in the row
-               afterwards. Rendered from the stored value on open so the panel
-               agrees with the table's Country column. */
+              ' style="' + fld + '">' + countrySelectOptionsHTML(u.country) + '</select>' +
             '<div id="' + contactCountryPreviewId(u.github_username) + '"' +
               ' style="margin-top:4px;font-size:0.66rem;color:var(--muted);min-height:1.1em">' +
               countryPreviewHTML(u.country) + '</div>' +
@@ -19091,13 +19149,26 @@ const dashboardHTML = `<!DOCTYPE html>
         // Any keystroke marks the table as being edited and records the
         // in-progress value, so the poll backs off and nothing typed is only
         // ever held in a DOM node that is about to be replaced.
-        el.addEventListener('input', function() {
+        var onEdit = function() {
           markContactEditing();
           _contactDirty[key] = el.value;
           /* Country is the one field whose stored form (two letters) does not
-             say what it means, so it echoes as you type. The other fields are
-             their own preview. */
+             say what it means, so it echoes as you type/select. The other
+             fields are their own preview. */
           if (field === 'country') refreshContactCountryPreview(user, el.value);
+        };
+        el.addEventListener('input', onEdit);
+        // A <select> (the Country dropdown) fires 'change', not always 'input'.
+        // Also save on change so a dropdown pick commits without needing a blur.
+        el.addEventListener('change', function() {
+          onEdit();
+          if (el.tagName === 'SELECT') {
+            var pending = el.value;
+            saveContactField(user, field, pending, {silent: true}).then(function(ok) {
+              if (ok && _contactDirty[key] === pending) delete _contactDirty[key];
+              refreshContactToggleLabel(user);
+            });
+          }
         });
         // focus/blur also count as activity: tabbing between fields must not
         // leave a gap the poll can render into.
@@ -19510,6 +19581,10 @@ const dashboardHTML = `<!DOCTYPE html>
           '</tr>' + renderContactPanelRow(u) + hiveRows;
       }).join('');
       document.getElementById('users-container').innerHTML =
+        // Shared autocomplete vocabulary for the Company combobox, rebuilt each
+        // render from the distinct company values across all users so it grows
+        // as new companies are entered.
+        '<datalist id="contact-company-suggestions">' + companyDatalistOptionsHTML() + '</datalist>' +
         '<table class="hive-table"><thead><tr>' +
         '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
