@@ -21,25 +21,32 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says n
 - `inference/` — sample in-cluster OpenAI-compatible inference deployment and RBAC.
 - `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
 - `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for non-Kubernetes deployments.
-- `quadlet/` — Podman Quadlet units for the standalone deployment (ADR-0017). `hive.container` and `hive-data.volume` start the Hive service under `systemd`, rootful or rootless; see [the operator guide](../docs/podman-standalone-quadlet.md). Docker Compose remains the default runtime and is unaffected.
+- `quadlet/` — Podman Quadlet units for the standalone deployment (ADR-0017). `hive.container` and `hive-data.volume` start the Hive service under `systemd`, rootful or rootless; `hive.network` and `hive-gateway.container` put the authenticating gateway in front of it with the same published-port split as the Compose stack — 3001 published, 7681 never. See [the operator guide](../docs/podman-standalone-quadlet.md). Docker Compose remains the default runtime and is unaffected.
 - `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.
 
 ## Deployment contract tests
 
-Three guards cover different parts of the standalone stack and deliberately do
-not overlap. All three run in CI and none of them starts a container.
+Four guards cover different parts of the standalone stack and deliberately do
+not overlap. All four run in CI and none of them starts a container.
 
 | Test | Covers |
 |---|---|
 | `test_standalone_service_contract.sh` | The `hive` and `gateway` services: published-port boundary (3001 published, 7681 never), `NET_ADMIN`, `/data` on a named volume, health checks and readiness ordering, read-only config and secret mounts. |
 | `test_watchtower_socket_contract.sh` | The opt-in auto-update profile: Docker-socket containment, profile gating, the proxy's ports/networks/API sections. |
 | `test_supply_chain_pins.sh` | Build inputs: base-image and toolchain digest pins. |
+| `test_quadlet_port_boundary.sh` | The Podman units in `quadlet/`: the same published-port boundary as the row above (gateway publishes 3001 and only 3001, no unit publishes 7681), the shared network both containers join, the gateway's `After=hive.service` ordering, and the network's `DisableDNS`/`Internal`/`IPv6` defaults. |
 
 ```bash
 bash src/deploy/test_standalone_service_contract.sh
 bash src/deploy/test_watchtower_socket_contract.sh
 bash src/deploy/test_supply_chain_pins.sh
+bash src/deploy/test_quadlet_port_boundary.sh
 ```
+
+`test_standalone_service_contract.sh` parses `docker-compose.yaml` and
+`test_quadlet_port_boundary.sh` parses the Quadlet units; neither can see the
+other runtime's assets, which is why the boundary is asserted twice rather than
+once.
 
 `test_standalone_service_contract.sh` is also the snapshot the Podman runtime
 work in #4188 has to keep passing: it is a focused subset, not a claim of
