@@ -355,9 +355,9 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 	//   DRIFT   → a dot on the Version cell (driftBadge, full hover preserved)
 	//   ACMM+JOURNEY  → one Maturity cell (both badges stacked, both sorts kept)
 	//   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts)
-	// The 12 <th>/<td> cells are: bulk, ⋮ menu, Hive, Location, Uptime, Version,
-	// Repos, Maturity, Agents, Tokens, Mode, Activity.
-	const wantColumns = 12
+	// The 13 <th>/<td> cells are: bulk, ⋮ menu, Hive, Location, Uptime, Version,
+	// Repos, Maturity, Agents, Tokens, Mode, Activity, Quadrant.
+	const wantColumns = 13
 	if thCount != wantColumns {
 		t.Errorf("hive table has %d columns, want %d", thCount, wantColumns)
 	}

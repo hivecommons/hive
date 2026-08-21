@@ -127,19 +127,75 @@ func TestDecliningHiveDoesNotJoinPopulation(t *testing.T) {
 	}
 }
 
-// TestNudgeOnlyWhenWeak keeps the instrument from nagging. A nudge attached to
-// a strong axis trains people to ignore nudges everywhere.
+// TestNudgeOnlyWhenWeak keeps the instrument from nagging. A nudge that fires
+// on something already strong trains people to ignore nudges everywhere.
+//
+// The gate is deliberately on the weakest CRITERION, not on the axis average. A
+// hive can sit at a high autonomy level with a strict governor and still have
+// only one of eight repos enrolled: the axis averages well, but "only 1 of 8
+// org repos enrolled" is precisely the thing that would move it forward.
+// Suppressing that because the axis looks fine would hide the one actionable
+// finding on the row, which is the opposite of what this instrument is for.
+//
+// So the invariant is: a nudge implies SOME contributing criterion ranked at or
+// below the median — never that the whole axis did.
 func TestNudgeOnlyWhenWeak(t *testing.T) {
-	qs := ScoreFleet(fleetOf(12, func(i int, in *quadrantInputs) {
+	inputs := fleetOf(12, func(i int, in *quadrantInputs) {
 		in.prsMerged90d = iptr(i * 3)
 		in.workSource = "issues"
-	}))
+	})
+	qs := ScoreFleet(inputs)
+
+	// criterionPercentile re-derives one criterion's rank against the same
+	// population ScoreFleet used, so the assertion checks the real gate rather
+	// than a reimplementation of it.
+	criterionPercentile := func(axis string, idx int, want subCriterion) int {
+		var pop []float64
+		for j := range inputs {
+			for _, oc := range criteriaFor(axis, inputs[j]) {
+				if oc.name == want.name {
+					pop = append(pop, oc.value)
+				}
+			}
+		}
+		return percentileRank(want.value, pop, want.higherIsBetter)
+	}
+
 	for i, q := range qs {
 		for _, a := range q.Axes {
-			if a.Scored && a.Score > 50 && a.Nudge != "" {
-				t.Errorf("hive %d: axis %s scored %d but still carries a nudge %q",
-					i, a.Axis, a.Score, a.Nudge)
+			if !a.Scored || a.Nudge == "" {
+				continue
 			}
+			weakEnough := false
+			for _, c := range criteriaFor(a.Axis, inputs[i]) {
+				if c.nudge == a.Nudge && criterionPercentile(a.Axis, i, c) <= 50 {
+					weakEnough = true
+				}
+			}
+			if !weakEnough {
+				t.Errorf("hive %d: axis %s carries nudge %q, but no contributing criterion ranked at or below the median",
+					i, a.Axis, a.Nudge)
+			}
+		}
+	}
+}
+
+// TestNudgeAbsentWhenEverythingIsStrong is the positive control for the gate
+// above: a hive that leads the fleet on every productivity criterion must carry
+// no productivity nudge, or the gate is suppressing nothing at all.
+func TestNudgeAbsentWhenEverythingIsStrong(t *testing.T) {
+	inputs := fleetOf(12, func(i int, in *quadrantInputs) {
+		in.prsMerged90d = iptr((i + 1) * 10)
+		in.tasksCompleted7d = iptr((i + 1) * 10)
+		in.contributorCount = 4
+		in.activeContributors = 4
+		// Non-default work source, so that criterion is at its best value too.
+		in.workSource = "linear"
+	})
+	qs := ScoreFleet(inputs)
+	for _, a := range qs[11].Axes {
+		if a.Axis == AxisProductivity && a.Nudge != "" {
+			t.Errorf("the fleet-leading hive still carries a productivity nudge %q — the gate suppresses nothing", a.Nudge)
 		}
 	}
 }
@@ -174,19 +230,40 @@ func TestSmallFleetIsUnscored(t *testing.T) {
 	}
 }
 
-// TestCostRatioFloor guards against scoring efficiency off one or two merges,
-// where the ratio reflects fixed setup spend rather than how the hive runs.
+// TestCostRatioFloor guards the tokens-per-PR RATIO against being computed off
+// one or two merges, where it reflects fixed setup spend rather than how the
+// hive runs.
+//
+// It asserts the criterion, not the axis. The axis legitimately still scores
+// here: the burn RATE (tokens per day) carries no PR floor because it is
+// meaningful whatever a hive has shipped, and only the ratio that divides by
+// merged PRs needs a denominator worth dividing by.
 func TestCostRatioFloor(t *testing.T) {
-	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.tokensPerDay = fptr(50000)
-		in.prsMerged90d = iptr(2) // below minMergedPRsForCostRatio
-	}))
-	for i, q := range qs {
-		for _, a := range q.Axes {
-			if a.Axis == AxisEfficiency && a.Scored {
-				t.Errorf("hive %d: efficiency scored on 2 merged PRs — below the floor", i)
-			}
+	below := efficiencyCriteria(quadrantInputs{
+		tokensPerDay: fptr(50000),
+		prsMerged90d: iptr(minMergedPRsForCostRatio - 1),
+	})
+	for _, c := range below {
+		if c.name == "tokens_per_pr" {
+			t.Errorf("tokens_per_pr was computed on %d merged PRs — below the floor",
+				minMergedPRsForCostRatio-1)
 		}
+	}
+	// Positive control: at the floor the ratio DOES appear, proving the check
+	// above observes the floor rather than a criterion that never fires.
+	at := efficiencyCriteria(quadrantInputs{
+		tokensPerDay: fptr(50000),
+		prsMerged90d: iptr(minMergedPRsForCostRatio),
+	})
+	found := false
+	for _, c := range at {
+		if c.name == "tokens_per_pr" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("tokens_per_pr missing at %d merged PRs — the floor test proves nothing",
+			minMergedPRsForCostRatio)
 	}
 }
 
