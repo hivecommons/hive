@@ -186,8 +186,22 @@ SECRETS_DIR="${CONF_DIR}/secrets"
 # actually enforce it. A constant copied into this file is a second source of
 # truth and would eventually be the #4367 bug again, one level up.
 
+# The FIRST probe's port, and the pattern is written to keep it that way.
+# HealthCmd names two listeners since #4476 — the Go API first, the auth proxy
+# second — and it is the API port that dashboard.port is coupled to. A leading
+# `.*` is greedy and would match through to the LAST URL on the line, so the
+# script would write the PROXY's port into hive.yaml: #4367 again, caused by the
+# fix for a different bug. `[^:]*://` cannot cross the first scheme colon.
 unit_health_port() {
-  sed -n 's|^HealthCmd=.*http://127\.0\.0\.1:\([0-9]\{1,5\}\)/api/health.*|\1|p' "$1" | head -n1
+  sed -n 's|^HealthCmd=[^:]*://127\.0\.0\.1:\([0-9]\{1,5\}\)/api/health.*|\1|p' "$1" | head -n1
+}
+
+# The SECOND probe's port: the auth proxy nginx dials (#4476). Empty on a unit
+# that still probes one listener.
+unit_proxy_health_port() {
+  grep -E '^HealthCmd=' "$1" \
+    | grep -oE '127\.0\.0\.1:[0-9]{1,5}/api/health' \
+    | sed -n '2s|127\.0\.0\.1:\([0-9]\{1,5\}\)/api/health|\1|p'
 }
 
 unit_publish_port() {
@@ -291,12 +305,24 @@ done
 ok "four Quadlet units present, none mounting a container socket"
 
 HEALTH_PORT="$(unit_health_port "${QUADLET_SRC}/hive.container")"
+PROXY_HEALTH_PORT="$(unit_proxy_health_port "${QUADLET_SRC}/hive.container")"
 GATEWAY_PORT="$(unit_publish_port "${QUADLET_SRC}/hive-gateway.container")"
 HIVE_IMAGE="$(unit_image "${QUADLET_SRC}/hive.container")"
 [ -n "$HEALTH_PORT" ]  || die "$EX_SOFTWARE" "could not read the HealthCmd port from hive.container"
 [ -n "$GATEWAY_PORT" ] || die "$EX_SOFTWARE" "could not read PublishPort from hive-gateway.container"
 [ -n "$HIVE_IMAGE" ]   || die "$EX_SOFTWARE" "could not read Image= from hive.container"
 ok "read from the units: health port ${HEALTH_PORT}, gateway port ${GATEWAY_PORT}"
+
+# Reported because the two are not interchangeable, and step 4 below couples
+# dashboard.port to the FIRST one only. The second is the auth proxy the
+# gateway dials; it is probed so the unit cannot report healthy while the
+# dashboard is dead (#4476), but its port comes from HIVE_PROXY_PORT, not from
+# hive.yaml, so there is nothing here for this script to set.
+if [ -n "$PROXY_HEALTH_PORT" ]; then
+  info "the unit also probes the auth proxy on ${PROXY_HEALTH_PORT} (#4476)"
+else
+  warn "hive.container probes only ${HEALTH_PORT}: it can report healthy while the dashboard is dead (#4476)"
+fi
 info "image: ${HIVE_IMAGE}"
 
 # --- step 2: the host preflights, before anything is written ----------------

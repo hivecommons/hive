@@ -165,6 +165,36 @@ check_unit_wiring() {
       ;;
     *) warn "Restart=$restart" ;;
   esac
+
+  # WHAT `active` IS WORTH HERE (#4476). Everything above establishes that this
+  # unit reports readiness rather than spawn -- and this probe, and `boot-check`
+  # below, read this unit and nothing else. So it matters which listener the
+  # healthcheck reads. The container serves two: the Go API, and the Node auth
+  # proxy that src/deploy/nginx.conf dials and every operator reaches. A unit
+  # generated from a HealthCmd naming only the first reported `active` and
+  # `healthy` for two minutes in which the dashboard refused connections, so a
+  # green run of this probe would have been green and wrong.
+  #
+  # Read from the GENERATED ExecStart, not from the checkout: the installed
+  # unit is what this manager will run, and it may predate the fix.
+  #
+  # Counted over the whole ExecStart rather than parsed out of the --health-cmd
+  # argument, deliberately. Quadlet escapes the spaces inside that argument as
+  # \x20 and `systemctl show` renders argv[] space-joined, so the argument's
+  # boundaries look different depending on which one you read. The count does
+  # not care: nothing else on a generated podman-run line is an /api/health URL.
+  local exec_start health_cmd probe_count
+  exec_start="$(show ExecStart)"
+  health_cmd="$(printf '%s' "$exec_start" | grep -c -- '--health-cmd' || true)"
+  probe_count="$(printf '%s' "$exec_start" | grep -oE '127\.0\.0\.1:[0-9]+/api/health' | wc -l)"
+  if [ "$health_cmd" -eq 0 ]; then
+    bad "no --health-cmd in the generated ExecStart -- Notify=healthy then reports started, not healthy"
+  elif [ "$probe_count" -ge 2 ]; then
+    ok "the healthcheck probes both listeners -- 'healthy' covers the auth proxy the gateway reaches"
+  else
+    bad "the healthcheck probes one listener -- this unit can report healthy while the dashboard is dead (#4476)"
+    info "installed unit predates the fix; reinstall hive.container from the checkout and daemon-reload"
+  fi
 }
 
 check_boot_wiring() {
