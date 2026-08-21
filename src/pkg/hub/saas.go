@@ -4983,10 +4983,15 @@ var (
 	commitMsgBySHA = map[string]string{}
 )
 
-// trackedBranches lists the always-tracked branches that produce Docker
-// images via CI. Personal dev branches (e.g. mk) are tracked dynamically:
-// see HubServer.trackedBranchList.
-var trackedBranches = []string{"v2", "v3"}
+// trackedBranches lists the legacy always-tracked branches that still produce
+// Docker images via CI. Personal dev branches (e.g. mk) are tracked
+// dynamically: see HubServer.trackedBranchList. v3 is retired and must not be
+// offered solely because old image tags or persisted SHA cache entries linger.
+var trackedBranches = []string{"v2"}
+
+var retiredBranches = map[string]struct{}{
+	"v3": {},
+}
 
 // trackedBranchList returns the static CI branches plus every branch some
 // registered hive is assigned to, so a personal dev branch gets SHA polling,
@@ -4997,6 +5002,9 @@ func (s *HubServer) trackedBranchList() []string {
 	seen := make(map[string]bool, len(trackedBranches))
 	out := make([]string, 0, len(trackedBranches))
 	add := func(b string) {
+		if _, retired := retiredBranches[b]; retired {
+			return
+		}
 		if b != "" && !seen[b] {
 			seen[b] = true
 			out = append(out, b)
@@ -5032,7 +5040,7 @@ const imageBranchCacheTTL = 5 * time.Minute
 // ghcr.io/kubestellar/hive:<branch>-latest tags (cached). A tag with a '-'
 // that our sanitizer would have produced can't be reversed unambiguously, so
 // we only surface tags that round-trip: the tag minus the "-latest" suffix.
-// Slashless branches (v2, v3, mk) round-trip exactly; slashed branches
+// Slashless branches (v2, mk) round-trip exactly; slashed branches
 // (feat/x → feat-x-latest) surface as "feat-x", which is still a valid
 // switch target because switch-branch/branchToTag normalize both to the same
 // image tag.
