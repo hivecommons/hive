@@ -6569,7 +6569,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := s.fetchInferenceModelsForBackend(backend, endpoints)
+	models, complete := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
 	fallback := false
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
@@ -6585,6 +6585,13 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		"backend":  backend,
 		"models":   models,
 		"fallback": fallback,
+		// partial: some of the backend's endpoints answered and others did
+		// not, so `models` is a FLOOR, not a census — every id in it really
+		// was discovered (so the dropdown labels them normally, unlike the
+		// static fallback), but a model's absence proves nothing. Auto-heal
+		// must sit out this sample rather than switch an agent off a model
+		// that only the unreachable endpoint serves (#4438).
+		"partial": !fallback && !complete,
 	}
 	// Some LiteLLM gateways advertise the FULL catalog on /v1/models but scope
 	// a key's team to a SUBSET; a non-entitled model 403s at inference. When
@@ -6654,23 +6661,37 @@ func intersectEntitled(discovered, entitled []string) []string {
 // Falls back to the legacy raw-key path whenever no gateway resolves for this
 // name (env-configured vllm/llm-d endpoints), keeping existing behaviour.
 func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []string) []string {
+	models, _ := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
+	return models
+}
+
+// fetchInferenceModelsForBackendDetailed additionally reports whether EVERY
+// endpoint answered, so a caller can tell a complete census from a partial one
+// (#4438). It matters most here: this is the discovery the dashboard's model
+// auto-heal reads, and auto-heal does not merely toast — it rewrites the
+// agent's configured model and relaunches its session. A gateway that drops
+// out of a multi-endpoint sweep must never be able to spend an agent's
+// selection that way.
+func (s *Server) fetchInferenceModelsForBackendDetailed(backend string, endpoints []string) ([]string, bool) {
 	gw := s.resolveGatewayForBackend(backend)
 	if gw == nil || !gatewayKindNeedsProbeAuth(gw.Kind) {
-		return fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+		return fetchModelsFromEndpointsDetailed(endpoints, s.inferenceAPIKey(backend))
 	}
 	bearer, headers, err := gatewayProbeAuth(gw.Kind, gw.ResolveAPIKey(), gw.ProjectID)
 	if err != nil {
 		s.logger.Warn("gateway auth for model discovery failed",
 			"backend", backend, "kind", gw.Kind, "error", err)
-		return nil
+		return nil, false
 	}
 	seen := make(map[string]bool)
 	var all []string
+	complete := true
 	for _, ep := range endpoints {
 		models, err := fetchModelsWithHeaders(ep, bearer, headers)
 		if err != nil {
 			s.logger.Warn("model discovery failed",
 				"backend", backend, "kind", gw.Kind, "endpoint", ep, "error", err)
+			complete = false
 			continue
 		}
 		for _, m := range models {
@@ -6680,7 +6701,7 @@ func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []stri
 			}
 		}
 	}
-	return all
+	return all, complete
 }
 
 // gatewayKindNeedsProbeAuth reports whether a gateway kind requires the
@@ -6781,15 +6802,30 @@ func (s *Server) queryInferenceModels(backend string) []string {
 	return models
 }
 
-// queryInferenceModelsDetailed additionally reports whether the returned
-// list is the static FALLBACK (discovery failed and no env override) rather
-// than a live-discovered or operator-configured set. Callers surfacing
-// model add/remove events must ignore diffs against a fallback list.
+// queryInferenceModelsDetailed additionally reports whether the returned list
+// is NON-AUTHORITATIVE — a stand-in for a census that did not fully succeed —
+// rather than a complete live-discovered or operator-configured set. Callers
+// surfacing model add/remove events must ignore diffs against such a list.
+//
+// Three shapes are non-authoritative, and all three produced the same false
+// "Model removed" storm before they were flagged:
+//   - the static aliases, when discovery failed outright (#4426);
+//   - a PARTIAL sweep, when some endpoints answered and others did not;
+//   - the HIVE_*_MODELS env list, when it is reached only BECAUSE a
+//     registered endpoint failed to answer (#4438).
+//
+// The env list is authoritative in the one case where it is the configured
+// source of models rather than a consolation prize: no endpoint registered at
+// all, so nothing was ever probed.
 func (s *Server) queryInferenceModelsDetailed(backend string) ([]string, bool) {
-	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
-		models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+	endpoints, ok := s.getInferenceEndpoints(backend)
+	probed := ok && len(endpoints) > 0
+	if probed {
+		models, complete := fetchModelsFromEndpointsDetailed(endpoints, s.inferenceAPIKey(backend))
 		if len(models) > 0 {
-			return models, false
+			// Show a partial sweep — a short dropdown beats an empty one —
+			// but never let it stand as a census of what exists.
+			return models, !complete
 		}
 	}
 	envVar := "HIVE_VLLM_MODELS"
@@ -6800,7 +6836,7 @@ func (s *Server) queryInferenceModelsDetailed(backend string) ([]string, bool) {
 		envVar = "HIVE_LITELLM_MODELS"
 	}
 	if val := os.Getenv(envVar); val != "" {
-		return inferenceModelsFromEnv(envVar, ""), false
+		return inferenceModelsFromEnv(envVar, ""), probed
 	}
 	// Discovery failed or the backend is unconfigured — fall back to the
 	// common static aliases (unverified against any endpoint/key).
@@ -6813,11 +6849,25 @@ const inferenceModelQueryTimeout = 5 * time.Second
 // a deduplicated, combined list of all model IDs found. apiKey is optional
 // (litellm requires bearer auth; vllm/llm-d do not).
 func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
+	models, _ := fetchModelsFromEndpointsDetailed(endpoints, apiKey)
+	return models
+}
+
+// fetchModelsFromEndpointsDetailed additionally reports whether EVERY endpoint
+// answered. A PARTIAL sweep — one gateway of several timing out or answering
+// 403 while its siblings reply — still returns a non-empty list, and a caller
+// that diffs model sets must not read the survivors as "the unreachable
+// endpoint's models were removed" (#4438: a partial sweep wallpapered the
+// dashboard with false "Model removed from litellm: …" toasts, including for
+// the very model the hive's agents were configured to use).
+func fetchModelsFromEndpointsDetailed(endpoints []string, apiKey string) ([]string, bool) {
 	seen := make(map[string]bool)
 	var all []string
+	complete := true
 	for _, ep := range endpoints {
 		models, err := fetchModelsFromEndpoint(ep, apiKey)
 		if err != nil {
+			complete = false
 			continue
 		}
 		for _, m := range models {
@@ -6827,7 +6877,7 @@ func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
 			}
 		}
 	}
-	return all
+	return all, complete
 }
 
 func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {

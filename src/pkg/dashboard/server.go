@@ -401,10 +401,14 @@ type InferenceBackend struct {
 	Name      string   `json:"name"`
 	Inference bool     `json:"inference"`
 	Models    []string `json:"models"`
-	// ModelsFallback is true when Models is the static alias list because
-	// live /v1/models discovery failed (endpoint down, 403, etc). The UI
-	// must not treat a fallback list as evidence that models were actually
-	// added or removed (#toast storm on litellm 403).
+	// ModelsFallback is true when Models is NOT an authoritative census of
+	// what the backend offers: the static alias list substituted because
+	// live /v1/models discovery failed (endpoint down, 403, etc), a PARTIAL
+	// sweep in which some endpoints answered and others did not, or the
+	// HIVE_*_MODELS env list standing in for a registered endpoint that
+	// failed to answer. The UI must not treat any of these as evidence that
+	// models were actually added or removed (#4426, #4438) — diffing against
+	// one is what produced the "Model removed from litellm: …" toast storms.
 	ModelsFallback bool `json:"models_fallback,omitempty"`
 }
 

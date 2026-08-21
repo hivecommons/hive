@@ -7539,7 +7539,11 @@
         // filtered model set — reconcile agents/defaults whose selected model
         // is no longer available. No-op when the list is a static fallback or
         // when every current selection is still present (idempotent).
-        reconcileModelsAfterDiscovery(backend, models, !!data.fallback);
+        // data.partial: some of the backend's endpoints answered and others
+        // did not, so the list is a floor, not a census — offer it in the
+        // dropdown, but never let it retire a selection, because auto-heal
+        // rewrites the agent's model and relaunches its session (#4438).
+        reconcileModelsAfterDiscovery(backend, models, !!data.fallback || !!data.partial);
         return models;
       } catch (e) {
         return INFERENCE_MODELS[backend] || [];
@@ -7713,13 +7717,16 @@
     function updateInferenceModelsFromSSE(inferenceBackends) {
       if (!inferenceBackends) return;
       for (const b of inferenceBackends) {
-        /* A fallback list means /v1/models discovery FAILED (endpoint down,
-           gateway 403, ...) and the server substituted static aliases. That
-           is not evidence any model was added or removed — diffing against
-           it once flooded the dashboard with ~25 sticky "Model removed"
-           toasts when a litellm key lost /v1/models access. Keep the last
-           REAL list as the diff baseline so recovery diffs stay accurate,
-           and skip the toast machinery entirely. */
+        /* models_fallback means the list is NOT an authoritative census:
+           /v1/models discovery FAILED and the server substituted static
+           aliases (or the HIVE_*_MODELS env list), or only SOME of the
+           backend's endpoints answered. None of that is evidence a model
+           was added or removed — diffing against such a list flooded the
+           dashboard with ~25 sticky "Model removed" toasts when a litellm
+           key lost /v1/models access (#4426), and again when a multi-gateway
+           sweep came back partial (#4438). Keep the last REAL list as the
+           diff baseline so recovery diffs stay accurate, and skip the toast
+           machinery entirely. */
         if (b.models_fallback) {
           const fallbackModels = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
           INFERENCE_MODELS[b.id] = fallbackModels;
@@ -7730,14 +7737,27 @@
         const currentIds = (b.models || []).sort();
         const prevIds = (_lastKnownModels[b.id] || []).sort();
 
+        /* An EMPTY live list is a discovery hole the server did not flag,
+           never a backend that genuinely offers nothing: diffing it would
+           declare every known model removed at once — the worst-case toast
+           storm. Refuse the diff, and keep the last real baseline AND its
+           dropdown rather than blanking the model picker (#4438). */
+        if (prevIds.length > 0 && currentIds.length === 0) continue;
+
         if (prevIds.length > 0 && JSON.stringify(currentIds) !== JSON.stringify(prevIds)) {
           const added = currentIds.filter(m => !prevIds.includes(m));
           const removed = prevIds.filter(m => !currentIds.includes(m));
 
+          /* Model-change toasts name the FULL id, provider prefix included.
+             Stripping it (m.split('/').pop()) rendered "openai/claude-
+             sonnet-4-6" as bare "claude-sonnet-4-6" — spelled identically to
+             the id an agent is configured with, so an operator could not tell
+             a prefixed variant's departure from their own model vanishing,
+             nor find the named model anywhere in the gateway's list (#4438). */
           added.forEach(m => {
             const key = `added:${b.id}:${m}`;
             if (_dismissedModelBanners.has(key)) return;
-            showToast(`New model available on ${b.id}: ${m.split('/').pop()}`, 'success');
+            showToast(`New model available on ${b.id}: ${m}`, 'success');
             _dismissedModelBanners.add(key);
           });
 
@@ -7748,10 +7768,10 @@
             const key = `removed:${b.id}:${m}`;
             if (_dismissedModelBanners.has(key)) return;
             _dismissedModelBanners.add(key);
-            showToast(`Model removed from ${b.id}: ${m.split('/').pop()}`, 'error', false, TOAST_MODEL_CHANGE_MS);
+            showToast(`Model removed from ${b.id}: ${m}`, 'error', false, TOAST_MODEL_CHANGE_MS);
             if (window._lastAgents) {
               (window._lastAgents || []).filter(a => a.cli === b.id && a.model === m).forEach(a => {
-                showToast(`⚠ ${a.displayName || a.name} uses removed model ${m.split('/').pop()} — update its model selection`, 'error', false, TOAST_MODEL_CHANGE_MS);
+                showToast(`⚠ ${a.displayName || a.name} uses removed model ${m} — update its model selection`, 'error', false, TOAST_MODEL_CHANGE_MS);
               });
             }
           });
