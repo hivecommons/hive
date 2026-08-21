@@ -3695,9 +3695,9 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	provisionHiveRecord := *h
 	provisionHiveRecord.Repos = append([]string(nil), h.Repos...)
 	provisionReq := req
-	provisionWG.Add(1)
-	go func() {
-		defer provisionWG.Done()
+	// Queued, not spawned: execution is bounded hub-wide and per cluster so a
+	// provisioning burst cannot stampede kubectl/OCI (see provision_queue.go).
+	enqueueProvision(targetCluster, func() {
 		h := &provisionHiveRecord
 		cluster := s.clusterForHive(h)
 		if cluster == nil {
@@ -3716,7 +3716,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		}
 		h.Status = "provisioning"
 		saveSaaSHive(h)
-	}()
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
