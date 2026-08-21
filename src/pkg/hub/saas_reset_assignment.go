@@ -261,6 +261,32 @@ func (s *HubServer) handleResetAssignment(w http.ResponseWriter, r *http.Request
 // created longer ago than the timeout is auto-reset, and a fresh assign always
 // carries an AssignedAt anyway so it takes the precise path. A wedge with neither
 // stamp is left for the operator's manual Reset (still reachable via the UI/API).
+// stuckAssignmentSweepInterval throttles sweepStuckAssignments. A wedge is
+// only actionable once it is older than assignStuckResetTimeout (tens of
+// minutes), so sweeping every 2-min poller tick buys nothing but a full fleet
+// scan; a wedge is still reset well within one timeout of becoming eligible.
+// 7 minutes is deliberately co-prime with the sibling throttled lanes so the
+// sweeps drift apart instead of stacking onto the same poller tick.
+const stuckAssignmentSweepInterval = 7 * time.Minute
+
+// sweepStuckAssignmentsIfDue runs the stuck-assignment sweep only if at least
+// stuckAssignmentSweepInterval has elapsed since the last run. Safe to call
+// from the poller loop every tick; same throttle pattern and same guarding
+// mutex as reconcileNetAdminIfDue.
+func (s *HubServer) sweepStuckAssignmentsIfDue() {
+	s.clusterUnreachableMu.Lock()
+	due := s.lastStuckAssignmentSweep.IsZero() ||
+		time.Since(s.lastStuckAssignmentSweep) >= stuckAssignmentSweepInterval
+	if due {
+		s.lastStuckAssignmentSweep = time.Now()
+	}
+	s.clusterUnreachableMu.Unlock()
+	if !due {
+		return
+	}
+	s.sweepStuckAssignments()
+}
+
 func (s *HubServer) sweepStuckAssignments() {
 	now := time.Now()
 

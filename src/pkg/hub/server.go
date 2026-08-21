@@ -977,6 +977,14 @@ type HubServer struct {
 	// grant stops being honored at read time via loadSaaSUser's prune, on the
 	// wall clock, whether or not this sweep ever runs.
 	lastAccessExpirySweep time.Time
+	// lastOrphanedUpgradeSweep throttles the orphaned-upgrade latch sweep
+	// (stale_upgrade.go). Same rationale and same guarding mutex as the sweeps
+	// above: poller-loop-only state.
+	lastOrphanedUpgradeSweep time.Time
+	// lastStuckAssignmentSweep throttles the stuck-assignment reset sweep
+	// (saas_reset_assignment.go). Same rationale and same guarding mutex as the
+	// sweeps above: poller-loop-only state.
+	lastStuckAssignmentSweep time.Time
 	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
 	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
 	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see

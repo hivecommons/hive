@@ -5372,11 +5372,14 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// Clear Upgrading flags orphaned by spoke pods that vanished mid-upgrade.
 	// Runs alongside — not inside — triggerAutoUpgrades because that function
 	// only ever considers hives with AutoUpgrade enabled, while the flag is set
-	// by the admin and bulk upgrade paths for any hive.
-	s.sweepOrphanedUpgrades()
+	// by the admin and bulk upgrade paths for any hive. Throttled internally to
+	// orphanedUpgradeSweepInterval — corrective work, not a hot path.
+	s.sweepOrphanedUpgradesIfDue()
 	// Auto-reset any placeholder wedged at assigned && !claim_delivered past the
 	// timeout, so an assigned-but-unclaimed slot can never dead-end silently.
-	s.sweepStuckAssignments()
+	// Throttled internally to stuckAssignmentSweepInterval — a wedge only
+	// becomes actionable after assignStuckResetTimeout, far longer than a tick.
+	s.sweepStuckAssignmentsIfDue()
 	// Repair pre-#1222 NET_ADMIN securityContext drift so the F5 fatal-egress
 	// image (#2664) can't crash-loop drifted hives. Throttled internally to
 	// netAdminReconcileInterval — this poller ticks far more often than the
@@ -5426,8 +5429,8 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		}
 		// Always check for pending auto-upgrades (retries failed/missed hives).
 		s.triggerAutoUpgrades()
-		s.sweepOrphanedUpgrades()
-		s.sweepStuckAssignments()
+		s.sweepOrphanedUpgradesIfDue()
+		s.sweepStuckAssignmentsIfDue()
 		s.reconcileNetAdminIfDue()
 		s.reconcilePerHiveEnvIfDue()
 		s.retireExpiredGenerationsIfDue()

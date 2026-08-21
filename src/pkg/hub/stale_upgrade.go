@@ -216,6 +216,32 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 // SUPPRESSING delivery, since every upgrade path skips a hive it believes is
 // mid-upgrade. UpgradeTarget is preserved for observability, and the event is
 // logged and written to the hive's timeline.
+// orphanedUpgradeSweepInterval throttles sweepOrphanedUpgrades. The sweep
+// repairs stale upgrade latches and re-arms missed deliveries — corrective
+// work on the scale of minutes, not a hot path — so the 2-min SHA poller must
+// not pay a full registry evaluation every tick as the fleet grows. 9 minutes
+// is deliberately co-prime with the sibling 10/15-minute lanes so the throttled
+// sweeps drift apart instead of stacking onto the same poller tick.
+const orphanedUpgradeSweepInterval = 9 * time.Minute
+
+// sweepOrphanedUpgradesIfDue runs the orphaned-upgrade sweep only if at least
+// orphanedUpgradeSweepInterval has elapsed since the last run. Safe to call
+// from the poller loop every tick; same throttle pattern and same guarding
+// mutex as reconcileNetAdminIfDue.
+func (s *HubServer) sweepOrphanedUpgradesIfDue() {
+	s.clusterUnreachableMu.Lock()
+	due := s.lastOrphanedUpgradeSweep.IsZero() ||
+		time.Since(s.lastOrphanedUpgradeSweep) >= orphanedUpgradeSweepInterval
+	if due {
+		s.lastOrphanedUpgradeSweep = time.Now()
+	}
+	s.clusterUnreachableMu.Unlock()
+	if !due {
+		return
+	}
+	s.sweepOrphanedUpgrades()
+}
+
 func (s *HubServer) sweepOrphanedUpgrades() {
 	// Admin kill switch: while spoke upgrades are paused nothing is being
 	// delivered, so this sweep must not run — it re-arms heartbeatUpgrade
