@@ -9,6 +9,7 @@ import (
 // Each test is named TestRegression_PassN_Description.
 
 func TestRegression_Pass0_EmptyIdeaReturns400(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	_, code, _ := client.post("/api/inception/start", map[string]string{"idea": ""})
 	if code != 400 {
@@ -17,6 +18,7 @@ func TestRegression_Pass0_EmptyIdeaReturns400(t *testing.T) {
 }
 
 func TestRegression_Pass0_ResetWithNoState(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	data, code, err := client.post("/api/inception/reset", nil)
 	if err != nil {
@@ -28,6 +30,7 @@ func TestRegression_Pass0_ResetWithNoState(t *testing.T) {
 }
 
 func TestRegression_Pass1_BeadStoreReloadsFromDisk(t *testing.T) {
+	requireHive(t)
 	// The bead store must reload from disk each poll cycle because
 	// the brainstorm agent writes directly via the bd CLI, not via
 	// the in-memory store. Without reload, the watcher never sees
@@ -42,6 +45,7 @@ func TestRegression_Pass1_BeadStoreReloadsFromDisk(t *testing.T) {
 }
 
 func TestRegression_Pass2_WatcherIgnoresOldBeads(t *testing.T) {
+	requireHive(t)
 	// Old inception beads from previous passes must not trigger phase
 	// advances in the current pass. The watcher must filter by
 	// bead.CreatedAt >= state.StartedAt.
@@ -55,6 +59,7 @@ func TestRegression_Pass2_WatcherIgnoresOldBeads(t *testing.T) {
 }
 
 func TestRegression_ApproveInCapturePhase(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "test"})
@@ -65,6 +70,7 @@ func TestRegression_ApproveInCapturePhase(t *testing.T) {
 }
 
 func TestRegression_DownloadWithNoInception(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	_, code, _ := client.get("/api/inception/download")
@@ -74,6 +80,7 @@ func TestRegression_DownloadWithNoInception(t *testing.T) {
 }
 
 func TestRegression_ScaffoldReturns404NotState(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	_, code, _ := client.get("/api/inception/scaffold")
@@ -86,6 +93,7 @@ func TestRegression_ScaffoldReturns404NotState(t *testing.T) {
 }
 
 func TestRegression_ApproveRequiresScaffoldPhase(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "test"})
@@ -96,6 +104,7 @@ func TestRegression_ApproveRequiresScaffoldPhase(t *testing.T) {
 }
 
 func TestRegression_Pass0_StateWithNoInception(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	data, code, err := client.get("/api/inception/state")
@@ -112,6 +121,7 @@ func TestRegression_Pass0_StateWithNoInception(t *testing.T) {
 }
 
 func TestRegression_Bug39_ConcurrentStartRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	_, code1, _ := client.post("/api/inception/start", map[string]string{"idea": "first idea"})
@@ -126,6 +136,7 @@ func TestRegression_Bug39_ConcurrentStartRejected(t *testing.T) {
 }
 
 func TestRegression_Bug40_InvalidFactTypeRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	_, code, _ := client.post("/api/inception/start", map[string]string{"idea": "test invalid facts"})
@@ -147,6 +158,7 @@ func TestRegression_Bug40_InvalidFactTypeRejected(t *testing.T) {
 }
 
 func TestRegression_Bug41_EmptyFactBodyRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "empty body test"})
@@ -165,6 +177,7 @@ func TestRegression_Bug41_EmptyFactBodyRejected(t *testing.T) {
 }
 
 func TestRegression_Bug42_EmptyFactTitleRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "empty title test"})
@@ -183,6 +196,7 @@ func TestRegression_Bug42_EmptyFactTitleRejected(t *testing.T) {
 }
 
 func TestRegression_Bug44_DuplicateQuestionIDsRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "dupe question test"})
@@ -202,6 +216,7 @@ func TestRegression_Bug44_DuplicateQuestionIDsRejected(t *testing.T) {
 }
 
 func TestRegression_Bug45_WikiNameTooLongRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	longName := ""
 	for i := 0; i < 100; i++ {
@@ -217,6 +232,7 @@ func TestRegression_Bug45_WikiNameTooLongRejected(t *testing.T) {
 }
 
 func TestRegression_Bug48_PhaseChangedAtOmitsZero(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "timestamp test"})
@@ -233,6 +249,7 @@ func TestRegression_Bug48_PhaseChangedAtOmitsZero(t *testing.T) {
 }
 
 func TestRegression_Bug50_IdeationFactsFallbackToWiki(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "fallback facts test"})
@@ -264,6 +281,7 @@ func TestRegression_Bug50_IdeationFactsFallbackToWiki(t *testing.T) {
 }
 
 func TestRegression_Bug52_StaleWikiFactsClearedOnStart(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	// First inception: record facts
 	client.post("/api/inception/reset", nil)
@@ -296,6 +314,7 @@ func TestRegression_Bug52_StaleWikiFactsClearedOnStart(t *testing.T) {
 }
 
 func TestRegression_Bug55_EmptyQuestionTextRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "empty text test"})
@@ -314,6 +333,7 @@ func TestRegression_Bug55_EmptyQuestionTextRejected(t *testing.T) {
 }
 
 func TestRegression_Bug56_UnknownAnswerIDRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "unknown id test"})
@@ -335,6 +355,7 @@ func TestRegression_Bug56_UnknownAnswerIDRejected(t *testing.T) {
 }
 
 func TestRegression_Bug58_EmptyFactsArrayRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "empty facts test"})
@@ -357,6 +378,7 @@ func TestRegression_Bug58_EmptyFactsArrayRejected(t *testing.T) {
 }
 
 func TestRegression_Bug63_WhitespaceIdeaRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	_, code, _ := client.post("/api/inception/start", map[string]string{"idea": "   "})
@@ -370,6 +392,7 @@ func TestRegression_Bug63_WhitespaceIdeaRejected(t *testing.T) {
 }
 
 func TestRegression_Bug62_ImportOnlyMdFiles(t *testing.T) {
+	requireHive(t)
 	// The import handler should only accept .md files from the zip.
 	// Non-markdown files (like passwd, .json, .txt) should be skipped.
 	// This test would need a zip upload which the test client doesn't
@@ -382,6 +405,7 @@ func TestRegression_Bug62_ImportOnlyMdFiles(t *testing.T) {
 }
 
 func TestRegression_Bug67_EmptyQuestionsRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	client.post("/api/inception/start", map[string]string{"idea": "empty questions test"})
@@ -398,6 +422,7 @@ func TestRegression_Bug67_EmptyQuestionsRejected(t *testing.T) {
 }
 
 func TestRegression_Bug68_BareStringRepoURLRejected(t *testing.T) {
+	requireHive(t)
 	client := newAPIClient()
 	client.post("/api/inception/reset", nil)
 	data, code, _ := client.post("/api/inception/scan", map[string]string{"repo_url": "not-a-url"})

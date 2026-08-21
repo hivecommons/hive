@@ -26,14 +26,9 @@ func TestInceptionE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e in short mode")
 	}
+	requireHive(t)
 
 	client := newAPIClient()
-
-	// Verify hive is reachable
-	_, code, err := client.get("/api/version")
-	if err != nil || code != 200 {
-		t.Fatalf("hive not reachable at %s: %v (code=%d)", hiveURL, err, code)
-	}
 
 	passed := 0
 	failed := 0

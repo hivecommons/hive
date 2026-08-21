@@ -9,16 +9,49 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 var (
-	hiveURL   = envOr("HIVE_URL", "http://192.168.4.85:3003")
-	hiveToken = envOr("HIVE_TOKEN", "0f87edfe470a78005be214d521b82c3d2d63e437d8875b9b56488b887f697ce8")
+	hiveURL   = envOr("HIVE_URL", "http://127.0.0.1:3003")
+	hiveToken = os.Getenv("HIVE_TOKEN")
 	cdpURL    = envOr("CDP_URL", "ws://127.0.0.1:9222")
 	screenshotDir = envOr("SCREENSHOT_DIR", "/tmp/inception-e2e")
 )
+
+var (
+	hiveProbeOnce sync.Once
+	hiveProbeErr  error
+)
+
+// requireHive skips the calling test unless a live hive answers
+// /api/version at hiveURL. The probe runs once per test binary with a
+// short timeout so an unreachable hive skips the whole package in
+// seconds instead of stalling every unguarded HTTP call until the
+// 10-minute package deadline kills the run (see #4395).
+func requireHive(t *testing.T) {
+	t.Helper()
+	hiveProbeOnce.Do(func() {
+		probe := &apiClient{
+			baseURL: hiveURL,
+			token:   hiveToken,
+			client:  &http.Client{Timeout: 3 * time.Second},
+		}
+		_, code, err := probe.get("/api/version")
+		if err != nil {
+			hiveProbeErr = err
+			return
+		}
+		if code != 200 {
+			hiveProbeErr = fmt.Errorf("/api/version returned %d", code)
+		}
+	})
+	if hiveProbeErr != nil {
+		t.Skipf("hive not reachable at %s, skipping: %v", hiveURL, hiveProbeErr)
+	}
+}
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
