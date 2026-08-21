@@ -151,6 +151,7 @@ type agentVerdict struct {
 	Stuck          bool   // expected active but not actually working
 	Impotent       bool   // actually running but not able
 	QuietByDesign  bool   // paused or expected-off — never a fault
+	Problem        bool   // THE alarm: governor expects it on, it can't deliver (any reason)
 	CapabilityTier string // tierGreen | tierAmber | tierRed | tierGray
 	BlockedReason  string // one human sentence; empty when Able
 }
@@ -221,9 +222,17 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	v.QuietByDesign = v.RunState == runQuietByDesign
 
 	// --- ABLE leg. ---
-	// Unknown for a legacy spoke: it reports no capabilities, so we cannot
-	// claim it is unable — leave Able=false, tier gray, and never mark Impotent.
+	// Unknown for a legacy spoke: it reports no capabilities or expected/enabled
+	// signals, so we cannot claim it is unable — leave Able=false, tier gray,
+	// and never mark Impotent. Its bare state="running" is NOT trustworthy as
+	// "working" here either: without the new signals we cannot tell working from
+	// impotent, and rendering "working" next to a gray capability badge reads as
+	// a contradiction (the Bluefin "off + working + ✗✗✗" confusion). Force the
+	// whole row to UNKNOWN so a legacy spoke never looks like either health or a
+	// fault — it looks like what it is: not yet reporting.
 	if legacy {
+		v.RunState = runUnknown
+		v.QuietByDesign = false
 		v.markUnknown()
 		return v
 	}
@@ -300,6 +309,15 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 		}
 	}
 
+	// PROBLEM is the ONE signal the operator scans for: the governor is calling
+	// this agent (expected active) AND it cannot do its work — for ANY reason
+	// (stuck at login, zombie session, dead, blocked, or running-but-impotent).
+	// It deliberately unifies Stuck and Impotent so the view has a single "is
+	// this a problem?" per agent. It is FALSE for paused/off-schedule agents
+	// (quiet by design — the operator's own choice, not called) and for legacy/
+	// unknown rows (returned early above — can't-verify is not broken).
+	v.Problem = a.ExpectedActive && !v.QuietByDesign && !v.Able
+
 	return v
 }
 
@@ -313,13 +331,23 @@ func (v *agentVerdict) markUnknown() {
 }
 
 // agentFleetRollup is the per-spoke divergence summary: the three counts the
-// header shows plus the two delta totals.
+// header shows, the delta totals, and the single Problems count that drives the
+// hive's health dot and its sort position.
 type agentFleetRollup struct {
 	Expected int `json:"expected"`
 	Running  int `json:"running"`
 	Able     int `json:"able"`
 	Stuck    int `json:"stuck"`
 	Impotent int `json:"impotent"`
+	// Problems is how many agents the governor expects on that cannot deliver
+	// (any reason) — THE alarm count. >0 → the hive's dot is red and it sorts to
+	// the top.
+	Problems int `json:"problems"`
+	// Known is how many agents reported the new divergence signals (non-legacy).
+	// When Known==0 the whole hive is UNKNOWN (a spoke not yet rolled to this
+	// build) and its dot is gray, never green — absence of a problem we cannot
+	// see is not health.
+	Known int `json:"known"`
 }
 
 // AgentVerdictJSON is the per-agent row the fleet view renders. It carries the
@@ -349,7 +377,12 @@ type AgentVerdictJSON struct {
 	Stuck          bool   `json:"stuck,omitempty"`
 	Impotent       bool   `json:"impotent,omitempty"`
 	QuietByDesign  bool   `json:"quietByDesign,omitempty"`
-	BlockedReason  string `json:"blockedReason,omitempty"`
+	// Problem is THE alarm: governor expects this agent on and it can't deliver.
+	Problem bool `json:"problem,omitempty"`
+	// Unknown means the spoke did not report the new divergence signals (legacy
+	// build). The frontend renders these rows as "unknown", never as off/✗.
+	Unknown       bool   `json:"unknown,omitempty"`
+	BlockedReason string `json:"blockedReason,omitempty"`
 }
 
 // buildAgentVerdicts derives the per-agent verdict rows for one hive, skipping
@@ -383,6 +416,8 @@ func buildAgentVerdicts(agents []AgentSummary, blockers hiveBlockers, queuedWork
 			Stuck:          v.Stuck,
 			Impotent:       v.Impotent,
 			QuietByDesign:  v.QuietByDesign,
+			Problem:        v.Problem,
+			Unknown:        v.CapabilityTier == tierGray,
 			BlockedReason:  v.BlockedReason,
 		})
 	}
@@ -407,6 +442,9 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 			continue
 		}
 		v := deriveAgentVerdict(a, blockers, queuedWork, now)
+		if v.CapabilityTier != tierGray {
+			r.Known++
+		}
 		if a.ExpectedActive {
 			r.Expected++
 		}
@@ -421,6 +459,9 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 		}
 		if v.Impotent {
 			r.Impotent++
+		}
+		if v.Problem {
+			r.Problems++
 		}
 	}
 	return r

@@ -165,6 +165,14 @@ func TestVerdict_LegacySpokeIsUnknownNeverAlarms(t *testing.T) {
 	if v.Able || v.Stuck || v.Impotent {
 		t.Errorf("legacy agent must not be able/stuck/impotent: %+v", v)
 	}
+	// Legacy agent must be run-state UNKNOWN (not "working" off a bare state
+	// field) and never a Problem — this is the Bluefin "off+working+✗✗✗" fix.
+	if v.RunState != runUnknown {
+		t.Errorf("legacy agent run-state = %v, want unknown", v.RunState)
+	}
+	if v.Problem {
+		t.Error("legacy/unknown agent must never be a PROBLEM (can't-verify ≠ broken)")
+	}
 	// A legacy stopped agent must not be called dead/stuck.
 	a2 := AgentSummary{Name: "old2", State: "stopped"}
 	v2 := deriveAgentVerdict(a2, hiveBlockers{}, 5, now)
@@ -238,5 +246,60 @@ func TestBuildAgentVerdicts_ShapeAndSkipBlank(t *testing.T) {
 	}
 	if !out[0].CanMerge || out[0].CapabilityTier != tierGreen {
 		t.Errorf("verdict JSON missing derived fields: %+v", out[0])
+	}
+}
+
+// PROBLEM = governor expects it on AND it can't deliver, for any reason. It
+// unifies stuck/impotent/blocked and never fires on paused/off/legacy agents.
+func TestVerdict_ProblemFlag(t *testing.T) {
+	now := time.Now()
+	// Expected + login-stuck → problem.
+	stuck := modernWorking(now)
+	stuck.NeedsLogin = true
+	if v := deriveAgentVerdict(stuck, hiveBlockers{}, 5, now); !v.Problem {
+		t.Error("expected + login-stuck must be a PROBLEM")
+	}
+	// Expected + hive-blocked (running but impotent) → problem.
+	blk := modernWorking(now)
+	if v := deriveAgentVerdict(blk, hiveBlockers{RepoTargetMisconfigured: true}, 5, now); !v.Problem {
+		t.Error("expected + blocked must be a PROBLEM")
+	}
+	// Expected + working + able → NOT a problem.
+	if v := deriveAgentVerdict(modernWorking(now), hiveBlockers{}, 5, now); v.Problem {
+		t.Error("healthy agent must not be a PROBLEM")
+	}
+	// Paused (even if it carries ExpectedActive) → NOT a problem.
+	paused := modernWorking(now)
+	paused.Paused, paused.State = true, "paused"
+	if v := deriveAgentVerdict(paused, hiveBlockers{}, 5, now); v.Problem {
+		t.Error("paused agent must never be a PROBLEM")
+	}
+	// Not expected active → NOT a problem even if it can't work.
+	off := modernWorking(now)
+	off.ExpectedActive, off.State = false, "stopped"
+	if v := deriveAgentVerdict(off, hiveBlockers{}, 5, now); v.Problem {
+		t.Error("off-schedule agent must never be a PROBLEM")
+	}
+}
+
+func TestRollup_ProblemsAndKnown(t *testing.T) {
+	now := time.Now()
+	healthy := modernWorking(now)
+	stuck := modernWorking(now)
+	stuck.Name, stuck.NeedsLogin = "quality", true
+	legacy := AgentSummary{Name: "old", State: "running", StartedAt: settled(now)}
+
+	r := rollupAgents([]AgentSummary{healthy, stuck, legacy}, hiveBlockers{}, 5, now)
+	if r.Problems != 1 {
+		t.Errorf("problems = %d, want 1 (the login-stuck one)", r.Problems)
+	}
+	if r.Known != 2 {
+		t.Errorf("known = %d, want 2 (legacy agent excluded)", r.Known)
+	}
+
+	// All-legacy hive: Known==0 so the frontend renders it UNKNOWN, not "0 able".
+	allLegacy := rollupAgents([]AgentSummary{legacy}, hiveBlockers{}, 5, now)
+	if allLegacy.Known != 0 || allLegacy.Problems != 0 {
+		t.Errorf("all-legacy hive must be known=0 problems=0, got %+v", allLegacy)
 	}
 }

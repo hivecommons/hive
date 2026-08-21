@@ -3354,7 +3354,15 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// heartbeat signals plus this hive's blocker fields. Derived on read so
 		// the browser never re-runs the state machine (shares classifyInactive‐
 		// Agent with the block above, so the two can never disagree).
-		if len(result[i].Agents) > 0 {
+		//
+		// SKIP placeholders/pool hives entirely: an unclaimed placeholder runs
+		// its default agents against no real repo, so they legitimately report
+		// "expected N · 0 able · N impotent" — a cascade of FALSE alarms that
+		// would drown the one signal the view exists for. No verdicts → the
+		// frontend has nothing to render for them and they carry no problem
+		// count. (isPlaceholderEntry is the same authoritative test computeFleet‐
+		// Stats and the alert layer use.)
+		if len(result[i].Agents) > 0 && !isPlaceholderEntry(result[i]) {
 			blockers := hiveBlockers{
 				GitHubAppRequired:       result[i].GitHubAppRequired,
 				GitHubAppPermIssue:      result[i].GitHubAppPermIssue,
@@ -9737,6 +9745,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <a href="/reading">Reading</a>
       <a href="/get-started">Get Started</a>
       <a href="/dashboard" style="color:var(--amber)">My Hives</a>
+      <a href="/my-hives" id="nav-fleet" style="display:none" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
       <a href="/api/docs" target="_blank">API</a>
       <a href="https://kubestellar.io/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
       <span id="nav-user" class="nav-user"></span>
@@ -18412,6 +18421,8 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         _adminLoaded = true;
         document.getElementById('admin-section').style.display = '';
+        var navFleet = document.getElementById('nav-fleet');
+        if (navFleet) navFleet.style.display = '';
         /* The section is display:none until the admin check passes, so this is
            the first point at which the persisted collapse state can be pushed
            onto real DOM. Idempotent, so running it on every poll is fine. */
