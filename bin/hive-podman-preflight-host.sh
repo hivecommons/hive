@@ -181,18 +181,95 @@ hive_podman_check_selinux() {
 
 # --- 2. Mount labeling -------------------------------------------------------
 #
-# The three bind-mount sources in src/docker-compose.yaml. Each is consumed by
-# exactly one container, so the private (:Z) form is always available; the
-# read-only configuration files are called out as shared (:z) candidates
-# because :Z stamps a per-container MCS category onto a file that is part of
-# the operator's checkout and is likely read by other tooling.
+# TWO LAYOUTS, AND THE DIFFERENCE IS NOT COSMETIC (#4422).
+#
+# This check knew only the source-tree layout — the one the Compose stack mounts
+# out of a checkout, where the gateway config sits at `deploy/nginx.conf`. The
+# Quadlet install (src/docs/podman-standalone-quadlet.md) puts the operator's
+# files in `%E/hive` with `nginx.conf` FLAT, so pointing this script at that
+# directory reported
+#
+#   ✗ Gateway config: <dir>/deploy/nginx.conf does not exist
+#
+# and exited 78 with the file sitting right there, one level up. That landed on
+# the one install path where this check is most useful: SELinux labelling of
+# those binds is exactly the class of problem that otherwise surfaces as a
+# 300-second start timeout with the container already `--rm`'d away. A non-zero
+# exit also invites an operator to stop reading a report whose other rows —
+# mount labels, the secrets group-traverse check, port 3001 — they still need.
+#
+# The recommended relabel option differs by layout too, and getting THAT
+# backwards would be worse than the path bug:
+#
+#   source-tree   the config files are part of the operator's CHECKOUT and are
+#                 likely read by other tooling, so `:z` (shared) is right and
+#                 `:Z` would stamp a per-container MCS category onto a tracked
+#                 file.
+#   quadlet       the config files are operator-owned files in %E/hive read by
+#                 exactly ONE container, and the shipped units mount all three
+#                 `:ro,Z`. Recommending `:z` there would contradict the units.
 #
 # Format: relative-path|description|recommended-option
-HIVE_PODMAN_BIND_SOURCES=(
+HIVE_PODMAN_BIND_SOURCES_SOURCE=(
   "hive.yaml|Hive configuration|z"
   "deploy/nginx.conf|gateway configuration|z"
   "secrets|secrets directory|Z"
 )
+HIVE_PODMAN_BIND_SOURCES_QUADLET=(
+  "hive.yaml|Hive configuration|Z"
+  "nginx.conf|gateway configuration|Z"
+  "secrets|secrets directory|Z"
+)
+
+# Which layout HIVE_SRC_DIR holds: auto | source | quadlet. `auto` decides from
+# what is on disk; the explicit values are for a directory mid-install that has
+# neither gateway config in place yet.
+HIVE_PODMAN_LAYOUT="${HIVE_PODMAN_LAYOUT:-auto}"
+
+# Resolved once by _pfh_resolve_layout, read by every check below.
+HIVE_PFH_LAYOUT=""
+HIVE_PFH_NGINX_REL=""
+HIVE_PODMAN_BIND_SOURCES=()
+
+# Decides the layout and populates the three globals above. Detection keys on
+# the gateway config, the only file whose PATH differs between the two layouts;
+# `hive.env` is the tiebreak for a Quadlet directory that has not had nginx.conf
+# copied in yet, since nothing in the source tree carries that name.
+_pfh_resolve_layout() {
+  local dir="$HIVE_SRC_DIR" chosen="$HIVE_PODMAN_LAYOUT"
+
+  if [[ "$chosen" == "auto" ]]; then
+    if [[ -e "${dir}/deploy/nginx.conf" ]]; then
+      chosen="source"
+    elif [[ -e "${dir}/nginx.conf" ]]; then
+      chosen="quadlet"
+    elif [[ -e "${dir}/hive.env" ]]; then
+      chosen="quadlet"
+    else
+      # Neither shape is on disk. Stay on the historical default rather than
+      # guess; the config check reports the missing files by name either way.
+      chosen="source"
+    fi
+  fi
+
+  case "$chosen" in
+    source)
+      HIVE_PFH_LAYOUT="source"
+      HIVE_PFH_NGINX_REL="deploy/nginx.conf"
+      HIVE_PODMAN_BIND_SOURCES=("${HIVE_PODMAN_BIND_SOURCES_SOURCE[@]}")
+      ;;
+    quadlet)
+      HIVE_PFH_LAYOUT="quadlet"
+      HIVE_PFH_NGINX_REL="nginx.conf"
+      HIVE_PODMAN_BIND_SOURCES=("${HIVE_PODMAN_BIND_SOURCES_QUADLET[@]}")
+      ;;
+    *)
+      printf 'ERROR: HIVE_PODMAN_LAYOUT must be auto, source, or quadlet (got %q)\n' \
+        "$HIVE_PODMAN_LAYOUT" >&2
+      exit 64
+      ;;
+  esac
+}
 
 # --- Reading an SELinux label ------------------------------------------------
 #
@@ -367,8 +444,9 @@ hive_podman_check_mount_labels() {
   done
 
   if [[ "$checked" -eq 0 ]]; then
-    _pfh_warn "Mount labeling: no bind-mount source found under ${HIVE_SRC_DIR}"
-    _pfh_hint "Set HIVE_SRC_DIR to the directory holding hive.yaml, deploy/, and secrets/."
+    _pfh_warn "Mount labeling: no bind-mount source found under ${HIVE_SRC_DIR} (layout: ${HIVE_PFH_LAYOUT})"
+    _pfh_hint "Set HIVE_SRC_DIR to the directory holding the bind sources: hive.yaml, ${HIVE_PFH_NGINX_REL}, and secrets/."
+    _pfh_hint "A source tree (Compose) has deploy/nginx.conf; a Quadlet install has nginx.conf flat in %E/hive. Force either with HIVE_PODMAN_LAYOUT=source|quadlet."
     return 0
   fi
 
@@ -522,7 +600,40 @@ hive_podman_check_config_secrets() {
   local rc=0
 
   _pfh_check_readable "${HIVE_SRC_DIR}/hive.yaml" "Hive config" "" "required" || rc=1
-  _pfh_check_readable "${HIVE_SRC_DIR}/deploy/nginx.conf" "Gateway config" "" "required" || rc=1
+  _pfh_check_readable "${HIVE_SRC_DIR}/${HIVE_PFH_NGINX_REL}" "Gateway config" "" "required" || rc=1
+
+  # hive.env is Quadlet-only, and deliberately NOT a row in the bind-source
+  # table above: `EnvironmentFile=` is read by systemd ON THE HOST and never
+  # bind-mounted, so it has no container label to judge — podman-volume-
+  # persistence.md records it staying at its ordinary host label. It still earns
+  # a check here, because both ways it goes wrong cost the whole start budget:
+  #
+  #   missing            `EnvironmentFile=` becomes `podman run --env-file`, and
+  #                      `podman run` FAILS outright on a missing file.
+  #   no dashboard token Hive refuses to start unless the hive is hub-hosted —
+  #                      every mutation endpoint would be unauthenticated — and
+  #                      Notify=healthy turns that refusal into a unit stuck in
+  #                      `activating` until TimeoutStartSec expires.
+  if [[ "$HIVE_PFH_LAYOUT" == "quadlet" ]]; then
+    local env_file="${HIVE_SRC_DIR}/hive.env"
+    if [[ ! -e "$env_file" ]]; then
+      _pfh_fail "Environment file: ${env_file} does not exist"
+      _pfh_hint "EnvironmentFile= becomes '--env-file' on the container command line, which fails on a missing file. Start from the tracked template:"
+      _pfh_hint "  cp src/deploy/quadlet/hive.env.example '${env_file}' && chmod 600 '${env_file}'"
+      rc=1
+    else
+      _pfh_check_readable "$env_file" "Environment file" "600" "required" || rc=1
+      # Presence of a non-empty assignment only. The value is never read out.
+      if grep -qE '^[[:space:]]*HIVE_DASHBOARD_TOKEN[[:space:]]*=[[:space:]]*[^[:space:]]' "$env_file" 2>/dev/null; then
+        _pfh_pass "Dashboard token: HIVE_DASHBOARD_TOKEN is set in hive.env"
+      else
+        _pfh_warn "Dashboard token: HIVE_DASHBOARD_TOKEN is not set in ${env_file}"
+        _pfh_hint "Hive REFUSES TO START without it unless the hive is hub-hosted, and Notify=healthy turns that into a unit stuck in 'activating' for the whole TimeoutStartSec."
+        _pfh_hint "  printf 'HIVE_DASHBOARD_TOKEN=%s\\n' \"\$(openssl rand -hex 32)\" >> '${env_file}'"
+        _pfh_hint "A hub-hosted hive (HIVE_SESSION_KEY / HIVE_HUB_SECRET set) does not need it — that is why this is a warning, not a failure."
+      fi
+    fi
+  fi
 
   if [[ ! -d "$secrets_dir" ]]; then
     # Token-only deployments never create it; a GitHub App deployment must.
@@ -682,6 +793,17 @@ hive_podman_preflight_host_main() {
 
   echo "Podman preflight (SELinux, mounts, secrets, ports)"
 
+  # Resolve the layout BEFORE any check runs — every path below depends on it.
+  # Announced rather than inferred silently: auto-detection that does not say
+  # what it picked is indistinguishable from a check looking in the wrong place,
+  # which is the bug this replaced (#4422).
+  _pfh_resolve_layout
+  if [[ "$HIVE_PODMAN_LAYOUT" == "auto" ]]; then
+    echo "  layout: ${HIVE_PFH_LAYOUT} (detected) — config under ${HIVE_SRC_DIR}, gateway config at ${HIVE_PFH_NGINX_REL}"
+  else
+    echo "  layout: ${HIVE_PFH_LAYOUT} (HIVE_PODMAN_LAYOUT) — config under ${HIVE_SRC_DIR}, gateway config at ${HIVE_PFH_NGINX_REL}"
+  fi
+
   # Each check reports independently: an operator fixing a host wants the whole
   # list, not the first item on it.
   hive_podman_check_selinux
@@ -717,7 +839,13 @@ Runs only when HIVE_DEPLOY_RUNTIME selects podman; with the Docker default it
 reports that it was skipped and exits 0.
 
 Environment:
-  HIVE_SRC_DIR                    directory holding hive.yaml, deploy/, secrets/
+  HIVE_SRC_DIR                    directory holding the deployment's bind sources
+  HIVE_PODMAN_LAYOUT              auto (default) | source | quadlet — which shape
+                                  HIVE_SRC_DIR has. A source tree (Compose) keeps
+                                  the gateway config at deploy/nginx.conf; a
+                                  Quadlet install keeps it flat as nginx.conf in
+                                  %E/hive, alongside hive.env. auto decides from
+                                  what is on disk and prints which it picked.
   HIVE_PODMAN_PREFLIGHT_PORTS     published host ports to check (default 3001)
 
 Exit codes: 0 clean, 64 unusable runtime selection, 78 at least one failure.

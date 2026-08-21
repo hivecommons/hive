@@ -1455,6 +1455,13 @@ func main() {
 	// caches: agent sessions outlived their scoped token, gh 401'd and printed
 	// "gh auth login", and the login-detector auto-paused the agent (#4072).
 	go agentMgr.StartAgentTokenRefresh(ctx)
+	// Start the credential watchdog UNCONDITIONALLY. It self-gates per backend
+	// on the presence of an agent using that backend each tick, so it is a
+	// no-op on gateway/inference-only hives. On Copilot/Claude hives it turns a
+	// missing or expired durable credential — the "stuck at login after an
+	// upgrade roll" outage — into an immediate Audit Log signal instead of a
+	// silent multi-hour stall.
+	go agentMgr.StartCredentialWatchdog(ctx)
 	if ghClient != nil {
 		agentMgr.SetSandboxPRClient(ghClient)
 	}

@@ -20,6 +20,23 @@ const (
 	AuditAgentRemoved     = "agent_removed"
 	AuditAgentBackendSet  = "agent_backend_changed"
 	AuditAgentModelSet    = "agent_model_changed"
+
+	// AuditCopilotTokenMissing is recorded by the credential watchdog when the
+	// durable Copilot device-flow token file (/data/copilot-user-token) is
+	// absent or empty on a Copilot-backend hive. It surfaces the "stuck at
+	// /login after an upgrade roll" failure — where a bare in-CLI `/login`
+	// wrote config.json but never the durable file, so fresh agent pods have
+	// no token to auto-refresh from — as an immediate, queryable Audit Log
+	// signal instead of a silent multi-hour outage. Recovery is an operator
+	// dashboard device-flow login; the watchdog never touches token material.
+	AuditCopilotTokenMissing = "copilot_token_missing"
+
+	// AuditClaudeTokenMissing is the Claude-backend analogue: recorded when the
+	// durable Claude OAuth credentials file (/data/home/.claude/.credentials.json)
+	// is absent, unparseable, or expired on a Claude-backend hive. Same silent
+	// failure shape and same operator-login recovery as the Copilot case; the
+	// detail's outcome= distinguishes "missing" from "invalid or expired".
+	AuditClaudeTokenMissing = "claude_token_missing"
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than

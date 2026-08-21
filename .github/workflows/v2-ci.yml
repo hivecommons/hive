@@ -338,6 +338,17 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_contribute_k8s_workload.sh
 
+      # #4399: the browser terminal must say when it is NOT showing live output.
+      # The fix is a tmux FORMAT STRING, and a malformed one does not fail — it
+      # renders as garbage or leaves the literal `#{?...}` on screen. So this
+      # sets it on a scratch tmux server and reads back what tmux actually
+      # renders, in both the live and scrolled-back states, and reproduces the
+      # reported "halt" (a copy-mode pane stops following output, and survives
+      # closing the browser). Skips cleanly where tmux is absent.
+      - name: Terminal scrollback legibility (#4399)
+        working-directory: .
+        run: bash src/deploy/test_terminal_scrollback_status.sh
+
       # #4408: `just contribute-move` relocates an already-registered
       # contributor identity to a new machine. The properties that matter are
       # not visible in the Justfile text — that the positional HIVE_HUB /

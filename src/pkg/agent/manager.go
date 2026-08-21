@@ -106,6 +106,42 @@ const (
 	// whenever -x is given, so it is pinned here rather than left to the 24-row
 	// default.
 	defaultTmuxPaneHeight = 50
+
+	// tmuxStatusRight is the status line agent tmux sessions carry (#4399).
+	//
+	// THE PROBLEM IT SOLVES. Two things sat in the top-right of the browser
+	// terminal and neither said what it was:
+	//
+	//   * tmux's DEFAULT status-right is a live WALL CLOCK
+	//     (`"#{=21:pane_title}" %H:%M %d-%b-%y`). An operator reasonably read it
+	//     as a timestamp OF THE CONTENT and tried to line it up with the
+	//     scrollback — which can never work, because it is simply the time now.
+	//   * copy-mode draws a black-on-yellow `[position/total]` counter (tmux's
+	//     `mode-style bg=yellow,fg=black`). That is the only on-screen hint that
+	//     the pane is scrolled back, and it looks like a line counter, not a
+	//     warning.
+	//
+	// And copy-mode is the important state: while a pane is in it the pane
+	// STOPS FOLLOWING LIVE OUTPUT. #3694 deliberately turned mouse mode on so
+	// the wheel scrolls history, which means an operator reaches that state by
+	// doing the most natural thing in a terminal. Worse, copy-mode is PANE
+	// state held by the tmux server, so closing the browser tab and reopening
+	// it re-attaches to a pane that is still frozen — exactly the "no more
+	// output appeared, and reopening showed no more output" report in #4399.
+	//
+	// So: say which state the pane is in, and label the clock as the current
+	// time rather than leaving it to be misread as a content timestamp.
+	// Deliberately plain ASCII with no `#[...]` style blocks — style specs are
+	// comma-separated and a comma inside a `#{?...}` branch has to be escaped,
+	// which is exactly the kind of format-string subtlety that renders as
+	// garbage instead of failing loudly.
+	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK - not following live output - press q to resume] ,[live] }now %H:%M:%S "
+
+	// tmuxStatusInterval is how often (seconds) tmux redraws the status line.
+	// tmux's default is 15s, which would leave the SCROLLBACK marker above up
+	// to 15 seconds stale — long enough for an operator to scroll, see nothing
+	// change, and conclude the terminal is broken.
+	tmuxStatusInterval = 2
 )
 
 var defaultTmuxSocket string
@@ -740,6 +776,20 @@ const (
 	// duration string (e.g. "30m"). Invalid or non-positive values fall back
 	// to the default.
 	AgentTokenRefreshIntervalEnv = "HIVE_AGENT_TOKEN_REFRESH_INTERVAL"
+
+	// defaultCredentialWatchdogInterval is how often the credential watchdog
+	// checks that each in-use backend's durable credential file still exists
+	// and is usable. It is a slow health check (a missing/expired credential is
+	// a standing condition until an operator re-logs in, not a fast-moving one),
+	// so a coarse interval keeps the Audit Log signal-not-noise while still
+	// catching a post-upgrade-roll loss within a few minutes.
+	defaultCredentialWatchdogInterval = 5 * time.Minute
+	// CredentialWatchdogIntervalEnv overrides the watchdog interval with a Go
+	// duration string. Invalid or non-positive values fall back to the default;
+	// a value of "0" does NOT disable the watchdog (use the parse-failure path
+	// only for overrides) — disabling is intentionally not offered so the
+	// safety net cannot be silently turned off.
+	CredentialWatchdogIntervalEnv = "HIVE_CREDENTIAL_WATCHDOG_INTERVAL"
 )
 
 // agentTokenRefreshInterval resolves the per-agent token refresh interval
@@ -776,6 +826,155 @@ func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
 			m.refreshAgentTokens(ctx)
 		}
 	}
+}
+
+// credentialWatchdogInterval resolves the watchdog interval from
+// CredentialWatchdogIntervalEnv, falling back to the default.
+func credentialWatchdogInterval() time.Duration {
+	if v := os.Getenv(CredentialWatchdogIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultCredentialWatchdogInterval
+}
+
+// credentialWatch describes one CLI backend whose usable credential lives in a
+// durable file on the hive PVC that the hive relies on but does NOT itself keep
+// alive. Only backends of this shape belong here: bob resolves its key at
+// launch and fails loudly, and gemini/codex/goose/pi/inference backends keep
+// their creds under the agent's own $HOME (or do no CLI login at all), so there
+// is no hive-managed file for a presence check to watch.
+//
+// probe reports (ok, reason): ok=true means the credential is usable; when
+// false, reason is a short human string ("missing" / "invalid or expired") for
+// the audit detail and log. It must only stat/parse the file — never emit,
+// mutate, or return token material.
+type credentialWatch struct {
+	backend     string
+	path        string
+	auditAction string
+	probe       func(path string) (ok bool, reason string)
+}
+
+// copilotTokenUsable reports whether the durable Copilot device-flow token file
+// is present and non-empty. It reads only the file's presence and size — never
+// its contents.
+func copilotTokenUsable(path string) (bool, string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return false, "missing"
+	}
+	return true, ""
+}
+
+// claudeTokenUsable reports whether the Claude credentials file holds a valid,
+// non-expired token. Unlike copilot's, a Claude credential can be PRESENT but
+// unusable (expired), so a bare presence check is insufficient — it delegates
+// to claude.HasValidToken, which parses the file and checks expiry. It
+// distinguishes an absent file ("missing") from a present-but-stale one
+// ("invalid or expired") for a more actionable alert.
+func claudeTokenUsable(path string) (bool, string) {
+	if _, err := os.Stat(path); err != nil {
+		return false, "missing"
+	}
+	if !claude.HasValidToken(path) {
+		return false, "invalid or expired"
+	}
+	return true, ""
+}
+
+// credentialWatches is the set of durable-credential files the watchdog guards,
+// keyed by backend. Adding a new CLI backend of the same shape is a one-line
+// entry here — nothing else in the loop changes.
+func credentialWatches() []credentialWatch {
+	return []credentialWatch{
+		{backend: "copilot", path: CopilotUserTokenPath, auditAction: AuditCopilotTokenMissing, probe: copilotTokenUsable},
+		{backend: "claude", path: claude.CredentialsPath, auditAction: AuditClaudeTokenMissing, probe: claudeTokenUsable},
+	}
+}
+
+// StartCredentialWatchdog periodically verifies that each in-use CLI backend's
+// durable credential file (Copilot device-flow token, Claude OAuth credentials)
+// is present and usable, and emits an audit event + logs a warning when it is
+// not. It is a SAFETY NET, not a fixer: it never reads, writes, or otherwise
+// touches token material (recovery is an operator dashboard device-flow login,
+// per the manual-login rule). It exists because the loudest failure mode we
+// see is silent: a fresh agent pod after an upgrade roll finds no durable
+// credential, every agent CLI hangs at its login prompt, and — absent this —
+// the only signal is agents quietly ceasing work for hours. Turning that into
+// an immediate, queryable Audit Log entry is the whole point.
+//
+// Gating: each backend's check only fires when at least one configured agent
+// uses that backend. A Claude-only hive never alerts on a missing Copilot
+// token, and vice versa; gateway/inference-only hives alert on neither.
+//
+// Safe to start unconditionally at boot: like StartAgentTokenRefresh it tracks
+// live state each tick rather than a boot-time snapshot, so a hive that gains
+// or loses a backend via config reload is evaluated correctly.
+func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
+	ticker := time.NewTicker(credentialWatchdogInterval())
+	defer ticker.Stop()
+	// Per-backend transition tracker so we log/audit on TRANSITIONS (usable ->
+	// unusable and back) rather than every tick — a standing condition would
+	// otherwise flood the Audit Log at the tick rate.
+	lastUnusable := make(map[string]bool)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, w := range credentialWatches() {
+				m.evalCredentialWatch(w, lastUnusable)
+			}
+		}
+	}
+}
+
+// evalCredentialWatch runs one backend's probe (only if that backend is in
+// use) and emits a transition-edge log + audit event. lastUnusable carries the
+// previous observation per backend across ticks.
+func (m *Manager) evalCredentialWatch(w credentialWatch, lastUnusable map[string]bool) {
+	if !m.backendInUse(w.backend) {
+		// Not in use: nothing to watch. Reset the tracker so a later config
+		// change that adds this backend with a bad credential alerts on its
+		// first miss rather than being masked as "no transition".
+		delete(lastUnusable, w.backend)
+		return
+	}
+	ok, reason := w.probe(w.path)
+	unusable := !ok
+	if unusable && !lastUnusable[w.backend] {
+		m.logger.Warn("credential watchdog: durable credential unusable",
+			"backend", w.backend,
+			"path", w.path,
+			"reason", reason,
+			"impact", "agents on this backend hang at login; new pods cannot start work",
+			"recovery", "operator dashboard device-flow login")
+		m.audit(w.auditAction, "", auditFields(
+			"outcome", reason,
+			"backend", w.backend,
+			"path", w.path,
+			"trigger", "watchdog",
+		))
+	} else if !unusable && lastUnusable[w.backend] {
+		m.logger.Info("credential watchdog: durable credential restored",
+			"backend", w.backend, "path", w.path)
+	}
+	lastUnusable[w.backend] = unusable
+}
+
+// backendInUse reports whether any configured agent runs on the named backend
+// (honoring a runtime BackendOverride).
+func (m *Manager) backendInUse(backend string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.agents {
+		if effectiveBackend(a) == backend {
+			return true
+		}
+	}
+	return false
 }
 
 // RefreshAgentTokens immediately rewrites every running agent's per-agent
@@ -1230,6 +1429,14 @@ func tmuxPaneWidth() int {
 func newSessionCommands(session, dir string) []string {
 	return []string{
 		"set-option", "-g", "history-limit", strconv.Itoa(tmuxHistoryLimit()), ";",
+		// #4399: set the status line BEFORE new-session so the pane carries it
+		// from its first frame. Global (-g) rather than per-session because each
+		// agent runs on its own tmux socket under its own UID
+		// (/tmp/tmux-2007/hive-scanner), so "global" is scoped to that one
+		// agent's server — and a global set also reaches panes created later in
+		// the session, which a per-session set would not.
+		"set-option", "-g", "status-right", tmuxStatusRight, ";",
+		"set-option", "-g", "status-interval", strconv.Itoa(tmuxStatusInterval), ";",
 		"new-session", "-d", "-s", session, "-c", dir,
 		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight),
 	}
