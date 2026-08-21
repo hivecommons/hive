@@ -51,8 +51,12 @@
   /* agent sub-rows */
   tr.agent td { background: #101825; border-bottom: 1px solid #1a2537; font-size: 13px; }
   tr.agent .aname { padding-left: 26px; font-weight: 500; }
-  .rs { display: inline-flex; align-items: center; gap: 6px; }
-  .rs .swatch { width: 8px; height: 8px; border-radius: 50%; }
+  /* align-items:flex-start + a small top offset keeps the dot round and at the
+     first line when the label wraps to 2-3 lines in a narrow cell (e.g. "should
+     be working"). flex-shrink:0 stops the flexbox squeezing the fixed-size dot
+     into an oval. */
+  .rs { display: inline-flex; align-items: flex-start; gap: 6px; }
+  .rs .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 5px; }
   .rs.working .swatch { background: var(--green); }
   .rs.idle-at-prompt .swatch { background: var(--amber); }
   .rs.stuck-at-login .swatch { background: var(--red); }
@@ -61,7 +65,7 @@
   .rs.quiet-by-design .swatch { background: transparent; border: 1px solid var(--green); }
   .rs.unknown .swatch { background: var(--gray); }
   .cap { display: inline-flex; align-items: center; gap: 6px; }
-  .cap .light { width: 9px; height: 9px; border-radius: 50%; }
+  .cap .light { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
   .cap.green .light { background: var(--green); }
   .cap.amber .light { background: var(--amber); }
   .cap.red .light { background: var(--red); }
