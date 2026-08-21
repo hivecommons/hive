@@ -4512,7 +4512,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	if !isValidAutoUpgradeMode(body.Mode) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\" or \"daily\")"}`)
+		fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\", \"daily\" or \"weekly\")"}`)
 		return
 	}
 	h.AutoUpgrade = body.AutoUpgrade
@@ -14384,6 +14384,7 @@ const dashboardHTML = `<!DOCTYPE html>
         '<button type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
         '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
         '<button type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Auto: daily 1pm ET</button>' +
+        '<button type="button" onclick="runBulkAction(\'weekly-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a week, Tuesday midday — the least disruptive cadence that still keeps the hive current">Auto: Tue 1pm ET</button>' +
         '<button type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
         branchPicker +
         '<button type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
@@ -14404,6 +14405,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'upgrade': 'Upgrade to latest',
       'enable-auto-upgrade': 'Enable instant auto-upgrade on',
       'daily-auto-upgrade': 'Enable daily 1pm ET auto-upgrade on',
+      'weekly-auto-upgrade': 'Enable weekly Tuesday 1pm ET auto-upgrade on',
       'disable-auto-upgrade': 'Disable auto-upgrade on',
       'switch-branch': 'Switch branch for'
     };
@@ -14916,7 +14918,9 @@ const dashboardHTML = `<!DOCTYPE html>
              escape quotes and is unsafe to interpolate into an attribute. */
           var autoUpgradeCheck = '';
           if (isHosted && h.role === 'owner') {
-            var mode = h.autoUpgrade ? (h.autoUpgradeMode === AUTO_UPGRADE_DAILY ? AUTO_UPGRADE_DAILY : AUTO_UPGRADE_INSTANT) : AUTO_UPGRADE_OFF;
+            var mode = h.autoUpgrade
+              ? ((h.autoUpgradeMode === AUTO_UPGRADE_DAILY || h.autoUpgradeMode === AUTO_UPGRADE_WEEKLY) ? h.autoUpgradeMode : AUTO_UPGRADE_INSTANT)
+              : AUTO_UPGRADE_OFF;
             var opts = '';
             for (var oi = 0; oi < AUTO_UPGRADE_OPTIONS.length; oi++) {
               var opt = AUTO_UPGRADE_OPTIONS[oi];
@@ -15321,9 +15325,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var AUTO_UPGRADE_OFF = 'off';
     var AUTO_UPGRADE_INSTANT = 'instant';
     var AUTO_UPGRADE_DAILY = 'daily';
+    var AUTO_UPGRADE_WEEKLY = 'weekly';
     /* Copy is framed around DISRUPTION, not cron mechanics: the operator is
        choosing when it is acceptable to interrupt a hive that is working. */
-    var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day, after hours, so a stable hive is not disturbed mid-work.';
+    var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day at 1pm ET; Weekly restarts it at most once a week, Tuesday at 1pm ET, so a stable hive is disturbed as rarely as possible.';
     /* Icon-only labels. The "Auto:" prefix repeated on every row was the widest
        single element in the Version column and said nothing a scanning operator
        did not already know from the column it sits in — so it is carried by the
@@ -15350,7 +15355,8 @@ const dashboardHTML = `<!DOCTYPE html>
     var AUTO_UPGRADE_OPTIONS = [
       {value: AUTO_UPGRADE_OFF, label: '⦸ off', ariaLabel: 'Auto-upgrade: off'},
       {value: AUTO_UPGRADE_INSTANT, label: '⚡ instant', ariaLabel: 'Auto-upgrade: instantly when a new version lands'},
-      {value: AUTO_UPGRADE_DAILY, label: '🕐 1p', ariaLabel: 'Auto-upgrade: daily at 1pm ET'}
+      {value: AUTO_UPGRADE_DAILY, label: '🕐 1p', ariaLabel: 'Auto-upgrade: daily at 1pm ET'},
+      {value: AUTO_UPGRADE_WEEKLY, label: '🗓 tue 1p', ariaLabel: 'Auto-upgrade: weekly on Tuesday at 1pm ET'}
     ];
     /* Accessible name for the select itself, resolved from the CURRENT mode so
        the control announces what it is set to rather than only what it does. */
@@ -15380,7 +15386,7 @@ const dashboardHTML = `<!DOCTYPE html>
        concrete preference rather than leaving a blank to be re-interpreted. */
     async function setAutoUpgradeMode(id, value) {
       var enabled = value !== AUTO_UPGRADE_OFF;
-      var mode = (value === AUTO_UPGRADE_DAILY) ? AUTO_UPGRADE_DAILY : AUTO_UPGRADE_INSTANT;
+      var mode = (value === AUTO_UPGRADE_DAILY || value === AUTO_UPGRADE_WEEKLY) ? value : AUTO_UPGRADE_INSTANT;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/auto-upgrade', {
           method: 'PUT',
@@ -15389,7 +15395,8 @@ const dashboardHTML = `<!DOCTYPE html>
         });
         if (!resp.ok) { hiveToast('Failed to update auto-upgrade', 'error'); loadHives(); return; }
         var label = !enabled ? 'off'
-          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 1pm ET' : 'instant');
+          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 1pm ET'
+          : (mode === AUTO_UPGRADE_WEEKLY ? 'weekly on Tuesday at 1pm ET' : 'instant'));
         hiveToast(id + ' auto-upgrade: ' + label, 'success');
         loadHives();
       } catch(e) {
