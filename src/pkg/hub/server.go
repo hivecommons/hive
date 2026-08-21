@@ -246,14 +246,17 @@ type RegistryEntry struct {
 	// re-armed forever, which looks like progress but never is. Past
 	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
 	// human can see. Reset whenever the hive reaches a target.
-	OrphanedUpgradeSweeps   int          `json:"orphanedUpgradeSweeps,omitempty"`
-	IssueHistory            []SparkPoint `json:"issueHistory,omitempty"`
-	PRHistory               []SparkPoint `json:"prHistory,omitempty"`
-	GitHubAppRequired       bool         `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue      string       `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState          string       `json:"githubAppState,omitempty"`
-	RepoTargetMisconfigured bool         `json:"repoTargetMisconfigured,omitempty"`
-	RepoTargetIssue         string       `json:"repoTargetIssue,omitempty"`
+	OrphanedUpgradeSweeps    int          `json:"orphanedUpgradeSweeps,omitempty"`
+	IssueHistory             []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory                []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired        bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue       string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState           string       `json:"githubAppState,omitempty"`
+	GitHubAppTokenStatus     string       `json:"githubAppTokenStatus,omitempty"`
+	GitHubAppTokenLastMintAt string       `json:"githubAppTokenLastMintAt,omitempty"`
+	GitHubAppTokenError      string       `json:"githubAppTokenError,omitempty"`
+	RepoTargetMisconfigured  bool         `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue          string       `json:"repoTargetIssue,omitempty"`
 	// ConflictingReporters names two spoke instances that are BOTH reporting
 	// as this hive (e.g. "hive-abc… ↔ hive-def…"), set when their beats
 	// alternate. Non-empty is a critical drift signal: every field in this
@@ -1747,17 +1750,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// verbatim ("The GitHub App is configured but has no installation.
 		// Install the app on your org to enable agents.") — the strict
 		// identifier sanitizer stripped every space out of it.
-		GitHubAppPermIssue:      sanitizeProseField(payload.GitHubAppPermIssue),
-		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
-		RepoTargetMisconfigured: payload.RepoTargetMisconfigured,
-		RepoTargetIssue:         sanitizeProseField(payload.RepoTargetIssue),
-		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
-		GitHubAppID:             payload.GitHubAppID,
-		GitHubAppSlug:           payload.GitHubAppSlug,
-		GitHubInstallationID:    payload.GitHubInstallationID,
-		GitHubAPIURL:            payload.GitHubAPIURL,
-		GitHubBaseURL:           payload.GitHubBaseURL,
-		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
+		GitHubAppPermIssue:       sanitizeProseField(payload.GitHubAppPermIssue),
+		GitHubAppState:           sanitizeHeartbeatField(payload.GitHubAppState),
+		GitHubAppTokenStatus:     sanitizeHeartbeatField(payload.GitHubAppTokenStatus),
+		GitHubAppTokenLastMintAt: sanitizeField(payload.GitHubAppTokenLastMintAt),
+		GitHubAppTokenError:      sanitizeProseField(payload.GitHubAppTokenError),
+		RepoTargetMisconfigured:  payload.RepoTargetMisconfigured,
+		RepoTargetIssue:          sanitizeProseField(payload.RepoTargetIssue),
+		StatusFlipping:           s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
+		GitHubAppID:              payload.GitHubAppID,
+		GitHubAppSlug:            payload.GitHubAppSlug,
+		GitHubInstallationID:     payload.GitHubInstallationID,
+		GitHubAPIURL:             payload.GitHubAPIURL,
+		GitHubBaseURL:            payload.GitHubBaseURL,
+		PendingGitHubAppInstall:  payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
 				return time.Now()

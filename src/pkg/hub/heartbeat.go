@@ -651,6 +651,12 @@ type HeartbeatPayload struct {
 	Timestamp          string `json:"timestamp"`
 	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`
+	// GitHubAppTokenStatus is the spoke's local view of the shared App token
+	// cache used by GitHub writers ("ok", "stale", "missing", "error").
+	// LastMintAt is the cache file mtime and Error is a log-safe detail.
+	GitHubAppTokenStatus     string `json:"github_app_token_status,omitempty"`
+	GitHubAppTokenLastMintAt string `json:"github_app_token_last_mint_at,omitempty"`
+	GitHubAppTokenError      string `json:"github_app_token_error,omitempty"`
 	// RepoTargetMisconfigured carries an operator-facing config-shape issue
 	// detected by the spoke. It is visibility only: the spoke keeps running and
 	// the hub does not rewrite the project fields.

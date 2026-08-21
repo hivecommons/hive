@@ -119,6 +119,7 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 			ID                    string                `json:"id"`
 			AdvisoryIssueActivity AdvisoryIssueActivity `json:"advisoryIssueActivity"`
 			BudgetHealth          BudgetHealth          `json:"budgetHealth"`
+			GitHubAppHealth       GitHubAppHealth       `json:"githubAppHealth"`
 		} `json:"hives"`
 		Summary map[string]int `json:"hives_summary"`
 	}
@@ -127,9 +128,11 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 	}
 	byID := map[string]AdvisoryIssueActivity{}
 	budgetByID := map[string]BudgetHealth{}
+	ghAppByID := map[string]GitHubAppHealth{}
 	for _, h := range resp.Hives {
 		byID[h.ID] = h.AdvisoryIssueActivity
 		budgetByID[h.ID] = h.BudgetHealth
+		ghAppByID[h.ID] = h.GitHubAppHealth
 	}
 	if byID["h1"].Bucket != advisoryIssueBucketStale || byID["h1"].LastActivityAt == "" {
 		t.Fatalf("h1 activity = %+v, want stale with timestamp", byID["h1"])
@@ -148,5 +151,11 @@ func TestHandleMyHivesIncludesAdvisoryIssueActivity(t *testing.T) {
 	}
 	if resp.Summary["budget_warning"] != 1 || resp.Summary["budget_unknown"] != 1 {
 		t.Fatalf("summary = %#v, want budget_warning=1 budget_unknown=1", resp.Summary)
+	}
+	if ghAppByID["h1"].Bucket != ghAppBucketUnknown || ghAppByID["hosted-empty"].Bucket != ghAppBucketUnknown {
+		t.Fatalf("github app health = %#v, want unknown/n/a for rows without token signal", ghAppByID)
+	}
+	if resp.Summary["github_app_unknown"] != 2 {
+		t.Fatalf("summary = %#v, want github_app_unknown=2", resp.Summary)
 	}
 }

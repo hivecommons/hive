@@ -131,6 +131,12 @@
   .budget-health.warning .light { background: var(--amber); }
   .budget-health.critical .light, .budget-health.exhausted .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
   .budget-health.unknown .light { background: var(--gray); }
+  .github-app-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .github-app-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
+  .github-app-health.ok .light { background: var(--green); }
+  .github-app-health.degraded .light { background: var(--amber); }
+  .github-app-health.broken .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .github-app-health.unknown .light { background: var(--gray); }
   .status-msg { padding: 40px 0; text-align: center; color: var(--muted); }
   a.reload { color: var(--accent); text-decoration: none; }
   [title] { cursor: help; }
@@ -181,7 +187,7 @@
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when agents cannot work, output is stale, or budget is depleted</span>
+  <span class="sub">a hive is a <b>problem</b> when agents cannot work, output is stale, budget is depleted, or GitHub App auth is broken</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
@@ -205,6 +211,15 @@
         <option value="ok">ok</option>
       </select>
     </label>
+    <label>gh app
+      <select id="githubAppFilter">
+        <option value="">all</option>
+        <option value="broken">broken</option>
+        <option value="degraded">degraded/stale</option>
+        <option value="unknown">unknown/n/a</option>
+        <option value="ok">ok</option>
+      </select>
+    </label>
   </span>
 </header>
 <div class="wrap">
@@ -212,7 +227,8 @@
     <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting)</span>
     <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
     <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
-    <span><span class="delta problem">PROBLEM</span> agents cannot work, output is stale, or budget is depleted · <span class="delta quiet">quiet</span> paused / off by schedule</span>
+    <span><b>gh app:</b> <span class="github-app-health ok"><span class="light"></span>ok</span> · <span class="github-app-health degraded"><span class="light"></span>stale</span> · <span class="github-app-health broken"><span class="light"></span>broken</span> · <span class="github-app-health unknown"><span class="light"></span>n/a</span></span>
+    <span><span class="delta problem">PROBLEM</span> agents cannot work, output is stale, budget is depleted, or GitHub App auth is broken · <span class="delta quiet">quiet</span> paused / off by schedule</span>
     <span><b>capability:</b> <span style="color:var(--green)">green</span> able · <span style="color:var(--amber)">amber</span> partial · <span style="color:var(--red)">red</span> blocked · <span style="color:var(--gray)">gray</span> unknown</span>
   </div>
   <table>
@@ -296,6 +312,16 @@ function budgetHealthHTML(b) {
   return '<span class="budget-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
+function githubAppHealthHTML(g) {
+  g = g || {};
+  var bucket = g.bucket || "unknown";
+  var rel = g.lastTokenMintAt ? relTime(g.lastTokenMintAt) : "n/a";
+  var label = bucket === "unknown" ? "gh app n/a" : "gh app " + (bucket === "degraded" ? "stale" : bucket);
+  if (g.lastTokenMintAt) label += " · " + rel;
+  var title = g.detail || (g.lastTokenMintAt ? "last token mint " + rel : label);
+  return '<span class="github-app-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
+    '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
+}
 function versionHTML(h) {
   var sha = h.gitHash || "";
   if (!sha) return '<span class="output">—</span>';
@@ -369,6 +395,7 @@ function deltaHTML(a) {
 // every agent stuck.
 function hiveHealth(h) {
   if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
+  if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
   var budget = ((h.budgetHealth || {}).bucket || "");
   if (budget === "critical" || budget === "exhausted") return "problem";
   var r = h.fleetRollup;
@@ -387,6 +414,7 @@ var problemsOnly = false;
 var showHealthy = false; // when false, healthy hives are hidden to cut noise
 var advisoryFilter = "";
 var budgetFilter = "";
+var githubAppFilter = "";
 
 function hiveKey(h) { return h.id || h.name; }
 
@@ -413,6 +441,7 @@ function renderHives(hives) {
     if (!problemsOnly && !showHealthy && health === "ok") return;
     if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return;
     if (budgetFilter && ((h.budgetHealth || {}).bucket || "unknown") !== budgetFilter) return;
+    if (githubAppFilter && ((h.githubAppHealth || {}).bucket || "unknown") !== githubAppFilter) return;
     shown++;
 
     var isProblem = health === "problem";
@@ -431,7 +460,7 @@ function renderHives(hives) {
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
-      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '</td>';
+      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth) + '</td>';
     tb.appendChild(tr);
 
     var verdicts = h.agentVerdicts || [];
@@ -497,6 +526,8 @@ function wireControls() {
   if (af) af.addEventListener("change", function () { advisoryFilter = af.value; renderHives(lastHives); });
   var bf = document.getElementById("budgetFilter");
   if (bf) bf.addEventListener("change", function () { budgetFilter = bf.value; renderHives(lastHives); });
+  var gf = document.getElementById("githubAppFilter");
+  if (gf) gf.addEventListener("change", function () { githubAppFilter = gf.value; renderHives(lastHives); });
 }
 
 var lastHives = [];

@@ -605,6 +605,24 @@ func describeKeySource(v string) string {
 	return v
 }
 
+func githubAppTokenHeartbeatFields(cfg *config.Config, detail string) (status, lastMintAt, lastErr string) {
+	if cfg == nil || !cfg.GitHub.HasApp() {
+		return "", "", ""
+	}
+	info, err := os.Stat(github.TokenCachePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return hub.GitHubAppTokenStatusMissing, "", detail
+		}
+		return hub.GitHubAppTokenStatusError, "", err.Error()
+	}
+	lastMintAt = info.ModTime().UTC().Format(time.RFC3339)
+	if time.Since(info.ModTime()) > hub.GitHubAppTokenStaleAfter {
+		return hub.GitHubAppTokenStatusStale, lastMintAt, detail
+	}
+	return hub.GitHubAppTokenStatusOK, lastMintAt, ""
+}
+
 // githubAuth is the outcome of resolving this hive's GitHub credentials at
 // startup. Every field is optional: a hive with no usable credentials is a
 // legitimate, bootable state.
@@ -3636,10 +3654,22 @@ func main() {
 				// base_url and api_url — a GHE placeholder with base_url:"" but
 				// api_url: github.ibm.com must report github.ibm.com, not be
 				// silently rendered as github.com in the spokes table.
-				GitHubHost:              cfg.GitHub.HostLabel(),
-				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
-				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
-				GitHubAppState:          dashSrv.GetGitHubAppState(),
+				GitHubHost:         cfg.GitHub.HostLabel(),
+				GitHubAppRequired:  dashSrv.IsGitHubAppRequired(),
+				GitHubAppPermIssue: dashSrv.GetGitHubAppPermIssue(),
+				GitHubAppState:     dashSrv.GetGitHubAppState(),
+				GitHubAppTokenStatus: func() string {
+					status, _, _ := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
+					return status
+				}(),
+				GitHubAppTokenLastMintAt: func() string {
+					_, lastMintAt, _ := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
+					return lastMintAt
+				}(),
+				GitHubAppTokenError: func() string {
+					_, _, errMsg := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
+					return errMsg
+				}(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:             cfg.Hub.AutoUpgrade,
 				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {

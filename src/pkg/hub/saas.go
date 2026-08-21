@@ -2878,6 +2878,11 @@ type MyHiveEntry struct {
 	// the UI can explain the dot without reverse-engineering RegistryEntry.
 	BudgetHealth BudgetHealth `json:"budgetHealth"`
 
+	// GitHubAppHealth is this hive's GitHub App token/auth health for the fleet
+	// row, bucketed server-side so every consumer shares the same thresholds and
+	// problem semantics.
+	GitHubAppHealth GitHubAppHealth `json:"githubAppHealth"`
+
 	// AdvisoryStale is true when this hive SHOULD be posting advisory digests
 	// but its digest has quietly gone stale — computed on read by advisoryStale()
 	// so the browser never re-derives the threshold or the gating (advisory-mode
@@ -3360,6 +3365,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		result[i].Journey = &status
 		result[i].AdvisoryIssueActivity = advisoryIssueActivityFor(result[i].RegistryEntry, journeyNow)
 		result[i].BudgetHealth = budgetHealthFor(result[i].RegistryEntry)
+		result[i].GitHubAppHealth = githubAppHealthFor(result[i].RegistryEntry, journeyNow)
 
 		// Advisory-staleness pill, computed on read (same as Journey) so the
 		// gating — advisory-mode participation, app-can-write, past-threshold —

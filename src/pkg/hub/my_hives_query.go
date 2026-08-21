@@ -216,6 +216,16 @@ func myHivesSummary(entries []MyHiveEntry) map[string]int {
 		default:
 			s["budget_unknown"]++
 		}
+		switch e.GitHubAppHealth.Bucket {
+		case ghAppBucketOK:
+			s["github_app_ok"]++
+		case ghAppBucketDegraded:
+			s["github_app_degraded"]++
+		case ghAppBucketBroken:
+			s["github_app_broken"]++
+		default:
+			s["github_app_unknown"]++
+		}
 	}
 	return s
 }
