@@ -1019,33 +1019,81 @@ func (m *Manager) StartCopilotSessionRefresh(ctx context.Context) {
 	}
 }
 
-// refreshCopilotSessionToken seeds config.json's copilotTokens from the durable
-// user token when the map is empty on a copilot-backend hive. One tick's work;
-// safe to call from the timer or ad hoc.
+// refreshCopilotSessionToken keeps the Copilot credential in sync between the
+// CLI's config.json copilotTokens map and the hive's durable store, in BOTH
+// directions, on a copilot-backend hive. One tick's work; safe from the timer
+// or ad hoc.
+//
+//   - PROMOTE (config → durable): if the CLI has a token (someone logged in
+//     INSIDE an agent with /login) but the hive's in-memory/durable token is
+//     missing or stale, mirror the CLI's token to the durable file +
+//     SetCopilotToken. This makes an in-agent login as durable as a dashboard
+//     login — it survives rolls and arms the seed direction below — closing the
+//     gap where a local /login unstuck agents now but was lost on the next roll.
+//   - SEED (durable → config): if the CLI's map is EMPTY but the hive holds a
+//     token, restore it so the CLI is not left stuck at /login (the #4494 case).
+//
+// It never runs a device flow and never mints a token; it only mirrors a token
+// that already exists. The manual-login rule is intact.
 func (m *Manager) refreshCopilotSessionToken() {
 	if !m.backendInUse("copilot") {
 		return
 	}
-	// Already populated (the CLI's own token or a prior restore is in place):
-	// leave it alone so we never overwrite a live session.
-	if copilotConfigHasTokens() {
-		return
-	}
+	m.syncCopilotToken(sharedCopilotConfigPath, CopilotUserTokenPath)
+}
+
+// copilotSyncAction names what one syncCopilotToken call did, for logging and
+// deterministic tests.
+type copilotSyncAction int
+
+const (
+	copilotSyncNoop    copilotSyncAction = iota
+	copilotSyncPromote                   // config token mirrored to the durable store
+	copilotSyncSeed                      // durable token restored into an empty config
+)
+
+// syncCopilotToken reconciles the CLI's config.json copilotTokens map with the
+// hive's durable/in-memory token, in both directions. Parameterized on both
+// paths so it is testable without touching /data. See refreshCopilotSessionToken
+// for the promote/seed rationale.
+func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAction {
 	m.mu.RLock()
-	token := m.copilotAuthToken
+	held := strings.TrimSpace(m.copilotAuthToken)
 	m.mu.RUnlock()
-	if strings.TrimSpace(token) == "" {
-		// No token to restore from — this is the genuinely-logged-out case the
-		// StartCredentialWatchdog alert covers; recovery is a manual login.
-		return
+
+	if copilotCredentialFileHasTokens(configPath) {
+		// PROMOTE: the CLI has a token; mirror it to the durable store unless the
+		// hive already holds exactly it.
+		cliTok := extractCopilotToken(configPath)
+		if cliTok == "" || cliTok == held {
+			return copilotSyncNoop
+		}
+		if err := writeDurableCopilotToken(durablePath, cliTok); err != nil {
+			m.logger.Warn("copilot session refresh: failed to promote CLI token to durable file",
+				"path", durablePath, "error", err)
+			return copilotSyncNoop
+		}
+		m.SetCopilotToken(cliTok)
+		m.logger.Info("copilot session refresh: promoted in-agent login token to the durable store",
+			"path", durablePath)
+		return copilotSyncPromote
 	}
-	if err := restoreCopilotTokens(sharedCopilotConfigPath, token); err != nil {
+
+	// SEED: the CLI map is empty; restore from the held token so agents are not
+	// left stuck at /login.
+	if held == "" {
+		// Genuinely logged out — the StartCredentialWatchdog alert covers this;
+		// recovery is a manual login.
+		return copilotSyncNoop
+	}
+	if err := restoreCopilotTokens(configPath, held); err != nil {
 		m.logger.Warn("copilot session refresh: failed to restore copilotTokens",
-			"path", sharedCopilotConfigPath, "error", err)
-		return
+			"path", configPath, "error", err)
+		return copilotSyncNoop
 	}
 	m.logger.Info("copilot session refresh: re-seeded empty copilotTokens from durable user token",
-		"path", sharedCopilotConfigPath)
+		"path", configPath)
+	return copilotSyncSeed
 }
 
 // evalCredentialWatch runs one backend's probe (only if that backend is in
@@ -5721,6 +5769,55 @@ func restoreCopilotTokens(path, token string) error {
 		"github.com": map[string]interface{}{"token": token},
 	}
 	return writeCopilotConfig(path, cfg)
+}
+
+// extractCopilotToken pulls the first usable token string out of a config.json
+// copilotTokens map, or "" when there is none. The Copilot CLI stores entries
+// in two shapes across versions/login routes — a bare string
+// ({"host:user":"gho_…"}) and an object ({"github.com":{"token":"gho_…"}}) —
+// and this accepts both. It is the inverse of restoreCopilotTokens: the reader
+// side of promoting a CLI-written token back to the hive's durable store.
+func extractCopilotToken(path string) string {
+	cfg, err := readCopilotConfig(path)
+	if err != nil {
+		return ""
+	}
+	tokens, ok := cfg["copilotTokens"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	for _, v := range tokens {
+		switch t := v.(type) {
+		case string:
+			if s := strings.TrimSpace(t); s != "" {
+				return s
+			}
+		case map[string]interface{}:
+			if s, ok := t["token"].(string); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// writeDurableCopilotToken persists token to durablePath via a temp file +
+// rename, matching the dashboard login's saveCopilotToken write. The production
+// caller passes CopilotUserTokenPath — the file that survives upgrade rolls and
+// that the hive reads at boot into m.copilotAuthToken; the path is a parameter
+// so tests can target a temp file.
+func writeDurableCopilotToken(durablePath, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	tmp := durablePath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, durablePath)
 }
 
 // cliReadyIndicators prove copilot finished startup.

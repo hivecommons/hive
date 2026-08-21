@@ -142,16 +142,25 @@ func TestRefreshCopilotSessionToken(t *testing.T) {
 		t.Error("no held token: must not fabricate a credential")
 	}
 
-	// (d) Already-populated store → must NOT overwrite (no clobbering a live session).
+	// (d) Config already populated with a token the hive does NOT hold → the
+	// config token is PRESERVED (never clobbered) AND promoted to the durable
+	// store (bidirectional sync). Uses syncCopilotToken with a temp durable path
+	// so the promote write does not target the production /data path.
 	m4 := testManager(5)
 	m4.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
 	m4.copilotAuthToken = "ghu_held"
+	dur := filepath.Join(dir, "durable")
 	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{"github.com":{"token":"gho_cli_owned"}}}`), 0o660); err != nil {
 		t.Fatal(err)
 	}
-	m4.refreshCopilotSessionToken()
+	if act := m4.syncCopilotToken(path, dur); act != copilotSyncPromote {
+		t.Errorf("differing config token must promote, got action %v", act)
+	}
 	raw, _ := os.ReadFile(path)
 	if !strings.Contains(string(raw), "gho_cli_owned") {
-		t.Error("must not overwrite an already-present token")
+		t.Error("config token must not be overwritten by a promote")
+	}
+	if b, _ := os.ReadFile(dur); string(b) != "gho_cli_owned" {
+		t.Errorf("durable file = %q, want gho_cli_owned (promoted)", string(b))
 	}
 }
