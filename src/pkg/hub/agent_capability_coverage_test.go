@@ -114,8 +114,13 @@ func TestVerdict_SessionGoneAndIdle(t *testing.T) {
 	}
 }
 
-// no-capability agent (advisory below issues) → red tier + reason.
-func TestVerdict_NoCapabilityIsRed(t *testing.T) {
+// no-capability agent (ACMM level grants no GitHub writes at all) → that is
+// the operator's chosen maturity level, NOT a fault: the agent's mission is
+// advisory (digest), so it must read green, carry no blocked reason, and
+// never count as impotent/problem. (Fleet rows at L1/L2 previously flagged
+// every working advisory agent "PROBLEM: no write capability at this ACMM
+// level".)
+func TestVerdict_AdvisoryOnlyLevelIsNotAProblem(t *testing.T) {
 	now := time.Now()
 	a := AgentSummary{
 		Name: "adv", State: "running", Backend: "claude",
@@ -124,15 +129,20 @@ func TestVerdict_NoCapabilityIsRed(t *testing.T) {
 		StartedAt: settled(now), LastActivityAt: activeAt(now, 1*time.Minute),
 	}
 	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
-	if v.CapabilityTier != tierRed {
-		t.Errorf("no-capability tier = %s, want red", v.CapabilityTier)
+	if v.CapabilityTier != tierGreen {
+		t.Errorf("advisory-only tier = %s, want green", v.CapabilityTier)
 	}
-	if v.BlockedReason == "" {
-		t.Error("no-capability agent must carry a reason")
+	if v.BlockedReason != "" {
+		t.Errorf("advisory-only agent must carry no reason, got %q", v.BlockedReason)
 	}
-	// Running but not capable → impotent.
-	if !v.Impotent {
-		t.Error("running no-capability agent must be IMPOTENT")
+	if v.Impotent {
+		t.Error("working advisory-only agent must NOT be IMPOTENT")
+	}
+	if !v.Able {
+		t.Error("working advisory-only agent must be Able (its mission is the digest)")
+	}
+	if v.Problem {
+		t.Error("advisory-only level must never be a PROBLEM")
 	}
 }
 
@@ -161,12 +171,20 @@ func TestVerdict_TierArms(t *testing.T) {
 	if v := deriveAgentVerdict(loginBlk, hiveBlockers{}, 5, now); v.CapabilityTier != tierAmber {
 		t.Errorf("login-blocked writer = %s, want amber", v.CapabilityTier)
 	}
-	// red — issues-only agent (no write to gate) that is ALSO blocked at the
-	// floor: model an agent with no capability at all.
+	// green — advisory-only agent (ACMM grants no writes): by design, not red.
 	none := writer
 	none.CanOpenIssue, none.CanOpenPR, none.CanMerge = false, false, false
-	if v := deriveAgentVerdict(none, hiveBlockers{}, 5, now); v.CapabilityTier != tierRed {
-		t.Errorf("no-capability agent = %s, want red", v.CapabilityTier)
+	if v := deriveAgentVerdict(none, hiveBlockers{}, 5, now); v.CapabilityTier != tierGreen {
+		t.Errorf("advisory-only agent = %s, want green (level design, not a fault)", v.CapabilityTier)
+	}
+	// red — issues-only agent blocked at the floor: its mode grants issue
+	// writes but a login block takes even that away, leaving no reachable
+	// mission.
+	issuesOnlyBlocked := writer
+	issuesOnlyBlocked.CanOpenPR, issuesOnlyBlocked.CanMerge = false, false
+	issuesOnlyBlocked.NeedsLogin = true
+	if v := deriveAgentVerdict(issuesOnlyBlocked, hiveBlockers{}, 5, now); v.CapabilityTier != tierRed {
+		t.Errorf("floor-blocked issues-only agent = %s, want red", v.CapabilityTier)
 	}
 }
 

@@ -37,6 +37,28 @@ func TestBudgetHealthBuckets(t *testing.T) {
 	}
 }
 
+func TestBudgetHealthExhaustedFlagWinsWithoutNumbers(t *testing.T) {
+	// The governor's exhausted flag is authoritative even when the numeric
+	// spend/limit pair is absent or zeroed (window boundary, older heartbeat
+	// shape): a depleted budget must show EXHAUSTED, never a gray unknown.
+	cases := []RegistryEntry{
+		{BudgetExhausted: boolptr(true)},
+		{BudgetExhausted: boolptr(true), BudgetLimit: int64ptr(0)},
+		{BudgetExhausted: boolptr(true), BudgetCurrentSpend: int64ptr(0), BudgetLimit: int64ptr(0)},
+	}
+	for _, e := range cases {
+		got := budgetHealthFor(e)
+		if got.Bucket != budgetBucketExhausted || !got.Exhausted {
+			t.Fatalf("budgetHealthFor(%+v) = %+v, want exhausted", e, got)
+		}
+	}
+	// But ignored still wins over exhausted.
+	got := budgetHealthFor(RegistryEntry{BudgetExhausted: boolptr(true), BudgetIgnored: boolptr(true)})
+	if got.Bucket != budgetBucketUnknown || !got.Ignored {
+		t.Fatalf("ignored+exhausted = %+v, want unknown ignored", got)
+	}
+}
+
 func TestBudgetHealthUnknownWithoutConfiguredBudget(t *testing.T) {
 	cases := []RegistryEntry{
 		{},

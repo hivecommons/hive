@@ -247,14 +247,22 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// blocker cannot make it "partial".
 	modeGrantsWrite := a.CanOpenPR || a.CanMerge
 
+	// advisoryOnly: the ACMM level grants this agent NO GitHub writes at all —
+	// not even opening issues. That is the operator's chosen maturity level,
+	// not a fault: at these levels the agent's whole mission is advisory
+	// (findings flow to the digest), so "cannot write" must never read as a
+	// PROBLEM. Before this, every working advisory agent on an L1/L2 hive was
+	// flagged "PROBLEM: no write capability at this ACMM level" on the fleet
+	// page, drowning out real problems.
+	advisoryOnly := !a.CanOpenIssue && !modeGrantsWrite
+
 	// capable = "if this agent were working, could it exercise its FULL mission?"
 	// The CanOpen*/CanMerge booleans already encode the mode's ceiling (an
 	// advisory issues-only agent simply reports CanMerge=false — not being able
-	// to merge is not a fault for it). The only things that TAKE AWAY a granted
-	// capability are an interactive login block or a hive-level blocker. We
-	// require CanOpenIssue as the floor: an agent that cannot even open an issue
-	// at this ACMM level has no reachable mission.
-	capable := a.CanOpenIssue && !blocked
+	// to merge is not a fault for it, and an advisory-only agent's mission
+	// needs no GitHub write at all). The only things that TAKE AWAY a granted
+	// capability are an interactive login block or a hive-level blocker.
+	capable := (a.CanOpenIssue || advisoryOnly) && !blocked
 
 	// Able = actually able to fulfill its mission RIGHT NOW: capable AND truly
 	// working. A capable-but-stopped or capable-but-paused agent is not doing
@@ -263,25 +271,25 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// running ⊇ able) and makes IMPOTENT = running − able coherent.
 	v.Able = capable && v.RunState == runWorking
 
-	// Reason + tier.
+	// Reason + tier. An unblocked advisory-only agent carries NO reason: its
+	// lack of write capability is the ACMM level working as designed.
 	switch {
 	case loginBlocked:
 		v.BlockedReason = "sitting at login prompt"
 	case hiveBlocked:
 		v.BlockedReason = blockers.reason()
-	case !a.CanOpenIssue && !a.CanOpenPR && !a.CanMerge:
-		v.BlockedReason = "no write capability at this ACMM level"
 	}
 
 	// Tier reflects CAPABILITY (would it work if running), not liveness — a
 	// healthy-but-paused agent still shows green so the badge answers "can this
 	// agent do its job" independent of the run-state column beside it.
 	//
-	//   green — fully capable of its mission.
+	//   green — fully capable of its mission (for an advisory-only agent, the
+	//           mission is the digest — no GitHub write required).
 	//   amber — can still open issues, but a blocker takes away a WRITE its mode
 	//           would otherwise grant (partial: half its job works).
-	//   red   — cannot even open an issue (blocked at the floor, or no capability
-	//           at this ACMM level).
+	//   red   — cannot even open an issue despite its mode granting it (blocked
+	//           at the floor).
 	switch {
 	case capable:
 		v.CapabilityTier = tierGreen
