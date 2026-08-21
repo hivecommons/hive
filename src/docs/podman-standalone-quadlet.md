@@ -784,11 +784,12 @@ Recorded honestly rather than left implied:
   and the rootful half of `%E` (`/etc`) was read from `systemd.unit(5)` rather
   than measured; the rootless half (`/home/<user>/.config`) was measured
   directly with a probe unit. #4377 closed both, as recorded above.
-- **No reboot has been performed** in either root mode. The boot *wiring* is
-  measured — the generator's `default.target.wants/` symlink, `default.target`
-  being reached, and lingering starting a sessionless user manager — but their
-  composition across an actual kernel boot is not. See
-  [the lifecycle page](podman-quadlet-lifecycle.md#reboot-persistence-not-executed-here).
+- **No reboot was performed by this slice**, in either root mode. The boot
+  *wiring* is measured here — the generator's `default.target.wants/` symlink,
+  `default.target` being reached, and lingering starting a sessionless user
+  manager — but their composition across an actual kernel boot is not. #4413
+  executed that composition in both modes, on a host that could be rebooted:
+  [the lifecycle page](podman-quadlet-lifecycle.md#reboot-persistence-executed-both-modes).
 - The live runs used a scratch directory for `hive.yaml`, `secrets/`,
   `hive.env`, and `nginx.conf` instead of `%E/hive`, so they could not touch a
   real operator configuration. Nothing else in the units differed.

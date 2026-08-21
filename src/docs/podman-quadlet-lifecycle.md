@@ -9,8 +9,9 @@ lifecycle those two decisions implied, exercised.
 
 Scope is lifecycle only: stop, start, restart, recreate, and boot persistence,
 in both root modes. Every row is now executed: the two reboot rows this page
-once recorded as **not executed** were closed by #4413 and are below. Update and rollback are their own slice and are now written
-down in [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md)
+once recorded as **not executed** were executed by #4413 and are below. Update
+and rollback are their own slice and are now written down in
+[podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md)
 (#4378) — including what a unit looks like while a bad update is timing out,
 which is a lifecycle state this page does not produce. Auto-update is a later
 slice again, as are backup, restore, and migration.

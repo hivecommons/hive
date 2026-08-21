@@ -1,11 +1,15 @@
 # Host-execution capability matrix: what this execution environment can actually do
 
 [#4188](https://github.com/kubestellar/hive/issues/4188) requires "Boot persistence
-... tested for the chosen Podman lifecycle", and
-[podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) records both reboot rows
+... tested for the chosen Podman lifecycle", and when this page was written
+[podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) recorded both reboot rows
 as **NOT executed**. Before anyone proposes a new execution runtime on the strength
 of "the current execution paths cannot run this work", that claim deserves to be
 measured rather than asserted. This page is the measurement.
+
+Those rows have since been executed, on a host that could be rebooted. That is not
+a contradiction of what follows, it is the remedy this page implies: what stopped
+them running *here* is topology, and the answer to topology is a different host.
 
 **It is one environment, measured once.** Every row below is a command that was run
 here, with its real exit status and its verbatim output. Nothing is inferred from a
@@ -15,8 +19,8 @@ neighbouring row, and nothing is generalised to any other host — see
 The headline result was not the expected one. Most of these capabilities are
 **present**, including the two that matter most for a disposable-guest proposal:
 `/dev/kvm` is usable and passwordless `sudo` works. And the reason
-[#4413](https://github.com/kubestellar/hive/issues/4413) cannot run here turns out
-not to be a permission gap at all.
+[#4413](https://github.com/kubestellar/hive/issues/4413) could not run here turns
+out not to be a permission gap at all.
 
 ## Which execution path this was
 
@@ -139,16 +143,19 @@ polkit authorises this user to reboot, and `systemctl --dry-run reboot` — whic
 prints what it would do — exits 0. **No reboot was performed**; #4413 explicitly
 reserves that.
 
-This corrects the expectation #4441 itself carried. The reason #4413's rows are
-unexecuted is **not** that reboot is forbidden here. It is that this session runs *on
-the host that would be rebooted*, exactly as
-[podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) states:
+This corrects the expectation #4441 itself carried. The reason #4413's rows could
+not be executed here is **not** that reboot is forbidden. It is that this session runs
+*on the host that would be rebooted*, exactly as
+[podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) put it while those rows
+were still open:
 
 > The host this was measured on could not be rebooted: it was the host running the
 > session doing the measuring, and a reboot would have ended it mid-run.
 
 That is a **topology** problem, not a permission one — and it is the single most
 useful thing this page establishes, because the two have entirely different remedies.
+Taking the topology remedy is how #4413's rows were eventually run: on a host that
+was not the one running the session doing the measuring.
 
 ### User lingering — authorised, currently off
 
@@ -166,8 +173,9 @@ Lingering is **off** right now, and polkit **would permit** this user to turn it
 `loginctl enable-linger` was deliberately **not run**: it reconfigures the host, which
 #4441 places out of scope. So this row establishes authorisation, not a completed
 enable — and per the precedent [#4377](https://github.com/kubestellar/hive/issues/4377)
-set, authorisation is *not* evidence that units would survive a boot. Only #4413 can
-establish that.
+set, authorisation is *not* evidence that units would survive a boot. Only an actual
+reboot can establish that. #4413 has since done so, on another host and with
+`Linger=yes` — the enable this row deliberately did not perform.
 
 ### SELinux — enforcing, and it is the host's policy
 
@@ -292,8 +300,9 @@ capability; it is the ceiling, not a grant.
   relay's own `HIVE_AGENT_SESSION` matching this probe's tmux session.
 - `/dev/kvm` opens read-write, on a host that is itself a KVM guest — so nested
   virtualisation is available here.
-- Reboot is authorised. #4413 is unrunnable here for a **topology** reason (the
-  session lives on the host that would restart), not a permission one.
+- Reboot is authorised. #4413 was unrunnable here for a **topology** reason (the
+  session lives on the host that would restart), not a permission one — and it
+  ran elsewhere on that basis.
 - Lingering is off but authorisable; rootful podman is reachable via passwordless
   `sudo`; SELinux is the host's, enforcing, unconfined; the process holds no
   capabilities but user namespaces work.
@@ -308,8 +317,9 @@ capability; it is the ceiling, not a grant.
   runner, a hosted spoke, or another contributor's machine may differ in every row —
   `/dev/kvm` in particular is commonly absent on hosted runners.
 - **That boot persistence works.** Lingering being *authorisable* is not evidence
-  that units survive a boot. #4377 set that precedent explicitly and #4413 is the
-  task that can settle it; this page does not.
+  that units survive a boot. #4377 set that precedent explicitly and #4413 settled
+  it on a host that could be rebooted; nothing measured here contributed to that
+  result.
 - **That anything should be built.** This is evidence for judging a proposal, not a
   proposal. A disposable-guest design should be argued against these numbers, not
   the other way round.
