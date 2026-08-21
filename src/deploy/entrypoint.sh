@@ -448,6 +448,29 @@ if [ "$(id -u)" = "0" ]; then
     cp -rn /opt/hive/seed-data/* /data/ 2>/dev/null || true
   fi
 
+  # The seed copy above runs as root, so everything it creates is root-owned.
+  # Roster agents get re-chowned to their own hive-<agent> UID in the
+  # per-agent loop below, but /data/agents ITSELF and any seeded directory for
+  # an agent no longer in the roster (e.g. the retired "reviewer" seed) stay
+  # root-owned forever. The permissions watcher runs as dev after the
+  # privilege drop, cannot chown, and would warn about them on every tick
+  # (#4488). This is the one moment we are still root and the chown actually
+  # succeeds, so hand root-owned agent-data entries to dev:node NOW.
+  # Entries already owned by an agent UID or dev are left untouched.
+  if [ -d /data/agents ]; then
+    if [ "$(stat -c '%u' /data/agents 2>/dev/null || echo 0)" = "0" ]; then
+      chown dev:node /data/agents 2>/dev/null || true
+      chmod g+rwX /data/agents 2>/dev/null || true
+    fi
+    for _seeded_dir in /data/agents/*/; do
+      [ -d "$_seeded_dir" ] || continue
+      if [ "$(stat -c '%u' "$_seeded_dir" 2>/dev/null || echo 0)" = "0" ]; then
+        chown -R dev:node "$_seeded_dir" 2>/dev/null || true
+        chmod -R g+rwX "$_seeded_dir" 2>/dev/null || true
+      fi
+    done
+  fi
+
   # Create beads symlinks: /home/dev/<agent>-beads -> /data/beads/<agent>
   if [ -d /etc/hive/agents ] || [ -d /data/beads ]; then
     mkdir -p /home/dev /data/beads
