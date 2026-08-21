@@ -181,9 +181,24 @@ function toggleHTML(a) {
   if (a.enabled) return '<span><span class="dot on"></span>on</span>';
   return '<span><span class="dot off"></span>off</span>';
 }
+// Display labels for each run-state machine value. "working" reads as an
+// overclaim ("this agent IS producing") when the capability column may say
+// otherwise, so it is shown as "should be working": the governor has it on and
+// its pane is alive — whether it actually is delivering is answered by the
+// PROBLEM / capability column beside it. The machine value stays "working"
+// (CSS class, JSON, tests) — only the human label changes.
+var RUN_STATE_LABELS = {
+  "working": "should be working",
+  "idle-at-prompt": "idle",
+  "stuck-at-login": "stuck at login",
+  "session-gone": "session gone",
+  "dead": "down",
+  "quiet-by-design": "quiet by design",
+  "unknown": "unknown"
+};
 function runStateHTML(a) {
   var rs = a.unknown ? "unknown" : (a.runState || "unknown");
-  var label = rs.replace(/-/g, " ");
+  var label = RUN_STATE_LABELS[rs] || rs.replace(/-/g, " ");
   var rel = a.lastActivityAt ? ' <span class="rel">' + esc(relTime(a.lastActivityAt)) + '</span>' : "";
   return '<span class="rs ' + esc(rs) + '"><span class="swatch"></span>' + esc(label) + '</span>' + rel;
 }
