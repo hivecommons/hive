@@ -52,7 +52,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | Script | Stage | Purpose |
 |---|---|---|
 | `hive.sh` | CLI | Operator command wrapper for starting the supervisor, checking status, attaching, kicking agents, reading logs, and stopping agents. |
-| `hive-setup.sh` | Bootstrap | All-in-one Ubuntu 24.04 LXC setup for a Docker-based Hive v2 instance, including generated `hive.yaml` and env files. |
+| `hive-setup.sh` | Bootstrap | All-in-one Ubuntu 24.04 LXC setup for a Docker-based Hive v2 instance, including generated `hive.yaml` and env files. **Docker-only**: it installs Docker Engine and drives `docker compose`, and predates `HIVE_DEPLOY_RUNTIME`, so that variable does not redirect it. For a Podman install follow the [README's Quick Start (Podman)](../README.md#quick-start-podman); see [Deployment helper scripts](../src/docs/deployment-scripts.md#all-in-one-lxc-setup). |
 | `hive-prereq-check.sh` | Bootstrap | Validates host prerequisites for a Docker-based Hive v2 install and can attempt fixes with `--fix`. |
 | `hive-deploy.sh` | Deploy | Pulls the latest Hive repository and syncs scripts to `/usr/local/bin`; also restarts Discord bot components when their files change. |
 | `hive-standalone-runtime.sh` | Deploy | Selects the standalone container engine from `HIVE_DEPLOY_RUNTIME` (`docker` by default) and runs commands against it without ever falling back to the other engine. |
