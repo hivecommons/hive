@@ -151,7 +151,7 @@ made the second container a stranger to its own state.
 | `systemctl stop hive-data-volume.service` | no — the generated unit is `Type=oneshot` with `RemainAfterExit=yes` and **no `ExecStop`**; stopping it runs nothing |
 | `podman rm -v hive` | no — `-v` removes *anonymous* volumes; a named one is untouched (verified separately) |
 | `podman volume rm hive-data` | **yes** |
-| `podman volume prune`, `podman system prune --volumes` | **yes**, and they do not ask about this volume specifically |
+| `podman volume prune`, and the system-wide prune's `--volumes` form (see podman-system-prune(1)) | **yes**, and they do not ask about this volume specifically |
 | `bin/hive-podman-teardown.sh` | **yes** — by design. It selects on the #4210 ownership labels, and the volume carries them: `podman volume ls --filter label=io.kubestellar.hive.owned=true` returns `hive-data` |
 
 ## The one thing not to do: `:Z` on the volume line
