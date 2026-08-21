@@ -740,6 +740,20 @@ const (
 	// duration string (e.g. "30m"). Invalid or non-positive values fall back
 	// to the default.
 	AgentTokenRefreshIntervalEnv = "HIVE_AGENT_TOKEN_REFRESH_INTERVAL"
+
+	// defaultCopilotTokenWatchdogInterval is how often the Copilot-token
+	// watchdog checks that the durable device-flow token file still exists on a
+	// Copilot-backend hive. It is a slow health check (a missing file is a
+	// standing condition until an operator re-logs in, not a fast-moving one),
+	// so a coarse interval keeps the Audit Log signal-not-noise while still
+	// catching a post-upgrade-roll loss within a few minutes.
+	defaultCopilotTokenWatchdogInterval = 5 * time.Minute
+	// CopilotTokenWatchdogIntervalEnv overrides the watchdog interval with a Go
+	// duration string. Invalid or non-positive values fall back to the default;
+	// a value of "0" does NOT disable the watchdog (use the parse-failure path
+	// only for overrides) — disabling is intentionally not offered so the
+	// safety net cannot be silently turned off.
+	CopilotTokenWatchdogIntervalEnv = "HIVE_COPILOT_TOKEN_WATCHDOG_INTERVAL"
 )
 
 // agentTokenRefreshInterval resolves the per-agent token refresh interval
@@ -776,6 +790,105 @@ func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
 			m.refreshAgentTokens(ctx)
 		}
 	}
+}
+
+// copilotTokenWatchdogInterval resolves the watchdog interval from
+// CopilotTokenWatchdogIntervalEnv, falling back to the default.
+func copilotTokenWatchdogInterval() time.Duration {
+	if v := os.Getenv(CopilotTokenWatchdogIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultCopilotTokenWatchdogInterval
+}
+
+// StartCopilotTokenWatchdog periodically verifies that the durable Copilot
+// device-flow token file (CopilotUserTokenPath) is present and non-empty on a
+// Copilot-backend hive, and emits an audit event + logs a warning when it is
+// not. It is a SAFETY NET, not a fixer: it never reads, writes, or otherwise
+// touches token material (recovery is an operator dashboard device-flow login,
+// per the manual-login rule). It exists because the loudest failure mode we
+// see is silent: a fresh agent pod after an upgrade roll finds no durable
+// token, every agent CLI hangs at /login, and — absent this — the only signal
+// is agents quietly ceasing work for hours. Turning that into an immediate,
+// queryable Audit Log entry is the whole point.
+//
+// Gating: the check only fires when at least one configured agent uses the
+// copilot backend. Claude/gateway-only hives have no Copilot token to miss, so
+// a missing file there is not a fault and must not alert.
+//
+// Safe to start unconditionally at boot: like StartAgentTokenRefresh it tracks
+// live state each tick rather than a boot-time snapshot, so a hive that gains
+// or loses copilot agents via config reload is evaluated correctly.
+func (m *Manager) StartCopilotTokenWatchdog(ctx context.Context) {
+	ticker := time.NewTicker(copilotTokenWatchdogInterval())
+	defer ticker.Stop()
+	// Track the last observed state so we log/audit on TRANSITIONS (present ->
+	// missing and back) rather than every tick — a standing missing-file
+	// condition would otherwise flood the Audit Log at the tick rate.
+	lastMissing := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			missing, checked := m.copilotTokenMissing()
+			if !checked {
+				// No copilot-backend agent configured: nothing to watch. Reset
+				// the transition tracker so a later config change that adds a
+				// copilot agent with a missing file alerts on its first miss.
+				lastMissing = false
+				continue
+			}
+			if missing && !lastMissing {
+				m.logger.Warn("copilot token watchdog: durable device-flow token missing",
+					"path", CopilotUserTokenPath,
+					"impact", "copilot agents cannot auto-refresh; new pods hang at /login",
+					"recovery", "operator dashboard device-flow login")
+				m.audit(AuditCopilotTokenMissing, "", auditFields(
+					"outcome", "missing",
+					"path", CopilotUserTokenPath,
+					"trigger", "watchdog",
+				))
+			} else if !missing && lastMissing {
+				m.logger.Info("copilot token watchdog: durable device-flow token restored",
+					"path", CopilotUserTokenPath)
+			}
+			lastMissing = missing
+		}
+	}
+}
+
+// copilotTokenMissing reports whether the durable Copilot token file is absent
+// or empty. checked is false when no configured agent uses the copilot backend
+// (in which case missing is meaningless and callers must not alert). It reads
+// only the file's presence and size — never its contents — so it can never
+// leak or mutate token material.
+func (m *Manager) copilotTokenMissing() (missing, checked bool) {
+	return m.copilotTokenMissingAt(CopilotUserTokenPath)
+}
+
+// copilotTokenMissingAt is copilotTokenMissing parameterized on the token path
+// so tests can point it at a temp file (the production path is a fixed const).
+func (m *Manager) copilotTokenMissingAt(path string) (missing, checked bool) {
+	m.mu.RLock()
+	usesCopilot := false
+	for _, a := range m.agents {
+		if effectiveBackend(a) == "copilot" {
+			usesCopilot = true
+			break
+		}
+	}
+	m.mu.RUnlock()
+	if !usesCopilot {
+		return false, false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return true, true
+	}
+	return false, true
 }
 
 // RefreshAgentTokens immediately rewrites every running agent's per-agent

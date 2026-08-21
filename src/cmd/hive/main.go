@@ -1434,6 +1434,12 @@ func main() {
 	// caches: agent sessions outlived their scoped token, gh 401'd and printed
 	// "gh auth login", and the login-detector auto-paused the agent (#4072).
 	go agentMgr.StartAgentTokenRefresh(ctx)
+	// Start the Copilot-token watchdog UNCONDITIONALLY. It self-gates on the
+	// presence of a copilot-backend agent each tick, so it is a no-op on
+	// Claude/gateway-only hives. On Copilot hives it turns a missing durable
+	// device-flow token — the "stuck at /login after an upgrade roll" outage —
+	// into an immediate Audit Log signal instead of a silent multi-hour stall.
+	go agentMgr.StartCopilotTokenWatchdog(ctx)
 	if ghClient != nil {
 		agentMgr.SetSandboxPRClient(ghClient)
 	}
