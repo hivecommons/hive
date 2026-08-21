@@ -66,6 +66,13 @@ case "${args[0]:-}" in
     [ -f "$sd/$prop" ] && cat "$sd/$prop" || printf '\n'
     ;;
   cat)
+    # `cat <unit>`: the gateway (#4493) and hive are modelled separately, so a
+    # case can remove one without the other.
+    if [ "${args[1]:-}" = "hive-gateway.service" ]; then
+      [ "${FAKE_GATEWAY_UNIT_KNOWN:-yes}" = "yes" ] || exit 1
+      printf '# generated\n[Service]\nExecStart=/usr/bin/podman run --name hive-gateway --rm docker.io/library/nginx@sha256:aaaa\n'
+      exit 0
+    fi
     [ "${FAKE_UNIT_KNOWN:-yes}" = "yes" ] || exit 1
     img="$(dropin_image)"
     [ -n "$img" ] || img="ghcr.io/kubestellar/hive:stable"
@@ -89,6 +96,11 @@ case "${args[0]:-}" in
     printf 'success\n' >"$sd/Result"
     ;;
   restart|start)
+    # The gateway is its own unit with its own start outcome (#4493); its
+    # start must never overwrite hive's recorded state.
+    if [ "${args[1]:-}" = "hive-gateway.service" ]; then
+      exit "${FAKE_GATEWAY_START_RC:-0}"
+    fi
     if [ "${FAKE_RESTART_RC:-0}" = "0" ]; then
       printf 'active\n' >"$sd/ActiveState"; printf 'running\n' >"$sd/SubState"
       printf 'success\n' >"$sd/Result"
@@ -140,6 +152,15 @@ printf 'skopeo %s\n' "$*" >>"$SKOPEO_CALL_LOG"
 printf '%s\n' "${FAKE_TAG_LIST_DIGEST}"
 EOF
 
+# curl: the host-side end-to-end probe of the gateway's published port
+# (#4493). FAKE_GATEWAY_CURL_RC=7 models the measured lie: hive healthy,
+# gateway unit up or startable, and the dashboard port dead anyway.
+cat >"${FAKE_BIN}/curl" <<'EOF'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$CURL_CALL_LOG"
+exit "${FAKE_GATEWAY_CURL_RC:-0}"
+EOF
+
 cat >"${FAKE_BIN}/sudo" <<'EOF'
 #!/usr/bin/env bash
 printf 'sudo %s\n' "$*" >>"$SUDO_CALL_LOG"
@@ -160,8 +181,10 @@ reset_env() {
   export PODMAN_CALL_LOG="${TEST_TMP}/podman.log"
   export SKOPEO_CALL_LOG="${TEST_TMP}/skopeo.log"
   export SUDO_CALL_LOG="${TEST_TMP}/sudo.log"
+  export CURL_CALL_LOG="${TEST_TMP}/curl.log"
   : >"$SYSTEMCTL_CALL_LOG"; : >"$PODMAN_CALL_LOG"
   : >"$SKOPEO_CALL_LOG";    : >"$SUDO_CALL_LOG"
+  : >"$CURL_CALL_LOG"
 
   export QUADLET_DIR="${TEST_TMP}/quadlet"
   export HIVE_UPDATE_QUADLET_DIR="$QUADLET_DIR"
@@ -184,6 +207,14 @@ reset_env() {
   export FAKE_TIMER_STATE=disabled
   export FAKE_TIMER_RC=0
   export FAKE_AUTOUPDATE_LABEL=""
+  # The gateway (#4493): known, startable, and answering by default; each case
+  # breaks exactly the link it is about. Retries are collapsed so a dead
+  # gateway costs the suite nothing.
+  export FAKE_GATEWAY_UNIT_KNOWN=yes
+  export FAKE_GATEWAY_START_RC=0
+  export FAKE_GATEWAY_CURL_RC=0
+  export HIVE_UPDATE_GATEWAY_RETRIES=2
+  export HIVE_UPDATE_GATEWAY_DELAY=0
   # The opt-in file the script installs. Pointed at the tracked one so a case
   # that renames or deletes it fails here rather than on a host.
   export HIVE_UPDATE_AUTOUPDATE_SRC="${ROOT}/src/deploy/quadlet/optional/hive-autoupdate.conf"
@@ -375,6 +406,70 @@ seed_dropin "${REPO}@${DIGEST_BAD}" \
   "pending 2026-08-21T09:00:00Z ${DIGEST_NEW} ${REPO}:stable" \
   "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
 case_expect "rollback skips a pending entry from an interrupted pin" 0 "rolled back to ${DIGEST_OLD}" rollback
+
+echo
+echo "== rollback restores the WHOLE deployment, gateway included (#4493) =="
+# The measured hole: after a failed update, Requires= has already stopped
+# hive-gateway.service, and `systemctl restart hive.service` only cycles
+# dependents that are ACTIVE when the job runs -- so nothing ever started the
+# gateway again, and the script said "and it is serving" over a dead :3001.
+seed_failed_over_healthy() {
+  seed_dropin "${REPO}@${DIGEST_BAD}" \
+    "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+    "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+}
+reset_env; seed_failed_over_healthy
+case_expect "rollback from a failed update claims end to end, not just hive" 0 "healthy end to end" rollback
+check "and it actually STARTED the gateway rather than assuming restart would" \
+  'grep -q "systemctl --user start hive-gateway.service" "$SYSTEMCTL_CALL_LOG"'
+check "and it probed the gateway's published port from the host" \
+  'grep -q "127.0.0.1:3001/api/health" "$CURL_CALL_LOG"'
+# The gateway's port belongs to the INSTALLED unit, not to a constant: a host
+# that publishes elsewhere must be probed where it publishes.
+reset_env; seed_failed_over_healthy
+printf '[Container]\nPublishPort=8443:3001\n' >"${QUADLET_DIR}/hive-gateway.container"
+run_update rollback >/dev/null
+check "the probe reads the published port out of the installed gateway unit" \
+  'grep -q "127.0.0.1:8443/api/health" "$CURL_CALL_LOG"'
+# THE LYING SUCCESS, verbatim from the issue: hive healthy, dashboard dead.
+# The exact state the old script blessed with PASS and exit 0.
+reset_env; seed_failed_over_healthy
+export FAKE_GATEWAY_CURL_RC=7
+out="$(run_update rollback)"; rc=$?
+check "a rollback whose gateway never answers exits 78, not 0" '[ "$rc" = "78" ]'
+check "and never prints 'and it is serving'" '! printf "%s" "$out" | grep -q "and it is serving"'
+check "and says the gateway did not answer" 'printf "%s" "$out" | grep -q "the gateway did not answer"'
+check "while the restored digest is still recorded healthy -- hive itself served on it" \
+  'grep -q "^# HIVE-PIN healthy .* ${DIGEST_OLD} " "$(dropin)"'
+reset_env; seed_failed_over_healthy
+export FAKE_GATEWAY_START_RC=1
+case_expect "a gateway that will not START is a finding, not a footnote" 78 \
+  "nothing an operator can reach" rollback
+# A deployment installed without the gateway unit has nothing to restore; the
+# script must say the end-to-end check could not run rather than fail or lie.
+reset_env; seed_failed_over_healthy
+export FAKE_GATEWAY_UNIT_KNOWN=no
+case_expect "no gateway unit at all is a warning, not a failure" 0 \
+  "no end-to-end check can run" rollback
+# pin has the same two obligations: verify end to end on success, and say the
+# gateway went down with hive on failure (Requires= took it down too).
+reset_env
+run_update pin "${REPO}:stable" >/dev/null
+check "a successful pin also starts and probes the gateway" \
+  'grep -q "systemctl --user start hive-gateway.service" "$SYSTEMCTL_CALL_LOG" \
+   && grep -q "127.0.0.1:3001/api/health" "$CURL_CALL_LOG"'
+reset_env; export FAKE_GATEWAY_CURL_RC=7
+case_expect "a pin whose gateway never answers exits 78" 78 "DEPLOYMENT is not serving" pin "${REPO}:stable"
+check "but the digest is still recorded healthy -- the fault is in front of hive" \
+  'grep -q "^# HIVE-PIN healthy .* ${DIGEST_NEW} " "$(dropin)"'
+reset_env; export FAKE_RESTART_RC=1
+case_expect "a failed update says the gateway has stopped with it" 78 \
+  "hive-gateway.service has stopped with it" pin "${REPO}:stable"
+check "a failed update does not try to start the gateway over a broken hive" \
+  '! grep -q "start hive-gateway.service" "$SYSTEMCTL_CALL_LOG"'
+reset_env; export FAKE_GATEWAY_CURL_RC=7
+seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "unpin whose gateway never answers exits 78" 78 "did not answer" unpin
 
 echo
 echo "== history =="

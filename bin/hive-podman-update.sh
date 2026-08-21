@@ -68,6 +68,19 @@ EX_USAGE=64
 EX_CONFIG=78
 
 UNIT="hive.service"
+# The other half of the deployment (#4493). hive-gateway.service has
+# Requires=hive.service, so a failed update takes it down WITH the failing
+# unit -- and a later `systemctl restart hive.service` does not bring it back,
+# because a restart transaction only cycles dependents that are ACTIVE when
+# the job runs. Every path here that restarts hive must therefore treat the
+# gateway as part of the deployment, not as something systemd will handle.
+GATEWAY_UNIT="hive-gateway.service"
+# Published-port fallback when the installed hive-gateway.container cannot be
+# read. 3001 is what the shipped unit publishes.
+GATEWAY_PORT_DEFAULT=3001
+# End-to-end confirmation budget, sized like bin/hive-podman-setup.sh's.
+GATEWAY_HEALTH_RETRIES="${HIVE_UPDATE_GATEWAY_RETRIES:-30}"
+GATEWAY_HEALTH_DELAY="${HIVE_UPDATE_GATEWAY_DELAY:-2}"
 CONTAINER="hive"
 DROPIN_NAME="10-image.conf"
 # The opt-in auto-update drop-in (#4411). A SEPARATE file from the pin so the
@@ -134,6 +147,7 @@ done
 if [ "$ROOTFUL" -eq 1 ]; then
   MODE_LABEL="rootful (system manager)"
   MODE_FLAG=" --rootful"
+  SCTL_LABEL="sudo systemctl"
   QUADLET_DIR="${HIVE_UPDATE_QUADLET_DIR:-/etc/containers/systemd}"
   sctl() { sudo systemctl "$@"; }
   pod()  { sudo podman "$@"; }
@@ -141,6 +155,7 @@ if [ "$ROOTFUL" -eq 1 ]; then
 else
   MODE_LABEL="rootless (user manager, uid $(id -u))"
   MODE_FLAG=""
+  SCTL_LABEL="systemctl --user"
   QUADLET_DIR="${HIVE_UPDATE_QUADLET_DIR:-$HOME/.config/containers/systemd}"
   sctl() { systemctl --user "$@"; }
   pod()  { podman "$@"; }
@@ -342,7 +357,8 @@ restart_and_report() {
   elapsed=$(( (t1 - t0) / 1000000000 ))
   if [ "$rc" -eq 0 ] && [ "$(show ActiveState)" = "active" ]; then
     ok "restart returned $rc after ${elapsed}s, state $(state)"
-    info "with Notify=healthy that return means /api/health answered on the new digest"
+    info "with Notify=healthy that return means both in-container listeners answered (#4476),"
+    info "which says nothing yet about the PUBLISHED port -- the gateway check below owns that"
     info "running  $(running_image)"
     local v; v="$(running_version)"
     [ -n "$v" ] && info "version  $v"
@@ -351,6 +367,65 @@ restart_and_report() {
   bad "restart returned $rc after ${elapsed}s, state $(state)"
   local run; run="$(running_image)"
   info "running  ${run:-<no container>}"
+  return 1
+}
+
+# --- the gateway, which a hive.service restart does NOT take care of --------
+
+# The published port, read from the INSTALLED Quadlet unit so the check probes
+# what this host actually publishes rather than what the checkout says.
+gateway_port() {
+  local unit_file="${QUADLET_DIR}/hive-gateway.container" port=""
+  if [ -f "$unit_file" ]; then
+    port="$(sed -n 's|^PublishPort=\([0-9]\{1,5\}\):.*|\1|p' "$unit_file" | head -n1)"
+  fi
+  printf '%s\n' "${port:-$GATEWAY_PORT_DEFAULT}"
+}
+
+# Start the gateway and confirm the deployment answers END TO END before any
+# caller claims "serving" (#4493). Two facts make this necessary:
+#
+#   1. After a failed update, Requires=hive.service has already STOPPED the
+#      gateway, and `systemctl restart hive.service` re-starts only dependents
+#      that are active when the job runs -- an inactive gateway is not in the
+#      transaction, so nothing ever starts it again. Measured: rollback left
+#      `hive active / gateway inactive / dashboard :3001 DEAD` while reporting
+#      success. `start` is idempotent -- a no-op on a healthy stack, the fix
+#      on a stranded one -- so this needs no conditional logic.
+#   2. Notify=healthy on hive.service proves Hive's own listeners answered
+#      INSIDE the container (#4476 probes both 3002 and 3001 there). It says
+#      nothing about the published port an operator actually uses. The
+#      installer already refuses to claim healthy without curling the gateway
+#      from the host; this is the same assertion, for the same reason.
+ensure_gateway_serving() {
+  local port; port="$(gateway_port)"
+  if ! sctl cat "$GATEWAY_UNIT" >/dev/null 2>&1; then
+    warn "$GATEWAY_UNIT is not known to this manager -- no end-to-end check can run"
+    info "Hive itself is serving, but nothing here publishes port ${port} for an operator"
+    return 0
+  fi
+  if ! sctl start "$GATEWAY_UNIT" >/dev/null 2>&1; then
+    bad "$GATEWAY_UNIT did not start -- Hive is serving, but nothing an operator can reach is"
+    info "journalctl -u $GATEWAY_UNIT has the reason (add --user for a rootless install)"
+    return 1
+  fi
+  ok "started $GATEWAY_UNIT (a no-op when it was already running)"
+  if ! command -v curl >/dev/null 2>&1; then
+    bad "curl is not installed, so the end-to-end check cannot run -- this script will not claim serving on evidence it does not have"
+    return 1
+  fi
+  info "waiting for the gateway on http://127.0.0.1:${port}/api/health"
+  local attempt=0
+  while [ "$attempt" -lt "$GATEWAY_HEALTH_RETRIES" ]; do
+    if curl -sf "http://127.0.0.1:${port}/api/health" >/dev/null 2>&1; then
+      ok "gateway answered on ${port} -- healthy end to end"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep "$GATEWAY_HEALTH_DELAY"
+  done
+  bad "the gateway did not answer on ${port} within $((GATEWAY_HEALTH_RETRIES * GATEWAY_HEALTH_DELAY))s"
+  info "Hive itself is healthy, so the gap is in front of it -- check $GATEWAY_UNIT"
   return 1
 }
 
@@ -466,16 +541,26 @@ do_pin() {
 
   head1 "Restart"
   if restart_and_report; then
+    # `healthy` is a statement about this DIGEST as a rollback target -- Hive
+    # itself served on it -- so it is recorded before the gateway check, whose
+    # failure is a fault in front of Hive, not in the image.
     mark_top_outcome healthy
+    if ensure_gateway_serving; then
+      head1 "Result"
+      ok "updated to $digest and it is serving end to end"
+      info "roll it back with: $0 rollback${MODE_FLAG}"
+      exit 0
+    fi
     head1 "Result"
-    ok "updated to $digest and it is serving"
-    info "roll it back with: $0 rollback${MODE_FLAG}"
-    exit 0
+    bad "updated to $digest and Hive is healthy, but the DEPLOYMENT is not serving"
+    info "the dashboard stays dead until the gateway is up: $SCTL_LABEL start $GATEWAY_UNIT"
+    exit "$EX_CONFIG"
   fi
   mark_top_outcome failed
   head1 "Result"
   bad "the new image did not become healthy -- Hive is DOWN on this host"
   info "the unit will keep retrying it: Restart=always, one TimeoutStartSec per attempt"
+  info "$GATEWAY_UNIT has stopped with it (Requires=), so the published dashboard port is down too"
   info "roll back now, deliberately:"
   info "    $0 rollback${MODE_FLAG}"
   exit "$EX_CONFIG"
@@ -525,9 +610,19 @@ do_rollback() {
   info "stopped the failing unit first: $(state)"
   if restart_and_report; then
     mark_top_outcome healthy
+    # THE REASON THIS CALL EXISTS (#4493): the stop above -- and the failed
+    # update before it -- left the gateway inactive, and the restart of
+    # hive.service did not put it back. Without this, "rolled back and it is
+    # serving" was printed over a dead published port.
+    if ensure_gateway_serving; then
+      head1 "Result"
+      ok "rolled back to $digest and it is serving end to end"
+      exit 0
+    fi
     head1 "Result"
-    ok "rolled back to $digest and it is serving"
-    exit 0
+    bad "rolled back to $digest and Hive is healthy, but the DEPLOYMENT is not serving"
+    info "the dashboard stays dead until the gateway is up: $SCTL_LABEL start $GATEWAY_UNIT"
+    exit "$EX_CONFIG"
   fi
   mark_top_outcome failed
   head1 "Result"
@@ -550,7 +645,7 @@ do_unpin() {
   warn "the unit is back on the floating tag: $(unit_image)"
   info "a floating tag cannot be rolled back to; this is a teardown step, not an update one"
   head1 "Restart"
-  if restart_and_report; then exit 0; fi
+  if restart_and_report && ensure_gateway_serving; then exit 0; fi
   exit "$EX_CONFIG"
 }
 
@@ -661,10 +756,10 @@ do_autoupdate() {
   head1 "Restart"
   info "the label applies at container-create time, so the running container"
   info "is not eligible until it is recreated"
-  if restart_and_report; then
+  if restart_and_report && ensure_gateway_serving; then
     ok "container label: $(autoupdate_label)"
   else
-    bad "the restart did not come up healthy -- auto-update is armed on a unit that is not serving"
+    bad "the restart did not come up serving -- auto-update is armed on a deployment that is not"
     exit "$EX_CONFIG"
   fi
 

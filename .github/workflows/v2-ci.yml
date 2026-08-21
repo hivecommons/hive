@@ -328,7 +328,13 @@ jobs:
       # rollback rather than a hope — that the pin written is always a digest
       # (and the manifest LIST digest, not the per-architecture one `podman
       # image inspect` hands back), and that `rollback` skips the entry that
-      # just failed instead of walking back into it. Every input is mocked, so
+      # just failed instead of walking back into it. #4493 added the third:
+      # neither `rollback` nor `pin` may claim "serving" until the GATEWAY
+      # answers on its published port from the host — a failed update strands
+      # hive-gateway.service inactive (Requires= stopped it, and a restart of
+      # hive.service only cycles dependents that are active), so the suite
+      # holds that rollback starts the gateway and that a dead published port
+      # is an exit-78 finding, never a PASS. Every input is mocked, so
       # this pulls nothing and restarts nothing.
       - name: Podman Quadlet update and rollback (#4378)
         working-directory: .

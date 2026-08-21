@@ -295,6 +295,20 @@ and the one below it is the `healthy` `:stable` digest; rollback skipped the
 first and took the second. A "go to the previous entry" rule would have walked
 straight back into the image that had just failed.
 
+The transcript above predates #4493 and its last PASS line was a lie: the
+failed update had already stopped `hive-gateway.service` (`Requires=`), and a
+`systemctl restart hive.service` only re-starts dependents that are ACTIVE
+when the job runs, so the gateway stayed inactive and the published dashboard
+port stayed dead while the script reported "and it is serving". Measured on
+that state: `hive active / gateway inactive / :3001 DEAD / :3002 answering
+inside the container`. The script now starts the gateway on every path that
+restarts hive — `start` is idempotent, a no-op when it is already up — and
+claims success only after the gateway answers `/api/health` on its published
+port from the host, the same end-to-end assertion `bin/hive-podman-setup.sh`
+ends on. A rollback whose gateway does not come up serving exits 78, with the
+restored digest still recorded `healthy`: Hive served on it, and the fault is
+in front of Hive.
+
 | step | measured |
 | --- | --- |
 | `systemctl stop` on a unit mid-failing-start | rc 0 in **555ms**, `inactive/dead/success` |
