@@ -275,6 +275,10 @@ check "a reference that is already a digest contacts no registry" \
 reset_env; export FAKE_SKOPEO_RC=1 FAKE_TAG_REF="${REPO}:nope" HIVE_UPDATE_SKOPEO=skopeo
 export FAKE_PULL_FAIL_SUBSTR="nope"
 case_expect "an unresolvable tag is a finding, not a silent tag pin" 78 "could not resolve" resolve "${REPO}:nope"
+# A registry with a port carries a colon before the path, which is exactly the
+# shape a naive ${ref%:*} tag-strip would truncate to "localhost".
+reset_env; export FAKE_TAG_REF="localhost:5000/hive:v1"
+case_expect "resolve keeps a registry port in the repo part" 0 "localhost:5000/hive@${DIGEST_NEW}" resolve "localhost:5000/hive:v1"
 
 echo
 echo "== pin =="
@@ -352,6 +356,24 @@ before="$(cat "$(dropin)")"
 case_expect "a rollback target that no longer pulls refuses" 78 "nothing has been changed" rollback
 check "and leaves the drop-in byte-identical" '[ "$before" = "$(cat "$(dropin)")" ]'
 check "and restarts nothing" '! grep -q "systemctl restart" "$SYSTEMCTL_CALL_LOG"'
+# The double failure: the rollback target itself never becomes healthy. This
+# is the worst state the tool can leave a host in, so the report must be
+# honest -- exit 78, say so, and record the restored pin as failed.
+reset_env; export FAKE_RESTART_RC=1
+seed_dropin "${REPO}@${DIGEST_BAD}" \
+  "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+  "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+case_expect "a rollback target that also fails to become healthy exits 78" 78 "did not become healthy either" rollback
+check "a double failure marks the restored pin failed, not healthy" \
+  'grep -q "^# HIVE-PIN failed .* ${DIGEST_OLD} " "$(dropin)"'
+# An interrupted pin leaves a `pending` line at the top of the history; the
+# rollback target search must skip it just like a `failed` one.
+reset_env
+seed_dropin "${REPO}@${DIGEST_BAD}" \
+  "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+  "pending 2026-08-21T09:00:00Z ${DIGEST_NEW} ${REPO}:stable" \
+  "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+case_expect "rollback skips a pending entry from an interrupted pin" 0 "rolled back to ${DIGEST_OLD}" rollback
 
 echo
 echo "== history =="
@@ -377,12 +399,21 @@ case_expect "unpin warns that the floating tag cannot be rolled back to" 0 "cann
 check "unpin removes the drop-in" '[ ! -f "$(dropin)" ]'
 reset_env
 case_expect "unpin with nothing pinned is not an error" 0 "no drop-in to remove" unpin
+reset_env; export FAKE_RESTART_RC=1
+seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "unpin whose restart fails exits 78" 78 "" unpin
 
 echo
 echo "== rootful drives the system manager through sudo =="
 reset_env
 run_update status --rootful >/dev/null
 check "rootful reads the system manager through sudo" 'grep -q "sudo systemctl" "$SUDO_CALL_LOG"'
+# The write path: a rootful pin must land the drop-in through `sudo install`,
+# not a plain redirect that would fail (or worse, half-write) without root.
+reset_env
+run_update pin "${REPO}:stable" --rootful >/dev/null
+check "rootful pin writes the drop-in through sudo install" \
+  'grep -q "sudo install" "$SUDO_CALL_LOG" && grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)"'
 
 echo
 echo "== autoupdate (#4411) =="
