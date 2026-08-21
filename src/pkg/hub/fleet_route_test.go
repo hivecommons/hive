@@ -26,6 +26,18 @@ func TestFleetRouteServesPageAndMyHivesRedirects(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "<html") {
 		t.Error("GET /fleet: expected the fleet page HTML shell")
 	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`<header class="site-header">`,
+		`<a href="/">Hives</a>`,
+		`<a href="/dashboard">My Hives</a>`,
+		`<a href="/fleet" id="nav-fleet" class="active" aria-current="page"`,
+		`<a href="/api/docs">API</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /fleet: expected navbar to contain %q", want)
+		}
+	}
 
 	req = httptest.NewRequest("GET", "/my-hives?view=quadrant", nil)
 	w = httptest.NewRecorder()
