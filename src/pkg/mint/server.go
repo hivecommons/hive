@@ -1,12 +1,10 @@
 package mint
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -29,14 +27,22 @@ const (
 
 // Server exposes the mint over HTTP.
 //
-// Caller authentication on /mint is, for this foundation, a shared-secret
-// bearer token (constant-time compared). This is deliberately minimal.
+// Caller authentication on /mint goes through a CallerAuthenticator (caller.go).
+// The default is the original shared-secret bearer token, constant-time
+// compared, so behaviour is unchanged unless an operator configures otherwise.
 //
-// TODO(caller-auth): replace the shared secret with real caller-identity
-// verification — e.g. validate a spoke/agent identity assertion (an inbound
-// OIDC token from the workload's own SA, or a mutual-TLS client cert), map it
-// to an allowed subject + scope set, and issue only scopes that identity is
-// entitled to. The shared secret proves "trusted network position", not "who".
+// What a shared secret proves is "trusted network position", not "who" — see
+// caller.go for the finding (#3915) and for what changed. In short: the mint no
+// longer treats possession of a credential as permission to mint ANYTHING.
+// Where Entitlements are configured the mint is deny-by-default per identity,
+// and the verified identity is recorded on every mint and every refusal.
+//
+// TODO(caller-auth): a Kubernetes TokenReview backend (validate the caller's
+// projected ServiceAccount token, audience-scoped so it cannot be replayed at
+// the API server) and/or an mTLS client-certificate backend. Both implement
+// CallerAuthenticator and need no change here. TokenReview needs
+// k8s.io/client-go, which this module does not depend on — that dependency is a
+// maintainer decision, which is why the seam landed first.
 //
 // TODO(cloud-wif): the returned token is designed to be exchanged at a cloud
 // WIF provider (GCP STS / AWS AssumeRoleWithWebIdentity / Azure federated
@@ -44,24 +50,68 @@ const (
 // JWKS. That exchange is provider-side and out of scope here.
 type Server struct {
 	minter *Minter
-	secret string
+	auth   CallerAuthenticator
+	ents   Entitlements
 	logger *slog.Logger
+}
+
+// ServerOption configures a Server. Options are additive: a Server built
+// without any behaves exactly as it did before #3915.
+type ServerOption func(*Server)
+
+// WithAuthenticator replaces the caller-authentication mechanism. This is the
+// seam for a TokenReview or mTLS backend; passing nil is ignored so a caller
+// cannot accidentally disable authentication.
+func WithAuthenticator(a CallerAuthenticator) ServerOption {
+	return func(s *Server) {
+		if a != nil {
+			s.auth = a
+		}
+	}
+}
+
+// WithEntitlements bounds what each verified identity may mint. Once a non-empty
+// set is supplied the mint is deny-by-default: an identity with no entry may
+// mint nothing, and an entitlement's empty dimension allows nothing rather than
+// everything. See Entitlement.
+func WithEntitlements(e Entitlements) ServerOption {
+	return func(s *Server) { s.ents = e }
 }
 
 // NewServer builds a mint HTTP server. secret is the shared bearer secret that
 // gates /mint; it must be non-empty (fail closed — an empty secret would allow
 // anyone to mint). The secret is supplied by config/env, never hardcoded.
-func NewServer(minter *Minter, secret string, logger *slog.Logger) (*Server, error) {
+//
+// The signature is unchanged from before #3915 and the default posture is
+// identical: a shared-secret gate with no entitlement bound. Use
+// WithAuthenticator and WithEntitlements to tighten it.
+func NewServer(minter *Minter, secret string, logger *slog.Logger, opts ...ServerOption) (*Server, error) {
 	if minter == nil {
 		return nil, fmt.Errorf("mint: nil minter")
 	}
-	if secret == "" {
-		return nil, fmt.Errorf("mint: shared secret is required (fail closed)")
+	auth, err := NewSharedSecretAuthenticator(secret)
+	if err != nil {
+		return nil, err
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{minter: minter, secret: secret, logger: logger}, nil
+	s := &Server{minter: minter, auth: auth, logger: logger}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	// Say the posture out loud at construction. An unbounded mint is a
+	// deliberate configuration, not an accident to discover from a token that
+	// should never have been issued.
+	if len(s.ents) == 0 {
+		s.logger.Warn("mint: no caller entitlements configured — any authenticated caller may mint any subject, audience and scope (bounded only by the TTL cap)",
+			"authenticator", s.auth.Name())
+	} else {
+		s.logger.Info("mint: caller entitlements active (deny-by-default)",
+			"authenticator", s.auth.Name(), "identities", s.ents.identityNames())
+	}
+	return s, nil
 }
 
 // Handler returns an http.Handler serving MintPath and JWKSPath.
@@ -95,8 +145,12 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !s.authorized(r) {
-		// Fail closed. Do not distinguish missing vs wrong secret.
+	identity, err := s.auth.Authenticate(r)
+	if err != nil {
+		// Fail closed. Do not distinguish missing vs malformed vs wrong
+		// credential — the client learns only that it is not authorized.
+		s.logger.Warn("mint: unauthenticated /mint request refused",
+			"authenticator", s.auth.Name(), "remote_addr", r.RemoteAddr)
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -107,6 +161,19 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Deny-by-default once entitlements are configured. This is what stops a
+	// credential holder minting for a subject it has no business asserting —
+	// the "any subject, any audience, any scope" half of #3915. Refused with
+	// 403, not 401: the caller IS authenticated, it is simply not entitled.
+	if ok, why := s.ents.permits(identity, req.Subject, req.Audience, req.Scopes); !ok {
+		s.logger.Warn("mint: refused, caller not entitled",
+			"caller", identity.String(), "caller_kind", identity.Kind,
+			"subject", req.Subject, "audience", req.Audience,
+			"scopes", req.Scopes, "reason", why)
+		writeErr(w, http.StatusForbidden, "not entitled")
 		return
 	}
 
@@ -128,7 +195,10 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
 		Issuer:        s.minter.issuer,
 	}
 	writeJSON(w, http.StatusOK, resp)
+	// The caller is part of the audit record (#3915): a mint line that names
+	// only the subject cannot answer "who asked for this token".
 	s.logger.Info("token minted",
+		"caller", identity.String(), "caller_kind", identity.Kind,
 		"subject", req.Subject, "audience", req.Audience,
 		"scopes", req.Scopes, "ttl_seconds", int(honored.Seconds()))
 }
@@ -147,19 +217,6 @@ func (s *Server) handleJWKS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(jwksCacheMaxAge.Seconds())))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
-}
-
-// authorized checks the shared-secret bearer token in constant time.
-func (s *Server) authorized(r *http.Request) bool {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, authScheme) {
-		return false
-	}
-	presented := strings.TrimPrefix(h, authScheme)
-	// Constant-time compare; length-independent short-circuit is unavoidable
-	// but subtle.ConstantTimeCompare returns 0 on length mismatch without
-	// leaking which byte differed.
-	return subtle.ConstantTimeCompare([]byte(presented), []byte(s.secret)) == 1
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
