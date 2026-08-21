@@ -345,17 +345,25 @@ func clusterDefaultForge(c *ClusterConfig) string {
 	return publicForgeHost
 }
 
-// kubectlForCluster builds an exec.Cmd that targets a specific cluster.
-// For in-cluster configs (InCluster == true) it runs plain kubectl;
-// for remote clusters it injects --kubeconfig and --context flags.
-func kubectlForCluster(cluster *ClusterConfig, args ...string) *exec.Cmd {
-	return exec.Command("kubectl", kubectlArgsForCluster(cluster, args...)...)
+// kubectlForCluster builds a bounded kubectl command that targets a specific
+// cluster. For in-cluster configs (InCluster == true) it runs plain kubectl;
+// for remote clusters it injects --kubeconfig and --context flags. Execution
+// (Output/CombinedOutput/Run) acquires a per-cluster concurrency slot — see
+// kubectl_executor.go.
+func kubectlForCluster(cluster *ClusterConfig, args ...string) *kubectlCmd {
+	return &kubectlCmd{
+		Cmd:       exec.Command("kubectl", kubectlArgsForCluster(cluster, args...)...),
+		clusterID: cluster.ID,
+	}
 }
 
 // kubectlForClusterContext is like kubectlForCluster but lets callers bound the
 // command lifetime with a context.
-func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...)
+func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args ...string) *kubectlCmd {
+	return &kubectlCmd{
+		Cmd:       exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...),
+		clusterID: cluster.ID,
+	}
 }
 
 // unreachableKubeconfigSentinel is aimed at instead of a real kubeconfig when a
