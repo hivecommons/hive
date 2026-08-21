@@ -985,6 +985,12 @@ type HubServer struct {
 	// (saas_reset_assignment.go). Same rationale and same guarding mutex as the
 	// sweeps above: poller-loop-only state.
 	lastStuckAssignmentSweep time.Time
+	// lastPoolReplenish throttles the watermark pool replenisher
+	// (pool_replenisher.go); poolReplenishHold suspends a cluster's
+	// replenishing until the recorded time after a failed seed. Same
+	// poller-loop-only guarding mutex as the sweeps above.
+	lastPoolReplenish time.Time
+	poolReplenishHold map[string]time.Time
 	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
 	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
 	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see
@@ -1275,6 +1281,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		keyGenerations:          legacyGenerationSet(secret),
 		clusters:                loadClusters(logger),
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
+		poolReplenishHold:       make(map[string]time.Time),
 		heartbeatUpgrade:        make(map[string]string),
 		heartbeatSwitchTag:      make(map[string]string),
 		clusterUnreachableUntil: make(map[string]time.Time),

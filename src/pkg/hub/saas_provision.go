@@ -200,7 +200,14 @@ type ClusterConfig struct {
 	// and can be optimistic, but routes/PVCs/namespaces and image-pull
 	// bandwidth all scale with hive COUNT, so operators need an explicit
 	// ceiling they can set per cluster as the fleet grows.
-	MaxHives          int    `json:"max_hives,omitempty" yaml:"max_hives,omitempty"`
+	MaxHives int `json:"max_hives,omitempty" yaml:"max_hives,omitempty"`
+	// PoolMin/PoolTarget drive the watermark pool replenisher
+	// (pool_replenisher.go): when clean available placeholders on this
+	// cluster drop below pool_min, the hub provisions up to pool_target.
+	// pool_target 0 (the default) disables auto-replenish for the cluster;
+	// pool_min 0 with a target treats the target itself as the floor.
+	PoolMin           int    `json:"pool_min,omitempty" yaml:"pool_min,omitempty"`
+	PoolTarget        int    `json:"pool_target,omitempty" yaml:"pool_target,omitempty"`
 	Arch              string `json:"arch" yaml:"arch"`
 	ImageTag          string `json:"image_tag" yaml:"image_tag"`
 	ImagePullPolicy   string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`

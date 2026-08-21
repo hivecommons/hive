@@ -5442,6 +5442,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// loadSaaSUser already drops an expired grant at every read, on the wall
 	// clock, whether or not this ever runs. See access_expiry.go.
 	s.sweepExpiredAccessIfDue()
+	// Keep each cluster's placeholder pool at its configured watermark so
+	// approvals never dead-end on "no available placeholder". Throttled
+	// internally to poolReplenishInterval; disabled per cluster unless
+	// pool_target is set. See pool_replenisher.go.
+	s.replenishPoolsIfDue()
 	// Record the per-release image-pulls snapshot (external-adoption chart). The
 	// call is internally guarded to snapshot only when the v2 release SHA advances,
 	// so ticking it alongside the frequent SHA poll is cheap — no separate
@@ -5472,6 +5477,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.reconcilePerHiveEnvIfDue()
 		s.retireExpiredGenerationsIfDue()
 		s.sweepExpiredAccessIfDue()
+		s.replenishPoolsIfDue()
 		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
