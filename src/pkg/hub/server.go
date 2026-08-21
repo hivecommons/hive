@@ -308,6 +308,28 @@ type RegistryEntry struct {
 	// fleetStatsMaxAge. Zero means the spoke is too old to report it, which is
 	// treated as "not stale" so an upgrade does not blank the strip.
 	FleetStatsCollectedAt time.Time `json:"fleetStatsCollectedAt,omitempty"`
+
+	// Quadrant signals reported by the spoke (nil = not reported). These back
+	// the per-hive quadrant score; see quadrant.go for how each is used and
+	// why absent evidence must never collapse to zero.
+	//
+	// BudgetCurrentSpend is tokens used in the CURRENT budget window, which is
+	// only meaningful alongside the window bounds — a bare zero cannot be told
+	// apart from a window that just rolled. The window length is the spoke's
+	// governor.budget.period_days (default 7d), so it must be normalised before
+	// being compared with the 90-day PR counters above.
+	BudgetCurrentSpend   *int64    `json:"budgetCurrentSpend,omitempty"`
+	BudgetWindowStartsAt time.Time `json:"budgetWindowStartsAt,omitempty"`
+	BudgetWindowEndsAt   time.Time `json:"budgetWindowEndsAt,omitempty"`
+	BudgetExhausted      *bool     `json:"budgetExhausted,omitempty"`
+	// HoldTotal / AwaitingReview / SLAViolations measure work stalled on a
+	// human or aging past its threshold; TasksCompleted7d is relay throughput
+	// summed on the spoke from its hourly buckets.
+	HoldTotal        *int `json:"holdTotal,omitempty"`
+	AwaitingReview   *int `json:"awaitingReview,omitempty"`
+	SLAViolations    *int `json:"slaViolations,omitempty"`
+	TasksCompleted7d *int `json:"tasksCompleted7d,omitempty"`
+
 	// ComponentReach is the LATEST component-reach report from this hive's
 	// spoke (#3993, phase 2a of #3973): per (component, running commit) span
 	// counters aggregated in-process on the spoke and carried on the
@@ -1704,6 +1726,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PRsMerged90d:   clampFleetCount(payload.PRsMerged90d),
 		PRsRejected90d: clampFleetCount(payload.PRsRejected90d),
 		CVEsClosed:     clampFleetCount(payload.CVEsClosed),
+		// Quadrant signals. Reuse clampFleetCount's discipline: a negative is
+		// nonsense from a spoke and becomes nil ("not reported") rather than
+		// being clamped to zero, which would be indistinguishable from a real
+		// measurement and would quietly drag the hive's score.
+		BudgetCurrentSpend:   clampQuadrantSpend(payload.BudgetCurrentSpend),
+		BudgetWindowStartsAt: parseHeartbeatTime(payload.BudgetWindowStartsAt),
+		BudgetWindowEndsAt:   parseHeartbeatTime(payload.BudgetWindowEndsAt),
+		BudgetExhausted:      payload.BudgetExhausted,
+		HoldTotal:            clampFleetCount(payload.HoldTotal),
+		AwaitingReview:       clampFleetCount(payload.AwaitingReview),
+		SLAViolations:        clampFleetCount(payload.SLAViolations),
+		TasksCompleted7d:     clampFleetCount(payload.TasksCompleted7d),
 		FleetStatsCollectedAt: func() time.Time {
 			if payload.FleetStatsCollectedAt == "" {
 				return time.Time{}
@@ -1884,6 +1918,37 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			if entry.FleetStatsCollectedAt.IsZero() {
 				entry.FleetStatsCollectedAt = h.FleetStatsCollectedAt
+			}
+			// Carry the quadrant signals forward for the same reason as the
+			// counts above: a spoke that just restarted reports nil until its
+			// governor and collectors warm back up, and overwriting with nil
+			// would collapse that hive's kite to "not measured" for the gap —
+			// which reads as a data problem rather than the transient it is.
+			//
+			// The budget window is carried WITH its spend, never apart from
+			// it. The spend number means nothing without the bounds that scope
+			// it, so preserving one while dropping the other would produce a
+			// figure that looks current but describes a window that has since
+			// rolled.
+			if entry.BudgetCurrentSpend == nil && h.BudgetCurrentSpend != nil {
+				entry.BudgetCurrentSpend = h.BudgetCurrentSpend
+				entry.BudgetWindowStartsAt = h.BudgetWindowStartsAt
+				entry.BudgetWindowEndsAt = h.BudgetWindowEndsAt
+			}
+			if entry.BudgetExhausted == nil && h.BudgetExhausted != nil {
+				entry.BudgetExhausted = h.BudgetExhausted
+			}
+			if entry.HoldTotal == nil && h.HoldTotal != nil {
+				entry.HoldTotal = h.HoldTotal
+			}
+			if entry.AwaitingReview == nil && h.AwaitingReview != nil {
+				entry.AwaitingReview = h.AwaitingReview
+			}
+			if entry.SLAViolations == nil && h.SLAViolations != nil {
+				entry.SLAViolations = h.SLAViolations
+			}
+			if entry.TasksCompleted7d == nil && h.TasksCompleted7d != nil {
+				entry.TasksCompleted7d = h.TasksCompleted7d
 			}
 			// Carry the last real component-reach report forward when this
 			// beat omits one (#3993) — a restarting spoke reports nil until
@@ -3654,6 +3719,14 @@ func clampInt(v, min, max int) int {
 // value. Ten million PRs from one hive is already far beyond plausible.
 const maxFleetCount = 10_000_000
 
+// maxQuadrantSpend bounds a hive's reported per-window token spend for the same
+// reason maxFleetCount bounds counts, but the stakes differ: quadrant scores are
+// fleet-RELATIVE percentiles, so one absurd value does not merely look wrong on
+// its own row — it stretches the distribution and pushes every honest hive
+// toward the same end of the axis. A trillion tokens in one budget window is
+// orders of magnitude beyond any real usage.
+const maxQuadrantSpend int64 = 1_000_000_000_000
+
 // clampFleetCount validates a spoke-reported fleet count pointer. nil stays nil
 // (the hive reported nothing — it must NOT be aggregated as a zero). A negative
 // value is treated as nil (garbage → don't count). Otherwise it is clamped to
@@ -3665,6 +3738,37 @@ func clampFleetCount(v *int) *int {
 	}
 	c := clampInt(*v, 0, maxFleetCount)
 	return &c
+}
+
+// clampQuadrantSpend sanitises a reported token spend the same way
+// clampFleetCount handles counts: a negative is nonsense from the spoke and
+// becomes nil ("not reported") rather than zero, so it can never be mistaken
+// for a hive that genuinely consumed nothing.
+//
+// The upper bound is deliberately generous — this is a token count over a
+// budget window, not a small tally — but it exists so a corrupt payload cannot
+// dominate a fleet-relative percentile and flatten every other hive's score.
+func clampQuadrantSpend(v *int64) *int64 {
+	if v == nil || *v < 0 {
+		return nil
+	}
+	c := clampInt64(*v, 0, maxQuadrantSpend)
+	return &c
+}
+
+// parseHeartbeatTime converts an RFC3339 timestamp from a heartbeat into a
+// time.Time, yielding the zero time for both an empty string (a spoke too old
+// to report it) and an unparseable one. Callers treat the zero time as "not
+// reported"; this mirrors how FleetStatsCollectedAt is handled at the upsert.
+func parseHeartbeatTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func clampInt64(v, min, max int64) int64 {

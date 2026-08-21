@@ -643,6 +643,60 @@ type HeartbeatPayload struct {
 	// instead of summing a frozen number forever. Empty from a spoke too old
 	// to report it, which the hub treats as "not stale".
 	FleetStatsCollectedAt string `json:"fleet_stats_collected_at,omitempty"`
+
+	// --- Quadrant signals -------------------------------------------------
+	// Cheap, already-computed spoke metrics forwarded so the hub can score the
+	// per-hive quadrant (trust / efficiency / satisfaction / productivity)
+	// without asking spokes to do new work. Every one of these is read from
+	// state the spoke already maintains on an existing timer — none costs a
+	// GitHub API call, which matters because the fleet shares a search quota.
+	//
+	// All pointers. A nil from an older spoke means "not reported", which the
+	// scorer treats as absent evidence rather than a measurement of zero — the
+	// distinction the whole quadrant design rests on. That also makes this
+	// block forward-compatible with no version negotiation.
+
+	// BudgetCurrentSpend is tokens consumed since the CURRENT budget window
+	// opened (governor's totalTokens minus the window baseline). Unlike
+	// Tokens24h above — which despite its name is a lifetime cumulative total —
+	// this is a genuine windowed delta, which is what makes a cost-per-outcome
+	// ratio meaningful rather than merely rankable.
+	//
+	// It is uninterpretable without its window bounds: zero equally means "the
+	// window just rolled" and "nothing was consumed". The two timestamps below
+	// are therefore part of the same signal, not optional decoration, and the
+	// window length is governor.budget.period_days (default 7 days) rather than
+	// anything fixed — so consumers must normalise (e.g. per day) before
+	// comparing against the 90-day PR counters above.
+	BudgetCurrentSpend   *int64 `json:"budget_current_spend,omitempty"`
+	BudgetWindowStartsAt string `json:"budget_window_starts_at,omitempty"`
+	BudgetWindowEndsAt   string `json:"budget_window_ends_at,omitempty"`
+	// BudgetExhausted reports that the governor is actively suppressing agent
+	// kicks because the window's budget ran out. It is both an efficiency and a
+	// productivity signal: throughput near zero means something very different
+	// when the hive is being throttled than when it is merely idle.
+	BudgetExhausted *bool `json:"budget_exhausted,omitempty"`
+
+	// HoldTotal is issues and PRs parked behind a hold label awaiting human
+	// review, and AwaitingReview is plans blocked on a human decision. Both
+	// measure the same thing from different ends: how much of this hive's work
+	// is stalled on a person rather than on the agents.
+	HoldTotal      *int `json:"hold_total,omitempty"`
+	AwaitingReview *int `json:"awaiting_review,omitempty"`
+
+	// SLAViolations is work aging past its service threshold, taken from the
+	// governor's eval snapshot.
+	SLAViolations *int `json:"sla_violations,omitempty"`
+
+	// TasksCompleted7d is contributor-relay tasks completed in the last seven
+	// days, summed on the spoke from its 168 hourly buckets. The buckets
+	// themselves stay local: sending ~168 integers every two minutes to
+	// reconstruct one number on the hub would be pure waste.
+	//
+	// A flat zero is a real measurement for a hive with no contributors, not a
+	// gap — read it alongside Contributors above to tell the two apart.
+	TasksCompleted7d *int `json:"tasks_completed_7d,omitempty"`
+
 	// AgentsWithModel counts this hive's agents that have an effective method
 	// (backend) or model assigned — override first, then agent config, exactly
 	// as the launcher resolves it. The hub uses it for user-journey stage

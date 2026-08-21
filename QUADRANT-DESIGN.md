@@ -182,3 +182,97 @@ This removes the spoke-side change from the critical path entirely.
 - `MetricsCollector` (mttr, prIssueCounts) is spoke-LOCAL only; never sent.
   So `github.PRIssueCounts` is NOT available hub-side — the repo-wide cost
   denominator I originally planned does not exist at the hub.
+
+## Windowed tokens ARE derivable — fixes the window-mismatch compromise
+
+VERIFIED: `tokens.SessionSummary` (src/pkg/tokens/collector.go:31) carries BOTH
+`TotalTokens int64` and `LastActive int64` (epoch) per session, and
+`AggregateSummary.Sessions []SessionSummary` (collector.go:~55) is populated on
+every scan (collector.go:279) into the cached aggregate, refreshed on a ticker
+(collector.go:150).
+
+So a 90-day windowed token total is a pure sum over already-cached data:
+    sum(s.TotalTokens for s in Summary().Sessions if s.LastActive >= cutoff)
+
+- No new GitHub API calls (rate-limit safe — the fleet is sensitive to this)
+- No new disk I/O; the scan already happened
+- Cheap enough for the 2-minute heartbeat
+
+This REPLACES the lifetime-vs-90d compromise. Instead of ranking-only
+tokens-per-PR, Efficiency gets a true 90d/90d ratio that is READABLE as an
+actual cost-per-merged-PR figure, not merely comparable.
+
+Caveat to verify: `LastActive` is `omitempty`, so a session with no timestamp
+serializes as 0. Sessions with LastActive==0 must be EXCLUDED from the window
+(unknown age), not treated as epoch-1970 and silently dropped — same rule, but
+it must be explicit so the sum never quietly under-reports.
+
+### Heartbeat additions under consideration (pending spoke survey)
+1. `TokensWindowed90d *int64` — the above. HIGH value, zero cost. Near-certain.
+2. MTTR / issue-to-merge — exists (`MetricsCollector.mttr`), never sent.
+3. Merge-acceptance for TRUST — needs the survey's verdict.
+4. Satisfaction candidates — survey must say honestly whether ANY exist.
+
+## Spoke survey — FINAL instrumentation decisions
+
+### Corrections to my own earlier plan
+- **Windowed tokens: use `governor.BudgetInfo.CurrentSpend`** (governor.go:81), NOT
+  my summed-SessionSummary idea. It is a true windowed delta (`totalTokens -
+  WindowBaseline`), already computed per governor eval, already JSON-tagged.
+  MUST ship with `WindowStartsAt`/`WindowEndsAt` — the number is uninterpretable
+  without its bounds (0 could mean "window just rolled" or "nothing consumed").
+  Window is `governor.budget.period_days`, default 7d — NOT 90d, so normalize to
+  tokens/day before pairing with PRsMerged90d.
+- **Trust merge-acceptance needs NO new field.** `BaselineMergeSuccessRate()` =
+  merged/(merged+rejected) over 90d, and the hub ALREADY has both counts. I
+  dropped this sub-criterion for nothing. Restore it computing hub-side.
+  WEIGHTING CAVEAT (from the code's own doc, fleet_stats.go:41-56): Goodhart-
+  gameable by PR size, measures one maintainer's judgment, and **was green
+  throughout the 2026-08-14 fleet outage**. Never let it dominate the axis.
+
+### Satisfaction — CONFIRMED empty, axis stays collapsed
+Independent survey found no NPS, no feedback capture, no time-to-first-response,
+nothing measuring how it FEELS to use a hive. Closest candidates measure
+attention (engaged presence) or machine hygiene (stall/action nudges). Verdict
+quoted: "if you ship a Satisfaction score built on nudge counts, you will be
+measuring agent hygiene and calling it user delight." Axis remains unscored.
+
+### Non-bug, checked and cleared
+`api_contribute.go:7714` sets `TasksFailed: proc.RestartCount` — but that is in
+`buildAgentLeaderboardEntries()`, which `LeaderboardForHub()` does NOT call (it
+calls `buildLeaderboard()`, contributor profiles only). Local UI view only; the
+hub is NOT receiving restart counts mislabelled as failures.
+
+### Misleading names to never trust by identifier
+- `Tokens24h` — lifetime cumulative, not 24h
+- `MTTRResult` — NOT mean-time-to-recovery; issue-open-to-PR-merge lead time,
+  sampled from `Fixes #N` in the 100 most recently UPDATED closed PRs =
+  uncontrolled, variable window. NOT cross-hive comparable. Also the biggest
+  existing rate-limit consumer (1 List + N unbounded Issues.Get every 5 min).
+- `CVEsClosed` — all-time (unlike its 90d siblings) and a free-text "CVE-"
+  search = PRs REFERENCING a CVE, not CVEs closed
+- `PRIssueCounts.MergedPRs` — repo-scoped, ALL authors (vs PRsMerged90d which is
+  org-wide, AI-author). Never ratio the two.
+
+### Heartbeat additions — final shortlist (all zero new API calls)
+| Field | Source | Axis | Notes |
+|---|---|---|---|
+| `BudgetCurrentSpend *int64` | governor.go:81 | Efficiency | + window bounds, mandatory |
+| `BudgetWindowStartsAt/EndsAt string` | FrontendBudget | Efficiency | makes spend interpretable |
+| `BudgetExhausted *bool` | FrontendBudget | Effic+Prod | hive is being throttled |
+| `HoldTotal *int` | server.go ~600 | Productivity | human-bottleneck, direct |
+| `AwaitingReview *int` | FrontendPlanning | Productivity | autonomy-inverse |
+| `SLAViolations *int` | governor.go:45 | Productivity | work aging past SLA |
+| `TasksCompleted7d *int` | contribute_metrics.go:75 | Productivity | sum 168 hourly buckets ON SPOKE |
+
+ALL pointers — old spokes send nil, which the scorer already treats as
+"not measured" rather than zero. No version-skew handling needed.
+
+REJECTED for the heartbeat: MTTR (uncontrolled window, not comparable),
+PRIssueCounts (wrong scope/author, expensive), coverage badge (0 is ambiguous
+with error), native gateway spend (outbound probe per beat), green-CI streak
+(does not exist, needs new API calls + new state).
+
+SEND SCALARS NEVER RINGS: MTTR.History ~5KB, token/cost rings up to 8640
+entries, contribute series 168 buckets. Reduce on the spoke first.
+Total budget for the shortlist: ~150 bytes.
