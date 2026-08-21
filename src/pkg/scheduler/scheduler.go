@@ -529,6 +529,26 @@ func (s *Scheduler) buildReposSection() string {
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
+	// Multi-repo projects: the agent workdir is a clone of the PRIMARY repo
+	// only, and the shipped templates' examples say --repo "$HIVE_REPO"
+	// (primary). Without an explicit rotation instruction agents lock onto
+	// the primary repo forever and the other project repos are never
+	// touched (root-caused on a live 3-repo hive: sec-check scanned only
+	// the primary across every session). The kick is the one place every
+	// agent/template combination sees, so the instruction lives here.
+	if len(s.cfg.Project.Repos) > 1 {
+		primary := s.cfg.Project.PrimaryRepo
+		if primary == "" {
+			primary = s.cfg.Project.Repos[0]
+		}
+		b.WriteString(fmt.Sprintf(`🔁 MULTI-REPO COVERAGE — REQUIRED: this project has %d authorized repos; ALL of them are in scope, not just the primary (%s).
+Your workdir is a clone of the primary repo only. Each session, pick the authorized repo you have LEAST RECENTLY covered (check your beads and the [<your-role>] issues you previously filed in each repo) and work THAT repo this session:
+  - If it is not your workdir repo, clone it first: git clone %s/<org>/<repo> /tmp/<repo> && cd /tmp/<repo>
+  - Pass the chosen repo EXPLICITLY to every gh command: --repo "<org>/<repo>" (do not rely on $HIVE_REPO, which always names the primary repo).
+  - $HIVE_REPOS lists every authorized repo, comma-separated.
+⛔ Do NOT default to the primary repo every session — repos you never visit accumulate unseen problems.
+`, len(s.cfg.Project.Repos), org+"/"+primary, strings.TrimRight(host, "/")))
+	}
 	return b.String()
 }
 
