@@ -39,6 +39,12 @@ jobs:
   # The long-lived branch set is defined ONCE below (LONG_LIVED). To add or
   # remove one, edit only that list — the whole workflow derives from this job's
   # output, so nothing else changes.
+  #
+  # It is not a trigger filter, so it hand-writes the release lines a second
+  # time, and going stale here fails GREEN: the image would keep building on a
+  # new release line and never publish its <branch>-latest tag (#4462). The
+  # release-line guard asserts this list against .github/release-lines.yml —
+  # see the `env_lists` entry there and src/docs/release-line-guard.md.
   gate:
     runs-on: ubuntu-latest
     outputs:

@@ -9,13 +9,23 @@
 # Adding `v4` fixed that instance and left the mechanism intact, so the same
 # failure was queued up for the day `v5` is cut. #4405 asks for the guard.
 #
+# The names are also hand-written a SECOND time, outside any trigger: the gate
+# job in docker.yml carries them in a `LONG_LIVED` env var as its GHCR push
+# policy (#4462). That one is not a branch filter, so the trigger check cannot
+# see it — and its failure mode is worse than a skipped workflow. On the day
+# `v5` is cut, docker.yml still triggers on `'**'` so the image keeps BUILDING
+# on v5, while the push policy never publishes `v5-latest`; no hive could be
+# assigned to the new line through the hub's branch switcher, and the image
+# looks healthy the whole time. Green, not absent. `env_lists` below covers it.
+#
 # src/scripts/check-release-lines.sh asserts this file against
 # .github/workflows/*.yml, and .github/workflows/release-line-guard.yml runs it
 # on every branch. See src/docs/release-line-guard.md.
 #
 # CUTTING A NEW RELEASE LINE: add the branch name to `release_lines` below AND
-# to every workflow listed under `pinned`. The guard fails until both are done —
-# that is the whole point, so do not "fix" it by only editing one side.
+# to every workflow listed under `pinned` AND to every list under `env_lists`.
+# The guard fails until all three are done — that is the whole point, so do not
+# "fix" it by only editing one side.
 
 # The release lines CI is expected to cover.
 release_lines: [v2, v4]
@@ -57,6 +67,21 @@ unpinned:
   # The guard itself. It must run on any branch, or it is #4339 one level up.
   release-line-guard.yml: '**'
 
+# Hand-written release-line lists that are NOT trigger filters, and so are
+# invisible to the branch-filter check above. Each key is `<workflow> <ENV>`;
+# the value uses the same grammar as `pinned` — extras, and `-name` for a
+# release line the list deliberately omits.
+#
+# The variable must appear exactly once in the workflow. Zero means the list was
+# renamed or removed and the guard is asserting nothing; more than one means the
+# guard cannot tell which occurrence is the policy. Both fail rather than
+# guessing.
+env_lists:
+  # docker.yml's gate job: only long-lived branches push to GHCR. `mk` and `dd`
+  # are standing experimental branches — not release lines, but branches a hive
+  # can be assigned to, so they legitimately publish a `<branch>-latest` tag.
+  docker.yml LONG_LIVED: [mk, dd]
+
 # MAINTAINER DECISION — deliberately NOT answered here (#4405).
 #
 # Should `v2` still be in these allow-lists? Mainline is `v4`, yet eight of the
@@ -68,8 +93,11 @@ unpinned:
 #   - if `v2` IS still supported, scorecard.yml's `-v2` exclusion should be
 #     dropped and `v2` added to that workflow;
 #   - if it is NOT, remove `v2` from `release_lines` above and from the eight
-#     workflows that name it (and drop the now-redundant `-v2`).
+#     workflows that name it plus docker.yml's `LONG_LIVED` (and drop the
+#     now-redundant `-v2`).
 #
 # Either way it is one edit to `release_lines` plus the workflows, and this
-# guard proves the edit is complete. Until a maintainer says otherwise, the
-# current behaviour stands unchanged.
+# guard proves the edit is complete — in both directions: retiring a line names
+# every list that still carries it, exactly as cutting one names every list that
+# does not. Until a maintainer says otherwise, the current behaviour stands
+# unchanged.

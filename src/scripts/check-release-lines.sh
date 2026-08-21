@@ -21,6 +21,15 @@
 # docker.yml's '**'). An unclassified one fails: a new pinned workflow is
 # exactly the thing that goes stale next.
 #
+# It also asserts the release-line lists that are NOT trigger filters, declared
+# under `env_lists` (#4462). docker.yml hand-writes the branch names a second
+# time in its gate job's `LONG_LIVED` env var — the GHCR push policy — and no
+# branch-filter check can see it. That list going stale is worse than a skipped
+# workflow: on the day `v5` is cut, docker.yml's `'**'` trigger keeps BUILDING
+# the image on v5 while the policy never publishes `v5-latest`, so no hive can
+# be assigned to the new line and the image looks healthy throughout. Green
+# rather than absent.
+#
 # Usage: src/scripts/check-release-lines.sh [manifest] [workflows-dir]
 #   manifest        default .github/release-lines.yml
 #   workflows-dir   default .github/workflows
@@ -69,8 +78,76 @@ normalise() {
   printf '%s\n' "$@" | LC_ALL=C sort -u | paste -sd, -
 }
 
+# Assert one hand-written release-line list — a workflow's branch filter, or an
+# env list that is not a trigger at all — against the manifest. A manifest value
+# may carry `-name` entries: release lines this list deliberately does not
+# cover. Expected = release_lines + extras - exclusions, exactly.
+#
+#   $1 entry        the manifest key ("v2-ci.yml", "docker.yml LONG_LIVED")
+#   $2 label        what a finding names, e.g. "v2-ci.yml:5 branches:"
+#   $3 spec         the manifest value: extras, and `-name` exclusions
+#   $4 consequence  appended to a mismatch — what actually breaks
+#   $5.. actual     the branch names found in the file
+assert_release_line_set() {
+  local entry="$1" label="$2" spec="$3" consequence="$4"
+  shift 4
+  local actual=("$@")
+  local actual_set
+  actual_set="$(normalise ${actual[@]+"${actual[@]}"})"
+
+  local extras=() excluded=() token
+  for token in $spec; do
+    if [[ "$token" == -* ]]; then excluded+=("${token#-}"); else extras+=("$token"); fi
+  done
+
+  local ex rl found bad_exclusion=0
+  for ex in ${excluded[@]+"${excluded[@]}"}; do
+    found=0
+    for rl in "${RELEASE_LINES[@]}"; do [[ "$ex" == "$rl" ]] && found=1; done
+    if [[ $found -eq 0 ]]; then
+      note_fail "${entry}: ${MANIFEST} excludes '-${ex}', which is not a declared release line. Drop the stale exclusion."
+      bad_exclusion=1
+    fi
+  done
+  [[ $bad_exclusion -eq 1 ]] && return
+
+  local expected=() skip
+  for rl in "${RELEASE_LINES[@]}"; do
+    skip=0
+    for ex in ${excluded[@]+"${excluded[@]}"}; do [[ "$ex" == "$rl" ]] && skip=1; done
+    [[ $skip -eq 0 ]] && expected+=("$rl")
+  done
+  expected+=(${extras[@]+"${extras[@]}"})
+
+  if [[ ${#expected[@]} -eq 0 ]]; then
+    note_fail "${label} ${MANIFEST} excludes every release line for '${entry}' and declares no extras, so nothing is asserted. Fix the entry."
+    return
+  fi
+
+  local expected_set
+  expected_set="$(normalise "${expected[@]}")"
+  if [[ "$actual_set" == "$expected_set" ]]; then
+    note_ok "${label} ${actual_set}"
+    return
+  fi
+
+  local missing unexpected detail
+  missing="$(comm -23 \
+    <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort -u) \
+    <(printf '%s\n' ${actual[@]+"${actual[@]}"} | LC_ALL=C sort -u) | paste -sd, -)"
+  unexpected="$(comm -13 \
+    <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort -u) \
+    <(printf '%s\n' ${actual[@]+"${actual[@]}"} | LC_ALL=C sort -u) | paste -sd, -)"
+
+  detail=""
+  [[ -n "$missing" ]] && detail="missing: ${missing}"
+  [[ -n "$unexpected" ]] && detail="${detail:+${detail}; }unexpected: ${unexpected}"
+  note_fail "${label} has [${actual_set:-<empty>}], expected [${expected_set}] — ${detail}. ${consequence}"
+}
+
 RELEASE_LINES=()
 declare -A PINNED_EXTRAS=()
+declare -A ENV_LISTS=()
 UNPINNED=()
 
 section=""
@@ -85,8 +162,9 @@ while IFS= read -r line; do
     section=""
     continue
   fi
-  if [[ "$line" =~ ^pinned:[[:space:]]*$ ]];   then section="pinned";   continue; fi
-  if [[ "$line" =~ ^unpinned:[[:space:]]*$ ]]; then section="unpinned"; continue; fi
+  if [[ "$line" =~ ^pinned:[[:space:]]*$ ]];    then section="pinned";    continue; fi
+  if [[ "$line" =~ ^unpinned:[[:space:]]*$ ]];  then section="unpinned";  continue; fi
+  if [[ "$line" =~ ^env_lists:[[:space:]]*$ ]]; then section="env_lists"; continue; fi
   if [[ "$line" =~ ^[^[:space:]] ]]; then section=""; continue; fi
 
   # Indented entry: "  name.yml: value"
@@ -94,8 +172,9 @@ while IFS= read -r line; do
   entry="${BASH_REMATCH[1]}"
   value="${BASH_REMATCH[2]}"
   case "$section" in
-    pinned)   PINNED_EXTRAS["$entry"]="$(flow_items "$value")" ;;
-    unpinned) UNPINNED+=("$entry") ;;
+    pinned)    PINNED_EXTRAS["$entry"]="$(flow_items "$value")" ;;
+    unpinned)  UNPINNED+=("$entry") ;;
+    env_lists) ENV_LISTS["$entry"]="$(flow_items "$value")" ;;
   esac
 done < "$MANIFEST"
 
@@ -227,56 +306,9 @@ while IFS=$'\t' read -r path lineno key branches; do
     continue
   fi
 
-  # A manifest value may carry `-name` entries: release lines this workflow
-  # deliberately does not cover. Expected = release_lines + extras - exclusions.
-  extras=()
-  excluded=()
-  for token in $expected_extras; do
-    if [[ "$token" == -* ]]; then excluded+=("${token#-}"); else extras+=("$token"); fi
-  done
-
-  expected=()
-  for rl in "${RELEASE_LINES[@]}"; do
-    skip=0
-    for ex in ${excluded[@]+"${excluded[@]}"}; do [[ "$ex" == "$rl" ]] && skip=1; done
-    [[ $skip -eq 0 ]] && expected+=("$rl")
-  done
-  expected+=(${extras[@]+"${extras[@]}"})
-
-  bad_exclusion=0
-  for ex in ${excluded[@]+"${excluded[@]}"}; do
-    found=0
-    for rl in "${RELEASE_LINES[@]}"; do [[ "$ex" == "$rl" ]] && found=1; done
-    if [[ $found -eq 0 ]]; then
-      note_fail "${base}: ${MANIFEST} excludes '-${ex}', which is not a declared release line. Drop the stale exclusion."
-      bad_exclusion=1
-    fi
-  done
-  [[ $bad_exclusion -eq 1 ]] && continue
-
-  if [[ ${#expected[@]} -eq 0 ]]; then
-    note_fail "${base}:${lineno} ${key}: ${MANIFEST} excludes every release line and declares no extras, so nothing is asserted. Move it to 'unpinned' or fix the entry."
-    continue
-  fi
-
-  expected_set="$(normalise "${expected[@]}")"
-
-  if [[ "$actual_set" == "$expected_set" ]]; then
-    note_ok "${base}:${lineno} ${key}: ${actual_set}"
-    continue
-  fi
-
-  missing="$(comm -23 \
-    <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort -u) \
-    <(printf '%s\n' "${actual[@]}" | LC_ALL=C sort -u) | paste -sd, -)"
-  unexpected="$(comm -13 \
-    <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort -u) \
-    <(printf '%s\n' "${actual[@]}" | LC_ALL=C sort -u) | paste -sd, -)"
-
-  detail=""
-  [[ -n "$missing" ]] && detail="missing: ${missing}"
-  [[ -n "$unexpected" ]] && detail="${detail:+${detail}; }unexpected: ${unexpected}"
-  note_fail "${base}:${lineno} ${key}: has [${actual_set:-<empty>}], expected [${expected_set}] — ${detail}. A release line named here but absent from the workflow means that workflow does not run on it at all."
+  assert_release_line_set "$base" "${base}:${lineno} ${key}:" "$expected_extras" \
+    "A release line named here but absent from the workflow means that workflow does not run on it at all." \
+    ${actual[@]+"${actual[@]}"}
 done <<< "$records"
 
 # A manifest entry whose workflow lost its branch filter (or its file) is just
@@ -298,12 +330,92 @@ for base in "${UNPINNED[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# Hand-written branch lists that are not trigger filters (#4462)
+# ---------------------------------------------------------------------------
+
+# Print every assignment of <var> in a workflow, one per occurrence:
+#   <line-number><TAB><space-separated branch names>
+# Accepts the spellings a workflow env value can take: `VAR: "v2 v4"`, the same
+# unquoted, and `VAR: [v2, v4]`. Comments are dropped outside quotes, so the
+# prose that names the variable is not mistaken for a second definition.
+extract_env_list() {
+  awk -v var="$2" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function unquote(s,  c) {
+      s = trim(s)
+      if (length(s) >= 2) {
+        c = substr(s, 1, 1)
+        if ((c == "\"" || c == "'"'"'") && substr(s, length(s), 1) == c)
+          return substr(s, 2, length(s) - 2)
+      }
+      return s
+    }
+    function strip_comment(s,  i, c, q, out) {
+      q = ""; out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") { out = out c; if (c == q) q = ""; continue }
+        if (c == "\"" || c == "'"'"'") { q = c; out = out c; continue }
+        if (c == "#") break
+        out = out c
+      }
+      return out
+    }
+    BEGIN { pat = "^[[:space:]]*" var ":[[:space:]]*" }
+    {
+      raw = strip_comment($0)
+      if (!match(raw, pat)) next
+      rest = unquote(trim(substr(raw, RSTART + RLENGTH)))
+      if (substr(rest, 1, 1) == "[") rest = substr(rest, 2, index(rest, "]") - 2)
+      gsub(/,/, " ", rest)
+      gsub(/["'"'"']/, "", rest)
+      printf "%d\t%s\n", FNR, trim(rest)
+    }
+  ' "$1"
+}
+
+if [[ ${#ENV_LISTS[@]} -gt 0 ]]; then
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    file="${entry%% *}"
+    var="${entry##* }"
+    if [[ "$file" == "$entry" || -z "$var" ]]; then
+      note_fail "${entry}: an 'env_lists' key in ${MANIFEST} must be '<workflow.yml> <ENV_NAME>'."
+      continue
+    fi
+    if [[ ! -f "${WORKFLOW_DIR}/${file}" ]]; then
+      note_fail "${entry}: listed under 'env_lists' in ${MANIFEST} but ${WORKFLOW_DIR}/${file} does not exist."
+      continue
+    fi
+
+    mapfile -t hits < <(extract_env_list "${WORKFLOW_DIR}/${file}" "$var")
+    if [[ ${#hits[@]} -eq 0 ]]; then
+      note_fail "${entry}: no '${var}:' assignment found in ${file}. It was renamed or removed, so this entry asserts nothing. Update ${MANIFEST} to name the list as it is spelled today."
+      continue
+    fi
+    if [[ ${#hits[@]} -gt 1 ]]; then
+      lines="$(printf '%s\n' "${hits[@]}" | cut -f1 | paste -sd, -)"
+      note_fail "${entry}: '${var}:' is assigned ${#hits[@]} times in ${file} (lines ${lines}), so the guard cannot tell which one is the policy. Define the list once."
+      continue
+    fi
+
+    lineno="${hits[0]%%$'\t'*}"
+    value="${hits[0]#*$'\t'}"
+    read -r -a items <<< "$value"
+    assert_release_line_set "$entry" "${file}:${lineno} env ${var}:" "${ENV_LISTS[$entry]}" \
+      "This list is not a trigger, so a release line missing from it fails GREEN: the image still builds on that branch and simply never publishes its <branch>-latest tag, leaving no image for a hive to be assigned to." \
+      ${items[@]+"${items[@]}"}
+  done < <(printf '%s\n' "${!ENV_LISTS[@]}" | LC_ALL=C sort)
+fi
+
 echo
 if [[ $fail -ne 0 ]]; then
-  echo "RESULT: FAIL — workflow branch filters are out of sync with ${MANIFEST}."
-  echo "Cutting a release line takes two edits: the manifest AND every workflow"
-  echo "listed under 'pinned'. Fixing only the manifest leaves those workflows"
-  echo "not running on the new branch at all (#4339)."
+  echo "RESULT: FAIL — hand-written branch lists are out of sync with ${MANIFEST}."
+  echo "Cutting a release line takes three edits: the manifest, every workflow"
+  echo "listed under 'pinned', and every list under 'env_lists'. Fixing only the"
+  echo "manifest leaves those workflows not running on the new branch at all"
+  echo "(#4339), and leaves the image built on it but never published (#4462)."
   exit 1
 fi
-echo "RESULT: PASS — every pinned workflow covers the declared release lines."
+echo "RESULT: PASS — every pinned workflow and hand-written list covers the declared release lines."

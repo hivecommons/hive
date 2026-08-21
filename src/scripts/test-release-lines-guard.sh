@@ -12,6 +12,11 @@
 # only understands one of the two YAML spellings of `branches:` silently stops
 # covering v2-ci.yml, the highest-value entry in the table.
 #
+# Cases 11-15 cover the same demand for the lists that are NOT triggers (#4462)
+# — docker.yml's `LONG_LIVED` push policy. That one can rot in an extra way a
+# branch filter cannot: the variable can be renamed, or defined twice, leaving
+# an entry that asserts nothing while the guard still prints a line about it.
+#
 # Usage: src/scripts/test-release-lines-guard.sh
 set -uo pipefail
 
@@ -62,6 +67,11 @@ echo "== Release-line guard self-test =="
 # 1. The repository as it stands is in sync.
 # ---------------------------------------------------------------------------
 expect 0 "repository is in sync with its own manifest" -- "$REAL_MANIFEST" "$REAL_WORKFLOWS"
+# The manifest side can rot too: dropping docker.yml's `env_lists` entry would
+# leave the run green by having nothing to check. Assert the real run does
+# assert the push policy, so that deletion is a failing test rather than a
+# quieter guard.
+expect_mentions "env LONG_LIVED" "the real run asserts docker.yml's LONG_LIVED push policy"
 
 # ---------------------------------------------------------------------------
 # 2. THE DEMONSTRATION (#4405 acceptance criterion 1). Add a plausible future
@@ -77,12 +87,15 @@ for wf in v2-ci.yml v2-tests.yml podman-contract.yml podman-rootful-lane.yml \
           suid-contract.yml scorecard.yml; do
   expect_mentions "FAIL: ${wf}" "${wf} is reported"
 done
-# docker.yml is deliberately unpinned and must NOT be dragged into the failure.
-if grep -q "FAIL: docker.yml" <<< "$LAST_OUT"; then
+# docker.yml's TRIGGER is deliberately unpinned and must NOT be dragged into the
+# failure — while its push policy, which is not a trigger, must be.
+if grep -Eq "FAIL: docker\.yml:[0-9]+ branches" <<< "$LAST_OUT"; then
   bad "docker.yml's '**' trigger was flagged; it is deliberate"
 else
   pass "docker.yml's '**' trigger is recognised as deliberate, not flagged"
 fi
+expect_mentions "FAIL: docker.yml" "docker.yml's LONG_LIVED push policy is reported (#4462)"
+expect_mentions "env LONG_LIVED" "the push-policy failure names the env list, not a trigger"
 
 # ---------------------------------------------------------------------------
 # Fixtures for the remaining cases.
@@ -95,6 +108,8 @@ pinned:
   block-form.yml: []
 unpinned:
   wild.yml: '**'
+env_lists:
+  envy.yml LONG_LIVED: [mk]
 EOF
 }
 
@@ -108,12 +123,22 @@ write_block() {
   } > "${WFDIR}/block-form.yml"
 }
 write_wild()  { printf 'on:\n  push:\n    branches:\n      - %s\n' "$1" > "${WFDIR}/wild.yml"; }
+# A workflow carrying a hand-written branch list that is NOT a trigger, in the
+# shape docker.yml's gate job uses. It has no branch filter at all, so it is
+# classified by `env_lists` alone.
+write_env()   {
+  { printf 'jobs:\n  gate:\n    steps:\n      - name: Decide push policy\n'
+    printf '        env:\n'
+    printf '          %s\n' "$1"
+  } > "${WFDIR}/envy.yml"
+}
 
 MANIFEST="${TMP}/manifest.yml"
 mk_manifest "$MANIFEST"
 
 # 3. Both spellings in sync -> pass.
 write_flow "v2, v4"; write_block "v2 v4"; write_wild "'**'"
+write_env 'LONG_LIVED: "v2 v4 mk"'
 expect 0 "flow sequence and block sequence both parse when in sync" -- "$MANIFEST" "$WFDIR"
 
 # 4. Flow spelling (`branches: [v2, v4]`) out of sync is caught. This is the
@@ -166,6 +191,80 @@ rm "${WFDIR}/block-form.yml"
 expect 1 "a manifest entry for a deleted workflow is caught" -- "$MANIFEST" "$WFDIR"
 expect_mentions "does not exist" "the deleted workflow is explained"
 write_block "v2 v4"
+
+# ---------------------------------------------------------------------------
+# 11. A hand-written list that is not a trigger, in sync, parses in each of the
+#     spellings a workflow env value can take.
+# ---------------------------------------------------------------------------
+write_env "LONG_LIVED: 'v2 v4 mk'"
+expect 0 "a single-quoted env list parses" -- "$MANIFEST" "$WFDIR"
+write_env 'LONG_LIVED: v2 v4 mk'
+expect 0 "an unquoted env list parses" -- "$MANIFEST" "$WFDIR"
+write_env 'LONG_LIVED: [v2, v4, mk]'
+expect 0 "a flow-sequence env list parses" -- "$MANIFEST" "$WFDIR"
+write_env 'LONG_LIVED: "v2 v4 mk"'
+
+# ---------------------------------------------------------------------------
+# 12. THE #4462 DEMONSTRATION on fixtures: a release line missing from a list
+#     that is not a trigger is caught. Nothing about the workflow's triggers
+#     changes, which is exactly why the branch-filter check cannot see it.
+# ---------------------------------------------------------------------------
+write_env 'LONG_LIVED: "v2 mk"'
+expect 1 "a stale env list is caught" -- "$MANIFEST" "$WFDIR"
+expect_mentions "FAIL: envy.yml" "the workflow holding the stale list is named"
+expect_mentions "missing: v4" "the env-list failure names the missing branch"
+expect_mentions "env LONG_LIVED" "the failure identifies the list by name"
+
+# A branch the manifest does not declare as an extra is caught too: the check
+# is an equality, so a retired release line left in the list is reported in the
+# same run as one that was never added.
+write_env 'LONG_LIVED: "v2 v4 mk v9"'
+expect 1 "an undeclared extra branch in an env list is caught" -- "$MANIFEST" "$WFDIR"
+expect_mentions "unexpected: v9" "the surplus branch is named"
+write_env 'LONG_LIVED: "v2 v4 mk"'
+
+# ---------------------------------------------------------------------------
+# 13. The list is renamed or deleted. A branch filter cannot vanish without the
+#     workflow visibly changing shape; an env var can, and the entry would then
+#     assert nothing while still looking checked.
+# ---------------------------------------------------------------------------
+write_env 'PUBLISH_BRANCHES: "v2 v4 mk"'
+expect 1 "an env list that no longer exists under that name is caught" -- "$MANIFEST" "$WFDIR"
+expect_mentions "no 'LONG_LIVED:' assignment found" "the renamed list is explained"
+write_env 'LONG_LIVED: "v2 v4 mk"'
+
+# ---------------------------------------------------------------------------
+# 14. Defined twice: the guard must refuse to guess which one is the policy
+#     rather than checking the first and reporting green.
+# ---------------------------------------------------------------------------
+{ printf 'jobs:\n  gate:\n    steps:\n      - name: Decide push policy\n'
+  printf '        env:\n          LONG_LIVED: "v2 v4 mk"\n'
+  printf '  other:\n    steps:\n      - env:\n          LONG_LIVED: "v2"\n'
+} > "${WFDIR}/envy.yml"
+expect 1 "an env list defined twice is caught rather than guessed at" -- "$MANIFEST" "$WFDIR"
+expect_mentions "is assigned 2 times" "the ambiguity is explained"
+write_env 'LONG_LIVED: "v2 v4 mk"'
+
+# Prose that merely mentions the variable is not a second definition: the real
+# docker.yml names LONG_LIVED in a comment above the job, and case 1 would fail
+# if that counted.
+{ printf '# The long-lived branch set is defined ONCE below (LONG_LIVED).\n'
+  printf 'jobs:\n  gate:\n    steps:\n      - env:\n'
+  printf '          LONG_LIVED: "v2 v4 mk"   # release lines + standing branches\n'
+  # shellcheck disable=SC2016 # the fixture is shell source, not an expansion
+  printf '        run: for b in $LONG_LIVED; do :; done\n'
+} > "${WFDIR}/envy.yml"
+expect 0 "a comment and a shell reference are not counted as definitions" -- "$MANIFEST" "$WFDIR"
+write_env 'LONG_LIVED: "v2 v4 mk"'
+
+# ---------------------------------------------------------------------------
+# 15. A manifest entry naming a workflow that no longer exists is caught here
+#     too — the same rot as a stale `pinned` entry, in the other section.
+# ---------------------------------------------------------------------------
+rm "${WFDIR}/envy.yml"
+expect 1 "an env_lists entry for a deleted workflow is caught" -- "$MANIFEST" "$WFDIR"
+expect_mentions "does not exist" "the deleted workflow is explained"
+write_env 'LONG_LIVED: "v2 v4 mk"'
 
 echo
 if [[ $fail -ne 0 ]]; then

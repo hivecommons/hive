@@ -10,6 +10,11 @@ name: Release Line Guard
 # single source of truth in .github/release-lines.yml, so cutting `v5` becomes
 # one edit that CI enforces rather than nine edits nobody is reminded to make.
 #
+# It also covers the same names where they are hand-written OUTSIDE a trigger:
+# docker.yml's `LONG_LIVED` GHCR push policy (#4462). A stale list there is
+# worse than a skipped workflow, because it is green — the image keeps building
+# on the new release line and simply never publishes `<branch>-latest`.
+#
 # TRIGGERS ON EVERY BRANCH ON PURPOSE. A guard against branch-pinned workflows
 # must not itself be branch-pinned, or it is #4339 one level up — hence the
 # `'**'` here and the `unpinned` entry for this file in the manifest, which the
