@@ -203,11 +203,25 @@ elif overlay_has_real_app:
     # PEM it names actually exists on this PVC. A dangling reference
     # (e.g. an interrupted key write) must not silently authenticate with
     # a missing/placeholder file; fail loud instead of 401-looping quietly.
+    #
+    # BOTH delivery locations, not just the PVC (#4368). /secrets is the
+    # provisioning mount, and the provisioning template used to seed
+    # key_file=/secrets/gh-app-key.pem for every App-using hive while creating
+    # that Secret entry only for hives provisioned WITH an inline private key.
+    # Four hives shipped naming a file that would never exist — under the one
+    # prefix this check did not look at, so the warning written for exactly
+    # this symptom stayed silent on every one of them, and the fault first
+    # surfaced as github_auth: fail hours later. A path outside both prefixes
+    # is an operator's own location and is deliberately not second-guessed.
     key_file = overlay_gh.get('key_file') or ''
-    if isinstance(key_file, str) and key_file.startswith('/data/') and not os.path.isfile(key_file):
+    if isinstance(key_file, str) and key_file.startswith(('/data/', '/secrets/')) and not os.path.isfile(key_file):
+        where = 'the PVC' if key_file.startswith('/data/') else 'the provisioning secret mount'
         sys.stderr.write(
             "[entrypoint] WARNING: overlay github.key_file=%s does not exist on "
-            "the PVC — GitHub App auth will fail until it is re-installed\n" % key_file
+            "%s — GitHub App auth will fail until it is re-installed. An explicit "
+            "key_file also short-circuits the fallback that would otherwise find a "
+            "delivered key; leaving it unset lets the path be derived from app_id\n"
+            % (key_file, where)
         )
 
 # The dashboard OVERLAY wins for acmm_level: the ConfigMap seed only ever

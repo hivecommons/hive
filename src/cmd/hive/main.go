@@ -2746,12 +2746,29 @@ func main() {
 		// app_id/installation_id at construction, so without this a corrected
 		// installation_id in hive.yaml keeps minting tokens for the OLD
 		// installation until the pod restarts.
+		//
+		// RESOLVE the key file rather than reading cfg.GitHub.KeyFile raw. An
+		// unset key_file is the CORRECT steady state on a hosted spoke — the
+		// heartbeat apply path deliberately does not persist one, because the
+		// path is derivable from app_id and a stored value outlives the App it
+		// was derived for. Gating on the raw field therefore skipped the rebuild
+		// entirely on exactly the hives that need it: a corrected
+		// installation_id saved to hive.yaml kept minting tokens for the old
+		// installation until the pod restarted. Startup (resolveAppKeyFile
+		// above), the heartbeat rebuild, and the dashboard's Set ID handler
+		// (#2459) all already resolve here; this was the last raw reader.
+		//
+		// Comparing RESOLVED paths also catches a change the raw comparison
+		// cannot see: a per-app-id key arriving on the PVC changes which key
+		// this process should sign with while cfg.GitHub.KeyFile stays "".
+		prevKeyFile := resolveAppKeyFile(prevGitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), prevGitHub.AppID)
+		nextKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
 		if prevGitHub.AppID != cfg.GitHub.AppID ||
 			prevGitHub.InstallationID != cfg.GitHub.InstallationID ||
-			prevGitHub.KeyFile != cfg.GitHub.KeyFile ||
+			prevKeyFile != nextKeyFile ||
 			prevGitHub.APIURL != cfg.GitHub.APIURL {
-			if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
-				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+			if cfg.GitHub.HasUsableApp() && nextKeyFile != "" {
+				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, nextKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 				if appErr != nil {
 					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
 				} else {
@@ -2775,6 +2792,7 @@ func main() {
 					logger.Info("github app auth rebuilt after config reload",
 						"app_id", cfg.GitHub.AppID,
 						"installation_id", cfg.GitHub.InstallationID,
+						"key_file", nextKeyFile,
 					)
 				}
 			}

@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	cryptoRand "crypto/rand"
 	"encoding/base64"
@@ -1834,6 +1835,139 @@ func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID st
 	return out
 }
 
+// spokeSecretsMountPrefix is where the hive-secrets Secret is projected in the
+// spoke pod. A key_file under this prefix can only resolve to an entry the same
+// manifest puts in that Secret — nothing else ever writes there, because the
+// projection is a read-only tmpfs.
+const spokeSecretsMountPrefix = "/secrets/"
+
+// assertSpokeManifestKeyFile rejects a rendered manifest whose hive.yaml seed
+// pins github.key_file at a /secrets path the SAME manifest does not create.
+//
+// THE BUG THIS EXISTS FOR (#4368)
+//
+// The ConfigMap seed used to emit `key_file: /secrets/gh-app-key.pem` for every
+// App-using hive — gated on UseApp. The hive-secrets Secret creates that entry
+// gated on UseAppFull, which additionally requires an installation_id AND an
+// inline private key at request time. A hive provisioned with an App id but
+// without the key inline (the normal case when the key arrives later through
+// the heartbeat delivery lane) therefore got a seed pointing at a file that
+// would never exist.
+//
+// It then failed in the worst available way. An explicit key_file wins outright
+// in resolveAppKeyFile (cmd/hive/main.go) — deliberately, because a path an
+// operator typed must not be silently redirected — so the key that DID arrive,
+// at /data/gh-app-key-<app_id>.pem, was never even tried. The whole 2026-08-12
+// batch (four hives) reported github_auth: fail with the right key sitting on
+// the PVC, and the hub's own alert text blamed an undelivered key.
+//
+// The template no longer pins key_file at all: it is derivable from app_id, and
+// resolveAppKeyFile's last fallback is /secrets/gh-app-key.pem, so a hive
+// provisioned WITH an inline key still resolves to exactly the file it used to
+// be pinned to. This check is what keeps the coupling from coming back — a
+// future pin is fine, but only if the manifest also creates what it names.
+//
+// Deliberately narrow. Only /secrets paths are checkable at render time: /data
+// is an empty PVC until the first key delivery, so a /data pin is not wrong
+// here, merely unverifiable, and any other path is an operator's own location.
+func assertSpokeManifestKeyFile(manifest string) error {
+	pinned := manifestKeyFilePins(manifest)
+	if len(pinned) == 0 {
+		return nil
+	}
+	created := manifestSecretKeys(manifest, "hive-secrets")
+	for _, p := range pinned {
+		if !strings.HasPrefix(p, spokeSecretsMountPrefix) {
+			continue
+		}
+		name := strings.TrimPrefix(p, spokeSecretsMountPrefix)
+		if _, ok := created[name]; !ok {
+			return fmt.Errorf(
+				"hive.yaml seeds github.key_file=%s but the hive-secrets Secret has no %q entry — "+
+					"the spoke would pin an explicit key path that never exists, and an explicit "+
+					"key_file short-circuits the fallback that would otherwise find the delivered key (#4368)",
+				p, name)
+		}
+	}
+	return nil
+}
+
+// manifestKeyFilePins returns every github.key_file value the rendered manifest
+// seeds. Commented-out lines are ignored: the template documents the absent pin
+// in a YAML comment, and a comment is not a pin.
+func manifestKeyFilePins(manifest string) []string {
+	var out []string
+	for _, line := range strings.Split(manifest, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		const key = "key_file:"
+		if !strings.HasPrefix(trimmed, key) {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(trimmed, key))
+		if i := strings.Index(v, " #"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		v = strings.Trim(v, `"'`)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// manifestSecretKeys returns the data/stringData key names of the named Secret
+// document in a multi-document manifest, as a set.
+//
+// Scoped to one document on purpose: the manifest carries several Secrets
+// (hive-tls among them), and matching a key name against the wrong one would
+// make this assertion agree with something it never checked.
+func manifestSecretKeys(manifest, secretName string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, doc := range strings.Split(manifest, "\n---") {
+		if !strings.Contains(doc, "kind: Secret") {
+			continue
+		}
+		if !strings.Contains(doc, "name: "+secretName+"\n") {
+			continue
+		}
+		inData := false
+		for _, line := range strings.Split(doc, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "data:" || trimmed == "stringData:" {
+				inData = true
+				continue
+			}
+			if !inData {
+				continue
+			}
+			// A non-indented line ends the block.
+			if line != "" && !strings.HasPrefix(line, " ") {
+				inData = false
+				continue
+			}
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			// Entries are exactly two spaces in; anything deeper is a value
+			// continuation line of a block scalar (the PEM bodies).
+			if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
+				continue
+			}
+			name, _, found := strings.Cut(trimmed, ":")
+			if !found {
+				continue
+			}
+			if name = strings.TrimSpace(name); name != "" {
+				out[name] = struct{}{}
+			}
+		}
+	}
+	return out
+}
+
 // fleetKeys carries every GitHub App private key the fleet knows, keyed by
 // app_id, so a freshly provisioned spoke starts life holding ALL of them rather
 // than waiting for the heartbeat's additional-key delivery to catch up. Pass nil
@@ -2081,14 +2215,33 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		return fmt.Errorf("template parse: %w", err)
 	}
 
+	// Render to memory first so the manifest can be CHECKED before it is
+	// applied. #4368 shipped four hives whose seed named a key file the same
+	// manifest never created; the failure was invisible until the first App
+	// call, hours later and on a different machine. Rendering into a buffer
+	// costs nothing here (every value is already in memory in `data`) and is
+	// what makes assertSpokeManifestKeyFile possible at all.
+	var manifestBuf bytes.Buffer
+	if err := tmpl.Execute(&manifestBuf, data); err != nil {
+		return fmt.Errorf("template exec: %w", err)
+	}
+	if err := assertSpokeManifestKeyFile(manifestBuf.String()); err != nil {
+		// Refuse to create a hive that cannot load its own App key. A hive that
+		// never provisions is a visible failure the admin can retry; one that
+		// provisions broken is a silent github_auth: fail nobody looks at until
+		// an agent needs the App.
+		logger.Error("refusing to apply spoke manifest", "hive", h.ID, "error", err)
+		return fmt.Errorf("spoke manifest rejected: %w", err)
+	}
+
 	manifestPath := filepath.Join(dir, "all.yaml")
 	f, err := os.Create(manifestPath)
 	if err != nil {
 		return fmt.Errorf("create manifest: %w", err)
 	}
-	if err := tmpl.Execute(f, data); err != nil {
+	if _, err := f.Write(manifestBuf.Bytes()); err != nil {
 		f.Close()
-		return fmt.Errorf("template exec: %w", err)
+		return fmt.Errorf("write manifest: %w", err)
 	}
 	f.Close()
 
@@ -2452,7 +2605,10 @@ data:
 {{- if .UseApp}}
       app_id: {{.AppID}}
       installation_id: {{.InstallationID}}
-      key_file: /secrets/gh-app-key.pem
+      # key_file is deliberately NOT pinned here: it is derivable from app_id,
+      # and an explicit value short-circuits resolveAppKeyFile before the key
+      # that actually arrived can be found. See assertSpokeManifestKeyFile
+      # below for the full account (#4368).
 {{- else}}
       token: "${HIVE_GITHUB_TOKEN}"
 {{- end}}

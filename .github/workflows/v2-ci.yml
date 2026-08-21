@@ -53,6 +53,18 @@ jobs:
       - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
         run: bash deploy/test_entrypoint_netadmin_ambient.sh
 
+      # #4368: the entrypoint warns when the overlay's github.key_file names a
+      # PEM that is not on disk — and used to look only at /data/, while the
+      # provisioning template seeded /secrets/gh-app-key.pem for every App-using
+      # hive and created that Secret entry only for hives provisioned WITH an
+      # inline key. Four hives shipped naming a file that would never exist,
+      # under the one prefix the check skipped, so the detector written for
+      # exactly that symptom stayed silent and the fault first surfaced as
+      # github_auth: fail. EXECUTES the real merge block extracted from the
+      # shipped entrypoint, so a regression fails the PR rather than a hive.
+      - name: Entrypoint dangling key_file tests (#4368)
+        run: bash deploy/test_entrypoint_dangling_keyfile.sh
+
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
       # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
