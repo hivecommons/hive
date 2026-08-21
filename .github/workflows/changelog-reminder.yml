@@ -14,6 +14,16 @@ name: Changelog Reminder
 # dependency churn, so a hard gate would fail honest work and train people to
 # ignore it — or worse, to add noise entries just to make it green. It comments
 # once and always succeeds; the judgement stays with the author.
+#
+# "Always succeeds" is load-bearing and was not true (#4440): on a fork PR the
+# comment POST 403s, because GitHub caps GITHUB_TOKEN at read-only for
+# `pull_request` events from forks whatever the permissions: block requests, and
+# `bash -e` turned that into a red check on every external contribution. The
+# reminder is now delivered as a JOB SUMMARY and a ::notice:: annotation, which
+# need no write permission and therefore reach forks and same-repo branches
+# alike; the PR comment is attempted on top of that and its failure is
+# tolerated. src/deploy/test_changelog_reminder.sh executes the real step script
+# against a stubbed `gh` that 403s and asserts it still exits 0.
 
 on:
   pull_request:
@@ -64,16 +74,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
         run: |
-          set -euo pipefail
+          # NOT `set -e` (#4440). This step delivers a REMINDER, and the header
+          # above promises it "always succeeds" and "never blocks a merge". It
+          # did neither on a pull request from a FORK: GitHub caps GITHUB_TOKEN
+          # at read-only for `pull_request` events raised from forks, whatever
+          # the permissions: block asks for, so the comment POST answered
+          #
+          #   gh: Resource not accessible by integration (HTTP 403)
+          #
+          # and `shell: bash -e` turned that into a failed check. The result was
+          # the exact thing the header set out to avoid — an advisory reminder
+          # behaving as a gate — on every external contribution, which is the
+          # population least likely to know the convention and most in need of
+          # the nudge. They got a red check and no reminder.
+          set -uo pipefail
+
           marker='<!-- changelog-reminder -->'
-          # Only ever comment once per PR. A reminder that reappears on every
-          # push is noise, and noise is how the previous convention died.
-          if gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[].body' \
-              | grep -qF "$marker"; then
-            echo "already reminded"
-            exit 0
-          fi
+
           # Body built in a heredoc rather than inline: the text starts a line
           # with '**', which YAML would read as an alias in a plain scalar.
           body_file="$(mktemp)"
@@ -91,4 +110,39 @@ jobs:
           EOF
           # Strip the YAML block indentation the heredoc preserved.
           sed -i 's/^          //' "$body_file"
-          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body_file"
+
+          # DELIVER IT SOMEWHERE THAT ALWAYS WORKS, FIRST. The job summary and a
+          # ::notice:: annotation need no write permission at all, so they reach
+          # fork PRs and same-repo branches identically. This is the delivery the
+          # reminder can actually rely on; the PR comment below is a nicety on
+          # top of it.
+          {
+            printf '### Changelog reminder\n\n'
+            grep -v "^${marker}$" "$body_file"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "::notice title=Changelog reminder::This PR changes code but does not touch CHANGELOG.md. If it is user-visible, please add a line under '## Unreleased'. Not a gate."
+
+          # A fork PR cannot post, so do not try: a 403 in the log invites the
+          # next reader to debug a permission that is working as designed.
+          if [ "${IS_FORK:-false}" = "true" ]; then
+            echo "fork PR — GITHUB_TOKEN is read-only here, so the reminder was delivered as a job summary and annotation instead of a comment"
+            exit 0
+          fi
+
+          # Same-repo PR: a comment is nicer, and only ever once. A reminder that
+          # reappears on every push is noise, and noise is how the previous
+          # convention died. A failed dedupe READ must not skip the comment, and
+          # must not fail the job either.
+          if gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[].body' 2>/dev/null \
+              | grep -qF "$marker"; then
+            echo "already reminded"
+            exit 0
+          fi
+
+          # Tolerated, not asserted. Even on a same-repo PR an org policy can
+          # narrow GITHUB_TOKEN, and the reminder has already been delivered
+          # above either way.
+          if ! gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body_file"; then
+            echo "::notice::could not post the reminder as a PR comment; it is in this job's summary instead"
+          fi
+          exit 0
