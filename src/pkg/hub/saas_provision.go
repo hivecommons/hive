@@ -28,8 +28,20 @@ const (
 	maxHivesPerUser   = 3
 	maxSaaSHivesTotal = 0 // 0 = unlimited
 	provisionTimeout  = 5 * time.Minute
-	cpuRequest        = "500m"
-	cpuLimit          = "2000m"
+	// cpuRequest/memRequest are the SCHEDULING footprint (what the scheduler
+	// reserves per hive) and directly set fleet density; the limits below are
+	// the burst ceiling and are unchanged. Right-sized 2026-08 from live fleet
+	// measurement (59 hives across vllm-d + hive-oke via kubectl top):
+	//   CPU:    p50 29-65m,   p90 0.5-1.7 cores, max 1.9  → 250m request
+	//   Memory: p50 0.8-1.1Gi, p90 1.3-2.9Gi,    max 3Gi  → 2Gi request
+	// Halving both doubles schedulable density on existing clusters (500
+	// hives: 125 vCPU + 1 TiB requested instead of 250 vCPU + 2 TiB). CPU is
+	// compressible so under-request only slows, never kills; memory bursts
+	// above 2Gi ride the 16Gi limit, with node overcommit bounded by the p90.
+	// Applies to NEW provisions; existing deployments keep their requests
+	// until their manifest is next re-applied.
+	cpuRequest = "250m"
+	cpuLimit   = "2000m"
 	// memRequest/memLimit size the spoke pod for the WHOLE agent fleet, not just
 	// the Go hive process. Each active coding agent (Copilot/Claude CLI) grows to
 	// ~2GB RSS, and an L6 hive runs 5-6 concurrently plus the hive process, so an
@@ -39,7 +51,7 @@ const (
 	// and the PR pipeline stalls (observed 2026-08-06: 9 OOM kills, whole fleet
 	// down ~4.5h on console-4vkt). 16Gi gives each agent headroom; OKE nodes have
 	// ~90GiB allocatable, so this is comfortably schedulable.
-	memRequest            = "4Gi"
+	memRequest            = "2Gi"
 	memLimit              = "16Gi"
 	nfsStorageCapacity    = "50Gi"
 	nfsMountTargetIP      = "10.0.10.30"
