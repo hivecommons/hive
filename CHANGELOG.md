@@ -18,6 +18,7 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Fixed
 
+- The agent Terminal now says when it is showing scrollback rather than live output. Scrolling with the mouse wheel puts the pane into tmux copy-mode, which stops it following new output — and because that state lives on the server, closing and reopening the terminal returned to the same frozen view, so an idle-looking agent was indistinguishable from a stuck one. The status bar now reads `[live]` or `[SCROLLBACK - not following live output - press q to resume]`, and the clock beside it is labelled `now` so it is not mistaken for a timestamp of the content on screen ([#4399](https://github.com/kubestellar/hive/issues/4399)).
 - `DASHBOARD_AUTH_TOKEN` was documented as holding a Kubernetes secret *name*; it holds the token *value* itself. An operator following the old wording would have set their dashboard token to the literal name of the Secret ([#4427](https://github.com/kubestellar/hive/pull/4427)).
 
 ## 2026-08-21
