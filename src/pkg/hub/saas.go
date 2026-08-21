@@ -2822,6 +2822,11 @@ type MyHiveEntry struct {
 	// admin-only action in the row menu.
 	AssignedUnclaimed bool `json:"assignedUnclaimed,omitempty"`
 
+	// Unassigned marks an unclaimed pool placeholder (statusAvailable or the
+	// legacy available-* org fallback). Fleet hides these idle capacity rows by
+	// default so real tenant hives drive the attention count.
+	Unassigned bool `json:"unassigned,omitempty"`
+
 	// AssignedAt is the RFC3339 timestamp the placeholder was last assigned/claimed
 	// (SaaSHive.AssignedAt). It rides the row payload ONLY for a hive that is still
 	// AssignedUnclaimed, so the dashboard can render a live "claim pending" counter
@@ -3313,6 +3318,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result[i].PendingRequestCount = len(pending)
 			result[i].PendingRequests = pending
 		}
+		result[i].Unassigned = isPlaceholderEntry(result[i])
 	}
 
 	// Unassigned placeholder rows: auth-class check failures are the pool's

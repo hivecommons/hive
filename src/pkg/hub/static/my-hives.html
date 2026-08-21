@@ -61,15 +61,22 @@
   }
   .fleet-header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   .fleet-header .sub { color: var(--muted); font-size: 12px; }
-  .wrap { padding: 16px 22px; max-width: 1200px; }
+  .wrap {
+    padding: 16px clamp(16px, 2vw, 32px);
+    max-width: none;
+    width: 100%;
+    overflow-x: auto;
+  }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-bottom: 14px; }
   .legend b { color: var(--ink); font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; }
+  table { width: 100%; min-width: 1180px; border-collapse: collapse; }
   thead th {
     text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
     color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
   }
   tbody td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th:nth-child(2), td:nth-child(2) { min-width: 360px; }
+  th:nth-child(7), td:nth-child(7) { min-width: 310px; }
   tr.spoke { cursor: pointer; }
   tr.spoke:hover { background: #16202f; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
@@ -90,6 +97,10 @@
   .rollup .bad { color: var(--red); }
   .rollup .sep { color: var(--muted); margin: 0 4px; }
   .output { color: var(--muted); font-size: 12px; }
+  td:nth-child(7) .output,
+  td:nth-child(7) .advisory-activity,
+  td:nth-child(7) .budget-health,
+  td:nth-child(7) .github-app-health { white-space: nowrap; }
   /* agent sub-rows */
   tr.agent td { background: #101825; border-bottom: 1px solid #1a2537; font-size: 13px; }
   tr.agent .aname { padding-left: 26px; font-weight: 500; }
@@ -194,6 +205,7 @@
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
     <label><input type="checkbox" id="showHealthy"> show healthy</label>
+    <label><input type="checkbox" id="showUnassigned"> show unassigned</label>
     <label>advisory output
       <select id="advisoryFilter">
         <option value="">all</option>
@@ -414,6 +426,7 @@ function hiveHealth(h) {
 var expanded = {};      // hive id -> true when its agent rows are open
 var problemsOnly = false;
 var showHealthy = false; // when false, healthy hives are hidden to cut noise
+var showUnassigned = false; // pool spokes are hidden until explicitly requested
 var advisoryFilter = "";
 var budgetFilter = "";
 var githubAppFilter = "";
@@ -424,6 +437,13 @@ function hiveNameHTML(h) {
   var dashboardURL = h.dashboardUrl || h.url || "";
   if (!dashboardURL) return '<span class="name">' + label + '</span>';
   return '<a class="name hive-link" href="' + esc(dashboardURL) + '" target="_blank" rel="noopener">' + label + '</a>';
+}
+
+function isUnassignedHive(h) {
+  if (h.unassigned) return true;
+  if (h.provStatus === "available") return true;
+  if (h.provStatus === "assigned" || h.assignedUnclaimed) return false;
+  return String(h.org || "").indexOf("available-") === 0;
 }
 
 function renderHives(hives) {
@@ -440,16 +460,20 @@ function renderHives(hives) {
     return String(a.h.name || a.h.id).localeCompare(String(b.h.name || b.h.id));
   });
 
-  var problemCount = rows.filter(function (r) { return r.health === "problem"; }).length;
-  var shown = 0;
-  rows.forEach(function (row) {
+  var visibleRows = rows.filter(function (row) {
     var h = row.h, health = row.health;
-    // Exception-first filtering.
-    if (problemsOnly && health !== "problem") return;
-    if (!problemsOnly && !showHealthy && health === "ok") return;
-    if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return;
-    if (budgetFilter && ((h.budgetHealth || {}).bucket || "unknown") !== budgetFilter) return;
-    if (githubAppFilter && ((h.githubAppHealth || {}).bucket || "unknown") !== githubAppFilter) return;
+    if (!showUnassigned && isUnassignedHive(h)) return false;
+    if (problemsOnly && health !== "problem") return false;
+    if (!problemsOnly && !showHealthy && health === "ok") return false;
+    if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return false;
+    if (budgetFilter && ((h.budgetHealth || {}).bucket || "unknown") !== budgetFilter) return false;
+    if (githubAppFilter && ((h.githubAppHealth || {}).bucket || "unknown") !== githubAppFilter) return false;
+    return true;
+  });
+  var problemCount = visibleRows.filter(function (r) { return r.health === "problem"; }).length;
+  var shown = 0;
+  visibleRows.forEach(function (row) {
+    var h = row.h, health = row.health;
     shown++;
 
     var isProblem = health === "problem";
@@ -520,7 +544,7 @@ function renderHives(hives) {
   if (!shown) {
     var msg = problemsOnly
       ? "No problems — every governor-expected agent is delivering and advisory output is current."
-      : (problemCount === 0 && !showHealthy ? "No problems. Healthy hives hidden — toggle “show healthy”." : "No hives.");
+      : (problemCount === 0 && !showHealthy ? "No problems. Healthy hives hidden — toggle “show healthy”." : "No hives match the active filters.");
     var trE = document.createElement("tr");
     trE.innerHTML = '<td colspan="7" class="status-msg">' + esc(msg) + '</td>';
     tb.appendChild(trE);
@@ -532,6 +556,8 @@ function wireControls() {
   if (po) po.addEventListener("change", function () { problemsOnly = po.checked; load(); });
   var sh = document.getElementById("showHealthy");
   if (sh) sh.addEventListener("change", function () { showHealthy = sh.checked; load(); });
+  var su = document.getElementById("showUnassigned");
+  if (su) su.addEventListener("change", function () { showUnassigned = su.checked; renderHives(lastHives); });
   var af = document.getElementById("advisoryFilter");
   if (af) af.addEventListener("change", function () { advisoryFilter = af.value; renderHives(lastHives); });
   var bf = document.getElementById("budgetFilter");

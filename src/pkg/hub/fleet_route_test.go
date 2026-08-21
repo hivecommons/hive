@@ -33,6 +33,8 @@ func TestFleetRouteServesPageAndMyHivesRedirects(t *testing.T) {
 		`<a href="/dashboard">My Hives</a>`,
 		`<a href="/fleet" id="nav-fleet" class="active" aria-current="page"`,
 		`<a href="/api/docs">API</a>`,
+		`id="showUnassigned"`,
+		`function isUnassignedHive(h)`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /fleet: expected navbar to contain %q", want)

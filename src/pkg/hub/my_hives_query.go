@@ -188,6 +188,9 @@ func myHivesSummary(entries []MyHiveEntry) map[string]int {
 		if e.AssignedUnclaimed {
 			s["assigned_unclaimed"]++
 		}
+		if e.Unassigned {
+			s["unassigned"]++
+		}
 		if e.Upgrading {
 			s["upgrading"]++
 		}
