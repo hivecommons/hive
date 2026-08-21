@@ -2098,7 +2098,12 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 
 	// Pinned: unpinned HEAD broke every install on 2026-07-27 when upstream
 	// removed the --mode flag. Bump deliberately, after checking `--help`.
-	const cavemanRef = "github:JuliusBrussee/caveman#0d95a81d35a9"
+	// v1.9.1 IS commit 0d95a81d35a9 — the SHA form is deliberately not used
+	// because the `skills` CLI clones with `git clone --branch <ref>`, and
+	// git cannot clone a bare SHA as a branch ("Could not find remote branch
+	// 0d95a81d35a9"), which broke every install on a live hive. Tags clone
+	// cleanly; bump the tag, never a raw SHA.
+	const cavemanRef = "github:JuliusBrussee/caveman#v1.9.1"
 	// Upstream replaced `--mode full|minimal` with `--all` / `--minimal`
 	// (--all = hooks + init).
 	modeFlag := "--all"
@@ -2115,11 +2120,11 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	case "gemini":
 		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag)
 	case "goose":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "goose")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "goose")
 	case "codex":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "codex")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "codex")
 	case "aider":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "aider-desk")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "aider-desk")
 	default:
 		m.logger.Info("caveman not supported for backend", "backend", backend)
 		return
