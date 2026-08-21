@@ -551,6 +551,11 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
 	s.mux.HandleFunc("GET /api/saas/admin/available-placeholders", s.requireAdmin(s.handleAvailablePlaceholders))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
+	// Aggregate geographic rollup of the user base (counts only, no usernames).
+	// Admin-gated like the rest of the CRM/Users surface: country is personal
+	// data, so even the aggregate stays behind requireAdmin. Takes no query
+	// parameters — no country ever appears in a URL. See user_country_rollup.go.
+	s.mux.HandleFunc("GET /api/saas/admin/user-countries", s.requireAdmin(s.handleAdminUserCountries))
 	// #3234: fleet readiness for removing the N1/N2 legacy compatibility lanes.
 	s.mux.HandleFunc("GET /api/saas/admin/auth-rollout", s.requireAdmin(s.handleAuthRollout))
 	// Master-secret rotation (src/docs/design/master-key-rotation.md). Both are
@@ -9527,6 +9532,15 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div id="admin-users-body" style="display:none">
         <div id="users-container"><div class="loading">Loading users...</div></div>
+        <!-- Fleet-wide geographic rollup of the user base. Lives directly under
+             the Users table because it is the same data aggregated: the table
+             answers "who", this answers "where, overall". Inside
+             admin-users-body so it collapses with the section, and admin-gated
+             twice over — the section is display:none until the admin check
+             passes, and the endpoint it reads is behind requireAdmin.
+             Rendered as a plain ranked bar list; no map, no charting library,
+             no external asset (the hub forbids external CDNs/images). -->
+        <div id="user-countries-container" style="margin-top:20px"></div>
       </div>
     </div>
 
@@ -17462,6 +17476,10 @@ const dashboardHTML = `<!DOCTYPE html>
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
+        /* Rollup rides the same admin poll as the table it sits under, so the
+           two can never disagree about the roster. Not awaited: a slow or
+           failed rollup must not delay or break the users table. */
+        loadUserCountries();
       } catch(e) {
         if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
       } finally {
@@ -17471,6 +17489,103 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function filterUsers() {
       applySortUsers();
+    }
+
+    /* ---- Fleet country rollup -------------------------------------------
+       Where the hub's user base is, in aggregate. Reads
+       /api/saas/admin/user-countries, which is requireAdmin and returns COUNTS
+       only — no usernames — so this surface cannot be used to look up an
+       individual.
+
+       Deliberately NOT a map and NOT a chart: the hub ships no external CDN and
+       no external images, so a map would mean vendoring geometry and a charting
+       library would mean a script tag we cannot serve. A ranked bar list says
+       the same thing in less space and is readable at a glance.
+
+       The unknown bucket is rendered as its own row, always, with the same
+       weight as a country. Country is optional and best-effort, so early on
+       unknown IS the majority; hiding it would turn "3 of 200 users told us
+       they're in DE" into something that looks like "the fleet is German". */
+
+    /* Width of the widest bar, in percent of the list. The bars are scaled
+       against the LARGEST bucket rather than the total so the smaller
+       countries stay visible when one bucket dominates — which it will, since
+       unknown starts at ~100%. */
+    var COUNTRY_BAR_MAX_PCT = 100;
+
+    /* countryRollupRow renders one bucket. label is pre-built HTML (a flag+code
+       chip, or the plain "Unknown" text); everything else is numeric. */
+    function countryRollupRow(label, count, max, total) {
+      /* max is guaranteed >= 1 by the caller — see renderCountryRollup, which
+         returns early on an empty population. Guarding again here anyway
+         because a zero would silently produce NaN% and a bar that vanishes
+         rather than an error anyone would notice. */
+      var pct = (max > 0) ? Math.round((count / max) * COUNTRY_BAR_MAX_PCT) : 0;
+      var share = (total > 0) ? Math.round((count / total) * 100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+        '<div style="flex:none;width:72px;font-size:0.72rem;color:var(--text)">' + label + '</div>' +
+        '<div style="flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden">' +
+          '<div style="width:' + pct + '%;height:100%;background:var(--accent)"></div>' +
+        '</div>' +
+        '<div style="flex:none;width:84px;text-align:right;font-size:0.7rem;color:var(--muted)">' +
+          count + ' &middot; ' + share + '%</div>' +
+      '</div>';
+    }
+
+    function renderCountryRollup(data) {
+      var el = document.getElementById('user-countries-container');
+      if (!el) return;
+      var countries = (data && data.countries) || [];
+      var unknown = Number(data && data.unknown) || 0;
+      var total = Number(data && data.total) || 0;
+      /* No users at all is the only case with nothing to say. An all-unknown
+         population is NOT this case: it still renders, as a single 100% Unknown
+         bar, which is exactly the state the operator needs to see on day one. */
+      if (total <= 0) {
+        el.innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">No users yet.</div>';
+        return;
+      }
+      /* Scale against the biggest bucket, unknown included, so no bar can ever
+         exceed 100%. Floored at 1 so the divide is safe even if a future caller
+         reaches here with all-zero counts. */
+      var max = unknown;
+      countries.forEach(function(c) { if (Number(c.count) > max) max = Number(c.count); });
+      if (max < 1) max = 1;
+
+      var rows = countries.map(function(c) {
+        /* The server normalizes before sending; normalizing again is what
+           guarantees a legacy or hand-edited record can never emit half a code
+           point into the flag. A code that fails the check is dropped rather
+           than rendered raw. */
+        var code = normalizeCountryCode(c && c.code);
+        if (!code) return '';
+        var label = '<span style="display:inline-flex;align-items:center;gap:4px">' +
+          countryFlagHTML(code) + esc(code) + '</span>';
+        return countryRollupRow(label, Number(c.count) || 0, max, total);
+      }).join('');
+
+      /* Unknown is last (it is not a country and should not head a ranked list
+         of them) but always present, and labelled in --muted so it reads as an
+         absence rather than as a place. */
+      var unknownLabel = '<span style="color:var(--muted)">Unknown</span>';
+      rows += countryRollupRow(unknownLabel, unknown, max, total);
+
+      el.innerHTML =
+        '<div style="font-size:0.85rem;color:var(--accent);font-weight:600;margin-bottom:8px">' +
+          'Where users are &mdash; ' + countries.length + ' countr' + (countries.length === 1 ? 'y' : 'ies') +
+          ', ' + unknown + ' unknown of ' + total +
+        '</div>' + rows;
+    }
+
+    async function loadUserCountries() {
+      try {
+        var resp = await fetch('/api/saas/admin/user-countries');
+        /* 403 means not admin. Leave the container empty rather than writing an
+           error: a non-admin should learn nothing about this surface, not even
+           that it exists and refused them. */
+        if (!resp.ok) return;
+        renderCountryRollup(await resp.json());
+      } catch(e) {}
     }
 
     // --- Admin Users: contact / CRM fields -------------------------------
@@ -17484,7 +17599,8 @@ const dashboardHTML = `<!DOCTYPE html>
 
     // Number of columns in the admin users table. Panel/expand rows span the
     // full width, so this must track the <th> count in renderUsers.
-    var USERS_TABLE_COLSPAN = 8;
+    // 9 since the Country column landed.
+    var USERS_TABLE_COLSPAN = 9;
     // Rows of the notes textarea. Big enough for a short paragraph without
     // pushing the next user off screen. It is the only free-form prose field,
     // so it gets the height as well as the width; still user-resizable.
@@ -17643,6 +17759,28 @@ const dashboardHTML = `<!DOCTYPE html>
         ' style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:9999px;' +
         'font-size:0.6rem;font-weight:600;color:' + meta.color + ';background:' + meta.bg + '">' +
         (logo ? logo : '') + esc(meta.label) + '</span>';
+    }
+
+    /* countryCell renders the user's country in the admin Users table as
+       flag + alpha-2 code, following the providerBadge chip above rather than
+       inventing a second visual language for a per-row attribute: same
+       inline-flex chip, same 4px gap, same small type.
+
+       Unknown or unset renders NOTHING — an empty cell, no globe, no dash, no
+       "unknown" chip. That is #4371's rule and it matters most here, where a
+       column of placeholders would read as data we have. The rollup below the
+       table is where the size of the unknown bucket is stated explicitly; the
+       row is not the place to repeat it 200 times.
+
+       countryFlagHTML already normalizes and escapes; the code is escaped again
+       for the visible text because the render path must not depend on the
+       validator upstream of it staying correct. Color is the --muted theme
+       token so the code recedes next to the name in both light and dark. */
+    function countryCell(u) {
+      var code = normalizeCountryCode(u && u.country);
+      if (!code) return '';
+      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--muted)">' +
+        countryFlagHTML(code) + esc(code) + '</span>';
     }
 
     // renderContactCell is the collapsed summary shown in the main user row.
@@ -18316,6 +18454,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
+          '<td>' + countryCell(u) + '</td>' +
           '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
@@ -18324,7 +18463,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('');
       document.getElementById('users-container').innerHTML =
         '<table class="hive-table"><thead><tr>' +
-        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
       // The contact panels are built as raw HTML above; wire their listeners
       // once the rows are actually in the DOM. Inline on* handlers are avoided
