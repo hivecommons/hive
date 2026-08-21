@@ -44,6 +44,31 @@
 Description=Hive service
 Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
 
+# THE GATEWAY IS THE OTHER HALF OF THE DEPLOYMENT (#4516). hive-gateway.service
+# carries Requires=hive.service, which propagates a STOP from here to it and
+# nothing else -- so a hive that goes down takes the gateway with it, and a hive
+# that comes back does NOT bring it back. `systemctl restart hive.service` only
+# re-starts dependents that are ACTIVE when the job runs, and after a failed
+# update the gateway is not: the failing start already stopped it.
+#
+# That is fine for anything routed through bin/hive-podman-update.sh, which
+# starts the gateway itself since #4503. It is not fine for
+# `podman auto-update --rollback`, which restarts this unit over D-Bus and never
+# runs Hive's scripts: measured, the rollback restored the image correctly and
+# left :3001 -- the only published port -- dead until a human noticed, on a
+# daily timer, with rc=0 and hive.service active throughout.
+#
+# Wants= closes it at the unit level, so EVERY path that starts hive brings the
+# gateway with it: the timer, a bare `systemctl start`, and the scripts alike.
+#
+# Wants= and not Upholds=: Upholds would also restart a gateway an operator
+# deliberately stopped, which is a legitimate thing to do and not ours to undo.
+# Wants= restores it when hive STARTS and leaves a deliberate stop alone.
+# Wants= also has no systemd version floor, where Upholds= needs 249+.
+# It introduces no ordering: hive-gateway.container's own After=hive.service
+# still sequences them, verified by the config-contract test.
+Wants=hive-gateway.service
+
 [Container]
 # From the one source of truth, src/deploy/standalone-images.sh (#4206), so the
 # Podman and Docker assets cannot drift. src/deploy/test_standalone_image_refs.sh

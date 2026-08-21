@@ -296,6 +296,46 @@ if [[ -f "${ROOT}/${UNIT}" ]]; then
   fi
 fi
 
+# --- 10. hive pulls the gateway up, not just down (#4516) -------------------
+#
+# hive-gateway.container carries Requires=hive.service, which propagates a STOP
+# only. Without a start-direction dependency, any path that restarts hive while
+# the gateway is already down leaves :3001 -- the sole published port -- dead.
+# `podman auto-update --rollback` is exactly that path and runs unattended, so
+# the coupling has to live on the unit rather than in a caller.
+
+GATEWAY_UNIT="src/deploy/quadlet/hive-gateway.container"
+
+if [[ -f "${ROOT}/${UNIT}" ]]; then
+  if grep -qE '^Wants=hive-gateway\.service[[:space:]]*$' "${ROOT}/${UNIT}"; then
+    ok
+  else
+    fail "${UNIT}: no 'Wants=hive-gateway.service'. Requires= on the gateway propagates a stop only, so a restart of hive with the gateway already down leaves the published port dead (#4516)."
+  fi
+fi
+
+# Wants= must NOT be paired with an ordering key here: hive-gateway.container's
+# own After=hive.service is what sequences them. An After= in this direction
+# would invert that and deadlock the pair.
+if [[ -f "${ROOT}/${UNIT}" ]]; then
+  if grep -qE '^(After|Before)=hive-gateway\.service' "${ROOT}/${UNIT}"; then
+    fail "${UNIT}: orders itself against hive-gateway.service. The gateway's own After=hive.service owns that ordering; adding the reverse here risks a cycle (#4516)."
+  else
+    ok
+  fi
+fi
+
+# And the gateway must still carry the stop-direction half, or stopping hive
+# would leave an orphaned gateway serving 502s.
+if [[ -f "${ROOT}/${GATEWAY_UNIT}" ]]; then
+  if grep -qE '^Requires=hive\.service[[:space:]]*$' "${ROOT}/${GATEWAY_UNIT}" \
+     && grep -qE '^After=hive\.service[[:space:]]*$' "${ROOT}/${GATEWAY_UNIT}"; then
+    ok
+  else
+    fail "${GATEWAY_UNIT}: lost Requires=/After=hive.service. Wants= in hive.container only pulls the gateway UP; these are what take it down and order it (#4516)."
+  fi
+fi
+
 # --- Summary ----------------------------------------------------------------
 
 if [[ "$failures" -gt 0 ]]; then

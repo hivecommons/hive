@@ -17,7 +17,7 @@ whole result of this slice: those are two different signals.
 | What happens to `Restart=always`? | **Kept, untouched.** It never even fires — `NRestarts` stayed `0` through every rollback. No tradeoff is taken. |
 | What detects "bad"? | The **D-Bus start-job result**, which is `timeout`. Not `ActiveState`, not `systemctl is-failed`. |
 | Does #4378's finding still hold? | **Yes, unchanged.** Alerting keyed on `is-failed` or `ActiveState=failed` still does not fire. It is just not what podman uses. |
-| What does a bad update cost? | One full `TimeoutStartSec` of downtime — ~5 minutes on the shipped unit — then automatic recovery. |
+| What does a bad update cost? | One full `TimeoutStartSec` of downtime — ~5 minutes on the shipped unit — then automatic recovery **of the whole deployment**, gateway included (#4516). |
 | And if the bad image stays published? | The **same outage on every timer firing**. Podman does not remember that it rolled a digest back. |
 | Interaction with a #4378 digest pin? | The pin wins, **silently**: `UPDATED=false`, exit 0, unit untouched. |
 | Is it on by default? | **No**, per [#4188]. Opt-in only: `bin/hive-podman-update.sh autoupdate on`. |
@@ -88,6 +88,17 @@ Three things in that timeline are worth an operator's attention.
 start budget plus a few seconds of stop/start. Podman cannot know the image is
 bad any sooner — that is what the budget is for. On the shipped unit's 300s,
 expect **~5 minutes of downtime**, then automatic recovery to the previous image.
+
+> **The gateway is part of "recovery", and did not used to be.** `hive-gateway.service`
+> carries `Requires=hive.service`, which propagates a **stop** only. A failed update
+> stops the gateway along with the failing unit, and podman's rollback restart
+> re-starts only those dependents that are *active* when the job runs — which the
+> gateway is not. Measured on a rootless deployment at the shipped `TimeoutStartSec=300`:
+> the rollback restored the digest correctly, `hive.service` went `active`, `NRestarts`
+> stayed `0`, `podman auto-update` exited `0` — and `:3001`, the only published port,
+> stayed dead until a human noticed. `hive.container` now carries
+> `Wants=hive-gateway.service` so every path that starts Hive brings the gateway with
+> it ([#4516](https://github.com/kubestellar/hive/issues/4516)).
 
 **`is-failed` never leaves `activating`, and `NRestarts` never leaves `0`.**
 #4378's warning stands: monitoring keyed on unit state does not fire. Worse for
