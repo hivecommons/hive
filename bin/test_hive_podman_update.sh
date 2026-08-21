@@ -73,6 +73,17 @@ case "${args[0]:-}" in
     printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
     ;;
   daemon-reload) : ;;
+  is-enabled)
+    # podman-auto-update.timer (#4411). FAKE_TIMER_STATE is what the manager
+    # reports; FAKE_TIMER_RC lets a case model a host with no podman systemd
+    # units installed, which is the `enable` failure path.
+    printf '%s\n' "${FAKE_TIMER_STATE:-disabled}"
+    [ "${FAKE_TIMER_STATE:-disabled}" = "enabled" ] || exit 1
+    ;;
+  enable|disable)
+    printf '%s\n' "${args[*]}" >>"${sd}/timer.log"
+    exit "${FAKE_TIMER_RC:-0}"
+    ;;
   stop)
     printf 'inactive\n' >"$sd/ActiveState"; printf 'dead\n' >"$sd/SubState"
     printf 'success\n' >"$sd/Result"
@@ -112,8 +123,9 @@ case "${1:-}" in
   images)  printf '%s %s\n' "${FAKE_TAG_REF}" "${FAKE_TAG_LIST_DIGEST}" ;;
   inspect)
     case "$*" in
-      *ImageName*) cat "${STATE_DIR}/running_image" 2>/dev/null ;;
-      *)           printf '%s@%s\n' "${FAKE_TAG_REF%:*}" "${FAKE_TAG_ARCH_DIGEST}" ;;
+      *ImageName*)      cat "${STATE_DIR}/running_image" 2>/dev/null ;;
+      *io.containers.autoupdate*) printf '%s\n' "${FAKE_AUTOUPDATE_LABEL:-}" ;;
+      *)                printf '%s@%s\n' "${FAKE_TAG_REF%:*}" "${FAKE_TAG_ARCH_DIGEST}" ;;
     esac
     ;;
   exec) printf 'hive 3.0.0 (commit deadbee, branch v4)\n' ;;
@@ -169,6 +181,13 @@ reset_env() {
   export FAKE_TAG_REF="${REPO}:stable"
   export FAKE_TAG_LIST_DIGEST="$DIGEST_NEW"
   export FAKE_TAG_ARCH_DIGEST="$DIGEST_ARCH"
+  export FAKE_TIMER_STATE=disabled
+  export FAKE_TIMER_RC=0
+  export FAKE_AUTOUPDATE_LABEL=""
+  # The opt-in file the script installs. Pointed at the tracked one so a case
+  # that renames or deletes it fails here rather than on a host.
+  export HIVE_UPDATE_AUTOUPDATE_SRC="${ROOT}/src/deploy/quadlet/optional/hive-autoupdate.conf"
+  rm -f "${STATE_DIR}/timer.log"
   unset HIVE_UPDATE_SKOPEO || true
 }
 
@@ -364,6 +383,93 @@ echo "== rootful drives the system manager through sudo =="
 reset_env
 run_update status --rootful >/dev/null
 check "rootful reads the system manager through sudo" 'grep -q "sudo systemctl" "$SUDO_CALL_LOG"'
+
+echo
+echo "== autoupdate (#4411) =="
+
+au_dropin() { printf '%s/hive.container.d/20-autoupdate.conf' "$QUADLET_DIR"; }
+
+reset_env
+case_expect "off by default -- #4188 requires opt-in" 0 "auto-update is OFF" autoupdate status
+reset_env
+check "the tracked opt-in drop-in exists and carries the policy" \
+  'grep -q "^AutoUpdate=registry$" "$HIVE_UPDATE_AUTOUPDATE_SRC"'
+
+reset_env
+run_update autoupdate on >/dev/null
+check "on installs 20-autoupdate.conf beside the pin drop-in" '[ -f "$(au_dropin)" ]'
+check "the installed file is the tracked one, comments and all" \
+  'diff -q "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)" >/dev/null'
+check "on enables the timer" 'grep -q "enable --now podman-auto-update.timer" "${STATE_DIR}/timer.log"'
+check "on restarts so the container is recreated with the label" \
+  'grep -q "systemctl --user restart hive.service" "$SYSTEMCTL_CALL_LOG"'
+
+reset_env
+case_expect "on names the measured detection signal, not ActiveState" 0 \
+  "start-job result" autoupdate on
+reset_env
+case_expect "on states the per-bad-update cost" 0 "one full TimeoutStartSec" autoupdate on
+reset_env
+case_expect "on states that a bad tag repeats on every firing" 0 "REPEATS on every timer firing" autoupdate on
+
+# THE PIN CONFLICT. Measured: with a digest in Image=, auto-update reports
+# UPDATED=false and does nothing, so a pinned host with the timer on looks
+# healthy and never updates. Refusing is the only honest outcome.
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "REFUSES to arm auto-update over a digest pin" 78 "would do nothing" autoupdate on
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "the refusal names both ways out" 78 "unpin" autoupdate on
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+run_update autoupdate on >/dev/null
+check "the refusal changes nothing on disk" '[ ! -f "$(au_dropin)" ]'
+check "the refusal touches no timer" '[ ! -s "${STATE_DIR}/timer.log" ]'
+
+# Both files present is not something `on` can produce, but an operator can
+# reach it by pinning after arming -- which is exactly what a manual rollback
+# does. It must be visible without being asked about.
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "plain status flags pin+autoupdate without being asked" 0 "nothing to poll" status
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+case_expect "autoupdate status says it reads as 'up to date'" 0 "already up to date" autoupdate status
+
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+run_update autoupdate off >/dev/null
+check "off removes the drop-in" '[ ! -f "$(au_dropin)" ]'
+check "off disables the timer" 'grep -q "disable --now podman-auto-update.timer" "${STATE_DIR}/timer.log"'
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+run_update autoupdate off >/dev/null
+check "off leaves the image pin alone" '[ -f "$(dropin)" ]'
+reset_env
+mkdir -p "$(dirname "$(au_dropin)")"; cp "$HIVE_UPDATE_AUTOUPDATE_SRC" "$(au_dropin)"
+seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+run_update unpin >/dev/null
+check "unpin leaves auto-update alone (separate files, separate decisions)" '[ -f "$(au_dropin)" ]'
+
+# A host with no podman systemd units must still get the drop-in, with an
+# honest note -- the drop-in is what makes the unit eligible; the timer is only
+# one way to fire it.
+reset_env
+FAKE_TIMER_RC=1 run_update autoupdate on >/dev/null
+check "a missing podman-auto-update.timer still installs the drop-in" '[ -f "$(au_dropin)" ]'
+reset_env
+FAKE_TIMER_RC=1 case_expect "and says how to fire it without the timer" 0 \
+  "podman auto-update --rollback=true" autoupdate on
+
+reset_env
+case_expect "autoupdate rejects a bad action" 64 "autoupdate takes on, off, or status" autoupdate sideways
+reset_env
+run_update autoupdate status >/dev/null
+check "autoupdate status restarts nothing" '! grep -q "restart" "$SYSTEMCTL_CALL_LOG"'
+check "autoupdate status pulls nothing" '! grep -q "^podman pull" "$PODMAN_CALL_LOG"'
+
+reset_env
+FAKE_AUTOUPDATE_LABEL=registry FAKE_TIMER_STATE=enabled \
+  case_expect "status reports the label the RUNNING container carries" 0 "registry" autoupdate status
 
 echo
 echo "== invocation =="

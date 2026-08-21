@@ -459,6 +459,11 @@ needs its own slice — as do backup and restore.
 
 ## Related
 
+- [podman-auto-update.md](podman-auto-update.md) — #4411, built directly on the measurement above.
+  The `never reads failed` result does NOT rule out `podman auto-update --rollback`: podman reads
+  the D-Bus start-job result (`timeout`), not `ActiveState`, so the rollback fires while alerting
+  keyed on `is-failed` still does not. Opt-in, and it states what a digest pin written by THIS
+  script does to it (wins, silently).
 - [ADR-0017](adr/0017-podman-quadlet-lifecycle.md) — why Quadlet, and why `Notify=healthy`
 - [podman-standalone-quadlet.md](podman-standalone-quadlet.md) — the units and how to install them
 - [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) — stop, start, restart, recreate, boot; `SuccessExitStatus=143` and `Restart=always`, both of which shape what a failed update looks like

@@ -22,6 +22,18 @@
 # that boundary; %E is, and it puts the operator's files where each mode
 # expects them.
 #
+# AUTO-UPDATE IS OFF HERE, DELIBERATELY (#4411, #4188). There is no
+# `AutoUpdate=` key in this file: nothing polls a registry or acts on its own
+# until an operator opts in with `bin/hive-podman-update.sh autoupdate on`,
+# which drops `optional/hive-autoupdate.conf` in as
+# hive.container.d/20-autoupdate.conf. It IS achievable on this unit as
+# written — `podman auto-update --rollback` fires on a bad-but-startable image
+# even though this unit never reads `failed`, because podman reads the D-Bus
+# start-job result rather than ActiveState, so Restart= below stays exactly as
+# it is. What it costs (one full TimeoutStartSec of downtime per bad update,
+# repeated on every timer firing) is measured in
+# src/docs/podman-auto-update.md. Read that before turning it on.
+#
 # Podman version: ADR-0017 RECOMMENDS 5.6.0. The verified floor is UNKNOWN —
 # nothing between 5.0.0 and 5.8.4 has been exercised, and 5.8.4 is only the
 # version the spikes happened to run on, not a floor. Notify=healthy needs

@@ -42,6 +42,16 @@
 #                   bad update, when the top of the history is the bad pin.
 #   unpin           remove the drop-in, returning the unit to the floating tag
 #                   in hive.container, and restart.
+#   autoupdate <on|off|status>
+#                   OPT-IN health-aware auto-update (#4411). `on` installs
+#                   20-autoupdate.conf (AutoUpdate=registry) beside the pin
+#                   drop-in, restarts so the container carries the label, and
+#                   enables podman-auto-update.timer. `off` reverses it.
+#                   `status` is read-only.
+#                   REFUSES to turn on while a digest pin is in place: measured,
+#                   auto-update then reports UPDATED=false and does nothing,
+#                   which is indistinguishable from "up to date". See
+#                   src/docs/podman-auto-update.md.
 #
 # Rootless by default; --rootful drives the system manager through sudo.
 #
@@ -60,6 +70,12 @@ EX_CONFIG=78
 UNIT="hive.service"
 CONTAINER="hive"
 DROPIN_NAME="10-image.conf"
+# The opt-in auto-update drop-in (#4411). A SEPARATE file from the pin so the
+# two can be reasoned about, and turned on and off, independently: `unpin`
+# must not silently disable auto-update, and `autoupdate off` must not drop a
+# pin someone is relying on.
+AUTOUPDATE_NAME="20-autoupdate.conf"
+AUTOUPDATE_TIMER="podman-auto-update.timer"
 # The repo's unit names this. `unpin` returns to it, and `status` says so.
 BASE_IMAGE_REPO="ghcr.io/kubestellar/hive"
 HISTORY_KEEP=10
@@ -88,8 +104,18 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    status|resolve|pin|rollback|unpin)
-      [ -z "$CMD" ] && CMD="$1" || { printf 'two commands given: %s and %s\n' "$CMD" "$1" >&2; usage; } ;;
+    status|resolve|pin|rollback|unpin|autoupdate)
+      # `autoupdate status` is a command plus an ACTION, and the action happens
+      # to be spelled the same as another command. Only the argument-taking
+      # commands may absorb a second one of these words; `status rollback` is
+      # still two commands and still an error.
+      if [ -z "$CMD" ]; then
+        CMD="$1"
+      elif [ -z "$REF" ] && case "$CMD" in autoupdate|pin|resolve) true ;; *) false ;; esac; then
+        REF="$1"
+      else
+        printf 'two commands given: %s and %s\n' "$CMD" "$1" >&2; usage
+      fi ;;
     --rootful)  ROOTFUL=1 ;;
     --rootless) ROOTFUL=0 ;;
     -h|--help)  usage ;;
@@ -123,6 +149,10 @@ fi
 
 DROPIN_DIR="${QUADLET_DIR}/hive.container.d"
 DROPIN="${DROPIN_DIR}/${DROPIN_NAME}"
+AUTOUPDATE_DROPIN="${DROPIN_DIR}/${AUTOUPDATE_NAME}"
+# The tracked source of the opt-in file. Copied rather than generated so the
+# rationale in its header travels to the host with it.
+AUTOUPDATE_SRC="${HIVE_UPDATE_AUTOUPDATE_SRC:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/src/deploy/quadlet/optional/hive-autoupdate.conf}"
 
 show()  { sctl show "$UNIT" -p "$1" --value 2>/dev/null; }
 state() { printf '%s/%s/%s' "$(show ActiveState)" "$(show SubState)" "$(show Result)"; }
@@ -364,6 +394,24 @@ do_status() {
     warn "no earlier HEALTHY pin recorded -- rollback has nowhere to go"
     info "the first pin this script makes has no predecessor; that is expected"
   fi
+
+  # #4411. Reported here as well as under `autoupdate status` because the
+  # interaction with the pin above is the thing an operator needs to see
+  # WITHOUT knowing to ask: a pinned host with the timer on looks healthy and
+  # updates nothing.
+  head1 "Auto-update (#4411, opt-in)"
+  if autoupdate_on_host; then
+    ok "enabled by drop-in: $AUTOUPDATE_DROPIN"
+    info "container label        $(autoupdate_label)"
+    info "$AUTOUPDATE_TIMER  $(timer_state 2>/dev/null || echo unknown)"
+    if [ -f "$DROPIN" ]; then
+      warn "a digest pin is ALSO in place -- auto-update has nothing to poll and will report"
+      info "UPDATED=false while changing nothing. Unpin, or turn auto-update off."
+    fi
+  else
+    info "off (the default) -- turn it on with: $0 autoupdate on${MODE_FLAG}"
+    info "read what it costs first: src/docs/podman-auto-update.md"
+  fi
 }
 
 do_resolve() {
@@ -506,10 +554,136 @@ do_unpin() {
   exit "$EX_CONFIG"
 }
 
+# --- auto-update (#4411) ----------------------------------------------------
+
+autoupdate_on_host() { [ -f "$AUTOUPDATE_DROPIN" ]; }
+
+# Whether the RUNNING container actually carries the policy label. The drop-in
+# only takes effect on the next recreate, so a host can have the file and a
+# container that auto-update will not touch -- the same gap `status` already
+# prints for the image pin.
+autoupdate_label() {
+  pod inspect "$CONTAINER" --format '{{index .Config.Labels "io.containers.autoupdate"}}' 2>/dev/null
+}
+
+timer_state() { sctl is-enabled "$AUTOUPDATE_TIMER" 2>/dev/null; }
+
+do_autoupdate() {
+  local action="${REF:-status}"
+  case "$action" in
+    on|off|status) : ;;
+    *) printf 'autoupdate takes on, off, or status (got %s)\n' "$action" >&2; usage ;;
+  esac
+
+  require_unit
+  head1 "Auto-update -- $MODE_LABEL"
+
+  if [ "$action" = "status" ]; then
+    if autoupdate_on_host; then
+      ok "opt-in drop-in present: $AUTOUPDATE_DROPIN"
+    else
+      warn "auto-update is OFF -- no $AUTOUPDATE_NAME (this is the default, per #4188)"
+    fi
+    info "container label        $(autoupdate_label 2>/dev/null || true)"
+    info "$AUTOUPDATE_TIMER  $(timer_state 2>/dev/null || echo unknown)"
+    info "unit ExecStart names   $(unit_image)"
+    if autoupdate_on_host && [ -f "$DROPIN" ]; then
+      # The measured trap. Both files present is not an error, but it means the
+      # timer runs daily, reports success, and changes nothing.
+      warn "a digest pin is ALSO in place -- auto-update has nothing to poll"
+      info "measured: it reports UPDATED=false, exits 0, and does not touch the unit,"
+      info "which reads exactly like 'already up to date' in its output"
+      info "unpin to let auto-update follow the tag again: $0 unpin${MODE_FLAG}"
+    fi
+    return 0
+  fi
+
+  if [ "$action" = "off" ]; then
+    if ! autoupdate_on_host; then
+      warn "already off: no $AUTOUPDATE_DROPIN"
+    else
+      as_owner rm -f "$AUTOUPDATE_DROPIN"
+      as_owner rmdir "$DROPIN_DIR" 2>/dev/null
+      ok "removed $AUTOUPDATE_DROPIN"
+      sctl daemon-reload
+    fi
+    if sctl disable --now "$AUTOUPDATE_TIMER" >/dev/null 2>&1; then
+      ok "disabled $AUTOUPDATE_TIMER"
+    else
+      info "$AUTOUPDATE_TIMER was not enabled for this manager"
+    fi
+    info "the running container keeps its label until the next restart:"
+    info "    $0 pin <ref>${MODE_FLAG}   or   systemctl${MODE_FLAG:+ } restart $UNIT"
+    info "the manual path (pin/rollback) is unaffected"
+    return 0
+  fi
+
+  # --- on ---
+  # REFUSE rather than warn. Turning auto-update on over a pin produces a host
+  # that reports a healthy daily timer and never updates; that is worse than
+  # either state on its own, and it is silent.
+  if [ -f "$DROPIN" ]; then
+    bad "a digest pin is in place -- turning auto-update on here would do nothing"
+    info "pin      $(current_ref)"
+    info "measured: with a digest in Image=, auto-update reports UPDATED=false and"
+    info "exits 0. The timer would run daily, report success, and update nothing."
+    info "worse, if that digest stops resolving in the registry the whole"
+    info "auto-update run exits 125 -- for every other container on the host too."
+    info ""
+    info "decide which mechanism owns the image on this host:"
+    info "    $0 unpin${MODE_FLAG}      then   $0 autoupdate on${MODE_FLAG}"
+    info "or keep the pin and drive updates by hand, as #4378 does."
+    exit "$EX_CONFIG"
+  fi
+
+  if [ ! -f "$AUTOUPDATE_SRC" ]; then
+    bad "cannot find the opt-in drop-in to install: $AUTOUPDATE_SRC"
+    info "run this from a checkout, or set HIVE_UPDATE_AUTOUPDATE_SRC to the file"
+    exit "$EX_CONFIG"
+  fi
+
+  as_owner mkdir -p "$DROPIN_DIR"
+  as_owner cp "$AUTOUPDATE_SRC" "$AUTOUPDATE_DROPIN"
+  ok "installed $AUTOUPDATE_DROPIN"
+  sctl daemon-reload
+  ok "daemon-reload: the unit now carries AutoUpdate=registry"
+
+  if sctl enable --now "$AUTOUPDATE_TIMER" >/dev/null 2>&1; then
+    ok "enabled $AUTOUPDATE_TIMER"
+  else
+    warn "could not enable $AUTOUPDATE_TIMER -- install podman's systemd units, or run"
+    info "    podman auto-update --rollback=true"
+    info "from your own timer. The drop-in above is what makes this unit eligible."
+  fi
+
+  # The label lands on the CONTAINER at create time, so a running container
+  # predating the drop-in is invisible to auto-update until it is recreated.
+  head1 "Restart"
+  info "the label applies at container-create time, so the running container"
+  info "is not eligible until it is recreated"
+  if restart_and_report; then
+    ok "container label: $(autoupdate_label)"
+  else
+    bad "the restart did not come up healthy -- auto-update is armed on a unit that is not serving"
+    exit "$EX_CONFIG"
+  fi
+
+  head1 "What this now does, and what it costs"
+  info "a bad-but-startable image is detected and rolled back automatically"
+  info "(measured: podman reads the start-job result, which is 'timeout' -- NOT"
+  info "ActiveState, which never reaches 'failed' on this unit)"
+  info "each bad update costs one full TimeoutStartSec of downtime (300s here)"
+  info "and REPEATS on every timer firing until the bad tag is replaced upstream"
+  info "monitoring: watch the UPDATED column for 'rolled back'; the unit's own"
+  info "state and podman-auto-update.service's exit code both stay green"
+  info "full measurement: src/docs/podman-auto-update.md"
+}
+
 case "$CMD" in
-  status)   do_status ;;
-  resolve)  do_resolve ;;
-  pin)      do_pin ;;
-  rollback) do_rollback ;;
-  unpin)    do_unpin ;;
+  status)     do_status ;;
+  autoupdate) do_autoupdate ;;
+  resolve)    do_resolve ;;
+  pin)        do_pin ;;
+  rollback)   do_rollback ;;
+  unpin)      do_unpin ;;
 esac
