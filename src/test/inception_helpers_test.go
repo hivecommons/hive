@@ -1,3 +1,13 @@
+//go:build integration
+
+// The inception e2e/regression suite talks to a live hive instance over the
+// network. It only builds with `-tags integration` so that a plain
+// `go test ./...` never blocks on an unreachable endpoint (see issue #4402).
+//
+// To run it:
+//
+//	HIVE_URL=http://<host>:<port> HIVE_TOKEN=<token> go test -tags integration ./test/...
+
 package test
 
 import (
@@ -5,7 +15,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,9 +26,9 @@ import (
 )
 
 var (
-	hiveURL   = envOr("HIVE_URL", "http://192.168.4.85:3003")
-	hiveToken = envOr("HIVE_TOKEN", "0f87edfe470a78005be214d521b82c3d2d63e437d8875b9b56488b887f697ce8")
-	cdpURL    = envOr("CDP_URL", "ws://127.0.0.1:9222")
+	hiveURL       = os.Getenv("HIVE_URL")
+	hiveToken     = os.Getenv("HIVE_TOKEN")
+	cdpURL        = envOr("CDP_URL", "ws://127.0.0.1:9222")
 	screenshotDir = envOr("SCREENSHOT_DIR", "/tmp/inception-e2e")
 )
 
@@ -25,6 +37,44 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// TestMain gates the whole suite: it requires HIVE_URL to be set and the
+// endpoint to answer a fast TCP dial. Otherwise the suite is skipped instead
+// of every request hanging until the per-package panic timeout.
+func TestMain(m *testing.M) {
+	if hiveURL == "" {
+		fmt.Println("SKIP: HIVE_URL not set; inception e2e suite requires a live hive endpoint")
+		os.Exit(0)
+	}
+	if err := probeEndpoint(hiveURL, 2*time.Second); err != nil {
+		fmt.Printf("SKIP: hive endpoint %s unreachable (%v); skipping inception e2e suite\n", hiveURL, err)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// probeEndpoint does a fast TCP dial against the host:port of rawURL.
+func probeEndpoint(rawURL string, timeout time.Duration) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid HIVE_URL: %w", err)
+	}
+	host := u.Host
+	if u.Port() == "" {
+		switch u.Scheme {
+		case "https":
+			host = net.JoinHostPort(u.Hostname(), "443")
+		default:
+			host = net.JoinHostPort(u.Hostname(), "80")
+		}
+	}
+	conn, err := net.DialTimeout("tcp", host, timeout)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }
 
 type apiClient struct {
@@ -261,7 +311,7 @@ func verifyCDPPhase(phase string, pass int) string {
 	}
 
 	// Check progress bar shows correct active stage
-	progressCheck, _ := cdpEval(ws, fmt.Sprintf(`(function(){ var el = document.getElementById('inception-panel'); if (!el) return 'no_panel'; var text = el.textContent; var hasIdea = text.includes('Idea'); var hasClarify = text.includes('Clarify'); var hasStructure = text.includes('Structure'); return hasIdea && hasClarify && hasStructure ? 'progress_bar_ok' : 'progress_bar_missing'; })()`, ))
+	progressCheck, _ := cdpEval(ws, fmt.Sprintf(`(function(){ var el = document.getElementById('inception-panel'); if (!el) return 'no_panel'; var text = el.textContent; var hasIdea = text.includes('Idea'); var hasClarify = text.includes('Clarify'); var hasStructure = text.includes('Structure'); return hasIdea && hasClarify && hasStructure ? 'progress_bar_ok' : 'progress_bar_missing'; })()`))
 	if progressCheck != "progress_bar_ok" {
 		return fmt.Sprintf("CDP: progress bar missing stages at phase %s", phase)
 	}
