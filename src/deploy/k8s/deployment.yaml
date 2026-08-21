@@ -70,6 +70,14 @@ spec:
           securityContext:
             seccompProfile:
               type: RuntimeDefault
+            # COVERAGE (#4379): this exact drop/add list is BOOTED by
+            # ../test_manifest_caps_runtime.sh. That job derives the set from
+            # this file (it keeps no copy of its own), runs the whole privilege
+            # chain under it — entrypoint root->dev drop, su-exec hop to a
+            # per-agent UID, per-agent chown, ACMM egress gate — and then removes
+            # each capability in turn to prove every one is load-bearing.
+            # Tightening the list here while that job stays green is what #3895
+            # did; the pod broke at runtime and CI never noticed.
             capabilities:
               drop:
                 - ALL

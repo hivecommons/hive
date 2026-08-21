@@ -18,8 +18,10 @@ volume and network they need**:
 | `src/deploy/quadlet/hive-gateway.container` | the authenticating nginx gateway, and the only published port |
 
 Deliberately **not** here, each being its own slice: persistence and SELinux
-volume *semantics*, stop/start/recreate behaviour,
-update/rollback/auto-update, and backup/restore/migration.
+volume *semantics*, stop/start/recreate behaviour, auto-update, and
+backup/restore/migration. Manual update and rollback used to be on that list and
+now has its own page,
+[podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md) (#4378).
 
 **Docker is untouched.** `src/docker-compose.yaml` is unchanged and remains the
 default, fully supported runtime.
@@ -217,10 +219,12 @@ service's healthcheck in `src/docker-compose.yaml` looks for it, and what
 happy, the container starts, and the failure arrives five minutes later. That is
 why the `sed` above is a step rather than a remark.
 
-**`$CONF/hive.env` must exist**, even if it is empty:
+**`$CONF/hive.env` must exist**, even if every line in it stays commented out.
+Start from the tracked template, which lists every variable the Compose stack's
+`environment:` block sets:
 
 ```sh
-touch "$CONF/hive.env"
+cp src/deploy/quadlet/hive.env.example "$CONF/hive.env"
 chmod 600 "$CONF/hive.env"
 ```
 
@@ -228,6 +232,14 @@ chmod 600 "$CONF/hive.env"
 `podman run` fails if the file is missing. Quadlet does **not** honour
 systemd's leading `-` optional-file prefix here — see
 [Traps](#traps-measured-not-guessed).
+
+`hive.env.example` is tracked rather than left to prose because
+`EnvironmentFile=` is opaque: the unit names a path and nothing in the unit says
+what belongs in it, so a variable added to `src/docker-compose.yaml` used to
+reach Docker and silently never reach Podman. `src/deploy/
+test_standalone_runtime_parity.sh` ([#4404](https://github.com/kubestellar/hive/issues/4404))
+asserts the two lists are the same set, so that divergence now fails CI. Add a
+variable to both or to neither.
 
 At minimum set `HIVE_DASHBOARD_TOKEN` in it:
 
@@ -459,6 +471,14 @@ own repeatable check, `bin/hive-podman-lifecycle-probe.sh`, covered by
 `bin/test_hive_podman_lifecycle_probe.sh` with every input mocked. The
 measurements it was written from are in
 [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md).
+
+Changing the image these units run — and getting back when the new one does not
+work — is [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md)
+(#4378), with `bin/hive-podman-update.sh` as its repeatable path. The `Image=`
+line below stays a floating tag on purpose, because it has to agree with
+`src/deploy/standalone-images.sh`; the operator's digest pin goes in a Quadlet
+drop-in, `hive.container.d/10-image.conf`, which that page describes. A floating
+tag is not something you can roll back to, so pin before you need to.
 
 A **live rootless start was performed** on Fedora 44, Podman 5.8.4, cgroup v2,
 SELinux enforcing, against the real `ghcr.io/kubestellar/hive:stable` image:

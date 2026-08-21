@@ -20,7 +20,10 @@
 # by looking wrong, which is why they need a guard.
 #
 # This does NOT claim Docker/Podman parity. It snapshots one subset; further
-# invariants belong in separate small issues.
+# invariants belong in separate small issues. Parity itself -- comparing this
+# file against src/deploy/quadlet/* on a named list of axes -- is
+# src/deploy/test_standalone_runtime_parity.sh (#4404), which quotes the
+# sentence above as its reason for existing.
 #
 # Runs without starting a container.
 # Run: bash src/deploy/test_standalone_service_contract.sh

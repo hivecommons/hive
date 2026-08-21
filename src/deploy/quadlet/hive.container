@@ -37,6 +37,17 @@ Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standa
 # Podman and Docker assets cannot drift. src/deploy/test_standalone_image_refs.sh
 # fails if this line stops agreeing with it. Fully qualified on purpose: the
 # Quadlet generator warns on a short name and `podman auto-update` refuses one.
+#
+# IT IS A FLOATING TAG, AND AN OPERATOR MUST NOT ROLL BACK TO ONE. Today's
+# `:stable` and last month's `:stable` are different images with the same name,
+# so this line records a channel, not a version. The deployed version is pinned
+# by DIGEST in a Quadlet drop-in instead --
+# hive.container.d/10-image.conf, which Quadlet merges into this file on every
+# daemon-reload. Do not move the pin in here: this line has to keep agreeing
+# with the source of truth above, and a digest edited in here would be
+# overwritten by the next sync with it. See #4378 and
+# src/docs/podman-quadlet-update-rollback.md; bin/hive-podman-update.sh writes
+# the drop-in and reads its own pin history back for `rollback`.
 Image=ghcr.io/kubestellar/hive:stable
 ContainerName=hive
 

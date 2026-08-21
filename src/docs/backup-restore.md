@@ -91,6 +91,17 @@ Resolution order at backup time is governor config first, then the environment:
 
 **Escrow the key.** It is not stored inside the archive, so a backup without its key is unrestorable. Replacing the key does not re-encrypt existing archives; keep the old key to restore them.
 
+## Standalone deployments: which section applies
+
+A standalone Hive runs on one host with no Kubernetes cluster. There are two supported runtimes and the host-level procedures are **not** interchangeable — the volume has a different name, the ownership on disk is different, and one of them relabels its mounts:
+
+| Runtime | Deployment asset | Section |
+| --- | --- | --- |
+| Docker Compose | `src/docker-compose.yaml` | [Docker Compose](#docker-compose) |
+| Podman + Quadlet | `src/deploy/quadlet/*` | [Podman (Quadlet)](#podman-quadlet) |
+
+Everything that runs *inside* the hive container is the same on both: the spoke backup endpoints, the encryption-key handling, and the reasons `hive-backup run` does not apply. Those are described once, in the Docker Compose section, and the Podman section says which of them carry over unchanged rather than repeating them.
+
 ## Docker Compose
 
 `src/docker-compose.yaml` is a standalone deployment. It runs the hive container on a single Docker host, without a Kubernetes cluster.
@@ -168,6 +179,260 @@ To restore:
 4. Run `docker compose -f src/docker-compose.yaml up -d`.
 
 The entrypoint restores the runtime config at boot. Escrow the backup encryption key outside the host — the dashboard-set key lives on the `hive-data` volume, so losing the volume loses both the backups' key and the data it protects.
+
+## Podman (Quadlet)
+
+`src/deploy/quadlet/*` is the same standalone deployment on Podman, driven by systemd. [ADR-0017](adr/0017-podman-quadlet-lifecycle.md) chose Quadlet; [podman-standalone-quadlet.md](podman-standalone-quadlet.md) is the install, [podman-volume-persistence.md](podman-volume-persistence.md) characterises what `hive-data` guarantees, and [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) proves it survives a recreate. This section is how to get the data **out** and back **in** (#4406).
+
+Observed values below are marked as such. Everything under [Podman: what was observed](#podman-what-was-observed) was executed on the host described there; anything not executed says so.
+
+### What carries over from Docker unchanged
+
+Say this first, because it keeps the rest short. These run *inside* the hive container and are runtime-agnostic — they work on a Quadlet deployment exactly as written above, with no Podman-specific step:
+
+- `pkg/spokebackup`, and the owner-only `GET /api/backup/status` / `POST /api/backup` endpoints.
+- The backup encryption key, its escrow gate, and the `GET`/`PUT`/`DELETE /api/config/governor/backup` management endpoints. The dashboard-set key lives on the `hive-data` volume, so the same warning applies with more force: losing that volume loses both the key and the data it protects.
+- The archive contents, and the fact that regenerable bulk state (`nous/`, `home/`, `logs/`) can be excluded.
+- `hive-backup run` still **does not apply**, for the reason already given: no `clusters.json`, no in-cluster kubectl. That is a property of a standalone deployment, not of Docker.
+
+What is different is everything at the *host* level, and it is not a search-and-replace of `docker` for `podman`.
+
+### The volume is called `hive-data`, with no prefix
+
+Docker Compose prefixes named volumes with the project name, which is why the Docker section says `src_hive-data`. Quadlet does not: `hive-data.volume` sets `VolumeName=hive-data` explicitly, so the volume is `hive-data` in both root modes.
+
+**Following the Docker commands under Podman restores into a volume nothing mounts.** `podman volume create src_hive-data` succeeds, the extract succeeds, and `hive.service` then starts on the empty `hive-data` — which, per [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md), starts *cleanly* and healthy. There is no error to notice.
+
+| | Docker Compose | Podman Quadlet (rootless) | Podman Quadlet (rootful) |
+| --- | --- | --- | --- |
+| volume name | `src_hive-data` | `hive-data` | `hive-data` |
+| host path | `/var/lib/docker/volumes/src_hive-data/_data` | `~/.local/share/containers/storage/volumes/hive-data/_data` | `/var/lib/containers/storage/volumes/hive-data/_data` |
+| owner on disk, of `/data/hive-id` | `1001:1000` | **`525288:525287`** | `1001:1000` |
+
+That rootless row is the whole reason the next part exists.
+
+### Rootless: never `tar` the volume from the host shell
+
+A rootless container runs in a user namespace, so the UIDs on disk are not the UIDs in the container. On the host measured here, `/etc/subuid` reads `dbaggett:524288:65536`, so container UID 1001 (`dev`) is host UID 525288 and container GID 1000 is host GID 525287.
+
+Two things follow, and the second one is the dangerous one:
+
+1. A host-shell tar records the **mapped** IDs. Restoring that archive on another host — with a different subuid base — puts every file under an identity that host's container does not have.
+2. A host-shell tar **cannot read the GitHub App private key at all.** It is mode `0600` owned by host UID 525288, and the operator is UID 1000. Observed:
+
+   ```
+   $ tar czf hive-data.tar.gz -C "$VOLUME_PATH" .
+   tar: ./gh-app-key-restore-probe.pem: Cannot open: Permission denied
+   tar: Exiting with failure status due to previous errors
+   ```
+
+   `tar` exits non-zero **and still writes a tarball**. An operator who does not check the exit status has a backup that is missing the one file the backup exists to protect.
+
+Use any of the three forms that go through the namespace instead. All three were measured to record container-side ownership (`1001/1000`) and to read the key:
+
+Podman image references here are fully qualified on purpose: the Quadlet generator warns on a short name, and a short name resolves through whatever `unqualified-search-registries` happens to say on the host.
+
+```sh
+# 1. podman's own export -- fastest, and it is namespace-aware
+podman volume export hive-data -o hive-data-$(date +%F).tar
+
+# 2. a container that already has the mapping -- portable, and the same
+#    shape as the Docker command, which matters for migration
+podman run --rm -v hive-data:/data -v "$PWD":/backup:z docker.io/library/alpine:3.22 \
+  tar czf /backup/hive-data-$(date +%F).tar.gz -C /data .
+
+# 3. a host shell placed inside the namespace
+podman unshare tar czf hive-data-$(date +%F).tar.gz -C "$(podman volume inspect hive-data --format '{{.Mountpoint}}')" .
+```
+
+Rootful has no user namespace, so host UIDs *are* container UIDs and a host-shell tar is not wrong there. Use the same commands anyway, with `sudo`: it keeps one procedure for both modes, and `podman volume export` is still the fastest.
+
+### Also back up the config and secrets
+
+Besides the volume, `hive.container` mounts `%E/hive/hive.yaml` and `%E/hive/secrets`, and reads `%E/hive/hive.env` through `EnvironmentFile=`; `hive-gateway.container` mounts `%E/hive/nginx.conf`. `%E/hive` is `~/.config/hive` rootless and `/etc/hive` rootful, so one archive covers all four.
+
+```sh
+CONF=~/.config/hive          # rootful:  CONF=/etc/hive
+tar czf hive-config-$(date +%F).tar.gz -C "$(dirname "$CONF")" "$(basename "$CONF")"
+# -> hive.yaml, hive.env, nginx.conf, secrets/
+```
+
+Two Podman-specific notes on restoring that archive:
+
+- **`%E/hive/secrets` needs its ownership re-applied after extraction**, with the same command the install uses — `podman unshare chown -R 0:1002 "$CONF/secrets"` rootless, `chgrp -R 1002 "$CONF/secrets"` rootful. Observed on disk: rootless `uid=1000 gid=525289 mode=750`, rootful `uid=0 gid=1002 mode=750`. The container reads the keys as `dev` through the `hive-launch` group (GID 1002); a plain extract as the operator does not reproduce that.
+- **Do not try to restore the SELinux labels.** The bind mounts carry `:Z`, so Podman stamps a *private MCS category pair* on them — observed `system_u:object_r:container_file_t:s0:c269,c605` on the rootless deployment and `system_u:object_r:container_file_t:s0:c580,c750` on the rootful one. The pair belongs to the mount, not to the backup: it is not something an archive should capture or a restore should recreate, and Podman re-applies it. `hive.env` is the exception and stays at its ordinary host label (`unconfined_u:object_r:config_home_t:s0`), because `EnvironmentFile=` is read by systemd on the host and never bind-mounted.
+
+### `docker compose down -v`, and its Podman counterpart
+
+`docker compose down -v` removes the containers, the network, **and the named volume**. The Quadlet counterpart is a repository script:
+
+```sh
+bin/hive-podman-teardown.sh plan            # prints what it would remove; removes nothing
+bin/hive-podman-teardown.sh run --yes       # DESTRUCTIVE: deletes the hive-data volume
+```
+
+It selects on the [#4210 ownership labels](podman-ownership-cleanup.md) and nothing else, and unlike `docker compose down -v` it has a `plan` mode. Add `--rootful` context by running it under `sudo`.
+
+Stopping the service is **not** destructive and never has been: `systemctl stop hive.service` leaves the volume in place, measured in [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md). The minimal destructive form, if you want to do it by hand:
+
+```sh
+systemctl --user stop hive.service              # not destructive
+systemctl --user stop hive-data-volume.service  # not destructive
+podman volume rm hive-data                      # DESTRUCTIVE -- this is the down -v step
+```
+
+### Restore
+
+**Recreate the volume through its unit, not with `podman volume create`.** Both give you an empty `hive-data`; only one of them is Hive's. Observed:
+
+| recreate with | labels on the volume | `bin/hive-podman-teardown.sh plan` sees it |
+| --- | --- | --- |
+| `podman volume create hive-data` | `{}` | **no** — "no Hive-owned volumes" |
+| `systemctl --user start hive-data-volume.service` | the four `io.kubestellar.hive.*` labels | yes — "volumes (1): hive-data" |
+
+A volume created the first way survives every teardown and is invisible to the cleanup tooling, silently, forever.
+
+The full cycle, rootless (prefix each command with `sudo` and drop `--user` for rootful):
+
+```sh
+# 1. stop the service. Not destructive.
+systemctl --user stop hive.service
+
+# 2. replace the volume. THIS DELETES DATA.
+systemctl --user stop hive-data-volume.service
+podman volume rm hive-data
+
+# 3. recreate it through its unit, so it carries the ownership labels
+systemctl --user start hive-data-volume.service
+
+# 4. load the archive back in
+podman volume import hive-data hive-data-2026-08-21.tar
+#    ...or, for a .tar.gz taken with form 2 above, or one that came from Docker:
+podman run --rm -v hive-data:/data -v "$PWD":/backup:z docker.io/library/alpine:3.22 \
+  tar xzf /backup/hive-data-2026-08-21.tar.gz -C /data
+
+# 5. start. With Notify=healthy this returns only once /api/health answers.
+systemctl --user start hive.service
+```
+
+`podman volume import` requires an **uncompressed** tar and an **existing** volume; it does not create one, which is why step 3 is separate.
+
+Then check the thing that actually matters — that this is the same hive, not a fresh one wearing its name:
+
+```sh
+podman exec hive cat /data/hive-id
+podman exec hive sh -c 'ls -ln /data/gh-app-key*.pem'
+```
+
+### Docker → Podman migration
+
+**The two volumes are never shared, and there is no supported way to point Podman at Docker's storage.** This is not a caution, it is what the engines do. Observed, with a live Docker deployment on the same host:
+
+```
+$ podman volume inspect src_hive-data
+Error: no such volume src_hive-data          # and identically under sudo
+```
+
+Podman keeps its own volume registry; a Docker volume is not in it under any name. The fast wrong thing — bind-mounting Docker's volume directory straight into a Podman container — does not work either, and fails before it can do damage:
+
+```
+$ podman run --rm -v /var/lib/docker/volumes/src_hive-data/_data:/data:ro alpine ls /data
+Error: statfs /var/lib/docker/volumes/src_hive-data/_data: permission denied
+```
+
+`/var/lib/docker` is `0710 root:root`, so a rootless operator's own shell cannot read it either. Even where root could, doing it would leave two engines with different label and ownership expectations writing the same directory.
+
+**Migration is therefore an export and import of contents.** Both sides go through a container, which is what makes the ownership come out right on the Podman side:
+
+```sh
+# 1. from Docker. Note the project-prefixed volume name.
+docker run --rm -v src_hive-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/docker-hive-data.tar.gz -C /data .
+
+# 2. stop the Docker deployment. NOT `down -v` yet -- keep the source data
+#    until the Podman side is proven healthy.
+docker compose -f src/docker-compose.yaml stop
+
+# 3. on the Podman side: create the volume through its unit, then extract.
+#    If hive-data already exists with other content, wipe it first --
+#    steps 1-3 of Restore above. `tar xzf` merges into whatever is there.
+systemctl --user start hive-data-volume.service
+podman run --rm -v hive-data:/data -v "$PWD":/backup:z docker.io/library/alpine:3.22 \
+  tar xzf /backup/docker-hive-data.tar.gz -C /data
+
+# 4. start, and confirm it is the SAME hive
+systemctl --user start hive.service
+podman exec hive cat /data/hive-id       # must match what Docker reported
+
+# 5. only now, once step 4 matched: docker compose -f src/docker-compose.yaml down -v
+```
+
+Also copy the Docker deployment's `src/hive.yaml` to `%E/hive/hive.yaml` and `src/secrets/` to `%E/hive/secrets/`, then re-apply the secrets ownership as described above. Two settings do **not** carry over and have to be moved by hand: the Compose `environment:` block becomes `%E/hive/hive.env`, and `dashboard.port` must be `3002` to match the unit's `HealthCmd` ([#4367](podman-standalone-quadlet.md)).
+
+## Podman: what was observed
+
+Fedora 44, Podman 5.8.4, systemd 259, cgroup v2, SELinux **enforcing**, Docker 29.7.2, against the real `ghcr.io/kubestellar/hive:stable` image (`sha256:ec8e69bc…`). Three separate deployments, each with its own identity, so a restore returning the wrong data would be visible rather than plausible.
+
+### Backup, wipe, and restore — executed in both root modes
+
+| | rootless | rootful |
+| --- | --- | --- |
+| hive identity before | `hive-pure-fox` | `hive-neat-ant` |
+| `podman volume export` | 0.17s, 46,805,504 B (uncompressed) | executed |
+| container `tar czf` | 1.56s, 20,256,240 B (gzip) | — |
+| volume removed, then recreated through its unit | empty, 0 files, labels present | same |
+| `podman volume import` | 0.38s | executed |
+| `systemctl start hive.service` after the restore | rc 0 in **10s**, `active/running`, container `healthy` | rc 0 in **10s**, `active/running`, container `healthy` |
+| `hive-id` after the restore | `hive-pure-fox` — unchanged | `hive-neat-ant` — unchanged |
+| GitHub App key SHA-256 after the restore | unchanged | unchanged |
+| `beads/` agent ledger | unchanged | unchanged |
+
+The container came back **healthy**, not merely started: `Notify=healthy` means `systemctl start` returning is `/api/health` having answered on the restored data.
+
+Of the files checked, `hive-state.json` was the one whose hash **did** change across the restore, and that is not a fault: the running service rewrites it at boot. Use `hive-id` and the key files as the witness that a restore worked — a checksum over the whole volume will not match and is not supposed to.
+
+### Ownership and labels after restore — observed values
+
+Rootless, `~/.local/share/containers/storage/volumes/hive-data/_data`:
+
+| path | before | after `podman volume import` | after the container started |
+| --- | --- | --- | --- |
+| `_data` (the volume root) | `uid=525288 gid=525287 mode=755` | `uid=1000 gid=1000 mode=755` | corrected by the entrypoint |
+| `hive-id` | `uid=525288 gid=525287 mode=644` | `uid=525288 gid=525287 mode=644` | unchanged |
+| `gh-app-key-*.pem` | `uid=525288 gid=525287 mode=600` | `uid=525288 gid=525287 mode=600` | unchanged |
+| SELinux context | `system_u:object_r:container_file_t:s0` | `unconfined_u:object_r:container_file_t:s0` | unchanged |
+
+Rootful, `/var/lib/containers/storage/volumes/hive-data/_data`: the same, with `uid=1001 gid=1000` throughout because there is no namespace, and the volume root observed at `uid=0 gid=0` immediately after the import and back at `uid=1001 gid=1000` once the container had started.
+
+Two readings of that table are worth having.
+
+The SELinux **type** is `container_file_t` and there is **no MCS category** in every row — which is exactly the property [podman-volume-persistence.md](podman-volume-persistence.md) says a recreated container depends on. Only the SELinux *user* field differs after a restore (`unconfined_u` where it had been `system_u`), because the restore was driven from a host process rather than from a container; extracting through a container instead left it at `system_u`. Neither affects the access decision. **Do not "fix" this with `chcon`, and above all do not add `:Z` to the volume line** — that stamps a private category and the next mount is denied with no AVC to explain it.
+
+The volume-root ownership landing on `0:0` (rootful) or container-root (rootless) after `podman volume import` is real, and it is repaired by the entrypoint on the next start rather than by the operator. Both modes came back healthy from that state.
+
+### Docker → Podman migration — executed
+
+| step | observed |
+| --- | --- |
+| Docker deployment identity | `hive-calm-colt`, volume `src_hive-data`, healthy |
+| `podman volume inspect src_hive-data` | `Error: no such volume src_hive-data`, in **both** root modes |
+| bind-mounting Docker's volume dir into a rootless container | `Error: statfs …: permission denied` |
+| export from Docker via a container | 20,284,768 B, ownership recorded as `1001/1000` |
+| extract into a fresh Podman `hive-data` via a container | host `uid=525288 gid=525287`, ctx `system_u:object_r:container_file_t:s0` |
+| `systemctl --user start hive.service` | rc 0 in **10s**, container `healthy` |
+| `hive-id` under Podman afterwards | **`hive-calm-colt`** — the Docker hive, now running on Podman |
+| GitHub App key SHA-256 | identical to the Docker side |
+| `docker compose down -v` afterwards | removed container, network, and `src_hive-data` |
+
+### Not executed, and one caveat about the host
+
+| | Status |
+| --- | --- |
+| the GitHub App key was a **synthetic** `gh-app-key-*.pem` planted for the test | no real GitHub App was configured on these deployments. What is demonstrated is that a `0600` file owned by `dev` in `/data` round-trips byte-identically, with its mode and ownership, which is the property that matters |
+| restore onto a **different** host, with a different `/etc/subuid` base | **not executed** — the mapped-UID argument above is the reason the namespace-aware forms are given, and it is measured here only as the difference between what the two tar forms record |
+| restore of an archive taken from an **older** Hive image | **not executed** — that is a schema question, not a volume question |
+| `%E/hive` config/secrets archive round-trip | **not executed** as a full cycle; the ownership and label values quoted for it are observed from the live deployments, and the re-apply step is the documented install step |
+| #4188's "clean host with **no Docker** installation" | **not demonstrated here.** This host has Docker 29.7.2 installed and running, which is what made the migration section executable rather than theoretical. The Podman procedures above use no Docker component, but that a host without Docker can run them was not proven on this host |
 
 Fixes #2986.
 Fixes #2942.

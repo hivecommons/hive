@@ -2860,6 +2860,18 @@ spec:
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
         securityContext:
+          # COVERAGE (#4379): src/deploy/test_manifest_caps_runtime.sh boots the
+          # k8s manifest's exact grant (drop ALL plus its add list) and drives the
+          # privilege chain through it. This template is covered by CONTAINMENT
+          # rather than by its own boot: it adds capabilities but does NOT drop
+          # ALL, so its bounding set is the runtime default set UNION this add
+          # list -- a superset of the set that job boots, since the default set
+          # already contains CHOWN, DAC_OVERRIDE, SETGID, SETUID and SETPCAP.
+          # Both halves of that argument are asserted there, so introducing a
+          # drop list here, or an added capability the k8s manifest does not
+          # have, turns that job RED with an instruction to give this template
+          # its own boot. Do not "fix" that by copying the six capabilities in --
+          # that would silently NARROW the hosted bounding set.
           capabilities:
             add:
             - NET_ADMIN

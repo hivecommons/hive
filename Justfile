@@ -326,7 +326,36 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
           source "{{config_dir}}/contributor.env"
           echo "Already registered — ${GH_USER} (${CONTRIBUTOR_ID:-unknown})"
         else
-          echo "ERROR: Already registered but no local config found."
+          # THE "SAME IDENTITY, NEW MACHINE" DEAD END (#4408). /api/contribute/
+          # register is unauthenticated, so it correctly refuses to hand back an
+          # existing contributor's token — otherwise POSTing any known username
+          # would be an account-takeover primitive. That refusal is right; what
+          # was missing is what to do next. This used to be a bare
+          # "Already registered but no local config found." and exit 1, with no
+          # supported path named here or in the docs.
+          echo "ERROR: ${GH_USER} is already registered on ${HUB_HTTP}, and this"
+          echo "       machine has no {{config_dir}}/contributor.env to reuse."
+          echo ""
+          echo "That is expected: register is unauthenticated, so it will never"
+          echo "hand an existing contributor's token to whoever asks. You are"
+          echo "moving an identity, not creating one. Two supported ways forward:"
+          echo ""
+          echo "  1. KEEP the credential — copy it from the old machine:"
+          echo "       scp old-machine:{{config_dir}}/contributor.env {{config_dir}}/"
+          echo "       scp old-machine:{{config_dir}}/gh-auth.env      {{config_dir}}/"
+          echo "       chmod 600 {{config_dir}}/contributor.env {{config_dir}}/gh-auth.env"
+          echo "     The hub stores only a HASH of the registration token and clears"
+          echo "     the plaintext after first read, so copying the file is the ONLY"
+          echo "     way to reuse the credential — it can never be printed again."
+          echo "     Delete the files on the old machine afterwards."
+          echo ""
+          echo "  2. ROTATE the credential — reissue it here:"
+          echo "       just contribute-move {{backend}}"
+          echo "     Proves identity with your GitHub token, reissues one token per"
+          echo "     hub, preserves EVERY hub entry in order, and writes gh-auth.env."
+          echo "     The old machine's relay stops working the moment this runs."
+          echo ""
+          echo "See src/docs/contributor-relay.md → 'Moving the relay to another machine'."
           exit 1
         fi
       else
@@ -334,10 +363,47 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
         exit 1
       fi
     else
+      # MULTI-HUB PRESERVATION (#4408). contributor.env carries positional,
+      # comma-separated HIVE_HUB / HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID
+      # lists (bin/contributor-relay.sh pairs them by index). This block used to
+      # `cat >` a SINGLE-hub file unconditionally, so a two-hive contributor who
+      # ran contribute-setup against a hive they had not registered with yet
+      # silently lost the credential for the first one — a live token that the
+      # hub can never reprint. Registering an ADDITIONAL hub now appends to the
+      # existing lists instead, and the previous file is backed up either way.
+      _PREV_HUBS=""; _PREV_TOKENS=""; _PREV_IDS=""
+      if [[ -f "{{config_dir}}/contributor.env" ]]; then
+        _PREV_HUBS=$(grep -m1 '^HIVE_HUB=' "{{config_dir}}/contributor.env" | cut -d= -f2- || true)
+        _PREV_TOKENS=$(grep -m1 '^HIVE_REGISTRATION_TOKEN=' "{{config_dir}}/contributor.env" | cut -d= -f2- || true)
+        _PREV_IDS=$(grep -m1 '^CONTRIBUTOR_ID=' "{{config_dir}}/contributor.env" | cut -d= -f2- || true)
+        cp "{{config_dir}}/contributor.env" "{{config_dir}}/contributor.env.bak"
+        chmod 600 "{{config_dir}}/contributor.env.bak"
+      fi
+      _OUT_HUBS="${_HUB}"; _OUT_TOKENS="${TOKEN}"; _OUT_IDS="${CID}"
+      if [[ -n "$_PREV_HUBS" ]] && ! printf '%s' ",${_PREV_HUBS}," | grep -qF ",${_HUB},"; then
+        # Only append when the three lists are already the same length; a
+        # mismatched file is malformed and appending would misalign every pair.
+        _N_HUBS=$(printf '%s' "$_PREV_HUBS" | tr ',' '\n' | grep -c . || true)
+        _N_TOKENS=$(printf '%s' "$_PREV_TOKENS" | tr ',' '\n' | grep -c . || true)
+        _N_IDS=$(printf '%s' "$_PREV_IDS" | tr ',' '\n' | grep -c . || true)
+        if [[ "$_N_HUBS" == "$_N_TOKENS" && "$_N_HUBS" == "$_N_IDS" ]]; then
+          _OUT_HUBS="${_PREV_HUBS},${_HUB}"
+          _OUT_TOKENS="${_PREV_TOKENS},${TOKEN}"
+          _OUT_IDS="${_PREV_IDS},${CID}"
+          echo "Added ${_HUB} to your existing ${_N_HUBS}-hub configuration."
+          echo "  (previous file kept at {{config_dir}}/contributor.env.bak)"
+        else
+          echo "WARNING: the positional lists in the existing contributor.env do not line up"
+          echo "         (${_N_HUBS} hub(s), ${_N_TOKENS} token(s), ${_N_IDS} id(s)). Appending to a"
+          echo "         malformed file would transpose every hub/token pair after the"
+          echo "         mismatch, so this run writes a single-hub file instead."
+          echo "         Previous file kept at {{config_dir}}/contributor.env.bak."
+        fi
+      fi
       cat > "{{config_dir}}/contributor.env" <<EOF
-    HIVE_REGISTRATION_TOKEN=${TOKEN}
-    HIVE_HUB=${_HUB}
-    CONTRIBUTOR_ID=${CID}
+    HIVE_REGISTRATION_TOKEN=${_OUT_TOKENS}
+    HIVE_HUB=${_OUT_HUBS}
+    CONTRIBUTOR_ID=${_OUT_IDS}
     CONTRIBUTOR_USERNAME=${GH_USER}
     AGENT_BACKEND={{backend}}
     EOF
@@ -383,6 +449,273 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     echo "  Hub:     ${_HUB:-{{hive_hub}}}"
     echo ""
     echo "Run 'just contribute-hive' to start contributing."
+
+# Move an ALREADY-REGISTERED contributor identity onto this machine (#4408).
+# Usage: HIVE_HUB=wss://a/contribute,wss://b/contribute just contribute-move claude
+#        just contribute-move claude          (re-uses the hubs already in contributor.env)
+#
+# WHY THIS EXISTS. contribute-setup can only bootstrap a NEW identity: the
+# register endpoint is unauthenticated, so it refuses — correctly — to hand an
+# existing contributor's token to whoever asks for it. On a second machine that
+# left `ERROR: Already registered but no local config found.` and nothing else.
+# Nothing in hive prevents running the relay from a different machine (auth is a
+# plain token-hash lookup: no device binding, no IP pinning, no session
+# affinity) — only the setup path was missing.
+#
+# WHAT IT DOES. Everything contribute-setup does — backend preflight, gh auth,
+# gh-auth.env, CLI config staging — except that instead of REGISTERING it
+# REISSUES, once per hub, proving identity with your GitHub token
+# (POST /api/contribute/reissue-token). It then writes contributor.env with the
+# positional HIVE_HUB / HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists aligned
+# in the SAME ORDER, which is what bin/contributor-relay.sh pairs by index. A
+# multi-hive contributor doing this by hand had to rotate per hub and rebuild
+# those lists without transposing them; the relay refuses to start if the
+# lengths disagree and misbehaves silently if the order is wrong.
+#
+# THIS ROTATES. Reissuing overwrites the stored hash, so the old machine's relay
+# stops authenticating the moment this succeeds. That is the point — it is what
+# makes the move safe to run from a machine you do not fully trust yet. If you
+# want to KEEP the credential and switch back and forth, copy contributor.env
+# and gh-auth.env (mode 0600) instead; the hub stores only a hash and clears the
+# plaintext after first read, so a copy is the only way to reuse a token.
+#
+# SECURITY: this sends your GitHub token to each hub. contribute-setup
+# deliberately does NOT (H7/CWE-522) because it derives the hub URL from a
+# registry entry's dashboardUrl, which a poisoned registry controls. Here the
+# URL comes from YOUR HIVE_HUB or YOUR existing contributor.env, and
+# reissue-token authenticates by GitHub token by design — so the token has to
+# go. The two guards below are what keep that honest: TLS is required for any
+# non-loopback host, and every receiving host is printed and confirmed before
+# anything is sent. HIVE_MOVE_ASSUME_YES=1 skips the prompt for scripted runs.
+contribute-move backend="claude": check-version (contribute-check-backend backend)
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    for _tool in curl jq; do
+      if ! command -v "$_tool" &>/dev/null; then
+        echo "ERROR: ${_tool} not found — required to talk to the hub."
+        exit 1
+      fi
+    done
+
+    CONF="{{config_dir}}/contributor.env"
+    mkdir -p "{{config_dir}}"
+    echo "=== Move contributor identity to this machine (ClankeR) ==="
+    echo "✓ Preflight passed — {{backend}} CLI is ready."
+    echo ""
+
+    # ── Which hubs ──
+    # Read the existing file with grep rather than `source`: sourcing would
+    # clobber the caller's HIVE_HUB (making the two sources indistinguishable)
+    # and would execute whatever the file contains.
+    _ENV_HUBS="${HIVE_HUB:-}"
+    _FILE_HUBS=""; _FILE_USER=""
+    if [[ -f "$CONF" ]]; then
+      _FILE_HUBS=$(grep -m1 '^HIVE_HUB=' "$CONF" | cut -d= -f2- || true)
+      _FILE_USER=$(grep -m1 '^CONTRIBUTOR_USERNAME=' "$CONF" | cut -d= -f2- || true)
+    fi
+    if [[ -n "$_ENV_HUBS" ]]; then
+      HUBS="$_ENV_HUBS"; HUBS_FROM="HIVE_HUB"
+    elif [[ -n "$_FILE_HUBS" ]]; then
+      HUBS="$_FILE_HUBS"; HUBS_FROM="the existing contributor.env"
+    else
+      echo "ERROR: no hubs to move. Set HIVE_HUB to the hive(s) you contribute to:"
+      echo "    export HIVE_HUB=wss://<hive>/contribute"
+      echo "  or, for more than one, comma-separated in the order you want them:"
+      echo "    export HIVE_HUB=wss://<hive-a>/contribute,wss://<hive-b>/contribute"
+      echo ""
+      echo "  Your hub URLs are the HIVE_HUB line of contributor.env on the old"
+      echo "  machine, or the 'Connect' snippet on each hive's /contribute page."
+      exit 1
+    fi
+    declare -a HUB_LIST=()
+    while IFS= read -r _h; do
+      _h="$(printf '%s' "$_h" | tr -d '[:space:]')"
+      [[ -n "$_h" ]] && HUB_LIST+=("$_h")
+    done < <(printf '%s\n' "$HUBS" | tr ',' '\n')
+    if [[ "${#HUB_LIST[@]}" -eq 0 ]]; then
+      echo "ERROR: could not parse any hub URL out of '${HUBS}' (from ${HUBS_FROM})."
+      exit 1
+    fi
+
+    # ── Step 1: GitHub authentication (same as contribute-setup) ──
+    echo "── Step 1/3: GitHub Authentication ──"
+    if ! command -v gh &>/dev/null; then
+      echo "ERROR: gh CLI not found. Install: brew install gh"
+      exit 1
+    fi
+    if gh auth status &>/dev/null; then
+      GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+      echo "Already authenticated as: ${GH_USER}"
+    else
+      echo "Logging into GitHub..."
+      gh auth login --web --scopes "repo,read:org"
+      GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+      echo "Authenticated as: ${GH_USER}"
+    fi
+    GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+    if [[ -z "$GH_USER" || -z "$GH_TOKEN" ]]; then
+      echo "ERROR: could not read your GitHub identity or token from gh."
+      echo "  Try: gh auth login --web --scopes 'repo,read:org'"
+      exit 1
+    fi
+    # gh-auth.env is the second file contribute-hive hard-requires, and nothing
+    # used to say so — it exits with the same "Not set up yet. Run: just
+    # contribute-setup <cli>" when it is missing, pointing at the command that
+    # cannot run on this machine. Written here so the move produces a machine
+    # that can actually start the relay.
+    echo "GH_TOKEN=${GH_TOKEN}" > "{{config_dir}}/gh-auth.env"
+    chmod 600 "{{config_dir}}/gh-auth.env"
+    if [[ -n "$_FILE_USER" && "$_FILE_USER" != "$GH_USER" ]]; then
+      echo ""
+      echo "WARNING: the contributor.env already here belongs to ${_FILE_USER},"
+      echo "         but gh is authenticated as ${GH_USER}. Continuing would"
+      echo "         replace it with ${GH_USER}'s identity."
+    fi
+    echo ""
+
+    # ── Step 2: confirm, then reissue per hub ──
+    echo "── Step 2/3: Reissue (${#HUB_LIST[@]} hub(s), from ${HUBS_FROM}) ──"
+    declare -a HTTP_LIST=()
+    for _hub in "${HUB_LIST[@]}"; do
+      _http=$(printf '%s' "$_hub" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
+      case "$_http" in
+        https://*) : ;;
+        http://127.0.0.1*|http://localhost*|http://[::1]*|http://0.0.0.0*)
+          # Loopback only: a plaintext hop that never leaves the machine. Any
+          # other http:// host would put the GitHub token on the wire in clear.
+          : ;;
+        http://*)
+          echo "ERROR: ${_hub} is not TLS-protected."
+          echo "       Reissuing sends your GitHub token to that host, so this"
+          echo "       refuses anything but wss:// (or loopback for local testing)."
+          exit 1 ;;
+        *)
+          echo "ERROR: could not derive an HTTP base from '${_hub}'."
+          echo "       Expected wss://<host>/contribute."
+          exit 1 ;;
+      esac
+      HTTP_LIST+=("$_http")
+    done
+    echo "Your GitHub token will be sent to, and a NEW registration token issued by:"
+    for _http in "${HTTP_LIST[@]}"; do echo "  - ${_http}"; done
+    echo ""
+    echo "This ROTATES the credential. Any relay still running elsewhere with the"
+    echo "old token stops authenticating as soon as this completes."
+    if [[ "${HIVE_MOVE_ASSUME_YES:-}" != "1" ]]; then
+      # `|| _ANS=""` matters: read returns non-zero at EOF (a piped or
+      # </dev/null stdin), and under `set -e` that would kill the recipe before
+      # it could say why it stopped.
+      read -r -p "Continue? [y/N] " _ANS || _ANS=""
+      if [[ ! "${_ANS:-}" =~ ^[Yy]$ ]]; then
+        echo "Aborted — nothing was sent and nothing was changed."
+        exit 1
+      fi
+    fi
+    echo ""
+
+    # Rotations take effect on the hub as they happen, so a later failure must
+    # NOT discard the tokens already issued — that would lock the contributor
+    # out of the hubs that succeeded, with no way to reprint those tokens. Every
+    # success is written; the failures are named and the exit status is red.
+    NEW_TOKENS=""; NEW_IDS=""; OK_HUBS=""; FAILED=""
+    for _i in "${!HUB_LIST[@]}"; do
+      _hub="${HUB_LIST[$_i]}"; _http="${HTTP_LIST[$_i]}"
+      printf '  %s ... ' "$_http"
+      # Deliberately NOT `curl -f`: -f discards the response body on an HTTP
+      # error, and the body is where the hub says WHY — "Not registered as a
+      # contributor", "Account revoked", "Invalid or missing GitHub token".
+      # Those three need three different actions, and collapsing them into one
+      # "request failed" is what sends people to read the Go source.
+      _BODY=$(mktemp)
+      _CODE=$(curl -s --max-time 20 -o "$_BODY" -w '%{http_code}' \
+        -X POST "${_http}/api/contribute/reissue-token" \
+        -H "Authorization: Bearer ${GH_TOKEN}" 2>/dev/null) || _CODE="000"
+      _RESP=$(cat "$_BODY"); rm -f "$_BODY"
+      if [[ "$_CODE" == "000" ]]; then
+        echo "FAILED (unreachable)"
+        FAILED="${FAILED}\n    ${_hub} — could not connect"
+        continue
+      fi
+      _T=""; _C=""; _E=""
+      if printf '%s' "$_RESP" | jq empty 2>/dev/null; then
+        _T=$(printf '%s' "$_RESP" | jq -r '.registration_token // empty')
+        _C=$(printf '%s' "$_RESP" | jq -r '.contributor_id // empty')
+        _E=$(printf '%s' "$_RESP" | jq -r '.error // .message // empty')
+      else
+        _E="non-JSON response: ${_RESP:0:120}"
+      fi
+      if [[ "$_CODE" != "200" || -z "$_T" || -z "$_C" ]]; then
+        echo "FAILED (HTTP ${_CODE})"
+        FAILED="${FAILED}\n    ${_hub} — HTTP ${_CODE}: ${_E:-no token in response}"
+        continue
+      fi
+      echo "reissued (${_C})"
+      OK_HUBS="${OK_HUBS:+${OK_HUBS},}${_hub}"
+      NEW_TOKENS="${NEW_TOKENS:+${NEW_TOKENS},}${_T}"
+      NEW_IDS="${NEW_IDS:+${NEW_IDS},}${_C}"
+    done
+    echo ""
+
+    if [[ -z "$OK_HUBS" ]]; then
+      echo "ERROR: no hub reissued a token — contributor.env was NOT written."
+      printf 'Failures:%b\n' "$FAILED"
+      echo ""
+      echo "  * 'Not registered as a contributor' means this identity has no profile"
+      echo "    on that hive yet — that is a first-time setup: just contribute-setup {{backend}}"
+      echo "  * A 401 means gh is authenticated as someone else, or the token lacks"
+      echo "    the read:org scope."
+      exit 1
+    fi
+
+    # ── Step 3: write contributor.env, preserving hub ORDER and extra keys ──
+    echo "── Step 3/3: Writing ${CONF} ──"
+    if [[ -f "$CONF" ]]; then
+      cp "$CONF" "${CONF}.bak"
+      chmod 600 "${CONF}.bak"
+      echo "  previous file kept at ${CONF}.bak"
+    fi
+    # Keys this recipe owns are rewritten; anything else an operator or an
+    # earlier setup put in the file (HIVE_LITELLM_ENDPOINT, for one) is carried
+    # across verbatim rather than silently dropped.
+    EXTRA=""
+    if [[ -f "${CONF}.bak" ]]; then
+      EXTRA=$(grep -vE '^(HIVE_REGISTRATION_TOKEN|HIVE_HUB|CONTRIBUTOR_ID|CONTRIBUTOR_USERNAME|AGENT_BACKEND)=' "${CONF}.bak" || true)
+    fi
+    {
+      printf 'HIVE_REGISTRATION_TOKEN=%s\n' "$NEW_TOKENS"
+      printf 'HIVE_HUB=%s\n' "$OK_HUBS"
+      printf 'CONTRIBUTOR_ID=%s\n' "$NEW_IDS"
+      printf 'CONTRIBUTOR_USERNAME=%s\n' "$GH_USER"
+      printf 'AGENT_BACKEND=%s\n' "{{backend}}"
+      [[ -n "$EXTRA" ]] && printf '%s\n' "$EXTRA"
+    } > "$CONF"
+    chmod 600 "$CONF"
+
+    # Same CLI config staging contribute-setup does (Colima cannot bind-mount files).
+    if [[ "{{backend}}" == "claude" ]] && [[ -f "${HOME}/.claude.json" ]]; then
+      cp "${HOME}/.claude.json" "{{config_dir}}/claude-config.json"
+      chmod 600 "{{config_dir}}/claude-config.json"
+      echo "  Claude config staged for the container."
+    fi
+
+    echo ""
+    if [[ -n "$FAILED" ]]; then
+      echo "⚠ Moved with errors."
+      printf '  These hubs did NOT rotate and are not in contributor.env:%b\n' "$FAILED"
+      echo "  The ones that did are written and usable. Re-run to retry the rest."
+    else
+      echo "✓ Move complete!"
+    fi
+    echo "  GitHub:  ${GH_USER}"
+    echo "  CLI:     {{backend}}"
+    echo "  Hubs:    ${OK_HUBS}"
+    echo ""
+    echo "The old machine's relay no longer authenticates. Stop it and delete"
+    echo "${CONF} and {{config_dir}}/gh-auth.env there."
+    echo ""
+    echo "Run 'just contribute-hive' to start contributing from here."
+    if [[ -n "$FAILED" ]]; then exit 1; fi
 
 # Start contributing — containerized (default; docker or podman) or local mode
 # Usage: just contribute-hive              (container, default CLI from setup)

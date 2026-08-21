@@ -132,6 +132,21 @@ jobs:
       - name: Quadlet config-coupling contract (#4367)
         run: bash deploy/test_quadlet_config_contract.sh
 
+      # #4404: every guard above looks at ONE runtime. test_standalone_service_
+      # contract.sh parses only docker-compose.yaml and says so in its own header
+      # ("This does NOT claim Docker/Podman parity"); the two Quadlet guards parse
+      # only the units. A property can hold in both and still DIFFER between them,
+      # which is what #4188 asked for: "a change to one runtime must fail CI if
+      # the other runtime's contract was unintentionally left stale". This
+      # compares the two deployment descriptions directly — images, environment,
+      # mounts and modes, published vs exposed ports, capabilities, health checks,
+      # persistence, network exposure, restart policy, labels — and fails on any
+      # divergence not in its exception table, where each entry carries a stated
+      # reason. Entries are swept in reverse too: an exception that no longer
+      # matches a real divergence is itself a failure, so the table cannot rot.
+      - name: Docker/Podman contract parity (#4404)
+        run: bash deploy/test_standalone_runtime_parity.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
@@ -245,6 +260,18 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_lifecycle_probe.sh
 
+      # #4378: the deliberate manual update and rollback. The unit ships a
+      # FLOATING tag, so the pin that makes a rollback possible lives in a
+      # Quadlet drop-in; the suite holds the two properties that make it a
+      # rollback rather than a hope — that the pin written is always a digest
+      # (and the manifest LIST digest, not the per-architecture one `podman
+      # image inspect` hands back), and that `rollback` skips the entry that
+      # just failed instead of walking back into it. Every input is mocked, so
+      # this pulls nothing and restarts nothing.
+      - name: Podman Quadlet update and rollback (#4378)
+        working-directory: .
+        run: bash bin/test_hive_podman_update.sh
+
       # The gh wrapper's AUTHOR GATE, distinct from the mode/allowlist/merge
       # gates covered above. 33 executable cases from #3072 and #3096: a
       # spoofed HIVE_AGENT, identity-lookup failure, the marker trust boundary,
@@ -310,6 +337,21 @@ jobs:
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash src/deploy/test_contribute_k8s_workload.sh
+
+      # #4408: `just contribute-move` relocates an already-registered
+      # contributor identity to a new machine. The properties that matter are
+      # not visible in the Justfile text — that the positional HIVE_HUB /
+      # HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists come out aligned and in
+      # the same order is a property of the loop, and bin/contributor-relay.sh
+      # pairs those lists by index (it refuses to start on a length mismatch and
+      # sends the wrong token to the wrong hive on a transposed one). Getting the
+      # partial-failure path wrong is worse: a reissued token cannot be
+      # reprinted, so dropping it locks the contributor out of that hive. This
+      # runs the real recipe against a fake hub with a stubbed gh and a
+      # throwaway HOME — no network, no real credential.
+      - name: Contributor identity relocation (#4408)
+        working-directory: .
+        run: bash src/deploy/test_contribute_move.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ubuntu-latest

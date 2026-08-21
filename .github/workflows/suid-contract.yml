@@ -7,6 +7,9 @@ name: SUID + NET_ADMIN Contract
 #  2. #3760: the hive binary carries NO file capability (a file cap EPERMs on
 #     exec wherever the bounding set lacks NET_ADMIN); NET_ADMIN is instead
 #     raised by the entrypoint as a bounding-set-gated AMBIENT capability.
+#
+# plus two runtime jobs that boot a container and prove what a grep cannot:
+# ambient-cap-runtime (#3874) and manifest-cap-runtime (#4379).
 
 on:
   push:
@@ -17,6 +20,13 @@ on:
       - 'src/Dockerfile'
       - 'src/deploy/entrypoint.sh'
       - 'src/scripts/check-suid-contract.sh'
+      - 'src/deploy/test_ambient_cap_runtime.sh'
+      # #4379: the manifest capability set is DERIVED from these, so a change to
+      # any of them changes what the runtime job boots.
+      - 'src/deploy/k8s/deployment.yaml'
+      - 'src/deploy/kustomize/overlays/openshift-netadmin/scc-hive-netadmin.yaml'
+      - 'src/pkg/hub/saas_provision.go'
+      - 'src/deploy/test_manifest_caps_runtime.sh'
       - '.github/workflows/suid-contract.yml'
   pull_request:
     branches:
@@ -26,6 +36,13 @@ on:
       - 'src/Dockerfile'
       - 'src/deploy/entrypoint.sh'
       - 'src/scripts/check-suid-contract.sh'
+      - 'src/deploy/test_ambient_cap_runtime.sh'
+      # #4379: the manifest capability set is DERIVED from these, so a change to
+      # any of them changes what the runtime job boots.
+      - 'src/deploy/k8s/deployment.yaml'
+      - 'src/deploy/kustomize/overlays/openshift-netadmin/scc-hive-netadmin.yaml'
+      - 'src/pkg/hub/saas_provision.go'
+      - 'src/deploy/test_manifest_caps_runtime.sh'
       - '.github/workflows/suid-contract.yml'
   workflow_dispatch:
 
@@ -54,3 +71,23 @@ jobs:
 
       - name: Assert ambient CAP_NET_ADMIN survives the privilege drop
         run: bash src/deploy/test_ambient_cap_runtime.sh
+
+  # RUNTIME assertion (#4379). The job above boots with docker's DEFAULT bounding
+  # set plus NET_ADMIN — a strictly wider set than the pod gets. This one boots
+  # the capability set src/deploy/k8s/deployment.yaml actually ships
+  # (`--cap-drop=ALL` plus its exact add list, derived from the manifest at run
+  # time, never restated) and drives the whole privilege chain through it: the
+  # entrypoint's root->dev setpriv drop, the gosu fallback, the SUID su-exec hop
+  # to a per-agent UID, the per-agent chown, a DAC_OVERRIDE write and the ACMM
+  # iptables egress gate. It then removes each capability in turn and requires the
+  # chain to break, so none of those assertions can pass for the wrong reason.
+  #
+  # This is the coverage #3895 did not have: that PR proposed dropping
+  # SETUID/SETGID, which breaks agent launch in the pod, and CI stayed green.
+  manifest-cap-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Boot the manifest's exact capability set and exercise it
+        run: bash src/deploy/test_manifest_caps_runtime.sh
