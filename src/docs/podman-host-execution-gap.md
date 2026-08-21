@@ -322,8 +322,8 @@ rather than performing it.
 ## Related
 
 - [#4188](https://github.com/kubestellar/hive/issues/4188) — the umbrella, and its boot-persistence requirement
-- [#4413](https://github.com/kubestellar/hive/issues/4413) — the reboot rows this page explains but does not execute
-- [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) — where those rows are recorded as NOT executed
+- [#4413](https://github.com/kubestellar/hive/issues/4413) — the reboot rows this page explains but does not execute; now executed in both root modes
+- [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) — where those rows are recorded, measured
 - [podman-selinux-avc-evidence.md](podman-selinux-avc-evidence.md) — container SELinux behaviour, which is *not* what this environment shows
 - [net-admin-requirement.md](net-admin-requirement.md) — why `NET_ADMIN` matters
 - [podman-support-matrix.md](podman-support-matrix.md) — rootful/rootless × enforcing/advisory support levels

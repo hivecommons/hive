@@ -1,13 +1,15 @@
 # Quadlet lifecycle: stop, start, restart, recreate, and boot persistence
 
 What the Hive Quadlet units actually do when an operator drives them, measured
-rather than inferred (#4377). [ADR-0017](adr/0017-podman-quadlet-lifecycle.md)
+rather than inferred (#4377, and the reboot rows in #4413).
+[ADR-0017](adr/0017-podman-quadlet-lifecycle.md)
 chose Quadlet for the persistent lifecycle and
 [#4354](podman-standalone-quadlet.md) shipped the units; this page is the
 lifecycle those two decisions implied, exercised.
 
 Scope is lifecycle only: stop, start, restart, recreate, and boot persistence,
-in both root modes. Update and rollback are their own slice and are now written
+in both root modes. Every row is now executed: the two reboot rows this page
+once recorded as **not executed** were closed by #4413 and are below. Update and rollback are their own slice and are now written
 down in [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md)
 (#4378) — including what a unit looks like while a bad update is timing out,
 which is a lifecycle state this page does not produce. Auto-update is a later
@@ -189,44 +191,215 @@ One artifact worth recording because it nearly became a wrong result:
 about**, so querying state C that way reported the unit as active and recreated
 its marker file. The table above was re-measured without any `-M` query.
 
-## Reboot persistence: NOT executed here
+## Reboot persistence: executed, both modes
 
-Per #4377's stop condition, recorded as not executed rather than inferred.
+#4413, on a host that could actually be rebooted. Two reboots, one per root
+mode: both `hive-gateway.container` units carry `PublishPort=3001:3001`, and
+rootless can bind 3001 because it is above 1024, so the two stacks contend for
+the port and cannot be staged together.
 
-| | Status |
-| --- | --- |
-| rootless, lingering enabled, actual reboot | **not executed** |
-| rootful via the system manager, actual reboot | **not executed** |
+| | Came back | Healthy after boot | `hive-data` marker |
+| --- | --- | --- | --- |
+| rootless, lingering enabled, actual reboot | **yes** | **11.6s** after the user manager started | **identical** |
+| rootful via the system manager, actual reboot | **yes** | **16.1s** after userspace started | **identical** |
 
-The host this was measured on could not be rebooted: it was the host running
-the session doing the measuring, and a reboot would have ended it mid-run. The
-issue anticipates exactly this and calls for the row to be recorded as not
-executed, which is what this is. `is-enabled` was **not** used as a substitute
-— see above for why it could not have been one.
+Both figures are time-to-*healthy*, not time-to-spawned: `Notify=healthy` holds
+the unit in `activating` until `/api/health` answers, which is the whole reason
+ADR-0017 chose Quadlet.
 
-What *is* established without a reboot is every link in the chain except the
-boot itself: the generator installs the `default.target.wants/` symlink in both
-modes; `default.target` is reached in both managers; lingering starts a
-sessionless user manager and its enabled units in 305ms, and its absence stops
-them. What remains unproven is the composition of those links across an actual
-kernel boot.
+Host: Bluefin (Fedora Silverblue) 44.20260818, kernel 7.1.4, podman 5.8.4,
+cgroup v2, netavark, SELinux enforcing. Both rows ran the same image —
+`d465287054`, `sha256:73d88c4c…` — which took a deliberate step; see
+[the tag moved](#the-tag-moved-mid-experiment-and-that-is-why-the-rows-are-pinned).
 
-To close it, on a host that can be rebooted:
+### What "came back" was taken to mean
+
+Not `is-active`, and not the probe alone. The container serves on two ports and
+the unit's `HealthCmd` probes one of them: 3002, the Go API. The Node auth proxy
+on 3001 — what `nginx.conf`'s `upstream hive_api { server hive:3001; }` points
+at, and therefore what an operator reaches — is not probed at all (#4476). That
+was found the hard way while staging the rootful row: with `HIVE_DASHBOARD_TOKEN`
+unset, the proxy refused to start, and `hive.service` reported `active` with its
+container `healthy` for the entire two minutes in which the deployment was
+unusable.
+
+So a green `boot-check` alone would not have been evidence. Each row was
+recorded only after all four of:
 
 ```sh
-bin/hive-podman-lifecycle-probe.sh check              # confirm the wiring first
-bin/hive-podman-lifecycle-probe.sh check --rootful
-sudo systemctl reboot
-# after boot, in a fresh login:
-bin/hive-podman-lifecycle-probe.sh boot-check
-bin/hive-podman-lifecycle-probe.sh boot-check --rootful
+bin/hive-podman-lifecycle-probe.sh boot-check [--rootful]
+systemctl [--user] is-active hive.service hive-gateway.service \
+                             hive-network.service hive-data-volume.service
+curl -sf http://127.0.0.1:3001/api/health          # through the published gateway
+podman exec hive cat /data/reboot-marker.txt       # armed before the reboot
 ```
 
-`boot-check` reports `is-active` and how long after userspace started the unit
-became active, and — because `Notify=healthy` — that figure is time-to-healthy
-rather than time-to-spawned. It refuses to present a delta larger than ten
-minutes as boot evidence, since a unit started by hand hours after boot also
-has an `ActiveEnterTimestamp` later than boot.
+Both rows passed all four. On both boots the 3001 and 3002 probes agreed — but
+that agreement is a result here, not an assumption.
+
+### rootful
+
+```
+$ bin/hive-podman-lifecycle-probe.sh boot-check --rootful
+
+Boot persistence -- rootful (system manager)
+        uptime      up 1 minute
+        booted at   2026-08-21 14:11:33
+        is-active   active
+        state       active/running/success/0
+  PASS  hive.service is active after boot
+        became active 16s after userspace started
+        (Notify=healthy, so that is time-to-HEALTHY, not time-to-spawned)
+
+Result
+  no findings
+```
+
+Measured against `UserspaceTimestampMonotonic=2.304s`:
+
+| Unit | Active at | After userspace |
+| --- | --- | --- |
+| `hive-network.service` | 6.500s | +4.14s |
+| `hive-data-volume.service` | 6.499s | +4.14s |
+| `hive.service` | 18.503s | **+16.15s** |
+| `hive-gateway.service` | 19.211s | **+16.85s** |
+
+```
+$ curl -sf http://127.0.0.1:3001/api/health
+{"status":"ok"}
+$ podman exec hive cat /data/reboot-marker.txt
+2026-08-21T18:05:09+00:00        # armed before the reboot, byte-identical after
+```
+
+### rootless, with lingering
+
+Lingering was enabled before the reboot and survived it. #4441 measured
+`Linger=no` on this host and deliberately left it; the rootless row is
+meaningless without it, since a rootless result without lingering proves the
+negative case rather than the positive one.
+
+```
+$ loginctl show-user "$USER" -p Linger
+Linger=yes
+
+$ bin/hive-podman-lifecycle-probe.sh boot-check
+
+Boot persistence -- rootless (user manager, uid 1000)
+        uptime      up 1 minute
+        booted at   2026-08-21 14:19:30
+        is-active   active
+        state       active/running/success/0
+  PASS  hive.service is active after boot
+        became active 11s after userspace started
+        (Notify=healthy, so that is time-to-HEALTHY, not time-to-spawned)
+
+Result
+  no findings
+```
+
+| Unit | Active at | After `user@1000` | After userspace |
+| --- | --- | --- | --- |
+| `user@1000.service` | 6.052s | — | +3.75s |
+| `hive-network.service` | 6.453s | +0.40s | +4.15s |
+| `hive-data-volume.service` | 6.459s | +0.41s | +4.15s |
+| `hive.service` | 17.620s | **+11.57s** | +15.32s |
+| `hive-gateway.service` | 18.503s | +12.45s | +16.20s |
+
+The probe's "11s" is measured from the user manager, which is the honest
+reference for a rootless unit: nothing could have started before `user@1000`
+existed, and logind only created it because `Linger=yes`.
+
+```
+$ curl -sf http://127.0.0.1:3001/api/health
+{"status":"ok"}
+$ podman exec hive cat /data/reboot-marker.txt
+2026-08-21T18:18:18+00:00        # armed before the reboot, byte-identical after
+```
+
+The two `hive-data` volumes are in different stores — the rootful one under
+`/var/lib/containers`, the rootless one under `~/.local/share/containers` — so
+the two markers are two independent proofs, not one volume read twice.
+
+### Rootful Hive is inside the system boot transaction; rootless is not
+
+Not something either row set out to measure, but it fell out of the timings and
+it is the sharpest behavioural difference between the modes.
+
+| | userspace | total boot | Hive healthy at |
+| --- | --- | --- | --- |
+| boot 1, **rootful** | 16.854s | 19.211s | gateway 19.2107s |
+| boot 2, **rootless** | 6.928s | 9.233s | gateway 18.503s |
+
+On the rootful boot, `systemd`'s own `FinishTimestampMonotonic` was
+**19.2112s** — 549µs after `hive-gateway.service` became active. The boot was
+not declared finished until Hive was serving. Both units carry
+`WantedBy=default.target`, and in the system manager that target is the boot
+transaction, so a rootful Hive is on its critical path.
+
+In the user manager the same `WantedBy=default.target` resolves to the *user*
+manager's default target, which logind starts after the system boot has already
+completed. Hence boot 2 finishing in 9.2s with Hive not healthy until 18.5s.
+
+The consequence is worth stating plainly, because it is the operational cost of
+choosing rootful: a Hive that never becomes healthy holds a rootful boot for its
+`TimeoutStartSec` — 5min for `hive.service`, 2min for `hive-gateway.service`.
+That is not hypothetical; the first rootful start attempt here sat in
+`activating` for the full 120s before timing out. On rootless the same failure
+delays nothing but Hive itself.
+
+### The tag moved mid-experiment, and that is why the rows are pinned
+
+`ghcr.io/kubestellar/hive:stable` was pulled twice, once per store:
+
+```
+rootful  store, pulled 17:46:43Z -> sha256:73d88c4c…  (image d46528705417)
+rootless store, pulled 18:07:53Z -> sha256:461ae71a…  (image 880525a77498)
+```
+
+Twenty-one minutes apart, two different images. Left alone, the two rows would
+have differed in root mode *and* in what they ran, and a rootless failure could
+not have been attributed to either. This is exactly the floating-tag problem
+[the update and rollback doc](podman-quadlet-update-rollback.md) exists for.
+
+The rootless row was therefore pinned to the digest the rootful row had already
+run, through the documented drop-in rather than an edit to the unit:
+
+```
+$ bin/hive-podman-update.sh pin ghcr.io/kubestellar/hive@sha256:73d88c4c…
+  PASS  wrote ~/.config/containers/systemd/hive.container.d/10-image.conf
+  PASS  restart returned 0 after 10s, state active/running/success
+$ podman inspect hive --format '{{.Image}}'
+d46528705417c049d79cc02d230070ac5264bf93ba29d981743db9e14f18673d   # == rootful
+```
+
+The pin survived the reboot along with everything else. #4413 says not to change
+the units, and this does not: the base `hive.container` is untouched and still
+names the floating tag.
+
+### What this does not cover
+
+- **One host, one distribution.** Fedora Silverblue with SELinux enforcing and
+  cgroup v2. Nothing here says what a SELinux-permissive or cgroup v1 host does.
+- **Two boots, not a sample.** Each row is a single reboot. The times are what
+  those boots did, not a distribution.
+- **A clean shutdown.** Both reboots were `systemctl reboot`. Neither row says
+  what a power cut does to `hive-data` mid-write.
+- **The dashboard was reached, not exercised.** `/api/health` answered through
+  the gateway; no agent work was driven across the boot.
+
+To re-run it, arm and check first — `boot-check` refuses to present a delta
+larger than ten minutes as boot evidence, since a unit started by hand hours
+after boot also has an `ActiveEnterTimestamp` later than boot:
+
+```sh
+podman exec hive sh -c 'date -Is > /data/reboot-marker.txt'   # arm
+bin/hive-podman-lifecycle-probe.sh check [--rootful]          # confirm the wiring
+sudo systemctl reboot
+# then, promptly, in a fresh login:
+bin/hive-podman-lifecycle-probe.sh boot-check [--rootful]
+curl -sf http://127.0.0.1:3001/api/health
+podman exec hive cat /data/reboot-marker.txt
+```
 
 ## The two unit changes, and why they come as a pair
 
