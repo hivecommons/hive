@@ -135,5 +135,11 @@ TimeoutStartSec=120
 Restart=always
 RestartSec=30
 
+# NOT default.target, deliberately (#4478) — and this unit matters as much as
+# hive.container's line: Requires=hive.service above means a gateway job in
+# the boot transaction would drag Hive's job back into it. hive-boot.target is
+# started by hive-boot-gate.service after the manager declares startup
+# finished, so neither unit ever holds the boot. See hive.container's
+# [Install] comment and src/deploy/systemd/.
 [Install]
-WantedBy=default.target
+WantedBy=hive-boot.target

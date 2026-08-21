@@ -13,8 +13,10 @@
 #     never did. Quadlet units are GENERATED, and systemd refuses to enable a
 #     generated unit. What wires them to boot is the `[Install]` section inside
 #     the .container file, which the generator turns into a
-#     `default.target.wants/` symlink in its own output directory on every
-#     `daemon-reload`. So `is-enabled` reports `generated`, never `enabled`,
+#     `hive-boot.target.wants/` symlink in its own output directory on every
+#     `daemon-reload` — plus hive-boot-gate.service, the real unit that starts
+#     that target once the boot has settled (#4478). So `is-enabled` reports
+#     `generated` for hive.service, never `enabled`,
 #     and an operator following "enable it" gets an error they may well read
 #     as cosmetic.
 #   * For a ROOTLESS install that symlink is necessary and not sufficient: at
@@ -106,6 +108,7 @@ done
 # transcriptions that can drift apart.
 if [ "$ROOTFUL" -eq 1 ]; then
   MODE_LABEL="rootful (system manager)"
+  SCTL_LABEL="sudo systemctl"
   sctl()   { sudo systemctl "$@"; }
   pod()    { sudo podman "$@"; }
   # HIVE_LIFECYCLE_GEN_DIR is a test seam only. The generator output directory
@@ -115,6 +118,7 @@ if [ "$ROOTFUL" -eq 1 ]; then
   gen_ls() { sudo find "$GEN_DIR" -name 'hive*' -printf '%y %p\n' 2>/dev/null; }
 else
   MODE_LABEL="rootless (user manager, uid $(id -u))"
+  SCTL_LABEL="systemctl --user"
   sctl()   { systemctl --user "$@"; }
   pod()    { podman "$@"; }
   GEN_DIR="${HIVE_LIFECYCLE_GEN_DIR:-/run/user/$(id -u)/systemd/generator}"
@@ -219,13 +223,28 @@ check_boot_wiring() {
   info "is-enabled reports '$(sctl is-enabled "$UNIT" 2>&1)' -- 'generated' is expected and proves nothing"
 
   local wants
-  wants="$(gen_ls | awk '$1=="l"' | grep -c "default.target.wants/$UNIT")"
+  wants="$(gen_ls | awk '$1=="l"' | grep -c "hive-boot.target.wants/$UNIT")"
   if [ "${wants:-0}" -ge 1 ]; then
-    ok "the generator installed default.target.wants/$UNIT"
+    ok "the generator installed hive-boot.target.wants/$UNIT"
     info "from [Install] WantedBy= in hive.container, rewritten on every daemon-reload"
   else
-    bad "no default.target.wants/$UNIT in $GEN_DIR -- this unit will NOT start at boot"
-    info "check [Install] WantedBy=default.target in hive.container, then daemon-reload"
+    bad "no hive-boot.target.wants/$UNIT in $GEN_DIR -- this unit will NOT start at boot"
+    info "check [Install] WantedBy=hive-boot.target in hive.container, then daemon-reload"
+  fi
+
+  # The other half of the wiring since #4478: the symlink above only matters
+  # if something starts hive-boot.target, and the only thing that does is
+  # hive-boot-gate.service -- a real (not generated) unit, so is-enabled is
+  # meaningful for it. Without it Hive never starts at boot; it is also what
+  # keeps a rootful Hive off the boot's critical path, so the boot never waits
+  # on Hive becoming healthy.
+  local gate_state
+  gate_state="$(sctl is-enabled hive-boot-gate.service 2>/dev/null || true)"
+  if [ "$gate_state" = "enabled" ]; then
+    ok "hive-boot-gate.service is enabled -- it starts hive-boot.target after the boot settles (#4478)"
+  else
+    bad "hive-boot-gate.service is '${gate_state:-missing}' -- nothing starts hive-boot.target, so Hive will NOT start at boot"
+    info "install src/deploy/systemd/hive-boot.target and hive-boot-gate.service, then: ${SCTL_LABEL} enable hive-boot-gate.service"
   fi
 
   if [ "$ROOTFUL" -eq 1 ]; then

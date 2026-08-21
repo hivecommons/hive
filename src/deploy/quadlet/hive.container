@@ -208,5 +208,17 @@ SuccessExitStatus=143 SIGTERM
 Restart=always
 RestartSec=30
 
+# NOT default.target, deliberately (#4478). In the system manager
+# default.target is the boot transaction, and systemd does not declare the
+# boot finished until every job in it is done — so with Notify=healthy above,
+# a rootful Hive that never became healthy held the whole boot for its
+# TimeoutStartSec (measured: 20.188s of a 20s stand-in timeout,
+# src/deploy/probe_boot_transaction_coupling.sh). hive-boot.target is wanted
+# by nothing at boot; hive-boot-gate.service (the one Hive unit that IS in
+# default.target) starts it as a new transaction once the manager declares
+# startup finished. Hive still starts on every boot, the boot never waits on
+# it, and an interactive `systemctl start hive.service` still blocks until
+# healthy — including the start job `podman auto-update --rollback` watches
+# (#4407), which is unchanged. Both plain units live in src/deploy/systemd/.
 [Install]
-WantedBy=default.target
+WantedBy=hive-boot.target

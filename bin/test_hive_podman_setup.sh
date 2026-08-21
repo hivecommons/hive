@@ -139,7 +139,7 @@ chmod +x "${FAKE_BIN}"/*
 # them drift apart without this suite noticing.
 build_fixture() {
   rm -rf "$FIXTURE"
-  mkdir -p "${FIXTURE}/src/deploy/quadlet" "${FIXTURE}/preflight"
+  mkdir -p "${FIXTURE}/src/deploy/quadlet" "${FIXTURE}/src/deploy/systemd" "${FIXTURE}/preflight"
   cp "${ROOT}/src/hive.yaml.example"   "${FIXTURE}/src/hive.yaml.example"
   cp "${ROOT}/src/deploy/nginx.conf"   "${FIXTURE}/src/deploy/nginx.conf"
   cp "${ROOT}"/src/deploy/quadlet/hive.container \
@@ -148,6 +148,9 @@ build_fixture() {
      "${ROOT}"/src/deploy/quadlet/hive-data.volume \
      "${ROOT}"/src/deploy/quadlet/hive.env.example \
      "${FIXTURE}/src/deploy/quadlet/"
+  cp "${ROOT}"/src/deploy/systemd/hive-boot.target \
+     "${ROOT}"/src/deploy/systemd/hive-boot-gate.service \
+     "${FIXTURE}/src/deploy/systemd/"
 
   # Preflight stubs. Each records the runtime selector it was invoked with —
   # that recording is the whole point of one of the cases below — and exits with
@@ -172,6 +175,7 @@ RUN_OUT=""
 RUN_RC=0
 CONF=""
 UNITS_DIR=""
+SYSTEMD_UNITS_DIR=""
 CALL_LOG=""
 PREFLIGHT_LOG=""
 TRIPWIRE_LOG=""
@@ -184,6 +188,7 @@ new_case() {
   mkdir -p "$dir"
   CONF="${dir}/conf"
   UNITS_DIR="${dir}/units"
+  SYSTEMD_UNITS_DIR="${dir}/systemd-units"
   CALL_LOG="${dir}/calls.log"
   PREFLIGHT_LOG="${dir}/preflight.log"
   TRIPWIRE_LOG="${dir}/tripwire.log"
@@ -206,6 +211,7 @@ run_setup() {
     HIVE_SETUP_PREFLIGHT_DIR="${FIXTURE}/preflight" \
     HIVE_SETUP_CONF_DIR="$CONF" \
     HIVE_SETUP_UNIT_DIR="$UNITS_DIR" \
+    HIVE_SETUP_SYSTEMD_UNIT_DIR="$SYSTEMD_UNITS_DIR" \
     HIVE_SETUP_HEALTH_RETRIES=2 \
     HIVE_SETUP_HEALTH_DELAY=0 \
     env "$@" \
@@ -238,6 +244,12 @@ assert_contains "$RUN_OUT" "Hive is running" "reports the deployment is up"
 for unit in hive.container hive-gateway.container hive.network hive-data.volume; do
   if [[ -f "${UNITS_DIR}/${unit}" ]]; then pass "installed ${unit}"; else fail "did not install ${unit}"; fi
 done
+# The boot decoupling pair (#4478): plain units, installed into the systemd
+# unit directory rather than the Quadlet one, and the gate enabled — it is the
+# only Hive unit wanted by default.target.
+for unit in hive-boot.target hive-boot-gate.service; do
+  if [[ -f "${SYSTEMD_UNITS_DIR}/${unit}" ]]; then pass "installed ${unit}"; else fail "did not install ${unit}"; fi
+done
 # Installed VERBATIM: the rationale in the unit headers has to travel to the
 # host, and a generated stand-in would not carry it (#4470 forbids generating a
 # deployment description).
@@ -256,6 +268,7 @@ assert_eq "600" "$(stat -c '%a' "${CONF}/hive.env")" "hive.env is mode 600"
 
 calls="$(cat "$CALL_LOG")"
 assert_contains "$calls" "systemctl --user daemon-reload" "ran daemon-reload on the user manager"
+assert_contains "$calls" "systemctl --user enable hive-boot-gate.service" "enabled the boot gate (#4478)"
 assert_contains "$calls" "systemctl --user start hive-gateway.service" "started the gateway"
 assert_contains "$calls" "curl " "checked the gateway over HTTP"
 assert_lacks "$calls" "sudo " "rootless never reaches for sudo"

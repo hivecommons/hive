@@ -70,6 +70,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fakes. Same convention as HIVE_UPDATE_QUADLET_DIR in hive-podman-update.sh.
 SRC_DIR="${HIVE_SETUP_SRC_DIR:-${ROOT}/src}"
 QUADLET_SRC="${HIVE_SETUP_QUADLET_SRC:-${SRC_DIR}/deploy/quadlet}"
+SYSTEMD_SRC="${HIVE_SETUP_SYSTEMD_SRC:-${SRC_DIR}/deploy/systemd}"
 PREFLIGHT_DIR="${HIVE_SETUP_PREFLIGHT_DIR:-${ROOT}/bin}"
 
 # The container-side GID of `hive-launch`, pinned in src/Dockerfile and spelled
@@ -81,6 +82,12 @@ LAUNCH_GID="${HIVE_SETUP_LAUNCH_GID:-1002}"
 # ordering from the Requires=/After= the generator derives; this order is for a
 # reader watching the output.
 UNITS=(hive.network hive-data.volume hive.container hive-gateway.container)
+
+# The two PLAIN systemd units that keep Hive off the boot's critical path
+# (#4478). They are not Quadlet files: they go into the systemd unit
+# directory, not the Quadlet one, and the gate is enabled with systemctl like
+# any real unit — it is the only Hive unit wanted by default.target.
+BOOT_UNITS=(hive-boot.target hive-boot-gate.service)
 
 # Health confirmation budget. The gateway answering is an END-TO-END check —
 # nginx up, DNS resolving `hive`, Hive serving — so it can legitimately trail
@@ -163,6 +170,7 @@ if [ "$ROOTFUL" -eq 1 ]; then
   MODE_FLAG=" --rootful"
   CONF_DIR="${HIVE_SETUP_CONF_DIR:-/etc/hive}"
   UNIT_DIR="${HIVE_SETUP_UNIT_DIR:-/etc/containers/systemd}"
+  SYSTEMD_UNIT_DIR="${HIVE_SETUP_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
   SCTL_LABEL="sudo systemctl"
   sctl() { sudo systemctl "$@"; }
   pod()  { sudo podman "$@"; }
@@ -172,6 +180,7 @@ else
   MODE_FLAG=""
   CONF_DIR="${HIVE_SETUP_CONF_DIR:-$HOME/.config/hive}"
   UNIT_DIR="${HIVE_SETUP_UNIT_DIR:-$HOME/.config/containers/systemd}"
+  SYSTEMD_UNIT_DIR="${HIVE_SETUP_SYSTEMD_UNIT_DIR:-$HOME/.config/systemd/user}"
   SCTL_LABEL="systemctl --user"
   sctl() { systemctl --user "$@"; }
   pod()  { podman "$@"; }
@@ -485,17 +494,33 @@ for unit in "${UNITS[@]}"; do
 done
 info "All four: the gateway will not generate without the network it names."
 
+# The boot decoupling (#4478): the Quadlet units are wanted by
+# hive-boot.target, which nothing at boot wants; hive-boot-gate.service is the
+# one Hive unit in default.target, and it starts the target only after the
+# manager declares startup finished. Without these two, Hive never starts at
+# boot at all — bin/hive-podman-lifecycle-probe.sh checks for them.
+as_owner mkdir -p "$SYSTEMD_UNIT_DIR" || die "$EX_CONFIG" "could not create ${SYSTEMD_UNIT_DIR}"
+for unit in "${BOOT_UNITS[@]}"; do
+  as_owner install -Dm644 "${SYSTEMD_SRC}/${unit}" "${SYSTEMD_UNIT_DIR}/${unit}" \
+    || die "$EX_CONFIG" "could not install ${unit} into ${SYSTEMD_UNIT_DIR}"
+  ok "installed ${unit}"
+done
+
 sctl daemon-reload || die "$EX_CONFIG" "systemctl daemon-reload failed"
 ok "daemon-reload — the Quadlet generator has run"
+
+# Unlike the generated units, the gate is a real unit file, so enabling it
+# works and is what wires the whole deployment to boot.
+sctl enable hive-boot-gate.service || die "$EX_CONFIG" "systemctl enable hive-boot-gate.service failed"
+ok "hive-boot-gate.service enabled — Hive starts at boot without holding the boot (#4478)"
 
 # --- step 7: started is not the same as healthy -----------------------------
 step "7/7  Start, and confirm HEALTHY rather than started"
 
 # Starting the gateway pulls hive, the network and the volume up in order.
-# In a logged-in session the stack may already be up: daemon-reload runs the
-# generator, which writes the default.target.wants/ symlinks from [Install],
-# and systemd starts newly-wanted units of an already-active target. The start
-# is then a no-op that returns 0 and is worth running as the confirmation.
+# Since #4478 the units are wanted by hive-boot.target rather than
+# default.target, so daemon-reload alone no longer starts anything in a
+# logged-in session — this start is the first start, not a confirmation no-op.
 sctl start hive-gateway.service || die "$EX_CONFIG" "systemctl start hive-gateway.service failed"
 ok "start returned"
 

@@ -189,21 +189,32 @@ with `%h` is not portable across the rootful/rootless boundary. `%E` is, and it
 puts the operator's files where each mode already expects them.
 
 `%E` is the difference the unit file *shows* you. There is a second one it
-cannot, because the two modes read the same line differently:
+could not show, and it is why the units are no longer wanted by
+`default.target` ([#4478](https://github.com/kubestellar/hive/issues/4478)):
+the two modes read that line differently.
 
-| | `[Install] WantedBy=default.target` means | A Hive that never becomes healthy |
+| | `[Install] WantedBy=default.target` would mean | A Hive that never becomes healthy |
 | --- | --- | --- |
-| rootful (system unit) | the **boot transaction** | **holds the boot** until the unit gives up — `TimeoutStartSec` is 5min for `hive.service`, 2min for `hive-gateway.service` |
+| rootful (system unit) | the **boot transaction** | **held the boot** until the unit gave up — `TimeoutStartSec` is 5min for `hive.service`, 2min for `hive-gateway.service` |
 | rootless (`--user` unit) | the *user* manager's default target, which logind reaches after the system boot has already finished | delays nothing but Hive |
 
 Measured on two real reboots of one host: on the rootful boot systemd's own
 `FinishTimestampMonotonic` was **549µs** after `hive-gateway.service` went
-active — the boot was not declared finished until Hive was serving — while the
-rootless boot finished at 9.2s with Hive not healthy until 18.5s. The failure
-case is measured too, and the cost is the unit's whole `TimeoutStartSec`. See
-[Boot persistence](#4-boot-persistence) below for what to do about it and
+active — the boot was not declared finished until Hive was serving — and a
+never-ready stand-in held a boot for its whole `TimeoutStartSec`
+(`src/deploy/probe_boot_transaction_coupling.sh`).
+
+Since #4478 the units are wanted by **`hive-boot.target`** instead, and
+`hive-boot-gate.service` — the one Hive unit wanted by `default.target` —
+starts that target only after the manager declares startup finished. Measured
+in the same probe: the never-ready stand-in wired this way lets the boot
+finish in **+0.122s** where the old wiring held it **20.188s** of a 20s
+stand-in timeout, while the unit still auto-starts, still records
+`Result=timeout`, and still restarts. Both modes read the new wiring
+identically, so this difference between them is gone. See
+[Boot persistence](#4-boot-persistence) below and
 [the lifecycle page](podman-quadlet-lifecycle.md#rootful-hive-is-inside-the-system-boot-transaction-rootless-is-not)
-for the numbers (#4478).
+for the numbers.
 
 ## Install
 
@@ -318,8 +329,12 @@ check is `dashboard.port`; see [Traps](#traps-measured-not-guessed).
 
 ### 2. The units
 
-Install all four, not a subset — the gateway will not generate without the
-network unit it references.
+Install all four Quadlet units — the gateway will not generate without the
+network unit it references — plus the two plain systemd units that wire the
+deployment to boot without putting it on the boot's critical path (#4478).
+The plain units go into the **systemd** unit directory, not the Quadlet one:
+the Quadlet generator ignores `.service`/`.target` files in its own directory,
+so putting them there installs nothing.
 
 ```sh
 # rootless
@@ -327,15 +342,25 @@ install -Dm644 src/deploy/quadlet/hive.container         ~/.config/containers/sy
 install -Dm644 src/deploy/quadlet/hive-data.volume       ~/.config/containers/systemd/hive-data.volume
 install -Dm644 src/deploy/quadlet/hive.network           ~/.config/containers/systemd/hive.network
 install -Dm644 src/deploy/quadlet/hive-gateway.container ~/.config/containers/systemd/hive-gateway.container
+install -Dm644 src/deploy/systemd/hive-boot.target       ~/.config/systemd/user/hive-boot.target
+install -Dm644 src/deploy/systemd/hive-boot-gate.service ~/.config/systemd/user/hive-boot-gate.service
 systemctl --user daemon-reload
+systemctl --user enable hive-boot-gate.service
 
 # rootful
 sudo install -Dm644 src/deploy/quadlet/hive.container         /etc/containers/systemd/hive.container
 sudo install -Dm644 src/deploy/quadlet/hive-data.volume       /etc/containers/systemd/hive-data.volume
 sudo install -Dm644 src/deploy/quadlet/hive.network           /etc/containers/systemd/hive.network
 sudo install -Dm644 src/deploy/quadlet/hive-gateway.container /etc/containers/systemd/hive-gateway.container
+sudo install -Dm644 src/deploy/systemd/hive-boot.target       /etc/systemd/system/hive-boot.target
+sudo install -Dm644 src/deploy/systemd/hive-boot-gate.service /etc/systemd/system/hive-boot-gate.service
 sudo systemctl daemon-reload
+sudo systemctl enable hive-boot-gate.service
 ```
+
+The `enable` works, and is required, precisely because `hive-boot-gate.service`
+is a real unit file rather than a generated one — it is the only Hive unit
+wanted by `default.target`, and without it Hive never starts at boot.
 
 `daemon-reload` is what runs the generator. Confirm it produced the services:
 
@@ -383,28 +408,63 @@ published port, which is what the previous slice shipped.
 
 ### 4. Boot persistence
 
-**There is nothing to enable, and trying fails.** These units are *generated*,
-and systemd refuses to enable a generated unit:
+**There is exactly one thing to enable, and it is not a Quadlet unit.** The
+generated units cannot be enabled — systemd refuses:
 
 ```sh
 sudo systemctl enable hive.service
 # Failed to enable unit: Unit /run/systemd/generator/hive.service is transient or generated
 ```
 
-`[Install] WantedBy=default.target` inside `hive.container` and
-`hive-gateway.container` is what wires them to boot. The generator turns it
-into `default.target.wants/` symlinks in its own output directory on every
-`daemon-reload`, so step 2 above already did it. Confirm they landed:
+The boot wiring has two halves since
+[#4478](https://github.com/kubestellar/hive/issues/4478):
 
-```sh
-# rootless
-ls -l "/run/user/$(id -u)/systemd/generator/default.target.wants/"
-# rootful
-sudo ls -l /run/systemd/generator/default.target.wants/
-```
+1. `[Install] WantedBy=hive-boot.target` inside `hive.container` and
+   `hive-gateway.container`. The generator turns it into
+   `hive-boot.target.wants/` symlinks in its own output directory on every
+   `daemon-reload`, so step 2 above already did it. Confirm they landed:
+
+   ```sh
+   # rootless
+   ls -l "/run/user/$(id -u)/systemd/generator/hive-boot.target.wants/"
+   # rootful
+   sudo ls -l /run/systemd/generator/hive-boot.target.wants/
+   ```
+
+2. `hive-boot-gate.service`, enabled in step 2, the only Hive unit wanted by
+   `default.target`. Nothing at boot wants `hive-boot.target` itself: the gate
+   waits for the manager to declare startup finished
+   (`systemctl is-system-running --wait`) and then starts the target as a
+   **new** transaction. Skip its `enable` and the symlinks above are decoration
+   — Hive never starts at boot.
+
+**Why the indirection exists.** `WantedBy=default.target`, which these units
+carried before #4478, means two different things: in the user manager it is
+reached after the system boot has already finished, but in the **system**
+manager it is the boot transaction itself, and systemd does not declare a boot
+finished until every job in it is done. `Notify=healthy` holds these units in
+`activating` until `/api/health` answers, so a rootful Hive that never became
+healthy held the **whole boot** for its `TimeoutStartSec` — 5 minutes for
+`hive.service` — on **every** boot until the cause was fixed. A wrong
+`dashboard.port`, an unreachable registry, or a missing `HIVE_DASHBOARD_TOKEN`
+all reach it — see [Traps](#traps-measured-not-guessed). Measured in
+`src/deploy/probe_boot_transaction_coupling.sh`: a never-ready stand-in wired
+the old way held a boot 20.188s of a 20s timeout; wired through the gate the
+same boot finished in +0.122s, and the unit still auto-started, still recorded
+`Result=timeout` on its start job (which is what `podman auto-update
+--rollback` reads, so rollback semantics are untouched), and still cycled
+under `Restart=always`. Ordering directives cannot do this — a start job in
+the boot transaction delays the boot-finished timestamp no matter when it
+runs; the same probe measured `DefaultDependencies=no` holding the boot just
+as long.
+
+What the failure now costs instead: the timeout is paid *after* the boot, by
+the Hive units alone, in both modes — the host's boot, `systemd-analyze`, and
+anything gated on startup finishing are unaffected. An interactive
+`systemctl start hive.service` still blocks until healthy, exactly as before.
 
 **Rootless additionally needs lingering**, or the user manager never starts at
-boot and the symlinks above are never read:
+boot and none of the wiring above is ever read:
 
 ```sh
 loginctl enable-linger "$USER"
@@ -414,40 +474,18 @@ loginctl show-user "$USER" -p Linger      # -> Linger=yes
 `loginctl enable-linger` is not optional for a rootless install that must
 survive a reboot. Rootful needs no equivalent; the system manager is PID 1.
 
-**That is also rootful's cost, and it is worth knowing before you pick.** Being
-wired into PID 1's `default.target` means being wired into the *boot
-transaction*: systemd does not declare the boot finished until Hive is healthy.
-On a good boot that is invisible — 549µs between the gateway going active and
-the boot finishing, measured. On a bad one it is the whole
-`TimeoutStartSec`: **5 minutes for `hive.service`, 2 for
-`hive-gateway.service`**, on **every** boot until the cause is fixed. A wrong
-`dashboard.port`, an unreachable registry, or a missing
-`HIVE_DASHBOARD_TOKEN` all reach it — see [Traps](#traps-measured-not-guessed).
-
-The rootless install pays the same timeout, but off the boot: the user manager's
-`default.target` is reached after the system boot is already over, so a Hive
-that never comes up delays nothing but itself.
-
-Neither is a defect and nothing here needs changing to install either mode —
-you asked for Hive at boot and systemd is waiting for it to be ready. It is
-recorded because it is invisible in the unit, identical in both modes as
-written, and one of the few things that genuinely differs between them
-([#4478](https://github.com/kubestellar/hive/issues/4478)). If a rootful host
-must not wait, the lever is `TimeoutStartSec` in a drop-in — shortening it
-trades a bounded boot delay for less headroom on a slow first pull, and the
-first pull of a ~3.8GB image is exactly what that headroom is for.
-
-**Do not check any of this with `systemctl is-enabled`.** For a generated unit
-it reports `generated` — with lingering on, with lingering off, and with the
-symlink deleted. It cannot tell you whether Hive will come back. Use
+**Do not check any of this with `systemctl is-enabled hive.service`.** For a
+generated unit it reports `generated` — with lingering on, with lingering off,
+and with the symlink deleted. It cannot tell you whether Hive will come back.
+Use
 
 ```sh
 bin/hive-podman-lifecycle-probe.sh check              # or --rootful
 ```
 
-which reads the generator output and the linger state instead, and see
-[the lifecycle page](podman-quadlet-lifecycle.md) for the measurements behind
-that advice.
+which reads the generator output, the gate's enablement, and the linger state
+instead, and see [the lifecycle page](podman-quadlet-lifecycle.md) for the
+measurements behind that advice.
 
 ## Traps, measured not guessed
 

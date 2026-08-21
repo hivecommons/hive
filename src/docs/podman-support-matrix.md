@@ -170,36 +170,41 @@ warning is printed on every start and recorded in the audit line.
 
 The matrix above grades one axis: whether the egress-gate claim was measured for
 a cell. An operator choosing a root mode is deciding more than that, and #4478
-found a difference that the units themselves cannot show — it is invisible in
-the asset, identical in both modes as written, and means two different things
-depending on which manager reads it.
+found a difference that the units themselves could not show — invisible in
+the asset, identical in both modes as written, and meaning two different things
+depending on which manager read it.
 
 | | Rootful (system manager) | Rootless (user manager) |
 | --- | --- | --- |
-| `[Install] WantedBy=default.target` resolves to | the **boot transaction** | the *user* manager's default target, which logind reaches after the system boot has finished |
-| A Hive that never becomes healthy | **holds the boot** for `TimeoutStartSec` — 5min `hive.service`, 2min `hive-gateway.service` | delays nothing but Hive |
+| `[Install] WantedBy=default.target` (pre-#4478) resolved to | the **boot transaction** | the *user* manager's default target, which logind reaches after the system boot has finished |
+| A Hive that never became healthy | **held the boot** for `TimeoutStartSec` — 5min `hive.service`, 2min `hive-gateway.service` | delayed nothing but Hive |
 | Measured | [lifecycle page](podman-quadlet-lifecycle.md#rootful-hive-is-inside-the-system-boot-transaction-rootless-is-not) (#4413, #4478) | same |
 
-Both units carry the same two lines, and the Quadlet generator installs
+Both units carried the same two lines, and the Quadlet generator installed
 `default.target.wants/hive.service` in **both** modes. On two real reboots of one
 host, systemd's own `FinishTimestampMonotonic` on the rootful boot was **549µs**
 after `hive-gateway.service` went active — the boot was not declared finished
 until Hive was serving — while the rootless boot finished at 9.2s with Hive not
-healthy until 18.5s.
+healthy until 18.5s. The failure case was measured directly in a throwaway
+systemd container (`src/deploy/probe_boot_transaction_coupling.sh`): a
+`Type=notify` unit reached through `default.target.wants/` that never sends
+READY held the boot for **20.188s** of a 20s `TimeoutStartSec`, against
+**0.133s** for the same unit left out of `default.target.wants/`.
 
-The failure case was inferred from that and is now measured directly, in a
-throwaway systemd container rather than by rebooting a host into a broken state
-(`src/deploy/probe_boot_transaction_coupling.sh`): a `Type=notify` unit reached
-through `default.target.wants/` that never sends READY held the boot for
-**20.188s** of a 20s `TimeoutStartSec`, against **0.133s** for the same unit with
-the same timeout left out of `default.target.wants/`.
+**Resolved by #4478: the shipped units removed the difference.** They are now
+`WantedBy=hive-boot.target`, which nothing at boot wants;
+`hive-boot-gate.service` starts that target only after the manager declares
+startup finished, so neither mode puts Hive inside the boot transaction. The
+same probe's fourth case measures the shipped shape: the never-ready stand-in
+lets the boot finish in **+0.122s** while still auto-starting, still recording
+`Result=timeout` on its start job (what `podman auto-update --rollback` reads,
+so rollback semantics are untouched), and still cycling under `Restart=always`.
+The `TimeoutStartSec` values themselves did not change — a monitoring
+dashboard's health budget now costs the dashboard, not the host's boot.
 
-**This is not a support grade and does not move a cell.** It costs availability,
-not enforcement, and it is recorded here because it is the kind of difference
-that decides which mode an operator picks and is otherwise not written down
-anywhere they would look. Whether the units should change — `DefaultDependencies=`,
-different ordering, or a shorter rootful `TimeoutStartSec` — is open in #4478 and
-is deliberately not decided by this page.
+**This is not a support grade and does not move a cell.** It cost availability,
+not enforcement, and it is recorded here because it was the kind of difference
+that decides which mode an operator picks. It no longer needs to.
 
 ## Fail-closed is the third state
 

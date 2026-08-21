@@ -133,22 +133,20 @@ HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh
 # that pull is spent inside TimeoutStartSec; the Hive image is ~3.8GB.
 podman pull ghcr.io/kubestellar/hive:stable
 
-# All four units — the gateway will not generate without the network it names.
+# All four Quadlet units — the gateway will not generate without the network it
+# names — plus the plain units that wire the stack to boot (#4478).
 install -Dm644 src/deploy/quadlet/hive.container         ~/.config/containers/systemd/hive.container
 install -Dm644 src/deploy/quadlet/hive-data.volume       ~/.config/containers/systemd/hive-data.volume
 install -Dm644 src/deploy/quadlet/hive.network           ~/.config/containers/systemd/hive.network
 install -Dm644 src/deploy/quadlet/hive-gateway.container ~/.config/containers/systemd/hive-gateway.container
+install -Dm644 src/deploy/systemd/hive-boot.target       ~/.config/systemd/user/hive-boot.target
+install -Dm644 src/deploy/systemd/hive-boot-gate.service ~/.config/systemd/user/hive-boot-gate.service
 systemctl --user daemon-reload
+systemctl --user enable hive-boot-gate.service
 
 # Starting the gateway pulls Hive, the network and the volume up in order.
 systemctl --user start hive-gateway.service
 ```
-
-In a logged-in session the stack may already be up before you reach that last
-line: `daemon-reload` runs the generator, which writes the
-`default.target.wants/` symlinks from `[Install]`, and systemd starts
-newly-wanted units of an already-active target. The `start` is then a no-op that
-returns 0, and is worth running anyway as the confirmation that it did.
 
 Dashboard at `http://localhost:3001`, the same port and the same single
 published port as the Compose stack — Hive's own 3001/3002 and the raw ttyd
@@ -159,19 +157,20 @@ end, which also proves the gateway resolved `hive` over the shared network:
 curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
 ```
 
-`daemon-reload` runs the generator, and `[Install] WantedBy=default.target`
-inside the units is what wires them to boot — there is nothing to `systemctl
-enable`, and trying fails, because generated units cannot be enabled. **Rootless
-additionally needs `loginctl enable-linger "$USER"`** or the user manager never
-starts at boot. Check with `bin/hive-podman-lifecycle-probe.sh check`, not with
-`systemctl is-enabled`, which reports `generated` either way.
+`daemon-reload` runs the generator, and `[Install] WantedBy=hive-boot.target`
+inside the units is half of what wires them to boot; the other half is
+`hive-boot-gate.service` — the one real (enableable) unit, so the `enable`
+above works and is required. **Rootless additionally needs
+`loginctl enable-linger "$USER"`** or the user manager never starts at boot.
+Check with `bin/hive-podman-lifecycle-probe.sh check`, not with
+`systemctl is-enabled hive.service`, which reports `generated` either way.
 
-Rootful's counterpart to that requirement is a cost rather than a step:
-`default.target` in the system manager is the **boot transaction**, so a rootful
-Hive that never becomes healthy holds the boot for its `TimeoutStartSec` — up to
-five minutes, on every boot, until the cause is fixed. Rootless pays the same
-timeout off the boot and delays nothing but Hive. Measured, and it is one of the
-few things that genuinely differs between the modes:
+The gate is why booting never waits on Hive: it starts `hive-boot.target` only
+after systemd declares startup finished, so a Hive that cannot become healthy
+costs itself its `TimeoutStartSec` — not the host's boot, in either root mode.
+Before #4478 a rootful Hive sat inside the boot transaction and a broken one
+held the boot for up to five minutes, on every boot, until fixed. Measured,
+including the fix:
 [Boot persistence](src/docs/podman-standalone-quadlet.md#4-boot-persistence).
 
 **Security posture — pick deliberately.** The shipped unit requests

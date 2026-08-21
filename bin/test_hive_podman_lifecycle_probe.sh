@@ -54,7 +54,15 @@ case "${args[0]:-}" in
   cat)
     if is_gateway; then [ "${FAKE_GATEWAY_KNOWN:-yes}" = "yes" ] || exit 1; exit 0; fi
     [ "${FAKE_UNIT_KNOWN:-yes}" = "yes" ] || exit 1 ;;
-  is-enabled) printf '%s\n' "${FAKE_IS_ENABLED:-generated}" ;;
+  is-enabled)
+    # The gate is a real unit with its own enablement state (#4478); the
+    # generated hive.service answers `generated` in every configuration.
+    if [ "${args[1]:-}" = "hive-boot-gate.service" ]; then
+      printf '%s\n' "${FAKE_GATE_IS_ENABLED:-enabled}"
+    else
+      printf '%s\n' "${FAKE_IS_ENABLED:-generated}"
+    fi
+    ;;
   is-active)  printf '%s\n' "${FAKE_IS_ACTIVE:-active}" ;;
   is-failed)  printf '%s\n' "${FAKE_IS_FAILED:-inactive}" ;;
   start|stop|restart)
@@ -161,8 +169,9 @@ reset_env() {
   export FAKE_SubState=running
   export FAKE_Result=success
   export FAKE_ExecMainStatus=0
-  export FAKE_WantedBy=default.target
+  export FAKE_WantedBy=hive-boot.target
   export FAKE_IS_ENABLED=generated
+  export FAKE_GATE_IS_ENABLED=enabled
   export FAKE_IS_ACTIVE=active
   export FAKE_LINGER=yes
   export FAKE_ActiveEnterTimestampMonotonic=30000000
@@ -177,9 +186,9 @@ reset_env() {
   export FAKE_CURL_COUNT="${TEST_TMP}/curl.count"
   printf '0' >"$FAKE_CURL_COUNT"
   GEN="${TEST_TMP}/gen"
-  rm -rf "$GEN"; mkdir -p "$GEN/default.target.wants"
+  rm -rf "$GEN"; mkdir -p "$GEN/hive-boot.target.wants"
   : >"$GEN/hive.service"
-  ln -sf ../hive.service "$GEN/default.target.wants/hive.service"
+  ln -sf ../hive.service "$GEN/hive-boot.target.wants/hive.service"
   export HIVE_LIFECYCLE_GEN_DIR="$GEN"
 }
 
@@ -235,8 +244,10 @@ case_expect "on-failure alone is only a warning, and the missing 143 is the find
 
 echo
 echo "== boot wiring is read from the generator and linger, never from is-enabled =="
-reset_env; rm -f "${TEST_TMP}/gen/default.target.wants/hive.service"
+reset_env; rm -f "${TEST_TMP}/gen/hive-boot.target.wants/hive.service"
 case_expect "no generated wants symlink is a finding" 78 "will NOT start at boot" check
+reset_env; export FAKE_GATE_IS_ENABLED=disabled
+case_expect "a disabled boot gate is a finding (#4478)" 78 "nothing starts hive-boot.target" check
 reset_env; export FAKE_LINGER=no
 case_expect "lingering off is a finding, rootless" 78 "lingering is OFF" check
 reset_env; export FAKE_LINGER=no

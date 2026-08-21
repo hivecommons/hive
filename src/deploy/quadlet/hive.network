@@ -55,4 +55,7 @@ Label=io.kubestellar.hive.instance=default
 Label=io.kubestellar.hive.runtime=podman
 
 [Install]
-WantedBy=default.target
+# NOT default.target (#4478): the whole stack is wanted by hive-boot.target,
+# started by hive-boot-gate.service after the boot settles. Both containers
+# also Requires= this unit, so it exists whenever either starts by any path.
+WantedBy=hive-boot.target

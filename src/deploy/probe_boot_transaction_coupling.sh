@@ -36,9 +36,11 @@
 # `sleep`, not a Hive. Every number below is about the manager, not about the
 # image -- which is the point, because the manager is the half that was inferred.
 #
-# THE CONTROL IS THE ARGUMENT. Three cases differ in ONE thing: whether the unit
-# is in default.target.wants/. Without the `unwired` case, `broken` would only
-# show that a failing unit takes TimeoutStartSec to fail, which nobody doubted.
+# THE CONTROL IS THE ARGUMENT. The first three cases differ in ONE thing:
+# whether the unit is in default.target.wants/. Without the `unwired` case,
+# `broken` would only show that a failing unit takes TimeoutStartSec to fail,
+# which nobody doubted. The fourth case is the FIX shipped for #4478, in
+# miniature, proving it removes the hold without removing anything else.
 #
 #   control   Type=notify, wired, sends READY at once
 #             -> boot finishes microseconds after the unit goes active
@@ -46,11 +48,18 @@
 #             -> boot finishes a full TimeoutStartSec later
 #   unwired   the SAME never-ready unit, NOT wired into default.target
 #             -> boot finishes at once; the timeout is paid by whoever starts it
+#   decoupled the SAME never-ready unit, wired the way the SHIPPED units are
+#             since #4478: WantedBy=hive-boot.target, started by a gate unit
+#             once the manager declares startup finished
+#             -> boot finishes at once AND the unit still auto-starts,
+#                still records Result=timeout, and still restarts
 #
-# The Quadlet generator installs default.target.wants/hive.service in BOTH root
-# modes -- that was measured in #4377 and again in #4413 -- so `broken` is the
-# rootful shape and `unwired` is the shape rootless gets by having its
-# default.target reached by logind after the system boot is already over.
+# The Quadlet generator used to install default.target.wants/hive.service in
+# BOTH root modes -- measured in #4377 and again in #4413 -- so `broken` is the
+# pre-#4478 rootful shape and `unwired` is the shape rootless gets by having its
+# default.target reached by logind after the system boot is already over. The
+# `decoupled` case is the shape the units ship with now, and it is the proof
+# that the fix removes the hold without removing the auto-start.
 #
 # SAFETY. Every object is named hive-boottx-<pid>-*; the probe REFUSES TO START
 # if any of those names already exists, and cleanup removes exactly the names it
@@ -69,7 +78,7 @@ BASE_IMAGE="${BASE_IMAGE:-registry.access.redhat.com/ubi9/ubi-init:latest}"
 COUPLING_MAX_US="${COUPLING_MAX_US:-500000}"
 
 NAME="hive-boottx-$$"
-CASES=(control broken unwired)
+CASES=(control broken unwired decoupled)
 
 findings=0
 c_green=""; c_red=""; c_yellow=""; c_reset=""
@@ -132,6 +141,41 @@ ExecStart=/bin/sh -c 'exec sleep infinity'
 WantedBy=default.target
 EOF
 
+# The shipped shape since #4478: the same never-ready unit, wanted by a target
+# nothing at boot wants, started by a gate that waits for the manager to
+# declare startup finished and then enqueues a NEW transaction. Miniatures of
+# src/deploy/systemd/hive-boot.target and hive-boot-gate.service, plus the
+# same Restart=always the real hive.container carries, so the case also shows
+# the restart policy surviving the rewiring.
+cat >"${WORKDIR}/boottx.target" <<EOF
+[Unit]
+Description=hive-boottx stand-in for hive-boot.target
+EOF
+
+cat >"${WORKDIR}/decoupled.service" <<EOF
+[Unit]
+Description=hive-boottx stand-in for a never-healthy Hive, decoupled wiring
+[Service]
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=${TIMEOUT_SEC}
+ExecStart=/bin/sh -c 'exec sleep infinity'
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=boottx.target
+EOF
+
+cat >"${WORKDIR}/boottx-gate.service" <<EOF
+[Unit]
+Description=hive-boottx stand-in for hive-boot-gate.service
+[Service]
+Type=exec
+ExecStart=/bin/sh -c 'systemctl is-system-running --wait >/dev/null 2>&1; exec systemctl start --no-block boottx.target'
+[Install]
+WantedBy=default.target
+EOF
+
 build_case() {
   local case_name="$1" containerfile="${WORKDIR}/Containerfile.$1"
   case "$case_name" in
@@ -152,6 +196,12 @@ FROM ${BASE_IMAGE}
 COPY neverready.service /etc/systemd/system/
 EOF
       ;;
+    decoupled) cat >"$containerfile" <<EOF
+FROM ${BASE_IMAGE}
+COPY boottx.target boottx-gate.service decoupled.service /etc/systemd/system/
+RUN systemctl enable boottx-gate.service decoupled.service
+EOF
+      ;;
   esac
   podman build -q -f "$containerfile" -t "${NAME}-${case_name}" "$WORKDIR" >/dev/null 2>&1
 }
@@ -168,13 +218,13 @@ for c in "${CASES[@]}"; do
     exit 0
   fi
 done
-ok "three images built, differing only in which unit is enabled"
+ok "four images built, differing only in how the unit is wired"
 
 for c in "${CASES[@]}"; do
   podman run -d --name "${NAME}-${c}" --systemd=always "${NAME}-${c}" /sbin/init >/dev/null 2>&1 \
     || { bad "could not start the ${c} container"; exit 1; }
 done
-ok "three containers booted"
+ok "four containers booted"
 
 # Wait for each manager to declare the boot finished. `broken` cannot until its
 # unit times out, which is the whole result, so the budget is the timeout plus
@@ -199,7 +249,7 @@ for c in "${CASES[@]}"; do
   f="$(cshow "$c" FinishTimestampMonotonic)"
   rel="$(awk -v a="$f" -v b="$u" 'BEGIN{printf "%.3f", (a-b)/1000000}')"
   FINISH_REL[$c]="$rel"
-  wired="yes"; [ "$c" = "unwired" ] && wired="no"
+  wired="yes"; [ "$c" = "unwired" ] && wired="no"; [ "$c" = "decoupled" ] && wired="gate"
   printf '        %-9s %-14s %-16s %s\n' "$c" "$wired" "+${rel}s" \
     "$(podman exec "${NAME}-${c}" systemctl is-system-running 2>/dev/null | tr -d '\r')"
 done
@@ -263,6 +313,37 @@ if [ "$blocked" -ge $(( TIMEOUT_SEC * 9 / 10 )) ]; then
   info "the cost does not vanish, it moves off the boot and onto the caller"
 else
   warn "unwired: the interactive start returned in ${blocked}s, under the ${TIMEOUT_SEC}s timeout"
+fi
+
+# 5. The shipped shape since #4478: the gate frees the boot WITHOUT losing the
+#    auto-start, the start-job timeout, or the restart policy.
+if awk -v d="${FINISH_REL[decoupled]}" -v b="${FINISH_REL[broken]}" -v t="$TIMEOUT_SEC" \
+     'BEGIN{exit !(b - d >= t*0.9)}'; then
+  ok "decoupled: boot finished +${FINISH_REL[decoupled]}s against broken's +${FINISH_REL[broken]}s"
+  info "the gate starts boottx.target only after the manager declares startup finished"
+else
+  bad "decoupled finished +${FINISH_REL[decoupled]}s, not meaningfully before broken's +${FINISH_REL[broken]}s"
+fi
+
+# The unit must still have been auto-started, still have timed out on its own
+# start job (the result podman auto-update --rollback reads), and still be
+# cycling under Restart=always. Its first cycle ends TimeoutStartSec after the
+# boot, so give it that long plus slack.
+waited=0
+while [ "$waited" -lt "$deadline" ]; do
+  d_res="$(cshow decoupled Result decoupled.service)"
+  d_restarts="$(cshow decoupled NRestarts decoupled.service)"
+  [ "$d_res" = "timeout" ] && break
+  sleep 1; waited=$((waited + 1))
+done
+d_started="$(cshow decoupled InactiveExitTimestampMonotonic decoupled.service)"
+if [ -z "$d_started" ] || [ "$d_started" = "0" ]; then
+  bad "decoupled: the unit never started -- the gate freed the boot by losing the auto-start"
+elif [ "$d_res" != "timeout" ]; then
+  bad "decoupled: the unit started but never recorded Result=timeout (got '${d_res:-none}')"
+else
+  ok "decoupled: the unit still auto-started and its start job still ended Result=timeout"
+  info "NRestarts=${d_restarts:-0} -- Restart= survives the rewiring; only the boot stopped paying"
 fi
 
 head1 "Result"

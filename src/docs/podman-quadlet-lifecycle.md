@@ -154,20 +154,20 @@ $ systemctl --user enable hive.service
 Failed to enable unit: Unit /run/user/1000/systemd/generator/hive.service is transient or generated
 ```
 
-What wires them instead is `[Install] WantedBy=default.target` inside
-`hive.container`, which the generator turns into a symlink in its own output
-directory on every `daemon-reload`:
+What wires them instead is the `[Install]` section inside `hive.container`,
+which the generator turns into a symlink in its own output directory on every
+`daemon-reload`. Before #4478 the target was `default.target`; since #4478 it
+is `hive-boot.target`, started by `hive-boot-gate.service` after the boot has
+settled — see below:
 
 ```
-l /run/systemd/generator/default.target.wants/hive.service          -> ../hive.service
-l /run/user/1000/systemd/generator/default.target.wants/hive.service -> ../hive.service
+l /run/systemd/generator/hive-boot.target.wants/hive.service          -> ../hive.service
+l /run/user/1000/systemd/generator/hive-boot.target.wants/hive.service -> ../hive.service
 ```
 
-So there is nothing for an operator to enable, and `is-enabled` reports
-`generated` rather than `enabled` — permanently, in every configuration. On
-this host the rootful `WantedBy` resolved to `graphical.target`, because the
-system `default.target` is an alias for it; on a headless server it resolves to
-`multi-user.target`. Both are reached at boot.
+So the only thing an operator enables is `hive-boot-gate.service` — a plain
+unit, so enabling it works — and for the generated units `is-enabled` reports
+`generated` rather than `enabled`, permanently, in every configuration.
 
 ### `%E` in a rootful unit, measured
 
@@ -353,13 +353,15 @@ In the user manager the same `WantedBy=default.target` resolves to the *user*
 manager's default target, which logind starts after the system boot has already
 completed. Hence boot 2 finishing in 9.2s with Hive not healthy until 18.5s.
 
-The consequence is worth stating plainly, because it is the operational cost of
-choosing rootful: a Hive that never becomes healthy holds a rootful boot for its
-`TimeoutStartSec` — 5min for `hive.service`, 2min for `hive-gateway.service`.
-The 120s is not hypothetical — the first rootful start attempt here sat in
-`activating` for exactly that before timing out. On rootless the same failure
-delays nothing but Hive itself. Filed as #4478, since which mode an operator
-picks may turn on it.
+The consequence is worth stating plainly, because it was the operational cost
+of choosing rootful: with the units as they shipped then, a Hive that never
+became healthy held a rootful boot for its `TimeoutStartSec` — 5min for
+`hive.service`, 2min for `hive-gateway.service`. The 120s is not hypothetical
+— the first rootful start attempt here sat in `activating` for exactly that
+before timing out. On rootless the same failure delays nothing but Hive
+itself. Filed as #4478; the units have since been rewired so that neither mode
+puts Hive in the boot transaction — see
+[the fix, measured](#the-fix-shipped-for-4478-measured-the-same-way) below.
 
 #### The held boot was inferred, and is now measured
 
@@ -397,6 +399,44 @@ no firmware, no initrd — and the stand-in unit is a `sleep`, not a Hive. The
 Hive half is what the two real reboots above already measured. What was missing
 was the link between them, and the link is a property of systemd, not of the
 image.
+
+#### The fix shipped for #4478, measured the same way
+
+The decision #4478 held open is taken: the shipped units no longer sit in the
+boot transaction, in either mode. Of the options the issue listed,
+`DefaultDependencies=`/ordering (option 2 as first written) was measured and
+**does not work** — a start job in the boot transaction delays the
+boot-finished timestamp regardless of ordering, and a `DefaultDependencies=no`
+variant held the boot the full 20s just like `broken`; an immediately-elapsing
+timer fails the same way, because its job is enqueued before the initial queue
+empties. Shortening the rootful `TimeoutStartSec` (option 3) was rejected: 300s
+and 120s are load-bearing — `HealthStartPeriod` plus the retry budget plus the
+headroom a ~3.8GB first pull needs — and the D-Bus start-job timeout is what
+`podman auto-update --rollback` keys on (#4407).
+
+What ships instead is the one shape that measurably decouples: the units are
+`WantedBy=hive-boot.target`, which nothing at boot wants, and
+`hive-boot-gate.service` — the only Hive unit in `default.target`, `Type=exec`,
+so its own start job costs the transaction nothing — waits for
+`systemctl is-system-running --wait` to return (which happens at exactly the
+manager's `FinishTimestamp`, in every terminal state) and then starts the
+target with `--no-block` as a **new** transaction. The probe's fourth case is
+that shape in miniature, same never-ready unit, same 20s timeout:
+
+| case | wiring | boot finished | the unit itself |
+| --- | --- | --- | --- |
+| broken | `default.target.wants/` (pre-#4478) | **+20.297s** — held 20.167s | `Result=timeout` |
+| decoupled | `hive-boot.target` + gate (shipped) | **+0.122s** | still auto-started, still `Result=timeout`, `Restart=` still cycling |
+
+Everything the timeout semantics protect is preserved and asserted by the
+probe: the unit still starts on every boot, its start job still times out with
+`Result=timeout` — the result `podman auto-update --rollback` reads — an
+interactive `systemctl start` still blocks until healthy, and `Restart=always`
+still recovers it. The only thing that changed is who pays for a Hive that
+cannot become healthy: the Hive units, not the host's boot. If the gate cannot
+wait (`is-system-running --wait` missing or erroring), it starts the target
+immediately, which is exactly the pre-#4478 behaviour — the failure mode is
+losing the decoupling, never losing the deployment.
 
 ### The tag moved mid-experiment, and that is why the rows are pinned
 
