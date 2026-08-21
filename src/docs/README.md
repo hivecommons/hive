@@ -36,7 +36,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 ## Contributors and access
 
-- [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, and role requests.
+- [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, moving a relay to another machine, and role requests.
 - [Contributor trust tiers and delegated agent roles](https://github.com/kubestellar/hive/blob/v4/src/docs/contributor-trust-and-roles.md) — newcomer/contributor/trusted/merger/advisor semantics, **Acting as**, grants, and delegatable roles.
 - [Credly badges](https://github.com/kubestellar/hive/blob/v4/src/docs/credly-badges.md) — planned integration design; currently a placeholder mapping only.
 

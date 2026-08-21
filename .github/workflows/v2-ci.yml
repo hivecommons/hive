@@ -322,6 +322,21 @@ jobs:
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash src/deploy/test_contribute_k8s_workload.sh
+
+      # #4408: `just contribute-move` relocates an already-registered
+      # contributor identity to a new machine. The properties that matter are
+      # not visible in the Justfile text — that the positional HIVE_HUB /
+      # HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists come out aligned and in
+      # the same order is a property of the loop, and bin/contributor-relay.sh
+      # pairs those lists by index (it refuses to start on a length mismatch and
+      # sends the wrong token to the wrong hive on a transposed one). Getting the
+      # partial-failure path wrong is worse: a reissued token cannot be
+      # reprinted, so dropping it locks the contributor out of that hive. This
+      # runs the real recipe against a fake hub with a stubbed gh and a
+      # throwaway HOME — no network, no real credential.
+      - name: Contributor identity relocation (#4408)
+        working-directory: .
+        run: bash src/deploy/test_contribute_move.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ubuntu-latest
