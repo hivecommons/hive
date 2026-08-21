@@ -562,7 +562,11 @@ func (t *appTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	req2 := req.Clone(req.Context())
 	req2.Header.Set("Authorization", "Bearer "+token)
-	return t.base.RoundTrip(req2)
+	base := t.base
+	if base == nil {
+		base = sharedProxyTrust.sharedTransport()
+	}
+	return base.RoundTrip(req2)
 }
 
 func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Logger) *Client {
@@ -579,7 +583,6 @@ func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, log
 	auth.SetBotLogin(appBotLogin)
 	transport := &appTransport{
 		auth: auth,
-		base: http.DefaultTransport,
 	}
 	const appClientTimeout = 30 * time.Second
 	httpClient := &http.Client{Transport: transport, Timeout: appClientTimeout}
