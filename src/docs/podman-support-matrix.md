@@ -16,7 +16,12 @@ default and fully supported runtime**, unchanged by this document.
 | | **Enforcing** (`--cap-add NET_ADMIN`, gate installs) | **Advisory** (`HIVE_PROXY_ADVISORY_OK=true`, gate not installed) |
 | --- | --- | --- |
 | **Rootful** | **Supported** — #4200 ([PR #4304](https://github.com/kubestellar/hive/pull/4304)) | **Supported as a deliberate choice, unenforced** — #4200 ([PR #4304](https://github.com/kubestellar/hive/pull/4304)) |
-| **Rootless** | **Experimental** — #4199 ([PR #4280](https://github.com/kubestellar/hive/pull/4280)) | **Supported as a deliberate choice, unenforced** — #4199 ([PR #4280](https://github.com/kubestellar/hive/pull/4280)) |
+| **Rootless** | **Supported**¹ — #4199 ([PR #4280](https://github.com/kubestellar/hive/pull/4280)), promoted by #4487 | **Supported as a deliberate choice, unenforced** — #4199 ([PR #4280](https://github.com/kubestellar/hive/pull/4280)) |
+
+¹ Rootless support carries one operational precondition that is not an
+enforcement matter: surviving a reboot requires `loginctl enable-linger` for the
+running user (see [Rootless + enforcing — supported](#rootless--enforcing--supported)
+and #4489). Enforcement itself does not depend on lingering.
 
 There is no fifth state hiding behind the table. The remaining combination —
 neither `CAP_NET_ADMIN` nor the advisory opt-in — is not a support level at all:
@@ -42,36 +47,72 @@ than inferred.
 
 This is the reference cell. The other three are positioned against it.
 
-### Rootless + enforcing — experimental
+### Rootless + enforcing — supported
 
 The [rootless startup spike](podman-rootless-startup-spike.md) (#4199) measured
 that rootless Podman with `--cap-add NET_ADMIN` **does** install the gate, and
 that the gate really intercepts: an agent-UID TLS session came back with
 `issuer=CN=Hive ACMM Proxy CA`, while the exempt proxy UID reached the real
-upstream. That removed the assumption that rootless cannot enforce.
+upstream. That removed the assumption that rootless cannot enforce — but it left
+three things unsettled that were settled for rootful, and the spike named them
+as the promotion bar: the `SO_MARK` isolation repeated under rootless, one
+`slirp4netns` lane measured against the `pasta` result, and gate
+re-installation observed across a container restart. That list was the spike's
+own, and it was the whole list — not an open-ended bar.
 
-It did not make rootless first-class, and the spike says so itself. Three things
-that are settled for rootful are not settled for rootless:
+All three were subsequently measured on a live rootless enforcing host
+(#4487 — Bluefin 44, SELinux enforcing, Podman 5.8.4, netavark, crun, cgroups
+v2, image `ghcr.io/kubestellar/hive:stable`), after the shipped
+`probe_podman_rootless_netadmin.sh --shared-store --bypass` passed as the
+baseline:
 
-- **`SO_MARK` in isolation.** On rootless, the owner-UID `RETURN` and the mark
-  `RETURN` were both in the chain and which one carried the proxy's dial was
-  never separated. The isolation was done under rootful only (#4200). On a
-  kernel without `xt_owner`, the unseparated path is the *only* path.
-- **`slirp4netns`.** Only `pasta` was exercised. The rootless helper terminates
-  the container's traffic, so it is a plausible source of difference — and it is
-  a rootless-only variable with no rootful counterpart.
-- **Restart, reboot, and recreate.** Single `podman run`. Applies to every cell
-  (see [Carried-forward gaps](#carried-forward-gaps)), but it bites hardest
-  where the posture is otherwise unproven.
+- **`SO_MARK` in isolation.** Both owner-UID `RETURN`s were deleted from the
+  chain, leaving `mark 0x1112` as the only exemption, and an agent-UID request
+  was driven end to end — twice, against two upstream hosts, ruling out a
+  cached connection. It completed (`http_code=200`), which only the proxy's
+  own marked upstream dial can explain. The control held: with the owner rules
+  gone, an *unmarked* proxy-UID `curl` came back
+  `issuer=CN=Hive ACMM Proxy CA` — redirected, proving the owner backstop was
+  really absent. The mark path works on its own under rootless. On kernels
+  without `xt_owner` this path becomes the only path; it is now measured
+  rather than assumed.
+- **`slirp4netns` measured against `pasta`.** The same image under
+  `--network slirp4netns` (1.3.1, confirmed via `.HostConfig.NetworkMode`)
+  produced an identical four-rule gate chain, identical agent-UID
+  interception and end-to-end relay, and an identical exempt-UID direct path —
+  and the `SO_MARK` isolation was repeated on this helper with the same
+  result. `slirp4netns` is indistinguishable from `pasta` on every check.
+- **Gate re-installation across a restart.** The container was restarted from
+  a deliberately *mutilated* chain (owner rules still deleted), so the run
+  tests reconstruction rather than persistence. After restart the full
+  four-rule chain was back and interception held
+  (`issuer=CN=Hive ACMM Proxy CA`).
 
-**What would promote this cell to supported:** the `SO_MARK` isolation repeated
-under rootless, one `slirp4netns` lane measured against the `pasta` result, and
-gate re-installation observed across a container restart. That list is the
-rootless spike's own, and it is the whole list — not an open-ended bar.
+That is the full enforcing claim for this cell, observed rather than inferred,
+on both rootless network helpers. The promotion is #4487's decision record.
 
-Until then, an operator choosing rootless + enforcing gets a posture that has
-been observed to work on one configuration and has not been shown to hold on the
-variations rootless specifically introduces.
+Two footnotes travel with the grade:
+
+- **Lingering.** A rootless install does not survive a reboot unless
+  `loginctl enable-linger` is set for the running user — the user manager
+  never starts at boot otherwise. This is measured on the
+  [lifecycle page](podman-quadlet-lifecycle.md) and required by
+  [the Quadlet install doc](podman-standalone-quadlet.md); #4489 tracks the
+  installer's failure to say so. It is an availability precondition, not an
+  enforcement gap: the gate's fail-closed contract (exit 77) and its
+  re-installation on start are independent of it.
+- **SELinux.** The measurements above were taken with SELinux **enforcing**
+  and passed. A known false-`FAIL` from
+  `qualify_podman_selinux.sh` on hosts whose `stat` is uutils coreutils
+  (#4490) is a measurement-tool bug, not a capability gap, and does not
+  qualify this cell.
+
+What the promotion does **not** cover is stated in
+[Carried-forward gaps](#carried-forward-gaps): the evidence is one host shape
+per root mode, kernels without `xt_owner` remain untested as a whole
+configuration (though the residual risk is narrower now that the mark path is
+proven alone), no rootless dual-stack IPv6 measurement exists, and no CI lane
+defends any cell yet.
 
 ### Rootful + advisory and rootless + advisory — supported as a deliberate choice, unenforced
 
@@ -92,12 +133,13 @@ gate is never installed, so none of the rootless-specific unknowns above are in
 play. Nothing about the redirect, the ambient capability, or `SO_MARK` matters
 when there is no chain.
 
-That produces an ordering worth stating plainly, because it looks backwards:
-**rootless + advisory is graded above rootless + enforcing.** It is not a
-security ranking. Advisory mode makes no enforcement claim, so there is nothing
-left unproven about it; rootless enforcing makes the full claim on evidence that
-does not yet reach it. The grades measure how well the evidence covers the
-claim, not how safe the deployment is.
+Until #4487, that produced an ordering that looked backwards — **rootless +
+advisory was graded above rootless + enforcing** — and it was never a security
+ranking. Advisory mode makes no enforcement claim, so there was nothing left
+unproven about it; rootless enforcing made the full claim on evidence that did
+not yet reach it. The grades measure how well the evidence covers the claim,
+not how safe the deployment is. With rootless + enforcing now supported, the
+inversion is gone, but the reading rule stands.
 
 One known wart, from #4199 and not fixed here: in advisory mode the entrypoint
 reports `no xt_owner on this kernel`, which is a misdiagnosis — the `-C` probe
@@ -171,10 +213,13 @@ Measured identically under rootful (#4200) and rootless (#4199). Neither mode
 hands out `CAP_NET_ADMIN` by default — rootful does not either, so the
 fail-closed branch is reached for a real reason rather than by accident.
 
-## The configuration all of this was measured on
+## The configurations all of this was measured on
 
-Every cell above rests on one host shape. It is stated here so that a reader can
-tell whether their deployment is inside or outside the evidence:
+Every cell above rests on one host shape per root mode. They are stated here so
+that a reader can tell whether their deployment is inside or outside the
+evidence.
+
+The rootful cells and the original rootless spike (#4199, #4200):
 
 | | |
 | --- | --- |
@@ -185,6 +230,18 @@ tell whether their deployment is inside or outside the evidence:
 | Kernel / host | 7.1.4-200.fc44.x86_64, Aurora (Fedora) 44, SELinux enforcing |
 | Architecture | `amd64` only |
 | Image | published `ghcr.io/kubestellar/hive` tags, not a local `src/Dockerfile` build |
+
+The rootless + enforcing promotion evidence (#4487):
+
+| | |
+| --- | --- |
+| Podman | 5.8.4, rootless uid 1000 |
+| OCI runtime | crun |
+| Network backend | netavark; helpers `pasta` **and** `slirp4netns` 1.3.1 |
+| cgroups | v2 |
+| Kernel / host | Bluefin 44 (Silverblue), SELinux enforcing |
+| Architecture | `amd64` only |
+| Image | `ghcr.io/kubestellar/hive:stable` |
 
 This document does **not** set minimum supported Podman versions or a lifecycle
 choice. That is a separate slice under #4188; 5.8.4 is what was measured, not a
@@ -199,9 +256,9 @@ each already has a home, and none of them is closed by this document.
 | --- | --- | --- |
 | **IPv6 egress-gate bypass** | Measured real (#4319, [PR #4321](https://github.com/kubestellar/hive/pull/4321)) and **fixed** in [PR #4327](https://github.com/kubestellar/hive/pull/4327), which closes the v6 family with an `ip6tables` filter-table `REJECT` carrying the same three exemptions. Residual: the fix was observed on a rootful, ULA-only, amd64/netavark dual-stack network — **no rootless dual-stack measurement exists**, and no globally routable IPv6 path was available to either run. | [IPv6 egress-gate bypass](podman-ipv6-egress-bypass.md) |
 | **`arm64`** | Unmeasured everywhere. `amd64` only in both spikes. A hosted `ubuntu-24.04-arm` lane is identified but not built. | [Podman CI runner map](podman-ci-runner-map.md), #4336 |
-| **`slirp4netns`** | Unmeasured. Only `pasta` was exercised on rootless; rootless has no other network-helper evidence. | #4199 / [rootless spike](podman-rootless-startup-spike.md) |
-| **Restart, reboot, recreate** | **Narrowed, not closed.** The LIFECYCLE is now measured in both root modes — stop/start/restart/recreate (#4377) and an actual reboot of each (#4413), written up on the [lifecycle page](podman-quadlet-lifecycle.md). What those runs did not do is inspect the egress chain afterwards, so the part of this gap that belongs to this page — that the GATE re-installs reliably across a restart — is still unmeasured, and both spikes remain a single `podman run`. | #4199, #4200; [lifecycle page](podman-quadlet-lifecycle.md) (#4377, #4413) |
-| **Kernels without `xt_owner`** | Unmeasured. Deleting the owner `RETURN`s under rootful emulates the shape but not the kernel. Both exemptions stay in the chain regardless. | [rootful baseline](podman-rootful-egress-baseline.md) |
+| **`slirp4netns`** | **Measured** (#4487). Identical gate chain, interception, end-to-end relay, and `SO_MARK` isolation as `pasta`, on one host. | this page, [Rootless + enforcing](#rootless--enforcing--supported) |
+| **Restart, reboot, recreate** | **Narrowed further.** The LIFECYCLE is measured in both root modes — stop/start/restart/recreate (#4377) and an actual reboot of each (#4413, #4479), written up on the [lifecycle page](podman-quadlet-lifecycle.md). The GATE's re-installation across a container restart is now measured on rootless (#4487), including reconstruction from a deliberately mutilated chain. Rootful gate-after-restart remains uninspected, and no run has yet inspected the chain after a full host reboot. | #4199, #4200, #4487; [lifecycle page](podman-quadlet-lifecycle.md) (#4377, #4413) |
+| **Kernels without `xt_owner`** | Unmeasured as a whole configuration. Deleting the owner `RETURN`s emulates the shape but not the kernel — now done under both rootful (#4200) and rootless (#4487), so the mark-only path itself is proven in both modes; what remains untested is a kernel that genuinely lacks the module. | [rootful baseline](podman-rootful-egress-baseline.md), #4487 |
 | **`SO_MARK` on OKE-shaped platforms** | Not retired. The #2678 regression was the mark not sticking to the proxy's sockets on that platform — a property of the platform, not of the rule. The rootful isolation does not speak to it. | `src/pkg/proxy/somark_linux.go`, entrypoint comments |
 | **Gateway and pod topology** | Unmeasured. One container in isolation in both spikes — nothing about publishing 3001, withholding 7681, or two containers sharing a network. | the gateway/network slice under #4188 |
 | **Locally built image** | Unmeasured. Published tags only; a `src/Dockerfile` build was never probed. | #4199, #4200 |
@@ -212,16 +269,16 @@ measured — not that these gaps are closed for it.
 
 ## CI lanes that would keep this honest
 
-The matrix is a snapshot of two manual spikes. The lanes mapped in the
+The matrix is a snapshot of manual spikes. The lanes mapped in the
 [Podman CI runner map](podman-ci-runner-map.md) are what would make it a
 standing guarantee rather than a dated observation: rootful (#4335) and rootless
 (#4334) on hosted amd64, and the `arm64` build/pull-and-startup lane (#4336).
-Neither supported cell is currently defended by CI.
+No supported cell is currently defended by CI.
 
 ## References
 
 - [Rootful Podman egress-gate baseline](podman-rootful-egress-baseline.md) — #4200, [PR #4304](https://github.com/kubestellar/hive/pull/4304).
-- [Rootless Podman startup and exit-77 behavior](podman-rootless-startup-spike.md) — #4199, [PR #4280](https://github.com/kubestellar/hive/pull/4280).
+- [Rootless Podman startup and exit-77 behavior](podman-rootless-startup-spike.md) — #4199, [PR #4280](https://github.com/kubestellar/hive/pull/4280); promoted to supported by #4487.
 - [The IPv4-only egress gate is bypassable over IPv6](podman-ipv6-egress-bypass.md) — #4319, [PR #4321](https://github.com/kubestellar/hive/pull/4321); fixed in [PR #4327](https://github.com/kubestellar/hive/pull/4327).
 - [`CAP_NET_ADMIN` requirement](net-admin-requirement.md)
 - [Security model — operator guide](security-model.md)

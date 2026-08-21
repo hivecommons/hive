@@ -171,9 +171,10 @@ silently assume any of them.
    7681 must be published nowhere. If that contract cannot be asserted at the
    pod level, the topology reopens.
 4. **The rootless enforcing cell failing its promotion criteria.** The
-   [support matrix](../podman-support-matrix.md) grades rootless + enforcing as
-   experimental. That is a support question rather than a lifecycle one, but it
-   bounds what the rootless half of this ADR can promise.
+   [support matrix](../podman-support-matrix.md) graded rootless + enforcing as
+   experimental until its three promotion criteria were measured (#4487); the
+   cell is now supported. That is a support question rather than a lifecycle
+   one, but it bounds what the rootless half of this ADR can promise.
 5. **Quadlet auto-update proving unable to carry health-aware rollback**, which
    would push the update slices toward a mechanism this ADR did not choose.
 6. **Upstream deprecating Quadlet or changing the generator contract.**

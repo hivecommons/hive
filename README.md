@@ -183,7 +183,7 @@ start with exit 77 rather than running an unenforced capability model.
 | | Enforcing (default) | Advisory (`HIVE_PROXY_ADVISORY_OK=true`) |
 | --- | --- | --- |
 | **Rootful** | **Supported** | Supported as a deliberate choice, **unenforced** |
-| **Rootless** | **Experimental** | Supported as a deliberate choice, **unenforced** |
+| **Rootless** | **Supported** (needs `loginctl enable-linger` to survive reboot) | Supported as a deliberate choice, **unenforced** |
 
 Advisory mode is **not** a weaker grade of enforcing and **not** a fallback:
 agents can bypass the MITM proxy and the ACMM capability model is not enforced.
