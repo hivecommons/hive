@@ -200,6 +200,60 @@ func (e *entitlementStore) get(endpoint string) (models []string, source string,
 	return out, entry.source, true, time.Since(entry.at) > entitlementTTL
 }
 
+// entitledModelKey reduces a model id to a drift-insensitive comparison key:
+// the segment after the last provider prefix "/" with every "." folded to "-",
+// case-insensitively. This is the same tolerance the dashboard's preselect
+// matcher applies (prefix-stripped tail + dot/hyphen normalization, #4262) —
+// but here it is used to RESOLVE the outbound id, never to mask drift.
+func entitledModelKey(id string) string {
+	tail := id
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		tail = id[i+1:]
+	}
+	return strings.ToLower(strings.ReplaceAll(tail, ".", "-"))
+}
+
+// resolveEntitledModelID maps a stored model id onto the exact entitled
+// gateway id it drifted from. LiteLLM matches the request model VERBATIM
+// against the team's entitled set — "claude-sonnet-4.6" is refused with a
+// team-scope 403 even when "aws/claude-sonnet-4-6" is entitled (#4400: a
+// default agent carried its copilot-spelled dotted model id into a litellm
+// backend switch and 403'd forever, while an agent added later with an id
+// picked from discovery worked — same model, different spelling).
+//
+// Resolution is deliberately conservative:
+//   - an id already present verbatim in the entitled set is returned as-is;
+//   - otherwise, if EXACTLY ONE entitled id shares the model's comparison key
+//     (entitledModelKey: prefix-stripped, dot/hyphen-folded, case-folded),
+//     that entitled id is returned;
+//   - zero or multiple candidates return the input unchanged — an ambiguous
+//     rewrite could silently bill a different provider's deployment.
+func resolveEntitledModelID(entitled []string, model string) (string, bool) {
+	if model == "" || len(entitled) == 0 {
+		return model, false
+	}
+	for _, id := range entitled {
+		if id == model {
+			return model, false
+		}
+	}
+	key := entitledModelKey(model)
+	match := ""
+	for _, id := range entitled {
+		if entitledModelKey(id) != key {
+			continue
+		}
+		if match != "" {
+			return model, false // ambiguous — never guess between providers
+		}
+		match = id
+	}
+	if match == "" {
+		return model, false
+	}
+	return match, true
+}
+
 // parseTeam403Models extracts the entitled model ids from a LiteLLM
 // "team not allowed to access model" 403 body. It returns nil when the body is
 // not a team-scope denial or carries no models=[...] list, so callers can

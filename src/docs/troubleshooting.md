@@ -162,15 +162,26 @@ entitled:    aws/claude-sonnet-4-6
                  ^^^^         ^
 ```
 
-`.` versus `-`, and a missing `aws/` prefix, are each enough for a 403. Hive passes
-inference-backend model ids through **verbatim** on purpose — the gateway is the only
-thing that knows its own naming, so hive rewriting the id would produce a model the
-team is not entitled to. Fix it in the agent's `model:` setting, not in hive.
+`.` versus `-`, and a missing `aws/` prefix, are each enough for a 403. For plain
+`vllm`/`llm-d` backends hive passes model ids through **verbatim** on purpose — the
+server is the only thing that knows its own naming — so fix drift there in the
+agent's `model:` setting.
+
+For **`litellm`** gateways this drift now self-heals
+([#4400](https://github.com/kubestellar/hive/issues/4400)): hive learns the key's
+entitled model set (from a key-info probe, or from the first team-scope 403 itself)
+and, when the configured id differs from **exactly one** entitled id only by
+separator (`.`/`-`), case, or provider-prefix drift, forwards that exact entitled id
+instead. The first request after a fresh start may still 403 (that 403 is what
+teaches the entitled set); subsequent requests resolve. An id that matches nothing —
+or matches more than one entitled id — is still sent verbatim, so correct the
+agent's `model:` setting to an id from the allowed list in that case.
 
 **Why one agent fails and another with "the same" model does not:** they are not the
 same string. Compare the two agents' configured `model:` values directly rather than
 the model each was *meant* to use — a single separator differs and only one of them
-matches the gateway.
+matches the gateway. (Note the dashboard's model dropdown matches tolerantly, so both
+agents can *display* the same selection while their stored ids differ.)
 
 Before [#4400](https://github.com/kubestellar/hive/issues/4400) hive read that line as
 a login prompt: it badged the agent 🔑, and — because a valid token was on disk —

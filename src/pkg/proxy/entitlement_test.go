@@ -255,3 +255,116 @@ func TestRecordInferenceError_IgnoresProviderErrorsAndOtherBackends(t *testing.T
 		t.Fatalf("vllm 403 must not record entitlements")
 	}
 }
+
+// resolveEntitledModelID maps separator/prefix drift onto the exact entitled
+// gateway id — the #4400 field case: a default agent's copilot-spelled
+// "claude-sonnet-4.6" must resolve to the team's entitled
+// "aws/claude-sonnet-4-6", because LiteLLM matches the request model verbatim
+// and 403s anything else. Ambiguity or no candidate leaves the id untouched.
+func TestResolveEntitledModelID(t *testing.T) {
+	fmaSet := []string{
+		"gemini-2.5-pro", "gemini-2.5-flash",
+		"gcp/gemini-3.1-pro-preview", "aws/claude-sonnet-4-6", "aws/claude-opus-4-7",
+	}
+	cases := []struct {
+		name     string
+		entitled []string
+		model    string
+		want     string
+		wantOK   bool
+	}{
+		{"field case: dotted copilot spelling resolves to entitled aws id",
+			fmaSet, "claude-sonnet-4.6", "aws/claude-sonnet-4-6", true},
+		{"verbatim entitled id passes through",
+			fmaSet, "aws/claude-sonnet-4-6", "aws/claude-sonnet-4-6", false},
+		{"prefixless dashed spelling resolves",
+			fmaSet, "claude-sonnet-4-6", "aws/claude-sonnet-4-6", true},
+		{"stored prefix drifts to entitled prefixless id",
+			[]string{"gpt-4o"}, "Azure/gpt-4o", "gpt-4o", true},
+		{"case drift resolves",
+			fmaSet, "AWS/Claude-Sonnet-4-6", "aws/claude-sonnet-4-6", true},
+		{"no candidate stays unchanged",
+			fmaSet, "claude-sonnet-4-5", "claude-sonnet-4-5", false},
+		{"ambiguous providers stay unchanged",
+			[]string{"aws/claude-sonnet-4-6", "gcp/claude-sonnet-4.6"},
+			"claude-sonnet-4-6", "claude-sonnet-4-6", false},
+		{"empty model stays unchanged", fmaSet, "", "", false},
+		{"empty entitled set stays unchanged", nil, "claude-sonnet-4.6", "claude-sonnet-4.6", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := resolveEntitledModelID(tc.entitled, tc.model)
+			if got != tc.want || ok != tc.wantOK {
+				t.Fatalf("resolveEntitledModelID(%v, %q) = (%q, %v), want (%q, %v)",
+					tc.entitled, tc.model, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+// routeWithEntitledModel rewrites the FORWARDED route only: a known entitled
+// set plus resolvable drift yields a copy carrying the exact entitled id,
+// while the stored route (what the dashboard and persistence see) is never
+// mutated. Unknown entitlements, non-litellm backends, and unresolvable ids
+// pass the original route through by identity.
+func TestRouteWithEntitledModel(t *testing.T) {
+	p := &GitHubProxy{
+		logger:       slog.Default(),
+		inference:    newInferenceRouter(),
+		entitlements: newEntitlementStore(),
+	}
+	route := &InferenceRoute{
+		Backend:  "litellm",
+		Endpoint: "https://gw.example.com",
+		Model:    "claude-sonnet-4.6", // copilot-spelled drift (#4400)
+		APIKey:   "sk-team",
+	}
+	p.inference.Set("scanner", route)
+
+	// Entitled set unknown yet: pass-through by identity.
+	if got := p.routeWithEntitledModel(route, "scanner"); got != route {
+		t.Fatalf("unknown entitlements must pass the route through unchanged")
+	}
+
+	// A team-scope 403 teaches the entitled set (the self-heal trigger).
+	p.recordInferenceError(route, "scanner", http.StatusForbidden,
+		[]byte(`team not allowed to access model. This team can only access `+
+			`models=['gemini-2.5-pro','aws/claude-sonnet-4-6','aws/claude-opus-4-7']`))
+
+	got := p.routeWithEntitledModel(route, "scanner")
+	if got == route {
+		t.Fatalf("resolvable drift must return a rewritten copy")
+	}
+	if got.Model != "aws/claude-sonnet-4-6" {
+		t.Fatalf("forwarded model = %q, want aws/claude-sonnet-4-6", got.Model)
+	}
+	if got.Endpoint != route.Endpoint || got.APIKey != route.APIKey || got.Backend != route.Backend {
+		t.Fatalf("rewrite must only touch Model: %+v", got)
+	}
+	// Stored route untouched — the rewrite is per-request, never persisted.
+	if p.inference.Get("scanner").Model != "claude-sonnet-4.6" {
+		t.Fatalf("stored route must not be mutated")
+	}
+
+	// A verbatim-entitled model passes through by identity.
+	entitledRoute := &InferenceRoute{Backend: "litellm", Endpoint: "https://gw.example.com",
+		Model: "aws/claude-sonnet-4-6", APIKey: "sk-team"}
+	if got := p.routeWithEntitledModel(entitledRoute, "quality"); got != entitledRoute {
+		t.Fatalf("entitled model must pass through unchanged")
+	}
+
+	// Non-litellm backends never rewrite (vllm/llm-d ids are authoritative).
+	vllm := &InferenceRoute{Backend: "vllm", Endpoint: "https://gw.example.com", Model: "claude-sonnet-4.6"}
+	if got := p.routeWithEntitledModel(vllm, "scanner"); got != vllm {
+		t.Fatalf("non-litellm backend must pass through unchanged")
+	}
+
+	// Nil route / nil entitlement store are safe pass-throughs.
+	if got := p.routeWithEntitledModel(nil, "scanner"); got != nil {
+		t.Fatalf("nil route must return nil")
+	}
+	bare := &GitHubProxy{logger: slog.Default()}
+	if got := bare.routeWithEntitledModel(route, "scanner"); got != route {
+		t.Fatalf("nil entitlement store must pass through unchanged")
+	}
+}

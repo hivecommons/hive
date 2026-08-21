@@ -1618,6 +1618,41 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 		"agent", agentName, "endpoint", route.Endpoint, "count", len(entitled), "model", route.Model)
 }
 
+// routeWithEntitledModel returns the route to actually forward with: when the
+// gateway's entitled model set is known (key-info probe or a prior team-scope
+// 403) and the route's stored model differs from an entitled id only by
+// provider-prefix / dot-hyphen spelling drift, a COPY of the route carrying
+// the exact entitled id is returned. LiteLLM matches the request model string
+// verbatim, so without this a stored copilot-spelled id (e.g.
+// "claude-sonnet-4.6" vs entitled "aws/claude-sonnet-4-6") 403s on every call
+// forever (#4400) — while the dashboard's tolerant preselect matcher shows the
+// agent on a perfectly valid model. Self-healing: the first 403 teaches the
+// entitled set (recordInferenceError), so the next request resolves.
+//
+// The stored route is never mutated: the rewrite is per-request, so a
+// key/team change that re-entitles the verbatim id takes effect immediately,
+// and concurrent requests race on nothing. Unknown entitlements, verbatim
+// matches, and ambiguous candidates all pass the route through unchanged.
+func (p *GitHubProxy) routeWithEntitledModel(route *InferenceRoute, agentName string) *InferenceRoute {
+	if route == nil || route.Backend != "litellm" || p.entitlements == nil {
+		return route
+	}
+	entitled, _, known := p.EntitledModels(route.Endpoint)
+	if !known {
+		return route
+	}
+	resolved, ok := resolveEntitledModelID(entitled, route.Model)
+	if !ok {
+		return route
+	}
+	p.logger.Info("inference model resolved to entitled gateway id",
+		"agent", agentName, "endpoint", route.Endpoint,
+		"configured", route.Model, "resolved", resolved)
+	rewritten := *route
+	rewritten.Model = resolved
+	return &rewritten
+}
+
 // recordInferenceSuccess records a successful inference call so a previously
 // latched auth-failure signal clears — the self-heal for the inference-auth
 // health signal. Called from every inference forward path on a 2xx response.
@@ -1699,6 +1734,7 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
 			return
 		}
+		route = p.routeWithEntitledModel(route, agentName)
 
 		body, err := io.ReadAll(r.Body)
 		if r.Body != nil {
@@ -1895,6 +1931,7 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // handleInferenceRequest translates a single Anthropic API request and
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
+	route = p.routeWithEntitledModel(route, agentName)
 	conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
 	conn.SetReadDeadline(time.Time{})
