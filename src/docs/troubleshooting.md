@@ -118,6 +118,25 @@ Liveness is judged by the governor's in-process health check, so an agent that k
 1. **Read the work counts, not just liveness.** If an agent reports "Issues triaged: 0" cycle after cycle in the logs, that is the signal — `kubectl -n hive logs deploy/hive | grep <agent>` or attach to the session.
 2. **Cross-check an external surface.** Confirm the effect the agent is supposed to produce (a GitHub API query for the PRs/issues it claims to have handled) rather than trusting its self-reported state.
 
+## The terminal looks frozen — no new output, and reopening it doesn't help
+
+You are almost certainly **scrolled back**, not looking at a halted agent.
+
+The browser terminal is a live `tmux` attach, and the mouse wheel scrolls by entering tmux's copy-mode. **While a pane is in copy-mode it stops following live output.** Copy-mode is state held by the tmux server, not the browser, so closing the tab and reopening it re-attaches to the same scrolled-back pane and still shows nothing new — which is what makes it look like the agent died.
+
+Look at the right-hand end of the status bar:
+
+```
+[SCROLLBACK - not following live output - press q to resume]   now 14:22:07
+[live]                                                          now 14:22:07
+```
+
+Press **`q`** (or `Esc`) to leave copy-mode and resume following output.
+
+**The timestamp there is a clock, not a content timestamp.** It is the time *now*, which is why it never lines up with any particular line of scrollback. The black-on-yellow `[12/4837]` box in the top-right corner is tmux's copy-mode **scroll position**, not a line timestamp either.
+
+If the status bar shows `[live]` and output really has stopped, the agent is idle between kicks — check its next scheduled run on the dashboard before assuming a fault.
+
 ## An agent runs, but not the way I expect — why did it do that?
 
 Agents are told to act, not narrate: every policy carries an "Output Rules —

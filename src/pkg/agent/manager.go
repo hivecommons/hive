@@ -106,6 +106,42 @@ const (
 	// whenever -x is given, so it is pinned here rather than left to the 24-row
 	// default.
 	defaultTmuxPaneHeight = 50
+
+	// tmuxStatusRight is the status line agent tmux sessions carry (#4399).
+	//
+	// THE PROBLEM IT SOLVES. Two things sat in the top-right of the browser
+	// terminal and neither said what it was:
+	//
+	//   * tmux's DEFAULT status-right is a live WALL CLOCK
+	//     (`"#{=21:pane_title}" %H:%M %d-%b-%y`). An operator reasonably read it
+	//     as a timestamp OF THE CONTENT and tried to line it up with the
+	//     scrollback — which can never work, because it is simply the time now.
+	//   * copy-mode draws a black-on-yellow `[position/total]` counter (tmux's
+	//     `mode-style bg=yellow,fg=black`). That is the only on-screen hint that
+	//     the pane is scrolled back, and it looks like a line counter, not a
+	//     warning.
+	//
+	// And copy-mode is the important state: while a pane is in it the pane
+	// STOPS FOLLOWING LIVE OUTPUT. #3694 deliberately turned mouse mode on so
+	// the wheel scrolls history, which means an operator reaches that state by
+	// doing the most natural thing in a terminal. Worse, copy-mode is PANE
+	// state held by the tmux server, so closing the browser tab and reopening
+	// it re-attaches to a pane that is still frozen — exactly the "no more
+	// output appeared, and reopening showed no more output" report in #4399.
+	//
+	// So: say which state the pane is in, and label the clock as the current
+	// time rather than leaving it to be misread as a content timestamp.
+	// Deliberately plain ASCII with no `#[...]` style blocks — style specs are
+	// comma-separated and a comma inside a `#{?...}` branch has to be escaped,
+	// which is exactly the kind of format-string subtlety that renders as
+	// garbage instead of failing loudly.
+	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK - not following live output - press q to resume] ,[live] }now %H:%M:%S "
+
+	// tmuxStatusInterval is how often (seconds) tmux redraws the status line.
+	// tmux's default is 15s, which would leave the SCROLLBACK marker above up
+	// to 15 seconds stale — long enough for an operator to scroll, see nothing
+	// change, and conclude the terminal is broken.
+	tmuxStatusInterval = 2
 )
 
 var defaultTmuxSocket string
@@ -1230,6 +1266,14 @@ func tmuxPaneWidth() int {
 func newSessionCommands(session, dir string) []string {
 	return []string{
 		"set-option", "-g", "history-limit", strconv.Itoa(tmuxHistoryLimit()), ";",
+		// #4399: set the status line BEFORE new-session so the pane carries it
+		// from its first frame. Global (-g) rather than per-session because each
+		// agent runs on its own tmux socket under its own UID
+		// (/tmp/tmux-2007/hive-scanner), so "global" is scoped to that one
+		// agent's server — and a global set also reaches panes created later in
+		// the session, which a per-session set would not.
+		"set-option", "-g", "status-right", tmuxStatusRight, ";",
+		"set-option", "-g", "status-interval", strconv.Itoa(tmuxStatusInterval), ";",
 		"new-session", "-d", "-s", session, "-c", dir,
 		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight),
 	}
