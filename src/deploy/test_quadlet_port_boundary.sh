@@ -12,6 +12,10 @@
 # the same set of invariants for src/deploy/quadlet/, so the two runtimes are
 # guarded rather than one being guarded and the other reviewed.
 #
+# Both of those check one runtime at a time, and a property can hold in each and
+# still DIFFER between them. src/deploy/test_standalone_runtime_parity.sh (#4404)
+# is the cross-runtime comparison; this file stays the Podman-side boundary.
+#
 # What is asserted, and why each one is invisible at runtime when it breaks:
 #
 #   - The gateway publishes host 3001 -> container 3001 and nothing else. A

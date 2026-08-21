@@ -18,6 +18,13 @@ services:
       - "3001:3001"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      # APPEARS TO BE DEAD (#4416). Nothing in this repository reads
+      # /etc/nginx/upstream: deploy/nginx.conf declares `upstream hive_api`
+      # inline and states it carries no include, and the Podman gateway
+      # (deploy/quadlet/hive-gateway.container) has no equivalent mount. Left in
+      # place deliberately — #4404 was the parity CHECK and explicitly not the
+      # fixes; deploy/test_standalone_runtime_parity.sh carries this as a
+      # defect-tracked exception until #4416 disposes of it.
       - gateway-upstream:/etc/nginx/upstream
     depends_on:
       hive:
@@ -61,6 +68,12 @@ services:
       - ./hive.yaml:/etc/hive/hive.yaml
       - hive-data:/data
       - ./secrets:/secrets:ro
+    # PARITY (#4404): this list and the variable names in
+    # deploy/quadlet/hive.env.example are asserted to be the SAME SET by
+    # deploy/test_standalone_runtime_parity.sh. The Quadlet unit reads its
+    # environment through an opaque `EnvironmentFile=`, so a variable added here
+    # and nowhere else used to reach Docker and silently never reach Podman.
+    # Add to both, or to neither.
     environment:
       - HIVE_GITHUB_TOKEN=${HIVE_GITHUB_TOKEN}
       - HIVE_DASHBOARD_TOKEN=${HIVE_DASHBOARD_TOKEN}

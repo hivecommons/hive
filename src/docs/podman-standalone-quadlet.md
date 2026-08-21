@@ -219,10 +219,12 @@ service's healthcheck in `src/docker-compose.yaml` looks for it, and what
 happy, the container starts, and the failure arrives five minutes later. That is
 why the `sed` above is a step rather than a remark.
 
-**`$CONF/hive.env` must exist**, even if it is empty:
+**`$CONF/hive.env` must exist**, even if every line in it stays commented out.
+Start from the tracked template, which lists every variable the Compose stack's
+`environment:` block sets:
 
 ```sh
-touch "$CONF/hive.env"
+cp src/deploy/quadlet/hive.env.example "$CONF/hive.env"
 chmod 600 "$CONF/hive.env"
 ```
 
@@ -230,6 +232,14 @@ chmod 600 "$CONF/hive.env"
 `podman run` fails if the file is missing. Quadlet does **not** honour
 systemd's leading `-` optional-file prefix here — see
 [Traps](#traps-measured-not-guessed).
+
+`hive.env.example` is tracked rather than left to prose because
+`EnvironmentFile=` is opaque: the unit names a path and nothing in the unit says
+what belongs in it, so a variable added to `src/docker-compose.yaml` used to
+reach Docker and silently never reach Podman. `src/deploy/
+test_standalone_runtime_parity.sh` ([#4404](https://github.com/kubestellar/hive/issues/4404))
+asserts the two lists are the same set, so that divergence now fails CI. Add a
+variable to both or to neither.
 
 At minimum set `HIVE_DASHBOARD_TOKEN` in it:
 

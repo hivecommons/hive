@@ -132,6 +132,21 @@ jobs:
       - name: Quadlet config-coupling contract (#4367)
         run: bash deploy/test_quadlet_config_contract.sh
 
+      # #4404: every guard above looks at ONE runtime. test_standalone_service_
+      # contract.sh parses only docker-compose.yaml and says so in its own header
+      # ("This does NOT claim Docker/Podman parity"); the two Quadlet guards parse
+      # only the units. A property can hold in both and still DIFFER between them,
+      # which is what #4188 asked for: "a change to one runtime must fail CI if
+      # the other runtime's contract was unintentionally left stale". This
+      # compares the two deployment descriptions directly — images, environment,
+      # mounts and modes, published vs exposed ports, capabilities, health checks,
+      # persistence, network exposure, restart policy, labels — and fails on any
+      # divergence not in its exception table, where each entry carries a stated
+      # reason. Entries are swept in reverse too: an exception that no longer
+      # matches a real divergence is itself a failure, so the table cannot rot.
+      - name: Docker/Podman contract parity (#4404)
+        run: bash deploy/test_standalone_runtime_parity.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
