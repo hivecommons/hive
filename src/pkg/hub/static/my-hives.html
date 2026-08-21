@@ -350,7 +350,7 @@ function load() {
   fetch("/api/saas/my-hives", { credentials: "same-origin", headers: { "Accept": "application/json" } })
     .then(function (r) {
       if (r.status === 401) {
-        window.location.href = "/login?redirect=" + encodeURIComponent("/my-hives");
+        window.location.href = "/login?redirect=" + encodeURIComponent("/fleet");
         throw new Error("redirecting to login");
       }
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -360,7 +360,7 @@ function load() {
     .catch(function (e) {
       if (e && e.message === "redirecting to login") return;
       var c = document.getElementById("statusCell");
-      if (c) c.innerHTML = "Failed to load: " + esc(e.message) + ' — <a class="reload" href="/my-hives">retry</a>';
+      if (c) c.innerHTML = "Failed to load: " + esc(e.message) + ' — <a class="reload" href="/fleet">retry</a>';
     });
 }
 wireControls();

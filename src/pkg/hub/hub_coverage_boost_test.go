@@ -1966,7 +1966,7 @@ func TestHandleMyHivesWithBearerAndCache(t *testing.T) {
 		ghTokenCacheMu.Unlock()
 	}()
 
-	req := httptest.NewRequest("GET", "/my-hives", nil)
+	req := httptest.NewRequest("GET", "/fleet", nil)
 	req.Header.Set("Authorization", "Bearer ghp_myhives_test")
 	w := httptest.NewRecorder()
 	srv.handleMyHives(w, req)

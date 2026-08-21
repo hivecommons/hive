@@ -1432,7 +1432,18 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// unauthenticated like every other static page; all sensitive data comes
 	// from GET /api/saas/my-hives, which is requireAuth-gated. On a 401 the page
 	// redirects to the OAuth login (see static/my-hives.html).
-	s.mux.HandleFunc("GET /my-hives", s.serveStatic("static/my-hives.html"))
+	// The page lives at /fleet — matching the "Fleet" nav button that opens it.
+	// /my-hives (the original path) permanently redirects so old bookmarks,
+	// OAuth redirect params, and shared links keep working; the API endpoint
+	// /api/saas/my-hives is unchanged.
+	s.mux.HandleFunc("GET /fleet", s.serveStatic("static/my-hives.html"))
+	s.mux.HandleFunc("GET /my-hives", func(w http.ResponseWriter, r *http.Request) {
+		target := "/fleet"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+	})
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
 	// Open Graph preview image for shared links. Registered here rather than in
 	// registerOAuth because that function returns early when OAuth is

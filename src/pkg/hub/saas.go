@@ -9760,7 +9760,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <a href="/reading">Reading</a>
       <a href="/get-started">Get Started</a>
       <a href="/dashboard" style="color:var(--amber)">My Hives</a>
-      <a href="/my-hives" id="nav-fleet" style="display:none" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
+      <a href="/fleet" id="nav-fleet" style="display:none" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
       <a href="/api/docs" target="_blank">API</a>
       <a href="https://kubestellar.io/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
       <span id="nav-user" class="nav-user"></span>
