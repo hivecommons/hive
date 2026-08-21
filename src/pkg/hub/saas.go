@@ -318,6 +318,23 @@ type SaaSUser struct {
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
 
+	// Country is an OPTIONAL ISO 3166-1 alpha-2 code (uppercase, e.g. "GB"),
+	// rendered as a small flag beside the user's avatar. Two sources, in
+	// priority order: the explicit dropdown in the get-started wizard (copied
+	// here on approval, like FullName/SlackID above), else a best-effort
+	// inference from the Accept-Language region subtag at login, which only
+	// ever fills an EMPTY value. See user_country.go for the full rationale and
+	// the privacy posture.
+	//
+	// Stored as the code, never as the glyph: the flag is derived at render
+	// time from regional-indicator code points, so no external image host is
+	// involved and an unknown country renders nothing at all.
+	//
+	// omitempty so the thousands of existing records on the PVC round-trip
+	// byte-identical until a user actually picks a country or logs in from a
+	// browser that states a region.
+	Country string `json:"country,omitempty"`
+
 	// Engagement stats, admin-only (they ride /api/saas/admin/users, which is
 	// requireAdmin). Both omitempty ints so existing records round-trip
 	// byte-identical until the user first logs in / opens a hive after this ships.
@@ -6876,6 +6893,18 @@ type ProvisionRequest struct {
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 
+	// Country is the requester's OPTIONAL self-declared ISO 3166-1 alpha-2
+	// code, picked from the wizard's dropdown. Like the two fields above it
+	// reuses the SaaSUser key of the same name and is copied onto the user
+	// record on approval (applyRequestContactToUser) — asking and then dropping
+	// the answer would be worse than not asking.
+	//
+	// This is the AUTHORITATIVE source of a user's country: they chose it about
+	// themselves. The Accept-Language inference on the login path is only a
+	// fallback for records that never got one. omitempty so requests filed
+	// before this field existed round-trip unchanged.
+	Country string `json:"country,omitempty"`
+
 	// Decision audit. Previously a request only carried its final Status, so
 	// once it left "pending" there was no record of WHO decided, WHEN, or —
 	// for an approval — which hive the requester actually got. That made the
@@ -7020,6 +7049,13 @@ func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
 	if user.SlackID == "" && pr.SlackID != "" {
 		user.SlackID = truncateRunes(strings.TrimSpace(pr.SlackID), maxContactSlackIDLen)
 	}
+	// The explicit pick outranks anything Accept-Language inferred at login, so
+	// unlike the two fields above this one overwrites a value already on the
+	// record — but only when the request actually carries a choice. Re-normalize
+	// rather than trusting the stored request: it may predate the validation.
+	if code := normalizeCountryCode(pr.Country); code != "" {
+		user.Country = code
+	}
 }
 
 func loadProvisionRequest(username string) *ProvisionRequest {
@@ -7105,6 +7141,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		AuthMethod  string `json:"auth_method"`
 		FullName    string `json:"full_name"`
 		SlackID     string `json:"slack_id"`
+		Country     string `json:"country"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
@@ -7127,6 +7164,12 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	// check, not a regex.
 	body.FullName = truncateRunes(strings.TrimSpace(body.FullName), maxContactNameLen)
 	body.SlackID = truncateRunes(strings.TrimSpace(body.SlackID), maxContactSlackIDLen)
+	// Country is OPTIONAL and normalized rather than rejected: a malformed or
+	// absent code stores "", which renders no flag at all. Validating here (the
+	// last point before the PVC) means the render sites can trust that a stored
+	// country is two uppercase letters, and a client that never sends the field
+	// behaves exactly as before this shipped.
+	body.Country = normalizeCountryCode(body.Country)
 	// Accept a pasted org/repo URL, not just a bare name. Users read
 	// "GitHub Organization" and paste the org's URL; the old validator rejected
 	// ":" and "/" and returned a bare "invalid org name" that explained nothing.
@@ -7256,6 +7299,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		AuthMethod:  body.AuthMethod,
 		FullName:    body.FullName,
 		SlackID:     body.SlackID,
+		Country:     body.Country,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339),
 		Status:      provisionStatusPending,
 	}
@@ -9011,6 +9055,12 @@ const dashboardHTML = `<!DOCTYPE html>
     .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
     .nav-user { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--text); }
     .nav-avatar { width: 28px; height: 28px; border-radius: 50%; }
+    /* The country flag beside an avatar. Sized just under the surrounding text
+       so it reads as a marker rather than as a second avatar, and given a fixed
+       line-height so a tall emoji cannot stretch the row it sits in. No color
+       of our own — the glyph carries its own, and the box is transparent, so
+       this behaves identically in light and dark. */
+    .country-flag { font-size: 0.95rem; line-height: 1; vertical-align: middle; margin-left: 2px; }
 
     /* ── Layout ── */
     .content { max-width: 1600px; margin: 0 auto; padding: 2.5rem clamp(1rem, 4vw, 4.5rem) 3rem; }
@@ -9710,6 +9760,57 @@ const dashboardHTML = `<!DOCTYPE html>
           'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(label, px)) + '">';
       }
       return '<img src="' + escAttr(avatarInitialsSVG(label, px)) + '" alt="" style="' + style + '">';
+    }
+
+    /* ---- Country flag ---------------------------------------------------
+       A user's OPTIONAL country renders as a small flag beside their avatar.
+
+       The glyph is DERIVED from the stored ISO 3166-1 alpha-2 code, never
+       fetched: a flag emoji is just the two regional-indicator code points for
+       the code's letters (REGIONAL INDICATOR SYMBOL LETTER A is U+1F1E6), so
+       the hub needs no image assets and no external image host.
+
+       Mirrors normalizeCountryCode / countryFlagEmoji in user_country.go. The
+       server already normalizes before storing, so this is defence in depth for
+       a legacy record or a hand-edited file — and it is what guarantees the
+       render sites can never emit half a code point.
+
+       Unknown or unset country renders NOTHING. No globe placeholder, no "??"
+       box: absence of evidence must look like absence, not like a broken flag. */
+    var REGIONAL_INDICATOR_BASE = 0x1F1E6;  /* U+1F1E6 REGIONAL INDICATOR SYMBOL LETTER A */
+    var COUNTRY_CODE_LEN = 2;               /* ISO 3166-1 alpha-2 */
+
+    function normalizeCountryCode(code) {
+      var c = String(code == null ? '' : code).trim().toUpperCase();
+      if (c.length !== COUNTRY_CODE_LEN) return '';
+      /* Shape check only — two ASCII letters. The hub does not adjudicate which
+         territories exist; it just refuses anything that would break a render. */
+      if (!/^[A-Z]{2}$/.test(c)) return '';
+      return c;
+    }
+
+    function countryFlagEmoji(code) {
+      var c = normalizeCountryCode(code);
+      if (!c) return '';
+      return String.fromCodePoint(
+        REGIONAL_INDICATOR_BASE + (c.charCodeAt(0) - 65),
+        REGIONAL_INDICATOR_BASE + (c.charCodeAt(1) - 65));
+    }
+
+    /* countryFlagHTML: the flag as an inline <span>, or '' when there is no
+       country. Every caller appends the result unconditionally, so returning ''
+       is what makes an unknown country render as silence.
+
+       The code is escaped into the title/aria-label even though it is already
+       normalized to [A-Z]{2} — the render path must not depend on the validator
+       upstream of it staying correct. Colors come from theme tokens; the glyph
+       is the emoji's own, so only the sizing is ours. */
+    function countryFlagHTML(code) {
+      var c = normalizeCountryCode(code);
+      if (!c) return '';
+      var glyph = countryFlagEmoji(c);
+      return '<span class="country-flag" title="' + escAttr(c) + '" ' +
+        'role="img" aria-label="' + escAttr(c) + '">' + glyph + '</span>';
     }
 
     /* Rendered avatar sizes, in CSS pixels, one per surface. They differ because
@@ -11072,6 +11173,11 @@ const dashboardHTML = `<!DOCTYPE html>
             avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
               '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
               'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
+            /* The viewer's country flag, immediately after their face. Empty
+               string when the auth payload carries no country — which is the
+               common case today — so the nav renders exactly as before for a
+               user whose country is unknown. */
+            countryFlagHTML(data.country) +
             '<span style="font-size:0.85rem">' + esc(data.login) + '</span>' +
             '<span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + roleText + '</span>';
         }

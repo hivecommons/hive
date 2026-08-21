@@ -2,8 +2,8 @@
 #
 # ADR-0017 chose Quadlet as the Podman persistent lifecycle. This is the unit
 # that decision was for. It runs the Hive service itself; the authenticating
-# gateway and the network boundary are the next slice and are deliberately not
-# here.
+# gateway that fronts it is hive-gateway.container and the network they share
+# is hive.network (#4375).
 #
 # READINESS IS THE POINT. Notify=healthy generates Type=notify,
 # NotifyAccess=all, and `podman run --sdnotify=healthy`, which holds the unit
@@ -69,6 +69,15 @@ AddCapability=NET_ADMIN
 # mounts below are the opposite case.
 Volume=hive-data.volume:/data
 
+# The shared network (#4375). Referenced by unit name for the same reason as
+# the volume: the generated service picks up Requires=/After=hive-network.service.
+#
+# This is what makes the container reachable as `hive` from the gateway, which
+# is how src/deploy/nginx.conf finds its upstream. It is also the whole extent
+# of the exposure: joining a network publishes nothing, so 3001, 3002 and 7681
+# are reachable from other members of this network and from nowhere else.
+Network=hive.network
+
 # Operator-supplied configuration and secrets. %E is /etc for a rootful unit
 # and ~/.config for a rootless one.
 #
@@ -90,10 +99,13 @@ Volume=%E/hive/secrets:/secrets:ro,Z
 # do not "restore" the dash.
 EnvironmentFile=%E/hive/hive.env
 
-# No PublishPort. The service listens on 3002 (API) and 3001 (proxy), and 7681
-# is the raw writable ttyd terminal which must never be published — reaching it
-# goes through the authenticating gateway on :3001/terminal. Publishing belongs
-# to the gateway slice, not here.
+# NO PublishPort, DELIBERATELY. The service listens on 3002 (API) and 3001
+# (proxy), and 7681 is the raw writable ttyd terminal which must never be
+# published — reaching it goes through the authenticating gateway on
+# :3001/terminal, which authenticates first. The single published port on the
+# host belongs to hive-gateway.container and is 3001 and nothing else, exactly
+# as in src/docker-compose.yaml. src/deploy/test_quadlet_port_boundary.sh fails
+# the build if a PublishPort= appears here.
 
 # READINESS. HealthCmd is required for Notify=healthy to mean anything; see the
 # header. /api/health is the same endpoint the Kubernetes readiness probe and

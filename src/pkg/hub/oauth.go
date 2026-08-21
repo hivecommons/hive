@@ -538,6 +538,13 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if displayName != "" {
 		saasUser.DisplayName = displayName
 	}
+	// Best-effort country inference, source 2 of 2 (see user_country.go). Reads
+	// only the Accept-Language header this request already carried — no IP
+	// geolocation, no third-party lookup, nothing sent off-box — and fills the
+	// field ONLY when the record has none, so an explicit pick in the wizard is
+	// never overwritten by a browser's language setting. Cannot fail: with no
+	// region subtag it stores nothing and no flag renders.
+	applyInferredCountry(saasUser, r)
 	// A completed callback IS a login — count it here and nowhere else.
 	// ensureSaaSUser already refreshed LastLogin; the count is the engagement
 	// signal the admin Users card reads. Persist unconditionally below so a login
@@ -944,6 +951,15 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	setSessionCookies(w, r, sessionValue)
 	isAdmin := isHubAdmin(username)
 	displayLogin, avatar := s.displayIdentity(username)
+	// The viewer's own country, for the flag beside their nav avatar. Sent as
+	// the alpha-2 CODE, not the glyph, so the dashboard derives the emoji the
+	// same way every other render site does — and so an empty value is
+	// unambiguously "we do not know" rather than an empty-looking glyph.
+	// Absent from the payload entirely when unset (omitted below).
+	var country string
+	if u := loadSaaSUser(username); u != nil {
+		country = normalizeCountryCode(u.Country)
+	}
 	// Fold impersonation status into the auth payload the dashboard already
 	// fetches, so the "Viewing as … read-only" banner renders without a second
 	// round-trip. When an admin is impersonating, report the effective identity
@@ -956,11 +972,27 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		"avatar_url":    avatar,
 		"hub_admin":     isAdmin,
 	}
+	// Only ship the key when there is a country to ship. An absent key and an
+	// empty string both render no flag, but omitting it keeps the payload for
+	// the (currently vast) majority of users byte-identical to before.
+	if country != "" {
+		payload["country"] = country
+	}
 	if grant, ok := s.activeImpersonationGrant(r); ok {
 		targetLogin, targetAvatar := s.displayIdentity(grant.Target)
 		payload["login"] = targetLogin
 		payload["avatar_url"] = targetAvatar
 		payload["hub_admin"] = false
+		// Every per-user view renders AS the target, so the flag must follow the
+		// target too — otherwise the admin's own flag would sit beside the
+		// impersonated user's face. Delete rather than blank it when the target
+		// has no country, so no stale flag survives the swap.
+		delete(payload, "country")
+		if tu := loadSaaSUser(grant.Target); tu != nil {
+			if tc := normalizeCountryCode(tu.Country); tc != "" {
+				payload["country"] = tc
+			}
+		}
 		payload["impersonating"] = true
 		payload["viewing_as"] = targetLogin
 		payload["real_user"] = displayLogin
