@@ -370,6 +370,12 @@ On an enforcing host a mislabelled bind mount fails in ways that do not name SEL
 
 Do not weaken SELinux to test the theory. The measured behaviour, including the restore, is in [podman-selinux-avc-evidence.md](podman-selinux-avc-evidence.md) and [podman-volume-persistence.md](podman-volume-persistence.md); `bin/hive-podman-preflight-host.sh` reports the labels and the secrets group-traverse check directly.
 
+### `tar: can't open '/backup/…': Permission denied` restoring or migrating an archive
+
+Rootless, and the archive was written by a root process — anything from Docker's daemon, or anything taken under `sudo`. The `:z` on the `/backup` mount is supposed to relabel it to `container_file_t`, but relabelling needs ownership or `CAP_FOWNER`, and a rootless user has neither over a root-owned file. Podman skips it without saying so and the container is denied. The file's mode is a red herring: it is usually `0644` and perfectly readable from your own shell.
+
+`sudo chown "$(id -u):$(id -g)" <archive>` and re-run the identical command. Not `chmod 777`, which changes nothing here, and not `setenforce 0`. Full mechanism and the Docker → Podman procedure it belongs to: [backup-restore.md](backup-restore.md#docker--podman-migration).
+
 ### Auto-update rolled back, or is not updating
 
 Auto-update is opt-in and off by default. If it rolled back, the published image is bad and **will be retried on the next timer firing** — the unit's own state stays green throughout. If it reports success but changes nothing, a digest pin is probably in force. Both are covered in [podman-auto-update.md](podman-auto-update.md).

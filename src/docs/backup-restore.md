@@ -317,6 +317,8 @@ systemctl --user start hive.service
 
 `podman volume import` requires an **uncompressed** tar and an **existing** volume; it does not create one, which is why step 3 is separate.
 
+Rootless, the `:z` form in step 4 only works on an archive the operator owns. Any archive written by a root process — anything that came from Docker, or that was taken under `sudo` — is root-owned, and rootless Podman cannot relabel a file it does not own, so `:z` skips it and the extract is denied. `sudo chown "$(id -u):$(id -g)" <archive>` first; the [migration section](#docker--podman-migration) has the mechanism.
+
 Then check the thing that actually matters — that this is the same hive, not a fresh one wearing its name:
 
 ```sh
@@ -353,6 +355,13 @@ docker run --rm -v src_hive-data:/data -v "$PWD":/backup alpine \
 #    until the Podman side is proven healthy.
 docker compose -f src/docker-compose.yaml stop
 
+# 2a. take ownership of the archive. Docker's daemon is root, so the file it
+#     just wrote is root-owned -- and rootless Podman cannot relabel a file it
+#     does not own, so the `:z` in step 3 would silently skip it and the
+#     extract would fail with "Permission denied". Rootful Podman does not
+#     need this step.
+sudo chown "$(id -u):$(id -g)" docker-hive-data.tar.gz
+
 # 3. on the Podman side: create the volume through its unit, then extract.
 #    If hive-data already exists with other content, wipe it first --
 #    steps 1-3 of Restore above. `tar xzf` merges into whatever is there.
@@ -366,6 +375,22 @@ podman exec hive cat /data/hive-id       # must match what Docker reported
 
 # 5. only now, once step 4 matched: docker compose -f src/docker-compose.yaml down -v
 ```
+
+**Step 2a is not housekeeping, and its failure is an SELinux denial rather than an ownership one.** The archive Docker writes is mode `0644` — world-readable, so ownership alone would not stop the extract. What differs is the label. Docker's rootful daemon writes into the operator's directory and the file inherits that directory's type, typically `user_tmp_t`; a file the operator wrote through Podman in the same directory carries `container_file_t`. The `:z` in step 3 exists to relabel the mount to `container_file_t`, but relabelling is `chcon`, and `chcon` needs ownership or `CAP_FOWNER` — neither of which a rootless user has over a root-owned file. Podman skips the file, says nothing about it, and the container domain is denied:
+
+```
+$ podman run --rm -v hive-data:/data -v "$PWD":/backup:z docker.io/library/alpine:3.22 \
+    tar xzf /backup/docker-hive-data.tar.gz -C /data
+tar: can't open '/backup/docker-hive-data.tar.gz': Permission denied
+```
+
+With `chown` run first, that identical command extracts, and the file comes out `container_file_t` — `:z` relabelled it once it was the operator's to relabel. Inside the container the file also appears as `65534:65534` (`nobody`), because host uid 0 is outside the rootless subuid range; that is cosmetic, since `0644` would still permit the read.
+
+**Do not reach for `chmod 777` or `setenforce 0`.** Neither addresses the label, the first is a no-op here (the file is already readable), and the second turns off the enforcement the rest of this page depends on. `bin/hive-podman-preflight-host.sh` makes the same point about the host checks it runs: nothing in the Podman path requires weakening SELinux, and the kernel stays enforcing either way.
+
+Doing it the other way round — `docker run --user "$(id -u):$(id -g)"` in step 1, so the archive is never root-owned in the first place — removes the step, but changes what the Docker-side `tar` can read. `/data` holds `gh-app-key-*.pem` at mode `0600` owned by the container's `dev` uid, not the operator's, so a `tar` run as the operator drops exactly the file the archive exists to carry — and, as [above](#rootless-never-tar-the-volume-from-the-host-shell), exits non-zero while still writing a tarball. Keep step 1 privileged and take ownership afterwards.
+
+**The ordering of steps 4 and 5 is the safety property, not a formality.** A `hive-data` that stayed empty because the extract was denied still starts *cleanly*: `systemctl --user start hive.service` returns rc 0, the container reports `healthy`, and the dashboard answers on the published port — with a freshly minted identity. That is indistinguishable from a successful migration unless the `hive-id` check in step 4 is actually run. An operator who reads "healthy" and skips ahead to `down -v` destroys the source data they were still holding.
 
 Also copy the Docker deployment's `src/hive.yaml` to `%E/hive/hive.yaml` and `src/secrets/` to `%E/hive/secrets/`, then re-apply the secrets ownership as described above. Two settings do **not** carry over and have to be moved by hand: the Compose `environment:` block becomes `%E/hive/hive.env`, and `dashboard.port` must be `3002` to match the unit's `HealthCmd` ([#4367](podman-standalone-quadlet.md)).
 
@@ -418,11 +443,17 @@ The volume-root ownership landing on `0:0` (rootful) or container-root (rootless
 | `podman volume inspect src_hive-data` | `Error: no such volume src_hive-data`, in **both** root modes |
 | bind-mounting Docker's volume dir into a rootless container | `Error: statfs …: permission denied` |
 | export from Docker via a container | 20,284,768 B, ownership recorded as `1001/1000` |
+| the archive Docker's daemon wrote | root-owned, mode `0644`, ctx `system_u:object_r:user_tmp_t:s0` — against `container_file_t:s0` on a Podman-side archive in the same directory |
+| extract of that archive **before** step 2a, rootless | `tar: can't open '/backup/docker-hive-data.tar.gz': Permission denied`. `:z` skipped the root-owned file silently; no AVC names it |
+| the same command **after** `chown "$(id -u):$(id -g)"` | extracted; the archive came out `system_u:object_r:container_file_t:s0` — `:z` relabelled it once it was ours |
 | extract into a fresh Podman `hive-data` via a container | host `uid=525288 gid=525287`, ctx `system_u:object_r:container_file_t:s0` |
+| `systemctl --user start hive.service` on the volume the **denied** extract left empty | rc 0 in **11s**, `active`, container `healthy`, dashboard `{"status":"ok"}` — on a brand-new identity. This is why step 4 precedes step 5 |
 | `systemctl --user start hive.service` | rc 0 in **10s**, container `healthy` |
 | `hive-id` under Podman afterwards | **`hive-calm-colt`** — the Docker hive, now running on Podman |
 | GitHub App key SHA-256 | identical to the Docker side |
 | `docker compose down -v` afterwards | removed container, network, and `src_hive-data` |
+
+The four SELinux rows come from a second, independent run of the same procedure on Bluefin 44 (Silverblue), SELinux enforcing, Podman 5.8.4 rootless, Docker 29.7.2 ([#4497](https://github.com/kubestellar/hive/issues/4497)), which is where the missing ownership step was found: that run reproduced the two "this cannot work" results above exactly, and completed the migration — `hive-able-moth` moved from Docker to Podman, carrying a `_migration_marker` planted on the Docker side — but only with step 2a added. The first run recorded here was executed as well; the step that made its rootless extract succeed did not make it onto the page, which is the defect [#4497](https://github.com/kubestellar/hive/issues/4497) reports.
 
 ### Not executed, and one caveat about the host
 
