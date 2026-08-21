@@ -191,15 +191,6 @@ EXCEPTIONS = {
         "systemctl reports success — and would restart under Compose. Tracked "
         "in #4415; not fixed here, #4404 is the check and not the fixes.",
     ),
-    "mount-target:gateway:/etc/nginx/upstream": (
-        "defect-tracked",
-        "Compose mounts the named volume gateway-upstream at /etc/nginx/upstream "
-        "and the units have no equivalent. NOTHING in the repository reads that "
-        "path — src/deploy/nginx.conf declares `upstream hive_api` inline and "
-        "states it has no include — so the Quadlet side is likely correct and "
-        "the Compose volume vestigial. #4404 says explicitly not to delete it "
-        "here; tracked for separate disposal in #4416.",
-    ),
 }
 
 # Exceptions that fired. Anything left over at the end is stale.
