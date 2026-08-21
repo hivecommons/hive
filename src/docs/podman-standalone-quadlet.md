@@ -18,8 +18,10 @@ volume and network they need**:
 | `src/deploy/quadlet/hive-gateway.container` | the authenticating nginx gateway, and the only published port |
 
 Deliberately **not** here, each being its own slice: persistence and SELinux
-volume *semantics*, stop/start/recreate behaviour,
-update/rollback/auto-update, and backup/restore/migration.
+volume *semantics*, stop/start/recreate behaviour, auto-update, and
+backup/restore/migration. Manual update and rollback used to be on that list and
+now has its own page,
+[podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md) (#4378).
 
 **Docker is untouched.** `src/docker-compose.yaml` is unchanged and remains the
 default, fully supported runtime.
@@ -459,6 +461,14 @@ own repeatable check, `bin/hive-podman-lifecycle-probe.sh`, covered by
 `bin/test_hive_podman_lifecycle_probe.sh` with every input mocked. The
 measurements it was written from are in
 [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md).
+
+Changing the image these units run — and getting back when the new one does not
+work — is [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md)
+(#4378), with `bin/hive-podman-update.sh` as its repeatable path. The `Image=`
+line below stays a floating tag on purpose, because it has to agree with
+`src/deploy/standalone-images.sh`; the operator's digest pin goes in a Quadlet
+drop-in, `hive.container.d/10-image.conf`, which that page describes. A floating
+tag is not something you can roll back to, so pin before you need to.
 
 A **live rootless start was performed** on Fedora 44, Podman 5.8.4, cgroup v2,
 SELinux enforcing, against the real `ghcr.io/kubestellar/hive:stable` image:

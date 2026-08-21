@@ -1,0 +1,515 @@
+#!/usr/bin/env bash
+# Deliberate manual update and rollback for the Hive Quadlet unit (#4378).
+#
+# ADR-0017 chose Quadlet because `Notify=healthy` means a unit that reports
+# started is actually serving. That property only pays off if there is a
+# defined way to move to a new image AND to get back when the new one is bad.
+# #4354 shipped the unit and #4377 exercised its lifecycle; neither said how to
+# change the image it runs. This is that, and it is MANUAL on purpose --
+# health-aware auto-update is a separate later slice, and nothing here polls a
+# registry or acts on its own.
+#
+# WHAT IT MANAGES, and why it is not an edit to hive.container.
+#
+# The shipped unit names a floating tag, `ghcr.io/kubestellar/hive:stable`,
+# because src/deploy/standalone-images.sh is the one image-reference source of
+# truth and src/deploy/test_standalone_image_refs.sh fails the build when an
+# asset stops agreeing with it. A floating tag cannot be rolled back to: today's
+# `:stable` and last week's `:stable` are different images with the same name.
+#
+# So the pin lives in a Quadlet DROP-IN instead:
+#
+#     <quadlet dir>/hive.container.d/10-image.conf
+#
+# Quadlet merges `foo.container.d/*.conf` into `foo.container` at
+# `daemon-reload`, exactly as systemd does for .service drop-ins, so this file
+# replaces Image= without touching the repo's unit. Update and rollback are
+# then the same two-line operation on one file, and the file records the pin
+# history so `rollback` knows where back is.
+#
+# COMMANDS
+#
+#   status          what is pinned, what is RUNNING, and what rollback would do.
+#                   Read-only: starts nothing, stops nothing, pulls nothing.
+#   resolve <ref>   print the digest <ref> resolves to right now. Read-only.
+#   pin <ref>       pin to <ref> BY DIGEST and restart hive.service. <ref> may
+#                   be a tag (resolved to a digest first) or a digest.
+#                   THIS RESTARTS HIVE: ~11s of downtime measured, and rather
+#                   more if the new image never becomes healthy.
+#   rollback        return to the newest pin below the current one that this
+#                   script watched become HEALTHY, and restart. Skipping the
+#                   failed entries is the point -- rollback is for use after a
+#                   bad update, when the top of the history is the bad pin.
+#   unpin           remove the drop-in, returning the unit to the floating tag
+#                   in hive.container, and restart.
+#
+# Rootless by default; --rootful drives the system manager through sudo.
+#
+# Procedure, with the measured update and rollback runs:
+# src/docs/podman-quadlet-update-rollback.md
+#
+# Run: bin/hive-podman-update.sh <command> [args] [--rootful]
+# Exit codes: 0 success, 78 the operation did not end healthy (EX_CONFIG),
+#             64 unusable invocation (EX_USAGE)
+
+set -uo pipefail
+
+EX_USAGE=64
+EX_CONFIG=78
+
+UNIT="hive.service"
+CONTAINER="hive"
+DROPIN_NAME="10-image.conf"
+# The repo's unit names this. `unpin` returns to it, and `status` says so.
+BASE_IMAGE_REPO="ghcr.io/kubestellar/hive"
+HISTORY_KEEP=10
+
+ROOTFUL=0
+CMD=""
+REF=""
+
+c_reset=""; c_bold=""; c_red=""; c_green=""; c_yellow=""
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  c_reset=$'\033[0m'; c_bold=$'\033[1m'; c_red=$'\033[31m'
+  c_green=$'\033[32m'; c_yellow=$'\033[33m'
+fi
+
+say()   { printf '%s\n' "$*"; }
+head1() { printf '\n%s%s%s\n' "$c_bold" "$*" "$c_reset"; }
+ok()    { printf '  %sPASS%s  %s\n' "$c_green" "$c_reset" "$*"; }
+warn()  { printf '  %sWARN%s  %s\n' "$c_yellow" "$c_reset" "$*"; }
+bad()   { printf '  %sFAIL%s  %s\n' "$c_red" "$c_reset" "$*"; }
+info()  { printf '        %s\n' "$*"; }
+
+usage() {
+  sed -n '2,/^set -uo/p' "$0" | sed 's/^# \{0,1\}//; $d'
+  exit "$EX_USAGE"
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    status|resolve|pin|rollback|unpin)
+      [ -z "$CMD" ] && CMD="$1" || { printf 'two commands given: %s and %s\n' "$CMD" "$1" >&2; usage; } ;;
+    --rootful)  ROOTFUL=1 ;;
+    --rootless) ROOTFUL=0 ;;
+    -h|--help)  usage ;;
+    -*) printf 'unknown option: %s\n' "$1" >&2; usage ;;
+    *)
+      [ -z "$CMD" ] && { printf 'unknown command: %s\n' "$1" >&2; usage; }
+      [ -z "$REF" ] && REF="$1" || { printf 'unexpected argument: %s\n' "$1" >&2; usage; } ;;
+  esac
+  shift
+done
+[ -n "$CMD" ] || usage
+
+# Every systemd, podman, and file write goes through these, so the rootful and
+# rootless paths are one code path with a different prefix rather than two
+# transcriptions that drift.
+if [ "$ROOTFUL" -eq 1 ]; then
+  MODE_LABEL="rootful (system manager)"
+  MODE_FLAG=" --rootful"
+  QUADLET_DIR="${HIVE_UPDATE_QUADLET_DIR:-/etc/containers/systemd}"
+  sctl() { sudo systemctl "$@"; }
+  pod()  { sudo podman "$@"; }
+  as_owner() { sudo "$@"; }
+else
+  MODE_LABEL="rootless (user manager, uid $(id -u))"
+  MODE_FLAG=""
+  QUADLET_DIR="${HIVE_UPDATE_QUADLET_DIR:-$HOME/.config/containers/systemd}"
+  sctl() { systemctl --user "$@"; }
+  pod()  { podman "$@"; }
+  as_owner() { "$@"; }
+fi
+
+DROPIN_DIR="${QUADLET_DIR}/hive.container.d"
+DROPIN="${DROPIN_DIR}/${DROPIN_NAME}"
+
+show()  { sctl show "$UNIT" -p "$1" --value 2>/dev/null; }
+state() { printf '%s/%s/%s' "$(show ActiveState)" "$(show SubState)" "$(show Result)"; }
+now()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+require_unit() {
+  if ! sctl cat "$UNIT" >/dev/null 2>&1; then
+    bad "$UNIT is not known to this manager -- install the units and run daemon-reload"
+    info "see src/docs/podman-standalone-quadlet.md"
+    exit "$EX_CONFIG"
+  fi
+}
+
+# --- what the unit and the container actually name --------------------------
+
+# The digest the GENERATED unit would run on its next start. This is the merged
+# result of hive.container plus the drop-in, which is the only place the two
+# are ever combined -- `systemctl cat` prints that result and never names the
+# drop-in file that produced it.
+unit_image() {
+  sctl cat "$UNIT" 2>/dev/null \
+    | grep -m1 '^ExecStart=' \
+    | grep -oE '[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$'
+}
+
+# The image the RUNNING container was created from. It does not follow the unit
+# until a restart, and the gap between the two is the whole reason `status`
+# prints both.
+running_image() {
+  pod inspect "$CONTAINER" --format '{{.ImageName}}' 2>/dev/null
+}
+
+running_version() {
+  pod exec "$CONTAINER" hive --version 2>/dev/null | tail -n 1
+}
+
+# --- digest resolution ------------------------------------------------------
+
+# TAG -> DIGEST, and the obvious way to do it is wrong.
+#
+#   podman image inspect <tag> --format '{{index .RepoDigests 0}}'
+#
+# returns the digest of the per-ARCHITECTURE manifest, not of the manifest list
+# the tag points at. Measured: `ghcr.io/kubestellar/hive:stable` reported
+# sha256:5d3f442f... that way and sha256:ec8e69bc... from the registry, and
+# only the second one is a pin that still resolves on arm64. So resolve from
+# the registry with skopeo when it is there, and otherwise from the DIGEST
+# column of `podman images --digests`, which is the tag's own digest.
+resolve_digest() {
+  local ref="$1" repo digest
+  case "$ref" in
+    *@sha256:*) printf '%s\n' "${ref#*@}"; return 0 ;;
+  esac
+  # HIVE_UPDATE_SKOPEO is a test seam: it lets the suite force the podman
+  # fallback below on a host that has skopeo installed.
+  local skopeo_bin="${HIVE_UPDATE_SKOPEO:-skopeo}"
+  if command -v "$skopeo_bin" >/dev/null 2>&1; then
+    digest="$("$skopeo_bin" inspect --format '{{.Digest}}' "docker://${ref}" 2>/dev/null)"
+    if [ -n "$digest" ]; then printf '%s\n' "$digest"; return 0; fi
+  fi
+  pod pull -q "$ref" >/dev/null 2>&1 || return 1
+  repo="$ref"
+  digest="$(pod images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' 2>/dev/null \
+            | awk -v r="$repo" '$1 == r { print $2; exit }')"
+  [ -n "$digest" ] || return 1
+  printf '%s\n' "$digest"
+}
+
+# repo/name out of a reference, dropping any @digest and any :tag. The tag
+# test is deliberately not `${ref%:*}`: a registry may carry a port, and
+# `localhost:5000/hive` would lose everything after `localhost` that way.
+image_repo() {
+  local ref="$1" tail
+  ref="${ref%@*}"
+  tail="${ref##*:}"
+  case "$tail" in
+    "$ref") ;;                       # no colon at all
+    */*)    ;;                       # the colon was a registry port
+    *)      ref="${ref%:*}" ;;
+  esac
+  printf '%s\n' "$ref"
+}
+
+# --- the drop-in, and the pin history inside it -----------------------------
+#
+# History lines are comments, so Quadlet ignores them and one file holds both
+# the current pin and everything `rollback` needs. Fields:
+#
+#   # HIVE-PIN <outcome> <utc timestamp> <digest> <source ref>
+#
+# newest first, so line 1 describes the Image= below it. <outcome> is `healthy`
+# once this script has watched the unit reach active on that digest, `failed`
+# when it did not, and `pending` while a pin is in flight or was interrupted.
+# `rollback` returns to the newest `healthy` entry that is not the current one,
+# which is what makes it usable from a FAILED update: the entry at the top is
+# then the pin that broke, and skipping it is the whole job.
+
+# An entry is `# HIVE-PIN <outcome> <ISO timestamp> <digest> <ref>` and the
+# timestamp is part of the match on purpose: without it the prose in the header
+# above, which has to mention the marker to explain it, parses as the newest
+# entry and `rollback` reads a sentence as a digest.
+HIVE_PIN_RE='^# HIVE-PIN [a-z]+ [0-9]{4}-[0-9]{2}-[0-9]{2}T'
+
+history_lines() {
+  [ -f "$DROPIN" ] || return 0
+  grep -E "$HIVE_PIN_RE" "$DROPIN" 2>/dev/null | sed 's/^# HIVE-PIN //'
+}
+
+current_digest() {
+  [ -f "$DROPIN" ] || return 0
+  grep -m1 '^Image=' "$DROPIN" 2>/dev/null | sed 's/^Image=//' | sed 's/.*@//'
+}
+
+current_ref() {
+  [ -f "$DROPIN" ] || return 0
+  grep -m1 '^Image=' "$DROPIN" 2>/dev/null | sed 's/^Image=//'
+}
+
+# newest healthy entry that is not the digest currently pinned
+rollback_target() {
+  local cur; cur="$(current_digest)"
+  history_lines | awk -v cur="$cur" '$1 == "healthy" && $3 != cur { print $3, $4; exit }'
+}
+
+write_dropin() {
+  local image="$1"; shift
+  local tmp; tmp="$(mktemp)"
+  {
+    cat <<'HEADER'
+# The digest pin for hive.service. Written by bin/hive-podman-update.sh (#4378).
+#
+# Quadlet merges hive.container.d/*.conf into hive.container on every
+# daemon-reload, so the Image= below replaces the floating `:stable` tag in the
+# shipped unit without editing a file the repo owns -- src/deploy/quadlet is
+# checked against src/deploy/standalone-images.sh and must keep naming the tag.
+#
+# `systemctl cat hive.service` shows the MERGED result and never names this
+# file, so this is the only place the pin and its history are written down.
+# Changing Image= here takes effect on `daemon-reload` + `systemctl restart
+# hive.service`, and not before: a reload alone leaves the running container on
+# the old digest.
+#
+# The pin history is the HIVE-PIN comment lines below, newest first; the top
+# one describes the Image= at the bottom. `rollback` returns to the newest
+# `healthy` entry, so do not hand-edit them -- use the script.
+HEADER
+    printf '#\n'
+    local n=0 line
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      n=$((n + 1)); [ "$n" -le "$HISTORY_KEEP" ] || break
+      printf '# HIVE-PIN %s\n' "$line"
+    done
+    printf '\n[Container]\nImage=%s\n' "$image"
+  } >"$tmp"
+  as_owner install -Dm644 "$tmp" "$DROPIN"
+  rm -f "$tmp"
+}
+
+# Replaces the outcome word of the newest history entry in place.
+mark_top_outcome() {
+  local outcome="$1" tmp
+  [ -f "$DROPIN" ] || return 0
+  tmp="$(mktemp)"
+  as_owner cat "$DROPIN" | awk -v o="$outcome" '
+    /^# HIVE-PIN [a-z]+ [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/ && !done {
+      sub(/^# HIVE-PIN [a-z]+/, "# HIVE-PIN " o); done = 1
+    }
+    { print }
+  ' >"$tmp"
+  as_owner install -Dm644 "$tmp" "$DROPIN"
+  rm -f "$tmp"
+}
+
+# --- restart, and reporting what it did -------------------------------------
+
+# `systemctl restart` on this unit returns only once the healthcheck has passed,
+# because Notify=healthy holds it in `activating` until then. A restart that
+# returns 0 therefore means Hive is SERVING the new digest, and a restart that
+# fails has already spent TimeoutStartSec finding that out -- 300s in the
+# shipped unit. Both are reported as measured seconds rather than as "done".
+restart_and_report() {
+  local t0 t1 rc elapsed
+  t0=$(date +%s%N)
+  sctl restart "$UNIT"; rc=$?
+  t1=$(date +%s%N)
+  elapsed=$(( (t1 - t0) / 1000000000 ))
+  if [ "$rc" -eq 0 ] && [ "$(show ActiveState)" = "active" ]; then
+    ok "restart returned $rc after ${elapsed}s, state $(state)"
+    info "with Notify=healthy that return means /api/health answered on the new digest"
+    info "running  $(running_image)"
+    local v; v="$(running_version)"
+    [ -n "$v" ] && info "version  $v"
+    return 0
+  fi
+  bad "restart returned $rc after ${elapsed}s, state $(state)"
+  local run; run="$(running_image)"
+  info "running  ${run:-<no container>}"
+  return 1
+}
+
+# --- commands ---------------------------------------------------------------
+
+do_status() {
+  require_unit
+  head1 "Image pin -- $MODE_LABEL"
+  local cur run
+  cur="$(current_ref)"; run="$(running_image)"
+  if [ -f "$DROPIN" ] && [ -n "$cur" ]; then
+    ok "pinned by drop-in: $cur"
+    info "drop-in  $DROPIN"
+  else
+    warn "no drop-in: the unit runs the floating tag in hive.container"
+    info "a floating tag cannot be rolled back to -- today's and last week's are different images"
+    info "pin it: $0 pin ${BASE_IMAGE_REPO}:stable"
+  fi
+  info "unit ExecStart names   $(unit_image)"
+  info "running container      ${run:-<none>}"
+  if [ -n "$run" ] && [ -n "$cur" ] && [ "$run" != "$cur" ]; then
+    warn "the running container is NOT on the pinned image -- the pin takes effect on the next restart"
+  fi
+  local v; v="$(running_version)"
+  [ -n "$v" ] && info "version                $v"
+  info "unit state             $(state)"
+
+  head1 "Pin history (newest first)"
+  local lines; lines="$(history_lines)"
+  if [ -z "$lines" ]; then
+    info "none recorded"
+  else
+    printf '%s\n' "$lines" | sed 's/^/        /'
+  fi
+
+  head1 "Rollback"
+  local target; target="$(rollback_target)"
+  if [ -n "$target" ]; then
+    ok "rollback would return to ${target%% *}  (${target#* })"
+  else
+    warn "no earlier HEALTHY pin recorded -- rollback has nowhere to go"
+    info "the first pin this script makes has no predecessor; that is expected"
+  fi
+}
+
+do_resolve() {
+  [ -n "$REF" ] || { printf 'resolve needs a reference\n' >&2; usage; }
+  local digest; digest="$(resolve_digest "$REF")"
+  if [ -z "$digest" ]; then
+    bad "could not resolve $REF to a digest"
+    exit "$EX_CONFIG"
+  fi
+  printf '%s@%s\n' "$(image_repo "$REF")" "$digest"
+}
+
+do_pin() {
+  [ -n "$REF" ] || { printf 'pin needs a reference\n' >&2; usage; }
+  require_unit
+  head1 "Pin -- $MODE_LABEL"
+  say "  This restarts Hive. Ctrl-C now if that is not what you want."
+
+  local digest repo image
+  digest="$(resolve_digest "$REF")"
+  if [ -z "$digest" ]; then
+    bad "could not resolve $REF to a digest"
+    exit "$EX_CONFIG"
+  fi
+  repo="$(image_repo "$REF")"
+  image="${repo}@${digest}"
+  ok "$REF resolves to $digest"
+
+  # PULL BEFORE RESTARTING, deliberately. The generated ExecStart pulls a
+  # missing image itself, and that pull is spent inside TimeoutStartSec: the
+  # Hive image measured 3.8GB, so a cold pull can consume the whole start
+  # budget and fail a perfectly good update. Pulling here also means a
+  # registry that is down fails BEFORE anything stops.
+  head1 "Pull"
+  if pod pull -q "$image" >/dev/null 2>&1; then
+    ok "$image is present locally"
+  else
+    bad "could not pull $image -- nothing has been changed"
+    exit "$EX_CONFIG"
+  fi
+
+  head1 "Write the pin"
+  local new_history
+  new_history="$( printf 'pending %s %s %s\n' "$(now)" "$digest" "$REF"; history_lines )"
+  write_dropin "$image" <<<"$new_history"
+  ok "wrote $DROPIN"
+  info "Image=$image"
+  sctl daemon-reload
+  ok "daemon-reload: the generated unit now names $(unit_image)"
+  local before_restart; before_restart="$(running_image)"
+  info "the running container is still ${before_restart:-<none>} -- a reload does not restart"
+
+  head1 "Restart"
+  if restart_and_report; then
+    mark_top_outcome healthy
+    head1 "Result"
+    ok "updated to $digest and it is serving"
+    info "roll it back with: $0 rollback${MODE_FLAG}"
+    exit 0
+  fi
+  mark_top_outcome failed
+  head1 "Result"
+  bad "the new image did not become healthy -- Hive is DOWN on this host"
+  info "the unit will keep retrying it: Restart=always, one TimeoutStartSec per attempt"
+  info "roll back now, deliberately:"
+  info "    $0 rollback${MODE_FLAG}"
+  exit "$EX_CONFIG"
+}
+
+do_rollback() {
+  require_unit
+  head1 "Rollback -- $MODE_LABEL"
+  local target digest src repo image
+  target="$(rollback_target)"
+  if [ -z "$target" ]; then
+    bad "no earlier HEALTHY pin is recorded in $DROPIN -- there is nowhere to roll back to"
+    info "pin an explicit digest instead: $0 pin ${BASE_IMAGE_REPO}@sha256:<digest>"
+    exit "$EX_CONFIG"
+  fi
+  digest="${target%% *}"; src="${target#* }"
+  repo="$(image_repo "$src")"
+  [ -n "$repo" ] || repo="$BASE_IMAGE_REPO"
+  image="${repo}@${digest}"
+  ok "returning to $digest  (first pinned from $src)"
+
+  head1 "Pull"
+  if pod pull -q "$image" >/dev/null 2>&1; then
+    ok "$image is present locally"
+  else
+    bad "could not pull $image -- nothing has been changed"
+    info "a rollback that needs a registry it cannot reach is not a rollback; keep the previous"
+    info "image on the host, or roll back to one that is still in local storage"
+    exit "$EX_CONFIG"
+  fi
+
+  head1 "Write the pin"
+  local new_history
+  new_history="$( printf 'pending %s %s %s\n' "$(now)" "$digest" "$src"; history_lines )"
+  write_dropin "$image" <<<"$new_history"
+  ok "wrote $DROPIN"
+  sctl daemon-reload
+  ok "daemon-reload: the generated unit now names $(unit_image)"
+
+  # STOP FIRST, then start, rather than `restart`. After a failed update the
+  # unit is not sitting still: it is in Restart=always's loop, each attempt
+  # holding `activating` for TimeoutStartSec. A stop job cancels the start job
+  # in flight and returns in under a second; a restart queued behind it would
+  # otherwise wait out the bad attempt.
+  head1 "Restart"
+  sctl stop "$UNIT" >/dev/null 2>&1
+  info "stopped the failing unit first: $(state)"
+  if restart_and_report; then
+    mark_top_outcome healthy
+    head1 "Result"
+    ok "rolled back to $digest and it is serving"
+    exit 0
+  fi
+  mark_top_outcome failed
+  head1 "Result"
+  bad "the rollback target did not become healthy either -- state $(state)"
+  info "journalctl -u $UNIT has the reason (add --user for a rootless install)"
+  exit "$EX_CONFIG"
+}
+
+do_unpin() {
+  require_unit
+  head1 "Unpin -- $MODE_LABEL"
+  if [ ! -f "$DROPIN" ]; then
+    warn "no drop-in to remove: $DROPIN"
+    exit 0
+  fi
+  as_owner rm -f "$DROPIN"
+  as_owner rmdir "$DROPIN_DIR" 2>/dev/null
+  ok "removed $DROPIN"
+  sctl daemon-reload
+  warn "the unit is back on the floating tag: $(unit_image)"
+  info "a floating tag cannot be rolled back to; this is a teardown step, not an update one"
+  head1 "Restart"
+  if restart_and_report; then exit 0; fi
+  exit "$EX_CONFIG"
+}
+
+case "$CMD" in
+  status)   do_status ;;
+  resolve)  do_resolve ;;
+  pin)      do_pin ;;
+  rollback) do_rollback ;;
+  unpin)    do_unpin ;;
+esac

@@ -7,8 +7,11 @@ chose Quadlet for the persistent lifecycle and
 lifecycle those two decisions implied, exercised.
 
 Scope is lifecycle only: stop, start, restart, recreate, and boot persistence,
-in both root modes. Update, rollback, and auto-update are their own slice, as
-are backup, restore, and migration.
+in both root modes. Update and rollback are their own slice and are now written
+down in [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md)
+(#4378) — including what a unit looks like while a bad update is timing out,
+which is a lifecycle state this page does not produce. Auto-update is a later
+slice again, as are backup, restore, and migration.
 
 ## The short version
 
@@ -263,4 +266,5 @@ accident.
 
 - [ADR-0017](adr/0017-podman-quadlet-lifecycle.md) — why Quadlet
 - [podman-standalone-quadlet.md](podman-standalone-quadlet.md) — the units and how to install them
+- [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md) — moving the image and getting back; `SuccessExitStatus=143` and `Restart=always` from this page are what shape a failed update
 - [podman-selinux-release-qualification.md](podman-selinux-release-qualification.md) — the `:z`/`:Z` measurement, and the precedent for recording a live run as not performed here

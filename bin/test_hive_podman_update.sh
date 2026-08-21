@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+# Contract tests for bin/hive-podman-update.sh (#4378).
+# Run: bash bin/test_hive_podman_update.sh
+#
+# Every input is mocked. Stub `systemctl`, `podman`, `skopeo`, and `sudo`
+# answer from files under a temporary directory, and the Quadlet drop-in
+# directory is a real temporary directory pointed at by
+# HIVE_UPDATE_QUADLET_DIR. The whole matrix therefore runs on a host with no
+# Podman, no Quadlet, and no privileges, and never pulls an image or restarts
+# a service.
+#
+# The cases that matter are the ones about a FAILED update, because that is
+# the case the feature exists for. A rollback that only works from a healthy
+# unit is not a rollback, so there are cases here asserting that rollback
+# skips the entry that just failed, that it stops the failing unit before
+# starting (a start job queued behind a bad one waits out TimeoutStartSec),
+# and that it refuses rather than half-applies when the earlier image is no
+# longer pullable.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+UPDATE="${ROOT}/bin/hive-podman-update.sh"
+BASH_BIN="$(command -v bash)"
+TEST_TMP="$(mktemp -d)"
+# HIVE_TEST_KEEP_TMP=1 leaves the mocked drop-in directory and call logs behind,
+# which is the only way to see what a failing case actually wrote.
+if [ -z "${HIVE_TEST_KEEP_TMP:-}" ]; then
+  trap 'rm -rf "$TEST_TMP"' EXIT
+else
+  trap 'printf "kept: %s\n" "$TEST_TMP"' EXIT
+fi
+
+FAKE_BIN="${TEST_TMP}/bin"
+mkdir -p "$FAKE_BIN"
+
+DIGEST_OLD="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+DIGEST_NEW="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+DIGEST_BAD="sha256:3333333333333333333333333333333333333333333333333333333333333333"
+# The per-architecture manifest digest of the same tag. Resolving a tag through
+# `podman image inspect ... RepoDigests` returns THIS, and pinning it produces
+# an amd64-only pin. No case may ever end up writing it.
+DIGEST_ARCH="sha256:4444444444444444444444444444444444444444444444444444444444444444"
+REPO="ghcr.io/kubestellar/hive"
+
+# systemctl: unit state lives in files so `restart` can change it, which is
+# what lets the suite exercise the report the script makes AFTER a restart
+# rather than only the command it issued. A successful restart also moves the
+# recorded running image to whatever the drop-in now names, the way a real
+# recreate does.
+cat >"${FAKE_BIN}/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >>"$SYSTEMCTL_CALL_LOG"
+args=("$@")
+[ "${args[0]:-}" = "--user" ] && args=("${args[@]:1}")
+sd="$STATE_DIR"
+dropin_image() {
+  grep -m1 '^Image=' "${QUADLET_DIR}/hive.container.d/10-image.conf" 2>/dev/null | sed 's/^Image=//'
+}
+case "${args[0]:-}" in
+  show)
+    prop=""
+    for a in "${args[@]}"; do
+      case "$a" in -p) prop="__next__" ;; *) [ "$prop" = "__next__" ] && { prop="$a"; break; } ;; esac
+    done
+    [ -f "$sd/$prop" ] && cat "$sd/$prop" || printf '\n'
+    ;;
+  cat)
+    [ "${FAKE_UNIT_KNOWN:-yes}" = "yes" ] || exit 1
+    img="$(dropin_image)"
+    [ -n "$img" ] || img="ghcr.io/kubestellar/hive:stable"
+    printf '# /run/user/1000/systemd/generator/hive.service\n'
+    printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
+    ;;
+  daemon-reload) : ;;
+  stop)
+    printf 'inactive\n' >"$sd/ActiveState"; printf 'dead\n' >"$sd/SubState"
+    printf 'success\n' >"$sd/Result"
+    ;;
+  restart|start)
+    if [ "${FAKE_RESTART_RC:-0}" = "0" ]; then
+      printf 'active\n' >"$sd/ActiveState"; printf 'running\n' >"$sd/SubState"
+      printf 'success\n' >"$sd/Result"
+      dropin_image >"$sd/running_image"
+      exit 0
+    fi
+    printf 'failed\n' >"$sd/ActiveState"; printf 'failed\n' >"$sd/SubState"
+    printf 'timeout\n' >"$sd/Result"
+    dropin_image >"$sd/running_image"
+    exit "${FAKE_RESTART_RC}"
+    ;;
+  *) exit 0 ;;
+esac
+EOF
+
+# podman: `pull` fails for any reference containing FAKE_PULL_FAIL_SUBSTR, so a
+# rollback target that is no longer in the registry can be tested without one.
+# `images --digests` is the fallback resolution path and deliberately reports
+# the manifest-LIST digest, while `image inspect` reports the per-arch one --
+# the same disagreement measured on the real registry.
+cat >"${FAKE_BIN}/podman" <<'EOF'
+#!/usr/bin/env bash
+printf 'podman %s\n' "$*" >>"$PODMAN_CALL_LOG"
+case "${1:-}" in
+  pull)
+    ref="${!#}"
+    if [ -n "${FAKE_PULL_FAIL_SUBSTR:-}" ] && [ "${ref#*"$FAKE_PULL_FAIL_SUBSTR"}" != "$ref" ]; then
+      printf 'Error: pulling %s: manifest unknown\n' "$ref" >&2; exit 125
+    fi
+    printf '%s\n' "$ref"
+    ;;
+  images)  printf '%s %s\n' "${FAKE_TAG_REF}" "${FAKE_TAG_LIST_DIGEST}" ;;
+  inspect)
+    case "$*" in
+      *ImageName*) cat "${STATE_DIR}/running_image" 2>/dev/null ;;
+      *)           printf '%s@%s\n' "${FAKE_TAG_REF%:*}" "${FAKE_TAG_ARCH_DIGEST}" ;;
+    esac
+    ;;
+  exec) printf 'hive 3.0.0 (commit deadbee, branch v4)\n' ;;
+  *) exit 0 ;;
+esac
+EOF
+
+cat >"${FAKE_BIN}/skopeo" <<'EOF'
+#!/usr/bin/env bash
+printf 'skopeo %s\n' "$*" >>"$SKOPEO_CALL_LOG"
+[ "${FAKE_SKOPEO_RC:-0}" = "0" ] || exit "$FAKE_SKOPEO_RC"
+printf '%s\n' "${FAKE_TAG_LIST_DIGEST}"
+EOF
+
+cat >"${FAKE_BIN}/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo %s\n' "$*" >>"$SUDO_CALL_LOG"
+while [ "${1:-}" = "-n" ]; do shift; done
+exec "$@"
+EOF
+
+chmod +x "${FAKE_BIN}"/*
+
+PASS=0
+FAIL=0
+
+# Defaults describe a host with the units installed, Hive running and healthy
+# on DIGEST_OLD, and every pull succeeding. Each case overrides only what it
+# needs to break.
+reset_env() {
+  export SYSTEMCTL_CALL_LOG="${TEST_TMP}/systemctl.log"
+  export PODMAN_CALL_LOG="${TEST_TMP}/podman.log"
+  export SKOPEO_CALL_LOG="${TEST_TMP}/skopeo.log"
+  export SUDO_CALL_LOG="${TEST_TMP}/sudo.log"
+  : >"$SYSTEMCTL_CALL_LOG"; : >"$PODMAN_CALL_LOG"
+  : >"$SKOPEO_CALL_LOG";    : >"$SUDO_CALL_LOG"
+
+  export QUADLET_DIR="${TEST_TMP}/quadlet"
+  export HIVE_UPDATE_QUADLET_DIR="$QUADLET_DIR"
+  rm -rf "$QUADLET_DIR"; mkdir -p "$QUADLET_DIR"
+
+  export STATE_DIR="${TEST_TMP}/state"
+  rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
+  printf 'active\n'  >"$STATE_DIR/ActiveState"
+  printf 'running\n' >"$STATE_DIR/SubState"
+  printf 'success\n' >"$STATE_DIR/Result"
+  printf '%s@%s\n' "$REPO" "$DIGEST_OLD" >"$STATE_DIR/running_image"
+
+  export FAKE_UNIT_KNOWN=yes
+  export FAKE_RESTART_RC=0
+  export FAKE_PULL_FAIL_SUBSTR=""
+  export FAKE_SKOPEO_RC=0
+  export FAKE_TAG_REF="${REPO}:stable"
+  export FAKE_TAG_LIST_DIGEST="$DIGEST_NEW"
+  export FAKE_TAG_ARCH_DIGEST="$DIGEST_ARCH"
+  unset HIVE_UPDATE_SKOPEO || true
+}
+
+dropin() { printf '%s/hive.container.d/10-image.conf' "$QUADLET_DIR"; }
+
+# Seeds a drop-in with a given Image= and history, as an earlier run would have
+# left it. History lines are given newest-first, one per argument.
+seed_dropin() {
+  local image="$1"; shift
+  mkdir -p "$(dirname "$(dropin)")"
+  {
+    printf '# seeded by the test suite\n#\n'
+    local h; for h in "$@"; do printf '# HIVE-PIN %s\n' "$h"; done
+    printf '\n[Container]\nImage=%s\n' "$image"
+  } >"$(dropin)"
+}
+
+run_update() {
+  PATH="${FAKE_BIN}:${PATH}" NO_COLOR=1 "$BASH_BIN" "$UPDATE" "$@" 2>&1
+}
+
+# name, expected exit, expected-substring, args...
+case_expect() {
+  local name="$1" want_rc="$2" want_txt="$3"; shift 3
+  local out rc why=""
+  out="$(run_update "$@")"; rc=$?
+  [ "$rc" != "$want_rc" ] && why="exit $rc, wanted $want_rc"
+  if [ -n "$want_txt" ] && ! printf '%s' "$out" | grep -qF -- "$want_txt"; then
+    why="${why:+$why; }missing text: $want_txt"
+  fi
+  if [ -z "$why" ]; then
+    PASS=$((PASS + 1)); printf 'ok   %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf 'FAIL %s (%s)\n' "$name" "$why"
+    printf '%s\n' "$out" | sed 's/^/       | /'
+  fi
+}
+
+check() {
+  local name="$1" cond="$2"
+  if eval "$cond"; then
+    PASS=$((PASS + 1)); printf 'ok   %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$name"
+  fi
+}
+
+# Asserts that `first` appears before `second` in a call log.
+ordered_in() {
+  local log="$1" first="$2" second="$3" a b
+  a="$(grep -nF -- "$first" "$log" | head -1 | cut -d: -f1)"
+  b="$(grep -nF -- "$second" "$log" | head -1 | cut -d: -f1)"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
+
+echo "== status =="
+reset_env
+case_expect "no drop-in says the unit is on a floating tag" 0 "no drop-in" status
+reset_env
+case_expect "no drop-in explains why a floating tag cannot be rolled back to" 0 "cannot be rolled back to" status
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "a pinned unit reports its digest" 0 "$DIGEST_OLD" status
+reset_env; seed_dropin "${REPO}@${DIGEST_NEW}" "pending 2026-08-21T00:00:00Z ${DIGEST_NEW} ${REPO}:stable"
+case_expect "a pin not yet restarted into is called out" 0 "NOT on the pinned image" status
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "one healthy pin only means rollback has nowhere to go" 0 "nowhere to go" status
+reset_env
+run_update status >/dev/null
+check "status pulls nothing and restarts nothing" \
+  '! grep -q "pull" "$PODMAN_CALL_LOG" && ! grep -qE "systemctl (restart|stop|start)" "$SYSTEMCTL_CALL_LOG"'
+
+echo
+echo "== resolve: a tag must become the manifest LIST digest, never the per-arch one =="
+reset_env
+case_expect "a tag resolves to the registry's list digest" 0 "${REPO}@${DIGEST_NEW}" resolve "${REPO}:stable"
+reset_env
+out="$(run_update resolve "${REPO}:stable")"
+check "resolve never returns the per-architecture digest" '! printf "%s" "$out" | grep -q "$DIGEST_ARCH"'
+reset_env; export HIVE_UPDATE_SKOPEO="skopeo-not-installed"
+case_expect "without skopeo it falls back to the podman digest column, still the list digest" 0 "${REPO}@${DIGEST_NEW}" resolve "${REPO}:stable"
+reset_env
+run_update resolve "${REPO}@${DIGEST_OLD}" >/dev/null
+check "a reference that is already a digest contacts no registry" \
+  '[ ! -s "$SKOPEO_CALL_LOG" ] && ! grep -q "pull" "$PODMAN_CALL_LOG"'
+reset_env; export FAKE_SKOPEO_RC=1 FAKE_TAG_REF="${REPO}:nope" HIVE_UPDATE_SKOPEO=skopeo
+export FAKE_PULL_FAIL_SUBSTR="nope"
+case_expect "an unresolvable tag is a finding, not a silent tag pin" 78 "could not resolve" resolve "${REPO}:nope"
+
+echo
+echo "== pin =="
+reset_env
+case_expect "pin writes a digest and reports it serving" 0 "updated to $DIGEST_NEW" pin "${REPO}:stable"
+reset_env
+run_update pin "${REPO}:stable" >/dev/null
+check "the drop-in pins by digest, never by the tag it was given" \
+  'grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)" && ! grep -q "^Image=.*:stable" "$(dropin)"'
+check "the tag it came from is kept as provenance in the history" \
+  'grep -q "^# HIVE-PIN healthy .* ${DIGEST_NEW} ${REPO}:stable\$" "$(dropin)"'
+check "pin pulls BEFORE it restarts, so the pull is not spent inside TimeoutStartSec" \
+  'grep -q "podman pull" "$PODMAN_CALL_LOG" \
+   && [ "$(grep -c . "$PODMAN_CALL_LOG")" -gt 0 ] \
+   && awk "/podman pull/{p=NR} END{exit !(p>0)}" "$PODMAN_CALL_LOG" \
+   && ordered_in "$SYSTEMCTL_CALL_LOG" "daemon-reload" "restart"'
+reset_env
+run_update pin "${REPO}:stable" >/dev/null
+check "pin runs daemon-reload before the restart" \
+  'ordered_in "$SYSTEMCTL_CALL_LOG" "daemon-reload" "restart"'
+reset_env; export FAKE_PULL_FAIL_SUBSTR="$DIGEST_NEW"
+case_expect "a pull that fails stops the update before anything is touched" 78 "nothing has been changed" pin "${REPO}:stable"
+check "a failed pull leaves no drop-in behind" '[ ! -f "$(dropin)" ]'
+check "a failed pull restarts nothing" '! grep -q "systemctl restart" "$SYSTEMCTL_CALL_LOG"'
+reset_env; export FAKE_UNIT_KNOWN=no
+case_expect "an uninstalled unit is a finding, not a crash" 78 "is not known to this manager" pin "${REPO}:stable"
+
+echo
+echo "== a FAILED update, which is the case the feature exists for =="
+reset_env; export FAKE_RESTART_RC=1
+case_expect "an image that never becomes healthy exits non-zero" 78 "did not become healthy" pin "${REPO}:stable"
+reset_env; export FAKE_RESTART_RC=1
+case_expect "a failed update names the rollback command" 78 "rollback" pin "${REPO}:stable"
+reset_env; export FAKE_RESTART_RC=1
+case_expect "a failed update says the unit will keep retrying it" 78 "keep retrying" pin "${REPO}:stable"
+reset_env; export FAKE_RESTART_RC=1
+run_update pin "${REPO}:stable" >/dev/null
+check "the failed pin is recorded as failed, not as healthy" \
+  'grep -q "^# HIVE-PIN failed .* ${DIGEST_NEW} " "$(dropin)"'
+check "the drop-in still names the failed digest, so status tells the truth" \
+  'grep -q "^Image=${REPO}@${DIGEST_NEW}\$" "$(dropin)"'
+
+echo
+echo "== rollback =="
+reset_env
+seed_dropin "${REPO}@${DIGEST_BAD}" \
+  "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+  "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+case_expect "rollback from a FAILED update returns to the last healthy digest" 0 "rolled back to ${DIGEST_OLD}" rollback
+reset_env
+seed_dropin "${REPO}@${DIGEST_BAD}" \
+  "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+  "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+run_update rollback >/dev/null
+check "rollback skips the entry that just failed" \
+  'grep -q "^Image=${REPO}@${DIGEST_OLD}\$" "$(dropin)"'
+check "rollback stops the failing unit before starting, rather than queueing behind it" \
+  'ordered_in "$SYSTEMCTL_CALL_LOG" "stop" "restart"'
+check "rollback records the restored pin as healthy" \
+  'grep -q "^# HIVE-PIN healthy .* ${DIGEST_OLD} " "$(dropin)"'
+reset_env
+seed_dropin "${REPO}@${DIGEST_BAD}" \
+  "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+  "failed  2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+case_expect "with no HEALTHY predecessor rollback refuses rather than guessing" 78 "nowhere to roll back to" rollback
+reset_env
+case_expect "rollback with no drop-in at all refuses" 78 "nowhere to roll back to" rollback
+reset_env
+seed_dropin "${REPO}@${DIGEST_BAD}" \
+  "failed  2026-08-21T10:00:00Z ${DIGEST_BAD} ${REPO}:stable" \
+  "healthy 2026-08-20T10:00:00Z ${DIGEST_OLD} ${REPO}:b35e9cc"
+export FAKE_PULL_FAIL_SUBSTR="$DIGEST_OLD"
+# shellcheck disable=SC2034 # read back inside the single-quoted check below
+before="$(cat "$(dropin)")"
+case_expect "a rollback target that no longer pulls refuses" 78 "nothing has been changed" rollback
+check "and leaves the drop-in byte-identical" '[ "$before" = "$(cat "$(dropin)")" ]'
+check "and restarts nothing" '! grep -q "systemctl restart" "$SYSTEMCTL_CALL_LOG"'
+
+echo
+echo "== history =="
+reset_env
+hist=()
+for i in $(seq 1 14); do
+  hist+=("healthy 2026-08-0${i}T00:00:00Z sha256:$(printf '%064d' "$i") ${REPO}:t$i")
+done
+seed_dropin "${REPO}@${DIGEST_OLD}" "${hist[@]}"
+run_update pin "${REPO}:stable" >/dev/null
+check "the history is capped rather than growing without bound" \
+  '[ "$(grep -cE "^# HIVE-PIN [a-z]+ [0-9]{4}-" "$(dropin)")" -le 10 ]'
+check "the newest entry survives the cap" \
+  'grep -q "^# HIVE-PIN healthy .* ${DIGEST_NEW} " "$(dropin)"'
+
+check "the header prose is not parsed as a history entry" \
+  'run_update status | grep -A3 "Pin history" | grep -qv "newest first; the top"'
+
+echo
+echo "== unpin =="
+reset_env; seed_dropin "${REPO}@${DIGEST_OLD}" "healthy 2026-08-20T00:00:00Z ${DIGEST_OLD} ${REPO}:stable"
+case_expect "unpin warns that the floating tag cannot be rolled back to" 0 "cannot be rolled back to" unpin
+check "unpin removes the drop-in" '[ ! -f "$(dropin)" ]'
+reset_env
+case_expect "unpin with nothing pinned is not an error" 0 "no drop-in to remove" unpin
+
+echo
+echo "== rootful drives the system manager through sudo =="
+reset_env
+run_update status --rootful >/dev/null
+check "rootful reads the system manager through sudo" 'grep -q "sudo systemctl" "$SUDO_CALL_LOG"'
+
+echo
+echo "== invocation =="
+reset_env
+case_expect "an unknown command is EX_USAGE" 64 "unknown command" nonsense
+reset_env
+case_expect "an unknown option is EX_USAGE" 64 "unknown option" --nonsense
+reset_env
+case_expect "two commands are EX_USAGE" 64 "two commands given" status rollback
+reset_env
+case_expect "pin with no reference is EX_USAGE" 64 "pin needs a reference" pin
+reset_env
+case_expect "no command at all is EX_USAGE" 64 "Run: bin/hive-podman-update.sh"
+
+echo
+printf '%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ] || exit 1
