@@ -134,7 +134,28 @@ EnvironmentFile=%E/hive/hive.env
 # header. /api/health is the same endpoint the Kubernetes readiness probe and
 # the Compose healthcheck use, so "healthy" means the same thing on all three.
 #
-# THE PORT BELOW IS COUPLED TO `dashboard.port` IN THE MOUNTED hive.yaml, and
+# IT PROBES BOTH LISTENERS, and it did not always (#4476). The container serves
+# on two ports: 3002 is the Go API, 3001 is the Node auth proxy — and 3001 is
+# what src/deploy/nginx.conf points `upstream hive_api` at, so it is the port
+# the gateway and every operator actually reach. 3d1e6077 moved that upstream
+# off 3002 deliberately, so the gateway cannot reach the API without passing
+# the proxy first.
+#
+# Probing 3002 alone therefore certified the half nobody reaches. Measured:
+# with HIVE_DASHBOARD_TOKEN absent from hive.env the proxy fails closed and
+# never binds 3001, while 3002 answers 200 throughout — `hive.service` active
+# and the container `healthy` for the entire two minutes the deployment was
+# unusable, with the only red arriving 120s later on hive-gateway.service as an
+# nginx `connect() failed (111: Connection refused)` naming neither the port nor
+# the variable. The unit that owns the broken process now reports it.
+#
+# Podman runs a --health-cmd that is not a JSON array as an argument to
+# /bin/sh -c, so the `&&` below is the shell's: either half failing is
+# unhealthy. Quadlet passes the whole value through as ONE argument — verified
+# against the generator's --dryrun, which renders it
+# `--health-cmd "curl\x20-sf\x20...\x20&&\x20curl\x20-sf\x20..."`.
+#
+# THE FIRST PORT IS COUPLED TO `dashboard.port` IN THE MOUNTED hive.yaml, and
 # nothing enforces the coupling. 3002 is the Go default (defaultDashboardPort in
 # pkg/config/config.go), what src/deploy/hive.yaml sets, and what the Compose
 # healthcheck probes — but src/hive.yaml.example ships 3001 for source runs.
@@ -142,8 +163,17 @@ EnvironmentFile=%E/hive/hive.env
 # and Notify=healthy correctly holds the unit in `activating` for the whole
 # TimeoutStartSec below before --rm deletes the evidence. Change one, change the
 # other (#4367).
+#
+# THE SECOND IS COUPLED TO HIVE_PROXY_PORT, which src/proxy/server.js defaults
+# to 3001 and which nginx.conf names as its upstream. Probing it needs no
+# credential in any mode the proxy boots in — including hosted, where
+# HIVE_DASHBOARD_TOKEN is unset by design — because only mutating methods are
+# authenticated. src/proxy/health_probe.test.js is the guard on that: if GET
+# /api/health ever starts requiring one, this probe can never pass and every
+# start hangs for TimeoutStartSec. src/deploy/test_quadlet_config_contract.sh
+# asserts both couplings from the outside.
 Notify=healthy
-HealthCmd=curl -sf http://127.0.0.1:3002/api/health
+HealthCmd=curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health
 HealthInterval=10s
 HealthTimeout=5s
 HealthRetries=3

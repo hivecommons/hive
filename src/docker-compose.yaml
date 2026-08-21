@@ -84,8 +84,15 @@ services:
       - HIVE_REPO=${HIVE_REPO:-}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+    # BOTH LISTENERS, not just the Go API (#4476). 3002 is the Go API; 3001 is
+    # the Node auth proxy that deploy/nginx.conf points `upstream hive_api` at,
+    # so 3001 is what the gateway and every operator reach. Probing 3002 alone
+    # reported this container `healthy` for the whole two minutes a missing
+    # HIVE_DASHBOARD_TOKEN kept the proxy from binding 3001. CMD-SHELL because
+    # `&&` is the shell's; the Quadlet unit runs the identical string, which
+    # deploy/test_standalone_runtime_parity.sh asserts.
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3002/api/health"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health"]
       interval: 10s
       timeout: 5s
       retries: 3

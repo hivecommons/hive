@@ -2,7 +2,11 @@
 # Contract test for the Quadlet unit's config coupling (#4367).
 # Run: bash src/deploy/test_quadlet_config_contract.sh
 #
-# The unit's HealthCmd= probes a port that lives in the operator's hive.yaml,
+# The unit's HealthCmd= probes two ports, and both are coupled to something the
+# unit cannot see: the Go API port lives in the operator's hive.yaml (#4367) and
+# the auth-proxy port is what nginx.conf dials (#4476).
+#
+# The first coupling is the original one:
 # and NOTHING at install time notices when the two disagree. The config parses,
 # the Quadlet generator exits 0, the container starts and is genuinely healthy —
 # on the other port. Notify=healthy then does exactly what it should and holds
@@ -45,16 +49,24 @@ need_file() {
   return 0
 }
 
-# --- 1. The port the unit probes -------------------------------------------
+# --- 1. The ports the unit probes ------------------------------------------
+#
+# There are TWO, and there is an order to them: the Go API first, the auth proxy
+# second (#4476). `health_port` stays the API port, because that is the one
+# sections 2-4 and 7 couple to dashboard.port; the proxy port has its own
+# sources of truth and is checked in section 8.
 
+health_ports=""
 health_port=""
+proxy_health_port=""
 if need_file "$UNIT"; then
-  health_port="$(
+  health_ports="$(
     grep -E '^HealthCmd=' "${ROOT}/${UNIT}" \
       | grep -oE '127\.0\.0\.1:[0-9]+' \
-      | cut -d: -f2 \
-      | head -n1
+      | cut -d: -f2
   )"
+  health_port="$(printf '%s\n' "$health_ports" | sed -n '1p')"
+  proxy_health_port="$(printf '%s\n' "$health_ports" | sed -n '2p')"
   if [[ -z "$health_port" ]]; then
     fail "${UNIT}: no HealthCmd= probing http://127.0.0.1:<port>/api/health. Notify=healthy without a healthcheck reports \"started\" the moment conmon is up."
   else
@@ -110,22 +122,29 @@ if need_file "$COMPOSE"; then
   # Scoped to the `hive:` service on purpose: the `gateway:` service probes
   # /api/health too, on its own published port, and matching that one instead
   # would make this assertion agree with the wrong thing.
-  compose_port="$(
+  # EVERY port on the line, in order — one probe per runtime is no longer the
+  # shape. If Compose probed the API and the unit probed both, "healthy" would
+  # mean two different things on the two runtimes, which is exactly what the
+  # comment in each file claims it does not.
+  compose_ports="$(
     awk '
       /^  [a-zA-Z0-9_-]+:$/ { svc = $1; sub(/:$/, "", svc) }
       svc == "hive" && /127\.0\.0\.1:[0-9]+\/api\/health/ {
-        match($0, /127\.0\.0\.1:[0-9]+/)
-        port = substr($0, RSTART, RLENGTH)
-        sub(/.*:/, "", port)
-        print port
+        line = $0
+        while (match(line, /127\.0\.0\.1:[0-9]+/)) {
+          port = substr(line, RSTART, RLENGTH)
+          sub(/.*:/, "", port)
+          print port
+          line = substr(line, RSTART + RLENGTH)
+        }
         exit
       }
     ' "${ROOT}/${COMPOSE}"
   )"
-  if [[ -z "$compose_port" ]]; then
+  if [[ -z "$compose_ports" ]]; then
     fail "${COMPOSE}: no /api/health healthcheck found for the hive service"
-  elif [[ -n "$health_port" && "$compose_port" != "$health_port" ]]; then
-    fail "${COMPOSE}: the hive healthcheck probes ${compose_port} but ${UNIT} probes ${health_port}"
+  elif [[ -n "$health_ports" && "$(echo $compose_ports)" != "$(echo $health_ports)" ]]; then
+    fail "${COMPOSE}: the hive healthcheck probes [$(echo $compose_ports)] but ${UNIT} probes [$(echo $health_ports)]. \"healthy\" must mean the same thing on both runtimes."
   else
     ok
   fi
@@ -201,6 +220,82 @@ if [[ -f "${ROOT}/${DOC}" && -f "${ROOT}/${EXAMPLE_CONF}" && -n "$health_port" ]
   fi
 fi
 
+# --- 8. The auth proxy listener is probed too (#4476) -----------------------
+#
+# The container serves on two ports and the unit used to certify one of them.
+# 3002 is the Go API. 3001 is the Node auth proxy, and src/deploy/nginx.conf
+# points `upstream hive_api` at it, so 3001 is what the gateway and therefore
+# every operator actually reaches — 3d1e6077 moved the upstream off the Go API
+# deliberately so nothing can skip the proxy.
+#
+# Measured consequence of probing only 3002: with HIVE_DASHBOARD_TOKEN absent
+# from hive.env the proxy fails closed and never binds 3001 while 3002 answers
+# 200 throughout, so hive.service reported active and its container healthy for
+# the entire two minutes the deployment was unusable. The only red was
+# hive-gateway.service, 120s later, as an nginx connection-refused naming
+# neither the port nor the variable.
+#
+# Asserted against each source of truth rather than against the literal 3001,
+# the same way sections 2-4 treat the API port.
+
+PROXY_SRC="src/proxy/server.js"
+NGINX_CONF="src/deploy/nginx.conf"
+
+if [[ -f "${ROOT}/${UNIT}" ]]; then
+  if [[ -z "$proxy_health_port" ]]; then
+    fail "${UNIT}: HealthCmd probes ${health_port:-?} and nothing else. The auth proxy on the port nginx.conf dials is unprobed, so the unit reports healthy while the dashboard is dead (#4476)."
+  elif [[ "$proxy_health_port" == "$health_port" ]]; then
+    fail "${UNIT}: HealthCmd probes ${health_port} twice. The two listeners are different ports."
+  else
+    ok
+  fi
+fi
+
+if need_file "$PROXY_SRC"; then
+  proxy_default="$(
+    sed -n "s/.*HIVE_PROXY_PORT[[:space:]]*||[[:space:]]*'\([0-9]\{1,\}\)'.*/\1/p" \
+      "${ROOT}/${PROXY_SRC}" | head -n1
+  )"
+  if [[ -z "$proxy_default" ]]; then
+    fail "${PROXY_SRC}: could not read the HIVE_PROXY_PORT default"
+  elif [[ -n "$proxy_health_port" && "$proxy_default" != "$proxy_health_port" ]]; then
+    fail "${PROXY_SRC}: the proxy defaults to ${proxy_default} but ${UNIT} probes ${proxy_health_port}. An operator who does not set HIVE_PROXY_PORT would never reach healthy."
+  else
+    ok
+  fi
+fi
+
+if need_file "$NGINX_CONF"; then
+  nginx_upstream_port="$(
+    awk '
+      /upstream[[:space:]]+hive_api/ { in_up = 1 }
+      in_up && match($0, /hive:[0-9]+/) {
+        port = substr($0, RSTART, RLENGTH)
+        sub(/.*:/, "", port)
+        print port
+        exit
+      }
+    ' "${ROOT}/${NGINX_CONF}"
+  )"
+  if [[ -z "$nginx_upstream_port" ]]; then
+    fail "${NGINX_CONF}: no \`server hive:<port>\` inside upstream hive_api"
+  elif [[ -n "$proxy_health_port" && "$nginx_upstream_port" != "$proxy_health_port" ]]; then
+    fail "${NGINX_CONF}: the gateway dials hive:${nginx_upstream_port} but ${UNIT} probes ${proxy_health_port}. The probe is not watching the port the gateway needs."
+  else
+    ok
+  fi
+fi
+
+# --- 9. The unit names the second coupling too ------------------------------
+
+if [[ -f "${ROOT}/${UNIT}" ]]; then
+  if grep -q 'HIVE_PROXY_PORT' "${ROOT}/${UNIT}"; then
+    ok
+  else
+    fail "${UNIT}: the HealthCmd comment no longer names HIVE_PROXY_PORT. The proxy-port coupling is invisible from the unit."
+  fi
+fi
+
 # --- Summary ----------------------------------------------------------------
 
 if [[ "$failures" -gt 0 ]]; then
@@ -208,4 +303,5 @@ if [[ "$failures" -gt 0 ]]; then
   exit 1
 fi
 
-printf 'PASS: %d Quadlet config-coupling assertions (health port %s)\n' "$pass_count" "${health_port:-?}"
+printf 'PASS: %d Quadlet config-coupling assertions (health ports %s)\n' \
+  "$pass_count" "$(echo ${health_ports:-?})"
