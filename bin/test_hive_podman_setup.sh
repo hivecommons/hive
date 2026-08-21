@@ -70,14 +70,39 @@ assert_file_contains() {
 # podman: records every call. `unshare chown` and `pull` succeed without doing
 # anything — the point of the assertion is WHICH command was chosen, not its
 # effect, and an unprivileged test cannot perform either for real.
+#
+# `volume exists`/`volume inspect` answer from FAKE_VOLUME_STATE_FILE
+# (missing|labelled|unlabelled, default labelled) so the #4485 cases — a
+# stale-`active` volume unit whose volume is gone, and a volume that exists
+# without its ownership labels — can be driven.
 cat >"${FAKE_BIN}/podman" <<'FAKE'
 #!/usr/bin/env bash
 printf 'podman %s\n' "$*" >>"$FAKE_CALL_LOG"
+state="labelled"
+if [[ -n "${FAKE_VOLUME_STATE_FILE:-}" && -s "$FAKE_VOLUME_STATE_FILE" ]]; then
+  state="$(cat "$FAKE_VOLUME_STATE_FILE")"
+fi
+if [[ "${1:-}" == "volume" ]]; then
+  case "${2:-}" in
+    exists)
+      [[ "$state" == "missing" ]] && exit 1
+      exit 0
+      ;;
+    inspect)
+      [[ "$state" == "missing" ]] && exit 125
+      [[ "$state" == "labelled" ]] && printf 'true\n'
+      exit 0
+      ;;
+  esac
+fi
 exit 0
 FAKE
 
 # systemctl: records, and answers is-active from FAKE_ACTIVE_STATE so the
-# "started is not healthy" case can be driven.
+# "started is not healthy" case can be driven. Restarting the volume unit
+# "creates" a missing fake volume, exactly what the real unit's ExecStart does
+# — and does NOT relabel an existing unlabelled one, exactly like `podman
+# volume create --ignore` (#4485).
 cat >"${FAKE_BIN}/systemctl" <<'FAKE'
 #!/usr/bin/env bash
 printf 'systemctl %s\n' "$*" >>"$FAKE_CALL_LOG"
@@ -86,6 +111,12 @@ for a in "$@"; do [ "$a" = "--user" ] || args+=("$a"); done
 case "${args[0]:-}" in
   is-active) printf '%s\n' "${FAKE_ACTIVE_STATE:-active}"
              [ "${FAKE_ACTIVE_STATE:-active}" = "active" ] || exit 3 ;;
+  restart)
+    if [ "${args[1]:-}" = "hive-data-volume.service" ] \
+      && [ -n "${FAKE_VOLUME_STATE_FILE:-}" ] \
+      && [ "$(cat "$FAKE_VOLUME_STATE_FILE" 2>/dev/null)" = "missing" ]; then
+      printf 'labelled\n' >"$FAKE_VOLUME_STATE_FILE"
+    fi ;;
 esac
 exit 0
 FAKE
@@ -456,7 +487,53 @@ assert_lacks "$(cat "$CALL_LOG")" "podman pull" "did not pull"
 assert_contains "$RUN_OUT" "TimeoutStartSec" "says the first start pays for it instead"
 
 # ---------------------------------------------------------------------------
-# 11. Usage.
+# 11. #4485 — the volume must exist WITH its ownership labels before anything
+#     starts. `podman run -v hive-data:/data` auto-creates a missing named
+#     volume with NO labels, permanently invisible to
+#     bin/hive-podman-teardown.sh, and a stale-`active` volume unit is how the
+#     shipped install path used to reach that state. The installer checks the
+#     volume itself rather than trusting the unit's word.
+# ---------------------------------------------------------------------------
+new_case "an existing labelled volume is verified, not recreated"
+SETUP_ARGS="" run_setup
+assert_eq 0 "$RUN_RC" "exits 0"
+assert_contains "$RUN_OUT" "teardown can see it" "reports the label verification"
+assert_lacks "$(cat "$CALL_LOG")" "restart hive-data-volume.service" \
+  "a healthy labelled volume is left alone"
+
+new_case "a missing volume is created through its unit, not by hive.service"
+VOLSTATE="${TEST_TMP}/volstate-missing"
+printf 'missing\n' >"$VOLSTATE"
+SETUP_ARGS="" run_setup FAKE_VOLUME_STATE_FILE="$VOLSTATE"
+assert_eq 0 "$RUN_RC" "exits 0"
+calls="$(cat "$CALL_LOG")"
+assert_contains "$calls" "systemctl --user restart hive-data-volume.service" \
+  "restarted the volume unit — restart re-runs its create even when stale-active"
+assert_contains "$RUN_OUT" "teardown can see it" "verified the labels after creating"
+# The restart must come BEFORE the gateway start, or hive.service's own
+# `podman run` gets the chance to auto-create the volume unlabelled.
+restart_line="$(grep -n 'restart hive-data-volume.service' "$CALL_LOG" | head -n1 | cut -d: -f1)"
+start_line="$(grep -n 'start hive-gateway.service' "$CALL_LOG" | head -n1 | cut -d: -f1)"
+if [[ -n "$restart_line" && -n "$start_line" && "$restart_line" -lt "$start_line" ]]; then
+  pass "the volume unit ran before anything that could auto-create the volume"
+else
+  fail "the volume unit did not run before the gateway start (restart at ${restart_line:-none}, start at ${start_line:-none})"
+fi
+
+new_case "a volume without its ownership labels stops the install"
+VOLSTATE="${TEST_TMP}/volstate-unlabelled"
+printf 'unlabelled\n' >"$VOLSTATE"
+SETUP_ARGS="" run_setup FAKE_VOLUME_STATE_FILE="$VOLSTATE"
+assert_eq 78 "$RUN_RC" "exits 78 (EX_CONFIG)"
+assert_contains "$RUN_OUT" "does not carry io.kubestellar.hive.owned=true" "names the missing label"
+assert_contains "$RUN_OUT" "podman volume rm hive-data" "says how to remove it after backing up"
+assert_contains "$RUN_OUT" "back them up first" "points at the backup doc before the removal"
+assert_lacks "$(cat "$CALL_LOG")" "start hive-gateway.service" \
+  "nothing was started on a deployment whose state teardown cannot see"
+assert_lacks "$RUN_OUT" "Hive is running" "does not claim success"
+
+# ---------------------------------------------------------------------------
+# 12. Usage.
 # ---------------------------------------------------------------------------
 new_case "an unknown argument is a usage error"
 SETUP_ARGS="--wat" run_setup

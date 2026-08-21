@@ -72,6 +72,12 @@ SRC_DIR="${HIVE_SETUP_SRC_DIR:-${ROOT}/src}"
 QUADLET_SRC="${HIVE_SETUP_QUADLET_SRC:-${SRC_DIR}/deploy/quadlet}"
 PREFLIGHT_DIR="${HIVE_SETUP_PREFLIGHT_DIR:-${ROOT}/bin}"
 
+# The #4210 ownership label set, from its single source of truth rather than a
+# copy that can drift. Step 7 checks the volume against
+# HIVE_PODMAN_OWNED_LABEL_KEY/_VALUE before anything is started (#4485).
+# shellcheck source=bin/hive-podman-cleanup.sh
+. "${ROOT}/bin/hive-podman-cleanup.sh"
+
 # The container-side GID of `hive-launch`, pinned in src/Dockerfile and spelled
 # `fsGroup: 1002` on the Kubernetes path. bin/hive-podman-preflight-host.sh
 # checks the same number under the same name (#4359).
@@ -210,6 +216,12 @@ unit_publish_port() {
 
 unit_image() {
   sed -n 's|^Image=\(.*\)$|\1|p' "$1" | head -n1
+}
+
+# The volume's real name, read from the unit that creates it rather than a
+# constant that can drift from VolumeName= (#4485).
+unit_volume_name() {
+  sed -n 's|^VolumeName=\(.*\)$|\1|p' "$1" | head -n1
 }
 
 # hive.yaml's dashboard.port, read only from inside the `dashboard:` block. A
@@ -490,6 +502,44 @@ ok "daemon-reload — the Quadlet generator has run"
 
 # --- step 7: started is not the same as healthy -----------------------------
 step "7/7  Start, and confirm HEALTHY rather than started"
+
+# THE VOLUME MUST EXIST WITH ITS OWNERSHIP LABELS BEFORE ANYTHING STARTS
+# (#4485). systemd starts hive-data-volume.service only when it is inactive;
+# if the unit is stale-`active` from a previous boot while the volume it
+# created is gone, the start below skips it and hive.service's own start would
+# auto-create `hive-data` with NO labels — permanently invisible to
+# bin/hive-podman-teardown.sh, which selects by the #4210 label set and
+# nothing else. So the unit's word is not taken for it: the volume is checked
+# directly, the stale-active skew is repaired by restarting the unit (restart
+# re-runs its create even when systemd thinks it already did), and a volume
+# that exists WITHOUT the labels stops the install — podman cannot add labels
+# to an existing volume, so that state is not repairable in place.
+VOLUME_NAME="$(unit_volume_name "${QUADLET_SRC}/hive-data.volume")"
+[ -n "$VOLUME_NAME" ] || die "$EX_SOFTWARE" "could not read VolumeName= from hive-data.volume"
+
+volume_owned_value() {
+  pod volume inspect "$VOLUME_NAME" \
+    --format "{{index .Labels \"${HIVE_PODMAN_OWNED_LABEL_KEY}\"}}" 2>/dev/null
+}
+
+if ! pod volume exists "$VOLUME_NAME"; then
+  info "volume ${VOLUME_NAME} does not exist yet; running its unit rather than letting"
+  info "hive.service auto-create it unlabelled (#4485)"
+  sctl restart hive-data-volume.service \
+    || die "$EX_CONFIG" "systemctl restart hive-data-volume.service failed"
+fi
+
+owned_value="$(volume_owned_value)"
+if [ "$owned_value" != "$HIVE_PODMAN_OWNED_LABEL_VALUE" ]; then
+  bad "volume ${VOLUME_NAME} exists but does not carry ${HIVE_PODMAN_OWNED_LABEL} (#4485)"
+  info "An unlabelled volume is invisible to bin/hive-podman-teardown.sh and would survive"
+  info "every teardown, silently. Podman cannot add labels to an existing volume, so this"
+  info "cannot be repaired in place. If its contents matter, back them up first"
+  info "(src/docs/backup-restore.md), then remove it and re-run this installer:"
+  info "  podman volume rm ${VOLUME_NAME}"
+  die "$EX_CONFIG" "refusing to start a deployment whose state volume teardown cannot see"
+fi
+ok "volume ${VOLUME_NAME} exists and carries ${HIVE_PODMAN_OWNED_LABEL} — teardown can see it"
 
 # Starting the gateway pulls hive, the network and the volume up in order.
 # In a logged-in session the stack may already be up: daemon-reload runs the

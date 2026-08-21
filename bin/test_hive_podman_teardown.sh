@@ -109,7 +109,7 @@ while (( index < ${#args[@]} )); do
       index=$((index + 1))
       continue
       ;;
-    ps|ls|images|rm|rmi)
+    ps|ls|images|rm|rmi|inspect)
       verb="$token"
       [[ -n "$store_kind" ]] || store_kind="container"
       [[ "$token" == "images" ]] && store_kind="image"
@@ -141,6 +141,23 @@ case "$verb" in
       matches "$labels" || continue
       printf '%s\n' "$name"
     done <"$PODMAN_STORE"
+    ;;
+  inspect)
+    # Read of exact names, as the real engine renders {{.Labels}}: a Go map.
+    (( ${#operands[@]} > 0 )) || { echo "fake podman: inspect requires a name" >&2; exit 125; }
+    for operand in "${operands[@]}"; do
+      found="no"
+      while IFS='|' read -r kind name labels; do
+        if [[ "$kind" == "$store_kind" && "$name" == "$operand" ]]; then
+          found="yes"
+          printf 'map[%s]\n' "${labels//,/ }" | tr '=' ':'
+        fi
+      done <"$PODMAN_STORE"
+      if [[ "$found" != "yes" ]]; then
+        echo "fake podman: no such ${store_kind}: ${operand}" >&2
+        exit 125
+      fi
+    done
     ;;
   rm|rmi)
     (( ${#operands[@]} > 0 )) || { echo "fake podman: refusing an operand-less removal" >&2; exit 125; }
@@ -372,6 +389,51 @@ reset_store
 teardown env HIVE_DEPLOY_INSTANCE='x --filter label=other' "$BASH_BIN" "$TEARDOWN" run --yes
 assert_eq "64" "$RUN_STATUS" "injected instance is refused"
 assert_eq "" "$(cat "$CALL_LOG")" "injected instance runs no command at all"
+
+# --- 6b. an unlabelled hive-data is reported, never removed (#4485) ----------
+#
+# `podman run -v hive-data:/data` auto-creates a missing named volume with no
+# labels, and a volume without the ownership labels is outside the #4210
+# selection contract — correctly. What must not happen is the old output: "no
+# Hive-owned volumes" over a store where hive-data exists, telling the
+# operator the deployment is gone while audit.jsonl survives on disk. The
+# well-known name is REPORTED and never removed.
+
+reset_store
+sed -i 's/^volume|hive-data|.*/volume|hive-data|/' "$STORE"
+store_before="$(cat "$STORE")"
+teardown "$BASH_BIN" "$TEARDOWN" plan
+assert_eq "0" "$RUN_STATUS" "unlabelled-volume plan status (stderr: ${RUN_STDERR})"
+assert_contains "$RUN_STDOUT" "volume hive-data exists but carries no Hive ownership labels" \
+  "plan reports the unlabelled well-known volume"
+assert_contains "$RUN_STDOUT" "will not touch it" "plan says it will not remove it"
+assert_contains "$RUN_STDOUT" "no Hive-owned volumes" "selection itself stays label-scoped"
+assert_eq "$store_before" "$(cat "$STORE")" "unlabelled-volume plan removes nothing"
+
+teardown "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "unlabelled-volume run status (stderr: ${RUN_STDERR})"
+assert_contains "$RUN_STDOUT" "volume hive-data exists but carries no Hive ownership labels" \
+  "run reports the unlabelled well-known volume"
+assert_contains "$(cat "$STORE")" "volume|hive-data|" "run never removes the unlabelled volume"
+assert_lacks "$(cat "$CALL_LOG")" "volume rm hive-data" "no removal command named the unlabelled volume"
+assert_unowned_survived "unlabelled hive-data"
+
+# A labelled hive-data produces no report: it is selected and removed the
+# ordinary way.
+reset_store
+teardown "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "labelled-volume run status (stderr: ${RUN_STDERR})"
+assert_lacks "$RUN_STDOUT" "carries no Hive ownership labels" "no report for a labelled volume"
+assert_lacks "$(cat "$STORE")" "volume|hive-data|" "the labelled volume was removed"
+
+# hive-data labelled for ANOTHER instance is that deployment's, not an orphan:
+# a staging teardown neither removes nor reports the default instance's volume.
+reset_store
+teardown env HIVE_DEPLOY_INSTANCE=staging "$BASH_BIN" "$TEARDOWN" run --yes
+assert_eq "0" "$RUN_STATUS" "staging run status (stderr: ${RUN_STDERR})"
+assert_lacks "$RUN_STDOUT" "carries no Hive ownership labels" \
+  "another instance's labelled volume is not reported as an orphan"
+assert_contains "$(cat "$STORE")" "volume|hive-data|" "another instance's volume survives"
 
 # --- 7. images are removed only when asked -----------------------------------
 

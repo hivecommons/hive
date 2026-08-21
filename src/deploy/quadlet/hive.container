@@ -180,6 +180,24 @@ HealthRetries=3
 HealthStartPeriod=120s
 
 [Service]
+# THE LABELLED VOLUME MUST EXIST BEFORE THIS UNIT MAY START (#4485).
+#
+# The generated ExecStart carries `-v hive-data:/data`, and podman auto-creates
+# a missing named volume — with NO labels and no warning. If
+# hive-data-volume.service is stale-`active` from a previous boot while the
+# volume it created is gone, systemd skips it, this unit's own start creates
+# the volume instead, and the result is invisible to
+# bin/hive-podman-teardown.sh forever: `--ignore` on a later unit start
+# returns success WITHOUT applying labels, and teardown cannot see what it
+# cannot select. Teardown then reports "no Hive-owned volumes" while
+# audit.jsonl and every byte of Hive state survive on disk.
+#
+# So the auto-create path is closed rather than documented: this unit refuses
+# to start unless hive-data already exists AND carries the #4210 ownership
+# marker. The failure is loud — `systemctl status hive.service` names the
+# repair — instead of a healthy-looking stack whose state is orphaned.
+ExecStartPre=/bin/sh -c 'podman volume inspect hive-data --format "{{.Labels}}" 2>/dev/null | grep -qF "io.kubestellar.hive.owned:true" || { echo "hive-data is missing or lacks its io.kubestellar.hive.* ownership labels; refusing to start so the volume is never auto-created unlabelled (#4485). If it is missing: systemctl restart hive-data-volume.service (add --user when rootless). If it exists unlabelled: back it up first — see src/docs/backup-restore.md." >&2; exit 1; }'
+
 # ADR-0017: every .container unit must set TimeoutStartSec explicitly, larger
 # than HealthStartPeriod plus the retry budget (120s + 3x10s = 150s here). The
 # host default is NOT a safe fallback — it was measured at 45s on Fedora and

@@ -287,10 +287,15 @@ podman volume rm hive-data                      # DESTRUCTIVE -- this is the dow
 
 | recreate with | labels on the volume | `bin/hive-podman-teardown.sh plan` sees it |
 | --- | --- | --- |
-| `podman volume create hive-data` | `{}` | **no** — "no Hive-owned volumes" |
+| `podman volume create hive-data` | `{}` | **no** — reported as unlabelled, never removed |
 | `systemctl --user start hive-data-volume.service` | the four `io.kubestellar.hive.*` labels | yes — "volumes (1): hive-data" |
+| `bin/hive-podman-setup.sh`, volume unit stale-`active` | the four `io.kubestellar.hive.*` labels — the installer restarts the unit when the volume is missing (#4485) | yes |
 
-A volume created the first way survives every teardown and is invisible to the cleanup tooling, silently, forever.
+A volume created the first way is invisible to the teardown's selection, which is deliberately the ownership labels and nothing else. It used to survive silently, forever; since #4485 three things stand between you and that state:
+
+- `hive.service` refuses to start unless `hive-data` exists **with** its ownership labels, so `podman run -v hive-data:/data` never gets the chance to auto-create it unlabelled — the third row above used to produce exactly that, when the volume unit was stale-`active` from a previous boot while the volume it created was gone.
+- `bin/hive-podman-setup.sh` checks the volume itself rather than trusting the unit's state, restarts the unit when the volume is missing, and stops the install when the volume exists without its labels.
+- `bin/hive-podman-teardown.sh` reports an unlabelled `hive-data` — "exists but carries no Hive ownership labels; this teardown will not touch it" — instead of folding it into "no Hive-owned volumes". It still never removes it.
 
 The full cycle, rootless (prefix each command with `sudo` and drop `--user` for rootful):
 

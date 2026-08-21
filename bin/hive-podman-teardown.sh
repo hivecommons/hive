@@ -56,6 +56,18 @@ HIVE_TEARDOWN_KINDS=(
 # removing them is a separate decision from tearing down one deployment.
 HIVE_TEARDOWN_IMAGE_KIND="images|images|rmi|{{.ID}}"
 
+# Well-known Hive volume names, for the unlabelled-orphan report (#4485).
+#
+# Selection stays the ownership labels and nothing else — that contract is not
+# weakened here. But `podman run -v hive-data:/data` auto-creates a missing
+# named volume with NO labels, and a labelling failure used to read as "no
+# Hive-owned volumes": the operator is told the deployment is gone while
+# audit.jsonl and every byte of Hive state survive on disk. So a volume that
+# carries one of Hive's well-known names but no ownership label is REPORTED,
+# never removed: the output says it exists and that this teardown will not
+# touch it, instead of saying something untrue.
+HIVE_TEARDOWN_KNOWN_VOLUMES=(hive-data)
+
 hive_podman_teardown_usage() {
   cat <<'EOF'
 Usage: hive-podman-teardown.sh plan [--images]
@@ -73,7 +85,9 @@ defaults to "default".
 
 Only Hive-owned resources are visible to this command. Selection is the
 ownership label set from #4210 and nothing else, so an unlabelled container,
-pod, volume, or network cannot be reached from here.
+pod, volume, or network cannot be reached from here. A volume carrying one of
+Hive's well-known names WITHOUT the labels is reported, never removed (#4485),
+so a labelling failure cannot read as "no Hive-owned volumes".
 EOF
 }
 
@@ -153,6 +167,48 @@ _hive_podman_teardown_list() {
   "${command[@]}"
 }
 
+# Reports well-known Hive volume names that exist WITHOUT the ownership labels
+# (#4485). A read of exact names, never a removal: an unlabelled volume is
+# outside the #4210 selection contract and stays outside it — but its
+# existence is stated rather than folded into "no Hive-owned volumes".
+#
+# The arguments are the labelled volume names the filter already returned;
+# those are Hive's and need no report. A volume that carries the ownership
+# marker under a DIFFERENT instance is another deployment's and is skipped
+# too: its own teardown selects it.
+_hive_podman_teardown_report_unlabelled_volumes() {
+  local -a labelled=("$@")
+  local name known labelled_name labels
+  local -a command=()
+
+  for name in "${HIVE_TEARDOWN_KNOWN_VOLUMES[@]}"; do
+    known="no"
+    for labelled_name in "${labelled[@]}"; do
+      [[ "$labelled_name" == "$name" ]] && known="yes"
+    done
+    [[ "$known" == "yes" ]] && continue
+
+    command=(podman volume inspect "$name" --format '{{.Labels}}')
+    if ! hive_podman_cleanup_check "${command[@]}"; then
+      printf 'ERROR: ownership guard rejected an inspection this teardown constructed: %s\n' \
+        "${command[*]}" >&2
+      return 70
+    fi
+
+    # A missing volume is the expected case and not an error.
+    labels="$("${command[@]}" 2>/dev/null)" || continue
+
+    if [[ "$labels" == *"${HIVE_PODMAN_OWNED_LABEL_KEY}:${HIVE_PODMAN_OWNED_LABEL_VALUE}"* ]]; then
+      continue
+    fi
+
+    printf 'WARNING: volume %s exists but carries no Hive ownership labels; this teardown will not touch it.\n' \
+      "$name"
+    printf 'WARNING: if it is a Hive volume that lost its labels (#4485), back it up first (src/docs/backup-restore.md), then remove it yourself: podman volume rm %s\n' \
+      "$name"
+  done
+}
+
 # Tears down one resource kind. Prints what it found; removes it only when
 # HIVE_TEARDOWN_APPLY=yes.
 _hive_podman_teardown_kind() {
@@ -172,6 +228,13 @@ _hive_podman_teardown_kind() {
     [[ -n "$line" ]] || continue
     found+=("$line")
   done <<<"$listed"
+
+  # Volumes get the unlabelled-orphan report (#4485) whether or not anything
+  # labelled was found: the dangerous output is exactly "no Hive-owned
+  # volumes" over a store where hive-data exists without its labels.
+  if [[ "$kind" == "volumes" ]]; then
+    _hive_podman_teardown_report_unlabelled_volumes "${found[@]}" || return
+  fi
 
   if (( ${#found[@]} == 0 )); then
     printf 'no Hive-owned %s\n' "$kind"
