@@ -12,7 +12,7 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_SINGLETON_LOCK` | No | `/var/run/hive-metrics/hive.singleton.lock` when available, otherwise OS temp dir | Overrides the process singleton lock path. Set exactly `off` only for local development where duplicate processes are intentional. |
 | `HIVE_GITHUB_TOKEN` | Required unless GitHub App auth is configured | none | Main PAT fallback for `github.token`; also used by fleet/stat fallback paths and some deployment manifests. Missing PAT scopes surface as request-time 403s — see [Required PAT scopes](github-app-setup.md#personal-access-token-pat-scopes). |
 | `GH_APP_KEY_FILE` | No | configured `github.key_file`, then `/data/gh-app-key.pem` or `/secrets/gh-app-key.pem` in provisioned paths | GitHub App private-key file fallback. |
-| `DASHBOARD_AUTH_TOKEN` | No | none | Kubernetes/provisioned secret name for the dashboard shared token; used before `HIVE_DASHBOARD_TOKEN` when `dashboard.auth_token` is empty. |
+| `DASHBOARD_AUTH_TOKEN` | No | none | Dashboard shared-token **value** used by Kubernetes/provisioned deployments; read before `HIVE_DASHBOARD_TOKEN` when `dashboard.auth_token` is empty. Same format rules as `HIVE_DASHBOARD_TOKEN` — see [Generating and rotating `HIVE_DASHBOARD_TOKEN`](#generating-and-rotating-hive_dashboard_token). |
 | `HIVE_DASHBOARD_TOKEN` | No | none | Dashboard/API shared-token fallback and default `hivectl --token-env` variable. See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](#generating-and-rotating-hive_dashboard_token). |
 | `HIVE_AUTHORIZED_USERS` | No | none | Comma-separated direct-route dashboard allowlist, with optional `user:role` entries. Used when `dashboard.authorized_users` is empty. |
 | `HIVE_REPO` | No | none | Bootstrap shortcut in `owner/repo` form; fills `project.org`, `project.repos`, and `project.primary_repo` if missing. |
@@ -55,6 +55,28 @@ to) is an opaque shared secret. The server does **not** enforce any format:
 - **Empty value**: leaving it unset leaves the dashboard API unauthenticated
   (unless direct-route per-user authorization is configured). Never deploy an
   internet-reachable hive without it.
+
+### Precedence: `dashboard.auth_token`, `DASHBOARD_AUTH_TOKEN`, `HIVE_DASHBOARD_TOKEN`
+
+Three sources can supply the same one shared token. The first non-empty value
+wins and the rest are ignored:
+
+1. `dashboard.auth_token` in `hive.yaml` (note that the shipped manifests set it
+   to the `${HIVE_DASHBOARD_TOKEN}` placeholder, which the config resolver
+   expands — so in those deployments the env var is what actually supplies it).
+2. `DASHBOARD_AUTH_TOKEN` environment variable.
+3. `HIVE_DASHBOARD_TOKEN` environment variable.
+
+**Both env vars hold the token *value*, not a Kubernetes Secret name.** In
+`src/deploy/k8s/deployment.yaml` the *name* of the Secret is `hive-secrets`; the
+env var is populated from a key inside it via `secretKeyRef`. Setting either var
+to something like `hive-secrets` configures that literal string as your
+dashboard password.
+
+Because both resolve to the same field, setting them to *different* values is
+never useful — the lower-precedence one is silently discarded, which is a common
+source of "I rotated the token but the old one still works" confusion. Pick one
+variable per deployment and rotate that one.
 
 Generate a strong value with a CSPRNG; 32 bytes (256 bits) of entropy is
 recommended:

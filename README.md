@@ -102,6 +102,9 @@ cp src/deploy/nginx.conf "$CONF/nginx.conf"
 cp src/deploy/quadlet/hive.env.example "$CONF/hive.env"
 chmod 600 "$CONF/hive.env"
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> "$CONF/hive.env"
+# Classic PAT: `repo` scope (`public_repo` for public-only), plus `workflow` at
+# L5/L6 if agent PRs may touch `.github/workflows/`. See
+# src/docs/github-app-setup.md#personal-access-token-pat-scopes
 printf 'HIVE_GITHUB_TOKEN=%s\n'    'ghp_...'                 >> "$CONF/hive.env"
 
 # Pull before starting. The generated ExecStart pulls a missing image itself and
@@ -209,6 +212,11 @@ kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
 ```
 
+The PAT needs the classic `repo` scope (`public_repo` for public-only repos),
+plus `workflow` at L5/L6 if agent PRs may touch `.github/workflows/`. Scopes are
+never validated at startup, so a wrong-scoped token fails later as a generic
+GitHub 403 — see [Personal access token (PAT) scopes](src/docs/github-app-setup.md#personal-access-token-pat-scopes).
+
 The dashboard token is an opaque shared secret with no server-side strength
 check — always generate it with a CSPRNG as above, never a hand-typed value.
 See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](src/docs/env-vars.md#generating-and-rotating-hive_dashboard_token).
@@ -220,6 +228,10 @@ kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_... \
   --from-file=gh-app-key.pem=/path/to/key.pem
 ```
+
+With `github.app_id`/`key_file` set, the App path supplies repository
+permissions and the PAT is only a fallback; see
+[GitHub App setup](src/docs/github-app-setup.md) for both paths.
 
 #### 3. Create ConfigMap from hive.yaml
 
@@ -303,7 +315,7 @@ Long timeouts are needed for SSE streaming connections to the dashboard.
 ```bash
 kubectl apply -f src/deploy/k8s/namespace.yaml
 kubectl -n hive create secret generic hive-secrets \
-  --from-literal=HIVE_GITHUB_TOKEN=ghp_...
+  --from-literal=HIVE_GITHUB_TOKEN=ghp_...   # classic PAT: repo scope — see src/docs/github-app-setup.md#personal-access-token-pat-scopes
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 kubectl apply -f src/deploy/k8s/pvc.yaml
 kubectl apply -f src/deploy/k8s/deployment.yaml
