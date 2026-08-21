@@ -29,26 +29,54 @@ mkdir -p "$FAKE_BIN"
 # systemctl: `show -p X --value` answers from FAKE_<X>; is-enabled and
 # is-active answer from their own variables; `cat` decides whether the unit is
 # known at all. Anything the probe should never call in check mode (start,
-# stop, restart) is logged and refused, so a probe that starts drifting into
-# mutation fails the suite rather than the host.
+# stop, restart) is logged and refused unless FAKE_ALLOW_MUTATION=yes, so a
+# probe that starts drifting into mutation fails the suite rather than the
+# host. The exercise cases set FAKE_ALLOW_MUTATION and get a mutable
+# hive-gateway.service whose ActiveState lives in a FILE, because the #4491
+# mechanic under test is stateful: a stop of hive.service propagates to the
+# gateway through Requires=, and a later start of hive.service does NOT bring
+# it back -- Requires= propagates stop, not start.
 cat >"${FAKE_BIN}/systemctl" <<'EOF'
 #!/usr/bin/env bash
 printf 'systemctl %s\n' "$*" >>"$SYSTEMCTL_CALL_LOG"
 args=("$@")
 [ "${args[0]:-}" = "--user" ] && args=("${args[@]:1}")
+gw_state() { cat "$FAKE_GATEWAY_STATE_FILE" 2>/dev/null || printf 'inactive'; }
+is_gateway() { local a; for a in "${args[@]}"; do [ "$a" = "hive-gateway.service" ] && return 0; done; return 1; }
 case "${args[0]:-}" in
   show)
     prop=""
     for a in "${args[@]}"; do case "$a" in -p) prop="__next__" ;; *) [ "$prop" = "__next__" ] && { prop="$a"; break; } ;; esac; done
+    if is_gateway && [ "$prop" = "ActiveState" ]; then gw_state; exit 0; fi
     var="FAKE_$prop"
     printf '%s\n' "${!var-}"
     ;;
-  cat)       [ "${FAKE_UNIT_KNOWN:-yes}" = "yes" ] || exit 1 ;;
+  cat)
+    if is_gateway; then [ "${FAKE_GATEWAY_KNOWN:-yes}" = "yes" ] || exit 1; exit 0; fi
+    [ "${FAKE_UNIT_KNOWN:-yes}" = "yes" ] || exit 1 ;;
   is-enabled) printf '%s\n' "${FAKE_IS_ENABLED:-generated}" ;;
   is-active)  printf '%s\n' "${FAKE_IS_ACTIVE:-active}" ;;
   is-failed)  printf '%s\n' "${FAKE_IS_FAILED:-inactive}" ;;
   start|stop|restart)
-    printf 'REFUSED-MUTATION %s\n' "$*" >>"$SYSTEMCTL_CALL_LOG"; exit 1 ;;
+    if [ "${FAKE_ALLOW_MUTATION:-no}" != "yes" ]; then
+      printf 'REFUSED-MUTATION %s\n' "$*" >>"$SYSTEMCTL_CALL_LOG"; exit 1
+    fi
+    case "${args[0]}" in
+      stop)
+        # Any stop takes the gateway down: directly, or -- when hive.service
+        # is the unit stopped -- through Requires= propagation (#4491).
+        printf 'inactive' >"$FAKE_GATEWAY_STATE_FILE" ;;
+      start)
+        if is_gateway; then
+          [ "${FAKE_GATEWAY_START_FAILS:-no}" = "yes" ] && exit 1
+          printf 'active' >"$FAKE_GATEWAY_STATE_FILE"
+        fi
+        # Starting hive.service does NOT start the gateway. That asymmetry
+        # -- Requires= propagates stop, not start -- is the bug under test.
+        ;;
+      restart) : ;;
+    esac
+    exit 0 ;;
   *) exit 0 ;;
 esac
 EOF
@@ -59,6 +87,7 @@ printf 'podman %s\n' "$*" >>"$PODMAN_CALL_LOG"
 case "$1" in
   ps)     printf '%s\n' "${FAKE_PS:-hive Up 2 minutes (healthy)}" ;;
   volume) printf '%s\n' "${FAKE_VOLUME:-hive-data}" ;;
+  exec)   printf '%s\n' "${FAKE_MARKER:-lifecycle-probe-20260101T000000Z}" ;;
   *) exit 0 ;;
 esac
 EOF
@@ -81,6 +110,30 @@ EOF
 cat >"${FAKE_BIN}/uptime" <<'EOF'
 #!/usr/bin/env bash
 printf 'up 1 minute\n'
+EOF
+
+# curl is the probe's dashboard check on the gateway's published :3001. It
+# follows the gateway's simulated state, so a stranded gateway is a dead
+# dashboard exactly as on a real host. FAKE_DASHBOARD overrides: `dead` never
+# answers, `dies` answers the first call (the pre-probe capture) and then
+# stops -- an active gateway in front of a dead listener, #4489's shape.
+cat >"${FAKE_BIN}/curl" <<'EOF'
+#!/usr/bin/env bash
+n="$(cat "${FAKE_CURL_COUNT:-/dev/null}" 2>/dev/null || printf 0)"
+n=$((n + 1)); [ -n "${FAKE_CURL_COUNT:-}" ] && printf '%s' "$n" >"$FAKE_CURL_COUNT"
+case "${FAKE_DASHBOARD:-follow-gateway}" in
+  dead) exit 22 ;;
+  dies) [ "$n" -le 1 ] && { printf '{"status":"ok"}'; exit 0; }; exit 7 ;;
+esac
+[ "$(cat "$FAKE_GATEWAY_STATE_FILE" 2>/dev/null)" = "active" ] && { printf '{"status":"ok"}'; exit 0; }
+exit 7
+EOF
+
+# The exercise's wait loops are bounded by iteration count, not wall time, so
+# a no-op sleep keeps the suite fast without changing what they observe.
+cat >"${FAKE_BIN}/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
 EOF
 
 chmod +x "${FAKE_BIN}"/*
@@ -114,6 +167,15 @@ reset_env() {
   export FAKE_LINGER=yes
   export FAKE_ActiveEnterTimestampMonotonic=30000000
   export FAKE_UserspaceTimestampMonotonic=5000000
+  # Mutation is refused by default; only the exercise cases opt in.
+  export FAKE_ALLOW_MUTATION=no
+  export FAKE_GATEWAY_KNOWN=yes
+  export FAKE_GATEWAY_START_FAILS=no
+  export FAKE_DASHBOARD=follow-gateway
+  export FAKE_GATEWAY_STATE_FILE="${TEST_TMP}/gateway.state"
+  printf 'active' >"$FAKE_GATEWAY_STATE_FILE"
+  export FAKE_CURL_COUNT="${TEST_TMP}/curl.count"
+  printf '0' >"$FAKE_CURL_COUNT"
   GEN="${TEST_TMP}/gen"
   rm -rf "$GEN"; mkdir -p "$GEN/default.target.wants"
   : >"$GEN/hive.service"
@@ -219,6 +281,51 @@ echo
 echo "== invocation =="
 reset_env
 case_expect "an unknown argument is EX_USAGE" 64 "unknown argument" --nonsense
+
+echo
+echo "== exercise restores the gateway it strands (#4491) =="
+# The stop of hive.service propagates to hive-gateway.service through
+# Requires=; the later start does not bring it back. Before the fix the
+# exercise ended right there: gateway inactive, :3001 dead, "no findings",
+# exit 0. The restore step must start the gateway, verify :3001 answers, and
+# turn any failure to do so into a finding.
+reset_env; export FAKE_ALLOW_MUTATION=yes
+case_expect "exercise ends with the gateway active and no findings" 0 "hive-gateway.service is active, as it was before the probe" exercise
+reset_env; export FAKE_ALLOW_MUTATION=yes
+case_expect "exercise re-verifies that the dashboard answers" 0 "the dashboard answers on" exercise
+
+# The restore must actually START the gateway, not merely observe one that
+# never went down: after the run, the stop propagation must have happened and
+# a start of the gateway must be in the log.
+reset_env; export FAKE_ALLOW_MUTATION=yes
+run_probe exercise >/dev/null
+if grep -q 'systemctl --user start hive-gateway.service' "$SYSTEMCTL_CALL_LOG" \
+   && [ "$(cat "$FAKE_GATEWAY_STATE_FILE")" = "active" ]; then
+  PASS=$((PASS + 1)); printf 'ok   the restore step started the stranded gateway\n'
+else
+  FAIL=$((FAIL + 1)); printf 'FAIL the restore step never started hive-gateway.service\n'
+  sed 's/^/       | /' "$SYSTEMCTL_CALL_LOG"
+fi
+
+reset_env; export FAKE_ALLOW_MUTATION=yes FAKE_GATEWAY_START_FAILS=yes
+case_expect "a gateway that cannot be restored is a finding, not silence" 78 "could NOT be restored" exercise
+reset_env; export FAKE_ALLOW_MUTATION=yes FAKE_GATEWAY_START_FAILS=yes
+out="$(run_probe exercise)"
+if printf '%s' "$out" | grep -qF 'no findings'; then
+  FAIL=$((FAIL + 1)); printf 'FAIL "no findings" printed over a stack the probe broke\n'
+  printf '%s\n' "$out" | sed 's/^/       | /'
+else
+  PASS=$((PASS + 1)); printf 'ok   "no findings" is never printed over a stack the probe broke\n'
+fi
+
+reset_env; export FAKE_ALLOW_MUTATION=yes FAKE_DASHBOARD=dies
+case_expect "an active gateway in front of a dead :3001 is still a finding" 78 "does NOT now" exercise
+
+reset_env; export FAKE_ALLOW_MUTATION=yes FAKE_GATEWAY_KNOWN=no FAKE_DASHBOARD=dead
+case_expect "no gateway unit installed means nothing to restore, and no finding" 0 "not known to this manager; nothing to restore" exercise
+
+reset_env; export FAKE_ALLOW_MUTATION=yes; printf 'inactive' >"$FAKE_GATEWAY_STATE_FILE"
+case_expect "a gateway that was already down is left down" 0 "leaving it that way" exercise
 
 echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"

@@ -52,6 +52,18 @@ bin/hive-podman-lifecycle-probe.sh boot-check         # run me after a reboot
 so it is safe on a host that is serving. `exercise` drives the full lifecycle
 and is not. `boot-check` reads the journal and needs no arming beforehand.
 
+`exercise` ends with a restore step that returns the stack to its pre-probe
+state, and that step exists because of a systemd asymmetry worth knowing about
+([#4491](https://github.com/kubestellar/hive/issues/4491)):
+`hive-gateway.service` has `Requires=hive.service`, and `Requires=` propagates
+a *stop* but not a *start*. The probe's deliberate stop/start pair therefore
+takes the gateway — and with it `:3001`, the only published port — down and
+does not bring it back, where a single `systemctl restart hive.service` (one
+job, one transaction) keeps it up. The restore step restarts the gateway,
+confirms `:3001` answers as it did before the probe, runs even on a failed
+step or a Ctrl-C, and reports a failed restoration as a finding rather than
+"no findings".
+
 Exit codes follow the other Podman scripts: 0 no findings, 78 at least one
 finding, 64 an unusable invocation.
 `bin/test_hive_podman_lifecycle_probe.sh` covers it with every input mocked,

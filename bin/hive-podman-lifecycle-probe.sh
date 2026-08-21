@@ -34,7 +34,12 @@
 #              host that is serving.
 #   exercise   drives the full lifecycle -- stop, start, restart, recreate --
 #              and prints what the unit reports at each step. THIS STOPS AND
-#              STARTS HIVE. Not for a host you care about.
+#              STARTS HIVE. Not for a host you care about. A final restore
+#              step puts the stack back the way the probe found it -- in
+#              particular hive-gateway.service, which Requires= propagates a
+#              stop to but which nothing brings back on the later start
+#              (#4491) -- and a restore that fails is a FINDING, so the probe
+#              never reports "no findings" over a deployment it broke.
 #   boot-check reports post-boot state: whether the unit came back, and how
 #              long after boot it became active. Run it after a reboot; it
 #              reads the journal, so it needs no prior arming.
@@ -55,10 +60,15 @@ EX_CONFIG=78
 MODE="check"
 ROOTFUL=0
 UNIT="hive.service"
+GATEWAY_UNIT="hive-gateway.service"
 VOLUME_UNIT="hive-data-volume.service"
 VOLUME="hive-data"
 CONTAINER="hive"
 MARKER="/data/.lifecycle-probe"
+# The one published port (src/deploy/quadlet/hive-gateway.container). The URL
+# is overridable as a test seam only; on a real host there is nothing else it
+# could sensibly point at.
+DASHBOARD_URL="${HIVE_LIFECYCLE_DASHBOARD_URL:-http://127.0.0.1:3001/api/health}"
 
 findings=0
 
@@ -112,6 +122,9 @@ else
 fi
 
 show() { sctl show "$UNIT" -p "$1" --value 2>/dev/null; }
+gshow() { sctl show "$GATEWAY_UNIT" -p "$1" --value 2>/dev/null; }
+gateway_known() { sctl cat "$GATEWAY_UNIT" >/dev/null 2>&1; }
+dashboard_up() { curl -sf --max-time 5 "$DASHBOARD_URL" >/dev/null 2>&1; }
 
 state() {
   printf '%s/%s/%s/%s' \
@@ -268,11 +281,127 @@ wait_active() {
   return 1
 }
 
+wait_dashboard() {
+  local limit="${1:-60}" i=0
+  while [ "$i" -lt "$limit" ]; do
+    dashboard_up && return 0
+    sleep 2; i=$((i + 2))
+  done
+  return 1
+}
+
+# Pre-probe state, captured before the first mutation so the restore step has
+# something to restore TO. Globals, not locals: the INT/TERM trap reads them.
+GATEWAY_HAVE="no"
+PRE_UNIT_STATE=""
+PRE_GATEWAY_STATE=""
+PRE_DASHBOARD="no"
+
+# Put the stack back the way the probe found it, and treat failure to do so as
+# a finding. This is the #4491 fix: `systemctl stop hive.service` propagates
+# through the gateway's Requires=hive.service, but the later `start
+# hive.service` does not -- Requires= propagates stop, not start -- so without
+# this step the exercise strands hive-gateway.service inactive, the dashboard
+# on :3001 dead, and still prints "no findings". (`restart` is immune: it is
+# one systemd job, and the units that Requires= the restarted one come back in
+# the same transaction. Only the deliberate stop/start pair in steps 2 and 3
+# splits that into two jobs, and those steps are the point of the exercise, so
+# the repair belongs here rather than in them.)
+restore_stack() {
+  head1 "6. restore -- leave the stack as the probe found it"
+  local pre_gw=""
+  [ "$GATEWAY_HAVE" = "yes" ] && pre_gw=" $GATEWAY_UNIT=$PRE_GATEWAY_STATE"
+  info "before the probe: $UNIT=$PRE_UNIT_STATE${pre_gw} dashboard=$PRE_DASHBOARD"
+
+  if [ "$PRE_UNIT_STATE" != "active" ]; then
+    # The probe started a stack that was deliberately down; put it back down.
+    # The stop propagates through Requires= to the gateway too.
+    sctl stop "$UNIT" >/dev/null 2>&1
+    if [ "$(show ActiveState)" = "active" ]; then
+      bad "$UNIT was $PRE_UNIT_STATE before the exercise and is still running -- could not restore the stopped state"
+    else
+      ok "$UNIT returned to its pre-probe state ($PRE_UNIT_STATE -- it was not running before, so it is not running now)"
+    fi
+    return
+  fi
+
+  # hive.service first: the gateway Requires= it, so it cannot come back alone.
+  if [ "$(show ActiveState)" != "active" ]; then
+    sctl start "$UNIT" >/dev/null 2>&1
+  fi
+  if [ "$(show ActiveState)" = "active" ]; then
+    ok "$UNIT is active, as it was before the probe"
+  else
+    bad "$UNIT was active before the exercise and could NOT be restored: $(state)"
+  fi
+
+  local user_flag=""
+  [ "$ROOTFUL" -eq 0 ] && user_flag="--user "
+  if [ "$GATEWAY_HAVE" = "yes" ]; then
+    if [ "$PRE_GATEWAY_STATE" = "active" ]; then
+      if [ "$(gshow ActiveState)" != "active" ]; then
+        info "starting $GATEWAY_UNIT -- the stop in step 2 propagated to it through Requires=, and the start in step 3 did not bring it back (#4491)"
+        sctl start "$GATEWAY_UNIT" >/dev/null 2>&1
+      fi
+      if [ "$(gshow ActiveState)" = "active" ]; then
+        ok "$GATEWAY_UNIT is active, as it was before the probe"
+      else
+        bad "$GATEWAY_UNIT was active before the exercise and could NOT be restored -- the dashboard on :3001 is DOWN"
+        info "fix: systemctl ${user_flag}start $GATEWAY_UNIT"
+      fi
+    else
+      info "$GATEWAY_UNIT was $PRE_GATEWAY_STATE before the probe; leaving it that way"
+    fi
+  else
+    info "$GATEWAY_UNIT is not known to this manager; nothing to restore"
+  fi
+
+  # Serving is the assertion an operator actually cares about: an `active`
+  # gateway in front of a dead listener is exactly the failure shape #4489
+  # describes, so the unit state above is not accepted as the whole answer.
+  if [ "$PRE_DASHBOARD" = "yes" ]; then
+    if wait_dashboard 60; then
+      ok "the dashboard answers on $DASHBOARD_URL, as it did before the probe"
+    else
+      bad "the dashboard answered on $DASHBOARD_URL before the exercise and does NOT now"
+      info "fix: systemctl ${user_flag}start $GATEWAY_UNIT, then curl $DASHBOARD_URL"
+    fi
+  fi
+}
+
+# shellcheck disable=SC2329 # invoked indirectly, via the INT/TERM trap
+exercise_interrupted() {
+  trap - INT TERM
+  head1 "Interrupted"
+  bad "the exercise was interrupted mid-lifecycle"
+  restore_stack
+  finish
+}
+
 do_exercise() {
   require_unit
   head1 "Lifecycle exercise -- $MODE_LABEL"
   say "  This stops and starts Hive. Ctrl-C now if that is not what you want."
+  say "  A final restore step returns the stack -- including $GATEWAY_UNIT -- to its pre-probe state."
 
+  gateway_known && GATEWAY_HAVE="yes"
+  PRE_UNIT_STATE="$(show ActiveState)"
+  [ "$GATEWAY_HAVE" = "yes" ] && PRE_GATEWAY_STATE="$(gshow ActiveState)"
+  dashboard_up && PRE_DASHBOARD="yes"
+
+  # From here on the probe mutates the host. Whatever happens -- a failed
+  # step's early return, a Ctrl-C, a kill -- restore_stack runs before the
+  # verdict, and a restore that fails is itself a finding, so the probe can
+  # no longer report "no findings" over a deployment it left broken.
+  trap exercise_interrupted INT TERM
+
+  exercise_steps
+
+  trap - INT TERM
+  restore_stack
+}
+
+exercise_steps() {
   local t0 t1 elapsed before after
 
   head1 "1. start"
@@ -390,16 +519,20 @@ do_boot_check() {
   fi
 }
 
+finish() {
+  head1 "Result"
+  if [ "$findings" -eq 0 ]; then
+    say "  no findings"
+    exit 0
+  fi
+  printf '  %s%d finding(s)%s\n' "$c_red" "$findings" "$c_reset"
+  exit "$EX_CONFIG"
+}
+
 case "$MODE" in
   check)      do_check ;;
   exercise)   do_exercise ;;
   boot-check) do_boot_check ;;
 esac
 
-head1 "Result"
-if [ "$findings" -eq 0 ]; then
-  say "  no findings"
-  exit 0
-fi
-printf '  %s%d finding(s)%s\n' "$c_red" "$findings" "$c_reset"
-exit "$EX_CONFIG"
+finish
