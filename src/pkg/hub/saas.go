@@ -335,6 +335,27 @@ type SaaSUser struct {
 	// browser that states a region.
 	Country string `json:"country,omitempty"`
 
+	// CountrySetByUser records that the country above was chosen DELIBERATELY
+	// by the user rather than inferred, and it is what makes an explicit CLEAR
+	// stick.
+	//
+	// Without it, "explicit" is inferred from `Country != ""` (see
+	// applyInferredCountry), which is fine for a pick but wrong for a clear: a
+	// user who removes their country via the self-service endpoint leaves an
+	// empty field, and the very next login's Accept-Language inference would
+	// silently put a flag back. "Prefer not to say" would become impossible to
+	// express — and impossible to notice failing, since the flag reappears a
+	// login later, far from the action that was supposed to remove it.
+	//
+	// Set only by the user's own writes: the self-service endpoint
+	// (handleMyCountry) and the wizard pick copied on approval
+	// (applyRequestContactToUser). NEVER set by the login-path inference, which
+	// is precisely the distinction this field exists to draw.
+	//
+	// omitempty bool so every record that has not been through a deliberate
+	// pick — which today is all of them — round-trips byte-identical.
+	CountrySetByUser bool `json:"country_set_by_user,omitempty"`
+
 	// Engagement stats, admin-only (they ride /api/saas/admin/users, which is
 	// requireAdmin). Both omitempty ints so existing records round-trip
 	// byte-identical until the user first logs in / opens a hive after this ships.
@@ -483,6 +504,17 @@ func (s *HubServer) registerSaaSRoutes() {
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
 	s.mux.HandleFunc("GET /api/saas/usage", s.requireAuth(s.handleUsage))
+	// Self-service country: the ONE field a non-admin may write on their own
+	// user record. requireAuth, not requireAdmin — that is the entire point,
+	// since every other SaaSUser write is admin-gated and the wizard is a
+	// one-time surface. The handler resolves the acting user from the SESSION
+	// and the body carries no identity, so this cannot reach anyone else's
+	// record. See handleMyCountry in user_country.go.
+	//
+	// PUT with a JSON body rather than a code in the path: country is personal
+	// data and a URL would put it in access logs, Referer headers and history.
+	s.mux.HandleFunc("GET /api/saas/me/country", s.requireAuth(s.handleMyCountry))
+	s.mux.HandleFunc("PUT /api/saas/me/country", s.requireAuth(s.handleMyCountry))
 	s.mux.HandleFunc("POST /api/saas/lite/enroll", s.requireAuth(s.handleLiteEnroll))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
@@ -7055,6 +7087,11 @@ func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
 	// rather than trusting the stored request: it may predate the validation.
 	if code := normalizeCountryCode(pr.Country); code != "" {
 		user.Country = code
+		// The wizard pick is a deliberate statement, so stamp it as one — same
+		// marker the self-service endpoint sets. Without this, an approval
+		// would leave the record looking "inferred", and the priority rule
+		// would hold only by the accident of the value being non-empty.
+		user.CountrySetByUser = true
 	}
 }
 
@@ -9061,6 +9098,19 @@ const dashboardHTML = `<!DOCTYPE html>
        of our own — the glyph carries its own, and the box is transparent, so
        this behaves identically in light and dark. */
     .country-flag { font-size: 0.95rem; line-height: 1; vertical-align: middle; margin-left: 2px; }
+    /* The viewer's OWN flag is a button, not a label — it opens the country
+       editor. Stripped of every default button chrome so it reads as the same
+       inline glyph the read-only .country-flag is, and only gains a background
+       on hover/focus to say it is interactive. Transparent by default and
+       var(--muted)/var(--text) otherwise, so it inherits the theme in both
+       light and dark rather than carrying colors of its own. */
+    .country-edit-btn { background: none; border: 0; padding: 0 2px; margin: 0; cursor: pointer;
+      line-height: 1; display: inline-flex; align-items: center; border-radius: 4px; color: var(--muted); }
+    .country-edit-btn:hover, .country-edit-btn:focus-visible { background: var(--surface); color: var(--text); }
+    /* The no-country state. A muted ＋ rather than a globe or a "??" box: it
+       reads as "add one", which is the action available, instead of pretending
+       to be a flag we do not have. */
+    .country-flag-empty { font-size: 0.8rem; line-height: 1; color: var(--muted); }
 
     /* ── Layout ── */
     .content { max-width: 1600px; margin: 0 auto; padding: 2.5rem clamp(1rem, 4vw, 4.5rem) 3rem; }
@@ -9811,6 +9861,151 @@ const dashboardHTML = `<!DOCTYPE html>
       var glyph = countryFlagEmoji(c);
       return '<span class="country-flag" title="' + escAttr(c) + '" ' +
         'role="img" aria-label="' + escAttr(c) + '">' + glyph + '</span>';
+    }
+
+    /* ---- Self-service country editor ------------------------------------
+       The nav flag is the affordance: clicking it opens a small overlay where
+       the signed-in user sets or clears their OWN country. It is the only such
+       surface — the get-started wizard is a one-time gate you pass before you
+       have a hive, so an existing user otherwise has no way to correct or
+       remove a country (including one the hub merely GUESSED from their
+       browser's language). See handleMyCountry in user_country.go.
+
+       Deliberately not a profile page. One field, one overlay, reusing the
+       overlay pattern the assign/timeline/prompt dialogs already use. */
+
+    /* countryDisplayName: the English name for a code, via Intl.DisplayNames —
+       a browser built-in, so the dashboard carries no 250-row country table of
+       its own and cannot drift from one. Falls back to the bare code where the
+       API is missing or the code is unassigned; a code is always better than an
+       empty label. */
+    function countryDisplayName(code) {
+      var c = normalizeCountryCode(code);
+      if (!c) return '';
+      try {
+        var dn = new Intl.DisplayNames(['en'], {type: 'region'});
+        return dn.of(c) || c;
+      } catch (e) { return c; }
+    }
+
+    /* The viewer's own country, mirrored from the auth payload so the editor
+       opens showing what is on file rather than blank. Updated in place after a
+       successful save so the nav and the next open agree without a reload. */
+    var _myCountry = '';
+
+    /* countryNavHTML: the nav's country control for the SIGNED-IN viewer.
+
+       Distinct from countryFlagHTML, which is the read-only glyph used wherever
+       someone ELSE's flag is shown. Here the flag is a button, and — the part
+       that matters for the fleet this endpoint exists to serve — when there is
+       NO country it still renders, as a muted outline, because a user with no
+       flag is exactly the user who needs a way to add one. An invisible control
+       would leave them in the same dead end as before.
+
+       var(--muted) for the empty state and no color of our own for the set
+       state (the emoji carries its own), so both are light- and dark-safe. */
+    function countryNavHTML(code) {
+      var c = normalizeCountryCode(code);
+      var inner, title;
+      if (c) {
+        inner = '<span class="country-flag">' + countryFlagEmoji(c) + '</span>';
+        title = countryDisplayName(c) + ' — click to change';
+      } else {
+        inner = '<span class="country-flag-empty">＋</span>';
+        title = 'Set your country';
+      }
+      return '<button type="button" class="country-edit-btn" onclick="openCountryEditor()" ' +
+        'title="' + escAttr(title) + '" aria-label="' + escAttr(title) + '">' + inner + '</button>';
+    }
+
+    /* openCountryEditor: the overlay. Reads the current value from _myCountry,
+       writes through PUT /api/saas/me/country.
+
+       The code rides the JSON BODY, never a path or query string: country is
+       personal data and a URL is the one place it would land in access logs,
+       Referer headers and browser history. Clearing sends an explicit empty
+       string — which the hub records as a DECISION, so the login-path
+       Accept-Language inference will not quietly put a flag back. */
+    function openCountryEditor() {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
+      var btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
+      var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;box-sizing:border-box;font-size:0.85rem;text-transform:uppercase';
+      overlay.innerHTML =
+        '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:400px;width:90%">' +
+        '<h3 style="margin:0 0 10px 0;font-size:1rem">Your country</h3>' +
+        '<p style="margin:0 0 12px 0;color:var(--muted);font-size:0.82rem;line-height:1.5">' +
+        'Shows a small flag beside your avatar. Two-letter country code (ISO 3166-1 alpha-2), ' +
+        'for example GB or JP. Leave it blank for no flag &mdash; we will not guess one for you.</p>' +
+        '<input id="_country-input" type="text" maxlength="2" autocomplete="country" ' +
+        'value="' + escAttr(_myCountry) + '" style="' + fld + '">' +
+        '<div id="_country-preview" style="margin-top:8px;font-size:0.82rem;color:var(--muted);min-height:1.2em"></div>' +
+        '<div id="_country-err" style="display:none;margin-top:8px;font-size:0.8rem;color:#f85149"></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">' +
+        '<button data-act="no" style="' + btn + ';background:transparent;color:var(--text)">Cancel</button>' +
+        '<button data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">Save</button>' +
+        '</div></div>';
+
+      function close() {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') close();
+        if (e.key === 'Enter') save();
+      }
+      /* Live echo of what the code resolves to, so a typo is visible BEFORE
+         saving rather than as a surprise flag afterwards. Blank input reads as
+         the explicit "no flag" state, not as an error. */
+      function preview() {
+        var el = document.getElementById('_country-input');
+        var pv = document.getElementById('_country-preview');
+        if (!el || !pv) return;
+        var c = normalizeCountryCode(el.value);
+        if (!el.value.trim()) { pv.textContent = 'No flag will be shown.'; return; }
+        if (!c) { pv.textContent = 'Not a two-letter country code yet.'; return; }
+        pv.textContent = countryFlagEmoji(c) + '  ' + countryDisplayName(c);
+      }
+      async function save() {
+        var el = document.getElementById('_country-input');
+        var err = document.getElementById('_country-err');
+        var raw = el ? el.value.trim() : '';
+        /* '' is a legitimate value here (clear); anything else must be a valid
+           code. Checked client-side for a fast message, and again server-side
+           because a client check is a convenience, never a control. */
+        if (raw !== '' && !normalizeCountryCode(raw)) {
+          if (err) { err.textContent = 'Enter a two-letter country code, or leave it blank.'; err.style.display = ''; }
+          return;
+        }
+        try {
+          var resp = await fetch('/api/saas/me/country', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({country: normalizeCountryCode(raw)})
+          });
+          var data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'save failed');
+          _myCountry = normalizeCountryCode(data.country);
+          var nav = document.getElementById('nav-country');
+          if (nav) nav.innerHTML = countryNavHTML(_myCountry);
+          close();
+        } catch (e) {
+          if (err) { err.textContent = 'Error: ' + e.message; err.style.display = ''; }
+        }
+      }
+
+      overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) { close(); return; }
+        var act = e.target.getAttribute && e.target.getAttribute('data-act');
+        if (act === 'yes') save();
+        else if (act === 'no') close();
+      });
+      overlay.addEventListener('input', preview);
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+      var inp = document.getElementById('_country-input');
+      if (inp) { inp.focus(); inp.select(); }
+      preview();
     }
 
     /* Rendered avatar sizes, in CSS pixels, one per surface. They differ because
@@ -11161,6 +11356,10 @@ const dashboardHTML = `<!DOCTYPE html>
              lowercased because GitHub usernames are case-insensitive and the
              roster and the auth payload can disagree on casing. */
           _currentUser = String(data.login || '').toLowerCase();
+          /* The viewer's own country, mirrored so the editor opens showing what
+             is on file. Absent from the payload for a user who has none, which
+             normalizes to '' and renders the empty ＋ control. */
+          _myCountry = normalizeCountryCode(data.country);
           var roleText = data.hub_admin ? 'Hub Admin' : 'User';
           /* The viewer's own face links to their own profile, like every other
              face in the dashboard. avatar_url comes from the auth payload (it is
@@ -11173,11 +11372,17 @@ const dashboardHTML = `<!DOCTYPE html>
             avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
               '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
               'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
-            /* The viewer's country flag, immediately after their face. Empty
-               string when the auth payload carries no country — which is the
-               common case today — so the nav renders exactly as before for a
-               user whose country is unknown. */
-            countryFlagHTML(data.country) +
+            /* The viewer's country, immediately after their face — and, unlike
+               every other flag in the dashboard, CLICKABLE, because this is the
+               viewer's own record. Wrapped in a stable #nav-country host so a
+               save can repaint just this control without re-rendering the whole
+               nav (and without a page reload).
+
+               countryNavHTML also renders in the EMPTY state, as a muted ＋.
+               countryFlagHTML returns '' there, which is right for someone
+               else's flag but would hide the control from precisely the users
+               who have no country and need to set one. */
+            '<span id="nav-country">' + countryNavHTML(data.country) + '</span>' +
             '<span style="font-size:0.85rem">' + esc(data.login) + '</span>' +
             '<span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + roleText + '</span>';
         }

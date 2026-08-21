@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -8,15 +9,24 @@ import (
 // User country: an OPTIONAL ISO 3166-1 alpha-2 code on a hub user record, shown
 // as a small flag beside their avatar.
 //
-// Two sources, in strict priority order:
+// Three sources, in strict priority order:
 //
-//  1. EXPLICIT — the requester picks a country in the get-started wizard
-//     (ProvisionRequest.Country), which is copied onto the SaaSUser record on
-//     approval alongside the other contact fields. This is the authoritative
-//     source: the user chose it about themselves.
-//  2. INFERRED — best-effort, from the region subtag of the browser's
+//  1. EXPLICIT, self-service — the signed-in user sets or clears their own
+//     country at any time via PUT /api/saas/me/country (handleMyCountry, at the
+//     bottom of this file). This is the only surface an EXISTING user has: the
+//     wizard below is a one-time gate you pass through before you have a hive,
+//     so without this endpoint a country could never be corrected or removed.
+//  2. EXPLICIT, wizard — the requester picks a country in the get-started
+//     wizard (ProvisionRequest.Country), which is copied onto the SaaSUser
+//     record on approval alongside the other contact fields.
+//  3. INFERRED — best-effort, from the region subtag of the browser's
 //     Accept-Language header on a completed login. Only ever fills a record
-//     that has NO country yet, and never overwrites an explicit choice.
+//     that has NO country and whose user has made no deliberate choice; it
+//     never overwrites, and never undoes, an explicit one.
+//
+// Sources 1 and 2 both stamp SaaSUser.CountrySetByUser, which is what tells
+// source 3 that an EMPTY country is a decision ("prefer not to say") rather
+// than an absence to be helpfully filled in.
 //
 // PRIVACY. Country is personal data, so the inference is deliberately the
 // weakest thing that works:
@@ -158,18 +168,26 @@ func inferCountryFromRequest(r *http.Request) string {
 }
 
 // applyInferredCountry fills a user's country from request evidence, but ONLY
-// when the record has none.
+// when the record carries no country AND the user has never made a deliberate
+// choice.
 //
-// The guard is the whole function. An explicit pick in the wizard is the user
-// speaking about themselves; a language header is a hint. Once the record
-// carries a country, no amount of logging in from a differently-configured
-// browser may overwrite it — otherwise a user's stated country would silently
-// flip when they travel or borrow a laptop, which is both wrong and invisible.
+// The guard is the whole function. An explicit pick is the user speaking about
+// themselves; a language header is a hint. Once the record carries a country,
+// no amount of logging in from a differently-configured browser may overwrite
+// it — otherwise a user's stated country would silently flip when they travel
+// or borrow a laptop, which is both wrong and invisible.
+//
+// The CountrySetByUser half of the guard covers the case `Country != ""` alone
+// cannot: an explicit CLEAR. A user who deliberately removes their country
+// leaves an empty field that is indistinguishable, by value, from "never asked"
+// — so without the marker the next login would quietly put a flag back and
+// "prefer not to say" would be unexpressible. Absence of a value is not the
+// same as absence of a decision.
 //
 // Returns whether it changed the record, so the caller can tell a real update
 // from a no-op. Nil-safe: it sits on the login path beside other enrichment.
 func applyInferredCountry(user *SaaSUser, r *http.Request) bool {
-	if user == nil || user.Country != "" {
+	if user == nil || user.Country != "" || user.CountrySetByUser {
 		return false
 	}
 	code := inferCountryFromRequest(r)
@@ -178,4 +196,134 @@ func applyInferredCountry(user *SaaSUser, r *http.Request) bool {
 	}
 	user.Country = code
 	return true
+}
+
+// ── Self-service: a user setting their OWN country ───────────────────────────
+//
+// Before this, every write to a SaaSUser was requireAdmin-gated and the only
+// place a person could state their country was the get-started wizard — a
+// surface you pass through exactly once, before you have a hive. That left the
+// entire existing fleet with no way to set, correct, or remove their country
+// ever again, which is a strange thing to say about a field whose whole purpose
+// is for the user to speak about themselves.
+//
+// /api/saas/me/country is the smallest fix: GET reads the acting user's own
+// country, PUT sets or clears it. Deliberately NOT a general profile endpoint —
+// widening it to "any field on my own record" would put quota, blocked, hives
+// and role one typo away from being self-writable, which is exactly the reason
+// the admin gate exists. One field, allowlisted, is the whole surface.
+//
+// SECURITY — the identity comes from the SESSION, never from the request.
+// The body carries a country and nothing else: no login, no id, no target. That
+// is not an oversight to be politely ignored if someone sends one; it is the
+// property that makes this endpoint safe to expose to non-admins at all. An
+// unknown JSON key is discarded by the decoder, so a request naming another
+// user is honoured as a write to the CALLER's own record and can never touch
+// the named one. See TestMyCountryCannotSetAnotherUsersCountry.
+//
+// PRIVACY — country rides the JSON BODY, never the path or a query string, so
+// it stays out of access logs, Referer headers and browser history. That is why
+// this is a PUT with a body rather than the more obvious
+// POST /api/saas/me/country/{code}.
+
+// maxCountryRequestBodyBytes caps the request body. The only legitimate payload
+// is a two-letter code in a one-key object — a few dozen bytes — so 1 KiB is
+// already enormous. Named, and generous rather than tight, because the point is
+// to refuse an unbounded read, not to police whitespace.
+const maxCountryRequestBodyBytes = 1 << 10
+
+// myCountryRequest is the PUT body. One field, on purpose.
+//
+// Country is a POINTER so the handler can tell "key absent" from
+// `"country": ""`. Those must not mean the same thing: the empty string is an
+// explicit CLEAR ("prefer not to say"), while an absent key is a malformed
+// request that states no intention and is refused rather than silently treated
+// as a clear. A plain string would collapse the two and make it possible to
+// wipe a country by sending `{}`.
+type myCountryRequest struct {
+	Country *string `json:"country"`
+}
+
+// handleMyCountry reads (GET) or writes (PUT) the ACTING user's own country.
+//
+// Registered behind requireAuth, which supplies the CSRF gate, the blocked-user
+// check, and — importantly here — the refusal of writes while an admin is
+// impersonating. An admin viewing as someone else must not be able to edit that
+// person's profile through a self-service route; requireAuth's
+// blockIfImpersonatingWrite already returns 403 for any non-GET, so the PUT
+// half inherits that without a check of its own. The GET half still resolves to
+// the impersonated target, matching every other per-user read in the hub.
+func (s *HubServer) handleMyCountry(w http.ResponseWriter, r *http.Request) {
+	// The acting identity, from the verified session cookie. This is the only
+	// place a username enters this handler.
+	username := s.getAuthUser(r)
+	if username == "" {
+		writeJSONError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	user := loadSaaSUser(username)
+	if user == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unknown user — please log in again")
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		writeMyCountry(w, user)
+		return
+	}
+
+	var body myCountryRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCountryRequestBodyBytes))
+	if err := dec.Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if body.Country == nil {
+		// No "country" key at all. Refused rather than read as a clear — see
+		// the pointer rationale on myCountryRequest.
+		writeJSONError(w, http.StatusBadRequest, "country is required (send \"\" to clear it)")
+		return
+	}
+
+	raw := strings.TrimSpace(*body.Country)
+	code := ""
+	if raw != "" {
+		// Reuse the SAME validator every other country path uses, so the
+		// endpoint cannot drift into accepting a shape the render sites reject
+		// (or vice versa). Case-insensitive by way of normalizeCountryCode.
+		code = normalizeCountryCode(raw)
+		if code == "" {
+			writeJSONError(w, http.StatusBadRequest, "country must be an ISO 3166-1 alpha-2 code (two letters), or \"\" to clear it")
+			return
+		}
+	}
+
+	user.Country = code
+	// Both a pick and a clear are deliberate, so BOTH set the marker. Setting
+	// it on the clear is the load-bearing half: it is what stops the next
+	// login's Accept-Language inference from undoing the removal.
+	user.CountrySetByUser = true
+	if err := saveSaaSUser(user); err != nil {
+		s.logger.Warn("handleMyCountry: save failed", "user", username, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "could not save country")
+		return
+	}
+	writeMyCountry(w, user)
+}
+
+// writeMyCountry emits the shared response shape for both verbs, so a client
+// reads back exactly what a write produced without a second round-trip.
+//
+// The country is echoed as the CODE, never as the glyph — same rule as the auth
+// payload — so the caller derives the flag the same way every other render site
+// does, and an empty value is unambiguously "no country" rather than an
+// empty-looking emoji. `explicit` lets the UI distinguish a value the user
+// chose from one the hub guessed, which is the difference between showing
+// "United Kingdom" and "United Kingdom (guessed from your browser)".
+func writeMyCountry(w http.ResponseWriter, user *SaaSUser) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"country":  normalizeCountryCode(user.Country),
+		"explicit": user.CountrySetByUser,
+	})
 }
