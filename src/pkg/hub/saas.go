@@ -2866,6 +2866,13 @@ type MyHiveEntry struct {
 	// modal; this is only the hover preview.
 	RecentEvents []TimelineEvent `json:"recentEvents,omitempty"`
 
+	// AdvisoryIssueActivity is the fleet row's advisory/issue output freshness:
+	// the newest successful advisory digest post or actionable-issue count
+	// movement already reported to the hub, bucketed on read. Placeholders and
+	// old/non-advisory spokes with no signal still get the field with bucket
+	// "unknown" so every row renders an explicit n/a instead of disappearing.
+	AdvisoryIssueActivity AdvisoryIssueActivity `json:"advisoryIssueActivity"`
+
 	// AdvisoryStale is true when this hive SHOULD be posting advisory digests
 	// but its digest has quietly gone stale — computed on read by advisoryStale()
 	// so the browser never re-derives the threshold or the gating (advisory-mode
@@ -3341,6 +3348,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
+		result[i].AdvisoryIssueActivity = advisoryIssueActivityFor(result[i].RegistryEntry, journeyNow)
 
 		// Advisory-staleness pill, computed on read (same as Journey) so the
 		// gating — advisory-mode participation, app-can-write, past-threshold —

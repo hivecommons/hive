@@ -73,6 +73,12 @@
   .delta.problem { background: rgba(229,72,77,.16); color: var(--red); border: 1px solid rgba(229,72,77,.45); }
   .delta.quiet { color: var(--muted); }
   .rel { color: var(--muted); font-size: 11px; }
+  .advisory-activity { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; }
+  .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .advisory-activity.fresh .light { background: var(--green); }
+  .advisory-activity.aging .light { background: var(--amber); }
+  .advisory-activity.stale .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .advisory-activity.unknown .light { background: var(--gray); }
   .status-msg { padding: 40px 0; text-align: center; color: var(--muted); }
   a.reload { color: var(--accent); text-decoration: none; }
   [title] { cursor: help; }
@@ -96,17 +102,27 @@
 <body>
 <header>
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when the governor expects an agent on but it can't do its work</span>
+  <span class="sub">a hive is a <b>problem</b> when agents cannot work or advisory/issue output is stale</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
     <label><input type="checkbox" id="showHealthy"> show healthy</label>
+    <label>advisory output
+      <select id="advisoryFilter">
+        <option value="">all</option>
+        <option value="stale">stale</option>
+        <option value="aging">aging</option>
+        <option value="unknown">unknown/n/a</option>
+        <option value="fresh">fresh</option>
+      </select>
+    </label>
   </span>
 </header>
 <div class="wrap">
   <div class="legend">
     <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting)</span>
-    <span><span class="delta problem">PROBLEM</span> governor expects it on, it can't work · <span class="delta quiet">quiet</span> paused / off by schedule</span>
+    <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
+    <span><span class="delta problem">PROBLEM</span> agents cannot work or output is stale · <span class="delta quiet">quiet</span> paused / off by schedule</span>
     <span><b>capability:</b> <span style="color:var(--green)">green</span> able · <span style="color:var(--amber)">amber</span> partial · <span style="color:var(--red)">red</span> blocked · <span style="color:var(--gray)">gray</span> unknown</span>
   </div>
   <table>
@@ -163,9 +179,19 @@ function rollupHTML(r) {
 }
 function outputHTML(h) {
   var m = h.prsMerged90d || 0, rej = h.prsRejected90d || 0, cve = h.cvesClosed || 0;
-  if (!m && !rej && !cve) return '<span class="output">—</span>';
-  return '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
-    ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
+  var out = (!m && !rej && !cve)
+    ? '<span class="output">—</span>'
+    : '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
+      ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
+  return out + '<br>' + advisoryActivityHTML(h.advisoryIssueActivity);
+}
+function advisoryActivityHTML(a) {
+  a = a || {};
+  var bucket = a.bucket || "unknown";
+  var rel = a.lastActivityAt ? relTime(a.lastActivityAt) : "n/a";
+  var label = bucket === "unknown" ? "n/a" : bucket + " · " + rel;
+  return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory/issue activity ' + esc(rel) + '">' +
+    '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
 function toggleHTML(a) {
   // A legacy/unknown spoke did not report enabled/paused meaningfully — render
@@ -227,6 +253,7 @@ function deltaHTML(a) {
 // → unknown; else ok. Online/offline is NOT health — a spoke can be online with
 // every agent stuck.
 function hiveHealth(h) {
+  if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
   var r = h.fleetRollup;
   if (!r) return h.online ? "unknown" : "offline";
   if ((r.problems || 0) > 0) return "problem";
@@ -241,6 +268,7 @@ function hiveHealth(h) {
 var expanded = {};      // hive id -> true when its agent rows are open
 var problemsOnly = false;
 var showHealthy = false; // when false, healthy hives are hidden to cut noise
+var advisoryFilter = "";
 
 function hiveKey(h) { return h.id || h.name; }
 
@@ -265,6 +293,7 @@ function renderHives(hives) {
     // Exception-first filtering.
     if (problemsOnly && health !== "problem") return;
     if (!problemsOnly && !showHealthy && health === "ok") return;
+    if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return;
     shown++;
 
     var isProblem = health === "problem";
@@ -330,7 +359,7 @@ function renderHives(hives) {
   }
   if (!shown) {
     var msg = problemsOnly
-      ? "No problems — every governor-expected agent is delivering."
+      ? "No problems — every governor-expected agent is delivering and advisory output is current."
       : (problemCount === 0 && !showHealthy ? "No problems. Healthy hives hidden — toggle “show healthy”." : "No hives.");
     var trE = document.createElement("tr");
     trE.innerHTML = '<td colspan="6" class="status-msg">' + esc(msg) + '</td>';
@@ -343,6 +372,8 @@ function wireControls() {
   if (po) po.addEventListener("change", function () { problemsOnly = po.checked; load(); });
   var sh = document.getElementById("showHealthy");
   if (sh) sh.addEventListener("change", function () { showHealthy = sh.checked; load(); });
+  var af = document.getElementById("advisoryFilter");
+  if (af) af.addEventListener("change", function () { advisoryFilter = af.value; renderHives(lastHives); });
 }
 
 var lastHives = [];
