@@ -76,6 +76,39 @@ func mergeAcceptanceRate(e RegistryEntry) (float64, bool) {
 	return float64(*e.PRsMerged90d) / float64(total), true
 }
 
+// fleetCountGroup identifies hives whose org-scoped counters measure the SAME
+// underlying work, so a criterion's population can count that work once.
+//
+// The key is (org, ai-author) because that is exactly the query the spoke's
+// FleetStatsCollector issues — NewFleetStatsCollector(ghClient, author, org)
+// counts AI-author PRs across the whole org. Two hives agreeing on both fields
+// are therefore not two measurements of similar size, they are one measurement
+// reported twice. Three hives in the live fleet each reported prsMerged90d=3746
+// for precisely this reason.
+//
+// Org alone would be too coarse — two teams in one org running different AI
+// authors do produce genuinely distinct output and must each count. Including
+// the author keeps those separate while still collapsing true duplicates.
+//
+// Returns "" when either half is unknown, which means "ungrouped": the hive
+// counts once on its own, the safe default because it cannot be shown to
+// duplicate anyone. Case is folded since GitHub logins and orgs are
+// case-insensitive and spokes report them as configured.
+func fleetCountGroup(e RegistryEntry) string {
+	org := strings.ToLower(strings.TrimSpace(e.Org))
+	// AIAuthorEffective is who the agents ACTUALLY author as (the App bot login
+	// when ai_author is unset), which is the identity the collector's search
+	// resolves to. Prefer it, and fall back to the configured author.
+	author := strings.ToLower(strings.TrimSpace(e.AIAuthorEffective))
+	if author == "" {
+		author = strings.ToLower(strings.TrimSpace(e.AIAuthor))
+	}
+	if org == "" || author == "" {
+		return ""
+	}
+	return org + "/" + author
+}
+
 // quadrantInputsFor extracts the evidence for one hive.
 //
 // The nil-vs-zero discipline the registry maintains is carried through here
@@ -85,9 +118,12 @@ func mergeAcceptanceRate(e RegistryEntry) (float64, bool) {
 // unreported signal into a genuine low score.
 func quadrantInputsFor(e RegistryEntry, now time.Time) quadrantInputs {
 	in := quadrantInputs{
-		acmmLevel:    e.ACMMLevel,
-		governorMode: e.GovernorMode,
-		agentCount:   e.AgentCount,
+		acmmLevel:  e.ACMMLevel,
+		agentCount: e.AgentCount,
+		// The org-wide counters are collected per (org, ai-author) pair — see
+		// NewFleetStatsCollector — so that pair, not the hive ID, is what makes
+		// two hives' counts the same measurement rather than two of them.
+		countGroup: fleetCountGroup(e),
 		// WorkSource is empty for the DEFAULT GitHub Issues source rather than
 		// unknown, so an empty string is a real answer here: the hive is
 		// reading human-filed issues.

@@ -18,10 +18,19 @@ import "fmt"
 // it to a fleet percentile later. higherIsBetter records the direction, since
 // cost-style criteria are better when smaller and a single comparator cannot
 // guess that.
+//
+// activityFloor is the absolute magnitude at which this criterion's percentile
+// counts in full — see activityFactor in quadrant.go. Leaving it zero EXEMPTS
+// the criterion from the absolute gate, which is correct for ratios and
+// postures (where zero is a real, often good, value) and wrong for throughput
+// counters (where zero means idle). Every criterion must make this choice
+// deliberately; the zero default is safe only because an un-gated criterion
+// behaves exactly as it did before the gate existed.
 type subCriterion struct {
 	name           string
 	value          float64
 	higherIsBetter bool
+	activityFloor  float64
 	nudge          string // shown when this criterion is the axis's weakest link
 }
 
@@ -34,10 +43,53 @@ type subCriterion struct {
 // its throughput is modest. Mixing outcome quality in here would make the axis
 // a second productivity score.
 //
-// Note on merge acceptance: the obvious fourth criterion is the agent PR merge
-// rate, but the platform cannot compute it today — see the acmmadvisor note in
-// quadrant.go and the closed-unmerged gap in QUADRANT-DESIGN.md. It is omitted
-// rather than approximated, so Trust scores on three criteria.
+// THE GOVERNOR CRITERION HAS BEEN REMOVED, and Trust now scores on three
+// criteria: autonomy, merge acceptance and breadth.
+//
+// It was built on a misreading of the governor, in two compounding ways.
+//
+// Mechanically it never worked: it matched "observe"/"advisory"/"enforce", but
+// governor.Mode (pkg/governor/governor.go) only ever emits SURGE, BUSY, QUIET
+// or IDLE. Every hive in the fleet fell through to known=false, so the
+// criterion contributed to nothing — one of only three Trust criteria dropped
+// silently, with the axis still rendering a perfectly plausible number.
+//
+// Conceptually it was worse, and this is why it is deleted rather than
+// remapped: those values are WORKLOAD CADENCE — how hard the governor is
+// currently driving agents — not a trust posture. There is no
+// observe/advisory/enforce dimension anywhere in the governor. A hive at SURGE
+// is busy, not trusted; a hive at IDLE is quiet, not distrusted. Mapping
+// cadence onto a trust rank would take a criterion that measured nothing and
+// replace it with one that measures the wrong thing, which is strictly worse
+// because it would then look like it was working.
+//
+// No replacement is substituted, because the hub does not receive one. The
+// codebase has three genuine delegated-authority signals and ALL of them are
+// spoke-side configuration that never travels on the heartbeat:
+//
+//   - config.AutoMergeConfig.SelfAuthored (pkg/config/config.go) — the App
+//     merging its own PRs with no human approval. This is the strongest
+//     delegation bit in the product and would be the ideal trust criterion.
+//   - config.ReviewConfig.RequireApproval — the review gate.
+//   - config.AgentSandboxConfig / AgentConfig.Tools — sandbox and tool
+//     permissions.
+//
+// None appears on HeartbeatPayload or RegistryEntry; each is read only inside
+// cmd/hive/main.go. The hub therefore cannot see whether an operator granted or
+// revoked any of them, and acmmLevel — already the autonomy criterion below —
+// is the single delegation signal that does arrive.
+//
+// Recomputing a gate hub-side from acmmLevel (PlanAutoApproveForLevel,
+// SelfMergeMinACMMLevel) was considered and rejected: it is a pure function of
+// a value this axis ALREADY scores, so it would add no information while
+// double-weighting autonomy and looking like a second, independent criterion.
+// Inventing a proxy to keep the criterion count at three would repeat exactly
+// the mistake being fixed here.
+//
+// The real fix is to report the signal. Adding
+// AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel) to the heartbeat as a
+// *bool — nil for old spokes, matching every other quadrant pointer field —
+// would give Trust a true delegation criterion. Until then, three.
 func trustCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
 
@@ -49,21 +101,6 @@ func trustCriteria(in quadrantInputs) []subCriterion {
 			value:          float64(in.acmmLevel),
 			higherIsBetter: true,
 			nudge:          fmt.Sprintf("At ACMM L%d — consider trying the next level on one repo", in.acmmLevel),
-		})
-	}
-
-	// Governor posture. observe -> advisory -> enforce is an increasing
-	// willingness to let the governor act rather than merely watch.
-	if rank, known := normalizeGovernorMode(in.governorMode); known {
-		n := ""
-		if rank == 0 {
-			n = "Governor is observe-only — move it to advisory to let it act"
-		}
-		out = append(out, subCriterion{
-			name:           "governor",
-			value:          float64(rank),
-			higherIsBetter: true,
-			nudge:          n,
 		})
 	}
 
@@ -128,11 +165,18 @@ func efficiencyCriteria(in quadrantInputs) []subCriterion {
 	// now properly scoped — a rate rather than a lifetime total — so this is a
 	// genuine comparison rather than the approximate ranking an unnormalised
 	// cumulative figure would give.
+	//
+	// Gated on absolute burn. Without the gate this criterion rewards idleness
+	// outright: it is lower-is-better, so a hive spending nothing takes the top
+	// of the ranking for having done nothing at all. The floor makes a
+	// barely-burning hive score near zero here, and only hives doing real work
+	// compete on how cheaply they do it.
 	if in.tokensPerDay != nil {
 		out = append(out, subCriterion{
 			name:           "tokens_per_day",
 			value:          *in.tokensPerDay,
 			higherIsBetter: false,
+			activityFloor:  activityFloorTokensPerDay,
 			nudge:          "Token burn rate is high relative to the fleet",
 		})
 	}
@@ -186,10 +230,15 @@ func efficiencyCriteria(in quadrantInputs) []subCriterion {
 			n = fmt.Sprintf("%d agents but %d merged PRs — consider pausing idle agents",
 				in.agentCount, *in.prsMerged90d)
 		}
+		// Gated at one merged PR per agent: an agent that has shipped nothing
+		// in ninety days is the definition of idle burn, and this criterion
+		// exists to flag exactly that. Without the gate a fleet where most
+		// agents ship nothing puts them all at the median for it.
 		out = append(out, subCriterion{
 			name:           "output_per_agent",
 			value:          perAgent,
 			higherIsBetter: true,
+			activityFloor:  activityFloorOutputPerAgent,
 			nudge:          n,
 		})
 	}
@@ -224,10 +273,15 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 				n = "No agent-merged PRs in the last 90 days"
 			}
 		}
+		// The headline gate. A measured zero here scores ZERO, not the fleet
+		// median — this is the criterion where percentile-blindness did the most
+		// damage, since most of the fleet has merged nothing and ties place a
+		// uniformly-idle population at 50.
 		out = append(out, subCriterion{
 			name:           "prs_merged",
 			value:          float64(*in.prsMerged90d),
 			higherIsBetter: true,
+			activityFloor:  activityFloorMergedPRs,
 			nudge:          n,
 		})
 	}
@@ -280,10 +334,12 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 		if *in.tasksCompleted7d == 0 && in.contributorCount > 0 {
 			n = "Contributor relay is idle"
 		}
+		// Gated: an idle relay is idle whatever the rest of the fleet is doing.
 		out = append(out, subCriterion{
 			name:           "relay_7d",
 			value:          float64(*in.tasksCompleted7d),
 			higherIsBetter: true,
+			activityFloor:  activityFloorRelayTasks,
 			nudge:          n,
 		})
 	}

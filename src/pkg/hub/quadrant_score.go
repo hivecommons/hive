@@ -42,15 +42,25 @@ func ScoreFleet(inputs []quadrantInputs) []Quadrant {
 	// that declined must not be counted as a zero, or it would drag the whole
 	// fleet's distribution toward the bottom and make everyone else look good
 	// for the wrong reason.
+	//
+	// Each contributed value is tagged with its hive's countGroup so the sample
+	// can be deduped below: several hives in one org report that org's WHOLE
+	// output as their own, and counting it once per hive would let a single
+	// org's activity stretch the distribution as many times as it has hives.
 	type critKey struct{ axis, name string }
 	populations := map[critKey][]float64{}
+	popGroups := map[critKey][]string{}
 	for i := range inputs {
 		for axis, crits := range perHive[i] {
 			for _, c := range crits {
 				k := critKey{axis, c.name}
 				populations[k] = append(populations[k], c.value)
+				popGroups[k] = append(popGroups[k], inputs[i].countGroup)
 			}
 		}
+	}
+	for k, vals := range populations {
+		populations[k] = dedupeByGroup(vals, popGroups[k])
 	}
 
 	// First pass: per-hive, per-axis scores.
@@ -79,7 +89,20 @@ func ScoreFleet(inputs []quadrantInputs) []Quadrant {
 				if len(pop) < minFleetForPercentile {
 					continue
 				}
+				// Rank decides the ORDER among active hives; the absolute
+				// activity factor decides whether the hive is in the
+				// conversation at all. A criterion whose raw magnitude is zero
+				// scores zero here however the rest of the fleet ranks — which
+				// is the whole point: on a mostly-idle fleet a percentile alone
+				// puts everyone who did nothing at the median.
+				//
+				// Note this multiplies, so the hive is still SCORED (it
+				// reported a real measurement of zero); it simply scores low.
+				// Unscored — no measurement at all — is handled above by the
+				// empty-criteria branch and never reaches here.
 				s := percentileRank(c.value, pop, c.higherIsBetter)
+				s = clampScore(int(math.Round(
+					float64(s) * activityFactor(c.value, c.activityFloor))))
 				sum += s
 				n++
 				if c.nudge != "" && s < weakestScore {
