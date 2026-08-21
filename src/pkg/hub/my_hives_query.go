@@ -21,7 +21,7 @@ import (
 const maxMyHivesPerPage = 500
 
 type myHivesQuery struct {
-	q       string // case-insensitive substring across id/name/org/project/owner/repo
+	q       string // case-insensitive substring across id/name/org/project/owner/repo/cluster
 	status  string // "online", "offline", or an exact provStatus (available, assigned, provisioning, error, ...)
 	cluster string // ClusterID or ClusterName, case-insensitive
 	sortKey string // id | name | org | owner | cluster | status | last_seen
@@ -62,6 +62,7 @@ func entryMatches(e *MyHiveEntry, q myHivesQuery) bool {
 		needle := strings.ToLower(q.q)
 		hay := strings.ToLower(strings.Join([]string{
 			e.ID, e.Name, e.Org, e.ProjectName, e.Owner, e.PrimaryRepo,
+			strings.Join(e.Repos, " "), e.ClusterID, e.ClusterName,
 		}, "\x00"))
 		if !strings.Contains(hay, needle) {
 			return false

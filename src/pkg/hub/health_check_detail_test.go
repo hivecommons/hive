@@ -140,7 +140,8 @@ func TestFilterComposition(t *testing.T) {
 		{"clear resets check filter", "_dashFailingCheckFilter = '';"},
 		// Placeholder scoping is unchanged and still splits before filtering.
 		{"placeholder split retained", "(isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll)"},
-		{"filters applied to assigned only", "applyDashFilters(assignedAll).concat(unassignedAll)"},
+		{"filters applied to assigned only", "var filteredAssigned = applyDashFilters(assignedAll);"},
+		{"search scopes unassigned rows", "unassignedAll.filter(hiveMatchesSearch)"},
 		// Any-active must account for the check filter so the Clear button
 		// shows. The per-filter OR chain was replaced by activeFilterCount(),
 		// which also drives the "N filters active" summary; the check filter now

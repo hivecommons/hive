@@ -26,8 +26,18 @@ func testMyHivesEntries() []MyHiveEntry {
 		return e
 	}
 	return []MyHiveEntry{
-		mk("hosted-alpha", "acme", "alice", "vllm-d", "assigned", "2026-08-20T10:00:00Z", true),
-		mk("hosted-beta", "acme", "bob", "hive-oke", statusAvailable, "", false),
+		func() MyHiveEntry {
+			e := mk("hosted-alpha", "acme", "alice", "vllm-d", "assigned", "2026-08-20T10:00:00Z", true)
+			e.ClusterName = "VLLM Dallas"
+			e.Repos = []string{"alpha-api", "alpha-ui"}
+			return e
+		}(),
+		func() MyHiveEntry {
+			e := mk("hosted-beta", "acme", "bob", "hive-oke", statusAvailable, "", false)
+			e.ClusterName = "OKE East"
+			e.Repos = []string{"beta-worker"}
+			return e
+		}(),
 		mk("hosted-gamma", "zorg", "alice", "vllm-d", "provisioning", "2026-08-20T12:00:00Z", false),
 		mk("hosted-delta", "zorg", "carol", "vllm-d", "assigned", "2026-08-20T11:00:00Z", true),
 	}
@@ -61,6 +71,14 @@ func TestApplyMyHivesQueryFilters(t *testing.T) {
 	_, matched = applyMyHivesQuery(entries, mhq(t, "cluster=hive-oke"))
 	if matched != 1 {
 		t.Errorf("cluster=hive-oke matched %d, want 1", matched)
+	}
+	_, matched = applyMyHivesQuery(entries, mhq(t, "q=OKE East"))
+	if matched != 1 {
+		t.Errorf("q=OKE East matched %d, want 1", matched)
+	}
+	_, matched = applyMyHivesQuery(entries, mhq(t, "q=alpha-ui"))
+	if matched != 1 {
+		t.Errorf("q=alpha-ui matched %d, want 1", matched)
 	}
 	_, matched = applyMyHivesQuery(entries, mhq(t, "q=alice&cluster=vllm-d&status=online"))
 	if matched != 1 {

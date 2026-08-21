@@ -13866,8 +13866,11 @@ const dashboardHTML = `<!DOCTYPE html>
         : '';
     }
 
-    /* applyDashFilters filters the hives the caller wants rendered.
-       Placeholder (unassigned) rows bypass every filter — see isPlaceholderHive.
+    /* applyDashFilters filters the assigned hives the caller wants rendered.
+       Unassigned pool placeholders are handled separately in renderHives:
+       health/status/facet filters do not hide inventory, but the search box
+       still narrows every displayed row so typing text cannot leave unrelated
+       placeholders visible under an active search.
        For assigned rows all four narrowing mechanisms compose as an AND: the
        status chips (by state), the alert-type filter (hives carrying that
        alert), the search box and the facets. That is what "click an alert type
@@ -13875,7 +13878,6 @@ const dashboardHTML = `<!DOCTYPE html>
        active. */
     function applyDashFilters(hives) {
       return (hives || []).filter(function(h) {
-        if (isPlaceholderHive(h)) return true;
         return hiveMatchesFilters(h) && hiveMatchesAlertFilter(h) &&
           hiveMatchesSearch(h) && hiveMatchesFacets(h);
       });
@@ -15477,12 +15479,14 @@ const dashboardHTML = `<!DOCTYPE html>
         '|' + _dashFacetTrayOpen;
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
-      /* Status filters describe ASSIGNED hives only. An unassigned placeholder
-         has no GitHub App, no tokens and no real health to speak of, so every
-         chip would appear to "hide" the whole pool — and filtering to e.g.
-         Degraded made the Unassigned section vanish, which reads as the
-         placeholders having been deleted. Split first, filter only the assigned
-         side, and leave the pool alone. */
+      /* Status/facet filters describe ASSIGNED hives only. An unassigned
+         placeholder has no GitHub App, no tokens and no real health to speak of,
+         so every chip would appear to "hide" the whole pool — and filtering to
+         e.g. Degraded made the Unassigned section vanish, which reads as the
+         placeholders having been deleted. The free-text search is different:
+         it promises to filter the displayed rows by visible metadata, so it
+         also scopes placeholders by name/id/cluster/repo instead of leaving
+         unrelated inventory visible while the header says a search is active. */
       var assignedAll = [], unassignedAll = [];
       for (var _si = 0; _si < allHives.length; _si++) {
         (isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll).push(allHives[_si]);
@@ -15492,7 +15496,11 @@ const dashboardHTML = `<!DOCTYPE html>
          _upgradingHives from here on, so they cannot observe each other's
          mutations and the pill can no longer disagree with the badge. */
       normalizeUpgradeStates(assignedAll);
-      var hives = applyDashFilters(assignedAll).concat(unassignedAll);
+      var filteredAssigned = applyDashFilters(assignedAll);
+      var filteredUnassigned = (_dashSearchQuery || '').trim()
+        ? unassignedAll.filter(hiveMatchesSearch)
+        : unassignedAll;
+      var hives = filteredAssigned.concat(filteredUnassigned);
       var filterBar = document.getElementById('hive-filter-bar');
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
       var searchRow = document.getElementById('hive-search-row');
@@ -15510,7 +15518,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (viewBar) viewBar.style.display = allHives.length ? '' : 'none';
       renderViewBar();
       /* Counts are over the assigned set only, matching what the chips filter. */
-      renderStatusFilterBar(assignedAll, hives.length - unassignedAll.length);
+      renderStatusFilterBar(assignedAll, filteredAssigned.length);
       /* Facets are offered over the assigned set for the same reason the chips
          are: a placeholder carries no cluster, role or branch worth faceting. */
       renderFacetRail(assignedAll);
@@ -15545,12 +15553,11 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       if (!hives.length) {
         /* Hives exist, but every one was filtered out — say so, and offer the
-           way back rather than looking like the list failed to load. Only
-           assigned hives can be hidden, so report that count, not the total. */
+           way back rather than looking like the list failed to load. */
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives match these filters</p>' +
-          '<p>' + assignedAll.length + (assignedAll.length === 1 ? ' hive is' : ' hives are') + ' hidden by the search, facets or status filters.</p>' +
+          '<p>' + allHives.length + (allHives.length === 1 ? ' hive is' : ' hives are') + ' hidden by the search, facets or status filters.</p>' +
           /* clearAllHiveFilters, not clearStatusFilters: a search term, a facet
              or an alert drill-down can empty the list too, and a button that
              only clears the chips would leave the operator stuck looking at an
