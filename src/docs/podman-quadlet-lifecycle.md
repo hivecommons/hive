@@ -343,9 +343,11 @@ completed. Hence boot 2 finishing in 9.2s with Hive not healthy until 18.5s.
 The consequence is worth stating plainly, because it is the operational cost of
 choosing rootful: a Hive that never becomes healthy holds a rootful boot for its
 `TimeoutStartSec` — 5min for `hive.service`, 2min for `hive-gateway.service`.
-That is not hypothetical; the first rootful start attempt here sat in
-`activating` for the full 120s before timing out. On rootless the same failure
-delays nothing but Hive itself.
+The 120s is not hypothetical — the first rootful start attempt here sat in
+`activating` for exactly that before timing out — though it was reached from an
+interactive `systemctl start`, not from a boot; a deliberately-broken rootful
+boot was not executed. On rootless the same failure delays nothing but Hive
+itself. Filed as #4478, since which mode an operator picks may turn on it.
 
 ### The tag moved mid-experiment, and that is why the rows are pinned
 
