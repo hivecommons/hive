@@ -22,6 +22,7 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says n
 - `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
 - `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for non-Kubernetes deployments.
 - `quadlet/` — Podman Quadlet units for the standalone deployment (ADR-0017). `hive.container` and `hive-data.volume` start the Hive service under `systemd`, rootful or rootless; see [the operator guide](../docs/podman-standalone-quadlet.md). Docker Compose remains the default runtime and is unaffected.
+- `probe_podman_volume_persistence.sh` — characterises the `hive-data` named volume under SELinux enforcing (#4376): its label and MCS category, the copy-up ownership change, survival across container removal and unit recreation, and the named-volume/bind-mount contrast. Needs an enforcing host and reports `78` rather than a vacuous pass elsewhere; its static section (no `:z`/`:Z` on the volume line, `:Z` on the config and secret bind mounts) runs anywhere. See [the characterisation](../docs/podman-volume-persistence.md).
 - `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.
 
 ## Deployment contract tests

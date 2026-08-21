@@ -275,6 +275,15 @@ arguments, so it looks in the default store and reports
 `no container with name or ID ... found`. Measured on Podman 5.8.4 while
 qualifying these units.
 
+**Do not add `:z` or `:Z` to the `hive-data` volume line.** It is the one
+`Volume=` in the unit without a relabel suffix, and that is deliberate: podman
+labels a named volume `container_file_t:s0` with no MCS category at create time,
+which is what lets a recreated container read the data. `:Z` stamps a private
+category, and the next mount without the flag is denied — with **no AVC
+recorded**, so `ausearch` says nothing. Measured, with the restore, in
+[what `hive-data` guarantees](podman-volume-persistence.md#the-one-thing-not-to-do-z-on-the-volume-line)
+(#4376). The bind mounts below are the opposite case.
+
 **`:Z`, not `:z`, on the secrets mount.** `:z` is the *shared* SELinux label;
 `:Z` is private to one container, which is what a secrets directory wants.
 Exactly one container uses these paths. See the

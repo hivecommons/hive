@@ -59,6 +59,14 @@ AddCapability=NET_ADMIN
 
 # Persistent state. The .volume unit is referenced by unit name so the
 # generated service orders itself after it.
+#
+# NO :z OR :Z HERE, deliberately — this is the one Volume= line in this file
+# without a relabel suffix. Podman already labels a named volume
+# container_file_t:s0 with no MCS category, which is exactly what a volume
+# read by a recreated container needs. Adding :Z stamps a private category and
+# the next mount without the flag is denied, with no AVC recorded to explain
+# it. Characterised in src/docs/podman-volume-persistence.md (#4376); the bind
+# mounts below are the opposite case.
 Volume=hive-data.volume:/data
 
 # Operator-supplied configuration and secrets. %E is /etc for a rootful unit

@@ -11,8 +11,23 @@
 # `podman volume inspect` it during an incident should find the name the
 # documentation uses.
 #
-# Persistence and SELinux volume semantics are deliberately NOT characterised
-# here — that is its own slice. This unit defines the volume and nothing more.
+# WHAT THIS VOLUME GUARANTEES is characterised in
+# src/docs/podman-volume-persistence.md (#4376), measured on an enforcing host.
+# The short version, because one line of it constrains how this unit may be
+# edited:
+#
+#   Podman labels a named volume `container_file_t:s0` at create time — the
+#   type a container can read and write, with NO MCS category. That is what
+#   lets a RECREATED container read the data: every container gets a fresh
+#   category, and the generated ExecStart carries --rm, so the container is
+#   deleted on every stop and the volume is the only thing that persists.
+#
+# So do NOT add `:z` or `:Z` to the Volume= line that mounts this volume in
+# hive.container. `:Z` stamps a private category on the contents, and the next
+# mount without the flag is denied — silently, because a category denial
+# records no AVC at all (#4357 finding 3). Measured, with the restore, in the
+# doc above. The bind mounts in hive.container are the opposite case and do
+# need `:Z`; a named volume is already labelled and a host path is not.
 
 [Unit]
 Description=Hive persistent state volume
