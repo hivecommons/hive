@@ -35,7 +35,7 @@ func TestConvergenceMode_ConfiguredShadow(t *testing.T) {
 
 func TestConvergenceMode_UnrecognisedValueFailsSafeToOff(t *testing.T) {
 	t.Setenv(ConvergenceModeEnvVar, "")
-	for _, raw := range []string{"enforce", "on", "true", "garbage"} {
+	for _, raw := range []string{"on", "true", "garbage", "enforced", "enforce-all"} {
 		cfg := &Config{Convergence: ConvergenceConfig{Mode: raw}}
 		if got := cfg.ConvergenceMode(); got != ConvergenceModeOff {
 			t.Fatalf("mode %q resolved %q, want off", raw, got)
@@ -58,8 +58,14 @@ func TestConvergenceMode_EnvOverridesConfig(t *testing.T) {
 
 	// An unrecognised env value must NOT clobber a valid configured mode —
 	// the env only wins when it names a mode this build knows.
-	t.Setenv(ConvergenceModeEnvVar, "enforce")
+	t.Setenv(ConvergenceModeEnvVar, "garbage")
 	if got := cfg.ConvergenceMode(); got != ConvergenceModeShadow {
 		t.Fatalf("unrecognised env over config=shadow resolved %q, want shadow", got)
+	}
+
+	// #4263: "enforce" is a known mode and the env override may select it.
+	t.Setenv(ConvergenceModeEnvVar, "enforce")
+	if got := cfg.ConvergenceMode(); got != ConvergenceModeEnforce {
+		t.Fatalf("env=enforce over config=shadow resolved %q, want enforce", got)
 	}
 }

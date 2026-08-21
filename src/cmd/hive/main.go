@@ -1213,6 +1213,17 @@ func main() {
 		}
 	}
 
+	// #4263: restore convergence soak telemetry so a fixed-commit off/shadow/
+	// enforce comparison survives restarts. Missing or unparseable is ordinary
+	// on a hive that never ran with the toggle on — start empty, never fail.
+	const convergenceSoakHistoryPath = "/data/convergence-soak-history.json"
+	var pendingConvergenceSoakSeed []dashboard.ConvergenceSoakEntry
+	if soakData, err := os.ReadFile(convergenceSoakHistoryPath); err == nil {
+		if err := json.Unmarshal(soakData, &pendingConvergenceSoakSeed); err == nil && len(pendingConvergenceSoakSeed) > 0 {
+			logger.Info("convergence soak history loaded", "entries", len(pendingConvergenceSoakSeed))
+		}
+	}
+
 	// Restore governor/repo/beads/system trend history from disk so those
 	// sparklines survive restarts and render for any viewer (previously kept
 	// only in the browser's localStorage).
@@ -1756,6 +1767,10 @@ func main() {
 	if len(pendingBudgetWindowSeed) > 0 {
 		dashSrv.SeedBudgetWindowHistory(pendingBudgetWindowSeed)
 		logger.Info("budget window history restored", "entries", len(pendingBudgetWindowSeed))
+	}
+	if len(pendingConvergenceSoakSeed) > 0 {
+		dashSrv.SeedConvergenceSoak(pendingConvergenceSoakSeed)
+		logger.Info("convergence soak history restored", "entries", len(pendingConvergenceSoakSeed))
 	}
 
 	if len(pendingTrendSeed) > 0 {
@@ -5314,19 +5329,21 @@ func runEvalCycle(
 		}
 	}
 
-	// #4247 (parent #3845): observe the shared convergence admission at the
+	// #4247/#4263 (parent #3845): apply the shared convergence admission at the
 	// internal-kick dispatch boundary — AFTER governor policy evaluated the raw
 	// queue, BEFORE the scheduler caches and renders issues. Gated by the
-	// convergence feature toggle: with mode "off" (the default) this is
-	// entirely inert, and even in "shadow" it only LOGS what the shared
-	// evaluator would withhold — the raw actionable population is always what
-	// SetLastActionable and BuildKickMessages receive. Enforcement is a later,
-	// explicit increment (#4263).
-	observeConvergenceKickAdmission(cfg, dashSrv, actionable, logger)
+	// runtime convergence rollout mode, captured once per pass: with mode "off"
+	// (the DEFAULT) this is entirely inert and kickActionable IS actionable;
+	// "shadow" logs and records what would be withheld but still dispatches the
+	// raw population; only "enforce" gates the scheduled/cached issue payloads
+	// below. The raw actionable population stays authoritative for governor
+	// policy, dashboard status, PR/review dispatch, escalation, and every path
+	// not explicitly enrolled.
+	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
 
-	sched.SetLastActionable(actionable)
+	sched.SetLastActionable(kickActionable)
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, logger)
-	messages := sched.BuildKickMessages(actionable, agentsDue)
+	messages := sched.BuildKickMessages(kickActionable, agentsDue)
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
 		if !gov.AgentEligibleForCELKick(k.Agent) || agentMgr.IsPaused(k.Agent) {
@@ -6269,6 +6286,17 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			budgetData, err := json.Marshal(budgetHist)
 			if err == nil {
 				atomicWrite("/data/budget-window-history.json", budgetData)
+			}
+		}
+
+		// #4263: convergence soak telemetry, written atomically on the same
+		// cadence as the other series so a pod roll cannot lose more of one
+		// than the others.
+		soakHist := dashSrv.ConvergenceSoakHistory()
+		if len(soakHist) > 0 {
+			soakData, err := json.Marshal(soakHist)
+			if err == nil {
+				atomicWrite("/data/convergence-soak-history.json", soakData)
 			}
 		}
 	}

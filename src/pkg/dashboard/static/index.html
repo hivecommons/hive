@@ -13419,6 +13419,7 @@ function burnAreaChart() {
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
+        case 'loadConvergenceSoak': loadConvergenceSoak(); break;
         case 'toggleEscalationEnabled': toggleEscalationEnabled(el); break;
         case 'removeListItem': removeListItem(el.dataset.section || el.dataset.arg0, el.dataset.key || el.dataset.arg1, parseInt(el.dataset.index !== undefined ? el.dataset.index : el.dataset.arg2, 10)); break;
         case 'toggleRestriction': { if (el.dataset.index !== undefined) { const cb = el.querySelector('input[type=checkbox]') || el; toggleRestriction(parseInt(el.dataset.index, 10), cb.checked); } else { toggleRestriction(parseInt(el.dataset.arg0, 10), el.checked); } } break;
@@ -19681,6 +19682,7 @@ function burnAreaChart() {
       f = f || {};
       am = am || {};
       rv = rv || {};
+      const cv = (_configState.data || {}).convergence || {};
       const planOn = f.planFromLabel === true;
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
@@ -19778,6 +19780,21 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Fixer agent <span class="config-info">i<span class="config-tooltip">The agent kicked to address reviewer findings before re-review.</span></span></label>
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="fixer" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
+          </div>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Convergence Rollout <span class="config-info">i<span class="config-tooltip">Runtime rollout mode for convergence-driven admission of internal agent kicks (#3845/#4263). Off (default): no change from baseline. Shadow: decisions are computed and recorded but never enforced. Enforce: blocked/unknown work is withheld from internal scheduled/cached kicks. Live — no restart needed.</span></span></div>
+          <div class="config-field">
+            <label>Mode <span class="config-info">i<span class="config-tooltip">Default is off — existing behavior is unchanged until you opt in. Shadow and enforce consume the same decision, so you can soak-compare a fixed commit under each treatment.</span></span></label>
+            <select data-change-action="markDirty" data-arg0="convergence" data-arg1="mode" data-arg-types="s,s,v">
+              ${(Array.isArray(cv.modes) ? cv.modes : ['off','shadow','enforce']).map(m => `<option value="${esc(m)}" ${cv.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+            ${cv.env_override ? `<p style="font-size:0.72rem;color:var(--yellow);margin:4px 0 0">HIVE_CONVERGENCE_MODE is set — the effective mode is <strong>${esc(cv.effective_mode || 'off')}</strong> regardless of this setting.</p>` : `<p style="font-size:0.72rem;color:var(--muted);margin:4px 0 0">Effective mode: <strong>${esc(cv.effective_mode || 'off')}</strong> (generation ${cv.generation || 0}).</p>`}
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <button class="btn" data-action="loadConvergenceSoak">Load soak summary</button>
+            <div id="convergence-soak-summary" style="font-size:0.72rem;color:var(--muted);margin-top:6px"></div>
           </div>
         </div>
 
@@ -20007,6 +20024,39 @@ function burnAreaChart() {
     function toggleConfigSwitch(el, section, key) {
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
+    }
+
+    // loadConvergenceSoak fetches the owner-only fixed-commit soak telemetry
+    // (#4263) and renders a per-(commit, mode) summary so an operator can
+    // compare off/shadow/enforce treatments of the same workload at a glance.
+    async function loadConvergenceSoak() {
+      const out = document.getElementById('convergence-soak-summary');
+      if (!out) return;
+      out.textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/convergence/soak');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const entries = Array.isArray(data.entries) ? data.entries : [];
+        if (!entries.length) {
+          out.textContent = 'No soak telemetry recorded yet — set mode to shadow or enforce and let eval cycles run.';
+          return;
+        }
+        const groups = {};
+        for (const e of entries) {
+          const k = `${e.commit || '?'} / ${e.mode || '?'} (gen ${e.generation || 0})`;
+          if (!groups[k]) groups[k] = { passes: 0, admitted: 0, blocked: 0, unknown: 0, differ: 0, latency: 0 };
+          const g = groups[k];
+          g.passes++; g.admitted += e.admitted || 0; g.blocked += e.blocked || 0;
+          g.unknown += e.unknown || 0; g.differ += e.would_differ ? 1 : 0;
+          g.latency += e.decision_latency_ms || 0;
+        }
+        out.innerHTML = Object.entries(groups).map(([k, g]) =>
+          `<div><strong>${esc(k)}</strong>: ${g.passes} passes, ${g.admitted} admitted, ${g.blocked} blocked, ${g.unknown} unknown, ${g.differ} would-differ, avg latency ${(g.latency / g.passes).toFixed(1)}ms</div>`
+        ).join('');
+      } catch (err) {
+        out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
     }
 
     // markPromptSourceDirty reads the four GitHub prompt-source inputs and records
@@ -20512,6 +20562,17 @@ function burnAreaChart() {
               body: JSON.stringify(values)
             });
             if (!amRes.ok) throw new Error(await saveErrorMessage(amRes));
+          } else if (_configState.type === 'governor' && section === 'convergence') {
+            // convergence is a TOP-LEVEL config block, not under governor —
+            // it saves through its own owner-only /api/config/convergence
+            // endpoint (#4263 off/shadow/enforce rollout).
+            const cvRes = await fetch('/api/config/convergence', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!cvRes.ok) throw new Error(await saveErrorMessage(cvRes));
+            _configState.data.convergence = await cvRes.json().catch(() => _configState.data.convergence);
           } else if (_configState.type === 'governor' && section === 'review') {
             // review is a TOP-LEVEL config block, not under governor —
             // it saves through its own /api/config/review endpoint.

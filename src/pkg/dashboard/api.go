@@ -163,6 +163,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// lives on the governor Features tab — see api_config_automerge.go.
 	s.mux.HandleFunc("GET /api/config/auto-merge", s.handleAutoMergeGet)
 	s.mux.HandleFunc("PUT /api/config/auto-merge", s.handleAutoMergePut)
+	// convergence is a top-level Config field (not GovernorConfig); its UI
+	// lives on the governor Features tab — see api_config_convergence.go
+	// (#4263 off/shadow/enforce rollout). The soak endpoint is the
+	// fixed-commit telemetry read path (convergence_soak.go).
+	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
+	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
+	s.mux.HandleFunc("GET /api/convergence/soak", s.handleConvergenceSoak)
 	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
 	s.mux.HandleFunc("GET /api/config/governor/replan", s.handleGovernorReplanGet)
@@ -4203,6 +4210,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"features":    featuresSectionResponse(cfg),
 		"review":      cfg.Review,
 		"auto_merge":  autoMergeSectionResponse(cfg),
+		"convergence": s.convergenceSectionResponse(cfg),
 		"advisory":    advisorySectionResponse(cfg),
 		"replan":      replanSectionResponse(cfg),
 		"work_source": workSourceSectionResponse(cfg),

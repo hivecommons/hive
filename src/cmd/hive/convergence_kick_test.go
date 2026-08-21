@@ -12,7 +12,7 @@ import (
 	"github.com/kubestellar/hive/pkg/github"
 )
 
-// ── #4247 eval-cycle seam: observeConvergenceKickAdmission ─────────────────────
+// ── #4247/#4263 eval-cycle seam: applyConvergenceKickAdmission ─────────────────
 //
 // The rollout contract under test: with convergence.mode "off" (the DEFAULT)
 // the seam is entirely inert — no projection, no log, no mutation; with
@@ -72,7 +72,7 @@ func TestObserveConvergenceKickAdmission_OffModeIsInert(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	observeConvergenceKickAdmission(&config.Config{}, srv, actionable, logger)
+	applyConvergenceKickAdmission(&config.Config{}, srv, actionable, nil, logger)
 
 	if buf.Len() != 0 {
 		t.Fatalf("mode=off must log nothing, got: %s", buf.String())
@@ -82,7 +82,7 @@ func TestObserveConvergenceKickAdmission_OffModeIsInert(t *testing.T) {
 	}
 
 	// A nil config is also off (fail-safe) — and must not panic.
-	observeConvergenceKickAdmission(nil, srv, actionable, logger)
+	applyConvergenceKickAdmission(nil, srv, actionable, nil, logger)
 	if buf.Len() != 0 {
 		t.Fatal("nil config must resolve to off and log nothing")
 	}
@@ -100,7 +100,7 @@ func TestObserveConvergenceKickAdmission_ShadowLogsButNeverEnforces(t *testing.T
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	observeConvergenceKickAdmission(cfg, srv, actionable, logger)
+	applyConvergenceKickAdmission(cfg, srv, actionable, nil, logger)
 
 	out := buf.String()
 	if !bytes.Contains(buf.Bytes(), []byte("WITHHELD")) {
@@ -131,7 +131,7 @@ func TestObserveConvergenceKickAdmission_ShadowAllAdmitted(t *testing.T) {
 
 	var buf bytes.Buffer
 	captured := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	observeConvergenceKickAdmission(cfg, srv, actionable, captured)
+	applyConvergenceKickAdmission(cfg, srv, actionable, nil, captured)
 	if bytes.Contains(buf.Bytes(), []byte("WITHHELD")) {
 		t.Fatalf("nothing should be withheld with no ledger records: %s", buf.String())
 	}
@@ -147,7 +147,7 @@ func TestObserveConvergenceKickAdmission_NilInputsAreSafe(t *testing.T) {
 	cfg := &config.Config{Convergence: config.ConvergenceConfig{Mode: config.ConvergenceModeShadow}}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	observeConvergenceKickAdmission(cfg, nil, kickTestActionable(), logger)
-	observeConvergenceKickAdmission(cfg, kickTestDashboard(t), nil, logger)
-	observeConvergenceKickAdmission(cfg, kickTestDashboard(t), kickTestActionable(), nil)
+	applyConvergenceKickAdmission(cfg, nil, kickTestActionable(), nil, logger)
+	applyConvergenceKickAdmission(cfg, kickTestDashboard(t), nil, nil, logger)
+	applyConvergenceKickAdmission(cfg, kickTestDashboard(t), kickTestActionable(), nil, nil)
 }

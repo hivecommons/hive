@@ -104,6 +104,14 @@ type Server struct {
 	budgetWindowOnce sync.Once
 	budgetWindowHist *budgetWindowTracker
 
+	// convergenceModeTrk captures one (mode, generation) pair per enrolled
+	// eval pass and detects transitions (#4263). convergenceSoakTrk records the
+	// bounded per-pass soak telemetry. Both lazily built like the rings above.
+	convergenceModeOnce sync.Once
+	convergenceModeTrk  *convergenceModeTracker
+	convergenceSoakOnce sync.Once
+	convergenceSoakTrk  *convergenceSoakTracker
+
 	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
 

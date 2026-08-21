@@ -55,15 +55,27 @@ type ConvergenceKickFinding struct {
 // the GitHub-only bead observer and are admitted on its behalf, exactly as
 // evaluateContributorNeutralAdmission does (kubestellar/hive#4245 boundary).
 func (s *Server) ConvergenceKickProjection(issues []ghpkg.Issue) (admitted []ghpkg.Issue, withheld []ConvergenceKickFinding) {
+	admitted, withheld, _ = s.ConvergenceKickProjectionDetailed(issues)
+	return admitted, withheld
+}
+
+// ConvergenceKickProjectionDetailed is ConvergenceKickProjection plus the
+// sweep's ledger-coverage report (#4263 soak telemetry needs the partial-
+// coverage fact per pass). Same single sweep, same observer, same evaluator —
+// the coverage is projected from the sweep that judged the candidates, so the
+// counts and the coverage cannot disagree about the state they saw.
+func (s *Server) ConvergenceKickProjectionDetailed(issues []ghpkg.Issue) (admitted []ghpkg.Issue, withheld []ConvergenceKickFinding, coverage AdmissionCoverage) {
 	admitted = make([]ghpkg.Issue, 0, len(issues))
+	coverage = AdmissionCoverage{Policy: admissionCoveragePolicy}
 	if s == nil || s.contributeHub == nil {
-		return append(admitted, issues...), nil
+		return append(admitted, issues...), nil, coverage
 	}
 	hub := s.contributeHub
 	// One sweep for the whole pass — the same per-pass snapshot discipline the
 	// contributor paths use, so every candidate in this projection is judged
 	// against one consistent view of current ledger state.
 	sweep := hub.newAdmissionSweep()
+	coverage = hub.admissionCoverageFromSweep(sweep)
 	for _, issue := range issues {
 		candidate := kickAdmissionCandidate(issue)
 		if !candidate.isGitHubBacked() {
@@ -77,7 +89,7 @@ func (s *Server) ConvergenceKickProjection(issues []ghpkg.Issue) (admitted []ghp
 		}
 		withheld = append(withheld, ConvergenceKickFinding{Issue: issue, Decision: decision})
 	}
-	return admitted, withheld
+	return admitted, withheld, coverage
 }
 
 // kickAdmissionCandidate normalises one enumerated issue into the shared
