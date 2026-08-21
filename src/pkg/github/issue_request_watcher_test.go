@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -322,5 +323,138 @@ func TestIssueRequestWatcher_AuthzSeesKind(t *testing.T) {
 	got := strings.Join(seen, ",")
 	if !strings.Contains(got, "issue") || !strings.Contains(got, "comment") {
 		t.Fatalf("authorizer should see both kinds, saw %q", got)
+	}
+}
+
+// StartIssueRequestWatcher lifecycle: nil client is a no-op, the ticker loop
+// drives processing, and ctx cancel stops it.
+func TestIssueRequestWatcher_StartLoop(t *testing.T) {
+	var nilClient *Client
+	nilClient.StartIssueRequestWatcher(context.Background(), nil, nil) // must not panic
+	nilClient.ProcessIssueRequestsOnce(context.Background())           // must not panic
+
+	created := 0
+	srv := newIssueMockServer(t, "", &created, nil, nil)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	oldInterval := issueRequestPollInterval
+	issueRequestPollInterval = 20 * time.Millisecond
+	t.Cleanup(func() { issueRequestPollInterval = oldInterval })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.StartIssueRequestWatcher(ctx, func(agent string, uid int, kind string) error { return nil }, nil)
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Title: "[sec-check] via ticker", Body: "b", Agent: "sec-check",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for created == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if created != 1 {
+		t.Fatalf("ticker loop never processed the request (created=%d)", created)
+	}
+	cancel() // loop exit path
+	time.Sleep(50 * time.Millisecond)
+}
+
+// The watcher disables itself (no panic, no goroutine) when the request dir
+// cannot be created.
+func TestIssueRequestWatcher_StartWithUncreatableDir(t *testing.T) {
+	srv := newIssueMockServer(t, "", nil, nil, nil)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := issueRequestDirForTest
+	issueRequestDirForTest = filepath.Join(blocker, "issue-requests")
+	t.Cleanup(func() { issueRequestDirForTest = old })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.StartIssueRequestWatcher(ctx, nil, nil) // must return without panicking
+}
+
+// The production path constant is used when no test override is set.
+func TestIssueRequestDirDefault(t *testing.T) {
+	old := issueRequestDirForTest
+	issueRequestDirForTest = ""
+	t.Cleanup(func() { issueRequestDirForTest = old })
+	if got := issueRequestDir(); got != IssueRequestDir {
+		t.Fatalf("issueRequestDir() = %q, want %q", got, IssueRequestDir)
+	}
+}
+
+// WriteIssueRequest surfaces failures instead of losing the request silently.
+func TestWriteIssueRequest_Errors(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteIssueRequest(filepath.Join(blocker, "sub"), IssueRequest{
+		Repo: "o/r", Title: "t", Agent: "a",
+	}); err == nil {
+		t.Fatal("expected error when request dir cannot be created")
+	}
+}
+
+// CreateIssue input validation and degraded-path behavior.
+func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
+	var nilClient *Client
+	if _, err := nilClient.CreateIssue(context.Background(), "o/r", "t", "b", nil); !errors.Is(err, ErrNoGitHubClient) {
+		t.Fatalf("nil client: want ErrNoGitHubClient, got %v", err)
+	}
+
+	created := 0
+	srv := newIssueMockServer(t, "", &created, nil, nil)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	if _, err := c.CreateIssue(context.Background(), "o/r", "   ", "b", nil); err == nil {
+		t.Fatal("blank title must be rejected")
+	}
+
+	// Blank labels are skipped, usable ones attached; create succeeds.
+	res, err := c.CreateIssue(context.Background(), "o/r", "with labels", "b", []string{" ", "security"})
+	if err != nil || res.Number != 99 {
+		t.Fatalf("create with labels: res=%+v err=%v", res, err)
+	}
+}
+
+// A failing dedupe lookup or label-ensure must degrade, never block the create:
+// losing provenance labels is acceptable, losing the finding is not.
+func TestCreateIssue_DegradesWhenListAndLabelsFail(t *testing.T) {
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"): // dedupe list
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.Contains(r.URL.Path, "/labels"): // ensure-label lookups+creates
+			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":123,"html_url":"https://github.example/o/r/issues/123"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	res, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"security"})
+	if err != nil {
+		t.Fatalf("create must survive list/label failures: %v", err)
+	}
+	if created != 1 || res.Number != 123 || res.AlreadyExisted {
+		t.Fatalf("unexpected result: created=%d res=%+v", created, res)
 	}
 }

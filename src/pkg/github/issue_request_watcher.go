@@ -38,7 +38,8 @@ func issueRequestDir() string {
 
 // issueRequestPollInterval mirrors prRequestPollInterval: issue creation is not
 // latency-critical (the agent has already recorded the finding and moved on).
-const issueRequestPollInterval = 10 * time.Second
+// A var (not const) so tests can drive the real ticker loop quickly.
+var issueRequestPollInterval = 10 * time.Second
 
 // issueRetryBase and issueRetryMax bound the per-request retry backoff. Unlike
 // the PR watcher (retry every tick forever), a persistently failing issue
