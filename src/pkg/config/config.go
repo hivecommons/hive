@@ -1043,6 +1043,25 @@ type GovernorConfig struct {
 	// default.
 	ThresholdScaling string `yaml:"threshold_scaling,omitempty" json:"threshold_scaling,omitempty"`
 
+	// ThresholdsSource records WHERE the explicit thresholds in Modes came
+	// from, so "explicit always wins" can apply to the values an operator
+	// typed without also applying to the ones an ACMM pack seeded (#4037).
+	//
+	// Only ThresholdSourcePack is meaningful; empty means "operator-set, or
+	// pre-dating this field", which is the safe reading for every hive that
+	// already exists — see EffectiveThreshold for why that direction was
+	// chosen over defaulting the other way.
+	//
+	// It is a WHOLE-SET marker rather than one per mode. Per-mode provenance
+	// was the obvious shape and it is a trap: an operator who hand-tunes only
+	// `surge` would leave `busy` and `quiet` still scaling, and a scaled
+	// busy on a 39-repo hive (5 x 39 = 195) sitting above an unscaled surge of
+	// 30 INVERTS the mode ladder. Treating the thresholds as one set means the
+	// moment an operator edits any of them, all three become theirs verbatim,
+	// which cannot invert. It also keeps `threshold_source` out of ModeConfig's
+	// flat YAML map, where every non-`threshold` key is an agent cadence.
+	ThresholdsSource string `yaml:"thresholds_source,omitempty" json:"thresholds_source,omitempty"`
+
 	// Advisory tunes the advisory digest experience: how many findings the
 	// digest shows, and how long a finding may go un-reconfirmed before the
 	// hive retires it. See AdvisoryConfig.
@@ -1274,6 +1293,18 @@ const (
 	ThresholdScalingNone = "none"
 )
 
+// ThresholdSourcePack marks GovernorConfig.Modes thresholds as seeded by an
+// ACMM pack rather than typed by an operator (#4037). It is written only by the
+// pack-apply paths and cleared by the operator threshold-write path.
+const ThresholdSourcePack = "pack"
+
+// ThresholdsArePackSeeded reports whether the explicit thresholds in Modes were
+// written by a pack apply. Anything other than ThresholdSourcePack — including
+// the empty value every pre-#4037 hive has — reads as operator-owned.
+func (g GovernorConfig) ThresholdsArePackSeeded() bool {
+	return g.ThresholdsSource == ThresholdSourcePack
+}
+
 // ValidThresholdScalings are the accepted threshold_scaling values. "" means
 // "unset", which resolves to linear.
 var ValidThresholdScalings = map[string]bool{
@@ -1333,11 +1364,19 @@ func ScaleThreshold(base, repoCount int, scaling string) int {
 //
 // Resolution, in order:
 //
-//  1. An explicit governor.modes.<mode>.threshold greater than zero wins and is
-//     returned UNSCALED. An operator who hand-tuned a number meant that number,
-//     and #3498 is explicit that hand-tuned hives see no behavior change.
-//  2. Otherwise the base default for surge/busy/quiet, scaled by repo count.
-//  3. Any other mode name has no threshold (0). computeMode only ladders over
+//  1. An OPERATOR-SET explicit governor.modes.<mode>.threshold greater than
+//     zero wins and is returned UNSCALED. An operator who hand-tuned a number
+//     meant that number, and #3498 is explicit that hand-tuned hives see no
+//     behavior change: scaling a hand-tuner's `surge: 300` on a 39-repo hive
+//     would produce 11700.
+//  2. A PACK-SEEDED explicit threshold (governor.thresholds_source: pack) is
+//     treated as the per-repo BASE and scaled, exactly like the built-in
+//     defaults (#4037). This is what makes scaling reach a pack-applied hive —
+//     the normal path — while keeping each level's own tuning, since L3's
+//     15/10/3 and L4-L6's 10/5/2 stay distinct bases rather than collapsing
+//     onto one default.
+//  3. Otherwise the base default for surge/busy/quiet, scaled by repo count.
+//  4. Any other mode name has no threshold (0). computeMode only ladders over
 //     surge/busy/quiet — idle is the fallthrough — so a threshold on `idle` or
 //     on a custom mode has never been consulted.
 //
@@ -1345,12 +1384,16 @@ func ScaleThreshold(base, repoCount int, scaling string) int {
 // thresholdFor behavior: mode entries frequently exist only to carry cadences,
 // and a literal zero would put every non-empty queue in that mode.
 //
-// KNOWN LIMITATION: ACMM packs seed explicit thresholds (pkg/config/packs/
-// level-*.yaml write surge/busy/quiet), and rule 1 cannot tell a pack-seeded
-// default from a hand-tuned value. On a hive that applied a pack, scaling
-// therefore does not engage. See docs/governor-thresholds.md.
+// WHY AN ABSENT MARKER MEANS "OPERATOR-SET". Every hive that applied a pack
+// before #4037 has seeded thresholds and no marker, and reading those as
+// pack-seeded would multiply them by the repo count the first time the new code
+// ran — a silent, potentially large mode-ladder change on upgrade. Reading them
+// as operator-owned instead keeps those hives exactly as they are; re-applying
+// the level stamps the marker and turns scaling on as an explicit, operator-
+// initiated act. Fail-quiet on upgrade, opt-in to the new behavior.
 func (g GovernorConfig) EffectiveThreshold(modeName string, repoCount int) int {
-	if mode, ok := g.Modes[modeName]; ok && mode.Threshold > 0 {
+	packSeeded := g.ThresholdsArePackSeeded()
+	if mode, ok := g.Modes[modeName]; ok && mode.Threshold > 0 && !packSeeded {
 		return mode.Threshold
 	}
 
@@ -1363,7 +1406,18 @@ func (g GovernorConfig) EffectiveThreshold(modeName string, repoCount int) int {
 	case "quiet":
 		base = DefaultThresholdQuiet
 	default:
+		// Unknown mode: no threshold, and a pack-seeded value on it is still
+		// not a threshold the ladder consults.
 		return 0
+	}
+
+	// A pack-seeded value replaces the built-in base for this mode, then scales
+	// the same way. A pack that seeds only some modes leaves the rest on the
+	// built-in bases, which is the behavior the packs already rely on.
+	if packSeeded {
+		if mode, ok := g.Modes[modeName]; ok && mode.Threshold > 0 {
+			base = mode.Threshold
+		}
 	}
 
 	return ScaleThreshold(base, repoCount, g.ThresholdScalingMode())

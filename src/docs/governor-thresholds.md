@@ -42,9 +42,9 @@ For 39 repos, `linear` surges at 780 and `sqrt` at 140 (`ceil(√39) = 7`). Note
 
 An unrecognized value is rejected at config load.
 
-## Explicit thresholds always win
+## Operator-set thresholds always win
 
-A threshold you set yourself is used **verbatim and never scaled**:
+A threshold **you** set yourself is used **verbatim and never scaled**:
 
 ```yaml
 governor:
@@ -78,23 +78,29 @@ governor mode thresholds are not in descending order — a mode is unreachable
 
 It warns rather than silently reordering, because the inversion comes from a number you set. Either set all three explicitly, or remove the explicit one so all three scale together.
 
-## Known limitation: ACMM packs seed explicit thresholds
+## ACMM packs seed thresholds, and those DO scale
 
-ACMM level packs (`v2/pkg/config/packs/level-*.yaml`) write `surge`/`busy`/`quiet` thresholds into `governor.modes` when a level is applied — for example L4–L6 seed `surge: 10, busy: 5, quiet: 2`.
+ACMM level packs (`src/pkg/config/packs/level-*.yaml`) write `surge`/`busy`/`quiet` thresholds into `governor.modes` when a level is applied — for example L4–L6 seed `surge: 10, busy: 5, quiet: 2`, and L3 seeds `15/10/3`.
 
-Those land in config as **explicit** values, and nothing distinguishes a pack-seeded default from one an operator typed. So on a hive that has applied an ACMM level, **scaling does not engage**: rule "explicit always wins" takes precedence and the pack's absolute numbers are used.
-
-If your hive applied a pack and you want scaling, clear the thresholds you want scaled:
+Applying a pack is the normal path, so if those counted as hand-tuned the scaling above would almost never engage. Config therefore records **where the thresholds came from** ([#4037](https://github.com/kubestellar/hive/issues/4037)):
 
 ```yaml
 governor:
+  thresholds_source: pack     # written by the pack-apply path
   modes:
     surge:
-      # threshold omitted → scaled default
-      scanner: 5m
+      threshold: 10           # a per-repo BASE, not an absolute
 ```
 
-Resolving this properly requires tracking whether a threshold was pack-seeded or operator-set, which config does not currently record.
+With that marker present the seeded numbers are treated as **per-repo bases** and scaled exactly like the built-in defaults — so a 39-repo hive at L4 surges at `10 × 39 = 390`, and L3's `15` stays distinct from L4's `10` rather than collapsing onto one default.
+
+**Editing any threshold clears the marker.** The moment you set one in the dashboard's **Governor → Thresholds** tab (or by hand), the whole set becomes yours and is used verbatim. That is deliberate: clearing only the mode you touched would leave the others scaling, and a scaled `busy` of 195 sitting above a hand-set `surge` of 30 inverts the ladder described above. All three move together, so they cannot invert.
+
+### On upgrade
+
+A hive that applied a pack **before** this change has seeded thresholds and no `thresholds_source` marker. Those read as operator-set and keep their exact current values — upgrading never silently multiplies your thresholds. **Re-apply the level** (or change it) to stamp the marker and turn scaling on.
+
+To go the other way — pack-seeded values you want as absolutes — set them explicitly once; that clears the marker.
 
 ## Where the numbers are shown
 

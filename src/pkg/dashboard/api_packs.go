@@ -291,6 +291,13 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			if isFirstApplyOrExpansion || !present {
 				mode.Threshold = threshold
 				s.deps.Config.Governor.Modes[modeName] = mode
+				// #4037: mark the set as pack-seeded so EffectiveThreshold
+				// treats these as per-repo BASES and scales them, instead of
+				// reading them as hand-tuned absolutes and disabling scaling on
+				// what is the normal path for a hive. Stamped only when a
+				// threshold is actually written, so a pure merge that changed
+				// nothing does not silently convert an operator's numbers.
+				s.deps.Config.Governor.ThresholdsSource = config.ThresholdSourcePack
 			}
 		}
 	}
@@ -473,6 +480,8 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 				mode := s.deps.Config.Governor.Modes[modeName]
 				mode.Threshold = threshold
 				s.deps.Config.Governor.Modes[modeName] = mode
+				// #4037: same provenance stamp as the apply path above.
+				s.deps.Config.Governor.ThresholdsSource = config.ThresholdSourcePack
 			}
 			if pack.Governor.EvalIntervalS > 0 {
 				s.deps.Config.Governor.EvalIntervalS = pack.Governor.EvalIntervalS

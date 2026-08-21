@@ -4406,6 +4406,15 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// #4037: the operator just typed these numbers, so they stop being
+	// pack-seeded bases and become absolutes that EffectiveThreshold returns
+	// verbatim — the #3498 guarantee that a hand-tuned `surge: 300` is never
+	// multiplied by the repo count. Cleared for the WHOLE set, deliberately:
+	// leaving the untouched modes scaling while this one does not can invert
+	// the mode ladder (a scaled busy above an unscaled surge). Editing any
+	// threshold means the operator owns all of them.
+	s.deps.Config.Governor.ThresholdsSource = ""
+
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after threshold update", "error", err)
 	}
