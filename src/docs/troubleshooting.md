@@ -118,6 +118,54 @@ Liveness is judged by the governor's in-process health check, so an agent that k
 1. **Read the work counts, not just liveness.** If an agent reports "Issues triaged: 0" cycle after cycle in the logs, that is the signal — `kubectl -n hive logs deploy/hive | grep <agent>` or attach to the session.
 2. **Cross-check an external surface.** Confirm the effect the agent is supposed to produce (a GitHub API query for the PRs/issues it claims to have handled) rather than trusting its self-reported state.
 
+## An agent says "Please run /login" but logging in changes nothing
+
+Check whether the same line carries **`API Error: 403`**. If it does, the agent is
+**already logged in** and `/login` cannot help.
+
+Claude Code prefixes *every* API error with its login hint, so an upstream refusal
+renders like this:
+
+```
+● Please run /login · API Error: 403 {"type":"error","error":{"type":"api_error",
+  "message":"inference backend returned 403: {"error":{"message":"team not allowed
+  to access model. This team can only access models=['gemini-2.5-pro',
+  'gcp/gemini-3.1-pro-preview', 'aws/claude-sonnet-4-6', ...]"}}
+```
+
+The status is the tell:
+
+| status | meaning | fix |
+| --- | --- | --- |
+| **401** | authentication — the caller is not identified | `/login` |
+| **403** | authorization — the caller *is* identified and is not permitted | not `/login` |
+
+The usual cause on an inference backend (`litellm`, `vllm`, `llm-d`) is that the
+agent's **model id does not match what the gateway entitles**, exactly. Read the
+allowed list out of the error and compare it character by character with the
+agent's configured model — separators and prefixes both matter:
+
+```
+configured:  claude-sonnet-4.6
+entitled:    aws/claude-sonnet-4-6
+                 ^^^^         ^
+```
+
+`.` versus `-`, and a missing `aws/` prefix, are each enough for a 403. Hive passes
+inference-backend model ids through **verbatim** on purpose — the gateway is the only
+thing that knows its own naming, so hive rewriting the id would produce a model the
+team is not entitled to. Fix it in the agent's `model:` setting, not in hive.
+
+**Why one agent fails and another with "the same" model does not:** they are not the
+same string. Compare the two agents' configured `model:` values directly rather than
+the model each was *meant* to use — a single separator differs and only one of them
+matches the gateway.
+
+Before [#4400](https://github.com/kubestellar/hive/issues/4400) hive read that line as
+a login prompt: it badged the agent 🔑, and — because a valid token was on disk —
+auto-restarted it straight back into the same 403, which looked like the agent
+crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
+
 ## The terminal looks frozen — no new output, and reopening it doesn't help
 
 You are almost certainly **scrolled back**, not looking at a halted agent.

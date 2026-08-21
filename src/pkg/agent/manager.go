@@ -5579,8 +5579,74 @@ func lineHasLoginDirective(line string) bool {
 	return false
 }
 
+// modelRefusalPatterns are upstream MODEL-ENTITLEMENT refusals: the caller is
+// authenticated, and the model it asked for is not one this account may use.
+// Observed verbatim from a LiteLLM gateway in #4400:
+//
+//	team not allowed to access model. This team can only access
+//	models=['gemini-2.5-pro', ..., 'aws/claude-sonnet-4-6', ...]
+//
+// Kept as text as well as the status check below because not every gateway
+// surfaces an HTTP status through the CLI's error line.
+var modelRefusalPatterns = []string{
+	"not allowed to access model",
+	"team not allowed to access",
+}
+
+// lineShowsUpstreamAuthorizationError reports whether a line carries an
+// upstream failure that LOGGING IN CANNOT FIX (#4400).
+//
+// The distinction is the HTTP status, and it is not a nicety:
+//
+//	401  authentication — the caller is not identified. /login is the fix.
+//	403  authorization  — the caller IS identified and is not permitted.
+//	                      /login changes nothing; the request itself is the
+//	                      problem.
+//
+// Keying on the status rather than on one gateway's wording keeps this working
+// for gateways that phrase the refusal differently, and keeps 401 — a genuine
+// logged-out signal — detected exactly as before.
+func lineShowsUpstreamAuthorizationError(line string) bool {
+	if strings.Contains(line, "API Error: 403") {
+		return true
+	}
+	lower := strings.ToLower(line)
+	for _, pat := range modelRefusalPatterns {
+		if strings.Contains(lower, pat) {
+			return true
+		}
+	}
+	return false
+}
+
+// paneShowsLoginPrompt returns true if any line in the pane output matches a
+// known login/authentication prompt pattern.
+//
+// #4400: a line that ALSO carries an upstream authorization failure is skipped,
+// because Claude Code prefixes EVERY API error with its login hint. A hive
+// whose gateway refused the configured model rendered
+//
+//	● Please run /login · API Error: 403 {"...":"team not allowed to access
+//	  model. This team can only access models=[... 'aws/claude-sonnet-4-6' ...]"}
+//
+// on an agent that was fully logged in. That matched "Please run /login", so
+// the agent was badged as needing login AND auto-restarted by the poller's
+// `showsLogin && configHasTokens()` branch — restarting into the same 403 every
+// time, which is what the reporter saw as the agent "keeps crashing". The
+// operator was pointed at the one action that could not help, while the real
+// cause — a model id the gateway does not entitle — was sitting in the same
+// line.
+//
+// This is the same shape as lineHasLoginDirective's existing guard: that one
+// exists so "POST /login returns 302" is not read as a login screen. Claude
+// Code's error decoration is the same class of false positive.
 func paneShowsLoginPrompt(lines []string) bool {
 	for _, line := range lines {
+		// An upstream authorization failure is not a login prompt, whatever
+		// the CLI decorated it with.
+		if lineShowsUpstreamAuthorizationError(line) {
+			continue
+		}
 		if lineHasLoginDirective(line) {
 			return true
 		}
