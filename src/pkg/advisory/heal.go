@@ -159,6 +159,13 @@ var repoAccessFindingPatterns = []*regexp.Regexp{
 	// the close below is gated on a verified READ, which would be the wrong
 	// proof for a write-access claim (those are the app-auth healer's).
 	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without|unavailable)\b[^.\n]*\b(read-only|read|clone|checkout|fetch)\s+access\s+to\b[^.\n]*\brepo(sitory)?\b`),
+	// #4464, gap 3 (found live on a customer hive AFTER the first two fixes
+	// shipped): "Repository not provisioned for guide agent - cannot perform
+	// documentation audit". The bare repo noun with no workspace/worktree/
+	// checkout qualifier — gap 1's pattern requires that middle noun, so this
+	// escaped. Directional: the "not/never provisioned" claim must attach to
+	// the repo(sitory) subject within the same clause.
+	regexp.MustCompile(`(?i)\brepo(sitory)?\b[^.\n]*\b(not|never|un)provisioned\b|\brepo(sitory)?\b[^.\n]*\b(not|never)\s+provisioned\b`),
 }
 
 // IsRepoAccessFinding reports whether a finding title describes the hive's own

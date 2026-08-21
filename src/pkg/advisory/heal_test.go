@@ -306,6 +306,9 @@ var gee4veeRepoAccessTitles = []struct{ title, ref string }{
 var issue4464RepoAccessTitles = []struct{ title, ref string }{
 	{"Repository worktree not provisioned for guide agent despite include_repos=true configuration", "/data/agents/guide (empty directory)"},
 	{"Quality agent lacks read access to repository for coverage analysis", "devx-prod/epx-vscode-ext-poc"},
+	// Gap 3, found live on a customer hive after the first two fixes shipped:
+	// the bare repo noun, no workspace/worktree qualifier.
+	{"Critical: Repository not provisioned for guide agent - cannot perform documentation audit", "/tmp/hive/epx-vscode-ext-poc"},
 }
 
 func TestIsRepoAccessFinding(t *testing.T) {
