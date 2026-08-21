@@ -79,9 +79,9 @@ func TestCopilotTokenUsable(t *testing.T) {
 	}
 }
 
-// writeClaudeCreds writes a Claude credentials file with the given access token
+// writeClaudeCredsWithExpiry writes a Claude credentials file with the given access token
 // and expiry, mirroring the shape claude.ReadAccessToken parses.
-func writeClaudeCreds(t *testing.T, path, token string, expiresAtMillis int64) {
+func writeClaudeCredsWithExpiry(t *testing.T, path, token string, expiresAtMillis int64) {
 	t.Helper()
 	body := map[string]any{
 		"claudeAiOauth": map[string]any{
@@ -109,14 +109,14 @@ func TestClaudeTokenUsable(t *testing.T) {
 
 	// Present but expired (expiresAt in the past).
 	past := time.Now().Add(-time.Hour).UnixMilli()
-	writeClaudeCreds(t, path, "sk-ant-oat-old", past)
+	writeClaudeCredsWithExpiry(t, path, "sk-ant-oat-old", past)
 	if ok, reason := claudeTokenUsable(path); ok || reason != "invalid or expired" {
 		t.Fatalf("expired file: expected (false,\"invalid or expired\"), got (%v,%q)", ok, reason)
 	}
 
 	// Present and valid (expiresAt in the future).
 	future := time.Now().Add(time.Hour).UnixMilli()
-	writeClaudeCreds(t, path, "sk-ant-oat-fresh", future)
+	writeClaudeCredsWithExpiry(t, path, "sk-ant-oat-fresh", future)
 	if ok, _ := claudeTokenUsable(path); !ok {
 		t.Fatal("valid file: expected usable")
 	}
