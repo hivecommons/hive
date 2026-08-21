@@ -197,15 +197,23 @@ The browser terminal is a live `tmux` attach, and the mouse wheel scrolls by ent
 Look at the right-hand end of the status bar:
 
 ```
-[SCROLLBACK - not following live output - press q to resume]   now 14:22:07
-[live]                                                          now 14:22:07
+[SCROLLBACK 812/4837 lines back - not following live output - press q to resume]   now 14:22:07
+[live]                                                                             now 14:22:07
 ```
 
 Press **`q`** (or `Esc`) to leave copy-mode and resume following output.
 
-**The timestamp there is a clock, not a content timestamp.** It is the time *now*, which is why it never lines up with any particular line of scrollback. The black-on-yellow `[12/4837]` box in the top-right corner is tmux's copy-mode **scroll position**, not a line timestamp either.
+**The timestamp there is a clock, not a content timestamp.** It is the time *now*, which is why it never lines up with any particular line of scrollback. The `812/4837 lines back` counter is your scroll position: how many lines back from live you are, out of the total retained history.
 
-If the status bar shows `[live]` and output really has stopped, the agent is idle between kicks — check its next scheduled run on the dashboard before assuming a fault.
+**If you still see an unlabelled black-on-yellow box in the top-right of the pane** (e.g. `12:41 [812/4837]`), your hub predates the fix that hides it. That box is tmux's built-in copy-mode marker: the `[812/4837]` is the same scroll position, and the time next to it is the moment the **top visible line** was written — a reference point nothing on screen points at, which is why it never seems to correspond to the top or the bottom consistently. Current hubs hide that marker and carry the position, labelled, in the status bar instead.
+
+If the status bar shows `[live]` and output really has stopped, the agent is idle between kicks — check its next scheduled kick on the dashboard before assuming a fault.
+
+## The dashboard says the next kick is later, but the agent is visibly working now
+
+The agent-card **last kick** / **next kick** fields describe when work is *started*, not how long it runs. A kick sends one prompt into the agent's CLI; the resulting work pass then runs as long as it needs — often hours for a deep quality or scan pass. So an agent visibly busy at 01:47 with `last kick 8:12 PM` and `next kick 2:12 AM` is not off schedule: it is still working through the pass that began at 20:12. (These fields were labelled "last run" / "next run" before [#4399](https://github.com/kubestellar/hive/issues/4399), which invited exactly this misreading.)
+
+Every kick path — scheduled cadence, manual restart, crash-resume, CEL event triggers — records itself in `last kick` and the 🕘 *past kicks* archive, so a timestamp that has *not* moved is positive evidence that no new kick happened.
 
 ## An agent runs, but not the way I expect — why did it do that?
 

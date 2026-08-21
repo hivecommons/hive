@@ -65,7 +65,7 @@ fi
 
 WORK="$(mktemp -d)"
 SOCK="${WORK}/sock"
-cleanup() { tmux -S "$SOCK" kill-server 2>/dev/null; rm -rf "$WORK"; }
+cleanup() { tmux -S "$SOCK" kill-server 2>/dev/null; tmux -S "${WORK}/viewer-sock" kill-server 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
 
 # -f /dev/null: ignore the developer's own ~/.tmux.conf so this measures the
@@ -122,6 +122,11 @@ printf '%s' "$SCROLLED" | grep -qi "not following live" \
 printf '%s' "$SCROLLED" | grep -qi "q to resume" \
   && pass "and says how to get back to live" \
   || fail "says how to get back" "got: ${SCROLLED}"
+# The scroll position, formerly only available as tmux's unlabelled
+# black-on-yellow [pos/total] marker, must appear here WITH a label.
+printf '%s' "$SCROLLED" | grep -qE "[0-9]+/[0-9]+ lines back" \
+  && pass "the scroll position is carried in the status line, labelled" \
+  || fail "the scroll position is carried in the status line" "got: ${SCROLLED}"
 [ "$LIVE" != "$SCROLLED" ] \
   && pass "the two states are visibly different" \
   || fail "the two states are visibly different" "both rendered: ${LIVE}"
@@ -158,6 +163,67 @@ R2="$(tmux -S "$SOCK" capture-pane -p -t t 2>/dev/null | grep . | tail -1)"
 [ -n "$R2" ] && [ "$R1" != "$R2" ] \
   && pass "leaving copy-mode resumes live output (the advice the status line gives is correct)" \
   || fail "leaving copy-mode should resume live output" "before='${R1}' after='${R2}'"
+
+# --- the status line as an ATTACHED CLIENT actually sees it -------------------
+# `display-message -p` (used above) expands the format but does NOT apply
+# status-right-length — whose tmux DEFAULT is 40 columns. That is exactly how
+# the original message shipped truncated to "[SCROLLBACK - not following live
+# outp". So render through a real attached client: a viewer session on a
+# SECOND private socket runs `tmux attach` against the scratch server, and we
+# capture what that client draws.
+tmux -S "$SOCK" copy-mode -t t 2>/dev/null
+tmux -S "$SOCK" set-option -g status-right-length "$(sed -n 's/^\ttmuxStatusRightLength = \([0-9]*\)$/\1/p' "$MANAGER" | head -1)" 2>/dev/null
+VSOCK="${WORK}/viewer-sock"
+tmux -S "$VSOCK" -f /dev/null new-session -d -s viewer -x 200 -y 14 \
+  "tmux -S '$SOCK' attach -t t" 2>/dev/null
+sleep 3
+STATUS_LINE="$(tmux -S "$VSOCK" capture-pane -p -t viewer 2>/dev/null | tail -1)"
+echo "     attached client status: '${STATUS_LINE}'"
+if [ -z "$STATUS_LINE" ]; then
+  fail "an attached client renders a status line" "viewer capture was empty"
+else
+  printf '%s' "$STATUS_LINE" | grep -q "press q to resume" \
+    && pass "the full message survives status-right-length (no 40-column truncation)" \
+    || fail "the full message survives status-right-length" \
+            "an attached client saw it truncated: '${STATUS_LINE}'"
+  printf '%s' "$STATUS_LINE" | grep -qE "now [0-9]{2}:[0-9]{2}:[0-9]{2}" \
+    && pass "the labelled clock survives too" \
+    || fail "the labelled clock survives" "got: '${STATUS_LINE}'"
+fi
+
+# --- the unlabelled black-on-yellow marker -------------------------------------
+# tmux's built-in copy-mode marker is "<top-line write time> [pos/total]" in
+# mode-style — the "black-on-yellow text ... timestamp [whose] reference point
+# is unintelligible" from #4399. The wheel rebind enters copy-mode with -H so
+# the marker is hidden; the labelled status line above carries the position.
+if tmux -S "$SOCK" list-commands copy-mode 2>/dev/null | grep -qE '\[-[a-zA-Z]*H'; then
+  # Plain copy-mode (already entered above) shows the marker in the top-right
+  # of what the CLIENT draws.
+  VIS="$(tmux -S "$VSOCK" capture-pane -p -t viewer 2>/dev/null | head -1)"
+  printf '%s' "$VIS" | grep -qE '\[[0-9]+/[0-9]+\]' \
+    && pass "control: plain copy-mode draws the unlabelled [pos/total] marker" \
+    || fail "control: plain copy-mode draws the marker" "top line: '${VIS}'"
+  # Re-enter through the rebind's command: the marker must be gone.
+  tmux -S "$SOCK" send-keys -t t -X cancel 2>/dev/null
+  tmux -S "$SOCK" copy-mode -eH -t t 2>/dev/null
+  sleep 1
+  HID="$(tmux -S "$VSOCK" capture-pane -p -t viewer 2>/dev/null | head -1)"
+  printf '%s' "$HID" | grep -qE '\[[0-9]+/[0-9]+\]' \
+    && fail "the wheel's copy-mode entry hides the unlabelled marker" "top line still shows it: '${HID}'" \
+    || pass "the wheel's copy-mode entry (-H) hides the unlabelled marker"
+  # The rebind itself must be carried by BOTH the session-creation path and
+  # the attach path, or a session created one way scrolls differently.
+  grep -q 'copy-mode -eH' "$MANAGER" \
+    && pass "src/pkg/agent/manager.go rebinds the wheel to copy-mode -eH" \
+    || fail "manager.go carries the wheel rebind"
+  grep -q "copy-mode -eH" "$ATTACH" \
+    && pass "src/deploy/ttyd-tmux.sh applies the identical rebind on attach" \
+    || fail "ttyd-tmux.sh carries the wheel rebind"
+else
+  echo "  SKIP: this tmux predates copy-mode -H (3.2) — marker-hiding assertions skipped"
+fi
+tmux -S "$VSOCK" kill-server 2>/dev/null
+tmux -S "$SOCK" send-keys -t t -X cancel 2>/dev/null
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

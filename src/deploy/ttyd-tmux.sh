@@ -81,8 +81,12 @@ TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
 # created before that change, or outside the manager. Saved and restored around
 # the attach so an agent CLI that manages its own status line is not permanently
 # altered.
-TTYD_STATUS_RIGHT="${HIVE_TTYD_STATUS_RIGHT:-#{?pane_in_mode,[SCROLLBACK - not following live output - press q to resume] ,[live] }now %H:%M:%S }"
+TTYD_STATUS_RIGHT="${HIVE_TTYD_STATUS_RIGHT:-#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,[live] }now %H:%M:%S }"
 TTYD_STATUS_INTERVAL="${HIVE_TTYD_STATUS_INTERVAL:-2}"
+# tmux truncates status-right to status-right-length, DEFAULT 40 columns —
+# which cut the message above off mid-word. Raised to fit the longest
+# expansion (position counters included) with headroom.
+TTYD_STATUS_RIGHT_LENGTH="${HIVE_TTYD_STATUS_RIGHT_LENGTH:-140}"
 
 # attach_with runs the attach lifecycle. $1 is an optional command prefix
 # (e.g. "su-exec <spec>") so the same logic serves both the owner and non-owner
@@ -90,15 +94,26 @@ TTYD_STATUS_INTERVAL="${HIVE_TTYD_STATUS_INTERVAL:-2}"
 attach_with() {
   local run=("$@")
   local prev_mouse prev_history exit_code=0
-  local prev_status prev_interval
+  local prev_status prev_interval prev_status_len
   prev_mouse=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -v mouse 2>/dev/null || echo "on")
   prev_history=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv history-limit 2>/dev/null || echo "")
   prev_status=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv status-right 2>/dev/null || echo "")
   prev_interval=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv status-interval 2>/dev/null || echo "")
+  prev_status_len=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv status-right-length 2>/dev/null || echo "")
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse on 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" history-limit "$TTYD_HISTORY_LIMIT" 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right "$TTYD_STATUS_RIGHT" 2>/dev/null || true
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right-length "$TTYD_STATUS_RIGHT_LENGTH" 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-interval "$TTYD_STATUS_INTERVAL" 2>/dev/null || true
+  # #4399: hide tmux's unlabelled black-on-yellow copy-mode marker (its
+  # "<top-line write time> [pos/total]" is what the issue could not parse) —
+  # the labelled status line above carries the position instead. This is
+  # tmux's own default WheelUpPane binding with only -H added (tmux >= 3.2;
+  # older tmux rejects it, hence || true, and simply keeps the marker).
+  # Server-wide by nature and deliberately not restored on detach: each agent
+  # runs its own private tmux server, and the binding must persist so the
+  # NEXT wheel scroll — possibly before any browser attach — also hides it.
+  "${run[@]}" tmux -S "$TMUX_SOCKET" bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH' 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true
   if [ -n "$prev_history" ]; then
@@ -106,6 +121,9 @@ attach_with() {
   fi
   if [ -n "$prev_status" ]; then
     "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right "$prev_status" 2>/dev/null || true
+  fi
+  if [ -n "$prev_status_len" ]; then
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right-length "$prev_status_len" 2>/dev/null || true
   fi
   if [ -n "$prev_interval" ]; then
     "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-interval "$prev_interval" 2>/dev/null || true

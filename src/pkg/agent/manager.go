@@ -135,13 +135,48 @@ const (
 	// comma-separated and a comma inside a `#{?...}` branch has to be escaped,
 	// which is exactly the kind of format-string subtlety that renders as
 	// garbage instead of failing loudly.
-	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK - not following live output - press q to resume] ,[live] }now %H:%M:%S "
+	//
+	// The SCROLLBACK branch also carries the scroll position
+	// (`#{scroll_position}/#{history_size} lines back`) because the wheel
+	// rebind below hides tmux's own black-on-yellow marker — this is where
+	// that information now lives, with a label.
+	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,[live] }now %H:%M:%S "
+
+	// tmuxStatusRightLength bounds how many columns status-right may occupy.
+	// tmux's DEFAULT is 40, which silently truncated the message above to
+	// "[SCROLLBACK - not following live outp…" — losing both the "press q to
+	// resume" instruction and the labelled clock. The truncation is invisible
+	// to `display-message -p` (which expands the format without applying the
+	// length limit), which is how it escaped the original #4439 render test;
+	// the test now renders through a real attached client. 140 comfortably
+	// fits the longest expansion (position counters included) with headroom.
+	tmuxStatusRightLength = 140
 
 	// tmuxStatusInterval is how often (seconds) tmux redraws the status line.
 	// tmux's default is 15s, which would leave the SCROLLBACK marker above up
 	// to 15 seconds stale — long enough for an operator to scroll, see nothing
 	// change, and conclude the terminal is broken.
 	tmuxStatusInterval = 2
+
+	// tmuxWheelBindingKey/...Cond/...Then/...Else rebind the mouse wheel's
+	// copy-mode entry (#4399). tmux's default WheelUpPane binding is
+	//
+	//   if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } { copy-mode -e }
+	//
+	// and plain `copy-mode` draws tmux's built-in black-on-yellow marker in
+	// the pane's top-right: `<time> [position/total]`, where <time> is the
+	// WRITE TIME OF THE TOP VISIBLE LINE (tmux window-copy.c, gl->time) — a
+	// reference point no operator could be expected to guess, and the exact
+	// "timestamp whose reference point is unintelligible" reported in #4399.
+	// The rebind is byte-for-byte tmux's default with `-H` added (hide the
+	// marker; tmux >= 3.2), because the same information now appears LABELLED
+	// in the status line above. Bound server-wide on the agent's own private
+	// tmux server (each agent runs its own socket under its own UID), so no
+	// operator tmux is touched.
+	tmuxWheelBindingKey  = "WheelUpPane"
+	tmuxWheelBindingCond = "#{||:#{pane_in_mode},#{mouse_any_flag}}"
+	tmuxWheelBindingThen = "send-keys -M"
+	tmuxWheelBindingElse = "copy-mode -eH"
 )
 
 var defaultTmuxSocket string
@@ -1436,9 +1471,22 @@ func newSessionCommands(session, dir string) []string {
 		// agent's server — and a global set also reaches panes created later in
 		// the session, which a per-session set would not.
 		"set-option", "-g", "status-right", tmuxStatusRight, ";",
+		// #4399 follow-up: tmux truncates status-right to status-right-length,
+		// whose DEFAULT is 40 columns — which cut the message above off at
+		// "[SCROLLBACK - not following live outp". Must be raised or the label
+		// ships truncated.
+		"set-option", "-g", "status-right-length", strconv.Itoa(tmuxStatusRightLength), ";",
 		"set-option", "-g", "status-interval", strconv.Itoa(tmuxStatusInterval), ";",
 		"new-session", "-d", "-s", session, "-c", dir,
-		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight),
+		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight), ";",
+		// #4399: hide tmux's unlabelled black-on-yellow copy-mode marker (its
+		// "<top-line write time> [pos/total]" is what the issue could not
+		// parse) — the labelled status line above carries the position now.
+		// AFTER new-session on purpose: bind-key is server-wide and reaches
+		// wheel events whenever it runs, but if a pre-3.2 tmux rejects the
+		// `-H` flag the session itself must already exist.
+		"bind-key", "-n", tmuxWheelBindingKey,
+		"if-shell", "-F", tmuxWheelBindingCond, tmuxWheelBindingThen, tmuxWheelBindingElse,
 	}
 }
 

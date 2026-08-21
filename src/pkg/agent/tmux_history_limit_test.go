@@ -43,11 +43,15 @@ func TestNewSessionCommandsRaisesHistoryBeforePaneCreation(t *testing.T) {
 	}
 
 	// new-session still carries the detached session + working dir arguments,
-	// now followed by the explicit pane geometry (#3878).
+	// now followed by the explicit pane geometry (#3878). The wheel rebind
+	// (#4399) trails it, separated by ";" — after new-session on purpose, so a
+	// tmux too old for `copy-mode -H` still gets its session created.
 	rest := cmds[newIdx:]
 	want := []string{
 		"new-session", "-d", "-s", "hive-scanner", "-c", "/data/workdir/scanner",
-		"-x", strconv.Itoa(defaultTmuxPaneWidth), "-y", strconv.Itoa(defaultTmuxPaneHeight),
+		"-x", strconv.Itoa(defaultTmuxPaneWidth), "-y", strconv.Itoa(defaultTmuxPaneHeight), ";",
+		"bind-key", "-n", tmuxWheelBindingKey,
+		"if-shell", "-F", tmuxWheelBindingCond, tmuxWheelBindingThen, tmuxWheelBindingElse,
 	}
 	if len(rest) != len(want) {
 		t.Fatalf("new-session args = %v, want %v", rest, want)
