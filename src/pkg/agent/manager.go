@@ -5630,14 +5630,13 @@ func copilotCredentialFileHasTokens(path string) bool {
 const copilotConfigHeader = "// User settings belong in settings.json.\n// This file is managed automatically.\n"
 
 // readCopilotConfig loads config.json, strips the CLI's // comment lines, and
-// unmarshals the remainder. Returns an empty (non-nil) map when the file is
-// absent so a caller can populate a fresh config.
+// unmarshals the remainder. A read error (including a missing file) is returned
+// to the caller — clearExpiredTokens relies on that to no-op when there is no
+// config to clear; restoreCopilotTokens handles the missing-file case itself by
+// starting from an empty map.
 func readCopilotConfig(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]interface{}{}, nil
-		}
 		return nil, err
 	}
 	var cleaned []byte
@@ -5710,7 +5709,13 @@ func restoreCopilotTokens(path, token string) error {
 	}
 	cfg, err := readCopilotConfig(path)
 	if err != nil {
-		return err
+		// A missing/unreadable config is not fatal here: we are writing the
+		// token store fresh. A malformed-but-present file returns a non-IsNot‐
+		// Exist error we still honor rather than clobbering unknown content.
+		if !os.IsNotExist(err) {
+			return err
+		}
+		cfg = map[string]interface{}{}
 	}
 	cfg["copilotTokens"] = map[string]interface{}{
 		"github.com": map[string]interface{}{"token": token},

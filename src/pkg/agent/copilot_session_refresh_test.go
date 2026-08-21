@@ -57,6 +57,19 @@ func TestRestoreCopilotTokens(t *testing.T) {
 	if !copilotCredentialFileHasTokens(path) {
 		t.Error("blank restore must not clear an existing token")
 	}
+
+	// A MISSING config file is seeded fresh (not an error) — a fresh agent pod
+	// whose CLI never wrote config.json still gets a usable credential.
+	fresh := filepath.Join(dir, "sub", "config.json")
+	if err := os.MkdirAll(filepath.Dir(fresh), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreCopilotTokens(fresh, "ghu_fresh"); err != nil {
+		t.Fatalf("restore into a missing file should seed it, got %v", err)
+	}
+	if !copilotCredentialFileHasTokens(fresh) {
+		t.Error("restore must create + populate a missing config")
+	}
 }
 
 // The round-trip: clear empties, restore re-populates.
