@@ -717,7 +717,7 @@ mv "${QUADLET_FIXTURE}/hive.env" "${TEST_TMP}/hive.env.stash"
 run_preflight_dir "$QUADLET_FIXTURE"
 assert_contains "$RUN_OUT" "Environment file: ${QUADLET_FIXTURE}/hive.env does not exist" \
   "quadlet: a missing hive.env is a failure"
-assert_contains "$RUN_OUT" "podman run --env-file" "and says why podman run would fail"
+assert_contains "$RUN_OUT" "'--env-file' on the container command line" "and says why the container start would fail"
 assert_eq "$RUN_STATUS" 78 "quadlet: a missing hive.env exits 78"
 mv "${TEST_TMP}/hive.env.stash" "${QUADLET_FIXTURE}/hive.env"
 

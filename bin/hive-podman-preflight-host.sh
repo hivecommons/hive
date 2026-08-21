@@ -618,7 +618,7 @@ hive_podman_check_config_secrets() {
     local env_file="${HIVE_SRC_DIR}/hive.env"
     if [[ ! -e "$env_file" ]]; then
       _pfh_fail "Environment file: ${env_file} does not exist"
-      _pfh_hint "EnvironmentFile= becomes 'podman run --env-file', which fails on a missing file. Start from the tracked template:"
+      _pfh_hint "EnvironmentFile= becomes '--env-file' on the container command line, which fails on a missing file. Start from the tracked template:"
       _pfh_hint "  cp src/deploy/quadlet/hive.env.example '${env_file}' && chmod 600 '${env_file}'"
       rc=1
     else
