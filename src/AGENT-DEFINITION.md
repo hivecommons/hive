@@ -71,7 +71,7 @@ These defaults match the loader in `src/pkg/config`: an omitted `enabled` defaul
 | `lane_keywords` | []string | — | Issue classification routing keywords |
 | `detect_keywords` | []string | — | Token session detection keywords |
 | `kick_template` | string | — | Prompt template filename |
-| `include_repos` | bool | true | Append repos section to kicks |
+| `include_repos` | bool | true | Append repos section to kicks. Prompt text only — it authorizes repos, it does not clone or provision any of them on disk |
 | `metrics_collector` | string | — | Custom metrics collector name |
 | `acmm_levels` | []int | — | ACMM maturity levels this agent operates at |
 

@@ -529,9 +529,19 @@ func (s *Scheduler) buildReposSection() string {
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
-	// Multi-repo projects: the agent workdir is a clone of the PRIMARY repo
-	// only, and the shipped templates' examples say --repo "$HIVE_REPO"
-	// (primary). Without an explicit rotation instruction agents lock onto
+	// SCOPE vs PROVISIONING (#4464). This list is what `include_repos: true`
+	// puts in a kick, and agents have read it as a promise that the repos are
+	// on disk: a guide agent found its workspace directory empty, concluded
+	// "no git worktree has been provisioned despite include_repos=true", and
+	// filed it as an infrastructure blocker that then sat in the operator's
+	// advisory digest. There is no such provisioning step — nothing in the
+	// hive materialises a per-agent worktree from this list — so the kick has
+	// to say so, in the same section that produces the impression. Getting a
+	// checkout is an ordinary thing an agent does for itself, not a fault.
+	b.WriteString(fmt.Sprintf("ℹ️ This list is an AUTHORIZATION SCOPE, not a checkout: it does not put any repo on disk, and nothing provisions a per-agent git worktree from it. If you need files rather than the GitHub API and have no checkout, clone one yourself: git clone %s/<org>/<repo> /tmp/<repo>. An absent checkout is a normal state to handle, NOT an infrastructure fault — do not file a finding about a missing worktree or unprovisioned repo workspace.\n", strings.TrimRight(host, "/")))
+	// Multi-repo projects: the agent workdir is never a checkout of anything
+	// but the PRIMARY repo, and the shipped templates' examples say --repo
+	// "$HIVE_REPO" (primary). Without an explicit rotation instruction agents lock onto
 	// the primary repo forever and the other project repos are never
 	// touched (root-caused on a live 3-repo hive: sec-check scanned only
 	// the primary across every session). The kick is the one place every
@@ -542,7 +552,7 @@ func (s *Scheduler) buildReposSection() string {
 			primary = s.cfg.Project.Repos[0]
 		}
 		b.WriteString(fmt.Sprintf(`🔁 MULTI-REPO COVERAGE — REQUIRED: this project has %d authorized repos; ALL of them are in scope, not just the primary (%s).
-Your workdir is a clone of the primary repo only. Each session, pick the authorized repo you have LEAST RECENTLY covered (check your beads and the [<your-role>] issues you previously filed in each repo) and work THAT repo this session:
+Your workdir is, at most, a checkout of the primary repo — never of the others. Each session, pick the authorized repo you have LEAST RECENTLY covered (check your beads and the [<your-role>] issues you previously filed in each repo) and work THAT repo this session:
   - If it is not your workdir repo, clone it first: git clone %s/<org>/<repo> /tmp/<repo> && cd /tmp/<repo>
   - Pass the chosen repo EXPLICITLY to every gh command: --repo "<org>/<repo>" (do not rely on $HIVE_REPO, which always names the primary repo).
   - $HIVE_REPOS lists every authorized repo, comma-separated.

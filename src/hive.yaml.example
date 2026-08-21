@@ -55,7 +55,8 @@ agents:
     lane_keywords: ["bug", "triage", "typo", "fix"]  # Issue classification routing
     detect_keywords: ["scanner", "triage", "issue", "bug"]  # Token session detection
     kick_template: scanner-CLAUDE.md      # Prompt template filename (or omit for convention)
-    include_repos: true                   # Append repos section to kicks
+    include_repos: true                   # Append repos section to kicks (prompt text only —
+                                          #   authorizes repos, does not clone them)
     bead_role: worker                     # "supervisor" or "worker"
     # stats_display:                      # Custom stats for sidebar (omit for defaults)
     #   - key: actionable

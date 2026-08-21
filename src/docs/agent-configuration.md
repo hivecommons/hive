@@ -100,7 +100,9 @@ agents:
                                  #   monitor the others); default worker
     kick_template: scanner-holdgated.md
                                  # named work-prompt template in the policies dir
-    include_repos: true          # append the project repo list to each kick (default true)
+    include_repos: true          # append the project repo list to each kick (default true).
+                                 #   Prompt text only — it authorizes repos, it does
+                                 #   NOT clone, mount, or provision anything on disk.
     on_demand: false             # true = never kicked by the governor timer;
                                  #   only triggered explicitly (e.g. inception)
     clear_on_kick: true          # default true; false keeps session context across kicks
