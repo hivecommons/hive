@@ -260,6 +260,25 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_lifecycle_probe.sh
 
+      # #4470: the one-command Podman installer, which is the only script in
+      # the family that WRITES to the host — so the suite is about what it
+      # cannot be allowed to do. It pins the two traps that justified scripting
+      # it: dashboard.port is READ out of the unit's HealthCmd rather than
+      # hardcoded (#4367 — driven with a unit probing an arbitrary port, which a
+      # script carrying a literal 3002 would fail), and the secrets command
+      # matches the root mode (#4359 — podman unshare rootless, chgrp rootful).
+      # It also holds that a second run cannot cost an operator their edited
+      # config or their keys, that the preflights are invoked with
+      # HIVE_DEPLOY_RUNTIME=podman (without it they exit 0 having checked
+      # nothing), and that "healthy" is never claimed on a unit still
+      # activating or a silent gateway. apt-get, dnf, git and docker sit on the
+      # test PATH as tripwires: this installer installs no packages and clones
+      # nothing. Every input is mocked, so it needs no podman, no systemd, and
+      # no privileges.
+      - name: Podman one-command installer (#4470)
+        working-directory: .
+        run: bash bin/test_hive_podman_setup.sh
+
       # #4378: the deliberate manual update and rollback. The unit ships a
       # FLOATING tag, so the pin that makes a rollback possible lives in a
       # Quadlet drop-in; the suite holds the two properties that make it a
