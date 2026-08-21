@@ -132,10 +132,12 @@ type costSessionEntry struct {
 	Input     int64   `json:"input"`
 	Output    int64   `json:"output"`
 	CacheRead int64   `json:"cache_read"`
-	// Messages and LastActive give the UI enough to show session size and
-	// recency without a second round-trip. LastActive is a unix-seconds stamp
-	// (0 when the scanner could not determine it).
+	// Messages and Started/LastActive give the UI enough to show session size
+	// and timing without a second round-trip. Started is the earliest event
+	// timestamp and LastActive the latest, both unix-milliseconds stamps
+	// (0 when the scanner could not determine them).
 	Messages   int   `json:"messages"`
+	Started    int64 `json:"started,omitempty"`
 	LastActive int64 `json:"last_active,omitempty"`
 }
 
@@ -237,6 +239,7 @@ func estimatedSessions(summary *tokens.AggregateSummary) []costSessionEntry {
 			Output:     sess.OutputTokens,
 			CacheRead:  sess.CacheRead,
 			Messages:   sess.Messages,
+			Started:    sess.FirstActive,
 			LastActive: sess.LastActive,
 		})
 	}

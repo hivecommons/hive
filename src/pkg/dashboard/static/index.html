@@ -1446,6 +1446,8 @@
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
     .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
+    .cost-table td.ctime { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+    .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 4px; }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
 
@@ -8305,6 +8307,10 @@ function burnAreaChart() {
     // id stays available on hover (title). Session ids are UUID-length, so a
     // short prefix is enough to disambiguate visually.
     const COST_SESSION_ID_CHARS = 8;
+    // A session whose latest event is newer than this is presumed still running,
+    // so the cost-per-session table shows "active" instead of a misleading end
+    // time (the token scanner only sees events, not process exit).
+    const COST_SESSION_ACTIVE_MS = 5 * 60 * 1000;
     // Format a dollar amount with thousands separators (commas). Small amounts
     // keep 2-decimal cents; amounts >= $100 are shown as whole dollars but still
     // comma-grouped (e.g. $20,849). Sentinels for null / sub-cent are preserved.
@@ -8544,10 +8550,23 @@ function burnAreaChart() {
         const usdCell = approx
           ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(sn.usd)}</span>`
           : fmtUSD(sn.usd);
+        // "started → ended" in local time; a still-active session (latest event
+        // within COST_SESSION_ACTIVE_MS) shows "active" instead of a fake end.
+        const fmtSessTs = (ms) => new Date(ms).toLocaleDateString([], {month:'numeric',day:'numeric'}) + ' ' + new Date(ms).toLocaleTimeString([], {hour:'numeric',minute:'2-digit',hour12:true});
+        const isoOr = (ms, alt) => ms ? new Date(ms).toISOString() : alt;
+        const stillActive = sn.last_active && (Date.now() - sn.last_active) < COST_SESSION_ACTIVE_MS;
+        const startTxt = sn.started ? fmtSessTs(sn.started) : '—';
+        const endTxt = stillActive
+          ? '<span class="cost-session-active">active</span>'
+          : (sn.last_active ? fmtSessTs(sn.last_active) : '—');
+        const timeCell = (sn.started || sn.last_active)
+          ? `<td class="ctime" title="${esc(isoOr(sn.started, 'start unknown'))} → ${esc(isoOr(sn.last_active, 'end unknown'))}${stillActive ? ' (still active)' : ''}">${startTxt} → ${endTxt}</td>`
+          : '<td class="ctime">—</td>';
         return `<tr>
           <td class="csession" title="${esc(sn.session_id || '')}">${esc(shortId(sn.session_id))}</td>
           <td class="cmodel">${esc(sn.agent || 'unknown')}</td>
           <td class="cmodel">${esc(sn.model || '—')}</td>
+          ${timeCell}
           <td class="cnum">${fmtTokens(sn.input)}</td>
           <td class="cnum">${fmtTokens(sn.output)}</td>
           <td class="cnum">${usdCell}</td>
@@ -8557,8 +8576,8 @@ function burnAreaChart() {
         <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), most expensive first (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
         <div class="cost-sub-body" id="cost-sub-session-body">
         <table class="cost-table">
-          <thead><tr><th>session</th><th>sandbox</th><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
-          <tbody>${sessionRows || '<tr><td colspan="6" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
+          <thead><tr><th>session</th><th>sandbox</th><th>model</th><th title="Session start → end, local time (earliest / latest usage event). Hover a row for full timestamps; 'active' means the session had events in the last few minutes.">started → ended</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${sessionRows || '<tr><td colspan="7" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
         </table>
         </div>
       </div>`;

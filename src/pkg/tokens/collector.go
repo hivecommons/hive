@@ -38,7 +38,11 @@ type SessionSummary struct {
 	CacheCreate  int64  `json:"cache_create"`
 	TotalTokens  int64  `json:"total_tokens"`
 	Messages     int    `json:"messages"`
-	LastActive   int64  `json:"last_active,omitempty"`
+	// FirstActive / LastActive bracket the session in time: the earliest and
+	// latest event timestamps seen while parsing, as unix-milliseconds stamps
+	// (0 when the scanner could not determine them).
+	FirstActive int64 `json:"first_active,omitempty"`
+	LastActive  int64 `json:"last_active,omitempty"`
 }
 
 // AgentModelBucket holds per-agent or per-model token breakdown.

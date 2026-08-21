@@ -217,6 +217,30 @@ func TestScanBobSessions_AttributesTrustedFolderAgent(t *testing.T) {
 	if agg.Sessions[0].LastActive != wantLastActive {
 		t.Fatalf("LastActive = %d, want %d", agg.Sessions[0].LastActive, wantLastActive)
 	}
+	// No StartTime recorded — FirstActive falls back to LastUpdated.
+	if agg.Sessions[0].FirstActive != wantLastActive {
+		t.Fatalf("FirstActive = %d, want fallback to LastUpdated %d", agg.Sessions[0].FirstActive, wantLastActive)
+	}
+}
+
+// TestBobSessionFirstActive verifies FirstActive prefers the recorded
+// StartTime and falls back to LastUpdated, mirroring bobSessionLastActive.
+func TestBobSessionFirstActive(t *testing.T) {
+	if got := bobSessionFirstActive(nil); got != 0 {
+		t.Fatalf("nil session: got %d, want 0", got)
+	}
+	start := "2026-08-21T15:00:00.000Z"
+	end := "2026-08-21T16:33:10.357Z"
+	sess := &bobChatSession{StartTime: start, LastUpdated: end}
+	if got, want := bobSessionFirstActive(sess), mustParseMillis(t, start); got != want {
+		t.Fatalf("FirstActive = %d, want StartTime %d", got, want)
+	}
+	if got, want := bobSessionLastActive(sess), mustParseMillis(t, end); got != want {
+		t.Fatalf("LastActive = %d, want LastUpdated %d", got, want)
+	}
+	if got, want := bobSessionFirstActive(&bobChatSession{LastUpdated: end}), mustParseMillis(t, end); got != want {
+		t.Fatalf("FirstActive fallback = %d, want LastUpdated %d", got, want)
+	}
 }
 
 func mustParseMillis(t *testing.T, raw string) int64 {

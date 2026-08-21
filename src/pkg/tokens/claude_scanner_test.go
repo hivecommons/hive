@@ -160,6 +160,38 @@ func TestParseClaudeSessionFile_Timestamp(t *testing.T) {
 	}
 }
 
+// TestParseClaudeSessionFile_FirstAndLastActive verifies the session's time
+// bracket is computed from event timestamps: FirstActive = earliest event,
+// LastActive = latest event.
+func TestParseClaudeSessionFile_FirstAndLastActive(t *testing.T) {
+	dir := t.TempDir()
+
+	content := strings.Join([]string{
+		`{"type":"human","timestamp":"2025-06-15T10:00:00Z","message":{"text":"start work"}}`,
+		`{"type":"assistant","timestamp":"2025-06-15T10:30:00Z","message":{"model":"sonnet","usage":{"input_tokens":10,"output_tokens":5}}}`,
+		`{"type":"assistant","timestamp":"2025-06-15T11:45:00Z","message":{"model":"sonnet","usage":{"input_tokens":20,"output_tokens":10}}}`,
+	}, "\n") + "\n"
+	path := filepath.Join(dir, "bracket.jsonl")
+	os.WriteFile(path, []byte(content), 0o600)
+
+	summary, err := parseClaudeSessionFile(path, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	wantFirst := parseTimestampToUnixMilli("2025-06-15T10:00:00Z")
+	wantLast := parseTimestampToUnixMilli("2025-06-15T11:45:00Z")
+	if summary.FirstActive != wantFirst {
+		t.Errorf("FirstActive = %d, want %d (earliest event timestamp)", summary.FirstActive, wantFirst)
+	}
+	if summary.LastActive != wantLast {
+		t.Errorf("LastActive = %d, want %d (latest event timestamp)", summary.LastActive, wantLast)
+	}
+	if summary.FirstActive >= summary.LastActive {
+		t.Errorf("FirstActive %d should precede LastActive %d", summary.FirstActive, summary.LastActive)
+	}
+}
+
 func TestScanClaudeSessions_ProjectDirStructure(t *testing.T) {
 	// Create a mock Claude projects directory structure
 	projectsDir := t.TempDir()

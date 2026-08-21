@@ -236,6 +236,7 @@ func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary,
 			CacheRead:    cachedTokens,
 			TotalTokens:  total,
 			Messages:     messageCount,
+			FirstActive:  bobSessionFirstActive(sess),
 			LastActive:   bobSessionLastActive(sess),
 		})
 	}
@@ -248,6 +249,20 @@ func bobSessionLastActive(sess *bobChatSession) int64 {
 		return 0
 	}
 	for _, raw := range []string{sess.LastUpdated, sess.StartTime} {
+		if ts, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw)); err == nil {
+			return ts.UnixMilli()
+		}
+	}
+	return 0
+}
+
+// bobSessionFirstActive mirrors bobSessionLastActive but prefers the recorded
+// StartTime, falling back to LastUpdated when the start is absent/unparseable.
+func bobSessionFirstActive(sess *bobChatSession) int64 {
+	if sess == nil {
+		return 0
+	}
+	for _, raw := range []string{sess.StartTime, sess.LastUpdated} {
 		if ts, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw)); err == nil {
 			return ts.UnixMilli()
 		}
