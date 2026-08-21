@@ -95,26 +95,26 @@ type Quadrant struct {
 // precisely the bug the sufficiency floor exists to prevent.
 type quadrantInputs struct {
 	// --- Trust -----------------------------------------------------------
-	acmmLevel    int    // 1-6; 0 = unknown
-	governorMode string // observe | advisory | enforce (case-insensitive)
+	acmmLevel     int    // 1-6; 0 = unknown
+	governorMode  string // observe | advisory | enforce (case-insensitive)
 	reposEnrolled int
 	reposInOrg    int // 0 = unknown, so breadth is unscorable
 
 	// --- Efficiency ------------------------------------------------------
-	costUSD      *float64 // all-time cumulative spend
-	mergedPRs    *int     // repo-wide, all-time (github.PRIssueCounts)
-	closedIssues *int     // repo-wide, all-time
-	agentCount   int
+	costUSD        *float64 // all-time cumulative spend
+	mergedPRs      *int     // repo-wide, all-time (github.PRIssueCounts)
+	closedIssues   *int     // repo-wide, all-time
+	agentCount     int
 	agentMergedPRs *int // agent-attributed, in-org (SearchPRCount)
 
 	// --- Productivity ----------------------------------------------------
 	// Agent-attributed, IN-ORG counts. Must come from SearchPRCount, never
 	// SearchOutreachPRCount: the latter is -org: scoped (external outreach
 	// only) and would omit essentially all of a hive's real output.
-	agentMergedPRsWeekly   *float64
+	agentMergedPRsWeekly    *float64
 	agentClosedIssuesWeekly *float64
-	workSource             string
-	relayCompletedTasks    *int
+	workSource              string
+	relayCompletedTasks     *int
 
 	// --- Satisfaction ----------------------------------------------------
 	// Intentionally empty. There is no satisfaction signal in the platform
