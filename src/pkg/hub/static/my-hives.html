@@ -77,14 +77,16 @@
   .delta.problem { background: rgba(229,72,77,.16); color: var(--red); border: 1px solid rgba(229,72,77,.45); }
   .delta.quiet { color: var(--muted); }
   .rel { color: var(--muted); font-size: 11px; }
-  .advisory-activity { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; }
-  .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  /* flex:0 0 8px + flex-start: same anti-squish treatment as .rs/.cap dots —
+     without it a wrapped label squeezes the fixed-size dot into an oval. */
+  .advisory-activity { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
   .advisory-activity.fresh .light { background: var(--green); }
   .advisory-activity.aging .light { background: var(--amber); }
   .advisory-activity.stale .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
   .advisory-activity.unknown .light { background: var(--gray); }
-  .budget-health { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; }
-  .budget-health .light { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .budget-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .budget-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
   .budget-health.ok .light { background: var(--green); }
   .budget-health.warning .light { background: var(--amber); }
   .budget-health.critical .light, .budget-health.exhausted .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
@@ -211,8 +213,8 @@ function advisoryActivityHTML(a) {
   a = a || {};
   var bucket = a.bucket || "unknown";
   var rel = a.lastActivityAt ? relTime(a.lastActivityAt) : "n/a";
-  var label = bucket === "unknown" ? "n/a" : bucket + " · " + rel;
-  return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory/issue activity ' + esc(rel) + '">' +
+  var label = bucket === "unknown" ? "advisories n/a" : "advisories " + bucket + " · " + rel;
+  return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory/issue activity: last issue or PR touched ' + esc(rel) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
 function budgetHealthHTML(b) {
