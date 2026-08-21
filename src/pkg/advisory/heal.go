@@ -107,6 +107,12 @@ const repoAccessHealedCloseReason = "auto-closed: the hive verified an advisory-
 // omitted Contents:read and the credential helper blocked fetches), and agents
 // word them freely, so the patterns tolerate drift.
 //
+// #4464 added two more phrasings from the same hive: "Repository worktree not
+// provisioned for guide agent despite include_repos=true configuration" and
+// "Quality agent lacks read access to repository for coverage analysis" —
+// both filed by a build that predated #4291, both escaping every pattern
+// below, so they survived in the digest forever after the read path healed.
+//
 // Like appAuthFindingPatterns they must stay directional: every pattern
 // requires the LACK language ("no/missing/lacks/cannot") adjacent to the
 // access/clone subject, so a CODE finding that merely mentions repository
@@ -125,8 +131,19 @@ var repoAccessFindingPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without|unavailable)\b[^.\n]*\brepo(sitory)?\s+(read\s+)?access\b[^.\n]*\b(mechanism|infrastructure|capabilit|path|method|provision)`),
 	// "repository access infrastructure missing"
 	regexp.MustCompile(`(?i)\brepo(sitory)?\s+(read\s+)?access\b[^.\n]*\b(mechanism|infrastructure|capabilit|path|method|provision)[a-z]*\b[^.\n]*\b(missing|unavailable|absent|lacking|not\s+available)\b`),
-	// "no repository workspace provisioning for advisory agents"
-	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without)\b[^.\n]*\brepo(sitory)?\s+workspace\s+provisioning\b`),
+	// "no repository workspace provisioning for advisory agents",
+	// "missing repository worktree provisioning"
+	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without)\b[^.\n]*\brepo(sitory)?\s+work(space|tree)\s+provision`),
+	// "Repository worktree not provisioned for guide agent" (#4464) — the
+	// trailing-negation form of the previous pattern. "worktree/workspace …
+	// not provisioned" only ever describes the agent's own missing checkout,
+	// never repository code, so the match is safe to keep this loose.
+	regexp.MustCompile(`(?i)\brepo(sitory)?\s+work(space|tree)\b[^.\n]*\b(not|never)\s+(been\s+)?provisioned\b`),
+	// "Quality agent lacks read access to repository for coverage analysis"
+	// (#4464). READ is required, not optional: "lacks write access to
+	// repository" is the app-auth family, and a Contents READ verification
+	// must never close a WRITE-access finding.
+	regexp.MustCompile(`(?i)\b(no|missing|lacks?|without)\b[^.\n]*\bread(-only)?\s+access\s+to\b[^.\n]*\brepo(sitory)?\b`),
 	// "guide agent cannot access target repository", "unable to clone the repository"
 	regexp.MustCompile(`(?i)\b(cannot|can't|unable\s+to)\s+(access|read|clone|fetch)\b[^.\n]*\brepo(sitory)?\b`),
 }

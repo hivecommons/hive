@@ -297,10 +297,25 @@ var gee4veeRepoAccessTitles = []struct{ title, ref string }{
 	{"Guide agent blocked: No repository access mechanism in L2 advisory mode", "github.ibm.com/devx-prod/epx-vscode-ext-poc"},
 }
 
+// gee4veeWorktreeTitles are the two exact finding titles from the #4464
+// screenshot (same hive as #2575, a build predating #4291): the guide agent's
+// "worktree not provisioned" phrasing and the quality agent's "lacks read
+// access" phrasing, both of which escaped every pre-#4464 pattern and so
+// survived in the digest after the read path healed.
+var gee4veeWorktreeTitles = []struct{ title, ref string }{
+	{"Repository worktree not provisioned for guide agent despite include_repos=true configuration", "/data/agents/guide (empty directory)"},
+	{"Quality agent lacks read access to repository for coverage analysis", "devx-prod/epx-vscode-ext-poc"},
+}
+
 func TestIsRepoAccessFinding(t *testing.T) {
 	for _, f := range gee4veeRepoAccessTitles {
 		if !IsRepoAccessFinding(f.title) {
 			t.Errorf("IsRepoAccessFinding(%q) = false, want true (the #2575 family must match)", f.title)
+		}
+	}
+	for _, f := range gee4veeWorktreeTitles {
+		if !IsRepoAccessFinding(f.title) {
+			t.Errorf("IsRepoAccessFinding(%q) = false, want true (the #4464 family must match)", f.title)
 		}
 	}
 	// Drift the agents plausibly produce must still match.
@@ -309,6 +324,9 @@ func TestIsRepoAccessFinding(t *testing.T) {
 		"clone mechanism unavailable for L2 guide agents",
 		"Guide agent unable to fetch the target repository",
 		"Agent workspace lacks a git clone mechanism",
+		"Repository workspace never provisioned for advisory agents",
+		"Missing repository worktree provisioning for guide agent",
+		"Scanner agent has no read-only access to the repository",
 	}
 	for _, title := range drift {
 		if !IsRepoAccessFinding(title) {
@@ -324,6 +342,12 @@ func TestIsRepoAccessFinding(t *testing.T) {
 		"Add repository access checks to the admin API",
 		"Overly permissive repository access granted to all org members",
 		"Insufficient repo permissions", // app-auth family, handled by the other healer
+		// WRITE-access lack is the app-auth family too — a verified Contents
+		// READ must never close it.
+		"Guide agent lacks write access to repository for issue filing",
+		// A worktree that exists but is dirty/stale is a real operational
+		// finding, not a missing read path.
+		"Repository worktree contains uncommitted changes from previous session",
 		"",
 	}
 	for _, title := range negatives {
@@ -372,6 +396,14 @@ func TestCloseHealedRepoAccessFindings(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The #4464 pair heals through the same gate: the guide finding's ref
+	// ("/data/agents/guide (empty directory)") parses as no-repo → primary,
+	// and the quality finding's ref names the verified GHE repo.
+	for _, f := range gee4veeWorktreeTitles {
+		if _, err := store.Create(f.title, beads.TypeAdvisory, beads.PriorityHigh, "guide", f.ref); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// A repo-access finding about a repo the verifier CANNOT read: real
 	// condition, must survive the heal.
 	locked, err := store.Create("Guide agent cannot access target repository - no clone mechanism available",
@@ -394,10 +426,11 @@ func TestCloseHealedRepoAccessFindings(t *testing.T) {
 	}
 
 	healed := CloseHealedRepoAccessFindings(stores, canRead)
-	if len(healed) != len(gee4veeRepoAccessTitles) {
-		t.Fatalf("healed %d findings (%v), want the %d from #2575", len(healed), healed, len(gee4veeRepoAccessTitles))
+	wantHealed := len(gee4veeRepoAccessTitles) + len(gee4veeWorktreeTitles)
+	if len(healed) != wantHealed {
+		t.Fatalf("healed %d findings (%v), want the %d from #2575 + #4464", len(healed), healed, wantHealed)
 	}
-	for _, f := range gee4veeRepoAccessTitles {
+	for _, f := range append(append([]struct{ title, ref string }{}, gee4veeRepoAccessTitles...), gee4veeWorktreeTitles...) {
 		found := false
 		for _, h := range healed {
 			if h == f.title {
