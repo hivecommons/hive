@@ -4,10 +4,11 @@
 // Linear's native GitHub integration closes the ticket when a referenced PR
 // merges, so no write-back is needed in Phase 1.
 //
-// Security note: Linear egress is currently ungated in pkg/proxy/rules.go —
-// NeedsMITM only intercepts api.github.com. These read-only GraphQL calls pass
-// through the proxy untouched. Phase 2 (write-back via Linear MCP) will require
-// ACMM enforcement with GraphQL operation-name inspection before it is safe.
+// Security note: Linear egress from AGENTS is gated as of #4492 component F —
+// NeedsMITM now intercepts api.linear.app and pkg/proxy/linear_rules.go
+// enforces ACMM by GraphQL operation name, fail-closed on anything it cannot
+// classify. The calls in THIS file originate from the hive control plane, not
+// an agent, so they are exempt (internalCallerName) and remain read-only.
 package worksource
 
 import (

@@ -67,9 +67,29 @@ func IsGitHubHost(host string) bool {
 // enforcement. Hosts like github.com are registered for awareness but only need
 // opaque tunneling — their traffic (OAuth device flow, git smart HTTP) either
 // doesn't require ACMM enforcement or is already gated by CLI --deny-tool flags.
-// Only api.github.com needs MITM for GraphQL/REST mutation inspection.
+// api.github.com needs MITM for GraphQL/REST mutation inspection.
+//
+// api.linear.app needs it for the same reason and a sharper one (#4492 F): it
+// is a single POST /graphql for reads AND writes, so tunneling it opaquely —
+// which is what happened until now — meant every agent write to Linear went out
+// ungated. Note this is the FIRST non-GitHub host under mode enforcement, which
+// is why the IsGitHubHost checks at the CONNECT seams could no longer double as
+// the "should I inspect this?" test; see NeedsInspection.
 func NeedsMITM(host string) bool {
-	return host == "api.github.com"
+	return host == "api.github.com" || IsLinearHost(host)
+}
+
+// NeedsInspection reports whether the proxy must terminate TLS for this host to
+// enforce ACMM on the requests inside it.
+//
+// This exists because IsGitHubHost and NeedsMITM used to be entangled: every
+// call site asked IsGitHubHost first and returned early, so NeedsMITM was only
+// ever consulted for hosts already known to be GitHub. Adding a non-GitHub host
+// to NeedsMITM alone would therefore have been silently inert — the request
+// would still have been tunneled by the IsGitHubHost guard above it. Call sites
+// ask this instead, so a host added to NeedsMITM is actually inspected.
+func NeedsInspection(host string) bool {
+	return (IsGitHubHost(host) || IsLinearHost(host)) && NeedsMITM(host)
 }
 
 // copilotAPIHostSuffix matches the GitHub Copilot completion API hosts. The

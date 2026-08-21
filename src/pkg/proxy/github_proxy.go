@@ -463,8 +463,8 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		return
 	}
 
-	if !IsGitHubHost(host) || !NeedsMITM(host) {
-		// Non-GitHub or non-API GitHub host: tunnel directly. SO_MARK the socket
+	if !NeedsInspection(host) {
+		// Non-inspected host: tunnel directly. SO_MARK the socket
 		// so the forced-egress redirect exempts this proxy-originated dial.
 		upstream, err := markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
 		if err != nil {
@@ -510,7 +510,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer upstreamConn.Close()
 
-	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode, caps)
+	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
 }
 
 const tlsClientHelloMaxSize = 4096
@@ -801,16 +801,11 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 		return
 	}
 
-	// Non-GitHub hosts: tunnel without inspection.
-	if !IsGitHubHost(host) {
-		p.tunnelDirect(conn, r)
-		return
-	}
-
-	// github.com doesn't need MITM — OAuth device flow and git smart HTTP
-	// are handled by CLI --deny-tool flags. Only api.github.com needs
+	// Hosts we do not inspect: tunnel without interception. github.com is in
+	// this set — its OAuth device flow and git smart HTTP are handled by CLI
+	// --deny-tool flags. api.github.com and api.linear.app are not: both need
 	// request-level inspection for ACMM enforcement.
-	if !NeedsMITM(host) {
+	if !NeedsInspection(host) {
 		p.tunnelDirect(conn, r)
 		return
 	}
@@ -863,7 +858,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	defer upstreamConn.Close()
 
 	// Proxy HTTP requests, inspecting each one.
-	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode, caps)
+	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
 }
 
 // proxyHTTP reads HTTP requests from the client, checks them against
@@ -881,7 +876,22 @@ func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
 	p.logger.Warn(msg, attrs...)
 }
 
+// proxyHTTP relays a MITM'd GitHub connection with ACMM enforcement applied.
+// It is proxyHTTPHost with the GitHub host implied, which is what every
+// pre-existing caller means.
 func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) {
+	p.proxyHTTPHost(client, upstream, "", agentName, mode, caps)
+}
+
+// proxyHTTPHost is proxyHTTP with the terminated host carried through, so the
+// request loop can pick the right rule engine (#4492 F).
+//
+// The host is threaded rather than inferred from the request because a MITM'd
+// request line is a path, not an absolute URL — by this point the only record
+// of which host the TLS session was forged for is the CONNECT that opened it.
+// An empty host means GitHub, preserving every existing call site verbatim.
+func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host string, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) {
+	isLinear := IsLinearHost(host)
 	clientBuf := newBufferedConn(client)
 
 	for {
@@ -904,7 +914,23 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 		blocked := false
 		blockReason := ""
 
-		if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
+		if isLinear && agentName == internalCallerName {
+			// The hive's OWN Linear traffic — the read path #4178 shipped
+			// (backlog enumeration in pkg/worksource/linear.go) and, later,
+			// the OAuth/webhook plumbing. ACMM governs AGENT autonomy, so the
+			// control plane is exempt here exactly as it is for GitHub below.
+			// This branch must precede the enforcement one: without it, adding
+			// Linear to NeedsMITM would newly gate hive-originated reads that
+			// have always been ungated, breaking enumeration rather than
+			// restricting an agent.
+		} else if isLinear {
+			// Linear is a single POST /graphql for everything, so the
+			// (method, path) rule table cannot classify it and the GitHub
+			// GraphQL classifier is the wrong posture — it ends in a
+			// permissive default, backed by the REST table. Linear has no
+			// table underneath. See linear_rules.go.
+			blocked, blockReason = p.enforceLinear(req, agentName, mode, caps)
+		} else if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, graphQLBodyLimit))
 			if req.Body != nil {
 				req.Body.Close()
@@ -1097,6 +1123,65 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 		return "ioscan canary leak", p.canaryFailClosed, true
 	}
 	return "", false, false
+}
+
+// enforceLinear applies ACMM to one request on a MITM'd api.linear.app
+// connection and returns whether it is blocked, with an agent-facing reason.
+//
+// The request body is read (bounded), inspected, and restored so an allowed
+// request forwards byte-identically.
+//
+// NOTHING from the body is logged or surfaced in the 403. Linear documents
+// carry issue and comment content in the query and, in variables, potentially
+// tokens; the operation NAMES are schema identifiers rather than user content,
+// so those are what makes a denial debuggable without leaking the payload.
+func (p *GitHubProxy) enforceLinear(req *http.Request, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) (bool, string) {
+	// Linear exposes exactly one endpoint. Anything else on this host is not a
+	// shape this gate understands, so it is refused rather than forwarded.
+	if req.Method != http.MethodPost || !IsLinearGraphQLPath(req.URL.Path) {
+		return true, "linear: only POST " + linearGraphQLPath + " is permitted"
+	}
+
+	// Read one byte past the limit so hitting the cap is detectable: a body
+	// that exactly fills the buffer is indistinguishable from a truncated one
+	// otherwise, and truncation must deny.
+	body, readErr := io.ReadAll(io.LimitReader(req.Body, linearBodyLimit+1))
+	if req.Body != nil {
+		req.Body.Close()
+	}
+	truncated := len(body) > linearBodyLimit
+	if truncated {
+		body = body[:linearBodyLimit]
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+
+	if readErr != nil {
+		// Fail closed: a body we could not fully read is a body we could not
+		// classify.
+		p.logger.Warn("linear: request body read failed — denying", "agent", agentName)
+		return true, "linear: request body unreadable"
+	}
+
+	decision := LinearGraphQLAllowed(mode, caps, body, truncated)
+	if decision.Allowed {
+		return false, ""
+	}
+
+	// Operations may be empty when the document could not be classified at
+	// all, which is itself the useful signal.
+	p.logger.Warn("linear: blocked GraphQL request",
+		"agent", agentName,
+		"mode", mode.String(),
+		"operations", strings.Join(decision.Operations, ","),
+		"reason", decision.Reason,
+		"mutation", decision.IsMutation)
+
+	reason := "linear: " + decision.Reason
+	if len(decision.Operations) > 0 {
+		reason += " (" + strings.Join(decision.Operations, ",") + ")"
+	}
+	return true, reason
 }
 
 func githubWriteBodyMayLeak(method, path string) bool {
