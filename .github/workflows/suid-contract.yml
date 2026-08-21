@@ -8,8 +8,14 @@ name: SUID + NET_ADMIN Contract
 #     exec wherever the bounding set lacks NET_ADMIN); NET_ADMIN is instead
 #     raised by the entrypoint as a bounding-set-gated AMBIENT capability.
 #
-# plus two runtime jobs that boot a container and prove what a grep cannot:
-# ambient-cap-runtime (#3874) and manifest-cap-runtime (#4379).
+#  3. #3866/CWE-250/732: the image ships exactly ONE setuid/setgid binary —
+#     su-exec. The eleven world-executable ones node:26-slim and the
+#     passwd/util-linux packages leave behind are stripped, because the pod
+#     cannot switch them off with no_new_privs without breaking su-exec.
+#
+# plus three runtime jobs that boot a container and prove what a grep cannot:
+# ambient-cap-runtime (#3874), manifest-cap-runtime (#4379) and
+# image-suid-inventory (#3866).
 
 on:
   push:
@@ -21,6 +27,7 @@ on:
       - 'src/deploy/entrypoint.sh'
       - 'src/scripts/check-suid-contract.sh'
       - 'src/deploy/test_ambient_cap_runtime.sh'
+      - 'src/deploy/test_image_suid_inventory.sh'
       # #4379: the manifest capability set is DERIVED from these, so a change to
       # any of them changes what the runtime job boots.
       - 'src/deploy/k8s/deployment.yaml'
@@ -37,6 +44,7 @@ on:
       - 'src/deploy/entrypoint.sh'
       - 'src/scripts/check-suid-contract.sh'
       - 'src/deploy/test_ambient_cap_runtime.sh'
+      - 'src/deploy/test_image_suid_inventory.sh'
       # #4379: the manifest capability set is DERIVED from these, so a change to
       # any of them changes what the runtime job boots.
       - 'src/deploy/k8s/deployment.yaml'
@@ -91,3 +99,24 @@ jobs:
 
       - name: Boot the manifest's exact capability set and exercise it
         run: bash src/deploy/test_manifest_caps_runtime.sh
+
+  # RUNTIME assertion (#3866). The static check reads src/Dockerfile and can only
+  # see what the Dockerfile SAYS. It cannot see what the base image ships, and
+  # that is where the surface came from: node:26-slim plus passwd/util-linux
+  # leave eleven world-executable setuid/setgid binaries in the image, every one
+  # of them execable by an agent UID. `allowPrivilegeEscalation: false` would
+  # neutralise them via no_new_privs but would also disable su-exec and break
+  # agent launch, so the fix is in the image and this job is what confirms it.
+  #
+  # It builds the fixture TWICE — once without the Dockerfile's strip block and
+  # once with it — and requires the un-stripped build to show the eleven. A
+  # check that has never been observed to fail is not evidence. It then execs
+  # su-exec as `dev` to prove the one surviving setuid bit still switches UID,
+  # and as an agent UID to prove the hive-launch gate still refuses.
+  image-suid-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert the image ships exactly one setuid binary
+        run: bash src/deploy/test_image_suid_inventory.sh

@@ -53,3 +53,37 @@ once.
 `test_standalone_service_contract.sh` is also the snapshot the Podman runtime
 work in #4188 has to keep passing: it is a focused subset, not a claim of
 Docker/Podman parity, and further invariants belong in separate small issues.
+
+### Runtime contract tests (these DO build and boot a container)
+
+Separate from the four above, because a grep cannot answer what they ask. Each
+derives what it needs from the file that actually ships the contract, so none of
+them keeps a second copy that could drift.
+
+| Test | Covers |
+|---|---|
+| `test_ambient_cap_runtime.sh` | #3874: that `setpriv --inh-caps +net_admin --ambient-caps +net_admin` leaves `CapAmb` bit 12 set after the drop to `dev`. `--ambient-caps` alone exits 0 and yields `CapAmb=0x0`. |
+| `test_manifest_caps_runtime.sh` | #4379: boots the exact `drop`/`add` set `k8s/deployment.yaml` ships and drives the whole privilege chain through it, then removes each capability in turn to prove every one is load-bearing. |
+| `test_image_suid_inventory.sh` | #3866: that the image contains exactly one setuid/setgid file, `4750 root:hive-launch /usr/local/bin/su-exec`. |
+
+```bash
+bash src/deploy/test_ambient_cap_runtime.sh
+bash src/deploy/test_manifest_caps_runtime.sh
+bash src/deploy/test_image_suid_inventory.sh
+bash src/deploy/test_image_suid_inventory.sh --image ghcr.io/kubestellar/hive:stable
+```
+
+`test_image_suid_inventory.sh` builds its fixture **twice** — once without
+`src/Dockerfile`'s strip block and once with it — and fails if the un-stripped
+build does not show the eleven world-executable setuid/setgid binaries
+`node:26-slim` and the `passwd`/`util-linux` packages leave behind. A contract
+check that has never been observed to fail is not evidence that it would. The
+`--image` form skips the fixture and reads the inventory out of an image
+someone else built; `docker.yml` runs it that way against the real image, which
+is the only form that also covers the npm, pip and `COPY` layers.
+
+Why these binaries are removed in the image rather than switched off in the
+pod: `allowPrivilegeEscalation: false` would set `no_new_privs` and disable
+every setuid binary, `su-exec` included, which breaks agent launch. The
+trade-off is spelled out in the C6 comment in `k8s/deployment.yaml` and in
+[security-model.md](../docs/security-model.md#in-container-privilege-model).

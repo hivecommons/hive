@@ -221,6 +221,29 @@ jobs:
               ;;
           esac
 
+      # SECURITY (#3866, CWE-250/732): assert the REAL built image ships exactly
+      # one setuid/setgid binary, the su-exec launcher helper.
+      #
+      # src/deploy/test_image_suid_inventory.sh runs this same assertion against
+      # a fixture derived from src/Dockerfile on every PR that touches it (the
+      # image-suid-inventory job in suid-contract.yml). That fixture covers the
+      # base + apt layers, which is where the eleven world-executable
+      # setuid/setgid binaries came from. This copy is the one that sees the
+      # WHOLE image — every npm, pip and COPY layer included — so nothing can
+      # slip a setuid bit in below the layers the fixture reproduces.
+      #
+      # The image is already local here: pushed builds pulled it by digest in
+      # the step above, PR builds loaded it as hive-freshness-probe:local.
+      - name: Assert image SUID/SGID inventory
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
+            IMG="ghcr.io/kubestellar/hive@${{ steps.build.outputs.digest }}"
+          else
+            IMG=hive-freshness-probe:local
+          fi
+          bash src/deploy/test_image_suid_inventory.sh --image "$IMG"
+
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
         run: |

@@ -490,5 +490,49 @@ RUN mkdir -p /data/home/.copilot /data/home/.cache /data/home/.config /data/home
 
 RUN chown -R dev:node /data /home/dev 2>/dev/null || true
 
+# --- SUID/SGID inventory (#3866, CWE-250/CWE-732) ---
+# Strip every setuid/setgid bit in the image except the one su-exec helper the
+# launcher needs, and FAIL THE BUILD if the inventory is anything else.
+#
+# The C6 fix above hardened su-exec to 4750 root:hive-launch so agent UIDs
+# cannot exec it. It did not touch what the BASE IMAGE ships. node:26-slim
+# (Debian 13) plus the passwd/util-linux packages installed at the top of this
+# stage leave eleven setuid/setgid binaries behind, and every one of them is
+# world-executable — so reachable by any agent UID (2001+), which is exactly the
+# population the su-exec 4750 mode exists to exclude:
+#
+#   4755 root:root    /usr/bin/{chfn,chsh,gpasswd,mount,newgrp,passwd,su,umount}
+#   2755 root:shadow  /usr/bin/{chage,expiry}  /usr/sbin/unix_chkpwd
+#
+# Nothing in Hive execs any of them. The entrypoint creates the per-agent
+# accounts with useradd/groupadd/usermod while it is still root, and every
+# privilege hop goes through gosu (as root) or su-exec (as dev) — none of which
+# needs a setuid bit on a Debian tool.
+#
+# They matter because the pod cannot neutralise them the usual way. Setting
+# `allowPrivilegeEscalation: false` would set no_new_privs and disable ALL SUID
+# binaries — including su-exec, which would break agent launch (see the C6 note
+# in src/deploy/k8s/deployment.yaml). So no_new_privs stays off, and a SUID-root
+# exec from an agent UID would land in a bounding set that still holds SETUID,
+# SETGID and DAC_OVERRIDE: enough to read the MITM CA private key whatever mode
+# the 0700 directory #4341 moved it into carries.
+#
+# Stripping is safe precisely because only NON-root callers need a setuid bit.
+# root keeps full use of mount/su/passwd, and the accounts those tools would
+# edit are locked system accounts (root's shadow entry is `*`).
+#
+# This runs LAST, after every apt/npm/pip layer, so a package installed anywhere
+# above is covered. The assertion is what makes it durable: a future layer that
+# reintroduces a setuid binary fails the build here rather than shipping.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
+      ! -path /usr/local/bin/su-exec -print -exec chmod -s '{}' + \
+ && remaining="$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -printf '%M %u:%g %p\n' | sort)" \
+ && if [ "$remaining" != "-rwsr-x--- root:hive-launch /usr/local/bin/su-exec" ]; then \
+      echo "FATAL: image SUID/SGID inventory is not the single expected helper." >&2; \
+      echo "       want: -rwsr-x--- root:hive-launch /usr/local/bin/su-exec" >&2; \
+      echo "       got:" >&2; echo "$remaining" | sed 's/^/         /' >&2; \
+      exit 1; \
+    fi
+
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["--config", "/etc/hive/hive.yaml"]

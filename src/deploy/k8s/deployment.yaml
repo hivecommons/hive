@@ -67,6 +67,15 @@ spec:
           # instead) is not viable here: it needs ambient/inheritable caps that
           # the hub's netadmin_reconcile would wipe when it JSON-Patch-replaces
           # the whole securityContext with {NET_ADMIN} on drift. See PR body.
+          #
+          # Because no_new_privs therefore stays OFF, every OTHER setuid binary
+          # in the image stays live too — and the base image shipped eleven of
+          # them, all world-executable, so any agent UID could exec them into a
+          # bounding set that still holds SETUID/SETGID/DAC_OVERRIDE. #3866
+          # removes them in the image instead: src/Dockerfile strips every
+          # setuid/setgid bit but su-exec's and fails the build if the inventory
+          # is anything else. Boot-level proof:
+          # ../test_image_suid_inventory.sh.
           securityContext:
             seccompProfile:
               type: RuntimeDefault
