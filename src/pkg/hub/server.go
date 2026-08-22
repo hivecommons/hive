@@ -2057,6 +2057,25 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				branchForLatest = "v2"
 			}
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
+			// The orphan-sweep retry budget is HUB-side state and must survive
+			// ordinary heartbeats. The rebuilt entry starts from the payload
+			// (which never carries it), so without this carry every ~2-min
+			// beat silently reset OrphanedUpgradeSweeps to 0 — the terminal
+			// "give up after maxOrphanedUpgradeSweeps and report UpgradeFailed"
+			// state was unreachable for any hive that heartbeats at all, and a
+			// structurally-unable-to-upgrade hive looped clear→re-arm→re-latch
+			// forever, pinned in "Upgrading" with no human-visible fault. The
+			// completion branches below still reset it to 0 explicitly, which
+			// is the only legitimate reset: the upgrade actually landed.
+			entry.OrphanedUpgradeSweeps = h.OrphanedUpgradeSweeps
+			// A hive that demonstrably MOVED builds has ended whatever wedge
+			// streak the budget was counting, even when no latch is set (e.g.
+			// the sweep cleared it and the upgrade then landed) — carrying the
+			// spent budget into the NEXT upgrade would let a single future
+			// sweep tip a healthy hive straight into terminal UpgradeFailed.
+			if entry.GitHash != "" && h.GitHash != "" && !sameCommit(entry.GitHash, h.GitHash) {
+				entry.OrphanedUpgradeSweeps = 0
+			}
 			// Carry a previously-reported upgrade failure forward across ordinary
 			// heartbeats (which do not repeat it), but clear it the moment the
 			// spoke actually reports a NEW git hash — that means it finally moved.

@@ -92,15 +92,33 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			orphaned: true,
 		},
 		{
+			// Silence is only exculpatory while a restart could plausibly still
+			// be in flight — i.e. under silentUpgradeDeadline.
 			name: "in flight: silent since the upgrade was instructed (pod restarting)",
 			entry: RegistryEntry{
 				Upgrading:        true,
-				UpgradeStartedAt: started,
+				UpgradeStartedAt: fixedSweepNow.Add(-silentUpgradeDeadline + 5*time.Minute),
 				GitHash:          "c11643a",
 				UpgradeTarget:    "fc32ae4",
-				LastHeartbeat:    rfc3339(started.Add(-time.Minute)),
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-silentUpgradeDeadline)),
 			},
 			orphaned: false,
+		},
+		{
+			// The z-aiops cohort wedge: the pod died mid-upgrade (crash loop /
+			// failed pull / unreachable cluster), never came back, never
+			// heartbeated again — and the evidence-only rule left the row
+			// spinning "Upgrading" for 1.9h and counting. Past
+			// silentUpgradeDeadline the silence IS the evidence.
+			name: "orphaned: silent past the hard deadline (pod died mid-upgrade)",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: fixedSweepNow.Add(-silentUpgradeDeadline - time.Minute),
+				GitHash:          "c11643a",
+				UpgradeTarget:    "fc32ae4",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-silentUpgradeDeadline - 2*time.Minute)),
+			},
+			orphaned: true,
 		},
 		{
 			name: "in flight: a slow but recent upgrade is never cleared on elapsed time alone",
@@ -143,14 +161,27 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			orphaned: false,
 		},
 		{
-			name: "not orphaned: never heartbeated, so we cannot prove the attempt is gone",
+			name: "not orphaned: never heartbeated, under the silent deadline",
 			entry: RegistryEntry{
 				Upgrading:        true,
-				UpgradeStartedAt: started,
+				UpgradeStartedAt: fixedSweepNow.Add(-silentUpgradeDeadline + 5*time.Minute),
 				GitHash:          "c11643a",
 				UpgradeTarget:    "fc32ae4",
 			},
 			orphaned: false,
+		},
+		{
+			// Never heartbeated at all AND past the deadline: same verdict as a
+			// spoke that went silent — nothing that was going to report back
+			// still exists.
+			name: "orphaned: never heartbeated and past the silent deadline",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: fixedSweepNow.Add(-silentUpgradeDeadline - time.Minute),
+				GitHash:          "c11643a",
+				UpgradeTarget:    "fc32ae4",
+			},
+			orphaned: true,
 		},
 		{
 			// The ibm-alchemy live wedge: Upgrading latched with a ZERO
@@ -463,7 +494,7 @@ func TestSweepConvergedPathClearsWithoutReArmOrBudget(t *testing.T) {
 		ID:               "converged-hive",
 		Upgrading:        true,
 		UpgradeStartedAt: time.Now().Add(-68 * time.Minute),
-		GitHash:          "fc32ae4",  // already ON the target
+		GitHash:          "fc32ae4", // already ON the target
 		UpgradeTarget:    "fc32ae4",
 		LastHeartbeat:    rfc3339(time.Now().Add(-30 * time.Second)),
 		// Simulate a hive that was previously swept once as orphaned before

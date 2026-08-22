@@ -25,6 +25,24 @@ const orphanedUpgradeGrace = staleUpgradeTimeout
 // after which an upgrade with no live attempt behind it is considered orphaned.
 const orphanedUpgradeClearAfter = staleUpgradeTimeout + orphanedUpgradeGrace
 
+// silentUpgradeDeadline is the hard upper bound on how long a latched upgrade
+// may sit with NO heartbeat since it was instructed before the sweep clears it
+// anyway.
+//
+// The liveness evidence below deliberately refuses to clear a latch while the
+// spoke is silent — a restarting pod is not heartbeating, and clearing there
+// could cancel a live rollout. But silence has to stop being exculpatory at
+// SOME point: a pod that died mid-upgrade (failed image pull, crash loop on
+// the new build, suspended/deleted cluster) never comes back, never
+// heartbeats, and under the evidence-only rule its row spun "Upgrading"
+// FOREVER — the live wedge on the z-aiops cohort, four hives at 1.8–1.9h and
+// counting. No real rollout takes an hour of total silence: the spoke's own
+// self-upgrade path gives up in minutes and even a cold-node image pull beats
+// this by a wide margin. Six times the timeout the hub itself calls excessive
+// is long enough that this lane can never race a genuine upgrade, and short
+// enough that a dead attempt is reported the same session instead of never.
+const silentUpgradeDeadline = 6 * staleUpgradeTimeout
+
 // maxOrphanedUpgradeSweeps bounds how many times the sweep will clear and
 // re-arm the same hive's upgrade before treating it as a genuine fault instead
 // of a transient orphan.
@@ -137,14 +155,17 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 	lastBeat, err := time.Parse(time.RFC3339, entry.LastHeartbeat)
 	if err != nil {
 		// Never heartbeated, or an unparseable timestamp. We cannot prove the
-		// attempt is gone, so we do not clear — an offline hive is reported by
-		// the offline alert instead.
-		return ev
+		// attempt is gone. Short of silentUpgradeDeadline we do not clear — an
+		// offline hive is reported by the offline alert instead — but past it
+		// the silence IS the evidence: nothing that was going to report back
+		// still exists. See evaluateSilentUpgrade.
+		return evaluateSilentUpgrade(ev, zeroStart, entry)
 	}
 	if !lastBeat.After(entry.UpgradeStartedAt) {
 		// Silent since the upgrade was instructed. That is what a restart in
-		// progress looks like, so it must not be cleared here.
-		return ev
+		// progress looks like, so it must not be cleared here — until the
+		// silence outlives any restart that could possibly still be in flight.
+		return evaluateSilentUpgrade(ev, zeroStart, entry)
 	}
 
 	// The spoke is alive, post-dates the instruction, and is already ON the
@@ -204,6 +225,27 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 	return ev
 }
 
+// evaluateSilentUpgrade decides the fate of a latched upgrade whose spoke has
+// NOT been heard from since the instruction. Below silentUpgradeDeadline the
+// silence is treated as a restart in flight and the latch is left alone (the
+// pre-existing behaviour). Past the deadline the latch is orphaned with an
+// honest reason: whatever was restarting is not coming back on its own, and an
+// eternal "Upgrading" spinner is a lie the offline alert does not correct.
+// zeroStart (a corrupt/lost clock with no heartbeat either) stays untouchable:
+// with neither an elapsed nor a beat there is nothing to measure the silence
+// against, and such an entry cannot even render a growing spinner.
+func evaluateSilentUpgrade(ev upgradeAttemptEvidence, zeroStart bool, entry *RegistryEntry) upgradeAttemptEvidence {
+	if zeroStart || ev.elapsed < silentUpgradeDeadline {
+		return ev
+	}
+	ev.orphaned = true
+	ev.reason = "spoke has been silent for the entire " + roundedDuration(ev.elapsed) +
+		" since the upgrade was instructed — the pod likely died mid-upgrade " +
+		"(failed image pull, crash loop on the new build, or an unreachable cluster) " +
+		"and no attempt is left to wait for; still recorded on " + orDash(entry.GitHash)
+	return ev
+}
+
 // sweepOrphanedUpgrades clears Upgrading flags left behind by spoke pods that
 // vanished mid-upgrade. It runs on the hub, unconditioned on AutoUpgrade,
 // because the flag is set by admin and bulk upgrade paths too — the existing
@@ -244,15 +286,24 @@ func (s *HubServer) sweepOrphanedUpgradesIfDue() {
 
 func (s *HubServer) sweepOrphanedUpgrades() {
 	// Admin kill switch: while spoke upgrades are paused nothing is being
-	// delivered, so this sweep must not run — it re-arms heartbeatUpgrade
-	// (a delivery the pause forbids) and burns OrphanedUpgradeSweeps retry
-	// budget against hives that CANNOT land their target while paused, which
-	// would tip healthy hives into a false permanent UpgradeFailed. Latches
-	// simply wait; the sweep resumes with the rest of the machinery.
-	if sw, paused := s.spokeUpgradesPaused(); paused {
-		s.logger.Debug("orphaned-upgrade sweep suppressed — spoke upgrades are paused",
-			"paused_by", sw.By, "paused_at", sw.At)
-		return
+	// delivered, so the ABANDONED-orphan half of this sweep must not run — it
+	// re-arms heartbeatUpgrade (a delivery the pause forbids) and burns
+	// OrphanedUpgradeSweeps retry budget against hives that CANNOT land their
+	// target while paused, which would tip healthy hives into a false permanent
+	// UpgradeFailed. Those latches simply wait; that half resumes with the rest
+	// of the machinery.
+	//
+	// CONVERGED latches are different and are still cleared while paused:
+	// clearing one delivers nothing (the upgrade already happened — the clear
+	// even DROPS any armed instruction) and spends no retry budget, so the
+	// pause has nothing to protect there. Skipping them made every hive whose
+	// rollout finished right as an admin hit pause sit in an eternal
+	// "Upgrading" spinner for the whole freeze — precisely the dishonest state
+	// this sweep exists to remove.
+	spokePauseSw, spokesArePaused := s.spokeUpgradesPaused()
+	if spokesArePaused {
+		s.logger.Debug("orphaned-upgrade sweep in paused mode — clearing completed latches only",
+			"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
 	}
 	now := time.Now()
 
@@ -300,6 +351,11 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			h.UpgradeError = ""
 			h.UpgradeFailedAt = time.Time{}
 			delete(s.heartbeatUpgrade, h.ID)
+			continue
+		}
+		if spokesArePaused {
+			// Abandoned orphan while paused: leave the latch, spend no budget,
+			// re-arm nothing. See the pause rationale above the loop.
 			continue
 		}
 		h.OrphanedUpgradeSweeps++
