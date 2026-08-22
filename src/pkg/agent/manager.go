@@ -2546,11 +2546,11 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	case "gemini":
 		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag)
 	case "goose":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "goose")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "goose", "-y")
 	case "codex":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "codex")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "codex", "-y")
 	case "aider":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "aider-desk")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "aider-desk", "-y")
 	default:
 		m.logger.Info("caveman not supported for backend", "backend", backend)
 		return
