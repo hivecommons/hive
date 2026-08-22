@@ -73,7 +73,7 @@ func sanitizeRepoActivity(in []RepoActivityWire) []RepoActivityWire {
 // itself without trusting a spoke-side clamp.
 type ActivityStatWire struct {
 	Count    int    `json:"count"`
-	NewestAt string `json:"newest_at,omitempty"`
+	NewestAt string `json:"newestAt,omitempty"`
 }
 
 // RepoActivityWire is per-repo output activity over the collector's window.
