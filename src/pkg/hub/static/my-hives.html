@@ -350,13 +350,21 @@ function budgetHealthHTML(b) {
   return '<span class="budget-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
-function githubAppHealthHTML(g) {
+function githubAppHealthHTML(g, h) {
   g = g || {};
+  h = h || {};
   var bucket = g.bucket || "unknown";
   var rel = g.lastTokenMintAt ? relTime(g.lastTokenMintAt) : "n/a";
-  var label = bucket === "unknown" ? "gh app n/a" : "gh app " + (bucket === "degraded" ? "stale" : bucket);
+  var oldSpoke = bucket === "unknown" && h.gitHash && h.commitsBehindStableV4 != null && h.commitsBehindStableV4 > 0;
+  var label = bucket === "unknown" ? (oldSpoke ? "gh app not reported" : "gh app n/a") : "gh app " + (bucket === "degraded" ? "stale" : bucket);
   if (g.lastTokenMintAt) label += " · " + rel;
   var title = g.detail || (g.lastTokenMintAt ? "last token mint " + rel : label);
+  if (oldSpoke && !g.detail) {
+    title = "This spoke has not reported GitHub App token-cache health yet; it is running an older image (" +
+      h.gitHash + ", " + h.commitsBehindStableV4 + " commits behind stable v4).";
+  } else if (bucket === "unknown" && !g.detail) {
+    title = "No GitHub App token-cache health was reported; this usually means no GitHub App is configured for this hive.";
+  }
   return '<span class="github-app-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
@@ -521,7 +529,7 @@ function renderHives(hives) {
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
-      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth) + '</td>';
+      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth, h) + '</td>';
     tb.appendChild(tr);
     var link = tr.querySelector(".hive-link");
     if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
