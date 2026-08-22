@@ -4938,13 +4938,19 @@ const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 // never changes at runtime in production.
 var DashboardOverlayFile = "/data/hive.yaml.dashboard"
 
+// saTokenFile is the Kubernetes serviceaccount token path IsKubernetesPod
+// probes. It is a var (not a const) only so tests can point it at a
+// non-existent path and stay hermetic on hosts that really are pods;
+// production always uses the fixed in-cluster path.
+var saTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
 // IsKubernetesPod reports whether the process is running inside a
 // Kubernetes pod (mirrors the entrypoint's IS_KUBERNETES detection).
 func IsKubernetesPod() bool {
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		return true
 	}
-	_, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	_, err := os.Stat(saTokenFile)
 	return err == nil
 }
 

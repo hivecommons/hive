@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -275,6 +276,10 @@ agents:
 // ---------------------------------------------------------------------------
 
 func TestValidate_MissingOrg(t *testing.T) {
+	// On a live hive host HIVE_REPO is set and applyBootstrapEnv backfills
+	// project.org from it, so validation would pass. Clear it so the test is
+	// hermetic (empty means "unset" to applyBootstrapEnv).
+	t.Setenv("HIVE_REPO", "")
 	yaml := `
 project:
   repos:
@@ -310,14 +315,19 @@ agents:
 }
 
 func TestValidate_NoAgents(t *testing.T) {
-	yaml := `
+	// On a live hive host the default agents_dir (/data/agent-configs) holds
+	// real per-agent overlays, which Load merges in — so "no agents" would
+	// validate fine. Point agents_dir at an empty temp dir to stay hermetic.
+	yaml := fmt.Sprintf(`
 project:
   org: my-org
   repos:
     - repo-a
 github:
   token: ghp_tok
-`
+data:
+  agents_dir: %s
+`, t.TempDir())
 	path := writeTempConfig(t, yaml)
 	_, err := Load(path)
 	if err == nil {
