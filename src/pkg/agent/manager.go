@@ -6143,7 +6143,11 @@ var quotaExhaustionPatterns = []string{
 	"budget has been exceeded",
 	"provider spending limit reached",
 	"refused the request on a spending limit",
+	"gone over your budget allowance",
+	"bobcoins",
 }
+
+var quotaExhaustionStatusPattern = regexp.MustCompile(`\b\d+(?:\.\d+)?/\d+(?:\.\d+)?\s*\(0%\)\s*\|`)
 
 func paneShowsQuotaExhausted(lines []string) bool {
 	for _, line := range lines {
@@ -6152,6 +6156,9 @@ func paneShowsQuotaExhausted(lines []string) bool {
 			if strings.Contains(lower, pat) {
 				return true
 			}
+		}
+		if quotaExhaustionStatusPattern.MatchString(line) {
+			return true
 		}
 	}
 	return false

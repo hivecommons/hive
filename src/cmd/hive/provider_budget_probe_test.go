@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/dashboard"
+	"github.com/kubestellar/hive/pkg/hub"
 )
 
 // TestProviderBudgetSuppressionProbesRatherThanDeadlocks is the regression test
@@ -233,5 +235,23 @@ func TestProviderBudgetNotifyResetReportsRecoveryOnce(t *testing.T) {
 		if st.reset() {
 			t.Fatalf("healthy cycle %d reported the recovery again", i+2)
 		}
+	}
+}
+
+func TestProviderLimitHeartbeatFieldsFallsBackToAgentQuota(t *testing.T) {
+	dashboard.SetInferenceBudgetProvider(nil)
+	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
+
+	reason, rebuffs := providerLimitHeartbeatFields([]hub.AgentSummary{
+		{Name: "guide", State: "running", QuotaExhausted: true},
+		{Name: "scanner", State: "running", QuotaExhausted: true},
+		{Name: "paused", State: "paused", Paused: true, QuotaExhausted: true},
+		{Name: "supervisor"},
+	})
+	if rebuffs != 0 {
+		t.Fatalf("rebuffs = %d, want 0 for pane-derived quota", rebuffs)
+	}
+	if reason != "2 agent(s) out of provider quota" {
+		t.Fatalf("reason = %q, want provider quota count", reason)
 	}
 }
