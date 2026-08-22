@@ -228,9 +228,11 @@ func maxRFC3339(a, b string) string {
 }
 
 // advisoryAge renders a short age phrase for the advisory reason chip.
+// humanizeAge already carries the "ago" suffix, so nothing is appended here
+// (appending produced "advisory 3h ago ago").
 func advisoryAge(adv AdvisoryIssueActivity, now time.Time) string {
 	if t, ok := parseRFC3339(adv.LastActivityAt); ok {
-		return humanizeAge(now.Sub(t)) + " ago"
+		return humanizeAge(now.Sub(t))
 	}
 	return "fresh"
 }
