@@ -234,7 +234,7 @@
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 issues/PRs created · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth). Absence of output a level does not produce is never a fault.</span>
+  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 authored writes: issues/PRs created, comments, reviews · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth). Absence of output a level does not produce is never a fault.</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
@@ -554,7 +554,7 @@ function hiveHealth(h) {
 }
 
 // whyChipHTML renders the small "WHY" chip next to a hive's name: the verdict's
-// reason ("last merge 3h ago" / "no create in 30h (7 queued)" / "advisory
+// reason ("last merge 3h ago" / "no write in 30h (7 queued)" / "advisory
 // stale"). Green reasons are muted, red reasons are tinted so a broken hive's
 // cause reads at a glance. Nothing for parked/offline (their own chip/dot say
 // it) or when there is no verdict.

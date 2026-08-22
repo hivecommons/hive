@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,8 +56,9 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 		rollup    agentFleetRollup
 		app       GitHubAppHealth
 		queued    int
-		wantState string
-		wantKind  string
+		wantState  string
+		wantKind   string
+		wantReason string // substring match, "" = don't check
 	}{
 		{
 			name:      "L1 inception — no output ever, still green",
@@ -113,6 +115,37 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    0,
+			wantState: HealthStateGreen,
+			wantKind:  "creates",
+		},
+		{
+			// The operator: "if it's writing comments then that is output".
+			// An agent triaging a backlog — dismissing false positives in
+			// comments, reviewing held PRs — is producing real output even on
+			// a kick that creates nothing (live case: flashsystems/ess quality
+			// read red while actively commenting through 28 queued items).
+			name: "L4 creates stale but COMMENT recent, work queued — green",
+			entry: func() RegistryEntry {
+				r := ractivity("o/r", oldTs, oldTs, "", "")
+				r.Comments = ActivityStatWire{Count: 3, NewestAt: recent}
+				return withActivity(base(4), r)
+			}(),
+			rollup:    okRollup(),
+			app:       okApp(),
+			queued:    7,
+			wantState: HealthStateGreen,
+			wantKind:  "creates",
+		},
+		{
+			name: "L4 creates stale but REVIEW recent, work queued — green",
+			entry: func() RegistryEntry {
+				r := ractivity("o/r", oldTs, oldTs, "", "")
+				r.Reviews = ActivityStatWire{Count: 1, NewestAt: recent}
+				return withActivity(base(4), r)
+			}(),
+			rollup:    okRollup(),
+			app:       okApp(),
+			queued:    7,
 			wantState: HealthStateGreen,
 			wantKind:  "creates",
 		},
@@ -187,11 +220,12 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 				}
 				return e
 			}(),
-			rollup:    okRollup(),
-			app:       okApp(),
-			queued:    4,
-			wantState: HealthStateGreen,
-			wantKind:  "creates",
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     4,
+			wantState:  HealthStateGreen,
+			wantKind:   "creates",
+			wantReason: "create-capable agent(s) off: sec-check",
 		},
 		{
 			// L6 twin: a merge-judged hive whose on-duty agents can create but
@@ -205,11 +239,32 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 				}
 				return e
 			}(),
-			rollup:    okRollup(),
-			app:       okApp(),
-			queued:    3,
-			wantState: HealthStateGreen,
-			wantKind:  "merges",
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     3,
+			wantState:  HealthStateGreen,
+			wantKind:   "merges",
+			wantReason: "no merge-capable agent configured",
+		},
+		{
+			// Correlation at L2: all agents paused → advisory staleness is
+			// CAUSED by the pause, so the verdict names the off agents instead
+			// of a bare "advisory stale" red.
+			name: "L2 all agents off — green, reason names them",
+			entry: func() RegistryEntry {
+				e := base(2)
+				e.Agents = []AgentSummary{
+					{Name: "scanner", Enabled: false, ExpectedActive: false},
+					{Name: "quality", Enabled: false, ExpectedActive: false},
+				}
+				return e
+			}(),
+			rollup:     agentFleetRollup{Expected: 0, Running: 0, Able: 0, Known: 2},
+			app:        okApp(),
+			queued:     2,
+			wantState:  HealthStateGreen,
+			wantKind:   "advisory",
+			wantReason: "advisory-capable agent(s) off: scanner, quality",
 		},
 	}
 
@@ -221,6 +276,9 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			}
 			if v.OutputKind != tc.wantKind {
 				t.Errorf("outputKind = %q, want %q", v.OutputKind, tc.wantKind)
+			}
+			if tc.wantReason != "" && !strings.Contains(v.Reason, tc.wantReason) {
+				t.Errorf("reason = %q, want substring %q", v.Reason, tc.wantReason)
 			}
 		})
 	}

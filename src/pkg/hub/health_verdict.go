@@ -116,6 +116,12 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 
 	case e.ACMMLevel == acmmAdvisoryMax:
 		// L2 Advisory: freshness of the advisory stream is the health signal.
+		// Every agent contributes to the advisory stream, so if none are on
+		// duty (all paused/off-schedule), staleness is caused by that — say so
+		// instead of a bare "advisory stale" red.
+		if roster := grantRosterFor(e.Agents, func(AgentSummary) bool { return true }); len(roster.onDuty) == 0 {
+			return noWritersOnDuty(v, "advisory", roster)
+		}
 		// Reuse the existing advisory/issue-activity bucketing rather than the
 		// per-repo activity collector.
 		adv := advisoryIssueActivityFor(e, now)
@@ -141,36 +147,64 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 	case e.ACMMLevel >= acmmMergeMin:
 		// L6: judged on MERGES. A create that never merges, with work still
 		// queued, is the failure this level exists to catch.
-		if !anyOnDutyGrant(e.Agents, func(a AgentSummary) bool { return a.CanMerge }) {
-			return noWritersOnDuty(v, "merge")
+		if roster := grantRosterFor(e.Agents, func(a AgentSummary) bool { return a.CanMerge }); len(roster.onDuty) == 0 {
+			return noWritersOnDuty(v, "merge", roster)
 		}
 		last, ok := newestOutput(e.RepoActivity, func(r RepoActivityWire) string { return r.Merges.NewestAt })
 		return bandFreshness(v, last, ok, queuedWork, now, "merge")
 
 	default:
-		// L3–L5: judged on CREATES (issues or PRs). Merges are the human's job
-		// here, so an unmerged PR is not a fault — only a stalled creation
-		// stream (with work queued) is.
-		if !anyOnDutyGrant(e.Agents, func(a AgentSummary) bool { return a.CanOpenIssue || a.CanOpenPR }) {
-			return noWritersOnDuty(v, "create")
+		// L3–L5: judged on authored WRITES to the work source — issue/PR
+		// creates, comments, and reviews. Merges are the human's job here, so
+		// an unmerged PR is not a fault — only a fully stalled write stream
+		// (with work queued) is. Comments/reviews count because an agent
+		// triaging a backlog (dismissing false positives, reviewing held PRs)
+		// is producing real output even on a kick that creates nothing; the
+		// operator: "if it's writing comments then that is output".
+		roster := grantRosterFor(e.Agents, func(a AgentSummary) bool { return a.CanOpenIssue || a.CanOpenPR })
+		if len(roster.onDuty) == 0 {
+			return noWritersOnDuty(v, "create", roster)
 		}
 		last, ok := newestOutput(e.RepoActivity, func(r RepoActivityWire) string {
-			return maxRFC3339(r.Issues.NewestAt, r.PRs.NewestAt)
+			return maxRFC3339(maxRFC3339(r.Issues.NewestAt, r.PRs.NewestAt),
+				maxRFC3339(r.Comments.NewestAt, r.Reviews.NewestAt))
 		})
-		return bandFreshness(v, last, ok, queuedWork, now, "create")
+		return bandFreshness(v, last, ok, queuedWork, now, "write")
 	}
 }
 
-// anyOnDutyGrant reports whether any agent the governor currently expects to
-// work carries the given write grant. Paused and off-schedule agents cannot
-// produce output no matter what their grants say, so they don't count.
-func anyOnDutyGrant(agents []AgentSummary, grant func(AgentSummary) bool) bool {
+// grantRoster splits a hive's agents holding a write grant into the ones the
+// governor currently expects to work and the ones that are off (paused or
+// off-schedule). The off list carries names so a verdict caused by "the
+// responsible agent is off" can SAY so — the operator's ask: when the agent
+// responsible for creating/commenting/merging is off and that is the reason,
+// indicate the correlation.
+type grantRoster struct {
+	onDuty []string
+	off    []string
+}
+
+func grantRosterFor(agents []AgentSummary, grant func(AgentSummary) bool) grantRoster {
+	var r grantRoster
 	for _, a := range agents {
-		if a.ExpectedActive && grant(a) {
-			return true
+		if !grant(a) {
+			continue
+		}
+		if a.ExpectedActive {
+			r.onDuty = append(r.onDuty, a.Name)
+		} else {
+			r.off = append(r.off, a.Name)
 		}
 	}
-	return false
+	return r
+}
+
+// nameList renders up to three agent names, then "+N more".
+func nameList(names []string) string {
+	if len(names) <= 3 {
+		return strings.Join(names, ", ")
+	}
+	return strings.Join(names[:3], ", ") + fmt.Sprintf(" +%d more", len(names)-3)
 }
 
 // noWritersOnDuty is the verdict when no on-duty agent holds the write grant
@@ -178,12 +212,17 @@ func anyOnDutyGrant(agents []AgentSummary, grant func(AgentSummary) bool) bool {
 // agent had no issue/PR grants read "no create output" red — but a hive that
 // CANNOT write by mode/pause configuration is quiet by design, not failing;
 // same spine as L1 "no output expected"). Absence of output the configuration
-// does not permit is never a fault. The grant chips on the agent rows already
-// show the ✗s, so an operator who MEANT it to write can see exactly why it
-// doesn't.
-func noWritersOnDuty(v HealthVerdict, verb string) HealthVerdict {
+// does not permit is never a fault. When grant-holding agents EXIST but are
+// paused/off-schedule, the reason names them — that correlation ("the agent
+// responsible for this output is off") is the answer to the operator's next
+// question, so put it in the chip instead of making them hunt the agent rows.
+func noWritersOnDuty(v HealthVerdict, verb string, roster grantRoster) HealthVerdict {
 	v.State = HealthStateGreen
-	v.Reason = fmt.Sprintf("no %s-capable agent on duty — no output expected", verb)
+	if len(roster.off) > 0 {
+		v.Reason = fmt.Sprintf("no output expected — %s-capable agent(s) off: %s", verb, nameList(roster.off))
+	} else {
+		v.Reason = fmt.Sprintf("no %s-capable agent configured — no output expected", verb)
+	}
 	return v
 }
 
