@@ -71,6 +71,31 @@ func TestNewStore_CreatesGroupWritableDir(t *testing.T) {
 	}
 }
 
+// The bead dir's GROUP must be the creator's egid, not whatever a setgid
+// parent hands down. Live incident (fma): OpenShift's fsGroup put the PVC root
+// at a random namespace gid with setgid, bead dirs inherited it at 0770, and
+// the hive server — which is not in that group — lost every store at startup.
+func TestNewStore_PinsDirGroupToCreatorEgid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX ownership is not meaningful on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "beads", "scanner")
+	if _, err := NewStore(dir); err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("no syscall.Stat_t on this platform")
+	}
+	if int(st.Gid) != os.Getegid() {
+		t.Errorf("bead dir gid = %d, want creator egid %d", st.Gid, os.Getegid())
+	}
+}
+
 // umaskAllowsGroupWrite reports whether the process umask leaves the group-write
 // bit (0020) unmasked, so a group-writable create can actually land it. It reads
 // and restores the umask non-destructively.

@@ -152,6 +152,16 @@ func NewStore(dir string) (*Store, error) {
 	// silently requests plain 0770 — the setgid bit is dropped before the
 	// syscall, with no error — which is why the dir came out drwxrwx--- and the
 	// regression test caught it only on Linux (where the assertion is guarded).
+	//
+	// Re-group BEFORE the chmod (fma incident): on OpenShift the PVC root
+	// carries the namespace's random fsGroup with setgid, so a freshly created
+	// dir INHERITS that foreign gid — and at 0770 the hive server (which drops
+	// the fsGroup supplementary group at privilege drop) can never traverse
+	// it, silently losing the whole store at the next boot. The creator owns
+	// the dir and shares the node group with every hive UID, so pin the group
+	// to the creator's egid. Best-effort, like the chmod; chown can clear
+	// setgid on some platforms, so it must come first.
+	_ = os.Chown(dir, -1, os.Getegid())
 	_ = os.Chmod(dir, 0o770|os.ModeSetgid)
 
 	s := &Store{

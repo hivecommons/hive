@@ -2724,6 +2724,13 @@ func (s *Server) RecordAdvisoryError(errMsg string) {
 // more specific cause; the inference-auth fold only fills an otherwise-empty
 // error. It self-clears the moment inference recovers, because the provider
 // stops reporting the signal.
+//
+// Bead-store LOAD failures fold the same way (fma incident: /data/beads dirs
+// group-owned by a foreign gid locked the server out at startup, so every
+// digest built empty and the advisory silently aged for 3 days while the
+// agents kept writing findings). Gated on participation like the inference
+// fold, and outranked by both a real post error and the inference cause —
+// which are more specific. Self-clears on a restart that loads all stores.
 func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, lastError string) {
 	s.advisoryMu.RLock()
 	postedAt, findings, errMsg := s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
@@ -2732,6 +2739,8 @@ func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, last
 	if errMsg == "" && !postedAt.IsZero() {
 		if infErr, _ := InferenceAuthError(); infErr != "" {
 			errMsg = infErr
+		} else if s.deps != nil && s.deps.BeadStoreLoadFailures > 0 {
+			errMsg = fmt.Sprintf("%d bead store(s) failed to load at startup (check /data/beads ownership) — advisory digest is built from the stores that DID load", s.deps.BeadStoreLoadFailures)
 		}
 	}
 	return postedAt, findings, errMsg

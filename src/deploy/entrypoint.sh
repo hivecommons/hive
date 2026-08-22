@@ -496,6 +496,19 @@ if [ "$(id -u)" = "0" ]; then
       chown -R dev:node /data/beads 2>/dev/null || true
       chmod -R g+rwX /data/beads 2>/dev/null || true
     fi
+    # UNCONDITIONAL group repair (fma incident, llm-d-fast-model-actuation):
+    # OpenShift's restricted SCC assigns the namespace a random fsGroup
+    # (e.g. 1001670000); kubelet chgrps the PVC to it WITH setgid on mount, so
+    # bead dirs created afterwards inherit that foreign gid at mode 0770. The
+    # hive server drops to dev (groups node + hive-launch) at privilege drop,
+    # losing the fsGroup supplementary group, and then EACCESes on every store
+    # at startup — the advisory digest builds empty and silently goes stale
+    # while agents keep writing findings. The DATA_OWNER-gated chown above
+    # never fires (fsGroup changes group, not owner), so re-group the beads
+    # tree to node on every boot while we are still root. The tree is small
+    # (JSON ledgers), so the recursive walk is cheap even on NFS.
+    chgrp -R node /data/beads 2>/dev/null || true
+    chmod -R g+rwX /data/beads 2>/dev/null || true
   fi
 
   # Shared CLI auth/cache lives in /data/home (persistent volume).
