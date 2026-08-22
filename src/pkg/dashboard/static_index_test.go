@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -150,5 +151,28 @@ func TestAcceptsGzip(t *testing.T) {
 		if got := acceptsGzip(c.header); got != c.want {
 			t.Errorf("acceptsGzip(%q) = %v, want %v", c.header, got, c.want)
 		}
+	}
+}
+
+func TestStaticTerminalLinksRenewAssertionBeforeOpening(t *testing.T) {
+	body, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		"const TERMINAL_ASSERTION_RENEW_PATH = '/api/terminal/assertion/renew';",
+		"async function renewTerminalAssertion()",
+		"credentials: 'same-origin'",
+		"case 'openTerminal': e.preventDefault(); openTerminal(agent, el.href); break;",
+		"data-action=\"openTerminal\"",
+		"openTerminal(name);",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard terminal renewal wiring missing %q", want)
+		}
+	}
+	if strings.Contains(html, "window.open(terminalUrl(name), '_blank', 'noopener');") {
+		t.Fatal("welcome terminal action still opens /terminal directly without renewing the assertion")
 	}
 }
