@@ -228,6 +228,23 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			wantReason: "create-capable agent(s) off: sec-check",
 		},
 		{
+			// Budget exhaustion outranks freshness banding: agents are halted,
+			// so "no write in Nh" would bury the actual cause.
+			name: "L4 budget exhausted — red names the cause",
+			entry: func() RegistryEntry {
+				e := withActivity(base(4), ractivity("o/r", oldTs, oldTs, "", ""))
+				t := true
+				e.BudgetExhausted = &t
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     9,
+			wantState:  HealthStateRed,
+			wantKind:   "creates",
+			wantReason: "budget exhausted",
+		},
+		{
 			// The real kellyaa wire shape: paused agents keep ExpectedActive
 			// true (the governor still schedules them) and Enabled true — the
 			// pause lives ONLY in State/Paused. The roster must read them as

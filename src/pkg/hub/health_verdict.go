@@ -92,6 +92,15 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 			v.Reason = "GitHub App broken"
 			return v
 		}
+		// Budget exhaustion halts every agent, so no output stream can move.
+		// The chip must say THAT instead of the downstream "no write in Nh" —
+		// the operator's remedy (raise budget or wait for the window) is
+		// entirely different from debugging a stuck agent.
+		if e.BudgetExhausted != nil && *e.BudgetExhausted {
+			v.State = HealthStateRed
+			v.Reason = "budget exhausted — agents halted"
+			return v
+		}
 		if rollup.Expected > 0 && rollup.Running == 0 {
 			v.State = HealthStateRed
 			v.Reason = "no agents running"
