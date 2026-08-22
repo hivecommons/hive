@@ -89,7 +89,14 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 	if e.ACMMLevel > acmmInceptionMax {
 		if app.Bucket == ghAppBucketBroken {
 			v.State = HealthStateRed
-			v.Reason = "GitHub App broken"
+			// Name the specific failure when the spoke reported one —
+			// "repo-not-covered" (App installed but this repo not ticked) needs
+			// a completely different remedy than a missing/invalid key.
+			if st := strings.TrimSpace(e.GitHubAppState); st != "" && st != GitHubAppTokenStatusOK && st != "unknown" {
+				v.Reason = "GitHub App: " + st
+			} else {
+				v.Reason = "GitHub App broken"
+			}
 			return v
 		}
 		// Budget exhaustion halts every agent, so no output stream can move.

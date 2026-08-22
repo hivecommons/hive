@@ -228,6 +228,23 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			wantReason: "create-capable agent(s) off: sec-check",
 		},
 		{
+			// Live mcp-context-forge case: App installed and minting fine, but
+			// the repo isn't ticked in the installation — spoke reports
+			// githubAppState "repo-not-covered". The chip names it.
+			name: "L2 GitHub App repo-not-covered — red names the state",
+			entry: func() RegistryEntry {
+				e := base(2)
+				e.GitHubAppState = "repo-not-covered"
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        GitHubAppHealth{Bucket: ghAppBucketBroken, Status: "ok"},
+			queued:     2,
+			wantState:  HealthStateRed,
+			wantKind:   "advisory",
+			wantReason: "GitHub App: repo-not-covered",
+		},
+		{
 			// Budget exhaustion outranks freshness banding: agents are halted,
 			// so "no write in Nh" would bury the actual cause.
 			name: "L4 budget exhausted — red names the cause",
