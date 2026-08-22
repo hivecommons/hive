@@ -726,6 +726,19 @@ function renderHives(hives) {
 
     var verdicts = h.agentVerdicts || [];
     var subRows = [];
+    // Diagnosis block: the raw WHY facts (full error texts, App fix URL,
+    // budget numbers) for any hive whose row is not plainly healthy. Renders
+    // first among the sub-rows so root cause is the first thing an expand
+    // reveals.
+    var diag = diagnosisHTML(h);
+    if (diag) {
+      var drow = document.createElement("tr");
+      drow.className = "agent" + (isProblem ? " is-problem" : "");
+      drow.style.display = open ? "" : "none";
+      drow.innerHTML = '<td></td><td class="aname" colspan="6">' + diag + '</td>';
+      tb.appendChild(drow);
+      subRows.push(drow);
+    }
     // In an expanded problem hive, float the problem agents to the top.
     var ordered = verdicts.slice().sort(function (a, b) {
       return (b.problem ? 1 : 0) - (a.problem ? 1 : 0);
@@ -752,19 +765,6 @@ function renderHives(hives) {
       empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
       tb.appendChild(empty);
       subRows.push(empty);
-    }
-    // Diagnosis block: the raw WHY facts (full error texts, App fix URL,
-    // budget numbers) for any hive whose row is not plainly healthy. Renders
-    // first among the sub-rows so root cause is the first thing an expand
-    // reveals.
-    var diag = diagnosisHTML(h);
-    if (diag) {
-      var drow = document.createElement("tr");
-      drow.className = "agent" + (isProblem ? " is-problem" : "");
-      drow.style.display = open ? "" : "none";
-      drow.innerHTML = '<td></td><td class="aname" colspan="6">' + diag + '</td>';
-      tb.appendChild(drow);
-      subRows.push(drow);
     }
     // Per-repo output drill-down (hive-health): one sub-row listing each repo's
     // created/merged/reviewed counts with recency, so an operator can see WHICH
