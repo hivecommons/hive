@@ -71,6 +71,18 @@ const (
 	// created → PR created → PR merged) would otherwise count every reconciled
 	// contributor PR as a hive PR creation that never happened.
 	AuditActionPRAttributionReconciled = "pr_attribution_reconciled"
+	// AuditActionIssueClaimed is recorded when an agent claims an issue — the
+	// issue-request watcher applies a `hive/claimed-by-<agent>` label (App bots
+	// cannot be GitHub assignees, so ownership is signaled by a namespaced label
+	// rather than an assignee). It is a countable "this agent took work" signal
+	// on the activity trail.
+	AuditActionIssueClaimed = "agent_issue_claimed"
+	// AuditActionPRReviewed is recorded when the hive submits a PR review as the
+	// App bot: the review-request watcher on an agent's behalf, or the governor's
+	// own auto-merge APPROVE (QueuePRAutoMerge). Detail carries state=
+	// (approved|changes_requested|commented). This makes reviews a first-class
+	// audited activity instead of an invisible agent-CLI write.
+	AuditActionPRReviewed = "agent_pr_reviewed"
 )
 
 // System "agent" names recorded for creations no single coding agent

@@ -473,3 +473,59 @@ func TestCreateIssue_DegradesWhenListAndLabelsFail(t *testing.T) {
 		t.Fatalf("unexpected result: created=%d res=%+v", created, res)
 	}
 }
+
+// A "claim" request applies the hive/claimed-by-<agent> label and audits
+// agent_issue_claimed (App bots can't be assignees, so ownership = a label).
+func TestIssueRequestWatcher_ClaimAppliesLabelAndAudits(t *testing.T) {
+	labeled := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels") {
+			labeled++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"name":"hive/claimed-by-scanner"}]`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	var gotAction, gotDetail string
+	c.SetAttributionAudit(func(action, detail, agent string) { gotAction, gotDetail = action, detail })
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "claim", Repo: "o/r", Number: 42, Agent: "scanner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if labeled != 1 {
+		t.Fatalf("expected 1 label add, got %d", labeled)
+	}
+	if gotAction != AuditActionIssueClaimed {
+		t.Errorf("audit action = %q, want %q", gotAction, AuditActionIssueClaimed)
+	}
+	if !strings.Contains(gotDetail, "number=42") {
+		t.Errorf("audit detail missing number: %q", gotDetail)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("claim request should be consumed on success")
+	}
+}
+
+// A claim request missing number/agent is quarantined, not retried forever.
+func TestIssueRequestWatcher_ClaimMalformed(t *testing.T) {
+	c := issueTestClient(t, "http://127.0.0.1:0")
+	dir := withIssueDir(t)
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{Kind: "claim", Repo: "o/r", Agent: "scanner"}) // no number
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if _, err := os.Stat(reqPath + ".bad"); err != nil {
+		t.Errorf("malformed claim should be quarantined as .bad")
+	}
+}

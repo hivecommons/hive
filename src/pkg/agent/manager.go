@@ -7162,8 +7162,9 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 // AuthorizeIssueOpen enforces the policy for the issue-request watcher,
 // mirroring AuthorizePROpen with the mode gates that govern the direct gh
 // paths: "issue" requests need CanCreateIssues() (mode >= ISSUES_ONLY);
-// "comment" requests need the same (commenting is an issue-write). The same
-// UID forge-resistance applies: the request file's owner must BE the claimed
+// "comment" and "claim" requests need the same (commenting and claiming an
+// issue are both issue-writes under the same tier). The same UID
+// forge-resistance applies: the request file's owner must BE the claimed
 // agent. A nil manager or unknown agent is denied.
 func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string) error {
 	if strings.TrimSpace(agentName) == "" {

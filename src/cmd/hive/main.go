@@ -1578,6 +1578,13 @@ func main() {
 		// with backoff, dedupes by exact open-issue title, and enforces the
 		// same forge-resistance + CanCreateIssues mode gate the wrapper does.
 		ghClient.StartIssueRequestWatcher(ctx, agentMgr.AuthorizeIssueOpen, nil)
+		// Review relay: agents request PR reviews by dropping a file (hive-review)
+		// instead of running `gh pr review` in their own shell, which the hive
+		// never observes. The watcher submits the review with the App token and
+		// records it on the audit/activity trail, gated by the same
+		// forge-resistance + push-capability (CanPush) check as opening a PR —
+		// reviewing is a PR-write, so AuthorizePROpen is the correct gate.
+		ghClient.StartReviewRequestWatcher(ctx, agentMgr.AuthorizePROpen, nil)
 		// Merge relay: agents request merges by dropping a file (hive-merge)
 		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
 		// mutation GitHub rejects for App tokens ("Resource not accessible by
