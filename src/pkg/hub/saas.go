@@ -890,11 +890,12 @@ func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (str
 	if proof == "" {
 		return "", "not authenticated — spoke upgrade proof missing: the spoke sent no dashboard-token proof (X-Hive-Proxy-Auth); set DASHBOARD_AUTH_TOKEN on the spoke to its hive-secrets/dashboard-token value"
 	}
-	expected := s.spokeProxyAuthToken(hiveID)
-	if expected == "" {
-		return "", "not authenticated — the hub could not read this hive's dashboard-token secret (hive-secrets/dashboard-token) to verify the spoke's upgrade proof; check the hub's access to this hive's cluster"
-	}
-	if !secureCompareHub(proof, expected) {
+	switch s.verifySpokeUpgradeProof(hiveID, proof) {
+	case spokeProofOK:
+		// verified — fall through to attribution below
+	case spokeProofUnverifiable:
+		return "", "not authenticated — the hub has no stored dashboard-token record for this hive and could not read its hive-secrets/dashboard-token secret (the hive's cluster is unreachable from the hub, e.g. pull-only); a spoke on a current build reports its token over the authenticated heartbeat — trigger this hive's upgrade from the hub dashboard once, and the spoke's Upgrade button will verify against the stored record from then on"
+	default: // spokeProofMismatch
 		return "", "not authenticated — spoke upgrade proof rejected: the spoke's DASHBOARD_AUTH_TOKEN does not match this hive's dashboard-token secret; re-sync the spoke's token"
 	}
 	if username == "" {
@@ -915,6 +916,104 @@ func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (str
 		return "", "not authenticated — this account is blocked on the hub"
 	}
 	return username, ""
+}
+
+// spokeProofVerdict is the outcome of verifying a spoke's dashboard-token
+// upgrade proof. The three-way split exists for the honest-error chain:
+// "your token is wrong" and "the hub cannot check any token" demand different
+// operator actions and must never share one message.
+type spokeProofVerdict int
+
+const (
+	spokeProofOK spokeProofVerdict = iota
+	// spokeProofMismatch: at least one reference credential was available and
+	// the presented proof matched none of them.
+	spokeProofMismatch
+	// spokeProofUnverifiable: the hub has NO reference to check against — no
+	// stored DashboardTokenHash record and no readable secret (pull-only or
+	// otherwise unreachable cluster).
+	spokeProofUnverifiable
+)
+
+// verifySpokeUpgradeProof checks a spoke-relayed upgrade proof against, in
+// order:
+//
+//  1. The hub's OWN stored record (SaaSHive.DashboardTokenHash — written at
+//     provisioning when the hub mints the token, refreshed from the spoke's
+//     authenticated heartbeat). This needs no cluster access at all, which is
+//     the point: hosted spokes on pull-only clusters (e.g. fmaas) are reached
+//     only by their outbound heartbeat, and requiring a live kubectl secret
+//     read there made every proof unverifiable by design.
+//  2. A live read of the hive's hive-secrets/dashboard-token secret
+//     (spokeProxyAuthToken, cached) — the pre-existing lane, kept as fallback
+//     for hives that predate the stored record on clusters the hub CAN reach.
+//     A successful live read that matches also backfills the stored record, so
+//     the next verification (and a later loss of cluster access) no longer
+//     depends on the cluster. A rotation the stored record missed is adopted
+//     the same way: stale hash, live read matches, record refreshed.
+func (s *HubServer) verifySpokeUpgradeProof(hiveID, proof string) spokeProofVerdict {
+	verifiable := false
+	if h := loadSaaSHive(hiveID); h != nil && h.DashboardTokenHash != "" {
+		verifiable = true
+		if secureCompareHub(HashDashboardToken(proof), h.DashboardTokenHash) {
+			return spokeProofOK
+		}
+	}
+	if expected := s.spokeProxyAuthToken(hiveID); expected != "" {
+		verifiable = true
+		if secureCompareHub(proof, expected) {
+			if h := loadSaaSHive(hiveID); h != nil {
+				if hash := HashDashboardToken(expected); h.DashboardTokenHash != hash {
+					h.DashboardTokenHash = hash
+					_ = saveSaaSHive(h)
+				}
+			}
+			return spokeProofOK
+		}
+	}
+	if !verifiable {
+		return spokeProofUnverifiable
+	}
+	return spokeProofMismatch
+}
+
+// adoptSpokeDashboardTokenHash folds a heartbeat-reported dashboard-token hash
+// into the hive's stored record (see HeartbeatPayload.DashboardTokenHash for
+// why the spoke reports it, and verifySpokeUpgradeProof for what reads it).
+// Callers must have authenticated the beat's per-hive bearer first. An empty
+// or malformed value changes nothing: old spokes and token-less spokes report
+// nothing, and the hub must keep whatever record it already has.
+func (s *HubServer) adoptSpokeDashboardTokenHash(payload *HeartbeatPayload) {
+	reported := payload.DashboardTokenHash
+	if reported == "" || !isHexSHA256(reported) {
+		return
+	}
+	if !strings.HasPrefix(payload.HiveID, "hosted-") && !strings.HasPrefix(payload.HiveID, "saas-") {
+		return
+	}
+	h := loadSaaSHive(payload.HiveID)
+	if h == nil || h.DashboardTokenHash == reported {
+		return
+	}
+	h.DashboardTokenHash = reported
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Warn("failed to store heartbeat-reported dashboard token hash", "hive_id", payload.HiveID, "error", err)
+	}
+}
+
+// isHexSHA256 reports whether s is a well-formed lowercase-or-uppercase hex
+// SHA-256 digest — 64 hex characters, the only shape adoptSpokeDashboardTokenHash
+// will persist.
+func isHexSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // isCSRFSafe reports whether a request may be allowed to MUTATE state.

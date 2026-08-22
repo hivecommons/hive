@@ -3505,7 +3505,17 @@ func main() {
 				// record only when it sees the gateway named here, so a lost
 				// delivery is re-offered rather than dropped. Names only — the
 				// key never leaves the spoke.
-				GatewayNames:      dashSrv.ConfiguredGatewayNames(),
+				GatewayNames: dashSrv.ConfiguredGatewayNames(),
+				// Hash only, never the raw token: lets the hub verify this
+				// spoke's upgrade-proof credential without reading the
+				// hive-secrets secret from a cluster it may not reach
+				// (pull-only). Empty when no token is configured.
+				DashboardTokenHash: func() string {
+					if cfg.Dashboard.AuthToken == "" {
+						return ""
+					}
+					return hub.HashDashboardToken(cfg.Dashboard.AuthToken)
+				}(),
 				HiveID:            cfg.HiveID,
 				Org:               cfg.Project.Org,
 				AIAuthor:          cfg.Project.AIAuthor,

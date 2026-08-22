@@ -40,7 +40,13 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 	freshAdv := rfc(now.Add(-2 * time.Hour)) // within advisory aging window
 
 	base := func(level int) RegistryEntry {
-		return RegistryEntry{Online: true, ACMMLevel: level}
+		// Every base entry carries one on-duty agent with full write grants so
+		// the freshness bands are actually exercised; the no-writers-on-duty
+		// cases build their own agent sets.
+		return RegistryEntry{Online: true, ACMMLevel: level, Agents: []AgentSummary{
+			{Name: "quality", State: agentStateRunning, Enabled: true, ExpectedActive: true,
+				CanOpenIssue: true, CanOpenPR: true, CanMerge: true},
+		}}
 	}
 
 	tests := []struct {
@@ -163,6 +169,47 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			queued:    3,
 			wantState: HealthStateUnknown,
 			wantKind:  "creates",
+		},
+		{
+			// Live case (kellyaa/agent-newsletter): QUIET-mode L3 hive — every
+			// create-granted agent paused, the one running agent holds no write
+			// grants. It CANNOT create by configuration, so "no create output"
+			// must not be a fault. Same spine as L1: absence of output the
+			// configuration does not permit is never red.
+			name: "L3 no create-capable agent on duty — green (quiet by design)",
+			entry: func() RegistryEntry {
+				e := base(3)
+				e.Agents = []AgentSummary{
+					// paused, HAS grants — off duty, doesn't count
+					{Name: "sec-check", Enabled: false, ExpectedActive: false, CanOpenIssue: true, CanOpenPR: true},
+					// on duty, NO write grants
+					{Name: "scanner", State: agentStateRunning, Enabled: true, ExpectedActive: true},
+				}
+				return e
+			}(),
+			rollup:    okRollup(),
+			app:       okApp(),
+			queued:    4,
+			wantState: HealthStateGreen,
+			wantKind:  "creates",
+		},
+		{
+			// L6 twin: a merge-judged hive whose on-duty agents can create but
+			// not merge is quiet-by-design for merges, not failing.
+			name: "L6 no merge-capable agent on duty — green (quiet by design)",
+			entry: func() RegistryEntry {
+				e := base(6)
+				e.Agents = []AgentSummary{
+					{Name: "quality", State: agentStateRunning, Enabled: true, ExpectedActive: true,
+						CanOpenIssue: true, CanOpenPR: true, CanMerge: false},
+				}
+				return e
+			}(),
+			rollup:    okRollup(),
+			app:       okApp(),
+			queued:    3,
+			wantState: HealthStateGreen,
+			wantKind:  "merges",
 		},
 	}
 

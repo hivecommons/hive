@@ -377,8 +377,13 @@ function outputHTML(h) {
     var rel = lead.newestAt ? relTime(lead.newestAt) : "none";
     var parts = 'issues ' + iss.count + ' · PRs ' + prs.count + (isMerge ? ' · merged ' + mer.count : '');
     var leadLabel = isMerge ? 'last merge ' + rel : 'last create ' + rel;
+    // The advisory line rides along at EVERY level, same as the old-spoke
+    // fallback below — reporting repoActivity must not cost a hive its
+    // advisory indicator (post-upgrade regression: upgraded spokes lost the
+    // pill while old images kept it).
     return '<span class="output" title="per-repo output over the last ' + esc((h.repoActivityWindowHours || 12)) + 'h; judged on ' + (isMerge ? 'merges (L6)' : 'creates (L3–L5)') + '">' +
-      esc(parts) + ' <span class="rel">(' + esc(leadLabel) + ')</span></span>';
+      esc(parts) + ' <span class="rel">(' + esc(leadLabel) + ')</span></span>' +
+      '<br>' + advisoryActivityHTML(h.advisoryIssueActivity);
   }
 
   // Fallback: no per-repo activity reported (old spoke) — the prior 90d line.
