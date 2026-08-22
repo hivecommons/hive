@@ -161,6 +161,16 @@
   .hdot.offline { background: transparent; border: 1px solid var(--gray); }
   .hdot.parked { background: transparent; border: 1px dashed var(--gray); }
   .parked-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
+  /* WHY chip: the hive-health verdict's reason, next to the name. Muted for a
+     healthy/idle hive, red-tinted when the verdict is red so the cause of a
+     broken hive reads at a glance. */
+  .why-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
+  .why-chip.bad { color: var(--red); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
+  .why-chip.unknown { color: var(--gray); border-style: dashed; }
+  /* Per-repo output drill-down in the expanded sub-row. */
+  .repo-activity { display: flex; flex-direction: column; gap: 3px; }
+  .repo-activity-row { font-size: 11.5px; }
+  .repo-activity-row .repo { color: var(--fg, inherit); font-weight: 600; margin-right: 6px; }
   /* Signed-in avatar + its menu, matching the spoke dashboard's nav avatar:
      the image is the affordance, the dialog is right-anchored so extra width
      grows leftward and stays on screen. Shown on hover AND kept open by
@@ -224,7 +234,7 @@
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when agents cannot work, output is stale, budget is depleted, or GitHub App auth is broken</span>
+  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 issues/PRs created · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth). Absence of output a level does not produce is never a fault.</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
@@ -322,13 +332,81 @@ function rollupHTML(r) {
     '<span class="sep">·</span><span class="n ' + runCls + '">' + run + '</span> running' +
     '<span class="sep">·</span><span class="n ' + ableCls + '">' + able + '</span> able' + alarm + '</span>';
 }
+// sumRepoActivity totals one stat (e.g. "prs") across every repo the hive
+// reported, returning {count, newestAt}. newestAt is the max RFC3339 seen.
+function sumRepoActivity(repos, key) {
+  var count = 0, newest = "";
+  (repos || []).forEach(function (r) {
+    var s = r[key] || {};
+    count += s.count || 0;
+    if (s.newestAt && s.newestAt > newest) newest = s.newestAt;
+  });
+  return { count: count, newestAt: newest };
+}
+
+// outputHTML shows a hive's output the way its ACMM level is JUDGED, so the
+// cell answers the same question the verdict does:
+//   L1 Inception → "—" (produces nothing by design)
+//   L2 Advisory  → advisory freshness (the existing advisory line)
+//   L3–L5        → issues/PRs CREATED, with recency of the newest create
+//   L6           → creates + MERGES, with recency of the newest merge
+// Falls back to the old 90d PR/CVE line when the hive is too old to report the
+// per-repo activity the banding needs.
 function outputHTML(h) {
+  var lvl = h.acmmLevel;
+  var repos = h.repoActivity || [];
+
+  // L1 Inception: nothing to show.
+  if (lvl != null && lvl <= 1) {
+    return '<span class="output" title="inception — this hive produces no output by design">— inception</span>';
+  }
+  // L2 Advisory: the advisory stream IS the output.
+  if (lvl === 2) {
+    return advisoryActivityHTML(h.advisoryIssueActivity);
+  }
+
+  // L3+: per-repo created/merged output. Aggregate across repos.
+  if (repos.length) {
+    var iss = sumRepoActivity(repos, "issues");
+    var prs = sumRepoActivity(repos, "prs");
+    var mer = sumRepoActivity(repos, "merges");
+    var isMerge = lvl != null && lvl >= 6;
+    // The recency that matters at this level: newest merge (L6) or newest
+    // create (L3–L5).
+    var lead = isMerge ? mer : { count: prs.count, newestAt: (prs.newestAt > iss.newestAt ? prs.newestAt : iss.newestAt) };
+    var rel = lead.newestAt ? relTime(lead.newestAt) : "none";
+    var parts = 'issues ' + iss.count + ' · PRs ' + prs.count + (isMerge ? ' · merged ' + mer.count : '');
+    var leadLabel = isMerge ? 'last merge ' + rel : 'last create ' + rel;
+    return '<span class="output" title="per-repo output over the last ' + esc((h.repoActivityWindowHours || 12)) + 'h; judged on ' + (isMerge ? 'merges (L6)' : 'creates (L3–L5)') + '">' +
+      esc(parts) + ' <span class="rel">(' + esc(leadLabel) + ')</span></span>';
+  }
+
+  // Fallback: no per-repo activity reported (old spoke) — the prior 90d line.
   var m = h.prsMerged90d || 0, rej = h.prsRejected90d || 0, cve = h.cvesClosed || 0;
   var out = (!m && !rej && !cve)
     ? '<span class="output">—</span>'
     : '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
       ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
   return out + '<br>' + advisoryActivityHTML(h.advisoryIssueActivity);
+}
+
+// repoActivityDrilldownHTML renders a per-repo breakdown table body for the
+// expandable sub-row: one line per repo with its issue/PR/merge/review/advisory
+// counts. Empty string when the hive reported no per-repo activity.
+function repoActivityDrilldownHTML(h) {
+  var repos = h.repoActivity || [];
+  if (!repos.length) return "";
+  var rows = repos.map(function (r) {
+    function cell(key, label) {
+      var s = r[key] || {};
+      if (!s.count) return "";
+      return label + " " + s.count + (s.newestAt ? " (" + relTime(s.newestAt) + ")" : "");
+    }
+    var bits = [cell("issues", "issues"), cell("prs", "PRs"), cell("merges", "merged"), cell("reviews", "reviews"), cell("claims", "claimed"), cell("advisory", "advisory")]
+      .filter(function (x) { return x; }).join(" · ");
+    return '<div class="repo-activity-row"><span class="repo">' + esc(r.repo) + '</span> <span class="output">' + (bits || "—") + '</span></div>';
+  }).join("");
+  return '<div class="repo-activity">' + rows + '</div>';
 }
 function advisoryActivityHTML(a) {
   a = a || {};
@@ -435,26 +513,52 @@ function deltaHTML(a) {
   if (a.quietByDesign) return '<span class="delta quiet">quiet</span>';
   return "";
 }
-// hiveHealth returns "problem" | "ok" | "unknown" for the left dot, from the
-// rollup: any problem agent → problem; else if nothing is known (legacy spoke)
-// → unknown; else ok. Online/offline is NOT health — a spoke can be online with
-// every agent stuck.
+// hiveHealth returns "problem" | "ok" | "unknown" | "offline" | "parked" for
+// the left dot. The backend now sends an ACMM-banded output verdict
+// (h.healthVerdict = {state:green|red|unknown, reason, outputKind, lastOutputAt,
+// queuedWork}) that answers the core question — "does this hive have recent
+// output back to its work source, for the level it is AT?" — with the level
+// banding, precondition gates and queue-gate already applied. We prefer it, but
+// keep the two MORE-SPECIFIC display states the verdict does not model:
+//   • parked  — every agent deliberately quiet (hive not in use); the verdict's
+//     queue-gate already reads this as green, but the operator wants it shown as
+//     parked, not plain ok.
+//   • offline — not reporting; the verdict returns unknown for this, but the
+//     dashed-ring offline dot is the clearer signal.
+// A broken GitHub App still outranks parked (auth is broken whether or not the
+// hive is in use); the verdict already reds on it at L2+.
 function hiveHealth(h) {
-  // Parked — every agent deliberately quiet (hive not in use). Checked before
-  // the output-side signals: a hive nobody is running produces no advisories
-  // and burns no budget, so stale/exhausted readings are the pause's own
-  // consequence, not faults. A broken GitHub App still outranks parked — auth
-  // infrastructure is broken whether or not anyone is using the hive.
   if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
   if (h.allAgentsQuiet) return "parked";
+  if (!h.online) return "offline";
+  var v = h.healthVerdict;
+  if (v && v.state) {
+    if (v.state === "red") return "problem";
+    if (v.state === "green") return "ok";
+    return "unknown"; // v.state === "unknown"
+  }
+  // No verdict on the row (old hub, or a placeholder): fall back to the prior
+  // rollup-based derivation so the dot never goes blank.
   if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
   if (((h.budgetHealth || {}).bucket || "") === "critical" || ((h.budgetHealth || {}).bucket || "") === "exhausted") return "problem";
   var r = h.fleetRollup;
-  if (!r) return h.online ? "unknown" : "offline";
+  if (!r) return "unknown";
   if ((r.problems || 0) > 0) return "problem";
   if ((r.known || 0) === 0) return "unknown";
-  if (!h.online) return "offline";
   return "ok";
+}
+
+// whyChipHTML renders the small "WHY" chip next to a hive's name: the verdict's
+// reason ("last merge 3h ago" / "no create in 30h (7 queued)" / "advisory
+// stale"). Green reasons are muted, red reasons are tinted so a broken hive's
+// cause reads at a glance. Nothing for parked/offline (their own chip/dot say
+// it) or when there is no verdict.
+function whyChipHTML(h, health) {
+  if (health === "parked" || health === "offline") return "";
+  var v = h.healthVerdict;
+  if (!v || !v.reason) return "";
+  var cls = v.state === "red" ? "why-chip bad" : (v.state === "unknown" ? "why-chip unknown" : "why-chip");
+  return '<span class="' + cls + '" title="' + esc(v.outputKind ? "output judged on: " + v.outputKind : "hive-health") + '">' + esc(v.reason) + '</span>';
 }
 
 // Expand state persists across the 30s refresh (keyed by hive id) so an open
@@ -524,7 +628,7 @@ function renderHives(hives) {
     tr.className = "spoke health-" + health + (open ? " open" : "");
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + '</td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
@@ -562,6 +666,19 @@ function renderHives(hives) {
       empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
       tb.appendChild(empty);
       subRows.push(empty);
+    }
+    // Per-repo output drill-down (hive-health): one sub-row listing each repo's
+    // created/merged/reviewed counts with recency, so an operator can see WHICH
+    // repo a hive is (or isn't) producing against. Only when the hive reported
+    // per-repo activity.
+    var drill = repoActivityDrilldownHTML(h);
+    if (drill) {
+      var draw = document.createElement("tr");
+      draw.className = "agent";
+      draw.style.display = open ? "" : "none";
+      draw.innerHTML = '<td></td><td class="aname" colspan="6">' + drill + '</td>';
+      tb.appendChild(draw);
+      subRows.push(draw);
     }
     tr.addEventListener("click", function () {
       expanded[key] = !expanded[key];
