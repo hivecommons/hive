@@ -194,7 +194,10 @@ func grantRosterFor(agents []AgentSummary, grant func(AgentSummary) bool) grantR
 		if !grant(a) {
 			continue
 		}
-		if a.ExpectedActive {
+		// Off duty = operator-paused (Paused flag or paused state — paused
+		// agents still report ExpectedActive true, the governor keeps them on
+		// the schedule) or off-schedule (!ExpectedActive).
+		if a.ExpectedActive && !a.Paused && !strings.EqualFold(a.State, agentStatePaused) {
 			r.onDuty = append(r.onDuty, a.Name)
 		} else {
 			r.off = append(r.off, a.Name)
