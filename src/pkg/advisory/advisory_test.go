@@ -71,6 +71,20 @@ func TestFormatDigestMarkdownEmpty(t *testing.T) {
 	}
 }
 
+func TestFormatDigestMarkdownEmptyFreshnessMarker(t *testing.T) {
+	d := BuildDigest(nil, "idle")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: "", ShowEmpty: true})
+	if md == "" {
+		t.Fatal("expected non-empty markdown for an explicit empty freshness marker")
+	}
+	if !contains(md, "✅ No open advisory findings") {
+		t.Errorf("missing no-findings freshness marker:\n%s", md)
+	}
+	if !contains(md, "evaluated ") {
+		t.Errorf("missing evaluation timestamp:\n%s", md)
+	}
+}
+
 func TestFormatDigestMarkdownWithResolved(t *testing.T) {
 	d := &Digest{
 		GeneratedAt: time.Now(),

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kubestellar/hive/pkg/advisory"
+	"github.com/kubestellar/hive/pkg/beads"
 	"github.com/kubestellar/hive/pkg/config"
 	"github.com/kubestellar/hive/pkg/dashboard"
 	"github.com/kubestellar/hive/pkg/github"
@@ -46,6 +48,46 @@ func TestAdvisoryIssueUnresolved(t *testing.T) {
 	}
 	if advisoryIssueUnresolved(issues, "org/ok") {
 		t.Error("a resolved issue number must not trigger a re-ensure")
+	}
+}
+
+func TestEmptyAdvisoryDigestRequiresExistingIssueAndClient(t *testing.T) {
+	client := &github.Client{}
+
+	if !shouldBuildAdvisoryDigest(nil, client, true) {
+		t.Fatal("empty digest should still be built for an existing advisory issue")
+	}
+	if shouldBuildAdvisoryDigest(nil, client, false) {
+		t.Fatal("empty digest must not create advisory participation from nothing")
+	}
+	if shouldBuildAdvisoryDigest(nil, nil, true) {
+		t.Fatal("empty digest requires a GitHub client capable of attempting the write")
+	}
+	if !shouldBuildAdvisoryDigest(map[string]*beads.Store{"scanner": nil}, nil, false) {
+		t.Fatal("non-empty store set should still build so missing-issue errors can be reported")
+	}
+}
+
+func TestEmptyAdvisoryDigestPostsOnlyToExistingIssue(t *testing.T) {
+	client := &github.Client{}
+	empty := &advisory.Digest{}
+	withFinding := &advisory.Digest{TotalCount: 1}
+	withResolved := &advisory.Digest{RecentlyResolved: []advisory.ResolvedFinding{{Title: "fixed"}}}
+
+	if !shouldPostAdvisoryDigest(empty, client, true) {
+		t.Fatal("empty digest should post as a freshness marker when a pinned issue exists")
+	}
+	if shouldPostAdvisoryDigest(empty, client, false) {
+		t.Fatal("empty digest must not post without an existing pinned issue")
+	}
+	if shouldPostAdvisoryDigest(empty, nil, true) {
+		t.Fatal("empty digest must not post without a GitHub client")
+	}
+	if !shouldPostAdvisoryDigest(withFinding, nil, false) {
+		t.Fatal("findings must still flow to the missing-issue error path")
+	}
+	if !shouldPostAdvisoryDigest(withResolved, nil, false) {
+		t.Fatal("recently resolved findings must still flow to the missing-issue error path")
 	}
 }
 

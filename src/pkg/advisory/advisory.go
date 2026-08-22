@@ -361,6 +361,10 @@ type DigestOptions struct {
 	// ShowAll bypasses MaxFindings — the owner opt-in for the full list.
 	ShowAll bool
 	Org     string
+	// ShowEmpty renders a freshness-marker digest even when there are no
+	// open or recently resolved findings. Callers should only enable this when
+	// updating an existing advisory participant's pinned issue/comment.
+	ShowEmpty bool
 	// PrimaryRepo is the repo the digest is posted to, used to resolve
 	// repo-less "gh-123" references.
 	PrimaryRepo string
@@ -764,19 +768,24 @@ func VerifyFindingPaths(d *Digest, exists func(path string) bool) {
 func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 	org, primaryRepo := opts.Org, opts.PrimaryRepo
 	if d.TotalCount == 0 {
-		// No open findings. If nothing was recently resolved either, there is
-		// nothing to say — return "" so no digest comment is created. But when
-		// findings WERE just resolved, an updated digest must still be posted:
-		// otherwise the pinned comment freezes on its last non-empty state and
-		// keeps showing healed findings forever (#2575).
-		if len(d.RecentlyResolved) == 0 {
+		// No open findings. If findings WERE just resolved, an updated digest
+		// must still be posted: otherwise the pinned comment freezes on its last
+		// non-empty state and keeps showing healed findings forever (#2575).
+		// If nothing was recently resolved either, render only when the caller is
+		// deliberately refreshing an existing advisory participant's pinned issue;
+		// otherwise keep returning "" so no digest comment is created.
+		if len(d.RecentlyResolved) == 0 && !opts.ShowEmpty {
 			return ""
 		}
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
 		b.WriteString("> Automated code review findings from [Hive](https://github.com/kubestellar/hive) agents. ")
 		b.WriteString("This comment is updated periodically.\n\n")
-		b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
+		if len(d.RecentlyResolved) == 0 {
+			b.WriteString(fmt.Sprintf("**Findings:** 0 — ✅ No open advisory findings · evaluated %s.\n\n", d.GeneratedAt.Format(time.RFC3339)))
+		} else {
+			b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
+		}
 		writeRecentlyResolved(&b, d, org, primaryRepo)
 		writeAnalyzedFooter(&b, d)
 		return NeutralizeMentions(b.String())

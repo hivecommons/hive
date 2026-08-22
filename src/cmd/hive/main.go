@@ -5224,6 +5224,28 @@ func advisoryIssueUnresolved(advisoryIssues map[string]int, repo string) bool {
 	return !ok || num <= 0
 }
 
+func advisoryIssueNumber(advisoryIssues map[string]int, repo string) (int, bool) {
+	num, ok := advisoryIssues[repo]
+	return num, ok && num > 0
+}
+
+func shouldBuildAdvisoryDigest(beadStores map[string]*beads.Store, ghClient *github.Client, hasExistingPinnedIssue bool) bool {
+	if len(beadStores) > 0 {
+		return true
+	}
+	return ghClient != nil && hasExistingPinnedIssue
+}
+
+func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, hasPinnedIssue bool) bool {
+	if digest == nil {
+		return false
+	}
+	if digest.TotalCount > 0 || len(digest.RecentlyResolved) > 0 {
+		return true
+	}
+	return ghClient != nil && hasPinnedIssue
+}
+
 // advisoryIssueMissingError is the error recorded (and reported to the hub) when
 // a hive has findings to publish but no advisory issue to publish them to. It is
 // deliberately an ERROR rather than a silent skip: the hub's staleness gate
@@ -5292,17 +5314,19 @@ func runEvalCycle(
 	// error recorded below can name the CAUSE (e.g. Issues disabled on a fork,
 	// #4329) instead of only the symptom.
 	var advisoryEnsureErr error
-	if primaryRepo := primaryAdvisoryRepo(cfg); primaryRepo != "" && ghClient != nil {
-		if advisoryIssueUnresolved(advisoryIssues, primaryRepo) {
-			num, retryErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
+	primaryRepoAtCycleStart := primaryAdvisoryRepo(cfg)
+	_, hadPinnedAdvisoryIssueAtCycleStart := advisoryIssueNumber(advisoryIssues, primaryRepoAtCycleStart)
+	if primaryRepoAtCycleStart != "" && ghClient != nil {
+		if advisoryIssueUnresolved(advisoryIssues, primaryRepoAtCycleStart) {
+			num, retryErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepoAtCycleStart)
 			if retryErr == nil {
-				advisoryIssues[primaryRepo] = num
+				advisoryIssues[primaryRepoAtCycleStart] = num
 				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
-				logger.Info("advisory issue resolved on retry", "repo", primaryRepo, "number", num)
+				logger.Info("advisory issue resolved on retry", "repo", primaryRepoAtCycleStart, "number", num)
 			} else {
 				advisoryEnsureErr = retryErr
 				logger.Warn("advisory issue still unresolved — digest cannot be posted this cycle",
-					"repo", primaryRepo, "error", retryErr)
+					"repo", primaryRepoAtCycleStart, "error", retryErr)
 			}
 		}
 	}
@@ -5786,7 +5810,12 @@ func runEvalCycle(
 	}
 
 	// Advisory digest: build from beads (the source of truth) before status broadcast.
-	if len(beadStores) > 0 {
+	primaryRepo := primaryAdvisoryRepo(cfg)
+	issueNum, hasPinnedAdvisoryIssue := advisoryIssueNumber(advisoryIssues, primaryRepo)
+	hasExistingPinnedIssueForEmptyDigest := hasPinnedAdvisoryIssue &&
+		primaryRepo == primaryRepoAtCycleStart &&
+		hadPinnedAdvisoryIssueAtCycleStart
+	if shouldBuildAdvisoryDigest(beadStores, ghClient, hasExistingPinnedIssueForEmptyDigest) {
 		// Retire findings no agent has re-reported inside the staleness window
 		// BEFORE the digest is built, so a stale finding never appears in the
 		// comment one last time after it has been proven gone. Agents re-file a
@@ -5810,12 +5839,13 @@ func runEvalCycle(
 		dashSrv.SetAdvisoryDigest(digest)
 		statusPayload.AdvisoryDigest = digest
 
-		// Post whenever there is something CURRENT to say: open findings, or
-		// recently resolved ones. The latter matters for healing (#2575): when
-		// the last finding resolves, TotalCount drops to 0 but the pinned
-		// digest comment must still be rewritten — otherwise it freezes on its
-		// last non-empty state and keeps showing the healed finding forever.
-		if digest.TotalCount > 0 || len(digest.RecentlyResolved) > 0 {
+		// Post whenever there is something CURRENT to say: open findings,
+		// recently resolved ones, or an empty evaluation for a hive that already
+		// has a pinned advisory issue. The resolved and empty cases matter for
+		// freshness: otherwise the pinned comment and AdvisoryLastPostedAt
+		// freeze after the last finding disappears, and the hub reports a stale
+		// advisory loop even though the agents are running cleanly.
+		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))
@@ -5834,8 +5864,11 @@ func runEvalCycle(
 				"agents", strings.Join(agentNames, ", "),
 				"resolved_count", len(digest.RecentlyResolved),
 			)
+			if digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0 {
+				logger.Info("advisory digest empty — posting freshness marker",
+					"repo", primaryRepo, "issue", issueNum)
+			}
 
-			primaryRepo := primaryAdvisoryRepo(cfg)
 			// Repo entries may be org-qualified ("org/repo"); the digest
 			// linkifier needs the bare repo name alongside the org.
 			org, repoName := cfg.Project.Org, primaryRepo
@@ -5890,10 +5923,11 @@ func runEvalCycle(
 				MaxFindings: digestOpts.MaxFindings,
 				ShowAll:     digestOpts.ShowAll,
 				Org:         org,
+				ShowEmpty:   digest.TotalCount == 0 && len(digest.RecentlyResolved) == 0,
 				PrimaryRepo: repoName,
 			})
 			if md != "" {
-				if issueNum, ok := advisoryIssues[primaryRepo]; ok && issueNum > 0 {
+				if hasPinnedAdvisoryIssue {
 					// Prefer the App client as the PRIMARY poster. The App
 					// authored the advisory-digest comment and always holds
 					// issues:write, so it is the correct identity to edit it.
