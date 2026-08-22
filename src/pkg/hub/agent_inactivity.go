@@ -187,7 +187,16 @@ const (
 // UNKNOWN. A future timestamp is clock skew, not activity, and must not be
 // read as either fresh or stale.
 func parseAgentTime(s string) (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
+	t, err := time.Parse(time.RFC3339, s)
+	if err == nil {
+		return t, true
+	}
+	// Compact wire variant seen live from spokes ("2026-08-22T024118Z" — time
+	// colons stripped). RFC3339-only parsing silently returned !ok for every
+	// such timestamp, which defeated the needs-login grace check and let
+	// login-wedged agents (EPM, alchemy-logging) read as healthy fleet-wide.
+	t, err = time.Parse("2006-01-02T150405Z", s)
 	if err != nil {
 		return time.Time{}, false
 	}

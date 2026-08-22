@@ -199,6 +199,17 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	switch {
 	case paused:
 		v.RunState = runQuietByDesign
+	case kind == agentInactiveNeedsLogin:
+		// A login prompt outranks the off-schedule quiet branch below: a
+		// wedged interactive credential is a HIVE-wide fault (every kick to
+		// this backend will fail), not a scheduling choice — and spokes that
+		// omit expectedActive on the wire (seen live: EPM + alchemy-logging,
+		// three copilot agents each sitting at "Please use /login" with 40+
+		// queued items) read as green "quiet by design" without this, which
+		// is the exact at-a-glance failure the verdict exists to prevent.
+		// classifyInactiveAgent already applies the paused check, the
+		// running-state gate, and the 20-minute login grace.
+		v.RunState = runStuckAtLogin
 	case !legacy && !a.ExpectedActive:
 		// Not scheduled to run in this mode: off by design, not a fault —
 		// REGARDLESS of the reported session state. Spokes keep persistent
@@ -214,8 +225,6 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 		v.RunState = runQuietByDesign
 	case kind == agentInactiveSessionMissing:
 		v.RunState = runSessionGone
-	case kind == agentInactiveNeedsLogin:
-		v.RunState = runStuckAtLogin
 	case kind == agentInactiveIdleWithWork:
 		v.RunState = runIdleAtPrompt
 	case running:
@@ -312,9 +321,14 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// neither stuck nor impotent.
 	if !v.QuietByDesign {
 		switch v.RunState {
-		case runDead, runStuckAtLogin, runSessionGone, runIdleAtPrompt:
+		case runDead, runSessionGone, runIdleAtPrompt:
 			// Only "stuck" when the governor actually expects it active now.
 			v.Stuck = a.ExpectedActive
+		case runStuckAtLogin:
+			// A wedged login is stuck regardless of the schedule: the broken
+			// credential is hive-wide and the wire may omit expectedActive
+			// entirely (the EPM/alchemy case) — gating on it hid the fault.
+			v.Stuck = true
 		}
 		// IMPOTENT: running but not capable of its mission (blocked/gated). Uses
 		// `capable`, not v.Able, because v.Able already requires runWorking —
@@ -332,7 +346,11 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// this a problem?" per agent. It is FALSE for paused/off-schedule agents
 	// (quiet by design — the operator's own choice, not called) and for legacy/
 	// unknown rows (returned early above — can't-verify is not broken).
-	v.Problem = a.ExpectedActive && !v.QuietByDesign && !v.Able
+	//
+	// runStuckAtLogin bypasses the expectedActive gate: the credential fault is
+	// real whether or not the wire carries the schedule bit (see the ACTUAL-leg
+	// ordering above).
+	v.Problem = (a.ExpectedActive || v.RunState == runStuckAtLogin) && !v.QuietByDesign && !v.Able
 
 	return v
 }
@@ -359,6 +377,20 @@ type agentFleetRollup struct {
 	// (any reason) — THE alarm count. >0 → the hive's dot is red and it sorts to
 	// the top.
 	Problems int `json:"problems"`
+	// LoginStuck is how many of the Problems are interactive agents wedged at a
+	// login prompt. When every problem is a login block, the hive verdict can
+	// name the single actionable cause ("re-login needed") instead of the
+	// generic "N agent(s) blocked".
+	LoginStuck int `json:"loginStuck,omitempty"`
+	// IdleWithWork is how many of the Problems are running agents sitting idle
+	// past the threshold while the hive has queued work. Named separately so
+	// the verdict can say "idle with work queued" — the remedy (kick/schedule)
+	// differs from a dead session or a login wedge.
+	IdleWithWork int `json:"idleWithWork,omitempty"`
+	// DeadOrGone is how many of the Problems have no live session at all
+	// (dead, or running-with-session-missing zombies). When every problem is
+	// in this class the verdict keeps the familiar "no agents running".
+	DeadOrGone int `json:"deadOrGone,omitempty"`
 	// Known is how many agents reported the new divergence signals (non-legacy).
 	// When Known==0 the whole hive is UNKNOWN (a spoke not yet rolled to this
 	// build) and its dot is gray, never green — absence of a problem we cannot
@@ -478,6 +510,14 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 		}
 		if v.Problem {
 			r.Problems++
+			switch v.RunState {
+			case runStuckAtLogin:
+				r.LoginStuck++
+			case runIdleAtPrompt:
+				r.IdleWithWork++
+			case runDead, runSessionGone:
+				r.DeadOrGone++
+			}
 		}
 	}
 	return r

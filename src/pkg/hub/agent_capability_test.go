@@ -200,6 +200,79 @@ func TestVerdict_IssuesOnlyAgentIsAble(t *testing.T) {
 	}
 }
 
+// The live EPM/alchemy-logging shape: the spoke reports enabled+running+
+// needsLogin with capabilities but OMITS expectedActive. The wedged credential
+// is a hive-wide fault; the off-schedule quiet branch must not swallow it.
+func TestVerdict_LoginStuckWithoutExpectedActive(t *testing.T) {
+	now := time.Now()
+	a := modernWorking(now)
+	a.Name, a.Backend = "quality", "copilot"
+	a.ExpectedActive = false
+	a.CanMerge = false
+	a.NeedsLogin = true
+	v := deriveAgentVerdict(a, hiveBlockers{}, 40, now)
+	if v.RunState != runStuckAtLogin {
+		t.Errorf("runState = %v, want stuck-at-login (not quiet-by-design)", v.RunState)
+	}
+	if v.QuietByDesign {
+		t.Error("a login-stuck agent is never quiet by design")
+	}
+	if !v.Stuck {
+		t.Error("login-stuck must be STUCK even when expectedActive is absent")
+	}
+	if !v.Problem {
+		t.Error("login-stuck must be a PROBLEM even when expectedActive is absent")
+	}
+}
+
+// A genuinely off-schedule agent without a login prompt keeps the quiet branch:
+// the login carve-out above must not resurrect the surge-mode false alarm.
+func TestVerdict_OffScheduleWithoutLoginStaysQuiet(t *testing.T) {
+	now := time.Now()
+	a := modernWorking(now)
+	a.ExpectedActive = false
+	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	if v.RunState != runQuietByDesign || v.Problem {
+		t.Errorf("off-schedule running agent must stay quiet-by-design; got %v problem=%v", v.RunState, v.Problem)
+	}
+}
+
+func TestRollup_LoginStuckCount(t *testing.T) {
+	now := time.Now()
+	stuck := modernWorking(now)
+	stuck.Name, stuck.NeedsLogin = "quality", true
+	down := modernWorking(now)
+	down.Name, down.State = "guide", "stopped"
+	r := rollupAgents([]AgentSummary{modernWorking(now), stuck, down}, hiveBlockers{}, 5, now)
+	if r.Problems != 2 {
+		t.Fatalf("problems = %d, want 2", r.Problems)
+	}
+	if r.LoginStuck != 1 {
+		t.Errorf("loginStuck = %d, want 1 (only the login-wedged agent)", r.LoginStuck)
+	}
+	if r.DeadOrGone != 1 {
+		t.Errorf("deadOrGone = %d, want 1 (the stopped agent)", r.DeadOrGone)
+	}
+}
+
+// TestParseAgentTime_CompactWireFormat pins the colonless timestamp variant
+// spokes emit live ("2026-08-22T024118Z"). RFC3339-only parsing returned !ok
+// for every such value, which silently disabled the needs-login grace and the
+// idle rule fleet-wide — login-wedged agents read as healthy.
+func TestParseAgentTime_CompactWireFormat(t *testing.T) {
+	got, ok := parseAgentTime("2026-08-22T024118Z")
+	if !ok {
+		t.Fatal("compact wire timestamp did not parse")
+	}
+	want := time.Date(2026, 8, 22, 2, 41, 18, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("parsed %v, want %v", got, want)
+	}
+	if _, ok := parseAgentTime("garbage"); ok {
+		t.Error("garbage parsed as a time")
+	}
+}
+
 func TestRollup_Counts(t *testing.T) {
 	now := time.Now()
 	working := modernWorking(now)

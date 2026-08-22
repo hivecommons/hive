@@ -82,6 +82,47 @@ func TestHiveHealthForReasons(t *testing.T) {
 			wantReason: "2 agent(s) blocked",
 		},
 		{
+			// EPM/alchemy live case: every problem is a wedged interactive
+			// login, so the reason names the one actionable cause.
+			name:   "L3 all problems login-stuck — red names the re-login",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 0, Running: 1, Known: 4, Problems: 3, LoginStuck: 3},
+			app:    okApp(), queued: 43,
+			wantState:  HealthStateRed,
+			wantReason: "3 agent(s) stuck at login — re-login needed",
+		},
+		{
+			// Mixed causes keep the generic count: naming only the login half
+			// would hide the rest.
+			name:   "L3 mixed blocked causes — generic blocked count",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 2, Running: 1, Known: 4, Problems: 3, LoginStuck: 1},
+			app:    okApp(), queued: 5,
+			wantState:  HealthStateRed,
+			wantReason: "3 agent(s) blocked",
+		},
+		{
+			// Live sessions sitting past the idle threshold with a backlog:
+			// "no agents running" was factually wrong for this shape and sent
+			// operators down the restart path instead of the kick path.
+			name:   "L3 all problems idle-with-work — red names the idleness",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 3, Running: 0, Known: 5, Problems: 3, IdleWithWork: 3},
+			app:    okApp(), queued: 8,
+			wantState:  HealthStateRed,
+			wantReason: "3 agent(s) idle with work queued",
+		},
+		{
+			// Every problem is a dead/vanished session and nothing is alive:
+			// the familiar full-outage wording is preserved by the cause split.
+			name:   "L3 all problems dead — keeps no-agents-running wording",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 2, Running: 0, Known: 2, Problems: 2, DeadOrGone: 2},
+			app:    okApp(), queued: 3,
+			wantState:  HealthStateRed,
+			wantReason: "no agents running",
+		},
+		{
 			name:      "L4 recent create — reason humanizes the age",
 			entry:     withActivity(writer(base(4)), ractivity("o/r", rfc(now.Add(-3*time.Hour)), "", "", "")),
 			rollup:    okRollup(),

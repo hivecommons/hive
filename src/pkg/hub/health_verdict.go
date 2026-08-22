@@ -108,14 +108,32 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 			v.Reason = "budget exhausted — agents halted"
 			return v
 		}
+		if rollup.Problems > 0 {
+			v.State = HealthStateRed
+			switch {
+			case rollup.LoginStuck == rollup.Problems:
+				// Every blocked agent is wedged at a login prompt: name the one
+				// actionable cause (operator re-login) instead of the generic
+				// count — the EPM/alchemy at-a-glance case.
+				v.Reason = fmt.Sprintf("%d agent(s) stuck at login — re-login needed", rollup.LoginStuck)
+			case rollup.DeadOrGone == rollup.Problems && rollup.Running == 0:
+				// Nothing alive at all: keep the familiar wording so a fully
+				// down hive reads the same as before the cause split.
+				v.Reason = "no agents running"
+			case rollup.IdleWithWork == rollup.Problems:
+				// Sessions are alive but every scheduled agent is sitting past
+				// the idle threshold while work is queued. "no agents running"
+				// here was factually wrong (they ARE running) and pointed the
+				// operator at restarts instead of the kick/schedule path.
+				v.Reason = fmt.Sprintf("%d agent(s) idle with work queued", rollup.IdleWithWork)
+			default:
+				v.Reason = fmt.Sprintf("%d agent(s) blocked", rollup.Problems)
+			}
+			return v
+		}
 		if rollup.Expected > 0 && rollup.Running == 0 {
 			v.State = HealthStateRed
 			v.Reason = "no agents running"
-			return v
-		}
-		if rollup.Problems > 0 {
-			v.State = HealthStateRed
-			v.Reason = fmt.Sprintf("%d agent(s) blocked", rollup.Problems)
 			return v
 		}
 	}
