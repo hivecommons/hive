@@ -3,7 +3,6 @@ package agent
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/pkg/config"
@@ -149,54 +148,46 @@ func TestRefreshCopilotSessionToken_NoCopilotBackend(t *testing.T) {
 	m.refreshCopilotSessionToken()
 }
 
-// ensureCopilotTrustedFolders pre-seeds trusted_folders so Copilot's folder-
-// trust modal never appears. It must add a missing folder, be idempotent (no
-// rewrite when already present), preserve existing entries, and handle a
-// missing config file by creating it.
-func TestEnsureCopilotTrustedFolders(t *testing.T) {
+// restoreCopilotTokens must store the seeded token under the preserved login
+// identity when one is on file — the string shape a real /login writes — so
+// the interactive CLI recognizes the seed as a signed-in session instead of
+// showing "Please use /login" over a valid token. With no identity, it falls
+// back to the host-keyed object shape.
+func TestRestoreCopilotTokens_IdentityShape(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
-	read := func() string {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		return string(b)
+	// Identity present (preserved by clearExpiredTokens) → token stored under
+	// the identity key as a bare string.
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{},"loggedInUsers":["https://github.com:alice"],"lastLoggedInUser":"https://github.com:alice"}`), 0o660); err != nil {
+		t.Fatal(err)
 	}
-
-	// Missing file → created with the default folder trusted.
-	if err := ensureCopilotTrustedFolders(path); err != nil {
-		t.Fatalf("seed on missing file: %v", err)
+	if err := restoreCopilotTokens(path, "gho_seeded"); err != nil {
+		t.Fatal(err)
 	}
-	if got := read(); !strings.Contains(got, copilotTrustedFolder) {
-		t.Fatalf("default folder not seeded: %s", got)
-	}
-
-	// Idempotent: a second call with the same folder must NOT rewrite the file.
-	before, err := os.Stat(path)
+	cfg, err := readCopilotConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureCopilotTrustedFolders(path); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.Stat(path)
-	if !after.ModTime().Equal(before.ModTime()) {
-		t.Error("idempotent call rewrote the file (should no-op when folder already present)")
+	toks, _ := cfg["copilotTokens"].(map[string]interface{})
+	if got, _ := toks["https://github.com:alice"].(string); got != "gho_seeded" {
+		t.Errorf("identity-keyed token = %q, want gho_seeded under the identity key; tokens=%v", got, toks)
 	}
 
-	// Existing token + a new folder: token preserved, both folders present.
-	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{"github.com":{"token":"gho_keep"}},"trusted_folders":["/data/agents"]}`), 0o660); err != nil {
+	// No identity → legacy host-keyed object shape (unchanged behavior).
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{}}`), 0o660); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureCopilotTrustedFolders(path, "/data/home/hive-work"); err != nil {
+	if err := restoreCopilotTokens(path, "gho_plain"); err != nil {
 		t.Fatal(err)
 	}
-	got := read()
-	for _, want := range []string{"gho_keep", "/data/agents", "/data/home/hive-work"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q after add; file:\n%s", want, got)
-		}
+	cfg, err = readCopilotConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, _ = cfg["copilotTokens"].(map[string]interface{})
+	obj, _ := toks["github.com"].(map[string]interface{})
+	if got, _ := obj["token"].(string); got != "gho_plain" {
+		t.Errorf("no-identity token = %q, want gho_plain under github.com object shape; tokens=%v", got, toks)
 	}
 }

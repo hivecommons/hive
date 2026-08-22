@@ -1780,13 +1780,18 @@ func TestClearExpiredTokens_ClearsAndPreservesOther(t *testing.T) {
 		t.Error("tokens should be empty after clear")
 	}
 
+	// Login IDENTITY survives a token clear: an expired token does not change
+	// who was logged in, and the interactive CLI refuses to treat a seeded
+	// token as a signed-in session without it — wiping identity here is what
+	// left agents at "Please use /login" over a perfectly valid restored token
+	// (kubestellar/hive, 2026-08-22).
 	users := result["loggedInUsers"].([]interface{})
-	if len(users) != 0 {
-		t.Error("loggedInUsers should be empty")
+	if len(users) != 1 || users[0] != "github.com" {
+		t.Errorf("loggedInUsers must be preserved across a token clear, got %v", users)
 	}
 
-	if _, ok := result["lastLoggedInUser"]; ok {
-		t.Error("lastLoggedInUser should be deleted")
+	if result["lastLoggedInUser"] != "github.com" {
+		t.Error("lastLoggedInUser must be preserved across a token clear")
 	}
 
 	if result["otherSetting"] != "keep-me" {

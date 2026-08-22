@@ -2410,21 +2410,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	m.fixSharedConfigPerms(agent)
 
-	// Pre-seed Copilot's trusted_folders BEFORE the CLI starts so its "Confirm
-	// folder trust" modal never appears (Copilot ≥1.0.78). That modal wedges a
-	// fresh session at startup, the login-detector misreads the blocked pane as
-	// "needs login" and pauses the agent, and a re-login just re-hits the race —
-	// the failure the operator saw where logged-in agents kept asking to log in.
-	// There is no CLI flag to disable it (github/copilot-cli#1121); the
-	// trusted_folders array is the documented, durable bypass. Idempotent and
-	// best-effort — the runtime watchForTrustPromptForAgent watcher stays as a
-	// backstop, so a failure here only loses the pre-seed, never the answer.
-	if backend == "copilot" {
-		if err := ensureCopilotTrustedFolders(sharedCopilotConfigPath); err != nil {
-			m.logger.Warn("failed to pre-seed copilot trusted_folders (watcher will backstop)",
-				"name", agent.Name, "error", err)
-		}
-	}
+	// NOTE on Copilot's "Confirm folder trust" modal (≥1.0.78): #4563 tried to
+	// pre-seed config.json trusted_folders here so it never appears. That does
+	// NOT work — the shared config is rewritten wholesale by every running CLI
+	// from its own stale in-memory snapshot, so seeded entries are stomped
+	// within minutes (traced live 2026-08-22). The modal is instead answered
+	// session-only ("1. Yes") by watchForTrustPromptForAgent, which now runs
+	// for the agent's whole lifetime, and the login-detector stands down while
+	// the modal is on screen (PaneShowsBlockingPrompt).
 
 	// Re-apply SECRET env vars before every launch. ensureTmuxSession sets the
 	// full env via tmux set-environment, but it returns early when the session
@@ -2774,12 +2767,21 @@ type blockingPrompt struct {
 var blockingPrompts = []blockingPrompt{
 	{
 		backend: "copilot",
-		// Copilot: "Confirm folder trust" → 2. Yes, and remember for future
-		// sessions. Remembering is what stops it recurring on every restart.
+		// Copilot: "Confirm folder trust" → 1. Yes (THIS SESSION ONLY).
+		//
+		// Deliberately NOT "2. Yes, and remember": remembering makes the CLI
+		// rewrite the SHARED ~/.copilot/config.json from its own in-memory
+		// snapshot, which stomps every other agent's state in that file — traced
+		// live on kubestellar/hive (2026-08-22): each agent's "remember" wiped
+		// the others' trustedFolders entries, and one stale rewrite resurrected
+		// a dead token over the operator's fresh login, which is why re-logins
+		// never stuck. Session-only trust writes NOTHING; the watcher now runs
+		// for the agent's whole lifetime, so every (re)launch gets re-answered
+		// and persistence is unnecessary.
 		match: func(p string) bool {
 			return strings.Contains(p, "Confirm folder trust") || strings.Contains(p, "Do you trust the files")
 		},
-		key:   "2",
+		key:   "1",
 		label: "copilot folder trust",
 	},
 	{
@@ -2863,6 +2865,17 @@ func blockingPromptKey(backend, pane string) (key, label string, ok bool) {
 	return "", "", false
 }
 
+// PaneShowsBlockingPrompt reports whether the pane is currently sitting on a
+// known startup-blocking modal (folder trust, codex update, …) for the given
+// backend. The login-detector uses it to stand down: a trust-wedged pane is
+// NOT a login problem, and pausing the agent for it kills the very watcher
+// that would answer the prompt — the deadlock that kept kubestellar/hive's
+// copilot agents "sitting at login prompt" through every re-login (2026-08-22).
+func PaneShowsBlockingPrompt(backend, pane string) bool {
+	_, _, ok := blockingPromptKey(backend, pane)
+	return ok
+}
+
 // paneHasBlockingPrompt reports whether ANY known blocking prompt is on the
 // pane, regardless of backend. Used by the readiness gate, which does not know
 // the backend; the patterns are specific enough that a false positive only
@@ -2915,30 +2928,37 @@ const codexUpdatePromptLabel = "codex update prompt"
 func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.Context) {
 	const (
 		trustPollInterval = 2 * time.Second
-		trustMaxWait      = 120 * time.Second
 		trustCooldown     = 3 * time.Second
+		// trustReanswerAfter is how long a prompt must have been answered before
+		// the same prompt may be answered again. Short enough that a CLI which
+		// restarts inside the pane (crash loop, /login relaunch) is unwedged on
+		// its next appearance; long enough that the menu still rendering for a
+		// beat after the keystroke is never double-typed (the original failure:
+		// a second poll matched the fading menu and typed the option again — by
+		// then the CLI was at its input prompt, so the digit was submitted as a
+		// user message and answered, burning tokens).
+		trustReanswerAfter = 60 * time.Second
 	)
-	deadline := time.After(trustMaxWait)
+	// No deadline: the watcher runs for the agent's whole lifetime (ctx is the
+	// per-launch context). The old 120s window assumed the trust prompt only
+	// appears at startup, but Copilot ≥1.0.78 can render it later than that on
+	// a slow first start — and an unanswered prompt wedges the agent, which the
+	// login-detector then misreads as "needs login" (live on kubestellar/hive,
+	// 2026-08-22). A 2s poll of an in-memory pane capture is too cheap to need
+	// a deadline.
 	ticker := time.NewTicker(trustPollInterval)
 	defer ticker.Stop()
 
-	// A prompt is answered at most ONCE. The pane keeps rendering the menu for
-	// a beat after the keystroke, so a second poll matched it again and typed
-	// the option a second time — by then the CLI was at its input prompt, so
-	// "3" was submitted as a user message and answered ("Three."), burning
-	// tokens and polluting the conversation.
-	answered := make(map[string]bool, len(blockingPrompts))
+	answeredAt := make(map[string]time.Time, len(blockingPrompts))
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-deadline:
-			return
 		case <-ticker.C:
 			output := m.captureTmuxPaneForAgent(agent)
-			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && !answered[label] {
-				answered[label] = true
+			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
+				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected
 				// and Enter alone answers it (agy). Typing a digit there would
@@ -5787,14 +5807,19 @@ func writeCopilotConfig(path string, cfg map[string]interface{}) error {
 // clearExpiredTokens removes stored copilot tokens from config.json.
 // An expired gho_ token causes copilot to hang during auth through the
 // MITM proxy instead of falling through to the /login prompt.
+//
+// The login IDENTITY (loggedInUsers / lastLoggedInUser) is deliberately
+// PRESERVED: an expired token does not change who was logged in, and the
+// interactive CLI refuses to consider itself signed in without an identity —
+// a later restoreCopilotTokens seed of a perfectly valid token still showed
+// "Please use /login" because this function had wiped the identity alongside
+// the token (kubestellar/hive, 2026-08-22).
 func clearExpiredTokens() error {
 	cfg, err := readCopilotConfig(sharedCopilotConfigPath)
 	if err != nil {
 		return err
 	}
 	cfg["copilotTokens"] = map[string]interface{}{}
-	cfg["loggedInUsers"] = []interface{}{}
-	delete(cfg, "lastLoggedInUser")
 	return writeCopilotConfig(sharedCopilotConfigPath, cfg)
 }
 
@@ -5829,57 +5854,19 @@ func restoreCopilotTokens(path, token string) error {
 		}
 		cfg = map[string]interface{}{}
 	}
-	cfg["copilotTokens"] = map[string]interface{}{
-		"github.com": map[string]interface{}{"token": token},
-	}
-	return writeCopilotConfig(path, cfg)
-}
-
-// copilotTrustedFolder is the parent under which every agent's working dir lives
-// (/data/agents/<name>). Copilot trusts a folder AND everything below it, so a
-// single entry here covers all agents.
-const copilotTrustedFolder = "/data/agents"
-
-// ensureCopilotTrustedFolders pre-seeds Copilot CLI's trusted_folders in
-// config.json so the "Confirm folder trust" modal never appears. That modal
-// (Copilot ≥1.0.78) blocks a fresh agent session at startup; nothing types an
-// answer reliably (the auto-answerer races a 120s window and the CLI can render
-// the prompt later than that on a slow first start), and the login-detector then
-// MISREADS the blocked pane as "needs login" and pauses the agent — so a
-// logged-IN agent with a valid gho_ token sits wedged forever. There is no CLI
-// flag to disable the prompt (github/copilot-cli#1121 is an open request); the
-// documented, durable bypass is the trusted_folders array. Idempotent: a folder
-// already present is left as-is, so this never churns the file or re-prompts.
-func ensureCopilotTrustedFolders(path string, folders ...string) error {
-	if len(folders) == 0 {
-		folders = []string{copilotTrustedFolder}
-	}
-	cfg, err := readCopilotConfig(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		cfg = map[string]interface{}{}
-	}
-	existing, _ := cfg["trusted_folders"].([]interface{})
-	have := make(map[string]bool, len(existing))
-	for _, e := range existing {
-		if s, ok := e.(string); ok {
-			have[s] = true
+	// When the config still carries a login identity ("https://github.com:<user>"
+	// in lastLoggedInUser — preserved by clearExpiredTokens), store the token
+	// under that identity key in the string shape a real /login writes, so the
+	// interactive CLI recognizes the seeded credential as a signed-in session
+	// rather than showing "Please use /login" over a valid token. With no
+	// identity on file, fall back to the host-keyed object shape as before.
+	if user, ok := cfg["lastLoggedInUser"].(string); ok && strings.TrimSpace(user) != "" {
+		cfg["copilotTokens"] = map[string]interface{}{user: token}
+	} else {
+		cfg["copilotTokens"] = map[string]interface{}{
+			"github.com": map[string]interface{}{"token": token},
 		}
 	}
-	changed := false
-	for _, f := range folders {
-		if f != "" && !have[f] {
-			existing = append(existing, f)
-			have[f] = true
-			changed = true
-		}
-	}
-	if !changed {
-		return nil // already trusted — do not rewrite the file
-	}
-	cfg["trusted_folders"] = existing
 	return writeCopilotConfig(path, cfg)
 }
 

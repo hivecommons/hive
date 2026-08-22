@@ -6224,6 +6224,18 @@ func scanForLoginRequired(
 		}
 
 		joined := strings.Join(output, "\n")
+
+		// Stand down while a startup-blocking modal (folder trust, codex
+		// update, …) is on screen: that is not a login problem, and pausing
+		// the agent for it cancels the trust-prompt watcher that would answer
+		// it — the deadlock that kept copilot agents "sitting at login prompt"
+		// through every operator re-login (kubestellar/hive, 2026-08-22). The
+		// watcher answers the modal within seconds; if a REAL login prompt
+		// follows, the next detector tick sees it on a clean pane.
+		if agent.PaneShowsBlockingPrompt(cfg.Agents[name].Backend, joined) {
+			continue
+		}
+
 		for _, re := range compiled {
 			if re.MatchString(joined) {
 				logger.Warn("login required detected",
