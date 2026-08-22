@@ -118,9 +118,13 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 		// L2 Advisory: freshness of the advisory stream is the health signal.
 		// Every agent contributes to the advisory stream, so if none are on
 		// duty (all paused/off-schedule), staleness is caused by that — say so
-		// instead of a bare "advisory stale" red.
-		if roster := grantRosterFor(e.Agents, func(AgentSummary) bool { return true }); len(roster.onDuty) == 0 {
-			return noWritersOnDuty(v, "advisory", roster)
+		// instead of a bare "advisory stale" red. Only judged when the spoke
+		// reports per-agent detail; older spokes send none, and absence of
+		// detail must not read as absence of agents.
+		if len(e.Agents) > 0 {
+			if roster := grantRosterFor(e.Agents, func(AgentSummary) bool { return true }); len(roster.onDuty) == 0 {
+				return noWritersOnDuty(v, "advisory", roster)
+			}
 		}
 		// Reuse the existing advisory/issue-activity bucketing rather than the
 		// per-repo activity collector.

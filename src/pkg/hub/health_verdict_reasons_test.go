@@ -83,7 +83,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    3,
-			wantState: HealthStateGreen, wantReason: "last create 3h ago",
+			wantState: HealthStateGreen, wantReason: "last write 3h ago",
 		},
 		{
 			name:      "L4 stale create with queue — red names age and backlog",
@@ -91,7 +91,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    7,
-			wantState: HealthStateRed, wantReason: "no create in 2d (7 queued)",
+			wantState: HealthStateRed, wantReason: "no write in 2d (7 queued)",
 		},
 		{
 			name:      "L4 stale create but queue empty — idle with last output kept",
