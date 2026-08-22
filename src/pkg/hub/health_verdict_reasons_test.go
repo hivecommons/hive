@@ -17,6 +17,12 @@ func TestHiveHealthForReasons(t *testing.T) {
 	base := func(level int) RegistryEntry {
 		return RegistryEntry{Online: true, ACMMLevel: level}
 	}
+	// writer gives the entry an on-duty agent holding every write grant, so
+	// the #4561 no-writers-on-duty gate doesn't short-circuit banding.
+	writer := func(e RegistryEntry) RegistryEntry {
+		e.Agents = []AgentSummary{{ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true}}
+		return e
+	}
 
 	tests := []struct {
 		name       string
@@ -73,7 +79,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 		},
 		{
 			name:      "L4 recent create — reason humanizes the age",
-			entry:     withActivity(base(4), ractivity("o/r", rfc(now.Add(-3*time.Hour)), "", "", "")),
+			entry:     withActivity(writer(base(4)), ractivity("o/r", rfc(now.Add(-3*time.Hour)), "", "", "")),
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    3,
@@ -81,15 +87,15 @@ func TestHiveHealthForReasons(t *testing.T) {
 		},
 		{
 			name:      "L4 stale create with queue — red names age and backlog",
-			entry:     withActivity(base(4), ractivity("o/r", rfc(now.Add(-49*time.Hour)), "", "", "")),
+			entry:     withActivity(writer(base(4)), ractivity("o/r", rfc(now.Add(-49*time.Hour)), "", "", "")),
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    7,
-			wantState: HealthStateRed, wantReason: "no create in 2d ago (7 queued)",
+			wantState: HealthStateRed, wantReason: "no create in 2d (7 queued)",
 		},
 		{
 			name:      "L4 stale create but queue empty — idle with last output kept",
-			entry:     withActivity(base(4), ractivity("o/r", rfc(now.Add(-49*time.Hour)), "", "", "")),
+			entry:     withActivity(writer(base(4)), ractivity("o/r", rfc(now.Add(-49*time.Hour)), "", "", "")),
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    0,
@@ -97,7 +103,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 		},
 		{
 			name:      "L6 no output ever with queue — red no-output phrasing",
-			entry:     withActivity(base(6), ractivity("o/r", "", "", "", "")),
+			entry:     withActivity(writer(base(6)), ractivity("o/r", "", "", "", "")),
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    5,
@@ -105,7 +111,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 		},
 		{
 			name:      "L6 no output ever, queue empty — green no-output-yet phrasing",
-			entry:     withActivity(base(6), ractivity("o/r", "", "", "", "")),
+			entry:     withActivity(writer(base(6)), ractivity("o/r", "", "", "", "")),
 			rollup:    okRollup(),
 			app:       okApp(),
 			queued:    0,
