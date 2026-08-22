@@ -152,23 +152,25 @@ func TestEstimatedSessions_EmptySessions(t *testing.T) {
 	}
 }
 
-func TestEstimatedSessions_PricesAndSortsByUSD(t *testing.T) {
+func TestEstimatedSessions_PricesAndSortsByStartThenAgent(t *testing.T) {
 	agg := &tokens.AggregateSummary{
 		Sessions: []tokens.SessionSummary{
 			{
 				SessionID:    "sess-cheap",
-				Agent:        "quality",
+				Agent:        "z-quality",
 				Model:        "claude-haiku-3-20240307",
 				InputTokens:  100,
 				OutputTokens: 50,
+				FirstActive:  200,
 			},
 			{
 				SessionID:    "sess-expensive",
-				Agent:        "sec-check",
+				Agent:        "a-sec-check",
 				Model:        "claude-sonnet-4-20250514",
 				InputTokens:  10000,
 				OutputTokens: 5000,
 				CacheRead:    1000,
+				FirstActive:  200,
 			},
 		},
 	}
@@ -178,16 +180,16 @@ func TestEstimatedSessions_PricesAndSortsByUSD(t *testing.T) {
 		t.Fatalf("len = %d, want 2", len(out))
 	}
 
-	// Most expensive first.
+	// Same start time: agent name ascending, not cost descending.
 	if out[0].SessionID != "sess-expensive" {
-		t.Errorf("first session = %q, want sess-expensive (most expensive first)", out[0].SessionID)
+		t.Errorf("first session = %q, want sess-expensive (agent name tie-break)", out[0].SessionID)
 	}
 	if out[1].SessionID != "sess-cheap" {
 		t.Errorf("second session = %q, want sess-cheap", out[1].SessionID)
 	}
 
 	// Agent and model are preserved.
-	if out[0].Agent != "sec-check" || out[0].Model != "claude-sonnet-4-20250514" {
+	if out[0].Agent != "a-sec-check" || out[0].Model != "claude-sonnet-4-20250514" {
 		t.Errorf("expensive session agent/model = %q/%q", out[0].Agent, out[0].Model)
 	}
 

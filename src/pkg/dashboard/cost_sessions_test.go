@@ -91,17 +91,18 @@ func TestEstimatedSessions_UnpricedModelSource(t *testing.T) {
 }
 
 // TestEstimatedSessions_CapsRows verifies the payload is bounded at
-// maxCostSessions and keeps the most-expensive rows.
+// maxCostSessions and keeps the newest-started rows.
 func TestEstimatedSessions_CapsRows(t *testing.T) {
 	over := maxCostSessions + 25
 	sessions := make([]tokens.SessionSummary, over)
 	for i := range sessions {
-		// Larger i → more tokens → higher cost, so the top rows are the tail.
+		// Larger i → newer start, so the top rows are the tail.
 		sessions[i] = tokens.SessionSummary{
 			SessionID:   "s",
 			Agent:       "a",
 			Model:       "claude-opus-4.7",
 			InputTokens: int64(i+1) * 1000,
+			FirstActive: int64(i + 1),
 		}
 	}
 	summary := &tokens.AggregateSummary{Sessions: sessions}
@@ -110,10 +111,8 @@ func TestEstimatedSessions_CapsRows(t *testing.T) {
 	if len(got) != maxCostSessions {
 		t.Fatalf("len = %d, want cap %d", len(got), maxCostSessions)
 	}
-	// The single most-expensive session (largest i) must be present at row 0.
-	wantTop, _ := tokens.EstimateCostUSD("claude-opus-4.7", int64(over)*1000, 0, 0, 0)
-	if got[0].USD != wantTop {
-		t.Errorf("row[0] USD = %v, want %v (most-expensive kept after cap)", got[0].USD, wantTop)
+	if got[0].Started != int64(over) {
+		t.Errorf("row[0] started = %d, want %d (newest kept after cap)", got[0].Started, over)
 	}
 }
 
@@ -184,7 +183,9 @@ func TestCostSessionTimeColumnWiring(t *testing.T) {
 	html := string(b)
 	for _, snippet := range []string{
 		"const COST_SESSION_ACTIVE_MS = 5 * 60 * 1000;",
-		">started → ended</th>",
+		"session: { key: 'started', dir: 'desc' }",
+		"costSortTh('session', 'started', 'started → ended'",
+		"data-action=\"costSortTable\"",
 		`cost-session-active">active</span>`,
 		"sn.started ? fmtSessTs(sn.started) : '—'",
 		"(Date.now() - sn.last_active) < COST_SESSION_ACTIVE_MS",

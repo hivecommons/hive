@@ -1442,6 +1442,9 @@
     .cost-gateway .cgmeter > span { display: block; height: 100%; background: var(--green); }
     .cost-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
     .cost-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .cost-table th.cost-sortable { cursor: pointer; user-select: none; }
+    .cost-table th.cost-sortable:hover { color: var(--text); }
+    .cost-sort-ind { display: inline-block; margin-left: 4px; font-size: 0.62rem; color: var(--accent); }
     .cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(128,128,128,0.08); }
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
@@ -8411,6 +8414,48 @@ function burnAreaChart() {
       toggleCostSub(key);
     }
 
+    const COST_SORTS = {
+      model: { key: 'usd', dir: 'desc' },
+      sandbox: { key: 'usd', dir: 'desc' },
+      session: { key: 'started', dir: 'desc' },
+    };
+    function costSortDir(table, key) {
+      const s = COST_SORTS[table];
+      return s && s.key === key ? s.dir : '';
+    }
+    function costSortTh(table, key, label, opts = {}) {
+      const dir = costSortDir(table, key);
+      const title = opts.title ? ` title="${esc(opts.title)}"` : '';
+      const style = opts.align ? ` style="text-align:${opts.align}"` : '';
+      const aria = dir ? ` aria-sort="${dir === 'asc' ? 'ascending' : 'descending'}"` : ' aria-sort="none"';
+      const indicator = dir ? `<span class="cost-sort-ind" aria-hidden="true">${dir === 'asc' ? '▲' : '▼'}</span>` : '';
+      return `<th class="cost-sortable"${style}${title}${aria} role="button" tabindex="0" data-action="costSortTable" data-keydown-action="costSortTable" data-arg-types="e,s,s" data-arg1="${table}" data-arg2="${key}" data-keys="*">${label}${indicator}</th>`;
+    }
+    function costSortTable(ev, table, key) {
+      if (ev && ev.type === 'keydown') {
+        if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+        ev.preventDefault();
+      }
+      const s = COST_SORTS[table];
+      if (!s) return;
+      s.dir = s.key === key && s.dir === 'asc' ? 'desc' : 'asc';
+      s.key = key;
+      renderCost(_lastCost);
+    }
+    function costCmp(a, b, key, dir, fallback) {
+      const av = a[key], bv = b[key];
+      const na = typeof av === 'number', nb = typeof bv === 'number';
+      let c;
+      if (na || nb) c = (Number(av) || 0) - (Number(bv) || 0);
+      else c = String(av ?? '').localeCompare(String(bv ?? ''), undefined, { sensitivity: 'base', numeric: true });
+      if (c !== 0) return dir === 'desc' ? -c : c;
+      return fallback ? fallback(a, b) : 0;
+    }
+    function sortCostRows(rows, table, fallback) {
+      const s = COST_SORTS[table] || { key: 'usd', dir: 'desc' };
+      return rows.slice().sort((a, b) => costCmp(a, b, s.key, s.dir, fallback));
+    }
+
     function renderCost(cost) {
       const el = document.getElementById('cost-panel');
       if (!el) return;
@@ -8487,13 +8532,16 @@ function burnAreaChart() {
 
       // Per-model estimated cost table. Every model shows a $ estimate now —
       // exact list price where known, a coarse tier estimate (~) otherwise.
-      const models = (est.by_model || []).slice().sort((a, b) => b.usd - a.usd);
+      const models = sortCostRows((est.by_model || []).map(m => {
+        const users = liveAgentCounts[normModel(m.name)] || [];
+        return { ...m, running: users.length, _users: users };
+      }), 'model', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const modelRows = models.map(m => {
         const approx = m.source === 'unpriced';
         const usdCell = approx
           ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
-        const users = liveAgentCounts[normModel(m.name)] || [];
+        const users = m._users || [];
         const agentsCell = users.length
           ? `<span class="cagents-badge" title="Agents using this model now: ${esc(users.join(', '))}">${users.length}</span>`
           : `<span class="cagents-zero" title="No running agent on this model right now">—</span>`;
@@ -8512,8 +8560,8 @@ function burnAreaChart() {
 
       // ── Per-sandbox (per-agent) estimated cost ──
       // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
-      // per-agent breakdown. Sorted most-expensive first.
-      const bySandbox = (est.by_agent || []).slice().sort((a, b) => b.usd - a.usd);
+      // per-agent breakdown. Default sort remains most-expensive first.
+      const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const sandboxRows = bySandbox.map(a => {
         const approx = a.source === 'unpriced';
         const usdCell = approx
@@ -8530,7 +8578,7 @@ function burnAreaChart() {
         <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>usage by sandbox</div>
         <div class="cost-sub-body" id="cost-sub-sandbox-body">
         <table class="cost-table">
-          <thead><tr><th>sandbox (agent)</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <thead><tr>${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sandboxRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
         </table>
         </div>
@@ -8538,9 +8586,11 @@ function burnAreaChart() {
 
       // ── Cost per session ──
       // Each row is one agent run (session) inside its sandbox, priced from its
-      // own token splits. Backend already sorts most-expensive first and caps
-      // the count; we show the session id (shortened), owning sandbox, and model.
-      const bySession = est.by_session || [];
+      // own token splits. The client owns the visible sort state; default is
+      // newest session start first, then sandbox name ascending.
+      const bySession = sortCostRows(est.by_session || [], 'session', (a, b) =>
+        String(a.agent || '').localeCompare(String(b.agent || ''), undefined, { sensitivity: 'base', numeric: true }) ||
+        String(a.session_id || '').localeCompare(String(b.session_id || ''), undefined, { sensitivity: 'base', numeric: true }));
       const shortId = (id) => {
         const s = String(id || '');
         return s.length > COST_SESSION_ID_CHARS ? s.slice(0, COST_SESSION_ID_CHARS) + '…' : (s || '—');
@@ -8573,10 +8623,10 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
       const sessionTable = `<div class="cost-subsection" data-cost-sub="session">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), most expensive first (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), sorted by session start newest first by default (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
         <div class="cost-sub-body" id="cost-sub-session-body">
         <table class="cost-table">
-          <thead><tr><th>session</th><th>sandbox</th><th>model</th><th title="Session start → end, local time (earliest / latest usage event). Hover a row for full timestamps; 'active' means the session had events in the last few minutes.">started → ended</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <thead><tr>${costSortTh('session', 'session_id', 'session')}${costSortTh('session', 'agent', 'sandbox')}${costSortTh('session', 'model', 'model')}${costSortTh('session', 'started', 'started → ended', { title: "Session start → end, local time (earliest / latest usage event). Hover a row for full timestamps; 'active' means the session had events in the last few minutes." })}${costSortTh('session', 'input', 'input', { align: 'right' })}${costSortTh('session', 'output', 'output', { align: 'right' })}${costSortTh('session', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sessionRows || '<tr><td colspan="7" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
         </table>
         </div>
@@ -8598,7 +8648,7 @@ function burnAreaChart() {
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
           <table class="cost-table">
-            <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+            <thead><tr>${costSortTh('model', 'name', 'model')}${costSortTh('model', 'running', 'running agents', { align: 'center', title: 'Running agents on this model right now — hover the count for names' })}${costSortTh('model', 'input', 'input', { align: 'right' })}${costSortTh('model', 'output', 'output', { align: 'right' })}${costSortTh('model', 'usd', 'est. $', { align: 'right' })}</tr></thead>
             <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
           </table>
           ${sandboxTable}
