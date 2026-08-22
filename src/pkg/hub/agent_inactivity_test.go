@@ -133,6 +133,34 @@ func TestIdleRuleRespectsThresholdAndOnDemand(t *testing.T) {
 	}
 }
 
+func TestIdleRuleRespectsKickCadence(t *testing.T) {
+	now := time.Now()
+	base := AgentSummary{
+		Name: "ci-maintainer", State: "running",
+		StartedAt:       settled(now),
+		LastActivityAt:  activeAt(now, time.Hour),
+		KickIntervalSec: int64(4 * time.Hour / time.Second),
+	}
+
+	// flashsystems/ess runs on 2h/4h governor kicks; a pane quiet for an hour
+	// with queued work is healthy between kicks, not "idle at prompt".
+	if got := classifyInactiveAgent(base, inactiveAgentMinQueued, now); got != agentInactiveNone {
+		t.Fatalf("cadence-idle agent classified %v; want none", got.label())
+	}
+
+	missed := base
+	missed.LastActivityAt = activeAt(now, 4*time.Hour+inactiveAgentCadenceSlack+time.Minute)
+	if got := classifyInactiveAgent(missed, inactiveAgentMinQueued, now); got != agentInactiveIdleWithWork {
+		t.Fatalf("agent past cadence+slack classified %v; want idle-with-work", got.label())
+	}
+
+	legacy := base
+	legacy.KickIntervalSec = 0
+	if got := classifyInactiveAgent(legacy, inactiveAgentMinQueued, now); got != agentInactiveIdleWithWork {
+		t.Fatalf("legacy agent classified %v; want historical idle-with-work", got.label())
+	}
+}
+
 // TestUnknownActivityIsNotIdle guards the upgrade path: a spoke too old to
 // report lastActivityAt must not make every one of its agents alarm.
 func TestUnknownActivityIsNotIdle(t *testing.T) {

@@ -48,6 +48,13 @@ const (
 	// Idleness ALONE is never reported — see queuedWorkForInactivity.
 	inactiveAgentIdleThreshold = 45 * time.Minute
 
+	// inactiveAgentCadenceSlack is added to a spoke-reported governor cadence
+	// before calling a scheduled agent idle. This preserves genuine faults
+	// (missed cadence + queued work) while keeping healthy interval agents
+	// quiet between kicks; flashsystems/ess showed 2h/4h cadences with fresh
+	// next-run/advisory data but panes quiet longer than 45 minutes by design.
+	inactiveAgentCadenceSlack = 30 * time.Minute
+
 	// inactiveAgentMinQueued is how much actionable work must be waiting
 	// before an idle agent is called a problem. A hive with an empty queue is
 	// SUPPOSED to have idle agents; reporting those would light the facet on
@@ -167,10 +174,24 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 		// every agent on every hive that has not upgraded yet.
 		return agentInactiveNone
 	}
-	if now.Sub(lastActivity) >= inactiveAgentIdleThreshold {
+	if now.Sub(lastActivity) >= idleThresholdForAgent(a) {
 		return agentInactiveIdleWithWork
 	}
 	return agentInactiveNone
+}
+
+func idleThresholdForAgent(a AgentSummary) time.Duration {
+	threshold := inactiveAgentIdleThreshold
+	if a.KickIntervalSec <= 0 {
+		// Legacy or non-interval spokes do not provide cadence evidence, so the
+		// historical 45-minute rule remains the only safe signal the hub has.
+		return threshold
+	}
+	cadenceThreshold := time.Duration(a.KickIntervalSec)*time.Second + inactiveAgentCadenceSlack
+	if cadenceThreshold > threshold {
+		return cadenceThreshold
+	}
+	return threshold
 }
 
 // Wire values for the agent fields the classifier reads. Named so a typo

@@ -237,6 +237,30 @@ func TestVerdict_OffScheduleWithoutLoginStaysQuiet(t *testing.T) {
 	}
 }
 
+func TestVerdict_CadenceIdleIsWorkingUntilCadenceMissed(t *testing.T) {
+	now := time.Now()
+	a := modernWorking(now)
+	a.Name = "quality"
+	a.LastActivityAt = activeAt(now, time.Hour)
+	a.KickIntervalSec = int64(2 * time.Hour / time.Second)
+
+	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	if v.RunState != runWorking || v.Problem {
+		t.Fatalf("cadence-idle agent before next run must stay working/non-problem, got %+v", v)
+	}
+
+	a.LastActivityAt = activeAt(now, 2*time.Hour+inactiveAgentCadenceSlack+time.Minute)
+	v = deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	if v.RunState != runIdleAtPrompt || !v.Problem {
+		t.Fatalf("agent past cadence+slack must be idle-at-prompt problem, got %+v", v)
+	}
+
+	r := rollupAgents([]AgentSummary{a}, hiveBlockers{}, 5, now)
+	if r.IdleWithWork != 1 || r.Problems != 1 {
+		t.Fatalf("rollup must count missed-cadence idle-with-work, got %+v", r)
+	}
+}
+
 func TestRollup_LoginStuckCount(t *testing.T) {
 	now := time.Now()
 	stuck := modernWorking(now)

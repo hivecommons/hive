@@ -300,6 +300,11 @@ type AgentSummary struct {
 	// "running and working" from "running and producing nothing" — State,
 	// StartedAt and the kick log all keep their values while a CLI sits idle.
 	LastActivityAt string `json:"lastActivityAt,omitempty"`
+	// KickIntervalSec is the governor's CURRENT-mode interval for this agent.
+	// It lets the hub distinguish a fault from a scheduled-cadence agent that
+	// is correctly idle between kicks (flashsystems/ess: 2h/4h cadences looked
+	// idle after the generic 45-minute pane-activity threshold).
+	KickIntervalSec int64 `json:"kickIntervalSec,omitempty"`
 
 	// --- Fleet-divergence signals (the EXPECTED and ABLE legs) ---
 	// These let the hub show the gap between what the GOVERNOR expects running,
@@ -350,6 +355,7 @@ type AgentActivity struct {
 	SessionMissing bool
 	StartedAt      time.Time
 	LastActivityAt time.Time
+	KickInterval   time.Duration
 	// Fleet-divergence signals — see the matching AgentSummary fields.
 	ExpectedActive bool
 	CanOpenIssue   bool
@@ -388,6 +394,9 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 	}
 	if !act.LastActivityAt.IsZero() {
 		as.LastActivityAt = act.LastActivityAt.UTC().Format(time.RFC3339)
+	}
+	if act.KickInterval > 0 {
+		as.KickIntervalSec = int64(act.KickInterval / time.Second)
 	}
 	return as
 }

@@ -150,7 +150,7 @@ const reachStatePath = "/data/reach-state.json"
 // tell a deliberately-paused agent from one that is running but unable to
 // work. Shared by both heartbeat build sites so the ordinary beat and the
 // upgrade beat can never report different pictures of the same agent.
-func agentActivityFor(mgr *agent.Manager, cfg *config.Config, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
+func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
 	act := hub.AgentActivity{
 		Paused: proc.Paused,
 		// Pause provenance (#4041): ride WHO/WHY/WHEN to the hub so the
@@ -168,6 +168,7 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, currentMode, name 
 	if proc.StartedAt != nil {
 		act.StartedAt = *proc.StartedAt
 	}
+	act.KickInterval = heartbeatKickInterval(govState, name, proc, onDemandFromPack)
 
 	// EXPECTED leg: does the governor's current mode schedule this agent on a
 	// kicking cadence right now? Shared with the dashboard's offByCadence via
@@ -197,6 +198,17 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, currentMode, name 
 	}
 
 	return act
+}
+
+func heartbeatKickInterval(govState governor.State, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) time.Duration {
+	if proc == nil || !proc.Config.UsesGovernorKick() || proc.Config.OnDemand || onDemandFromPack[name] {
+		return 0
+	}
+	cadence, ok := govState.Cadences[name]
+	if !ok || cadence.Paused || cadence.Interval <= 0 {
+		return 0
+	}
+	return cadence.Interval
 }
 
 // prospectiveGitHubIdentity returns the GitHub identity the spoke WOULD hold
@@ -3370,7 +3382,7 @@ func main() {
 					mode = "on_demand"
 				}
 				agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
-					agentActivityFor(agentMgr, cfg, currentMode, name, proc, onDemandFromPack)))
+					agentActivityFor(agentMgr, cfg, govState, currentMode, name, proc, onDemandFromPack)))
 			}
 			acmmLvl := 0
 			if cfg.ACMMLevel != nil {
@@ -3886,7 +3898,8 @@ func main() {
 					return nil
 				}
 				statuses := agentMgr.AllStatuses()
-				currentMode := strings.ToLower(string(gov.GetState().Mode))
+				govState := gov.GetState()
+				currentMode := strings.ToLower(string(govState.Mode))
 				agents := make([]hub.AgentSummary, 0, len(statuses))
 				for name, proc := range statuses {
 					mode := ""
@@ -3894,7 +3907,7 @@ func main() {
 						mode = "on_demand"
 					}
 					agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
-						agentActivityFor(agentMgr, cfg, currentMode, name, proc, onDemandFromPack)))
+						agentActivityFor(agentMgr, cfg, govState, currentMode, name, proc, onDemandFromPack)))
 				}
 				acmmLvl := 0
 				if cfg.ACMMLevel != nil {
