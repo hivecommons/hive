@@ -91,6 +91,9 @@ preflights, configuration, the four Quadlet units, the boot wiring, and a final
 check that the **gateway** answers on the published port before it returns.
 
 ```bash
+git clone https://github.com/kubestellar/hive.git
+cd hive
+
 export HIVE_DEPLOY_RUNTIME=podman
 bin/hive-podman-setup.sh --rootless        # or --rootful
 ```
