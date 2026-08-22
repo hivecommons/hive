@@ -540,7 +540,8 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
-	// Daily image-pulls sparkline series (external adoption gauge). requireAuth,
+	// Per-release image-pulls series, headline (active release line) plus
+	// per-line (external adoption gauge). requireAuth,
 	// not requireAdmin: any signed-in hub user sees the same public-adoption
 	// number, and the underlying data is scraped from the PUBLIC package page.
 	s.mux.HandleFunc("GET /api/hub/image-pulls", s.requireAuth(s.handleImagePulls))
@@ -5686,10 +5687,10 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// internally to poolReplenishInterval; disabled per cluster unless
 	// pool_target is set. See pool_replenisher.go.
 	s.replenishPoolsIfDue()
-	// Record the per-release image-pulls snapshot (external-adoption chart). The
-	// call is internally guarded to snapshot only when the v2 release SHA advances,
-	// so ticking it alongside the frequent SHA poll is cheap — no separate
-	// scheduler. See image_pulls.go.
+	// Record the per-release image-pulls snapshots (external-adoption chart). The
+	// call is internally guarded to snapshot only when a release line's SHA
+	// advances, so ticking it alongside the frequent SHA poll is cheap — no
+	// separate scheduler. See image_pulls.go.
 	s.maybeSnapshotImagePulls(ctx, time.Now())
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
@@ -9962,14 +9963,18 @@ const dashboardHTML = `<!DOCTYPE html>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p style="margin-top:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:rgba(244,199,95,0.08);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
-        <!-- Image-pulls sparkline: 30-day daily-delta of container-image PULLS
-             of the public spoke image (ghcr.io/kubestellar/hive:v2). Gauges
-             external adoption beyond the hosted fleet. Derived from GitHub's
-             cumulative "Total downloads" counter — it is pulls/day, NOT unique
-             downloads (uniqueness is not measurable). Populated by
-             loadImagePulls(). Hidden until there is data to show. -->
+        <!-- Image-pulls bar chart: per-release container-image PULLS of the
+             public spoke image (ghcr.io/kubestellar/hive), bucketed by the
+             ACTIVE release line's release boundaries (the line the "stable"
+             channel currently resolves to — v4 today, v5 after the next
+             rollover, with no code change). Gauges external adoption beyond
+             the hosted fleet. Derived from GitHub's cumulative "Total
+             downloads" counter — it is pulls, NOT unique downloads
+             (uniqueness is not measurable). Populated by loadImagePulls(),
+             which also fills the per-line mini charts in the
+             "Latest available images" rows. Hidden until there is data. -->
         <div id="image-pulls-spark" style="display:none;margin-top:8px"
-             title="Container-image pulls per v2 release: the pulls that landed while each of the last ~10 v2 SHAs was the newest release, of the public hive image (ghcr.io/kubestellar/hive:v2). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
+             title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/kubestellar/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
@@ -14960,7 +14965,13 @@ const dashboardHTML = `<!DOCTYPE html>
               } else if (brStatus === 'failed') {
                 brStatusHTML = '<span style="color:var(--red);font-size:0.7rem;cursor:help" title="Image build failed for this commit — upgrades keep using the previous image">✗</span>';
               }
-              lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHAs[br]) + '</span>' + (brMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(brMsg) + '</span>' : '') + brStatusHTML + '</div>';
+              lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHAs[br]) + '</span>' + (brMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(brMsg) + '</span>' : '') + brStatusHTML +
+                /* Per-line pulls mini chart: a .line-pulls span each
+                   row, filled from the cached /api/hub/image-pulls payload now
+                   and refreshed by loadImagePulls() on every dashboard poll.
+                   A line with no pull data renders "—", never an error. */
+                '<span class="line-pulls" data-branch="' + escAttr(br) + '" style="display:inline-flex;align-items:center;margin-left:4px">' + linePullSparkHTML(br) + '</span>' +
+                '</div>';
             }
           } else if (_latestSHA) {
             lines = '<span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHA) + '</span>';
@@ -15121,14 +15132,80 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
-    /* loadImagePulls fetches the per-RELEASE pull series (pulls that landed while
-       each of the last ~10 v2 SHAs was the newest release) and paints a small
-       inline-SVG bar chart near the header — one bar per release, newest on the
-       right. Gauges external adoption of the public spoke image
-       (ghcr.io/kubestellar/hive:v2) beyond the hosted fleet. Honest labelling:
+    /* loadImagePulls fetches the per-RELEASE pull series and paints (a) a small
+       inline-SVG bar chart near the header for the ACTIVE release line — the
+       line the "stable" channel currently resolves to, reported by the server
+       as data.line, so a v4→v5 rollover re-labels and re-buckets the chart with
+       no frontend change — and (b) a mini per-line chart in each
+       "Latest available images" row from data.lines. One bar per release,
+       newest on the right. Gauges external adoption of the public spoke image
+       (ghcr.io/kubestellar/hive) beyond the hosted fleet. Honest labelling:
        derived from GitHub's cumulative download counter (pulls, NOT unique
-       downloads). Cold start (fewer than two release snapshots → no window can be
-       closed yet) shows "collecting…". */
+       downloads; GitHub publishes one package-wide counter, not per-tag). Cold
+       start (fewer than two release snapshots → no window can be closed yet)
+       shows "collecting…". */
+    var _imagePullLines = {};   // branch → per-line series from /api/hub/image-pulls
+
+    /* pullBarsSVG renders a per-release pull series as an inline SVG bar
+       chart, newest bar highlighted, per-bar <title> tooltips with the exact
+       numbers. Shared by the header widget and the per-row mini charts so the
+       two can never drift apart visually. */
+    function pullBarsSVG(points, BAR_W, BAR_GAP, BAR_H) {
+      var BAR_PAD = 2; // px, top breathing room so the tallest bar isn't clipped
+      var vals = points.map(function(p) { return Math.max(0, Number(p.pulls) || 0); });
+      var maxV = Math.max.apply(null, vals);
+      if (maxV <= 0) maxV = 1; // avoid divide-by-zero on an all-zero window
+      var chartW = points.length * BAR_W + (points.length - 1) * BAR_GAP;
+      var usableH = BAR_H - BAR_PAD;
+      var bars = '';
+      points.forEach(function(p, i) {
+        var v = vals[i];
+        var h = Math.max(1, (v / maxV) * usableH); // min 1px so a zero-pull release is still visible
+        var x = i * (BAR_W + BAR_GAP);
+        var y = BAR_H - h;
+        var sha = esc(String(p.sha || ''));
+        var tip = sha + ': ' + v + ' pulls' + (p.date ? ' (since ' + esc(String(p.date)) + ')' : '');
+        // The newest bar (last) is highlighted; older ones muted.
+        var fill = (i === points.length - 1) ? '#60a5fa' : 'rgba(96,165,250,0.45)';
+        bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + BAR_W + '" height="' + h.toFixed(1) + '" rx="1.5" fill="' + fill + '"><title>' + tip + '</title></rect>';
+      });
+      return '<svg width="' + chartW + '" height="' + BAR_H + '" viewBox="0 0 ' + chartW + ' ' + BAR_H + '" ' +
+        'style="display:block;overflow:visible">' + bars + '</svg>';
+    }
+
+    /* linePullSparkHTML is one branch row's mini pulls chart: compact bars plus
+       the newest release's count, wrapped in a tooltip with the exact totals.
+       No data for the line (a retired line pre-history, or a freshly cut line
+       like v5 with no closed release window yet) renders a muted "—". */
+    function linePullSparkHTML(br) {
+      var s = _imagePullLines[br];
+      var points = (s && s.points) || [];
+      if (!s || s.collecting || points.length < 1) {
+        return '<span style="color:var(--muted);opacity:0.5;font-size:0.65rem;cursor:help" title="No image-pull data for this line yet — a bar appears once two releases have been published on it">—</span>';
+      }
+      var latest = Number(s.latest) || 0;
+      var total = Number(s.total_window) || 0;
+      var tip = 'Image pulls per ' + esc(br) + ' release: ' + latest + ' on ' +
+        esc(String(points[points.length - 1].sha || '')) + ' \u00b7 ' + total +
+        ' over last ' + points.length + ' release' + (points.length === 1 ? '' : 's') +
+        ' (package-wide pulls landing during each release window)';
+      return '<span style="display:inline-flex;align-items:center;gap:4px" title="' + escAttr(tip) + '">' +
+        pullBarsSVG(points, 5, 2, 14) +
+        '<span style="font-size:0.65rem;color:#60a5fa;font-variant-numeric:tabular-nums">' + esc(String(latest)) + '</span>' +
+        '</span>';
+    }
+
+    /* fillLinePullSparks refreshes every rendered .line-pulls placeholder from
+       the cached series — called after each loadImagePulls fetch so the row
+       charts update even though the rows themselves rendered earlier in the
+       poll from the (possibly stale) cache. */
+    function fillLinePullSparks() {
+      var spans = document.querySelectorAll('.line-pulls');
+      for (var i = 0; i < spans.length; i++) {
+        spans[i].innerHTML = linePullSparkHTML(spans[i].getAttribute('data-branch') || '');
+      }
+    }
+
     async function loadImagePulls() {
       var host = document.getElementById('image-pulls-spark');
       if (!host) return;
@@ -15143,12 +15220,18 @@ const dashboardHTML = `<!DOCTYPE html>
         host.style.display = 'none';
         return;
       }
+      _imagePullLines = (data && data.lines) || {};
+      fillLinePullSparks();
       var points = (data && data.points) || [];
+      /* The server names the ACTIVE line (stable channel's branch). Fall back
+         to a lineless label rather than guessing a branch. */
+      var line = (data && data.line) ? esc(String(data.line)) : '';
+      var lineLabel = 'Pulls per ' + (line ? line + ' ' : '') + 'release';
       host.style.display = 'block';
 
       /* Cold start: needs at least two release snapshots to close one window. */
       if ((data && data.collecting) || points.length < 1) {
-        host.innerHTML = '<div style="font-size:0.7rem;color:var(--muted)">Image pulls per v2 release: <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
+        host.innerHTML = '<div style="font-size:0.7rem;color:var(--muted)">Image ' + lineLabel.toLowerCase() + ': <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
         return;
       }
 
@@ -15156,37 +15239,15 @@ const dashboardHTML = `<!DOCTYPE html>
       var BAR_W = 14;      // px, per-release bar width
       var BAR_GAP = 3;     // px, gap between bars
       var BAR_H = 30;      // px, drawing height
-      var BAR_PAD = 2;     // px, top breathing room so the tallest bar isn't clipped
 
-      var vals = points.map(function(p) { return Math.max(0, Number(p.pulls) || 0); });
-      var maxV = Math.max.apply(null, vals);
-      if (maxV <= 0) maxV = 1; // avoid divide-by-zero on an all-zero window
-      var chartW = points.length * BAR_W + (points.length - 1) * BAR_GAP;
-      var usableH = BAR_H - BAR_PAD;
-
-      var bars = '';
-      points.forEach(function(p, i) {
-        var v = vals[i];
-        var h = Math.max(1, (v / maxV) * usableH); // min 1px so a zero-pull release is still visible
-        var x = i * (BAR_W + BAR_GAP);
-        var y = BAR_H - h;
-        var sha = esc(String(p.sha || ''));
-        var tip = sha + ': ' + v + ' pulls' + (p.date ? ' (since ' + esc(String(p.date)) + ')' : '');
-        // The newest bar (last) is highlighted; older ones muted.
-        var fill = (i === points.length - 1) ? '#60a5fa' : 'rgba(96,165,250,0.45)';
-        bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + BAR_W + '" height="' + h.toFixed(1) + '" rx="1.5" fill="' + fill + '"><title>' + tip + '</title></rect>';
-      });
-
-      var svg =
-        '<svg width="' + chartW + '" height="' + BAR_H + '" viewBox="0 0 ' + chartW + ' ' + BAR_H + '" ' +
-        'style="display:block;overflow:visible">' + bars + '</svg>';
+      var svg = pullBarsSVG(points, BAR_W, BAR_GAP, BAR_H);
 
       var latest = (data && Number(data.latest)) || 0;
       var total = (data && Number(data.total_window)) || 0;
       var newestSHA = points.length ? esc(String(points[points.length - 1].sha || '')) : '';
       host.innerHTML =
         '<div style="display:flex;align-items:center;gap:10px">' +
-          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">Pulls per v2 release</div>' +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">' + lineLabel + '</div>' +
           svg +
           '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">' +
             '<span style="color:#60a5fa;font-weight:600">' + esc(String(latest)) + '</span> on ' + newestSHA +

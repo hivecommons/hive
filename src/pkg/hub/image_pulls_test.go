@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,16 +16,28 @@ import (
 // don't bleed into one another (mirrors how the SHA-cache tests reset state).
 func resetImagePullsState() {
 	imagePullsMu.Lock()
-	imagePullSeries = nil
+	imagePullSeriesByLine = map[string][]pullSnapshot{}
 	imagePullsLoaded = false
 	imagePullsMu.Unlock()
 }
 
-// setV2LatestSHA sets the v2 branch's latest-SHA the release snapshotter keys on.
-func setV2LatestSHA(sha string) {
+// setBranchLatestSHAs replaces the latest-SHA cache the release snapshotter
+// keys on, returning a restore func so a test can't bleed branches into the
+// rest of the package's tests.
+func setBranchLatestSHAs(t *testing.T, shas map[string]string) {
+	t.Helper()
 	latestSHAMu.Lock()
-	latestSHAByBranch["v2"] = branchSHAInfo{SHA: sha}
+	orig := latestSHAByBranch
+	latestSHAByBranch = map[string]branchSHAInfo{}
+	for b, sha := range shas {
+		latestSHAByBranch[b] = branchSHAInfo{SHA: sha}
+	}
 	latestSHAMu.Unlock()
+	t.Cleanup(func() {
+		latestSHAMu.Lock()
+		latestSHAByBranch = orig
+		latestSHAMu.Unlock()
+	})
 }
 
 func TestBuildImagePullsResponse_PerRelease(t *testing.T) {
@@ -163,7 +176,7 @@ func TestFetchCumulativePulls_CounterMissing(t *testing.T) {
 	}
 }
 
-func TestMaybeSnapshot_PersistsAndReleaseGuard(t *testing.T) {
+func TestMaybeSnapshot_PerLinePersistsAndReleaseGuard(t *testing.T) {
 	resetImagePullsState()
 	dir := t.TempDir()
 	origPath := imagePullsPath
@@ -171,8 +184,10 @@ func TestMaybeSnapshot_PersistsAndReleaseGuard(t *testing.T) {
 	defer func() { imagePullsPath = origPath }()
 
 	var cumulative int64 = 1000
+	fetches := 0
 	origFetch := fetchCumulativePulls
 	fetchCumulativePulls = func(ctx context.Context, logger *slog.Logger) (int64, bool) {
+		fetches++
 		return cumulative, true
 	}
 	defer func() { fetchCumulativePulls = origFetch }()
@@ -180,29 +195,40 @@ func TestMaybeSnapshot_PersistsAndReleaseGuard(t *testing.T) {
 	s := &HubServer{logger: slog.Default()}
 	t0 := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
 
-	// Release 1 (SHA aaa1111). Two ticks with the SAME SHA → only one snapshot.
-	setV2LatestSHA("aaa1111deadbeef")
+	// Two lines resolve. Two ticks with the SAME SHAs → one snapshot per line,
+	// and the package-wide counter is fetched ONCE per tick, shared by both.
+	setBranchLatestSHAs(t, map[string]string{
+		"v2": "aaa1111deadbeef",
+		"v4": "ccc3333feedface",
+	})
 	s.maybeSnapshotImagePulls(context.Background(), t0)
-	cumulative = 1234 // would-be second read, same release
+	if fetches != 1 {
+		t.Fatalf("want 1 shared cumulative fetch for both due lines, got %d", fetches)
+	}
+	cumulative = 1234 // would-be second read, same releases
 	s.maybeSnapshotImagePulls(context.Background(), t0.Add(3*time.Hour))
 
 	imagePullsMu.Lock()
-	n := len(imagePullSeries)
+	nV2, nV4 := len(imagePullSeriesByLine["v2"]), len(imagePullSeriesByLine["v4"])
 	imagePullsMu.Unlock()
-	if n != 1 {
-		t.Fatalf("same-release guard failed: want 1 snapshot, got %d", n)
+	if nV2 != 1 || nV4 != 1 {
+		t.Fatalf("same-release guard failed: want 1 snapshot per line, got v2=%d v4=%d", nV2, nV4)
 	}
 
-	// A NEW release (SHA bbb2222) → a second snapshot.
-	setV2LatestSHA("bbb2222cafef00d")
+	// A NEW release on v4 only (v2 is retired and never advances) → a second
+	// v4 snapshot, v2 untouched.
+	setBranchLatestSHAs(t, map[string]string{
+		"v2": "aaa1111deadbeef",
+		"v4": "ddd4444cafef00d",
+	})
 	cumulative = 1300
 	s.maybeSnapshotImagePulls(context.Background(), t0.Add(6*time.Hour))
 
 	imagePullsMu.Lock()
-	n = len(imagePullSeries)
+	nV2, nV4 = len(imagePullSeriesByLine["v2"]), len(imagePullSeriesByLine["v4"])
 	imagePullsMu.Unlock()
-	if n != 2 {
-		t.Fatalf("want 2 snapshots across two releases, got %d", n)
+	if nV2 != 1 || nV4 != 2 {
+		t.Fatalf("want v2=1 v4=2 snapshots, got v2=%d v4=%d", nV2, nV4)
 	}
 
 	if _, err := os.Stat(imagePullsPath); err != nil {
@@ -213,18 +239,184 @@ func TestMaybeSnapshot_PersistsAndReleaseGuard(t *testing.T) {
 	resetImagePullsState()
 	loadPersistedImagePulls(slog.Default())
 	imagePullsMu.Lock()
-	n = len(imagePullSeries)
+	nV2, nV4 = len(imagePullSeriesByLine["v2"]), len(imagePullSeriesByLine["v4"])
+	v4Series := append([]pullSnapshot(nil), imagePullSeriesByLine["v4"]...)
 	imagePullsMu.Unlock()
-	if n != 2 {
-		t.Fatalf("restore after restart failed: want 2, got %d", n)
+	if nV2 != 1 || nV4 != 2 {
+		t.Fatalf("restore after restart failed: want v2=1 v4=2, got v2=%d v4=%d", nV2, nV4)
 	}
 
-	// The aaa1111 release window = 1300-1000 = 300, keyed to the short SHA.
-	resp := buildImagePullsResponse(imagePullSeries)
+	// The ccc3333 release window on v4 = 1300-1000 = 300, keyed to the short SHA.
+	resp := buildImagePullsResponse(v4Series)
 	if resp.Latest != 300 || resp.TotalWindow != 300 {
 		t.Errorf("want latest/total 300, got latest=%d total=%d", resp.Latest, resp.TotalWindow)
 	}
-	if len(resp.Points) != 1 || resp.Points[0].SHA != "aaa1111" {
-		t.Errorf("want one bar keyed to short SHA aaa1111, got %+v", resp.Points)
+	if len(resp.Points) != 1 || resp.Points[0].SHA != "ccc3333" {
+		t.Errorf("want one bar keyed to short SHA ccc3333, got %+v", resp.Points)
+	}
+}
+
+func TestLoadPersistedImagePulls_LegacyArrayMigratesToV2(t *testing.T) {
+	// The pre-per-line file was a bare snapshot array that only ever tracked
+	// the v2 branch. It must load under the "v2" line, not vanish and not be
+	// attributed to the active line.
+	resetImagePullsState()
+	dir := t.TempDir()
+	origPath := imagePullsPath
+	imagePullsPath = filepath.Join(dir, "image-pulls.json")
+	defer func() { imagePullsPath = origPath }()
+
+	legacy := `[{"sha":"aaa1111","date":"2026-08-01","cumulative":1000},
+	            {"sha":"bbb2222","date":"2026-08-02","cumulative":1050}]`
+	if err := os.WriteFile(imagePullsPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loadPersistedImagePulls(slog.Default())
+
+	imagePullsMu.Lock()
+	series := append([]pullSnapshot(nil), imagePullSeriesByLine[legacyPullLine]...)
+	imagePullsMu.Unlock()
+	if len(series) != 2 || series[0].SHA != "aaa1111" {
+		t.Fatalf("legacy array not migrated under %q: %+v", legacyPullLine, series)
+	}
+}
+
+func TestActiveReleaseLine_FollowsStableChannel(t *testing.T) {
+	// The stable channel's digest-resolved branch is the source of truth —
+	// exactly what standalone-images.sh pins (ghcr.io/kubestellar/hive:stable).
+	channels := []ChannelTarget{
+		{Channel: ReleaseChannelStable, Branch: "v4", SHA: "ccc3333"},
+		{Channel: ReleaseChannelEdge, Branch: "v5", SHA: "eee5555"},
+	}
+	shas := map[string]string{"v2": "aaa1111", "v4": "ccc3333", "v5": "eee5555"}
+	if got := activeReleaseLine(channels, shas); got != "v4" {
+		t.Errorf("want v4 (stable channel's branch), got %q", got)
+	}
+	// After a promotion, the SAME code follows with no hub change.
+	channels[0].Branch = "v5"
+	if got := activeReleaseLine(channels, shas); got != "v5" {
+		t.Errorf("want v5 after stable re-points, got %q", got)
+	}
+}
+
+func TestActiveReleaseLine_FallbackHighestNumberedLine(t *testing.T) {
+	// Stable unresolved (GHCR blip / pinned off-branch): fall back to the
+	// highest-numbered v<N> line with a resolved SHA. Non-release branches
+	// (dd, mk) are never candidates.
+	channels := []ChannelTarget{{Channel: ReleaseChannelStable}} // no Branch
+	shas := map[string]string{"v2": "aaa1111", "v4": "ccc3333", "dd": "fff6666", "mk": "abc9999"}
+	if got := activeReleaseLine(channels, shas); got != "v4" {
+		t.Errorf("want v4 (highest resolved release line), got %q", got)
+	}
+	if got := activeReleaseLine(nil, map[string]string{"dd": "fff6666"}); got != "" {
+		t.Errorf("want empty when no release line resolves, got %q", got)
+	}
+	if got := activeReleaseLine(nil, nil); got != "" {
+		t.Errorf("want empty on no data, got %q", got)
+	}
+}
+
+func TestBuildImagePullsMulti_ActiveAndPerLine(t *testing.T) {
+	byLine := map[string][]pullSnapshot{
+		"v2": {
+			{SHA: "aaa1111", Date: "2026-08-01", Cumulative: 1000},
+			{SHA: "bbb2222", Date: "2026-08-02", Cumulative: 1050},
+		},
+		"v4": {
+			{SHA: "ccc3333", Date: "2026-08-03", Cumulative: 1100},
+			{SHA: "ddd4444", Date: "2026-08-04", Cumulative: 1400},
+		},
+	}
+	got := buildImagePullsMulti(byLine, "v4")
+	if got.Line != "v4" {
+		t.Errorf("want Line=v4, got %q", got.Line)
+	}
+	if got.Collecting || got.Latest != 300 || got.TotalWindow != 300 {
+		t.Errorf("flat fields must describe the ACTIVE line: %+v", got)
+	}
+	if len(got.Lines) != 2 {
+		t.Fatalf("want 2 per-line series, got %d", len(got.Lines))
+	}
+	if v2 := got.Lines["v2"]; v2.Latest != 50 || v2.Collecting {
+		t.Errorf("v2 line series wrong: %+v", v2)
+	}
+	if v4 := got.Lines["v4"]; v4.Latest != 300 {
+		t.Errorf("v4 line series wrong: %+v", v4)
+	}
+}
+
+func TestBuildImagePullsMulti_MissingActiveLineDegradesToCollecting(t *testing.T) {
+	// A freshly cut line (v5 promoted to stable before any snapshot exists)
+	// must degrade to "collecting" — never an error, never another line's data.
+	byLine := map[string][]pullSnapshot{
+		"v4": {
+			{SHA: "ccc3333", Date: "2026-08-03", Cumulative: 1100},
+			{SHA: "ddd4444", Date: "2026-08-04", Cumulative: 1400},
+		},
+	}
+	got := buildImagePullsMulti(byLine, "v5")
+	if !got.Collecting || len(got.Points) != 0 || got.Latest != 0 {
+		t.Errorf("missing active line must be Collecting with no points, got %+v", got)
+	}
+	if got.Line != "v5" {
+		t.Errorf("want Line=v5 even without data, got %q", got.Line)
+	}
+	if _, ok := got.Lines["v5"]; ok {
+		t.Errorf("a line with no snapshots must be absent from Lines, not fabricated")
+	}
+	if v4 := got.Lines["v4"]; v4.Latest != 300 {
+		t.Errorf("other lines must still be served: %+v", v4)
+	}
+}
+
+func TestHandleImagePulls_ServesActiveLineAndPerLineSeries(t *testing.T) {
+	resetImagePullsState()
+	dir := t.TempDir()
+	origPath := imagePullsPath
+	imagePullsPath = filepath.Join(dir, "image-pulls.json")
+	defer func() { imagePullsPath = origPath }()
+
+	imagePullsMu.Lock()
+	imagePullsLoaded = true
+	imagePullSeriesByLine = map[string][]pullSnapshot{
+		"v4": {
+			{SHA: "ccc3333", Date: "2026-08-03", Cumulative: 1100},
+			{SHA: "ddd4444", Date: "2026-08-04", Cumulative: 1400},
+		},
+	}
+	imagePullsMu.Unlock()
+	defer resetImagePullsState()
+
+	setBranchLatestSHAs(t, map[string]string{"v4": "ddd4444cafef00d"})
+
+	// Pre-warm the channel cache so the handler resolves "stable"→v4 without a
+	// registry round-trip (the cache is what production requests normally hit).
+	channelTargetMu.Lock()
+	origCache, origAt := channelTargetCache, channelTargetCachedAt
+	channelTargetCache = []ChannelTarget{{Channel: ReleaseChannelStable, Branch: "v4", SHA: "ddd4444", Digest: "sha256:feed"}}
+	channelTargetCachedAt = time.Now()
+	channelTargetMu.Unlock()
+	defer func() {
+		channelTargetMu.Lock()
+		channelTargetCache, channelTargetCachedAt = origCache, origAt
+		channelTargetMu.Unlock()
+	}()
+
+	s := &HubServer{logger: slog.Default()}
+	rec := httptest.NewRecorder()
+	s.handleImagePulls(rec, httptest.NewRequest(http.MethodGet, "/api/hub/image-pulls", nil))
+
+	var resp imagePullsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if resp.Line != "v4" {
+		t.Errorf("want line=v4 from the stable channel, got %q", resp.Line)
+	}
+	if resp.Latest != 300 || resp.Collecting {
+		t.Errorf("want active-line stats latest=300, got %+v", resp)
+	}
+	if v4, ok := resp.Lines["v4"]; !ok || v4.Latest != 300 {
+		t.Errorf("want per-line v4 series in payload, got %+v", resp.Lines)
 	}
 }
