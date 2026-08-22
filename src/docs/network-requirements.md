@@ -1,6 +1,6 @@
 # Network and port requirements
 
-This page is derived from the v2 code and manifests. Treat it as the operator-facing firewall matrix for standalone Docker Compose, Kubernetes spokes, and hub deployments.
+This page is derived from the Go code under `src/` and the deployment manifests. Treat it as the operator-facing firewall matrix for standalone Docker Compose, Kubernetes spokes, and hub deployments.
 
 ## Inbound listeners
 

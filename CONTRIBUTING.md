@@ -107,6 +107,7 @@ The sign-off adds a `Signed-off-by:` trailer certifying that you have the right 
 - Include `Fixes #<issue>` lines for issues the PR closes.
 - Describe what changed, why, and how you tested it.
 - Include the relevant command output or a short note such as `Not run (docs only)` when tests are not applicable.
+- Add a [CHANGELOG.md](CHANGELOG.md) entry under `Unreleased` for user-visible changes — features, fixes, security changes, migrations, deprecations, and breaking changes. Routine refactors, test-only changes, and dependency churn are explicitly out of scope; see the guidance at the top of that file. A GitHub Actions job leaves a one-time advisory comment when a PR touches code without touching the changelog: it is a reminder, not a merge gate, and an entry is not required when the change is not user-visible.
 - Expect maintainers to ask for focused follow-up changes rather than broad drive-by edits.
 
 ## Maintainer resources

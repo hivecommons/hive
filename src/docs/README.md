@@ -11,6 +11,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [`CAP_NET_ADMIN` and self-hosted spokes](https://github.com/kubestellar/hive/blob/v4/src/docs/net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
 - [Config layering](https://github.com/kubestellar/hive/blob/v4/src/docs/config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](https://github.com/kubestellar/hive/blob/v4/src/docs/operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
+- [Changelog](https://github.com/kubestellar/hive/blob/v4/CHANGELOG.md) — recent user-visible changes and release notes.
 - [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, switching a hive to a channel, and the `stable (v4)` version pill.
 - [The `auto-update` Compose profile](https://github.com/kubestellar/hive/blob/v4/src/docs/auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
 - [Environment variable reference](https://github.com/kubestellar/hive/blob/v4/src/docs/env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.

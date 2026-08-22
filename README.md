@@ -543,6 +543,8 @@ See the [Hive Hub](https://hive.kubestellar.io) to browse registered hives, view
 
 To contribute to Hive itself, see [CONTRIBUTING.md](CONTRIBUTING.md) and open issues or PRs on this repository.
 
+Recent user-visible changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+
 ## Security
 
 Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Do not report security vulnerabilities through public issues or pull requests.
