@@ -18,7 +18,11 @@ func TestHiveHealthForReasons(t *testing.T) {
 		return RegistryEntry{Online: true, ACMMLevel: level}
 	}
 	// writer gives the entry an on-duty agent holding every write grant, so
-	// the #4561 no-writers-on-duty gate doesn't short-circuit banding.
+	// the #4561 no-writers-on-duty gate doesn't short-circuit banding. #4564
+	// extended that gate to L2 (any on-duty agent feeds the advisory stream)
+	// and renamed the L3–L5 verb create→write; the L2 fixtures and the two
+	// verb expectations below track that (semantic conflict between the
+	// admin-merged #4562 test and #4564, which broke v4 HEAD).
 	writer := func(e RegistryEntry) RegistryEntry {
 		e.Agents = []AgentSummary{{ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true}}
 		return e
@@ -36,7 +40,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 		{
 			name: "L2 advisory fresh — reason carries a single humanized age",
 			entry: func() RegistryEntry {
-				e := base(2)
+				e := writer(base(2))
 				e.AdvisoryLastPostedAt = rfc(now.Add(-2 * time.Hour))
 				return e
 			}(),
@@ -47,7 +51,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 		{
 			name: "L2 advisory stale — red",
 			entry: func() RegistryEntry {
-				e := base(2)
+				e := writer(base(2))
 				e.AdvisoryLastPostedAt = rfc(now.Add(-100 * time.Hour))
 				return e
 			}(),
@@ -57,14 +61,14 @@ func TestHiveHealthForReasons(t *testing.T) {
 		},
 		{
 			name:   "L2 no advisory yet, queue empty — idle green",
-			entry:  base(2),
+			entry:  writer(base(2)),
 			rollup: okRollup(), app: okApp(), queued: 0,
 			wantState:  HealthStateGreen,
 			wantReason: "queue empty — idle",
 		},
 		{
 			name:   "L2 no advisory yet, work queued — unknown",
-			entry:  base(2),
+			entry:  writer(base(2)),
 			rollup: okRollup(), app: okApp(), queued: 4,
 			wantState:  HealthStateUnknown,
 			wantReason: "no advisory yet",
