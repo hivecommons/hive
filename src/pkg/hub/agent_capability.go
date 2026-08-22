@@ -1,8 +1,12 @@
 package hub
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // Fleet-divergence derivation.
@@ -404,27 +408,28 @@ type agentFleetRollup struct {
 // capability, deltas). runState is a string so the frontend never re-derives
 // the state machine.
 type AgentVerdictJSON struct {
-	Name           string `json:"name"`
-	Backend        string `json:"backend,omitempty"`
-	Mode           string `json:"mode,omitempty"`
-	Enabled        bool   `json:"enabled"`
-	ExpectedActive bool   `json:"expectedActive"`
-	State          string `json:"state,omitempty"`
-	RunState       string `json:"runState"`
-	LastActivityAt string `json:"lastActivityAt,omitempty"`
-	Paused         bool   `json:"paused,omitempty"`
-	PausedBy       string `json:"pausedBy,omitempty"`
-	PausedTrigger  string `json:"pausedTrigger,omitempty"`
-	PausedReason   string `json:"pausedReason,omitempty"`
-	PausedAt       string `json:"pausedAt,omitempty"`
-	CanOpenIssue   bool   `json:"canOpenIssue"`
-	CanOpenPR      bool   `json:"canOpenPR"`
-	CanMerge       bool   `json:"canMerge"`
-	Able           bool   `json:"able"`
-	CapabilityTier string `json:"capabilityTier"`
-	Stuck          bool   `json:"stuck,omitempty"`
-	Impotent       bool   `json:"impotent,omitempty"`
-	QuietByDesign  bool   `json:"quietByDesign,omitempty"`
+	Name            string `json:"name"`
+	Backend         string `json:"backend,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	ExpectedActive  bool   `json:"expectedActive"`
+	KickIntervalSec int64  `json:"kickIntervalSec,omitempty"`
+	State           string `json:"state,omitempty"`
+	RunState        string `json:"runState"`
+	LastActivityAt  string `json:"lastActivityAt,omitempty"`
+	Paused          bool   `json:"paused,omitempty"`
+	PausedBy        string `json:"pausedBy,omitempty"`
+	PausedTrigger   string `json:"pausedTrigger,omitempty"`
+	PausedReason    string `json:"pausedReason,omitempty"`
+	PausedAt        string `json:"pausedAt,omitempty"`
+	CanOpenIssue    bool   `json:"canOpenIssue"`
+	CanOpenPR       bool   `json:"canOpenPR"`
+	CanMerge        bool   `json:"canMerge"`
+	Able            bool   `json:"able"`
+	CapabilityTier  string `json:"capabilityTier"`
+	Stuck           bool   `json:"stuck,omitempty"`
+	Impotent        bool   `json:"impotent,omitempty"`
+	QuietByDesign   bool   `json:"quietByDesign,omitempty"`
 	// Problem is THE alarm: governor expects this agent on and it can't deliver.
 	Problem bool `json:"problem,omitempty"`
 	// Unknown means the spoke did not report the new divergence signals (legacy
@@ -443,33 +448,105 @@ func buildAgentVerdicts(agents []AgentSummary, blockers hiveBlockers, queuedWork
 		}
 		v := deriveAgentVerdict(a, blockers, queuedWork, now)
 		out = append(out, AgentVerdictJSON{
-			Name:           a.Name,
-			Backend:        a.Backend,
-			Mode:           a.Mode,
-			Enabled:        a.Enabled,
-			ExpectedActive: a.ExpectedActive,
-			State:          a.State,
-			RunState:       v.RunState.String(),
-			LastActivityAt: a.LastActivityAt,
-			Paused:         a.Paused,
-			PausedBy:       a.PausedBy,
-			PausedTrigger:  a.PausedTrigger,
-			PausedReason:   a.PausedReason,
-			PausedAt:       a.PausedAt,
-			CanOpenIssue:   v.CanOpenIssue,
-			CanOpenPR:      v.CanOpenPR,
-			CanMerge:       v.CanMerge,
-			Able:           v.Able,
-			CapabilityTier: v.CapabilityTier,
-			Stuck:          v.Stuck,
-			Impotent:       v.Impotent,
-			QuietByDesign:  v.QuietByDesign,
-			Problem:        v.Problem,
-			Unknown:        v.CapabilityTier == tierGray,
-			BlockedReason:  v.BlockedReason,
+			Name:            a.Name,
+			Backend:         a.Backend,
+			Mode:            a.Mode,
+			Enabled:         a.Enabled,
+			ExpectedActive:  a.ExpectedActive,
+			KickIntervalSec: a.KickIntervalSec,
+			State:           a.State,
+			RunState:        v.RunState.String(),
+			LastActivityAt:  a.LastActivityAt,
+			Paused:          a.Paused,
+			PausedBy:        a.PausedBy,
+			PausedTrigger:   a.PausedTrigger,
+			PausedReason:    a.PausedReason,
+			PausedAt:        a.PausedAt,
+			CanOpenIssue:    v.CanOpenIssue,
+			CanOpenPR:       v.CanOpenPR,
+			CanMerge:        v.CanMerge,
+			Able:            v.Able,
+			CapabilityTier:  v.CapabilityTier,
+			Stuck:           v.Stuck,
+			Impotent:        v.Impotent,
+			QuietByDesign:   v.QuietByDesign,
+			Problem:         v.Problem,
+			Unknown:         v.CapabilityTier == tierGray,
+			BlockedReason:   v.BlockedReason,
 		})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		li, lj := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name)
+		if li == lj {
+			return out[i].Name < out[j].Name
+		}
+		return li < lj
+	})
 	return out
+}
+
+// agentRosterMismatch is the additive warning shown when a hive's reported
+// agent names drift from the ACMM pack that defines its expected roster.
+type agentRosterMismatch struct {
+	Level      int      `json:"level"`
+	Missing    []string `json:"missing,omitempty"`
+	Unexpected []string `json:"unexpected,omitempty"`
+	Reason     string   `json:"reason"`
+}
+
+func computeAgentRosterMismatch(level int, agents []AgentSummary) *agentRosterMismatch {
+	if level <= 0 || len(agents) == 0 {
+		return nil
+	}
+	pack, err := config.ACMMPackByLevel(level)
+	if err != nil {
+		return nil
+	}
+	expected := make(map[string]struct{}, len(pack.Agents))
+	for _, a := range pack.Agents {
+		name := strings.TrimSpace(a.Name)
+		if name == "" || a.Hidden {
+			continue
+		}
+		expected[name] = struct{}{}
+	}
+	actual := make(map[string]struct{}, len(agents))
+	for _, a := range agents {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			continue
+		}
+		actual[name] = struct{}{}
+	}
+	var missing, unexpected []string
+	for name := range expected {
+		if _, ok := actual[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	for name := range actual {
+		if _, ok := expected[name]; !ok {
+			unexpected = append(unexpected, name)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(unexpected)
+	if len(missing) == 0 && len(unexpected) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, 2)
+	if len(missing) > 0 {
+		parts = append(parts, "missing "+strings.Join(missing, ", "))
+	}
+	if len(unexpected) > 0 {
+		parts = append(parts, "unexpected: "+strings.Join(unexpected, ", "))
+	}
+	return &agentRosterMismatch{
+		Level:      level,
+		Missing:    missing,
+		Unexpected: unexpected,
+		Reason:     fmt.Sprintf("agent roster mismatch for L%d: %s", level, strings.Join(parts, "; ")),
+	}
 }
 
 // rollupAgents summarizes a hive's agents into the divergence counts. It counts

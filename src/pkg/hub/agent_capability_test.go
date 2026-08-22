@@ -360,6 +360,67 @@ func TestBuildAgentVerdicts_ShapeAndSkipBlank(t *testing.T) {
 	}
 }
 
+func TestBuildAgentVerdicts_SortedByAgentName(t *testing.T) {
+	now := time.Now()
+	z := modernWorking(now)
+	z.Name = "zeta"
+	a := modernWorking(now)
+	a.Name = "alpha"
+	m := modernWorking(now)
+	m.Name = "middle"
+
+	out := buildAgentVerdicts([]AgentSummary{z, m, a}, hiveBlockers{}, 5, now)
+	got := []string{out[0].Name, out[1].Name, out[2].Name}
+	want := []string{"alpha", "middle", "zeta"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("agent verdict order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestComputeAgentRosterMismatch_WarningReason(t *testing.T) {
+	agents := []AgentSummary{
+		{Name: "scanner"},
+		{Name: "quality"},
+		{Name: "guide"},
+		{Name: "supervisor"},
+		{Name: "outreach"},
+	}
+	got := computeAgentRosterMismatch(2, agents)
+	if got == nil {
+		t.Fatal("expected mismatch warning")
+	}
+	if got.Reason != "agent roster mismatch for L2: missing brainstorm; unexpected: outreach" {
+		t.Fatalf("reason = %q", got.Reason)
+	}
+	if len(got.Missing) != 1 || got.Missing[0] != "brainstorm" {
+		t.Fatalf("missing = %v, want [brainstorm]", got.Missing)
+	}
+	if len(got.Unexpected) != 1 || got.Unexpected[0] != "outreach" {
+		t.Fatalf("unexpected = %v, want [outreach]", got.Unexpected)
+	}
+}
+
+func TestComputeAgentRosterMismatch_NoWarningForMatchingOrUnknown(t *testing.T) {
+	matching := []AgentSummary{
+		{Name: "brainstorm"},
+		{Name: "guide"},
+		{Name: "quality"},
+		{Name: "scanner"},
+		{Name: "supervisor"},
+	}
+	if got := computeAgentRosterMismatch(2, matching); got != nil {
+		t.Fatalf("matching roster got warning %+v", got)
+	}
+	if got := computeAgentRosterMismatch(99, []AgentSummary{{Name: "scanner"}}); got != nil {
+		t.Fatalf("unknown level got warning %+v", got)
+	}
+	if got := computeAgentRosterMismatch(2, nil); got != nil {
+		t.Fatalf("missing legacy agent data got warning %+v", got)
+	}
+}
+
 // PROBLEM = governor expects it on AND it can't deliver, for any reason. It
 // unifies stuck/impotent/blocked and never fires on paused/off/legacy agents.
 func TestVerdict_ProblemFlag(t *testing.T) {

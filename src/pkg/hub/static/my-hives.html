@@ -166,7 +166,9 @@
      broken hive reads at a glance. */
   .why-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
   .why-chip.bad { color: var(--red); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
+  .why-chip.warn { color: var(--amber); border-color: rgba(224,168,0,.55); background: rgba(224,168,0,.08); }
   .why-chip.unknown { color: var(--gray); border-style: dashed; }
+  .hive-access-faces a:hover img { filter: brightness(1.12); }
   /* Attach chip: one-click copy of the kubectl+tmux attach command for the
      hive's spoke pod, so an operator can jump from a problematic /fleet row
      straight into the pod for root-causing. Shows cluster · namespace on
@@ -321,6 +323,15 @@ function esc(s) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 }
+function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function jsArg(s) {
+  var lit = "'" + String(s === null || s === undefined ? "" : s)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n") + "'";
+  return esc(lit);
+}
 function relTime(iso) {
   if (!iso) return "";
   var t = Date.parse(iso);
@@ -333,6 +344,113 @@ function relTime(iso) {
 }
 function acmmBadge(lvl) { return '<span class="badge">L' + esc(lvl == null ? "?" : lvl) + '</span>'; }
 function modeBadge(m) { return '<span class="badge">' + esc(m || "—") + '</span>'; }
+
+var AVATAR_HIDPI_SCALE = 2;
+var INLINE_ACCESS_AVATAR_MAX = 4;
+var INLINE_ACCESS_AVATAR_PX = 16;
+var ACCESS_ROLE_COLORS = {"owner": "#d29922", "merger": "#a371f7", "read-write": "#3fb950"};
+var ACCESS_ROLE_COLOR_DEFAULT = "#6b7280";
+var AVATAR_FALLBACK_HUES = [0, 25, 50, 145, 175, 200, 230, 260, 290, 330];
+var _liveHiveUsers = new Set();
+
+function accessRoleColor(role) {
+  return ACCESS_ROLE_COLORS[role] || ACCESS_ROLE_COLOR_DEFAULT;
+}
+function ghProfileURL(username) {
+  return "https://github.com/" + encodeURIComponent(String(username || ""));
+}
+function avatarInitials(username) {
+  var clean = String(username || "").replace(/[^A-Za-z0-9]/g, "");
+  if (!clean) return "?";
+  return clean.length === 1 ? clean.charAt(0).toUpperCase() : (clean.charAt(0) + clean.charAt(clean.length - 1)).toUpperCase();
+}
+function avatarFallbackHue(username) {
+  var s = String(username || ""), hash = 0;
+  for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_FALLBACK_HUES[hash % AVATAR_FALLBACK_HUES.length];
+}
+function avatarInitialsSVG(username, px) {
+  var initials = avatarInitials(username), hue = avatarFallbackHue(username);
+  var r = px / 2, fontSize = Math.round(px * 0.42);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px + '" viewBox="0 0 ' + px + ' ' + px + '">' +
+    '<circle cx="' + r + '" cy="' + r + '" r="' + r + '" fill="hsl(' + hue + ',45%,32%)"/>' +
+    '<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="system-ui,sans-serif" font-size="' + fontSize + '" font-weight="600" fill="#fff">' +
+    initials + '</text></svg>';
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+}
+function isUserLive(username) {
+  try { return _liveHiveUsers && _liveHiveUsers.has(String(username || "").toLowerCase()); }
+  catch (e) { return false; }
+}
+function avatarProfileLink(username, label, avatarHTML) {
+  var uname = String(username || "");
+  if (!uname) return avatarHTML;
+  var title = label || uname;
+  if (isUserLive(uname)) title = title + "\n● Logged into their hive now";
+  return '<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" ' +
+    'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" ' +
+    'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + "</a>";
+}
+function avatarImg(username, px, extraStyle) {
+  var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
+    'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + (extraStyle || "") + '" ' +
+    'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(username, px)) + '">';
+  if (isUserLive(username)) {
+    var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
+    return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
+      'padding:' + RING_GAP + 'px;border:' + RING_W + 'px dashed var(--green);border-radius:50%;' +
+      'vertical-align:middle;line-height:0">' + img + "</span>";
+  }
+  return img;
+}
+function linkedAvatar(username, px, label, extraStyle) {
+  return avatarProfileLink(username, label, avatarImg(username, px, extraStyle));
+}
+function fmtHours(secs) {
+  secs = Number(secs) || 0;
+  if (secs <= 0) return "0h";
+  var h = secs / 3600;
+  return h >= 10 ? Math.round(h) + "h" : h.toFixed(1).replace(/\.0$/, "") + "h";
+}
+function fmtUserTS(ts) { return ts ? relTime(ts) : ""; }
+function userTaskActivity() { return {done: 0, failed: 0}; }
+function userVerdict() { return null; }
+function accessAvatarTitle(a) {
+  var uname = String((a || {}).username || "");
+  var role = String((a || {}).role || "");
+  var lines = [uname + (role ? " — " + role : "")];
+  if (a && a.full_name) lines.push(String(a.full_name));
+  if (a && a.slack_id) lines.push("Slack: " + String(a.slack_id));
+  if (a && a.notes) lines.push("Notes: " + String(a.notes));
+  if (a && a.login_count) lines.push("Logins: " + a.login_count);
+  if (a && a.session_seconds) lines.push("Time in hive: " + fmtHours(a.session_seconds));
+  if (a && a.engaged_seconds) lines.push("Engaged time: " + fmtHours(a.engaged_seconds));
+  if (a && a.last_action_at) lines.push("Last real action: " + fmtUserTS(a.last_action_at));
+  return lines.join("\n");
+}
+function inlineAccessAvatar(a) {
+  var uname = String((a || {}).username || "");
+  var role = String((a || {}).role || "");
+  return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
+    "border:1px solid " + accessRoleColor(role) + ";background:var(--panel);flex:0 0 auto");
+}
+function hiveAccessAvatars(h) {
+  var members = (h && h.access) || [];
+  if (!members.length) return "";
+  var shown = members.slice(0, INLINE_ACCESS_AVATAR_MAX);
+  var faces = "";
+  for (var i = 0; i < shown.length; i++) faces += inlineAccessAvatar(shown[i]);
+  var overflow = members.length - shown.length;
+  if (overflow > 0) {
+    var hiddenNames = [];
+    for (var j = shown.length; j < members.length; j++) hiddenNames.push(String(members[j].username || ""));
+    faces += '<span title="' + escAttr(hiddenNames.join(", ")) + '" ' +
+      'style="font-size:0.62rem;color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + "</span>";
+  }
+  var label = members.length === 1 ? "1 user with access" : members.length + " users with access";
+  return '<span class="hive-access-faces" aria-label="' + escAttr(label) + '" ' +
+    'style="display:inline-flex;align-items:center;gap:2px;margin-left:6px;vertical-align:middle">' + faces + "</span>";
+}
 
 function rollupHTML(r) {
   if (!r) return '<span class="output">no agents reported</span>';
@@ -476,6 +594,7 @@ function diagnosisHTML(h) {
     add("blocked agents", blocked.map(function (a) { return esc(a.name) + ": " + esc(a.blockedReason); }).join(" · "), true);
   }
   if (h.inactiveAgentsReason) add("inactive agents", esc(h.inactiveAgentsReason), true);
+  if (h.agentRosterMismatch && h.agentRosterMismatch.reason) add("agent roster", esc(h.agentRosterMismatch.reason), false);
   if (h.urlUnreachableReason) add("dashboard url", esc(h.urlUnreachableReason), true);
   if (!h.online && h.lastHeartbeat) add("last heartbeat", esc(relTime(h.lastHeartbeat)), true);
   if (!rows.length) return "";
@@ -564,7 +683,16 @@ function runStateHTML(a) {
   var rs = a.unknown ? "unknown" : (a.runState || "unknown");
   var label = RUN_STATE_LABELS[rs] || rs.replace(/-/g, " ");
   var rel = a.lastActivityAt ? ' <span class="rel">' + esc(relTime(a.lastActivityAt)) + '</span>' : "";
-  return '<span class="rs ' + esc(rs) + '"><span class="swatch"></span>' + esc(label) + '</span>' + rel;
+  var cadence = rs === "working" && a.kickIntervalSec ? ' <span class="rel">· ' + esc(formatCadence(a.kickIntervalSec)) + '</span>' : "";
+  return '<span class="rs ' + esc(rs) + '"><span class="swatch"></span>' + esc(label) + '</span>' + cadence + rel;
+}
+function formatCadence(seconds) {
+  var s = Number(seconds) || 0;
+  if (s <= 0) return "";
+  if (s % 86400 === 0) return (s / 86400) + "d";
+  if (s % 3600 === 0) return (s / 3600) + "h";
+  if (s % 60 === 0) return (s / 60) + "m";
+  return s + "s";
 }
 function capHTML(a) {
   // Unknown (legacy): a single "unknown" chip, NOT red ✗ ticks — we cannot see
@@ -632,6 +760,11 @@ function whyChipHTML(h, health) {
   if (!v || !v.reason) return "";
   var cls = v.state === "red" ? "why-chip bad" : (v.state === "unknown" ? "why-chip unknown" : "why-chip");
   return '<span class="' + cls + '" title="' + esc(v.outputKind ? "output judged on: " + v.outputKind : "hive-health") + '">' + esc(v.reason) + '</span>';
+}
+function rosterMismatchChipHTML(h) {
+  var m = h.agentRosterMismatch || {};
+  if (!m.reason) return "";
+  return '<span class="why-chip warn" title="' + esc(m.reason) + '">agent roster mismatch</span>';
 }
 
 // Expand state persists across the 30s refresh (keyed by hive id) so an open
@@ -714,7 +847,7 @@ function renderHives(hives) {
     tr.className = "spoke health-" + health + (open ? " open" : "");
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + attachChipHTML(h) + '</td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + hiveAccessAvatars(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + rosterMismatchChipHTML(h) + attachChipHTML(h) + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
@@ -723,6 +856,9 @@ function renderHives(hives) {
     tb.appendChild(tr);
     var link = tr.querySelector(".hive-link");
     if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
+    tr.querySelectorAll(".hive-access-faces a").forEach(function (a) {
+      a.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
 
     var verdicts = h.agentVerdicts || [];
     var subRows = [];
@@ -739,9 +875,9 @@ function renderHives(hives) {
       tb.appendChild(drow);
       subRows.push(drow);
     }
-    // In an expanded problem hive, float the problem agents to the top.
+    // Agent rows stay alphabetical so the same agent is always in the same place.
     var ordered = verdicts.slice().sort(function (a, b) {
-      return (b.problem ? 1 : 0) - (a.problem ? 1 : 0);
+      return String(a.name || "").localeCompare(String(b.name || ""));
     });
     ordered.forEach(function (a) {
       var sub = document.createElement("tr");

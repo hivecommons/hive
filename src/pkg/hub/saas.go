@@ -3150,6 +3150,12 @@ type MyHiveEntry struct {
 	FleetRollup   *agentFleetRollup  `json:"fleetRollup,omitempty"`
 	AgentVerdicts []AgentVerdictJSON `json:"agentVerdicts,omitempty"`
 
+	// AgentRosterMismatch is an additive warning when the spoke's reported
+	// agent list no longer matches the ACMM pack roster for its level. It does
+	// not change the red/green hive verdict; red production failures still
+	// outrank this yellow configuration-drift signal.
+	AgentRosterMismatch *agentRosterMismatch `json:"agentRosterMismatch,omitempty"`
+
 	// HealthVerdict is the at-a-glance hive-health verdict (hive-health): does
 	// this spoke have RECENT OUTPUT back to its work source, banded by ACMM
 	// level? green/red/unknown with a WHY reason, computed on read from the same
@@ -3654,6 +3660,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
 			result[i].FleetRollup = &rollup
 			result[i].AgentVerdicts = buildAgentVerdicts(result[i].Agents, blockers, queuedWork, journeyNow)
+			result[i].AgentRosterMismatch = computeAgentRosterMismatch(result[i].ACMMLevel, result[i].Agents)
 
 			// Hive-health verdict: reuse the rollup + app-health + queue depth we
 			// just computed. Only for real (non-placeholder) hives with reported
