@@ -378,6 +378,9 @@ func (c *Client) recordCreationAudit(action string, m InvocationMeta, extra ...s
 		audit(action, detail, m.Agent)
 		return
 	}
+	if c.logger == nil {
+		return // no sink and no logger (e.g. a bare test client) — nothing to do
+	}
 	c.logger.Info("attribution audit (no audit sink wired yet)",
 		slog.String("action", action), slog.String("detail", detail), slog.String("agent", m.Agent))
 }
