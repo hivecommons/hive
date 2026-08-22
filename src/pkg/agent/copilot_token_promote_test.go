@@ -174,6 +174,23 @@ func TestRestoreCopilotTokens_IdentityShape(t *testing.T) {
 		t.Errorf("identity-keyed token = %q, want gho_seeded under the identity key; tokens=%v", got, toks)
 	}
 
+	// Object-shaped identity ({"host","login"} — what Copilot 1.0.78 actually
+	// writes) → token stored under "<host>:<login>".
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{},"lastLoggedInUser":{"host":"https://github.com","login":"bob"}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreCopilotTokens(path, "gho_obj"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = readCopilotConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, _ = cfg["copilotTokens"].(map[string]interface{})
+	if got, _ := toks["https://github.com:bob"].(string); got != "gho_obj" {
+		t.Errorf("object-identity token = %q, want gho_obj under https://github.com:bob; tokens=%v", got, toks)
+	}
+
 	// No identity → legacy host-keyed object shape (unchanged behavior).
 	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{}}`), 0o660); err != nil {
 		t.Fatal(err)

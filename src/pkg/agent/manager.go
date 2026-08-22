@@ -5873,20 +5873,42 @@ func restoreCopilotTokens(path, token string) error {
 		}
 		cfg = map[string]interface{}{}
 	}
-	// When the config still carries a login identity ("https://github.com:<user>"
-	// in lastLoggedInUser — preserved by clearExpiredTokens), store the token
-	// under that identity key in the string shape a real /login writes, so the
-	// interactive CLI recognizes the seeded credential as a signed-in session
-	// rather than showing "Please use /login" over a valid token. With no
-	// identity on file, fall back to the host-keyed object shape as before.
-	if user, ok := cfg["lastLoggedInUser"].(string); ok && strings.TrimSpace(user) != "" {
-		cfg["copilotTokens"] = map[string]interface{}{user: token}
+	// When the config still carries a login identity (preserved by
+	// clearExpiredTokens), store the token under the "<host>:<login>" key a
+	// real /login writes, so the interactive CLI recognizes the seeded
+	// credential as a signed-in session rather than showing "Please use
+	// /login" over a valid token. The CLI has written lastLoggedInUser in two
+	// shapes across versions — a bare "https://github.com:user" string and a
+	// {"host":…,"login":…} object (the shape observed in a working 1.0.78
+	// config) — accept both. With no identity on file, fall back to the
+	// host-keyed object shape as before.
+	if key := copilotIdentityKey(cfg["lastLoggedInUser"]); key != "" {
+		cfg["copilotTokens"] = map[string]interface{}{key: token}
 	} else {
 		cfg["copilotTokens"] = map[string]interface{}{
 			"github.com": map[string]interface{}{"token": token},
 		}
 	}
 	return writeCopilotConfig(path, cfg)
+}
+
+// copilotIdentityKey renders a lastLoggedInUser value — string or
+// {"host","login"} object — as the "<host>:<login>" copilotTokens key the CLI
+// uses for a signed-in session, or "" when there is no usable identity.
+func copilotIdentityKey(v interface{}) string {
+	switch id := v.(type) {
+	case string:
+		if s := strings.TrimSpace(id); s != "" {
+			return s
+		}
+	case map[string]interface{}:
+		host, _ := id["host"].(string)
+		login, _ := id["login"].(string)
+		if strings.TrimSpace(host) != "" && strings.TrimSpace(login) != "" {
+			return host + ":" + login
+		}
+	}
+	return ""
 }
 
 // extractCopilotToken pulls the first usable token string out of a config.json
@@ -8319,6 +8341,18 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 }
 
 func (m *Manager) Restart(ctx context.Context, name string) error {
+	// Detach from the caller's cancellation. Restart is routinely invoked from
+	// goroutines whose OWN context is the per-launch agentCtx this function is
+	// about to cancel (pollTmuxOutputForAgent's token-detected and TLS-error
+	// restarts): agent.cancel() below kills that parent, so the relaunch's new
+	// WithCancel context was born dead — launchInTmux still typed the CLI, but
+	// pollTmuxOutputForAgent and watchForTrustPromptForAgent exited instantly,
+	// leaving every restarted agent with NO pane monitors. Live signature
+	// (kubestellar/hive, 2026-08-22): exactly one auto-answered trust prompt
+	// per agent per pod boot, then wedged panes forever after the first
+	// token-detected restart. A relaunch must never be aborted by the
+	// cancellation of the launch it replaces.
+	ctx = context.WithoutCancel(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
