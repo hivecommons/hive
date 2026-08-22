@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -151,9 +152,15 @@ func TestOpenAIChatClientCompleteHappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
-		buf := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(buf)
-		gotBody = string(buf)
+		// io.ReadAll, not a single Body.Read into a ContentLength-sized
+		// buffer: one Read is not guaranteed to fill the buffer, so a request
+		// split across segments would leave trailing NULs and fail the
+		// Contains assertions below intermittently rather than honestly.
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		gotBody = string(body)
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"score\":0.1,\"category\":\"benign\",\"rationale\":\"ok\"}"}}]}`)
 	}))
 	defer srv.Close()
