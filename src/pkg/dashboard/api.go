@@ -920,6 +920,15 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 		proof = s.deps.Config.Dashboard.AuthToken
 	}
 	cookie, _ := r.Cookie("hive_hub_user")
+	if proof == "" && cookie == nil {
+		// Fail fast and honestly: with no dashboard-token proof and no hub
+		// session cookie to relay, the hub is guaranteed to reject this request,
+		// and "not authenticated" would mislead a logged-in owner. Name the
+		// missing credential and how to configure it (#4446 honest-error
+		// standard).
+		jsonError(w, "self-upgrade needs this spoke's dashboard token to prove itself to the hub — set DASHBOARD_AUTH_TOKEN (the hive-secrets/dashboard-token secret) and restart the spoke", http.StatusBadRequest)
+		return
+	}
 	const upgradeTimeout = 30 * time.Second
 	client := &http.Client{Timeout: upgradeTimeout}
 	req, err := http.NewRequest("POST", upgradeURL, nil)

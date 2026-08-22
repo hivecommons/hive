@@ -821,13 +821,18 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 		}
 		username := s.getAuthUser(r)
 		if username == "" {
-			if _, ok := s.trustedSpokeUpgradeUser(r, r.PathValue("id")); ok {
+			spokeUser, reason := s.trustedSpokeUpgradeUser(r, r.PathValue("id"))
+			if spokeUser != "" {
 				next(w, r)
 				return
 			}
+			// Honest-error standard (#4446): every rejection on the spoke lane
+			// names WHICH credential failed and what to do about it, because the
+			// spoke dashboard relays this body verbatim into the operator's
+			// toast — a bare "not authenticated" told a logged-in owner nothing.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"not authenticated"}`))
+			json.NewEncoder(w).Encode(map[string]string{"error": reason})
 			return
 		}
 		user := loadSaaSUser(username)
@@ -851,21 +856,64 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 	}
 }
 
-func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (string, bool) {
+// trustedSpokeUpgradeUser authenticates the spoke-relayed upgrade lane. It
+// returns the user to attribute the upgrade to and an empty reason on success,
+// or ("", reason) on failure, where reason is an operator-facing explanation of
+// exactly which credential failed (the spoke shows it verbatim in a toast).
+//
+// The proof (X-Hive-Proxy-Auth = the hive's own dashboard token) is the
+// load-bearing credential: possession of that per-hive secret already grants
+// owner on the spoke dashboard itself, so a proof-verified request is the
+// spoke's authenticated operator by construction. X-Hive-User is attribution,
+// not authentication — gateway-fronted spokes (the Node auth proxy on :3001)
+// authenticate the operator with the shared token, strip per-user identity
+// headers, and therefore relay NO X-Hive-User even for a legitimate logged-in
+// owner. Rejecting that shape was the "Upgrade failed: not authenticated" bug:
+// a proof-verified request with no user identity is now attributed to the
+// hive's registered owner instead of being turned away.
+func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (string, string) {
 	username := r.Header.Get("X-Hive-User")
-	if username == "" || hiveID == "" || r.Header.Get("X-Hive-Role") != saasRoleOwner {
-		return "", false
-	}
 	proof := r.Header.Get(proxyAuthHeader)
+	if hiveID == "" {
+		return "", "not authenticated — upgrade request named no hive"
+	}
+	if username == "" && proof == "" {
+		// Nothing to verify at all. Old spoke builds (pre proof-forwarding)
+		// relay the upgrade click with no credentials whatsoever; tell the
+		// operator how to upgrade past that build instead of a dead end.
+		return "", "not authenticated — this upgrade request reached the hub with no hub session and no spoke credentials; if it came from a spoke dashboard, that spoke build is too old to relay its upgrade credentials — trigger this hive's upgrade from the hub dashboard (or enable auto-upgrade), after which the spoke button will work"
+	}
+	if r.Header.Get("X-Hive-Role") != saasRoleOwner {
+		return "", "not authenticated — spoke upgrade requests must carry the owner role"
+	}
+	if proof == "" {
+		return "", "not authenticated — spoke upgrade proof missing: the spoke sent no dashboard-token proof (X-Hive-Proxy-Auth); set DASHBOARD_AUTH_TOKEN on the spoke to its hive-secrets/dashboard-token value"
+	}
 	expected := s.spokeProxyAuthToken(hiveID)
-	if proof == "" || expected == "" || !secureCompareHub(proof, expected) {
-		return "", false
+	if expected == "" {
+		return "", "not authenticated — the hub could not read this hive's dashboard-token secret (hive-secrets/dashboard-token) to verify the spoke's upgrade proof; check the hub's access to this hive's cluster"
+	}
+	if !secureCompareHub(proof, expected) {
+		return "", "not authenticated — spoke upgrade proof rejected: the spoke's DASHBOARD_AUTH_TOKEN does not match this hive's dashboard-token secret; re-sync the spoke's token"
+	}
+	if username == "" {
+		// Proof verified but no per-user identity (shared-token gateway
+		// topology): attribute the upgrade to the hive's registered owner.
+		if h := loadSaaSHive(hiveID); h != nil {
+			username = h.Owner
+		}
+		if username == "" {
+			return "", "not authenticated — spoke upgrade request carried no user identity and this hive has no registered owner to attribute it to"
+		}
 	}
 	user := loadSaaSUser(username)
-	if user == nil || user.Blocked {
-		return "", false
+	if user == nil {
+		return "", fmt.Sprintf("not authenticated — the hub has no record of user %q; log in to the hub once, then retry", username)
 	}
-	return username, true
+	if user.Blocked {
+		return "", "not authenticated — this account is blocked on the hub"
+	}
+	return username, ""
 }
 
 // isCSRFSafe reports whether a request may be allowed to MUTATE state.
