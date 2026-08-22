@@ -166,6 +166,13 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 	if onDemand || queuedWork < inactiveAgentMinQueued {
 		return agentInactiveNone
 	}
+	if !legacyAgent(a) && !agentCanDrainQueuedWork(a) {
+		// Advisory-only agents (katamari/ibm-aiops-orchestrator at L2) cannot
+		// drain queued issues/PRs by design. Their health is the advisory
+		// stream's freshness; counting backlog against a write-incapable agent
+		// turns a healthy fresh digest into "idle with work queued".
+		return agentInactiveNone
+	}
 	lastActivity, activityOK := parseAgentTime(a.LastActivityAt)
 	if !activityOK {
 		// The spoke has never observed a pane change for this agent. That is
@@ -178,6 +185,10 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 		return agentInactiveIdleWithWork
 	}
 	return agentInactiveNone
+}
+
+func agentCanDrainQueuedWork(a AgentSummary) bool {
+	return a.CanOpenIssue || a.CanOpenPR || a.CanMerge
 }
 
 func idleThresholdForAgent(a AgentSummary) time.Duration {

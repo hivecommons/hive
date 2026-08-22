@@ -161,6 +161,23 @@ func TestIdleRuleRespectsKickCadence(t *testing.T) {
 	}
 }
 
+func TestIdleRuleSkipsWriteIncapableAdvisoryAgents(t *testing.T) {
+	now := time.Now()
+	a := AgentSummary{
+		Name: "quality", State: "running", Backend: "bob",
+		Enabled: true, ExpectedActive: true,
+		StartedAt: settled(now), LastActivityAt: activeAt(now, 3*time.Hour),
+	}
+	if got := classifyInactiveAgent(a, 9, now); got != agentInactiveNone {
+		t.Fatalf("write-incapable advisory agent classified %v; want none", got.label())
+	}
+
+	a.CanOpenIssue = true
+	if got := classifyInactiveAgent(a, 9, now); got != agentInactiveIdleWithWork {
+		t.Fatalf("write-capable idle agent classified %v; want idle-with-work", got.label())
+	}
+}
+
 // TestUnknownActivityIsNotIdle guards the upgrade path: a spoke too old to
 // report lastActivityAt must not make every one of its agents alarm.
 func TestUnknownActivityIsNotIdle(t *testing.T) {

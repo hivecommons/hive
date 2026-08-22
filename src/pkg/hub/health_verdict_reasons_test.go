@@ -180,6 +180,40 @@ func TestHiveHealthForReasons(t *testing.T) {
 	}
 }
 
+func TestHiveHealth_L2FreshAdvisoryIgnoresWriteIncapableIdleAgents(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	agent := func(name, state string, paused bool) AgentSummary {
+		return AgentSummary{
+			Name: name, State: state, Backend: "bob",
+			Enabled: true, ExpectedActive: !paused, Paused: paused,
+			StartedAt: settled(now), LastActivityAt: activeAt(now, 3*time.Hour),
+		}
+	}
+	e := RegistryEntry{
+		Online:               true,
+		ACMMLevel:            2,
+		AdvisoryLastPostedAt: rfc(now.Add(-4 * time.Minute)),
+		Agents: []AgentSummary{
+			agent("quality", agentStateRunning, false),
+			agent("guide", agentStateRunning, false),
+			agent("scanner", agentStatePaused, true),
+			agent("supervisor", agentStatePaused, true),
+			agent("brainstorm", agentStatePaused, true),
+		},
+	}
+
+	rollup := rollupAgents(e.Agents, hiveBlockers{}, 9, now)
+	if rollup.Problems != 0 || rollup.IdleWithWork != 0 {
+		t.Fatalf("write-incapable L2 agents must not create idle-with-work problems, got %+v", rollup)
+	}
+
+	v := hiveHealthFor(e, rollup, okApp(), 9, now)
+	if v.State != HealthStateGreen || !strings.Contains(v.Reason, "advisory 4m ago") {
+		t.Fatalf("fresh L2 advisory should stay healthy, got state=%s reason=%q", v.State, v.Reason)
+	}
+}
+
 func TestMaxRFC3339(t *testing.T) {
 	early, late := "2026-08-22T01:00:00Z", "2026-08-22T09:00:00Z"
 	cases := []struct{ a, b, want string }{

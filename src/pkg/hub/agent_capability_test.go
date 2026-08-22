@@ -261,6 +261,20 @@ func TestVerdict_CadenceIdleIsWorkingUntilCadenceMissed(t *testing.T) {
 	}
 }
 
+func TestVerdict_WriteIncapableAdvisoryAgentNotIdleWithWork(t *testing.T) {
+	now := time.Now()
+	a := AgentSummary{
+		Name: "guide", State: "running", Backend: "bob",
+		Enabled: true, ExpectedActive: true,
+		StartedAt: settled(now), LastActivityAt: activeAt(now, 3*time.Hour),
+	}
+
+	v := deriveAgentVerdict(a, hiveBlockers{}, 9, now)
+	if v.RunState != runWorking || !v.Able || v.Problem {
+		t.Fatalf("write-incapable advisory agent must be working/able/non-problem, got %+v", v)
+	}
+}
+
 func TestRollup_LoginStuckCount(t *testing.T) {
 	now := time.Now()
 	stuck := modernWorking(now)
