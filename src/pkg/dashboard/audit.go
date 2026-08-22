@@ -171,6 +171,49 @@ func (a *AuditLog) LastUserActions() map[string]string {
 	return out
 }
 
+// OutputActionsSince reads the on-disk audit log (auditLogPath) and returns
+// every entry whose Action is in `actions` and whose timestamp is at or after
+// `since`. It reads the FILE, not the in-memory ring, because the ring is capped
+// at auditRingCap (500) and reset on restart — the activity collector needs the
+// full window (e.g. 12h across every repo on a busy hive), which only the
+// lumberjack-rotated file holds. Malformed lines and unparseable timestamps are
+// skipped. Rotated/compressed backups are NOT read: the collector persists its
+// own running totals to a sidecar (see activity_collector.go), so the current
+// file is sufficient for the recent window and the sidecar covers history beyond
+// rotation. A missing file returns an empty slice (clean first-boot).
+//
+// filePath is a parameter (defaulting to auditLogPath when "") so tests can
+// point it at a fixture without touching /data.
+func (a *AuditLog) OutputActionsSince(since time.Time, actions map[string]bool, filePath string) []AuditEntry {
+	if filePath == "" {
+		filePath = auditLogPath
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+	var out []AuditEntry
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var e AuditEntry
+		if json.Unmarshal(line, &e) != nil || e.Timestamp == "" {
+			continue
+		}
+		if len(actions) > 0 && !actions[e.Action] {
+			continue
+		}
+		t, perr := time.Parse(time.RFC3339, e.Timestamp)
+		if perr != nil || t.Before(since) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func (a *AuditLog) Recent(n int) []AuditEntry {
 	a.mu.Lock()
 	defer a.mu.Unlock()

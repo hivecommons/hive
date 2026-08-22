@@ -2013,6 +2013,16 @@ func main() {
 	fleetStatsCollector.EnablePersistence("/data/fleet-stats.json")
 	go fleetStatsCollector.Start(ctx)
 
+	// Per-repo output-activity collector: reads the local audit log (no GitHub
+	// calls) and summarizes issues/PRs/comments/merges/claims/reviews per repo
+	// with recency, so the hub can tell — from the heartbeat alone — whether each
+	// hive is producing output back to its work source. Persisted to the /data
+	// PVC so a restart resumes the last summary; the collector loop reads
+	// /data/audit.jsonl every few minutes.
+	activityCollector := dashboard.NewActivityCollector(dashSrv.GetAudit(), "", logger)
+	activityCollector.EnablePersistence("/data/activity.json")
+	go activityCollector.Start(ctx)
+
 	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
 	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
 	// store loads any prior 7-day history from the /data PVC on first use and the
