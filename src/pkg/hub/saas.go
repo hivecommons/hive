@@ -18761,17 +18761,67 @@ const dashboardHTML = `<!DOCTYPE html>
        stay in step with the same name source the flag/preview already use. */
     var ISO_COUNTRY_CODES = ("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW").split(" ");
 
+    /* Minimum number of users sharing a country before it floats to the
+       "frequent" group at the top of the Country dropdown. "More than one":
+       a single assignment is not yet a pattern worth reordering the list for. */
+    var COUNTRY_FREQUENT_MIN_USERS = 2;
+    /* The disabled divider between the frequent group and the full
+       alphabetical list. value-less and disabled, so it can never be picked. */
+    var COUNTRY_FREQUENT_SEPARATOR = '──────────';
+
+    // frequentCountryCodes returns the codes held by at least
+    // COUNTRY_FREQUENT_MIN_USERS of the given users, ordered by count
+    // descending then localized name — the group countrySelectOptionsHTML
+    // floats to the top of the dropdown. Empty or malformed countries never
+    // count (normalizeCountryCode gates them out), so a roster full of
+    // country-less users produces no group at all. Recomputed on every panel
+    // render from the roster the admin poll keeps fresh (_allUsers), so the
+    // ordering tracks assignments live as countries are added or cleared.
+    function frequentCountryCodes(users) {
+      var counts = {};
+      (users || []).forEach(function (u) {
+        var c = normalizeCountryCode(u && u.country);
+        if (c) counts[c] = (counts[c] || 0) + 1;
+      });
+      return Object.keys(counts)
+        .filter(function (c) { return counts[c] >= COUNTRY_FREQUENT_MIN_USERS; })
+        .map(function (c) { return { code: c, count: counts[c], name: countryDisplayName(c) || c }; })
+        .sort(function (a, b) {
+          if (a.count !== b.count) return b.count - a.count;
+          return a.name.localeCompare(b.name);
+        })
+        .map(function (o) { return o.code; });
+    }
+
     // countrySelectOptionsHTML builds the <option>s for the Country dropdown,
     // sorted by localized display name, marking the current code selected and
     // a leading blank ("— none —") so an admin can clear a country.
+    //
+    // Countries already assigned to more than one loaded user float to a
+    // "frequent" group right under "— none —" (frequentCountryCodes), followed
+    // by a disabled separator and then the FULL alphabetical list — frequent
+    // codes stay duplicated there on purpose, so an admin whose muscle memory
+    // says "scroll to U" still finds United States where it always was. The
+    // current code is marked selected exactly once (the frequent copy when it
+    // has one), because duplicate selected attributes would make the browser
+    // pick the later, alphabetical copy and scroll the closed select there.
     function countrySelectOptionsHTML(current) {
       var cur = (normalizeCountryCode(current) || '');
       var opts = ISO_COUNTRY_CODES.map(function (code) {
         return { code: code, name: countryDisplayName(code) || code };
       }).sort(function (a, b) { return a.name.localeCompare(b.name); });
       var html = '<option value=""' + (cur ? '' : ' selected') + '>— none —</option>';
+      var frequent = frequentCountryCodes(_allUsers);
+      var curInFrequent = frequent.indexOf(cur) !== -1;
+      frequent.forEach(function (code) {
+        html += '<option value="' + escAttr(code) + '"' + (code === cur ? ' selected' : '') +
+          '>' + esc(countryDisplayName(code) || code) + ' (' + esc(code) + ')</option>';
+      });
+      if (frequent.length) {
+        html += '<option value="" disabled>' + COUNTRY_FREQUENT_SEPARATOR + '</option>';
+      }
       opts.forEach(function (o) {
-        html += '<option value="' + escAttr(o.code) + '"' + (o.code === cur ? ' selected' : '') +
+        html += '<option value="' + escAttr(o.code) + '"' + (o.code === cur && !curInFrequent ? ' selected' : '') +
           '>' + esc(o.name) + ' (' + esc(o.code) + ')</option>';
       });
       return html;
