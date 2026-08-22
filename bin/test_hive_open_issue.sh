@@ -271,6 +271,45 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+# --- Section 9: claim kind ---
+echo ""
+echo "--- claim kind ---"
+
+# claim requires --repo and a number
+check_exit "claim without number exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" claim --repo "org/repo"
+check_exit "claim without repo exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" claim 42
+
+run_script "claimbot" claim --repo "org/repo" 77
+REQ_FILE="$(find_req claimbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_KIND="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['kind'])" "$REQ_FILE")"
+  check "claim kind field" "claim" "$GOT_KIND"
+  GOT_NUM="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['number'])" "$REQ_FILE")"
+  check "claim number field" "77" "$GOT_NUM"
+  GOT_AGENT="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['agent'])" "$REQ_FILE")"
+  check "claim agent field" "claimbot" "$GOT_AGENT"
+else
+  echo "  FAIL: claim request file not created"
+  FAIL=$((FAIL + 3))
+fi
+
+# claim accepts a PR/issue URL as the number
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+run_script "urlbot" claim --repo "org/repo" "https://github.com/org/repo/issues/91"
+REQ_FILE="$(find_req urlbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_NUM="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['number'])" "$REQ_FILE")"
+  check "claim parses number from URL" "91" "$GOT_NUM"
+else
+  echo "  FAIL: claim-from-URL request not created"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

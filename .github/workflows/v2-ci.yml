@@ -354,6 +354,10 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_open_issue.sh
 
+      - name: hive-review helper tests
+        working-directory: .
+        run: bash bin/test_hive_review.sh
+
       # The guard that keeps the three steps above from being the last time
       # anyone notices: it fails when a bin/ suite exists and nothing runs it.
       # Each omission it catches is individually invisible, because nothing

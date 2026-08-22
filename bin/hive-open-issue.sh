@@ -18,6 +18,12 @@
 # Usage (drop-in for the common gh shapes):
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
+#   hive-open-issue claim   --repo <owner/repo> <number|url>
+#
+# "claim" records that this agent is starting work on an issue: the watcher
+# applies a `hive/claimed-by-<agent>` LABEL (App bots cannot be GitHub
+# assignees, so a label is the visible, auditable ownership signal) and audits
+# it as agent_issue_claimed. No body/title needed.
 #
 # On success it prints the request path and returns 0. The issue/comment is
 # created asynchronously (within one ~10s watcher tick); poll the .result.json
@@ -28,7 +34,10 @@ set -euo pipefail
 REQ_DIR="/var/run/hive-metrics/issue-requests"
 
 KIND="issue"
-if [ "${1:-}" = "comment" ]; then KIND="comment"; shift; fi
+case "${1:-}" in
+  comment) KIND="comment"; shift;;
+  claim) KIND="claim"; shift;;
+esac
 
 REPO=""; TITLE=""; BODY=""; BODY_FILE=""; NUMBER=""
 LABELS=()
@@ -51,8 +60,8 @@ while [ $# -gt 0 ]; do
     --assignee|-a|--milestone|-m|--project|-p|--template|-T) shift 2;;
     --web|-w|--editor|-e) shift;;
     *)
-      # A bare positional for a comment is the issue/PR number or URL.
-      if [ "$KIND" = "comment" ] && [ -z "$NUMBER" ]; then
+      # A bare positional for a comment/claim is the issue/PR number or URL.
+      if { [ "$KIND" = "comment" ] || [ "$KIND" = "claim" ]; } && [ -z "$NUMBER" ]; then
         case "$1" in
           http://*|https://*) NUMBER="$(printf '%s' "$1" | sed -n 's#.*/\(issues\|pull\)/\([0-9][0-9]*\).*#\2#p')";;
           [0-9]*) NUMBER="$1";;
@@ -79,6 +88,12 @@ if [ "$KIND" = "issue" ]; then
   # agent bug, and catching it here beats a watcher-side .bad quarantine.
   if [ -z "$REPO" ] || [ -z "$TITLE" ] || [ -z "$BODY" ]; then
     echo "hive-open-issue: --repo, --title, and --body are required" >&2
+    exit 2
+  fi
+elif [ "$KIND" = "claim" ]; then
+  # A claim just needs the issue to point at — no body/title.
+  if [ -z "$REPO" ] || [ -z "$NUMBER" ]; then
+    echo "hive-open-issue: claim requires --repo and a number (or URL)" >&2
     exit 2
   fi
 else
@@ -122,6 +137,10 @@ req = {"kind": kind, "repo": repo, "agent": agent}
 if kind == "comment":
     req["number"] = int(number)
     req["body"] = body
+elif kind == "claim":
+    # The watcher applies the hive/claimed-by-<agent> label; number is all it
+    # needs. No body/title/labels.
+    req["number"] = int(number)
 else:
     req["title"] = title
     req["body"] = body
@@ -135,6 +154,8 @@ PY
 
 if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"
+elif [ "$KIND" = "claim" ]; then
+  echo "hive-open-issue: requested claim of $REPO#$NUMBER (hive/claimed-by-$AGENT label)"
 else
   echo "hive-open-issue: requested issue on $REPO as the App bot: $TITLE"
 fi

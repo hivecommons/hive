@@ -987,6 +987,32 @@ if [[ -n "$AGENT_NAME" ]]; then
       exit $rc
       ;;
     issue/edit|pr/edit)
+      # ── Issue self-claim → hive/claimed-by-<agent> label ──
+      # An App bot cannot be a GitHub assignee (Issues.AddAssignees silently
+      # drops it), so `gh issue edit <n> --add-assignee @me` would be a no-op —
+      # the agent thinks it claimed the issue but nothing is recorded. Relay it
+      # to hive-open-issue claim, which applies a visible, AUDITED
+      # hive/claimed-by-<agent> label (agent_issue_claimed). Only for a plain
+      # self-claim on an issue; anything else falls through to the label path.
+      if [ "$subcmd" = "issue" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        _claim_self=false
+        _prev_arg=""
+        for a in "${args[@]}"; do
+          case "$a" in
+            --add-assignee=@me|--add-assignee=@self) _claim_self=true ;;
+            @me|@self) [ "$_prev_arg" = "--add-assignee" ] && _claim_self=true ;;
+          esac
+          _prev_arg="$a"
+        done
+        if $_claim_self; then
+          _extract_item
+          if [ -n "$item_num" ]; then
+            _claim_repo=""
+            [ -n "$item_repo" ] && _claim_repo="--repo $item_repo"
+            exec hive-open-issue claim $_claim_repo "$item_num"
+          fi
+        fi
+      fi
       _ensure_labels
       # Label injection is provenance metadata, not a security gate. gh applies
       # an edit atomically, so a missing label (repo not yet ensured, create
@@ -1011,13 +1037,27 @@ if [[ -n "$AGENT_NAME" ]]; then
       fi
       exec "$REAL_GH" "$@"
       ;;
-    issue/comment|pr/comment|pr/review)
+    pr/review)
+      _inject_identity
+      # ── Relay reviews through the hive (review-request watcher) ──
+      # A direct `gh pr review` lands under the agent's own shell token, is
+      # never audited, and so PR-review activity is invisible to the hive-health
+      # output signal. hive-review writes a request file the hive submits with
+      # the App token and records as agent_pr_reviewed — same rationale as
+      # issue/create, and gated by the SAME per-agent authorization + UID
+      # forge-resistance. Contributors are EXEMPT (they review under their own
+      # identity), mirroring the hive-open-pr / hive-open-issue redirects.
+      if ! _contributor_mode && command -v hive-review >/dev/null 2>&1; then
+        exec hive-review "${args[@]}"
+      fi
+      # No relay available: fall through to real gh so a review is never lost.
+      exec "$REAL_GH" "$@"
+      ;;
+    issue/comment|pr/comment)
       _inject_identity
       _extract_item
       # ── Relay comments through the hive (same rationale as issue/create) ──
-      # A lost review/triage comment is a lost work product. pr/review keeps
-      # the direct path: its approve/request-changes event semantics don't map
-      # to a plain comment.
+      # A lost review/triage comment is a lost work product.
       if [ "$action" = "comment" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
         exec hive-open-issue comment "${args[@]}"
       fi

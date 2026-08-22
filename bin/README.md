@@ -43,6 +43,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `git-credential-hive.sh` | Credentials | Git credential helper that serves cached GitHub App tokens and honors the host requested by Git. |
 | `gh-wrapper.sh` | Enforcement | `gh` wrapper that injects App tokens and enforces global/per-agent restriction rules from `/etc/hive/restrictions/<agent-id>.json`. |
 | `hive-open-pr.sh` | Enforcement | Agent-side wrapper for PR creation requests. It writes a request file for the Hive watcher so PRs are opened by the GitHub App bot and pass the same ACMM authorization checks. |
+| `hive-review.sh` | Enforcement | Agent-side wrapper for `gh pr review`. Writes a review-request file the Hive submits with the App token and audits as `agent_pr_reviewed`, so PR-review activity is attributed and visible to hive-health (a direct `gh pr review` is invisible). |
 | `setup-proxy-iptables.sh` | Enforcement | Installs iptables rules in the container to force GitHub HTTPS traffic through the ACMM proxy even if an agent unsets proxy variables. |
 | `agent-env-scrub.sh` | Enforcement | Sourced (never executed) at the start of every shell in an agent's process tree, via `BASH_ENV`/`ENV` from `agent-launch.sh` and an `/etc/bash.bashrc` guard, to unset the live GitHub credentials backend CLIs re-export into agent tool shells (#4045). |
 | `hive-config.sh` | Config | Shared shell config reader that exposes project, repo, agent, dashboard, health, and policy values parsed from `hive-project.yaml`. |
