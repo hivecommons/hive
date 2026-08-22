@@ -1559,21 +1559,22 @@ func TestClearExpiredTokens_Logic(t *testing.T) {
 		"otherSetting":     "keep",
 	}
 
-	// Apply the same operations as clearExpiredTokens
+	// Apply the same operations as clearExpiredTokens: ONLY the token map is
+	// emptied. Login identity (loggedInUsers/lastLoggedInUser) survives — an
+	// expired token does not change who was logged in, and the interactive CLI
+	// refuses a re-seeded token without an identity.
 	input["copilotTokens"] = map[string]interface{}{}
-	input["loggedInUsers"] = []interface{}{}
-	delete(input, "lastLoggedInUser")
 
 	tokens := input["copilotTokens"].(map[string]interface{})
 	if len(tokens) != 0 {
 		t.Error("tokens should be empty after clear")
 	}
 	users := input["loggedInUsers"].([]interface{})
-	if len(users) != 0 {
-		t.Error("loggedInUsers should be empty after clear")
+	if len(users) != 1 || users[0] != "user1" {
+		t.Error("loggedInUsers must be preserved across a token clear")
 	}
-	if _, ok := input["lastLoggedInUser"]; ok {
-		t.Error("lastLoggedInUser should be deleted")
+	if input["lastLoggedInUser"] != "user1" {
+		t.Error("lastLoggedInUser must be preserved across a token clear")
 	}
 	if input["otherSetting"] != "keep" {
 		t.Error("other settings should be preserved")
