@@ -1580,6 +1580,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
+	// Adopt the spoke's reported dashboard-token hash into the hub's stored
+	// record — the reference spoke-relayed upgrade requests verify their proof
+	// against. Done only after the per-hive bearer authenticated the beat (a
+	// hive can only set its OWN record), only for hosted hives that have a
+	// record, and only when the value is a well-formed digest that changed.
+	s.adoptSpokeDashboardTokenHash(&payload)
 	// Normalize the reported SHA to the canonical short length up front so every
 	// downstream comparison is same-length against the hub's 7-char stored SHAs.
 	// (Spokes now build gitShort with `--short=7`; this covers any that predate

@@ -536,6 +536,17 @@ type HeartbeatPayload struct {
 	// DATA this beat" — never as an error and never as "everyone idle forever"
 	// (legacy fields keep accumulating regardless).
 	EngagedSessionUsers []string `json:"engaged_session_users,omitempty"`
+	// DashboardTokenHash is the SHA-256 hex of this spoke's dashboard token
+	// (DASHBOARD_AUTH_TOKEN), reported so the hub can keep its own record
+	// (SaaSHive.DashboardTokenHash) of the credential spoke-relayed upgrade
+	// requests prove themselves with — without the hub ever needing to read
+	// the hive-secrets secret from the spoke's cluster (impossible on
+	// pull-only clusters) and without the raw token ever riding the wire. The
+	// beat itself is authenticated by the per-hive bearer, so only the hive
+	// can set its own record — which is sound: the record only lets that same
+	// hive's dashboard prove it is itself. omitempty: an old spoke, or one
+	// with no token, sends nothing, and the hub keeps whatever it has.
+	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"`
 	// UserLastActions maps username → RFC3339 timestamp of that user's most
 	// recent audit-logged REAL action on this hive (config save, agent
 	// restart, ACMM change, login, …; pseudo-users like "system" are never

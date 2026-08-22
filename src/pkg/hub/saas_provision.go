@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	cryptoRand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -500,6 +501,17 @@ type SaaSHive struct {
 	Owner       string `json:"owner"`
 	ProjectName string `json:"project_name"`
 	Org         string `json:"org"`
+	// DashboardTokenHash is the SHA-256 (hex) of the hive's dashboard token —
+	// the spoke's DASHBOARD_AUTH_TOKEN / hive-secrets/dashboard-token value.
+	// It is the hub's OWN record of the spoke's proof credential, written when
+	// provisioning mints the token and refreshed from the spoke's authenticated
+	// heartbeat (dashboard_token_hash) and from any successful live secret
+	// read. Spoke-relayed upgrade requests verify their X-Hive-Proxy-Auth proof
+	// against this first, so verification works for hives on clusters the hub
+	// cannot kubectl into (pull-only / unreachable) — the live secret read is
+	// only a fallback. A hash, never the raw token: the hub must be able to
+	// VERIFY the spoke's credential without holding a copy it could leak.
+	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"`
 	// GitHubHost is the GitHub instance this project lives on — empty means
 	// public github.com, otherwise a GitHub Enterprise host (github.ibm.com,
 	// github.cisco.com, …). Recorded at assign time from the requested org so
@@ -2068,6 +2080,20 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		imageTag = "v4-latest"
 	}
 
+	// Mint the spoke's dashboard token here (rather than inline in `data`) so
+	// its hash can be recorded on the hive record below once the manifest is
+	// applied: that stored record is what lets the hub verify spoke-relayed
+	// upgrade proofs WITHOUT a live secret read, which is impossible on
+	// pull-only clusters. See SaaSHive.DashboardTokenHash.
+	dashboardToken := func() string {
+		b := make([]byte, dashboardTokenBytes)
+		if _, err := cryptoRand.Read(b); err != nil {
+			logger.Error("failed to generate dashboard token", "error", err)
+			return ""
+		}
+		return hex.EncodeToString(b)
+	}()
+
 	data := map[string]any{
 		"ID":              h.ID,
 		"Namespace":       "hive-hosted-" + h.ID,
@@ -2122,14 +2148,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"MemLimit":              memLimit,
 		"RolloutMaxSurge":       rolloutMaxSurge,
 		"RolloutMaxUnavailable": rolloutMaxUnavailable,
-		"DashboardToken": func() string {
-			b := make([]byte, dashboardTokenBytes)
-			if _, err := cryptoRand.Read(b); err != nil {
-				logger.Error("failed to generate dashboard token", "error", err)
-				return ""
-			}
-			return hex.EncodeToString(b)
-		}(),
+		"DashboardToken":        dashboardToken,
 		// C2 domain separation (CWE-321/798): the spoke Deployment is injected ONLY
 		// the derived sub-keys it needs — the heartbeat bearer, plus the session
 		// verification key and the SSO PUBLIC key — and NEVER the master
@@ -2308,8 +2327,24 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 	// renamed and must instead be kept self-describing via labels.
 	stampHostedNamespaceIdentity(cluster, data["Namespace"].(string), h.ProjectName, h.Org, h.ID, logger)
 
+	// Record the hub's own copy of the proof credential — the manifest just
+	// applied is what injects this exact token into the spoke, so this is the
+	// authoritative moment to remember it. Callers persist h on success.
+	if dashboardToken != "" {
+		h.DashboardTokenHash = HashDashboardToken(dashboardToken)
+	}
+
 	logger.Info("audit: saas hive provisioned", "hive_id", h.ID, "owner", h.Owner, "org", h.Org, "cluster", cluster.ID)
 	return nil
+}
+
+// HashDashboardToken returns the SHA-256 hex digest of a spoke dashboard
+// token — the form the hub stores (SaaSHive.DashboardTokenHash) and the spoke
+// reports over the heartbeat, so neither side ever transmits or persists a
+// second copy of the raw credential.
+func HashDashboardToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // deprovisionHive performs best-effort cleanup of all resources associated
