@@ -107,7 +107,7 @@ jobs:
           # KEEP IN SYNC with the copy of this map in v2-tests.yml's coverage
           # job (the pre-merge half of this gate, #4112).
           declare -A PKG_THRESHOLD=(
-            [dashboard]=78   # ~20% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
+            [dashboard]=82   # ~17% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
             [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
 
@@ -130,19 +130,27 @@ jobs:
             # Raise these toward 90 as tests land; never raise one to paper over
             # a drop. A package that improves should have its floor moved up in
             # the same PR, so the ratchet only turns one way.
-            [intent]=65
-            [sandbox]=67
-            [ioscan]=71
-            [pushbroker]=72
-            [tracing]=76
+            #
+            # ── Ratchet turned for #4570 ─────────────────────────────────────
+            # sandbox/ioscan/pushbroker: tests added in the same PR, so the
+            #   floors move with the gain (67.6→98.5, 71.0→97.1, 72.8→100.0).
+            # intent/tracing/dashboard: NO code change — these had drifted far
+            #   above floors recorded at d89121f5 and were no longer catching
+            #   anything. Re-measured on v4 at cd8aee5d and moved up to what
+            #   they actually hold, with ~1 point of headroom.
+            # scheduler (90.4) and escalation (93.2) now clear the 90% default
+            #   and no longer need an entry at all.
+            [intent]=87
+            [tracing]=85
             [review]=80
             [retro]=82
             [github]=88
             [hivectl]=88
             [knowledge]=89
-            [scheduler]=89
-            [escalation]=89
             [proxy]=89
+            [ioscan]=96
+            [sandbox]=98
+            [pushbroker]=99
           )
 
           # Capture the full `go test -cover` output ONCE, then classify every
