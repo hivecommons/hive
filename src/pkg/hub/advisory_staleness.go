@@ -1,6 +1,9 @@
 package hub
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // advisoryStaleThreshold is how long a hive's advisory digest may go without a
 // successful update before the hub flags it as stale. Advisory digests are
@@ -79,6 +82,39 @@ func appAwaitingDelivery(e RegistryEntry) bool {
 	}
 }
 
+// allAgentsQuietByDesign reports whether EVERY agent this hive reports is
+// deliberately quiet — paused by the operator, or not expected active in the
+// current governor mode. Advisory findings come from agents; with all of them
+// intentionally off there is nothing new to digest, so an advisory timestamp
+// that merely AGES in that state is the operator's own choice, not a wedge,
+// and must not light the stale pill (a reported post ERROR still does — a
+// broken post path is broken regardless of who is paused).
+//
+// Deliberately conservative in the unknowns' favor: a hive reporting NO agents
+// (legacy spoke, or the field lost in transit) returns false, so this gate
+// never suppresses a real alarm on a spoke we cannot read. A legacy agent
+// entry (none of the new protocol fields) also returns false for the same
+// reason. The pause detection mirrors deriveAgentVerdict's quiet-by-design
+// arms: Paused/state=paused, or a new-protocol agent that is not expected
+// active and not running.
+func allAgentsQuietByDesign(e RegistryEntry) bool {
+	if len(e.Agents) == 0 {
+		return false
+	}
+	for _, a := range e.Agents {
+		if legacyAgent(a) {
+			return false
+		}
+		paused := a.Paused || strings.EqualFold(a.State, agentStatePaused)
+		running := strings.EqualFold(a.State, agentStateRunning)
+		offByDesign := !a.ExpectedActive && !running
+		if !paused && !offByDesign {
+			return false
+		}
+	}
+	return true
+}
+
 // carryAdvisoryPostTime preserves the last known advisory-post time on a
 // heartbeat that reports none (#4167).
 //
@@ -127,7 +163,10 @@ func carryAdvisoryPostTime(entry *RegistryEntry, prev RegistryEntry) {
 //     operator must see, even though the same failure raises the App banner.
 //     - an AGED timestamp is suppressed whenever the App cannot write at all
 //     (appCanWriteForAdvisory): with no error reported there is no proof the
-//     hive even tried, so its silence is expected.
+//     hive even tried, so its silence is expected. It is also suppressed when
+//     EVERY agent is deliberately quiet (allAgentsQuietByDesign): paused/off
+//     agents produce no findings, so an ageing digest is the operator's own
+//     pause, not a wedge.
 //
 // An empty/unparseable AdvisoryLastPostedAt with no AdvisoryError is UNKNOWN and
 // returns false — never a false alarm — matching the rule the codebase already
@@ -155,6 +194,14 @@ func advisoryStale(e RegistryEntry, now time.Time) (stale bool, reason string) {
 	// Gate 2b: with no error reported, an App that cannot write is expected to
 	// be quiet, not broken.
 	if !appCanWriteForAdvisory(e) {
+		return false, ""
+	}
+
+	// Gate 2c: with no error reported and EVERY agent deliberately quiet
+	// (paused / off-schedule), an ageing digest is the expected consequence of
+	// the operator's own pause — findings come from agents, and none are
+	// running to produce them. Not a fault, never a pill.
+	if allAgentsQuietByDesign(e) {
 		return false, ""
 	}
 

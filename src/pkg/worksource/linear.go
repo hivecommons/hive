@@ -44,6 +44,16 @@ type LinearConfig struct {
 	HoldLabels []string // label names that gate an issue (like GitHub "hold")
 	// BaseURL overrides the Linear API endpoint (default: "https://api.linear.app/graphql")
 	BaseURL string
+	// ViewerID, when non-empty, narrows enumeration to issues assigned or
+	// delegated to this Linear user id — the installed agent app's per-
+	// workspace viewer.id (RFC #4492 Part 2, component E). "Delegate this
+	// issue to Hive" then IS the enumeration filter, replacing state-name
+	// matching with Linear's own assignment UX. The filter matches EITHER
+	// assignee or delegate: Linear's agent platform sets an app given an
+	// issue as its `delegate` (humans keep `assignee` ownership), while the
+	// RFC and older workspaces phrase it as assignment — either field
+	// pointing at the app user means "the hive owns this".
+	ViewerID string
 }
 
 // LinearSource is a read-only WorkSource backed by Linear's GraphQL API.
@@ -69,6 +79,36 @@ const linearIssuesQuery = `query($teamKey: String!, $states: [String!], $cursor:
     filter: {
       team: { key: { eq: $teamKey } }
       state: { name: { in: $states } }
+    }
+    first: 100
+    after: $cursor
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      identifier
+      title
+      url
+      createdAt
+      updatedAt
+      priority
+      state { name }
+      assignee { displayName }
+}`
+
+// linearAssignedIssuesQuery is linearIssuesQuery narrowed to issues whose
+// assignee OR delegate is the given user id. A separate document rather than
+// a dynamically-built filter so both shapes stay readable and the unfiltered
+// path stays byte-identical to what #4178 shipped.
+const linearAssignedIssuesQuery = `query($teamKey: String!, $states: [String!], $viewerID: ID, $cursor: String) {
+  issues(
+    filter: {
+      team: { key: { eq: $teamKey } }
+      state: { name: { in: $states } }
+      or: [
+        { assignee: { id: { eq: $viewerID } } }
+        { delegate: { id: { eq: $viewerID } } }
+      ]
     }
     first: 100
     after: $cursor
@@ -202,6 +242,7 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 
 // fetchTeamIssues pages through the Linear issues query for one team.
 func (s *LinearSource) fetchTeamIssues(ctx context.Context, teamKey string, states []string) ([]linearIssueNode, error) {
+	query := linearIssuesQuery
 	var nodes []linearIssueNode
 	var cursor *string
 	for {
@@ -210,7 +251,11 @@ func (s *LinearSource) fetchTeamIssues(ctx context.Context, teamKey string, stat
 			"states":  states,
 			"cursor":  cursor,
 		}
-		resp, err := s.doQuery(ctx, vars)
+		if s.cfg.ViewerID != "" {
+			query = linearAssignedIssuesQuery
+			vars["viewerID"] = s.cfg.ViewerID
+		}
+		resp, err := s.doQuery(ctx, query, vars)
 		if err != nil {
 			return nil, err
 		}
@@ -223,12 +268,12 @@ func (s *LinearSource) fetchTeamIssues(ctx context.Context, teamKey string, stat
 	}
 }
 
-func (s *LinearSource) doQuery(ctx context.Context, vars map[string]interface{}) (*linearGraphQLResponse, error) {
+func (s *LinearSource) doQuery(ctx context.Context, query string, vars map[string]interface{}) (*linearGraphQLResponse, error) {
 	baseURL := s.cfg.BaseURL
 	if baseURL == "" {
 		baseURL = defaultLinearBaseURL
 	}
-	body, err := json.Marshal(linearGraphQLRequest{Query: linearIssuesQuery, Variables: vars})
+	body, err := json.Marshal(linearGraphQLRequest{Query: query, Variables: vars})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

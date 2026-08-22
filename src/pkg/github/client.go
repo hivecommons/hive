@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,10 +76,14 @@ type Client struct {
 	// MergeRequestAuthorizer / F4). nil fails closed. Set by
 	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
-	// issueAuthz gates issue-create/comment requests from the issue-request
+	// issueAuthz gates issue-create/comment/claim requests from the issue-request
 	// watcher against the per-agent mode policy (CanCreateIssues) +
 	// forge-resistance. nil fails closed. Set by StartIssueRequestWatcher.
 	issueAuthz IssueRequestAuthorizer
+	// reviewAuthz gates PR-review requests from the review-request watcher against
+	// the per-agent push-capability policy + forge-resistance. nil fails closed.
+	// Set by StartReviewRequestWatcher.
+	reviewAuthz ReviewRequestAuthorizer
 	// issueRetries tracks per-request-file retry backoff for the issue-request
 	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
 	issueRetryMu sync.Mutex
@@ -955,6 +960,12 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	if err != nil {
 		return fmt.Errorf("approving PR: %w", err)
 	}
+	// Audit the review so it counts as activity on the trail. This is the hive's
+	// own auto-merge self-approval (a governor action); agent-authored reviews
+	// come through the review-request watcher, which audits separately.
+	c.recordCreationAudit(AuditActionPRReviewed, InvocationMeta{Agent: AttributionAgentGovernor},
+		"repo", owner+"/"+repoName, "number", strconv.Itoa(number),
+		"agent", queuedBy, "state", "approved")
 	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, []string{label}); err != nil {
 		return fmt.Errorf("adding %s label: %w", label, err)
 	}

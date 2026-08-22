@@ -48,6 +48,70 @@ func TestAdvisoryStale_PastThresholdIsStale(t *testing.T) {
 	}
 }
 
+// pausedAgent / offScheduleAgent / activeAgent build the AgentSummary shapes
+// the quiet-by-design gate discriminates. ExpectedActive/Enabled/CanOpenIssue
+// are set so none of them read as legacy (legacyAgent must return false).
+func pausedAgent(name string) AgentSummary {
+	return AgentSummary{Name: name, State: agentStatePaused, Paused: true, Enabled: true, CanOpenIssue: true}
+}
+func offScheduleAgent(name string) AgentSummary {
+	return AgentSummary{Name: name, State: "idle", ExpectedActive: false, Enabled: true, CanOpenIssue: true}
+}
+func activeAgent(name string) AgentSummary {
+	return AgentSummary{Name: name, State: agentStateRunning, ExpectedActive: true, Enabled: true, CanOpenIssue: true}
+}
+
+// An aged digest on a hive whose EVERY agent is deliberately quiet (paused or
+// off-schedule) is the operator's own pause, not a wedge — never a pill.
+func TestAdvisoryStale_AllAgentsQuietSuppressesAgedTimestamp(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+	e.Agents = []AgentSummary{pausedAgent("scanner"), offScheduleAgent("guide")}
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("all agents quiet by design must suppress the aged-digest alarm, got %q", reason)
+	}
+}
+
+// A reported post ERROR is a broken post path regardless of who is paused —
+// the quiet gate must not swallow it.
+func TestAdvisoryStale_AllAgentsQuietDoesNotSuppressError(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryError = "403 posting digest comment"
+	e.Agents = []AgentSummary{pausedAgent("scanner"), pausedAgent("guide")}
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("a reported post error must stay stale even with every agent paused")
+	}
+}
+
+// One working agent means findings are expected — the aged alarm stands.
+func TestAdvisoryStale_OneActiveAgentKeepsAgedAlarm(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+	e.Agents = []AgentSummary{pausedAgent("scanner"), activeAgent("guide")}
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("an active agent must keep the aged-digest alarm")
+	}
+}
+
+// Unknowns never suppress: no reported agents, or a legacy agent that reports
+// none of the new protocol fields, must leave the alarm in place.
+func TestAdvisoryStale_UnknownAgentsNeverSuppress(t *testing.T) {
+	aged := func() RegistryEntry {
+		e := advisoryModeEntry()
+		e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+		return e
+	}
+	e := aged() // no agents reported at all
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("a hive reporting no agents must not have the alarm suppressed")
+	}
+	e = aged()
+	e.Agents = []AgentSummary{{Name: "old"}} // legacy shape: no new-protocol fields
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("a legacy agent entry must not suppress the alarm")
+	}
+}
+
 func TestAdvisoryStale_ErrorIsStaleWithCause(t *testing.T) {
 	e := advisoryModeEntry() // fresh timestamp, but the last attempt errored
 	e.AdvisoryError = "403 Resource not accessible by integration"

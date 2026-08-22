@@ -125,6 +125,12 @@ func TestAttributionDefaults_NilClientAndNilHooks(t *testing.T) {
 	}
 	nilClient.recordCreationAudit(AuditActionAgentPRCreated, InvocationMeta{}) // must not panic
 
+	// A non-nil client with neither an audit sink nor a logger (e.g. a bare
+	// NewClient(...) in a test) must not panic on the fallback branch — this is
+	// the path QueuePRAutoMerge's new approve-audit exercised.
+	bare := NewClient("t", "o", []string{"r"}, nil, "http://127.0.0.1:0")
+	bare.recordCreationAudit(AuditActionPRReviewed, InvocationMeta{Agent: "governor"}) // must not panic
+
 	c := NewClientForTest("http://127.0.0.1:0", "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !c.attributionTrailerOn() {
 		t.Error("no hooks: trailer should default ON (config default)")

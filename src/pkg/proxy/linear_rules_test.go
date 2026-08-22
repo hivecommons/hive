@@ -522,3 +522,30 @@ func TestLinearAndGitHubGatesAreIndependent(t *testing.T) {
 		t.Error("a GitHub mutation name must not be granted by the Linear allowlist")
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// agentSessionUpdate carries the same 10-second invariant as
+// agentActivityCreate: an agent that cannot set externalUrls/plan on its own
+// session cannot maintain session presence, so it must be reachable at every
+// tier (RFC #4492 Part 2, component C).
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestLinearAgentSessionUpdateReachableAtEveryTier(t *testing.T) {
+	const q = `mutation { agentSessionUpdate(id: "s1", input: {externalUrls: []}) { success } }`
+	for _, mode := range allModes {
+		d := decide(mode, q)
+		if !d.Allowed {
+			t.Errorf("agentSessionUpdate DENIED at %s (reason %q)", mode, d.Reason)
+		}
+		if !d.IsMutation {
+			t.Errorf("agentSessionUpdate at %s: expected IsMutation=true", mode)
+		}
+	}
+
+	// Batching it with a forbidden mutation must still deny the whole
+	// document — session presence is not a smuggling vehicle.
+	batch := `mutation { agentSessionUpdate(id: "s1", input: {}) { success } issueUpdate(id: "x", input: {}) { success } }`
+	if d := decide(agent.ModeAdvisory, batch); d.Allowed {
+		t.Error("agentSessionUpdate + issueUpdate batch allowed at ADVISORY")
+	}
+}

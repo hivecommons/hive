@@ -239,3 +239,154 @@ func TestSpokeUpgradeMiddlewareKeepsCSRFGate(t *testing.T) {
 		t.Fatalf("status/body = %d %q, want CSRF denial", rec.Code, rec.Body.String())
 	}
 }
+
+// TestSpokeUpgradeProofWithoutUserIdentityAttributesToOwner is the regression
+// test for "Upgrade failed: not authenticated" on gateway-fronted hosted
+// spokes: the Node auth proxy authenticates the operator with the shared
+// dashboard token and strips per-user identity headers, so the spoke's relayed
+// upgrade request arrives with a VALID proof but NO X-Hive-User. The proof is
+// the hive's own per-hive secret — owner-equivalent on the spoke by definition
+// — so the hub must accept the request and attribute it to the hive's
+// registered owner instead of rejecting the logged-in owner as unauthenticated.
+func TestSpokeUpgradeProofWithoutUserIdentityAttributesToOwner(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	const (
+		hiveID = "hosted-spoke-upgrade-no-identity"
+		owner  = "clubanderson"
+		token  = "spoke-dashboard-token"
+		branch = "v4"
+	)
+
+	s := newHandlerHub()
+	s.hubGitBranch = branch
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "hive-oke", GitBranch: branch}}
+	s.spokeProxyAuthCache = map[string]spokeProxyAuthEntry{
+		hiveID: {token: token, expires: time.Now().Add(time.Hour)},
+	}
+	if err := saveSaaSHive(&SaaSHive{ID: hiveID, Owner: owner, ClusterID: "hive-oke", Org: "org", PrimaryRepo: "repo"}); err != nil {
+		t.Fatalf("save hive: %v", err)
+	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: owner, Hives: map[string]string{hiveID: "owner"}}); err != nil {
+		t.Fatalf("save user: %v", err)
+	}
+
+	latestSHAMu.Lock()
+	prev, hadPrev := latestSHAByBranch[branch]
+	latestSHAByBranch[branch] = branchSHAInfo{SHA: "d4b21af6"}
+	latestSHAMu.Unlock()
+	defer func() {
+		latestSHAMu.Lock()
+		if hadPrev {
+			latestSHAByBranch[branch] = prev
+		} else {
+			delete(latestSHAByBranch, branch)
+		}
+		latestSHAMu.Unlock()
+	}()
+
+	// Exactly what the spoke relays on the gateway topology: role + proof, NO user.
+	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(proxyAuthHeader, token)
+
+	rec := httptest.NewRecorder()
+	s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if got := s.heartbeatUpgrade[hiveID]; got != "d4b21af6" {
+		t.Fatalf("heartbeatUpgrade[%q] = %q, want target SHA", hiveID, got)
+	}
+}
+
+// TestSpokeUpgradeHonestErrors pins the #4446 honest-error standard on every
+// spoke-lane rejection: the spoke relays the hub's body verbatim into the
+// operator's toast, so each failure must name WHICH credential failed and what
+// to do — never a bare "not authenticated".
+func TestSpokeUpgradeHonestErrors(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	const (
+		hiveID = "hosted-spoke-upgrade-honest"
+		owner  = "alice"
+		token  = "spoke-dashboard-token"
+	)
+
+	s := newHandlerHub()
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "hive-oke"}}
+	s.spokeProxyAuthCache = map[string]spokeProxyAuthEntry{
+		hiveID: {token: token, expires: time.Now().Add(time.Hour)},
+	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: owner, Hives: map[string]string{hiveID: "owner"}}); err != nil {
+		t.Fatalf("save user: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    string
+	}{
+		{
+			// Pre-proof spoke builds relay the click with no credentials at all;
+			// the error must point at the way out (upgrade from the hub side).
+			name:    "credential-less relay from an old spoke build",
+			headers: map[string]string{},
+			want:    "too old to relay",
+		},
+		{
+			name:    "proof missing",
+			headers: map[string]string{"X-Hive-User": owner, "X-Hive-Role": "owner"},
+			want:    "DASHBOARD_AUTH_TOKEN",
+		},
+		{
+			name:    "proof mismatch",
+			headers: map[string]string{"X-Hive-User": owner, "X-Hive-Role": "owner", proxyAuthHeader: "wrong"},
+			want:    "does not match",
+		},
+		{
+			name:    "wrong role",
+			headers: map[string]string{"X-Hive-User": owner, "X-Hive-Role": "read", proxyAuthHeader: token},
+			want:    "owner role",
+		},
+		{
+			name:    "unknown user",
+			headers: map[string]string{"X-Hive-User": "nobody-here", "X-Hive-Role": "owner", proxyAuthHeader: token},
+			want:    "no record of user",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", nil), "id", hiveID)
+			req.Header.Set("Origin", "https://hive.kubestellar.io")
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive)(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401 (body=%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("body %q must contain %q", rec.Body.String(), tc.want)
+			}
+		})
+	}
+
+	// Proof unverifiable: the hive is not in the registry and nothing is cached,
+	// so the hub cannot resolve its dashboard-token secret at all.
+	req := setPathValue(httptest.NewRequest(http.MethodPost, "/api/saas/hives/unknown-hive/upgrade", nil), "id", "unknown-hive")
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("X-Hive-User", owner)
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(proxyAuthHeader, token)
+	rec := httptest.NewRecorder()
+	s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive)(rec, req)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "could not read") {
+		t.Fatalf("unverifiable proof: status/body = %d %q, want 401 naming the unreadable secret", rec.Code, rec.Body.String())
+	}
+}

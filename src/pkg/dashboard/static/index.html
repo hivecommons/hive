@@ -13539,6 +13539,9 @@ function burnAreaChart() {
         case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
+        case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
+        case 'linearAgentConnect': linearAgentConnect(); break;
+        case 'linearAgentDisconnect': linearAgentDisconnect(); break;
         case 'toggleEscalationEnabled': toggleEscalationEnabled(el); break;
         case 'removeListItem': removeListItem(el.dataset.section || el.dataset.arg0, el.dataset.key || el.dataset.arg1, parseInt(el.dataset.index !== undefined ? el.dataset.index : el.dataset.arg2, 10)); break;
         case 'toggleRestriction': { if (el.dataset.index !== undefined) { const cb = el.querySelector('input[type=checkbox]') || el; toggleRestriction(parseInt(el.dataset.index, 10), cb.checked); } else { toggleRestriction(parseInt(el.dataset.arg0, 10), el.checked); } } break;
@@ -15568,6 +15571,9 @@ function burnAreaChart() {
         // The Forge App tab renders a shell synchronously, then loads the
         // credential inventory (fingerprints only) from the spoke.
         if (tabId === 'Forge App') loadForgeApps();
+        // The Features tab's Linear Agent panel loads install/session state
+        // from its own endpoint (owner-only; the render is a static shell).
+        if (tabId === 'Features') loadLinearAgentStatus();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -19928,6 +19934,16 @@ function burnAreaChart() {
           </div>
         </div>
 
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Linear Agent <span class="config-info">i<span class="config-tooltip">Connect this hive to a Linear workspace as a first-class agent (RFC #4492 Part 2). Once connected the hive is assignable and @-mentionable in Linear; delegating an issue to it opens an agent session that kicks the configured session agent. Requires LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET / LINEAR_WEBHOOK_SECRET on the hive.</span></span></div>
+          <div id="linear-agent-panel" style="font-size:0.72rem;color:var(--muted)">Loading…</div>
+          <div class="config-field" style="margin-top:10px">
+            <button class="btn" data-action="linearAgentConnect">Connect workspace</button>
+            <button class="btn" data-action="linearAgentDisconnect">Disconnect</button>
+            <button class="btn" data-action="loadLinearAgentStatus">Refresh</button>
+          </div>
+        </div>
+
         ${renderGovReplanSection((_configState.data || {}).replan || {})}`;
     }
 
@@ -20186,6 +20202,74 @@ function burnAreaChart() {
         ).join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
+    }
+
+    // ── Linear agent (RFC #4492 Part 2) ─────────────────────────────────────
+    // loadLinearAgentStatus paints install/workspace/session state from the
+    // owner-only status endpoint into the Features tab's Linear Agent panel.
+    async function loadLinearAgentStatus() {
+      const out = document.getElementById('linear-agent-panel');
+      if (!out) return;
+      out.textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/linear/agent/status');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const st = await res.json();
+        const rows = [];
+        if (!st.configured) {
+          rows.push('<div style="color:var(--yellow)">Not configured — set <code>LINEAR_CLIENT_ID</code>, <code>LINEAR_CLIENT_SECRET</code> and <code>LINEAR_WEBHOOK_SECRET</code> on the hive (see docs/linear-agent.md).</div>');
+        }
+        if (st.store_error) rows.push(`<div style="color:var(--red)">${esc(st.store_error)}</div>`);
+        if (st.connected) {
+          const ws = st.workspace || {};
+          rows.push(`<div>Connected to <strong>${esc(ws.name || ws.url_key || ws.id || 'workspace')}</strong> as app user <code>${esc(st.viewer_id || '')}</code>${st.connected_at ? ` since ${esc(new Date(st.connected_at).toLocaleString())}` : ''}.</div>`);
+        } else {
+          rows.push('<div>No Linear workspace connected.</div>');
+        }
+        rows.push(`<div>Session agent: ${st.session_agent ? `<strong>${esc(st.session_agent)}</strong>` : `<span style="color:var(--yellow)">${esc(st.session_agent_error || 'not resolved')}</span>`}</div>`);
+        rows.push(`<div>Webhook endpoint: <code>${esc(st.webhook_path || '/api/linear/webhook')}</code> · OAuth callback: <code>${esc(st.callback_path || '/linear/callback')}</code></div>`);
+        const sessions = Array.isArray(st.sessions) ? st.sessions : [];
+        if (sessions.length) {
+          const cells = sessions.map(s => `<tr><td style="padding:2px 8px 2px 0">${s.issue_url ? `<a href="${esc(s.issue_url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(s.issue_identifier || s.id)}</a>` : esc(s.issue_identifier || s.id)}</td><td style="padding:2px 8px 2px 0">${esc(s.issue_title || '')}</td><td style="padding:2px 8px 2px 0">${esc(s.agent || '—')}</td><td style="padding:2px 8px 2px 0">${esc(s.state || '')}</td><td style="padding:2px 0">${s.last_event_at ? esc(new Date(s.last_event_at).toLocaleString()) : ''}</td></tr>`).join('');
+          rows.push(`<table style="margin-top:6px;border-collapse:collapse;font-size:0.72rem"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:2px 8px 2px 0">Issue</th><th style="padding:2px 8px 2px 0">Title</th><th style="padding:2px 8px 2px 0">Agent</th><th style="padding:2px 8px 2px 0">State</th><th style="padding:2px 0">Last event</th></tr></thead><tbody>${cells}</tbody></table>`);
+        } else {
+          rows.push('<div>No agent sessions yet — delegate a Linear issue to the app to start one.</div>');
+        }
+        out.innerHTML = rows.join('');
+      } catch (err) {
+        out.textContent = `Failed to load Linear agent status: ${err.message}`;
+      }
+    }
+
+    // linearAgentConnect starts the actor=app OAuth flow: the install endpoint
+    // returns Linear's authorize URL with a single-use state; approving it in
+    // the opened tab lands on /linear/callback and persists the grant.
+    async function linearAgentConnect() {
+      try {
+        const res = await fetch('/api/linear/agent/install', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        if (!data.authorize_url) throw new Error('no authorize URL returned');
+        window.open(data.authorize_url, '_blank', 'noopener');
+        showToast('Approve the hive in the Linear tab, then press Refresh here.', 'info');
+      } catch (err) {
+        showToast(`Linear connect failed: ${err.message}`, 'error');
+      }
+    }
+
+    // linearAgentDisconnect forgets the stored grant. Revoking the app itself
+    // happens in Linear's workspace settings, not here.
+    async function linearAgentDisconnect() {
+      if (!confirm('Forget the stored Linear workspace connection? The app must also be revoked from Linear\'s settings to fully remove it.')) return;
+      try {
+        const res = await fetch('/api/linear/agent/disconnect', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        showToast('Linear workspace disconnected', 'success');
+        loadLinearAgentStatus();
+      } catch (err) {
+        showToast(`Linear disconnect failed: ${err.message}`, 'error');
       }
     }
 

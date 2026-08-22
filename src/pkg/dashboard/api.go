@@ -199,6 +199,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/config/governor/gateways/{name}/test", s.handleGovernorGatewaysTest)
 	s.mux.HandleFunc("POST /api/config/governor/gateways/discover", s.handleGovernorGatewaysDiscover)
 	s.registerOpenRouterRoutes()
+	s.registerLinearAgentRoutes()
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
@@ -919,6 +920,15 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 		proof = s.deps.Config.Dashboard.AuthToken
 	}
 	cookie, _ := r.Cookie("hive_hub_user")
+	if proof == "" && cookie == nil {
+		// Fail fast and honestly: with no dashboard-token proof and no hub
+		// session cookie to relay, the hub is guaranteed to reject this request,
+		// and "not authenticated" would mislead a logged-in owner. Name the
+		// missing credential and how to configure it (#4446 honest-error
+		// standard).
+		jsonError(w, "self-upgrade needs this spoke's dashboard token to prove itself to the hub — set DASHBOARD_AUTH_TOKEN (the hive-secrets/dashboard-token secret) and restart the spoke", http.StatusBadRequest)
+		return
+	}
 	const upgradeTimeout = 30 * time.Second
 	client := &http.Client{Timeout: upgradeTimeout}
 	req, err := http.NewRequest("POST", upgradeURL, nil)
@@ -3267,8 +3277,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["cavemanMode"]; ok {
 		if s, ok := v.(string); ok {
 			s = sanitizeString(s)
-			validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
-			if !validCavemanModes[s] {
+			// Same gate as config.Validate, so the write path cannot persist a
+			// value that would fail the next config load.
+			if !config.ValidateCavemanMode(s) {
 				jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
 				return
 			}

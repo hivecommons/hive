@@ -213,10 +213,11 @@ func TestHandleSelfUpgradeWithHubURL(t *testing.T) {
 	defer hub.Close()
 
 	cfg := &config.Config{
-		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{URL: hub.URL},
-		HiveID:  "test-hive-123",
+		Project:   config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		Agents:    map[string]config.AgentConfig{},
+		Hub:       config.HubConfig{URL: hub.URL},
+		HiveID:    "test-hive-123",
+		Dashboard: config.DashboardConfig{AuthToken: "spoke-token"},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
@@ -282,10 +283,11 @@ func TestHandleSelfUpgradeForwardsSpokeSessionProof(t *testing.T) {
 
 func TestHandleSelfUpgradeHubUnreachable(t *testing.T) {
 	cfg := &config.Config{
-		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{URL: "http://127.0.0.1:1"},
-		HiveID:  "test-hive-123",
+		Project:   config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		Agents:    map[string]config.AgentConfig{},
+		Hub:       config.HubConfig{URL: "http://127.0.0.1:1"},
+		HiveID:    "test-hive-123",
+		Dashboard: config.DashboardConfig{AuthToken: "spoke-token"},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}

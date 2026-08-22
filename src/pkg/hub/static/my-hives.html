@@ -159,6 +159,29 @@
   .hdot.ok { background: var(--green); }
   .hdot.unknown { background: var(--gray); }
   .hdot.offline { background: transparent; border: 1px solid var(--gray); }
+  .hdot.parked { background: transparent; border: 1px dashed var(--gray); }
+  .parked-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
+  /* WHY chip: the hive-health verdict's reason, next to the name. Muted for a
+     healthy/idle hive, red-tinted when the verdict is red so the cause of a
+     broken hive reads at a glance. */
+  .why-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
+  .why-chip.bad { color: var(--red); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
+  .why-chip.unknown { color: var(--gray); border-style: dashed; }
+  /* Per-repo output drill-down in the expanded sub-row. */
+  .repo-activity { display: flex; flex-direction: column; gap: 3px; }
+  .repo-activity-row { font-size: 11.5px; }
+  .repo-activity-row .repo { color: var(--fg, inherit); font-weight: 600; margin-right: 6px; }
+  /* Signed-in avatar + its menu, matching the spoke dashboard's nav avatar:
+     the image is the affordance, the dialog is right-anchored so extra width
+     grows leftward and stays on screen. Shown on hover AND kept open by
+     click (touch/keyboard operable), never hover-only. */
+  #nav-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green, #46a758); vertical-align: middle; }
+  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line, #2a2e37); border-radius: 8px; padding: 4px 0; min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
+  #nav-avatar-wrap.open #nav-user-menu, #nav-avatar-wrap:hover #nav-user-menu { display: block; }
+  #nav-user-menu > div#nav-menu-user { padding: 8px 16px; border-bottom: 1px solid var(--line, #2a2e37); font-weight: 600; font-size: .85rem; }
+  #nav-user-menu > div#nav-menu-role { padding: 2px 16px 6px; border-bottom: 1px solid var(--line, #2a2e37); font-size: .72rem; color: var(--gray); }
+  #nav-user-menu > a, #nav-user-menu > button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: 8px 16px; background: none; border: none; color: inherit; text-decoration: none; font-size: .82rem; cursor: pointer; }
+  #nav-user-menu > a:hover, #nav-user-menu > button:hover { background: rgba(255,255,255,.06); }
   /* Problem hives get a red left border so the eye lands on them. */
   tr.spoke.health-problem td:first-child { border-left: 3px solid var(--red); }
   tr.spoke.health-problem { background: rgba(229,72,77,.05); }
@@ -195,12 +218,23 @@
   </nav>
   <div class="header-right">
     <span id="hub-version"></span>
+    <span id="nav-avatar-wrap" style="display:none;position:relative">
+      <img id="nav-avatar" src="" alt="" title="">
+      <div id="nav-user-menu" role="menu">
+        <div id="nav-menu-user"></div>
+        <div id="nav-menu-role" style="display:none"></div>
+        <a href="#" id="nav-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none">GitHub profile ↗</a>
+        <a href="/dashboard">My Hives</a>
+        <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Docs ↗</a>
+        <button type="button" id="nav-menu-signout">Sign out</button>
+      </div>
+    </span>
     <a href="#" class="header-link" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
   </div>
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when agents cannot work, output is stale, budget is depleted, or GitHub App auth is broken</span>
+  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 issues/PRs created · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth). Absence of output a level does not produce is never a fault.</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
@@ -238,7 +272,7 @@
 </header>
 <div class="wrap">
   <div class="legend">
-    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting)</span>
+    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting) · <span class="hdot parked"></span> parked (all agents quiet by design — hive not in use)</span>
     <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
     <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
     <span><b>gh app:</b> <span class="github-app-health ok"><span class="light"></span>ok</span> · <span class="github-app-health degraded"><span class="light"></span>stale</span> · <span class="github-app-health broken"><span class="light"></span>broken</span> · <span class="github-app-health unknown"><span class="light"></span>n/a</span></span>
@@ -298,13 +332,81 @@ function rollupHTML(r) {
     '<span class="sep">·</span><span class="n ' + runCls + '">' + run + '</span> running' +
     '<span class="sep">·</span><span class="n ' + ableCls + '">' + able + '</span> able' + alarm + '</span>';
 }
+// sumRepoActivity totals one stat (e.g. "prs") across every repo the hive
+// reported, returning {count, newestAt}. newestAt is the max RFC3339 seen.
+function sumRepoActivity(repos, key) {
+  var count = 0, newest = "";
+  (repos || []).forEach(function (r) {
+    var s = r[key] || {};
+    count += s.count || 0;
+    if (s.newestAt && s.newestAt > newest) newest = s.newestAt;
+  });
+  return { count: count, newestAt: newest };
+}
+
+// outputHTML shows a hive's output the way its ACMM level is JUDGED, so the
+// cell answers the same question the verdict does:
+//   L1 Inception → "—" (produces nothing by design)
+//   L2 Advisory  → advisory freshness (the existing advisory line)
+//   L3–L5        → issues/PRs CREATED, with recency of the newest create
+//   L6           → creates + MERGES, with recency of the newest merge
+// Falls back to the old 90d PR/CVE line when the hive is too old to report the
+// per-repo activity the banding needs.
 function outputHTML(h) {
+  var lvl = h.acmmLevel;
+  var repos = h.repoActivity || [];
+
+  // L1 Inception: nothing to show.
+  if (lvl != null && lvl <= 1) {
+    return '<span class="output" title="inception — this hive produces no output by design">— inception</span>';
+  }
+  // L2 Advisory: the advisory stream IS the output.
+  if (lvl === 2) {
+    return advisoryActivityHTML(h.advisoryIssueActivity);
+  }
+
+  // L3+: per-repo created/merged output. Aggregate across repos.
+  if (repos.length) {
+    var iss = sumRepoActivity(repos, "issues");
+    var prs = sumRepoActivity(repos, "prs");
+    var mer = sumRepoActivity(repos, "merges");
+    var isMerge = lvl != null && lvl >= 6;
+    // The recency that matters at this level: newest merge (L6) or newest
+    // create (L3–L5).
+    var lead = isMerge ? mer : { count: prs.count, newestAt: (prs.newestAt > iss.newestAt ? prs.newestAt : iss.newestAt) };
+    var rel = lead.newestAt ? relTime(lead.newestAt) : "none";
+    var parts = 'issues ' + iss.count + ' · PRs ' + prs.count + (isMerge ? ' · merged ' + mer.count : '');
+    var leadLabel = isMerge ? 'last merge ' + rel : 'last create ' + rel;
+    return '<span class="output" title="per-repo output over the last ' + esc((h.repoActivityWindowHours || 12)) + 'h; judged on ' + (isMerge ? 'merges (L6)' : 'creates (L3–L5)') + '">' +
+      esc(parts) + ' <span class="rel">(' + esc(leadLabel) + ')</span></span>';
+  }
+
+  // Fallback: no per-repo activity reported (old spoke) — the prior 90d line.
   var m = h.prsMerged90d || 0, rej = h.prsRejected90d || 0, cve = h.cvesClosed || 0;
   var out = (!m && !rej && !cve)
     ? '<span class="output">—</span>'
     : '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
       ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
   return out + '<br>' + advisoryActivityHTML(h.advisoryIssueActivity);
+}
+
+// repoActivityDrilldownHTML renders a per-repo breakdown table body for the
+// expandable sub-row: one line per repo with its issue/PR/merge/review/advisory
+// counts. Empty string when the hive reported no per-repo activity.
+function repoActivityDrilldownHTML(h) {
+  var repos = h.repoActivity || [];
+  if (!repos.length) return "";
+  var rows = repos.map(function (r) {
+    function cell(key, label) {
+      var s = r[key] || {};
+      if (!s.count) return "";
+      return label + " " + s.count + (s.newestAt ? " (" + relTime(s.newestAt) + ")" : "");
+    }
+    var bits = [cell("issues", "issues"), cell("prs", "PRs"), cell("merges", "merged"), cell("reviews", "reviews"), cell("claims", "claimed"), cell("advisory", "advisory")]
+      .filter(function (x) { return x; }).join(" · ");
+    return '<div class="repo-activity-row"><span class="repo">' + esc(r.repo) + '</span> <span class="output">' + (bits || "—") + '</span></div>';
+  }).join("");
+  return '<div class="repo-activity">' + rows + '</div>';
 }
 function advisoryActivityHTML(a) {
   a = a || {};
@@ -326,13 +428,21 @@ function budgetHealthHTML(b) {
   return '<span class="budget-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
-function githubAppHealthHTML(g) {
+function githubAppHealthHTML(g, h) {
   g = g || {};
+  h = h || {};
   var bucket = g.bucket || "unknown";
   var rel = g.lastTokenMintAt ? relTime(g.lastTokenMintAt) : "n/a";
-  var label = bucket === "unknown" ? "gh app n/a" : "gh app " + (bucket === "degraded" ? "stale" : bucket);
+  var oldSpoke = bucket === "unknown" && h.gitHash && h.commitsBehindStableV4 != null && h.commitsBehindStableV4 > 0;
+  var label = bucket === "unknown" ? (oldSpoke ? "gh app not reported" : "gh app n/a") : "gh app " + (bucket === "degraded" ? "stale" : bucket);
   if (g.lastTokenMintAt) label += " · " + rel;
   var title = g.detail || (g.lastTokenMintAt ? "last token mint " + rel : label);
+  if (oldSpoke && !g.detail) {
+    title = "This spoke has not reported GitHub App token-cache health yet; it is running an older image (" +
+      h.gitHash + ", " + h.commitsBehindStableV4 + " commits behind stable v4).";
+  } else if (bucket === "unknown" && !g.detail) {
+    title = "No GitHub App token-cache health was reported; this usually means no GitHub App is configured for this hive.";
+  }
   return '<span class="github-app-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
@@ -403,21 +513,52 @@ function deltaHTML(a) {
   if (a.quietByDesign) return '<span class="delta quiet">quiet</span>';
   return "";
 }
-// hiveHealth returns "problem" | "ok" | "unknown" for the left dot, from the
-// rollup: any problem agent → problem; else if nothing is known (legacy spoke)
-// → unknown; else ok. Online/offline is NOT health — a spoke can be online with
-// every agent stuck.
+// hiveHealth returns "problem" | "ok" | "unknown" | "offline" | "parked" for
+// the left dot. The backend now sends an ACMM-banded output verdict
+// (h.healthVerdict = {state:green|red|unknown, reason, outputKind, lastOutputAt,
+// queuedWork}) that answers the core question — "does this hive have recent
+// output back to its work source, for the level it is AT?" — with the level
+// banding, precondition gates and queue-gate already applied. We prefer it, but
+// keep the two MORE-SPECIFIC display states the verdict does not model:
+//   • parked  — every agent deliberately quiet (hive not in use); the verdict's
+//     queue-gate already reads this as green, but the operator wants it shown as
+//     parked, not plain ok.
+//   • offline — not reporting; the verdict returns unknown for this, but the
+//     dashed-ring offline dot is the clearer signal.
+// A broken GitHub App still outranks parked (auth is broken whether or not the
+// hive is in use); the verdict already reds on it at L2+.
 function hiveHealth(h) {
-  if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
   if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
-  var budget = ((h.budgetHealth || {}).bucket || "");
-  if (budget === "critical" || budget === "exhausted") return "problem";
+  if (h.allAgentsQuiet) return "parked";
+  if (!h.online) return "offline";
+  var v = h.healthVerdict;
+  if (v && v.state) {
+    if (v.state === "red") return "problem";
+    if (v.state === "green") return "ok";
+    return "unknown"; // v.state === "unknown"
+  }
+  // No verdict on the row (old hub, or a placeholder): fall back to the prior
+  // rollup-based derivation so the dot never goes blank.
+  if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
+  if (((h.budgetHealth || {}).bucket || "") === "critical" || ((h.budgetHealth || {}).bucket || "") === "exhausted") return "problem";
   var r = h.fleetRollup;
-  if (!r) return h.online ? "unknown" : "offline";
+  if (!r) return "unknown";
   if ((r.problems || 0) > 0) return "problem";
   if ((r.known || 0) === 0) return "unknown";
-  if (!h.online) return "offline";
   return "ok";
+}
+
+// whyChipHTML renders the small "WHY" chip next to a hive's name: the verdict's
+// reason ("last merge 3h ago" / "no create in 30h (7 queued)" / "advisory
+// stale"). Green reasons are muted, red reasons are tinted so a broken hive's
+// cause reads at a glance. Nothing for parked/offline (their own chip/dot say
+// it) or when there is no verdict.
+function whyChipHTML(h, health) {
+  if (health === "parked" || health === "offline") return "";
+  var v = h.healthVerdict;
+  if (!v || !v.reason) return "";
+  var cls = v.state === "red" ? "why-chip bad" : (v.state === "unknown" ? "why-chip unknown" : "why-chip");
+  return '<span class="' + cls + '" title="' + esc(v.outputKind ? "output judged on: " + v.outputKind : "hive-health") + '">' + esc(v.reason) + '</span>';
 }
 
 // Expand state persists across the 30s refresh (keyed by hive id) so an open
@@ -452,7 +593,7 @@ function renderHives(hives) {
   hives = hives || [];
 
   // Rank: problems first, then unknown, then ok; stable within a rank by name.
-  var rank = { problem: 0, unknown: 1, offline: 2, ok: 3 };
+  var rank = { problem: 0, unknown: 1, offline: 2, parked: 3, ok: 4 };
   var rows = hives.map(function (h) { return { h: h, health: hiveHealth(h) }; });
   rows.sort(function (a, b) {
     var d = (rank[a.health] || 9) - (rank[b.health] || 9);
@@ -487,12 +628,12 @@ function renderHives(hives) {
     tr.className = "spoke health-" + health + (open ? " open" : "");
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + '</td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
       '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
-      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth) + '</td>';
+      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth, h) + '</td>';
     tb.appendChild(tr);
     var link = tr.querySelector(".hive-link");
     if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
@@ -525,6 +666,19 @@ function renderHives(hives) {
       empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
       tb.appendChild(empty);
       subRows.push(empty);
+    }
+    // Per-repo output drill-down (hive-health): one sub-row listing each repo's
+    // created/merged/reviewed counts with recency, so an operator can see WHICH
+    // repo a hive is (or isn't) producing against. Only when the hive reported
+    // per-repo activity.
+    var drill = repoActivityDrilldownHTML(h);
+    if (drill) {
+      var draw = document.createElement("tr");
+      draw.className = "agent";
+      draw.style.display = open ? "" : "none";
+      draw.innerHTML = '<td></td><td class="aname" colspan="6">' + drill + '</td>';
+      tb.appendChild(draw);
+      subRows.push(draw);
     }
     tr.addEventListener("click", function () {
       expanded[key] = !expanded[key];
@@ -587,6 +741,43 @@ function load() {
 wireControls();
 load();
 setInterval(load, 30000);
+
+// Signed-in avatar + menu, same identity source the hub landing page uses
+// (/api/auth/user: login, avatar_url, hub_admin, optional country code).
+(function () {
+  fetch("/api/auth/user", { credentials: "same-origin" })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.authenticated) return;
+      var wrap = document.getElementById("nav-avatar-wrap");
+      var img = document.getElementById("nav-avatar");
+      if (!wrap || !img) return;
+      img.src = d.avatar_url || "";
+      img.alt = d.login || "";
+      img.title = d.login || "";
+      // Country code → flag glyph, derived the same way the dashboard does
+      // (two regional-indicator symbols), shown beside the login in the menu.
+      var flag = "";
+      if (d.country && /^[A-Za-z]{2}$/.test(d.country)) {
+        var cc = d.country.toUpperCase();
+        flag = " " + String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65, 0x1F1E6 + cc.charCodeAt(1) - 65);
+      }
+      document.getElementById("nav-menu-user").textContent = (d.login || "") + flag;
+      var role = document.getElementById("nav-menu-role");
+      if (role) { role.textContent = d.hub_admin ? "hub admin" : "member"; role.style.display = ""; }
+      var prof = document.getElementById("nav-menu-profile");
+      if (prof && d.login) { prof.href = "https://github.com/" + encodeURIComponent(d.login); prof.style.display = ""; }
+      var out = document.getElementById("nav-menu-signout");
+      if (out) out.addEventListener("click", function () {
+        fetch("/api/auth/logout", { method: "POST" }).then(function () { location.href = "/"; });
+      });
+      // Click pins the menu open (touch/keyboard); hover is handled in CSS.
+      img.addEventListener("click", function (e) { e.stopPropagation(); wrap.classList.toggle("open"); });
+      document.addEventListener("click", function () { wrap.classList.remove("open"); });
+      wrap.style.display = "";
+    })
+    .catch(function () {});
+})();
 </script>
 </body>
 </html>

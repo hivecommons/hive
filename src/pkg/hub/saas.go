@@ -821,13 +821,18 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 		}
 		username := s.getAuthUser(r)
 		if username == "" {
-			if _, ok := s.trustedSpokeUpgradeUser(r, r.PathValue("id")); ok {
+			spokeUser, reason := s.trustedSpokeUpgradeUser(r, r.PathValue("id"))
+			if spokeUser != "" {
 				next(w, r)
 				return
 			}
+			// Honest-error standard (#4446): every rejection on the spoke lane
+			// names WHICH credential failed and what to do about it, because the
+			// spoke dashboard relays this body verbatim into the operator's
+			// toast — a bare "not authenticated" told a logged-in owner nothing.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"not authenticated"}`))
+			json.NewEncoder(w).Encode(map[string]string{"error": reason})
 			return
 		}
 		user := loadSaaSUser(username)
@@ -851,21 +856,64 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 	}
 }
 
-func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (string, bool) {
+// trustedSpokeUpgradeUser authenticates the spoke-relayed upgrade lane. It
+// returns the user to attribute the upgrade to and an empty reason on success,
+// or ("", reason) on failure, where reason is an operator-facing explanation of
+// exactly which credential failed (the spoke shows it verbatim in a toast).
+//
+// The proof (X-Hive-Proxy-Auth = the hive's own dashboard token) is the
+// load-bearing credential: possession of that per-hive secret already grants
+// owner on the spoke dashboard itself, so a proof-verified request is the
+// spoke's authenticated operator by construction. X-Hive-User is attribution,
+// not authentication — gateway-fronted spokes (the Node auth proxy on :3001)
+// authenticate the operator with the shared token, strip per-user identity
+// headers, and therefore relay NO X-Hive-User even for a legitimate logged-in
+// owner. Rejecting that shape was the "Upgrade failed: not authenticated" bug:
+// a proof-verified request with no user identity is now attributed to the
+// hive's registered owner instead of being turned away.
+func (s *HubServer) trustedSpokeUpgradeUser(r *http.Request, hiveID string) (string, string) {
 	username := r.Header.Get("X-Hive-User")
-	if username == "" || hiveID == "" || r.Header.Get("X-Hive-Role") != saasRoleOwner {
-		return "", false
-	}
 	proof := r.Header.Get(proxyAuthHeader)
+	if hiveID == "" {
+		return "", "not authenticated — upgrade request named no hive"
+	}
+	if username == "" && proof == "" {
+		// Nothing to verify at all. Old spoke builds (pre proof-forwarding)
+		// relay the upgrade click with no credentials whatsoever; tell the
+		// operator how to upgrade past that build instead of a dead end.
+		return "", "not authenticated — this upgrade request reached the hub with no hub session and no spoke credentials; if it came from a spoke dashboard, that spoke build is too old to relay its upgrade credentials — trigger this hive's upgrade from the hub dashboard (or enable auto-upgrade), after which the spoke button will work"
+	}
+	if r.Header.Get("X-Hive-Role") != saasRoleOwner {
+		return "", "not authenticated — spoke upgrade requests must carry the owner role"
+	}
+	if proof == "" {
+		return "", "not authenticated — spoke upgrade proof missing: the spoke sent no dashboard-token proof (X-Hive-Proxy-Auth); set DASHBOARD_AUTH_TOKEN on the spoke to its hive-secrets/dashboard-token value"
+	}
 	expected := s.spokeProxyAuthToken(hiveID)
-	if proof == "" || expected == "" || !secureCompareHub(proof, expected) {
-		return "", false
+	if expected == "" {
+		return "", "not authenticated — the hub could not read this hive's dashboard-token secret (hive-secrets/dashboard-token) to verify the spoke's upgrade proof; check the hub's access to this hive's cluster"
+	}
+	if !secureCompareHub(proof, expected) {
+		return "", "not authenticated — spoke upgrade proof rejected: the spoke's DASHBOARD_AUTH_TOKEN does not match this hive's dashboard-token secret; re-sync the spoke's token"
+	}
+	if username == "" {
+		// Proof verified but no per-user identity (shared-token gateway
+		// topology): attribute the upgrade to the hive's registered owner.
+		if h := loadSaaSHive(hiveID); h != nil {
+			username = h.Owner
+		}
+		if username == "" {
+			return "", "not authenticated — spoke upgrade request carried no user identity and this hive has no registered owner to attribute it to"
+		}
 	}
 	user := loadSaaSUser(username)
-	if user == nil || user.Blocked {
-		return "", false
+	if user == nil {
+		return "", fmt.Sprintf("not authenticated — the hub has no record of user %q; log in to the hub once, then retry", username)
 	}
-	return username, true
+	if user.Blocked {
+		return "", "not authenticated — this account is blocked on the hub"
+	}
+	return username, ""
 }
 
 // isCSRFSafe reports whether a request may be allowed to MUTATE state.
@@ -2983,6 +3031,14 @@ type MyHiveEntry struct {
 	InactiveAgents       int    `json:"inactiveAgents,omitempty"`
 	InactiveAgentsReason string `json:"inactiveAgentsReason,omitempty"`
 
+	// AllAgentsQuiet is true when EVERY agent this hive reports is deliberately
+	// quiet — paused or off-schedule. This is "hive not in use": nothing is
+	// broken, nothing will be produced, and the same condition suppresses the
+	// advisory-staleness pill (allAgentsQuietByDesign). Computed on read so the
+	// browser never re-derives the pause/off-schedule rule; the fleet page
+	// renders it as a distinct state chip rather than health or fault.
+	AllAgentsQuiet bool `json:"allAgentsQuiet,omitempty"`
+
 	// FleetRollup / AgentVerdicts carry the three-way divergence view — what the
 	// governor EXPECTS running, what is ACTUALLY running, and what is ABLE to
 	// fulfill its mission — computed on read from the per-agent heartbeat
@@ -2993,6 +3049,15 @@ type MyHiveEntry struct {
 	// state machine and cannot drift from the Go rule.
 	FleetRollup   *agentFleetRollup  `json:"fleetRollup,omitempty"`
 	AgentVerdicts []AgentVerdictJSON `json:"agentVerdicts,omitempty"`
+
+	// HealthVerdict is the at-a-glance hive-health verdict (hive-health): does
+	// this spoke have RECENT OUTPUT back to its work source, banded by ACMM
+	// level? green/red/unknown with a WHY reason, computed on read from the same
+	// rollup/app-health/queue/advisory/repo-activity signals the row already
+	// carries. nil for placeholder rows (nothing to judge). Named distinctly
+	// from the embedded RegistryEntry.Health (the raw spoke-reported blob) to
+	// avoid shadowing it. See health_verdict.go.
+	HealthVerdict *HealthVerdict `json:"healthVerdict,omitempty"`
 
 	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
 	// serve on the last several probes — the link in this very table is dead.
@@ -3458,6 +3523,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result[i].InactiveAgentsReason = rep.Reason
 		}
 
+		// "Hive not in use": every reported agent deliberately quiet. Same
+		// predicate that suppresses the advisory-stale pill, surfaced as its
+		// own state so an entirely-parked hive reads as PARKED, not healthy
+		// and not broken.
+		result[i].AllAgentsQuiet = allAgentsQuietByDesign(result[i].RegistryEntry)
+
 		// Fleet-divergence view: derive the three-way picture (expected vs
 		// actual vs able) and the per-agent verdicts from the same per-agent
 		// heartbeat signals plus this hive's blocker fields. Derived on read so
@@ -3483,6 +3554,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
 			result[i].FleetRollup = &rollup
 			result[i].AgentVerdicts = buildAgentVerdicts(result[i].Agents, blockers, queuedWork, journeyNow)
+
+			// Hive-health verdict: reuse the rollup + app-health + queue depth we
+			// just computed. Only for real (non-placeholder) hives with reported
+			// agents — a placeholder has nothing to produce.
+			verdict := hiveHealthFor(result[i].RegistryEntry, rollup, result[i].GitHubAppHealth, queuedWork, journeyNow)
+			result[i].HealthVerdict = &verdict
 		}
 
 		// Sparkline history dominated this payload: at 42 hives the two series
@@ -18747,17 +18824,67 @@ const dashboardHTML = `<!DOCTYPE html>
        stay in step with the same name source the flag/preview already use. */
     var ISO_COUNTRY_CODES = ("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW").split(" ");
 
+    /* Minimum number of users sharing a country before it floats to the
+       "frequent" group at the top of the Country dropdown. "More than one":
+       a single assignment is not yet a pattern worth reordering the list for. */
+    var COUNTRY_FREQUENT_MIN_USERS = 2;
+    /* The disabled divider between the frequent group and the full
+       alphabetical list. value-less and disabled, so it can never be picked. */
+    var COUNTRY_FREQUENT_SEPARATOR = '──────────';
+
+    // frequentCountryCodes returns the codes held by at least
+    // COUNTRY_FREQUENT_MIN_USERS of the given users, ordered by count
+    // descending then localized name — the group countrySelectOptionsHTML
+    // floats to the top of the dropdown. Empty or malformed countries never
+    // count (normalizeCountryCode gates them out), so a roster full of
+    // country-less users produces no group at all. Recomputed on every panel
+    // render from the roster the admin poll keeps fresh (_allUsers), so the
+    // ordering tracks assignments live as countries are added or cleared.
+    function frequentCountryCodes(users) {
+      var counts = {};
+      (users || []).forEach(function (u) {
+        var c = normalizeCountryCode(u && u.country);
+        if (c) counts[c] = (counts[c] || 0) + 1;
+      });
+      return Object.keys(counts)
+        .filter(function (c) { return counts[c] >= COUNTRY_FREQUENT_MIN_USERS; })
+        .map(function (c) { return { code: c, count: counts[c], name: countryDisplayName(c) || c }; })
+        .sort(function (a, b) {
+          if (a.count !== b.count) return b.count - a.count;
+          return a.name.localeCompare(b.name);
+        })
+        .map(function (o) { return o.code; });
+    }
+
     // countrySelectOptionsHTML builds the <option>s for the Country dropdown,
     // sorted by localized display name, marking the current code selected and
     // a leading blank ("— none —") so an admin can clear a country.
+    //
+    // Countries already assigned to more than one loaded user float to a
+    // "frequent" group right under "— none —" (frequentCountryCodes), followed
+    // by a disabled separator and then the FULL alphabetical list — frequent
+    // codes stay duplicated there on purpose, so an admin whose muscle memory
+    // says "scroll to U" still finds United States where it always was. The
+    // current code is marked selected exactly once (the frequent copy when it
+    // has one), because duplicate selected attributes would make the browser
+    // pick the later, alphabetical copy and scroll the closed select there.
     function countrySelectOptionsHTML(current) {
       var cur = (normalizeCountryCode(current) || '');
       var opts = ISO_COUNTRY_CODES.map(function (code) {
         return { code: code, name: countryDisplayName(code) || code };
       }).sort(function (a, b) { return a.name.localeCompare(b.name); });
       var html = '<option value=""' + (cur ? '' : ' selected') + '>— none —</option>';
+      var frequent = frequentCountryCodes(_allUsers);
+      var curInFrequent = frequent.indexOf(cur) !== -1;
+      frequent.forEach(function (code) {
+        html += '<option value="' + escAttr(code) + '"' + (code === cur ? ' selected' : '') +
+          '>' + esc(countryDisplayName(code) || code) + ' (' + esc(code) + ')</option>';
+      });
+      if (frequent.length) {
+        html += '<option value="" disabled>' + COUNTRY_FREQUENT_SEPARATOR + '</option>';
+      }
       opts.forEach(function (o) {
-        html += '<option value="' + escAttr(o.code) + '"' + (o.code === cur ? ' selected' : '') +
+        html += '<option value="' + escAttr(o.code) + '"' + (o.code === cur && !curInFrequent ? ' selected' : '') +
           '>' + esc(o.name) + ' (' + esc(o.code) + ')</option>';
       });
       return html;

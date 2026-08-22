@@ -237,6 +237,7 @@ func (m *Manager) archiveKickLogLocked(agent *AgentProcess, reason string) bool 
 	m.logger.Info("archived kick log", "name", agent.Name, "reason", reason, "file", fname, "bytes", len(header)+len(content))
 
 	m.pruneKickLogs(dir)
+	m.notifyKickObserver(agent.Name, KickObserverEventArchived, reason)
 	return true
 }
 

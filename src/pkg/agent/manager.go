@@ -378,6 +378,14 @@ type Manager struct {
 	// and why it is an atomic.Pointer rather than m.mu-guarded state.
 	auditSink atomic.Pointer[AuditSink]
 
+	// kickObserver, when set, receives kick lifecycle events ("kick-delivered",
+	// "kick-log-archived") for external progress surfaces — the Linear
+	// AgentActivity emitter (RFC #4492 Part 2) is the first consumer. Same
+	// atomic.Pointer discipline as auditSink: both notification sites run under
+	// m.mu, so the pointer must be readable from a locked context, and the
+	// observer is always invoked on its own goroutine. See kick_observer.go.
+	kickObserver atomic.Pointer[func(agentName, event, detail string)]
+
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
@@ -2516,7 +2524,12 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 
 	// Pinned: unpinned HEAD broke every install on 2026-07-27 when upstream
 	// removed the --mode flag. Bump deliberately, after checking `--help`.
-	const cavemanRef = "github:JuliusBrussee/caveman#0d95a81d35a9"
+	// v1.9.1 IS commit 0d95a81d35a9 — the SHA form is deliberately not used
+	// because the `skills` CLI clones with `git clone --branch <ref>`, and
+	// git cannot clone a bare SHA as a branch ("Could not find remote branch
+	// 0d95a81d35a9"), which broke every install on a live hive. Tags clone
+	// cleanly; bump the tag, never a raw SHA.
+	const cavemanRef = "github:JuliusBrussee/caveman#v1.9.1"
 	// Upstream replaced `--mode full|minimal` with `--all` / `--minimal`
 	// (--all = hooks + init).
 	modeFlag := "--all"
@@ -2533,11 +2546,11 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	case "gemini":
 		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag)
 	case "goose":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "goose")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "goose")
 	case "codex":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "codex")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "codex")
 	case "aider":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "aider-desk")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#v1.9.1", "-a", "aider-desk")
 	default:
 		m.logger.Info("caveman not supported for backend", "backend", backend)
 		return
@@ -4266,6 +4279,8 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// only carry a truncated preview, which is not enough to answer "what was
 	// my agent asked to do?".
 	m.recordPrompt(agent.Name, trigger, message)
+
+	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, trigger)
 }
 
 func (m *Manager) agentSandboxEnabledLocked(agent *AgentProcess) bool {
@@ -7162,8 +7177,9 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 // AuthorizeIssueOpen enforces the policy for the issue-request watcher,
 // mirroring AuthorizePROpen with the mode gates that govern the direct gh
 // paths: "issue" requests need CanCreateIssues() (mode >= ISSUES_ONLY);
-// "comment" requests need the same (commenting is an issue-write). The same
-// UID forge-resistance applies: the request file's owner must BE the claimed
+// "comment" and "claim" requests need the same (commenting and claiming an
+// issue are both issue-writes under the same tier). The same UID
+// forge-resistance applies: the request file's owner must BE the claimed
 // agent. A nil manager or unknown agent is denied.
 func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string) error {
 	if strings.TrimSpace(agentName) == "" {

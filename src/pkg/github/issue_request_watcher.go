@@ -58,16 +58,27 @@ const issueRequestMaxAge = 24 * time.Hour
 
 // IssueRequest is the JSON an agent writes to IssueRequestDir. Kind selects the
 // operation: "issue" (default) creates an issue; "comment" posts a comment on
-// an existing issue or PR (Number required).
+// an existing issue or PR (Number required); "claim" marks an issue as taken by
+// the agent (Number required) — it applies a `hive/claimed-by-<agent>` LABEL
+// rather than a GitHub assignee, because the hive authors as an App bot and App
+// bots are not valid GitHub assignees (Issues.AddAssignees silently drops them).
+// The claim is filed by the agent when it starts work on an issue, giving a
+// visible, auditable ownership signal the hive can observe.
 type IssueRequest struct {
-	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment"
+	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim"
 	Repo   string   `json:"repo"`
-	Title  string   `json:"title,omitempty"`  // issue only
+	Title  string   `json:"title,omitempty"` // issue only
 	Body   string   `json:"body,omitempty"`
 	Labels []string `json:"labels,omitempty"` // issue only
-	Number int      `json:"number,omitempty"` // comment only: issue/PR number
+	Number int      `json:"number,omitempty"` // comment/claim: issue/PR number
 	Agent  string   `json:"agent,omitempty"`
 }
+
+// claimLabelPrefix is the label namespace applied for a "claim" request. The
+// full label is claimLabelPrefix + <sanitized agent name>, e.g.
+// "hive/claimed-by-scanner". Namespaced so it is easy to filter/sweep and never
+// collides with a project's own labels.
+const claimLabelPrefix = "hive/claimed-by-"
 
 // IssueResponse is written next to a consumed request as <name>.result.json.
 type IssueResponse struct {
@@ -230,6 +241,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if strings.TrimSpace(req.Repo) == "" || req.Number <= 0 || strings.TrimSpace(req.Body) == "" {
 			shapeErr = "comment request requires repo, number, and body"
 		}
+	case "claim":
+		if strings.TrimSpace(req.Repo) == "" || req.Number <= 0 || strings.TrimSpace(req.Agent) == "" {
+			shapeErr = "claim request requires repo, number, and agent"
+		}
 	default:
 		shapeErr = "unknown kind " + strconv.Quote(kind)
 	}
@@ -263,6 +278,14 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 
 	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	switch kind {
+	case "claim":
+		// Apply a namespaced ownership label (App bots can't be assignees).
+		label := claimLabelPrefix + sanitizeAgentName(req.Agent)
+		err = c.AddLabels(ctx, req.Repo, req.Number, []string{label})
+		if err == nil {
+			resp.OK = true
+			resp.Number = req.Number
+		}
 	case "comment":
 		err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)
 		if err == nil {
@@ -298,8 +321,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	}
 
 	action := AuditActionAgentIssueCreated
-	if kind == "comment" {
+	switch kind {
+	case "comment":
 		action = AuditActionAgentCommentCreated
+	case "claim":
+		action = AuditActionIssueClaimed
 	}
 	c.recordCreationAudit(action, meta,
 		"repo", req.Repo,

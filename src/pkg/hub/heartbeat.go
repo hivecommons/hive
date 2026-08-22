@@ -696,6 +696,17 @@ type HeartbeatPayload struct {
 	// to report it, which the hub treats as "not stale".
 	FleetStatsCollectedAt string `json:"fleet_stats_collected_at,omitempty"`
 
+	// --- Per-repo output activity (hive-health) ---------------------------
+	// RepoActivity is the spoke's audit-derived summary of output produced
+	// back to each work source (issues/PRs/comments/merges/claims/reviews/
+	// advisory) with counts + recency. It lets the hub decide, from the beat
+	// alone, whether a hive is actually producing — banded by ACMM level in
+	// the health verdict. Nil from a spoke too old to compute it (carried
+	// forward hub-side), like ComponentReach.
+	RepoActivity            []RepoActivityWire `json:"repo_activity,omitempty"`
+	RepoActivityCollectedAt string             `json:"repo_activity_collected_at,omitempty"`
+	RepoActivityWindowHours int                `json:"repo_activity_window_hours,omitempty"`
+
 	// --- Quadrant signals -------------------------------------------------
 	// Cheap, already-computed spoke metrics forwarded so the hub can score the
 	// per-hive quadrant (trust / efficiency / satisfaction / productivity)

@@ -84,6 +84,42 @@ that a process was spawned. Docker is not required and is not used.
   `:3001` serves 502s.
 - `git`, `openssl`, and a GitHub token (PAT or App) for the org the hive works on
 
+### One command
+
+`bin/hive-podman-setup.sh` does everything in the manual sequence below —
+preflights, configuration, the four Quadlet units, the boot wiring, and a final
+check that the **gateway** answers on the published port before it returns.
+
+```bash
+git clone https://github.com/kubestellar/hive.git
+cd hive
+
+export HIVE_DEPLOY_RUNTIME=podman
+bin/hive-podman-setup.sh --rootless        # or --rootful
+```
+
+It installs no packages and clones nothing, is idempotent, never overwrites an
+existing config without `--force` and never touches `secrets/`. A failing step
+stops the run and names itself; nothing is rolled back, so the partial state is
+there to inspect. It also enforces three couplings that are easy to get wrong by
+hand:
+
+- `dashboard.port` is read out of the unit that will enforce it, and the run
+  stops if the config does not read back agreeing — the 300-second silent hang
+  the manual block warns about below.
+- the volume is created **through its unit**, so it carries the ownership labels
+  that make `bin/hive-podman-teardown.sh` able to see it.
+- the secrets directory gets the right ownership for the root mode, and rootless
+  installs are told when lingering is off and the deployment will not survive a
+  reboot.
+
+Add `--enable-linger` to fix that last one during the install rather than after.
+
+### Or, by hand
+
+Worth reading even if you use the script: the comments below are where the traps
+are documented, and the script enforces the same ones.
+
 The block below is **rootless**. For rootful, set `CONF=/etc/hive`, drop the
 `podman unshare` line in favour of the `chgrp` beside it, install the units into
 `/etc/containers/systemd/` with `sudo`, and drop `--user` from every `systemctl`.
