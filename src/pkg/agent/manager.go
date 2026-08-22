@@ -2410,6 +2410,22 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	m.fixSharedConfigPerms(agent)
 
+	// Pre-seed Copilot's trusted_folders BEFORE the CLI starts so its "Confirm
+	// folder trust" modal never appears (Copilot ≥1.0.78). That modal wedges a
+	// fresh session at startup, the login-detector misreads the blocked pane as
+	// "needs login" and pauses the agent, and a re-login just re-hits the race —
+	// the failure the operator saw where logged-in agents kept asking to log in.
+	// There is no CLI flag to disable it (github/copilot-cli#1121); the
+	// trusted_folders array is the documented, durable bypass. Idempotent and
+	// best-effort — the runtime watchForTrustPromptForAgent watcher stays as a
+	// backstop, so a failure here only loses the pre-seed, never the answer.
+	if backend == "copilot" {
+		if err := ensureCopilotTrustedFolders(sharedCopilotConfigPath); err != nil {
+			m.logger.Warn("failed to pre-seed copilot trusted_folders (watcher will backstop)",
+				"name", agent.Name, "error", err)
+		}
+	}
+
 	// Re-apply SECRET env vars before every launch. ensureTmuxSession sets the
 	// full env via tmux set-environment, but it returns early when the session
 	// already exists, so on a relaunch (restart, model change, crash recovery)
@@ -5816,6 +5832,54 @@ func restoreCopilotTokens(path, token string) error {
 	cfg["copilotTokens"] = map[string]interface{}{
 		"github.com": map[string]interface{}{"token": token},
 	}
+	return writeCopilotConfig(path, cfg)
+}
+
+// copilotTrustedFolder is the parent under which every agent's working dir lives
+// (/data/agents/<name>). Copilot trusts a folder AND everything below it, so a
+// single entry here covers all agents.
+const copilotTrustedFolder = "/data/agents"
+
+// ensureCopilotTrustedFolders pre-seeds Copilot CLI's trusted_folders in
+// config.json so the "Confirm folder trust" modal never appears. That modal
+// (Copilot ≥1.0.78) blocks a fresh agent session at startup; nothing types an
+// answer reliably (the auto-answerer races a 120s window and the CLI can render
+// the prompt later than that on a slow first start), and the login-detector then
+// MISREADS the blocked pane as "needs login" and pauses the agent — so a
+// logged-IN agent with a valid gho_ token sits wedged forever. There is no CLI
+// flag to disable the prompt (github/copilot-cli#1121 is an open request); the
+// documented, durable bypass is the trusted_folders array. Idempotent: a folder
+// already present is left as-is, so this never churns the file or re-prompts.
+func ensureCopilotTrustedFolders(path string, folders ...string) error {
+	if len(folders) == 0 {
+		folders = []string{copilotTrustedFolder}
+	}
+	cfg, err := readCopilotConfig(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		cfg = map[string]interface{}{}
+	}
+	existing, _ := cfg["trusted_folders"].([]interface{})
+	have := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		if s, ok := e.(string); ok {
+			have[s] = true
+		}
+	}
+	changed := false
+	for _, f := range folders {
+		if f != "" && !have[f] {
+			existing = append(existing, f)
+			have[f] = true
+			changed = true
+		}
+	}
+	if !changed {
+		return nil // already trusted — do not rewrite the file
+	}
+	cfg["trusted_folders"] = existing
 	return writeCopilotConfig(path, cfg)
 }
 

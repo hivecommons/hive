@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/pkg/config"
@@ -146,4 +147,56 @@ func TestRefreshCopilotSessionToken_NoCopilotBackend(t *testing.T) {
 	m.copilotAuthToken = "gho_held"
 	// Should return without panicking or touching the shared/durable paths.
 	m.refreshCopilotSessionToken()
+}
+
+// ensureCopilotTrustedFolders pre-seeds trusted_folders so Copilot's folder-
+// trust modal never appears. It must add a missing folder, be idempotent (no
+// rewrite when already present), preserve existing entries, and handle a
+// missing config file by creating it.
+func TestEnsureCopilotTrustedFolders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	read := func() string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return string(b)
+	}
+
+	// Missing file → created with the default folder trusted.
+	if err := ensureCopilotTrustedFolders(path); err != nil {
+		t.Fatalf("seed on missing file: %v", err)
+	}
+	if got := read(); !strings.Contains(got, copilotTrustedFolder) {
+		t.Fatalf("default folder not seeded: %s", got)
+	}
+
+	// Idempotent: a second call with the same folder must NOT rewrite the file.
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCopilotTrustedFolders(path); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(path)
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Error("idempotent call rewrote the file (should no-op when folder already present)")
+	}
+
+	// Existing token + a new folder: token preserved, both folders present.
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{"github.com":{"token":"gho_keep"}},"trusted_folders":["/data/agents"]}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCopilotTrustedFolders(path, "/data/home/hive-work"); err != nil {
+		t.Fatal(err)
+	}
+	got := read()
+	for _, want := range []string{"gho_keep", "/data/agents", "/data/home/hive-work"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q after add; file:\n%s", want, got)
+		}
+	}
 }
