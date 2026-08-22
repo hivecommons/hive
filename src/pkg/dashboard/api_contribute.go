@@ -806,6 +806,18 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	var page bytes.Buffer
 	fmt.Fprintf(&page, strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
+<!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
+     visitor who pinned a theme never sees a frame of the other one. Kept to the
+     single attribute write on purpose: everything else about the control (the
+     button label, persistence, the cycle) lives in the deferred block at the
+     foot of the document, because none of it affects the first paint. An inline
+     script element is fine under CSP — applyDocumentScriptSrcElem stamps a
+     sha256 for every inline script in the finished document (csp_script_src.go);
+     it is inline on*= ATTRIBUTES that are forbidden (ADR-0016), which is why the
+     button dispatches through data-action instead of onclick. -->
+<script>
+(function(){try{var t=localStorage.getItem('hive.contribute.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 <style>
 /* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
    dossier hero name + rank designation (.dz-heroname / .dz-rankpill .rank-name). */
@@ -823,8 +835,13 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
    :root[data-theme="light"] hook — so a future in-page toggle can force it
    (the toggle itself is out of scope). data-theme="dark" always wins back to
    dark even under a light OS preference. Values are Primer-light neutrals so the
-   surface blends with the surrounding Docusaurus docs chrome. */
+   surface blends with the surrounding Docusaurus docs chrome.
+   #4549: each block also declares color-scheme, which is what tells the browser
+   how to paint the chrome CSS cannot reach — the <select> popups on the
+   onboarding tab, scrollbars, and the focus ring. Without it a forced-light page
+   still drops a black dropdown over a white form. */
 :root{
+  color-scheme:dark;
   --cc-bg:#0d1117;
   --cc-bg-deep:#010409;
   --cc-surface:#161b22;
@@ -842,6 +859,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-red:#f85149;
 }
 @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  color-scheme:light;
   --cc-bg:#ffffff;
   --cc-bg-deep:#f6f8fa;
   --cc-surface:#f6f8fa;
@@ -859,6 +877,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-red:#cf222e;
 }}
 :root[data-theme="light"]{
+  color-scheme:light;
   --cc-bg:#ffffff;
   --cc-bg-deep:#f6f8fa;
   --cc-surface:#f6f8fa;
@@ -1056,17 +1075,17 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    The popover is an absolutely-positioned card toggled open by JS (aria-expanded),
    anchored to the wrapper so it sits just under the glyph. */
 .info-affordance{position:relative;display:inline-flex;align-items:center}
-.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:#6e7681;cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
+.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:var(--cc-muted-2);cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
 .info-btn:hover,.info-btn:focus{color:#58a6ff;outline:none}
-.info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:#c9d1d9;font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
+.info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:var(--cc-text-2);font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
 .info-pop[hidden]{display:none}
-.info-pop h4{margin:0 0 4px;font-size:.76rem;color:#e6edf3;font-weight:600}
+.info-pop h4{margin:0 0 4px;font-size:.76rem;color:var(--cc-text);font-weight:600}
 .info-pop ul{margin:4px 0 0;padding-left:16px}
 .info-pop li{margin:2px 0}
-.info-pop code{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:0 3px;font-size:.7rem}
+.info-pop code{background:var(--cc-surface);border:1px solid var(--cc-border-2);border-radius:4px;padding:0 3px;font-size:.7rem}
 .custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:#58a6ff}
 .custom-css-pop{width:min(320px,calc(100vw - 32px));z-index:10002}
-.custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
+.custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text-2);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
 /* Compact tier badge inline next to a connected clanker's identity. */
 .tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
 .tier-badge.tier-inline::before{width:6px;height:6px}
@@ -1479,8 +1498,8 @@ select.admin-act{min-width:0;max-width:100%%}
    the .cc-interest-chip visual (same green affinity color) in a compact, non-
    interactive line so an owner gets a fleet-wide view without editing anything
    here — editing stays contributor-owned via My label interests above. */
-.clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
-.clanker-interests-label{color:#6e7681}
+.clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:var(--cc-muted-2)}
+.clanker-interests-label{color:var(--cc-muted-2)}
 .clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
 /* #2547 peer compatibility: the hub-vs-client protocol comparison, rendered ONLY
    when the versions actually differ so a healthy fleet stays quiet. Amber (not
@@ -1539,7 +1558,7 @@ select.admin-act{min-width:0;max-width:100%%}
 /* Optional hold-reason field (#queue-hold-reason) in the ⋯ menu — a compact inline
    note the operator can fill before Hold. Empty is fine (holding without a note). */
 .cc-q-holdreason{padding:2px 9px 7px}
-.cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.76rem;padding:4px 7px;outline:none;color-scheme:dark}
+.cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.76rem;padding:4px 7px;outline:none}
 .cc-q-holdreason-input:focus{border-color:#1f6feb}
 /* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
    not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
@@ -1817,6 +1836,35 @@ select.admin-act{min-width:0;max-width:100%%}
 .lb-custom-style-note code{color:var(--cc-accent)}
 .lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
 .lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
+/* ── #4549 Theme control ─────────────────────────────────────────────────────
+   The light ramp above has existed since #2612 but was reachable only if the
+   visitor's OS already asked for it — there was no in-page selector and no
+   stored preference, so a visitor on a dark-set device could not get light and
+   a visitor on a light-set device could not pin dark. This is that selector.
+   It writes :root[data-theme], the hook the ramp already keys on, so no palette
+   work rides along.
+   auto is the ABSENCE of the attribute, not a resolved value: a visitor who
+   never touches the control keeps exactly today's behaviour, and one who
+   returns to auto starts following their OS again live, including a change
+   made while the page is open.
+   The bar is now .page-chrome (tabs + control); .page-tabs keeps its class,
+   role=tablist and its own children unchanged, and hands the surface/border it
+   used to paint up to the wrapper so the two sit in one continuous bar. The
+   control deliberately does NOT go inside the tablist — a non-tab child of a
+   role=tablist is announced as a stray tab. */
+.page-chrome{display:flex;align-items:stretch;background:var(--cc-surface);border-bottom:1px solid var(--cc-border)}
+.page-chrome>.page-tabs{flex:1 1 auto;min-width:0;background:none;border-bottom:none}
+.theme-toggle{flex:0 0 auto;align-self:center;display:inline-flex;align-items:center;gap:6px;margin:0 48px 0 12px;padding:5px 11px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:999px;color:var(--cc-muted);font-family:inherit;font-size:.76rem;line-height:1;cursor:pointer}
+.theme-toggle:hover{color:var(--cc-text);border-color:var(--cc-muted)}
+.theme-toggle:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
+.theme-toggle__glyph{font-size:.92rem;line-height:1}
+/* The swap must not animate. The sheet puts transitions on tiles, buttons, the
+   ops rail and the quota bar; letting every one of them run at once turns a
+   theme change into a half-second wobble across the whole page. ccApplyTheme
+   sets this for one frame around the attribute write. Independent of the
+   prefers-reduced-motion blocks: this suppresses a transition nobody asked for
+   on ANY setting, rather than honouring a stated preference. */
+:root.cc-theme-switching *,:root.cc-theme-switching *::before,:root.cc-theme-switching *::after{transition:none!important;animation:none!important}
 /* ── #4537 Phone portrait (~390 CSS px). The page had breakpoints at 900/860/768/
    560/520 and then nothing, so an iPhone in portrait fell off the right edge.
    Four compounding causes, fixed here plus two structural ones above
@@ -1842,6 +1890,8 @@ select.admin-act{min-width:0;max-width:100%%}
      hides the trailing tabs just as effectively as the overflow did. Wrapping
      puts all five on screen and tappable. */
   .page-tabs{flex-wrap:wrap;padding:0 16px}
+  .page-chrome{flex-wrap:wrap}
+  .theme-toggle{margin:0 16px 6px auto}
   .page-tab{flex:0 0 auto;padding:12px 12px;font-size:.88rem}
 
   /* Gutters back to something a phone can spare, and the horizontal axis stated
@@ -1877,6 +1927,7 @@ select.admin-act{min-width:0;max-width:100%%}
   .lb-trend{padding-left:14px;padding-right:14px}
 }
 </style>%s</head><body>
+<div class="page-chrome">
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
@@ -1884,13 +1935,15 @@ select.admin-act{min-width:0;max-width:100%%}
 <button class="page-tab" role="tab" id="ptab-leaderboard" aria-selected="false" data-panel="tab-leaderboard">Leaderboard</button>
 <button class="page-tab" role="tab" id="ptab-profile" aria-selected="false" data-panel="tab-profile">Profile</button>
 </div>
+<button type="button" class="theme-toggle" id="cc-theme-toggle" data-action="cycle-theme" data-theme-mode="auto" title="Theme: Auto &mdash; follows your system appearance" aria-label="Theme: Auto (follows your system appearance). Activate for Light."><span class="theme-toggle__glyph" aria-hidden="true">&#9680;</span><span class="theme-toggle__text">Auto</span></button>
+</div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
 <div class="page">
 <div class="main">
 <h1>🐝 Contribute to %s</h1>
 <div id="invite-banner" class="invite-banner" hidden role="status"></div>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
-<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
+<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:var(--cc-text)">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
 <div class="stat-row">
 <div class="stat"><div class="stat-num" style="color:#58a6ff">%d</div><div class="stat-label">Total</div></div>
 %s
@@ -1901,7 +1954,7 @@ select.admin-act{min-width:0;max-width:100%%}
      JS from the CLIENTS metadata (inline SVG emblems, all CSP-safe). Clicking a
      tile drives the existing #cli-select below, so the copy-block logic is
      unchanged. Falls back gracefully: the plain selector still works if JS is off. -->
-<p style="color:#8b949e;margin:0 0 8px;font-size:.9rem">Find your tool:</p>
+<p style="color:var(--cc-muted);margin:0 0 8px;font-size:.9rem">Find your tool:</p>
 <div id="client-tiles" class="client-tiles" role="listbox" aria-label="Choose your CLI tool"></div>
 <!-- "Open in <tool>" ONBOARDING affordance. Only shown for a client with a real,
      vendor-documented deep-link scheme. It opens a chat in the vendor's own app to
@@ -1913,16 +1966,16 @@ select.admin-act{min-width:0;max-width:100%%}
 </div>
 <div style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">OS:</label>
-<select id="os-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">OS:</label>
+<select id="os-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="macos" selected>macOS</option>
 <option value="linux">Linux</option>
 <option value="windows">Windows</option>
 </select>
 </span>
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">Choose your CLI:</label>
-<select id="cli-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">Choose your CLI:</label>
+<select id="cli-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
 <option value="codex" data-install="npm i -g @openai/codex" data-host-install="npm i -g @openai/codex\ncodex login --device-auth   # or export CODEX_API_KEY / OPENAI_API_KEY for API-key mode" data-model-flag="--model" data-default-model="" data-env="# Optional: Codex reasoning effort — the relay passes it as -c model_reasoning_effort.\n# export AGENT_REASONING_EFFORT=high">OpenAI Codex</option>
 <option value="copilot" data-install="" data-host-install="npm install -g @github/copilot # uses your existing gh auth" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
@@ -1939,16 +1992,16 @@ select.admin-act{min-width:0;max-width:100%%}
 </select>
 </span>
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">Mode:</label>
-<select id="mode-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">Mode:</label>
+<select id="mode-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="containerized">Containerized (recommended)</option>
 <option value="host">Host (non-containerized)</option>
 <option value="kubernetes">Kubernetes (cluster)</option>
 </select>
 </span>
 <span id="runtime-group" style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">Runtime:</label>
-<select id="runtime-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">Runtime:</label>
+<select id="runtime-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="">Auto-detect</option>
 <option value="docker">Docker</option>
 <option value="podman">Podman</option>
@@ -1956,32 +2009,32 @@ select.admin-act{min-width:0;max-width:100%%}
 </span>
 </div>
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
-<label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
-<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" data-input-action="updateCmds">
+<label style="font-size:.9rem;color:var(--cc-muted)">Model (optional):</label>
+<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" data-input-action="updateCmds">
 </div>
 <!-- #2549 Kubernetes-mode note. Hidden except in Kubernetes mode. States the two
      honest constraints up front: only headless-capable backends run in a cluster
      (a headless pod has no TTY), and the credential stored in the cluster Secret
      is a long-lived personal token that is more exposed than a laptop file, with
      the per-task credential boundary tracked in #2537. -->
-<div id="k8s-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
-<strong style="color:#e6edf3">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
-<span style="color:#8b949e">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
+<div id="k8s-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
+<span style="color:var(--cc-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
 </div>
 <!-- Host-only note. Shown for backends the containerized/Kubernetes paths cannot
      run, so the mode flip to Host is explained rather than mysterious: "other"
      has no image, and agy's Google sign-in is interactive with no API-key mode,
      so no unattended container can hold a session. -->
-<div id="hostonly-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
-<strong style="color:#e6edf3">This backend runs on your host, not in a container.</strong> The mode selector has been switched to <strong>Host</strong> for you. <strong>Antigravity (agy)</strong> signs in through an interactive Google OAuth flow &mdash; a browser URL plus a pasted code, with no API-key mode &mdash; so a container or pod has no session to inherit, and the contributor image does not ship the binary. Run <code>agy</code> once to sign in, then start the relay on the host. Its print mode (<code>agy -p</code>) is verified, so headless host runs work; Kubernetes does not.
+<div id="hostonly-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">This backend runs on your host, not in a container.</strong> The mode selector has been switched to <strong>Host</strong> for you. <strong>Antigravity (agy)</strong> signs in through an interactive Google OAuth flow &mdash; a browser URL plus a pasted code, with no API-key mode &mdash; so a container or pod has no session to inherit, and the contributor image does not ship the binary. Run <code>agy</code> once to sign in, then start the relay on the host. Its print mode (<code>agy -p</code>) is verified, so headless host runs work; Kubernetes does not.
 </div>
-<div id="multi-hub-note" style="margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
-<strong style="color:#e6edf3">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:#58a6ff">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:#58a6ff">#2846</a>.
+<div id="multi-hub-note" style="margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:#58a6ff">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:#58a6ff">#2846</a>.
 </div>
-<p style="color:#8b949e;margin-bottom:8px">Copy and paste these commands to get started:</p>
-<div style="margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;position:relative">
+<p style="color:var(--cc-muted);margin-bottom:8px">Copy and paste these commands to get started:</p>
+<div style="margin-top:16px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:16px;position:relative">
 <button id="copy-btn" style="position:absolute;top:8px;right:8px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.75rem">Copy</button>
-<pre id="copy-cmds" style="color:#e6edf3;font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
+<pre id="copy-cmds" style="color:var(--cc-text);font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
 # Use the OS / CLI / Mode / Runtime selectors above to customize.
 brew install just gh
 git clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive
@@ -2285,10 +2338,10 @@ update();  // initial paint: copy block + branded UI in sync from first load
 })();
 </script>
 </div>
-<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:#58a6ff">docs/podman-rootless-ci.md</a>.</p>
-<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:#58a6ff">docs/podman-rootless-ci.md</a>.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
+<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
 </div>
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
@@ -2324,7 +2377,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:#e6edf3">Operations</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--cc-text)">Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -2350,7 +2403,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div><div class="admin-toggle-label">Task cooldown</div><div class="admin-toggle-sub">After a task completes with a verified PR, keep that issue out of the queue for the period below. Off = no cooldown gating. Failure quarantine is separate and always on.</div></div>
 </div>
 <div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
-<label>Cooldown period (hours) <span style="color:#6e7681">— 168 = one week (default). Range 1&ndash;8760.</span></label>
+<label>Cooldown period (hours) <span style="color:var(--cc-muted-2)">— 168 = one week (default). Range 1&ndash;8760.</span></label>
 <input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
 <!-- Live tally of issues currently within their cooldown window (#2649 companion),
      hydrated by ccRenderCooldownCount from the fleet payload. Hidden when 0. -->
@@ -2358,7 +2411,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 
 <hr class="admin-hr">
-<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Admission filters</h3>
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Admission filters</h3>
 <p class="ops-note" style="margin-top:0">The queue-shaping levers. Deny (default) skips matches; Allow serves only matches.</p>
 
 <div class="admin-field" id="admin-filter-titles"></div>
@@ -2366,19 +2419,19 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field" id="admin-filter-labels"></div>
 
 <div class="admin-field">
-<label>Allowed models <span style="color:#6e7681">— wildcards (*) and /regex/. Empty = allow all.</span></label>
+<label>Allowed models <span style="color:var(--cc-muted-2)">— wildcards (*) and /regex/. Empty = allow all.</span></label>
 <div class="admin-chips" id="admin-allow-models"></div>
 <div class="admin-addrow"><input type="text" id="admin-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\d/"><button type="button" id="admin-add-model">Add</button></div>
 <div class="admin-toggle" style="padding-top:8px"><div class="admin-switch" id="admin-reject-switch" data-key="contribute_reject_unknown_models"></div><div class="admin-toggle-sub">Reject unknown models at connect time (only when the allowlist is non-empty).</div></div>
 </div>
 
 <hr class="admin-hr">
-<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Repos for Contribute</h3>
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Repos for Contribute</h3>
 <p class="ops-note" style="margin-top:0">Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p>
 <div id="admin-repos"></div>
 
 <hr class="admin-hr">
-<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Tier access &amp; rate limits</h3>
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Tier access &amp; rate limits</h3>
 <p class="ops-note" style="margin-top:0">Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p>
 <div id="admin-tiers"></div>
 
@@ -2396,7 +2449,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
 <div class="ops">
 <h1>Operations</h1>
-<p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:#e6edf3">Management</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
 
 <!-- Two-region shell: a MAIN area (fleet / pipeline / queue / my-work) beside a
      dedicated full-height DEV-LOG RAIL (chat/notifications-panel style). The rail is
@@ -2412,7 +2465,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected clankers, last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
-  <span style="color:#e6edf3;font-weight:600">Your army</span>
+  <span style="color:var(--cc-text);font-weight:600">Your army</span>
   <span class="cc-army-stat working"><span class="dot"></span><b id="cc-army-working">0</b>&nbsp;working</span>
   <span class="cc-army-stat reviewing"><span class="dot"></span><b id="cc-army-reviewing">0</b>&nbsp;reviewing</span>
   <span class="cc-army-stat idle"><span class="dot"></span><b id="cc-army-idle">0</b>&nbsp;idle</span>
@@ -2644,13 +2697,69 @@ It clears automatically when the period elapses. An operator can shorten or disa
 // Replaces former inline on*= handler attributes so CSP script-src-attr can be
 // 'none'. Behaviors are keyed off data-* attributes:
 //   data-action="dismiss-parent"  → remove the button's parent element
+//   data-action="cycle-theme"     → advance the theme selector (#4549)
 //   data-hide-on-error="1"        → hide <img> whose load failed
 //   data-select-on-click="1"      → select input contents on click
 //   data-stop-prop="1"            → stop click/mousedown propagating to parents
+
+// ── Theme selector (#4549) ───────────────────────────────────────────────────
+// Three states cycled in this order. "auto" means the attribute is ABSENT, not
+// resolved to a value: the sheet already follows prefers-color-scheme when no
+// data-theme is set, so removing it hands control back to the OS live. Resolving
+// auto to a concrete value here would freeze the page against an OS change made
+// while it is open, which is the one thing the default must not do.
+// The <head> guard already applied the stored value before first paint; this
+// block owns the label, the persistence and the cycle, none of which the first
+// paint needs. The storage key is deliberately NOT the one static/index.html's
+// own toggle uses: that surface keys off a body class and this one off
+// :root[data-theme], so a shared key would have each surface writing a value the
+// other cannot read. TestContributeThemeKeyDoesNotCollideWithDashboard pins that.
+var CC_THEME_KEY='hive.contribute.theme';
+var CC_THEME_ORDER=['auto','light','dark'];
+var CC_THEME_UI={
+  auto:{glyph:'\u25D0',text:'Auto',hint:'follows your system appearance'},
+  light:{glyph:'\u2600',text:'Light',hint:'forced light'},
+  dark:{glyph:'\u263E',text:'Dark',hint:'forced dark'}
+};
+// Any value that is not a pinned theme reads as auto, so a corrupt or foreign
+// entry degrades to the default rather than to a broken attribute. Private-mode
+// Safari throws on localStorage access, hence the try around every touch.
+function ccReadTheme(){try{var v=localStorage.getItem(CC_THEME_KEY);return(v==='light'||v==='dark')?v:'auto';}catch(e){return 'auto';}}
+function ccApplyTheme(mode,persist){
+  var r=document.documentElement;
+  r.classList.add('cc-theme-switching');
+  if(mode==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',mode);
+  if(persist){try{if(mode==='auto')localStorage.removeItem(CC_THEME_KEY);else localStorage.setItem(CC_THEME_KEY,mode);}catch(e){}}
+  var btn=document.getElementById('cc-theme-toggle');
+  if(btn){
+    var ui=CC_THEME_UI[mode]||CC_THEME_UI.auto;
+    var next=CC_THEME_UI[CC_THEME_ORDER[(CC_THEME_ORDER.indexOf(mode)+1)%%CC_THEME_ORDER.length]]||CC_THEME_UI.auto;
+    var g=btn.querySelector('.theme-toggle__glyph');if(g)g.textContent=ui.glyph;
+    var t=btn.querySelector('.theme-toggle__text');if(t)t.textContent=ui.text;
+    btn.setAttribute('data-theme-mode',mode);
+    btn.setAttribute('title','Theme: '+ui.text+' \u2014 '+ui.hint);
+    // Name the CURRENT state and what activating does, since the control is a
+    // cycle rather than a two-way switch — aria-pressed cannot express three.
+    btn.setAttribute('aria-label','Theme: '+ui.text+' ('+ui.hint+'). Activate for '+next.text+'.');
+  }
+  // Drop the no-transition guard once the swapped frame is painted. rAF does not
+  // fire in a background tab, so the timeout is the floor that guarantees the
+  // class can never stick and freeze every transition on the page.
+  var clear=function(){r.classList.remove('cc-theme-switching');};
+  if(window.requestAnimationFrame)requestAnimationFrame(function(){requestAnimationFrame(clear);});
+  setTimeout(clear,150);
+}
+function ccCycleTheme(){ccApplyTheme(CC_THEME_ORDER[(CC_THEME_ORDER.indexOf(ccReadTheme())+1)%%CC_THEME_ORDER.length],true);}
+// Sync the button's label with whatever the head guard already applied. Runs
+// with persist=false so merely loading the page never writes storage.
+ccApplyTheme(ccReadTheme(),false);
+
 document.addEventListener('click',function(e){
   if(!e.target.closest)return;
   var d=e.target.closest('[data-action="dismiss-parent"]');
   if(d&&d.parentElement){d.parentElement.remove();return;}
+  var th=e.target.closest('[data-action="cycle-theme"]');
+  if(th){ccCycleTheme();return;}
   var s=e.target.closest('[data-select-on-click]');
   if(s&&s.select){s.select();}
 });
@@ -6120,7 +6229,7 @@ poll();setInterval(poll,3000);
 <div class="admin-modal-btns"><button type="button" id="admin-confirm-cancel">Cancel</button><button type="button" class="confirm" id="admin-confirm-ok">Confirm</button></div>
 </div>
 </div>
-<div style="margin-top:40px;padding:16px 0;border-top:1px solid #30363d;font-size:.75rem;color:#8b949e;display:flex;align-items:center;gap:8px">
+<div style="margin-top:40px;padding:16px 0;border-top:1px solid var(--cc-border);font-size:.75rem;color:var(--cc-muted);display:flex;align-items:center;gap:8px">
   <span id="hive-version">loading...</span>
 </div>
 <script>

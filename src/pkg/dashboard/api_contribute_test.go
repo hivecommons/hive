@@ -284,7 +284,9 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 		`id="mode-select"`,
 		`id="runtime-select"`,
 		`How it works`,
-		`Powered by <strong style="color:#e6edf3">ClankeR</strong>`,
+		// #4549 tokenized the neutral inline literals so the light ramp reaches
+		// them; this assertion guards the SENTENCE, not the hex it was written in.
+		`Powered by <strong style="color:var(--cc-text)">ClankeR</strong>`,
 		`Trust tiers`,
 	} {
 		if !strings.Contains(body, want) {
