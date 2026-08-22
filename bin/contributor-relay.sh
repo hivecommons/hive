@@ -93,6 +93,11 @@ const MODE_HEADLESS = 'headless';
 const CONTRIBUTOR_MODE = process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
   ? MODE_HEADLESS
   : MODE_INTERACTIVE;
+// contributor-agent.sh creates and exports this before starting the relay. Pin
+// it at process startup just like CONTRIBUTOR_MODE so a later environment
+// mutation cannot make the one-shot CLI run outside the workspace that was
+// granted to Codex with --add-dir.
+const TASK_WORKSPACE_DIR = process.env.HIVE_WORKSPACE_DIR || process.cwd();
 
 // Where the headless runner records its current lifecycle state as JSON, so a
 // supervising process (or a future K8s liveness/readiness probe reading the
@@ -844,7 +849,7 @@ function runHeadlessTask(task) {
     timeout: HEADLESS_TASK_TIMEOUT_MS,
     maxBuffer: HEADLESS_MAX_OUTPUT_BYTES,
     killSignal: 'SIGKILL',
-    cwd: process.env.HIVE_WORKSPACE_DIR || process.cwd(),
+    cwd: TASK_WORKSPACE_DIR,
   }, (err, stdout, stderr) => {
     headlessChild = null;
     // Tokens can appear in agent output; redact before the tail leaves the host.
@@ -855,9 +860,15 @@ function runHeadlessTask(task) {
       // here. err.killed && err.signal signals the timeout; report a real
       // failure either way so the hub can reassign — never a silent hang.
       const timedOut = err.killed === true;
+      // Preserve one bounded, token-redacted diagnostic line. In particular,
+      // Codex automatic-review denial/timeout is an expected terminal outcome
+      // for an unattended run and must reach Hive as an actionable failure,
+      // rather than being flattened to an opaque exit code.
+      const diagnostic = outTail.map(line => line.trim()).filter(Boolean).slice(-1)[0];
+      const diagnosticSuffix = diagnostic ? `: ${diagnostic.slice(0, 500)}` : '';
       const reason = timedOut
         ? `headless task exceeded ${HEADLESS_TASK_TIMEOUT_MS / 60000}min and was killed`
-        : `headless CLI exited with error: ${err.code !== undefined ? `code ${err.code}` : err.message}`;
+        : `headless CLI exited with error: ${err.code !== undefined ? `code ${err.code}` : err.message}${diagnosticSuffix}`;
       finish(() => {
         console.error(`Headless task ${task.task_id} failed: ${reason}`);
         writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, reason });

@@ -25,7 +25,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', backendBinary = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '--allow-all', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -40,7 +40,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, model = '', reas
     // different BINARY (litellm → claude); it defaults to the identity mapping
     // every other backend has.
     if (/backend_binary/.test(cmd)) return `${backendBinary || backend}\n`;
-    if (/backend_perm_flag/.test(cmd)) return '--allow-all\n';
+    if (/backend_perm_flag/.test(cmd)) return `${backendPerm}\n`;
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
       // REAL pane rendering (e.g. a codex modal menu) rather than one of the
@@ -1614,6 +1614,24 @@ test('a failing headless run reports task_failed rather than hanging', () => {
   } finally { teardown(relay); }
 });
 
+test('a Codex auto-review denial is reported with its actionable diagnostic', () => {
+  const err = new Error('codex failed'); err.code = 1;
+  const relay = loadRelay({
+    backend: 'codex',
+    mode: 'headless',
+    execFileResult: { err, stderr: 'approval automatic review timed out\n' },
+  });
+  try {
+    assignHeadlessTask(relay);
+    const failure = relay.__sent.find(m => m.type === 'task_failed');
+    assert.ok(failure, 'an automatic-review failure must terminate the task');
+    assert.match(failure.reason, /code 1.*automatic review timed out/i,
+      'the redacted CLI diagnostic must reach Hive instead of an opaque exit code');
+    assert.strictEqual(relay.__readHeadlessStatus().reason, failure.reason,
+      'the probe status and hub failure must expose the same terminal reason');
+  } finally { teardown(relay); }
+});
+
 test('a headless timeout kill is reported as a failure, not a completion', () => {
   const err = new Error('timeout'); err.killed = true; err.signal = 'SIGKILL';
   const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { err } });
@@ -1684,6 +1702,32 @@ test('buildHeadlessArgv maps each supported backend to its one-shot invocation',
         `${tc.backend} must report headless support`);
     } finally { teardown(relay); }
   }
+});
+
+test('Codex headless keeps auto-review bounded to the declared task workspace', () => {
+  const workspace = '/tmp/hive-contributor-workspace';
+  const perm = `--ask-for-approval on-request --sandbox workspace-write -c approvals_reviewer=auto_review --add-dir ${workspace}`;
+  const relay = loadRelay({
+    backend: 'codex',
+    backendPerm: perm,
+    mode: 'headless',
+    env: { HIVE_WORKSPACE_DIR: workspace },
+  });
+  try {
+    const built = relay.buildHeadlessArgv('ship the change');
+    assert.deepStrictEqual(built.args.slice(0, 8), [
+      '--ask-for-approval', 'on-request',
+      '--sandbox', 'workspace-write',
+      '-c', 'approvals_reviewer=auto_review',
+      '--add-dir', workspace,
+    ], `Codex unattended permission argv drifted: ${JSON.stringify(built.args)}`);
+    assignHeadlessTask(relay);
+    const call = relay.__execFileCalls[0];
+    assert.strictEqual(call.opts.cwd, workspace,
+      'the one-shot process cwd and its additional writable root must be the same task workspace');
+    assert.ok(!built.args.includes('--dangerously-bypass-approvals-and-sandbox'),
+      'automatic review must not disable the sandbox');
+  } finally { teardown(relay); }
 });
 
 test('goose headless passes the prompt as -t\'s value and skips --model', () => {

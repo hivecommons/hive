@@ -197,15 +197,37 @@ codex_flags_output="$(
     HOME="$HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \
     HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
     HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
     AGENT_BACKEND=codex \
     bash "${ROOT_DIR}/bin/contributor-agent.sh"
 )"
 case "$codex_flags_output" in
-  *"backend_perm_flag=--ask-for-approval on-request --sandbox workspace-write"* ) ;;
+  *"backend_perm_flag=--ask-for-approval on-request --sandbox workspace-write -c approvals_reviewer=auto_review --add-dir ${WORK_DIR}/workspace"* ) ;;
   *)
-    echo "expected codex default posture to be explicit and non-bypass; got:" >&2
+    echo "expected codex default posture to auto-review and include the task workspace; got:" >&2
     echo "$codex_flags_output" >&2
+    exit 1
+    ;;
+esac
+
+codex_reviewer_override_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_CODEX_APPROVALS_REVIEWER=user \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+case "$codex_reviewer_override_output" in
+  *"-c approvals_reviewer=user --add-dir ${WORK_DIR}/workspace"* ) ;;
+  *)
+    echo "expected codex reviewer override to be preserved; got:" >&2
+    echo "$codex_reviewer_override_output" >&2
     exit 1
     ;;
 esac
@@ -217,6 +239,7 @@ codex_bypass_output="$(
     HIVE_REGISTRATION_TOKEN="test-token" \
     HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
     HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1 \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
     HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
     AGENT_BACKEND=codex \
     bash "${ROOT_DIR}/bin/contributor-agent.sh"
@@ -225,6 +248,13 @@ case "$codex_bypass_output" in
   *"backend_perm_flag=--dangerously-bypass-approvals-and-sandbox"* ) ;;
   *)
     echo "expected codex dangerous bypass to be opt-in; got:" >&2
+    echo "$codex_bypass_output" >&2
+    exit 1
+    ;;
+esac
+case "$codex_bypass_output" in
+  *"approvals_reviewer="*|*"--add-dir"* )
+    echo "dangerous codex bypass must not retain sandbox-only reviewer/workspace flags; got:" >&2
     echo "$codex_bypass_output" >&2
     exit 1
     ;;
