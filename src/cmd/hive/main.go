@@ -6224,7 +6224,14 @@ func scanForLoginRequired(
 		return
 	}
 
-	const paneLines = 50 // number of recent lines to scan
+	// Scan the pane TAIL only. A login prompt the CLI is genuinely stuck at
+	// sits at the BOTTOM of the pane; the 50-line window this used to read
+	// reached deep into scrollback, where agent WORK OUTPUT that merely
+	// mentions a pattern phrase lives — quality's scan findings quoting
+	// "gh auth login" from auth documentation got the agent paused mid-kick
+	// (kubestellar/hive, 2026-08-22 08:27, on a fully-authenticated CLI).
+	// Same discipline as the poller's tail-only match (#4577).
+	const paneLines = 12
 	statuses := agentMgr.AllStatuses()
 	for name, proc := range statuses {
 		if proc.State != "running" {
