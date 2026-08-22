@@ -268,6 +268,33 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       echo "WARN: Goose CLI download failed — skipping (backend: goose will be unavailable)"; \
     fi
 
+# --- Layer 8.25: Google Antigravity CLI (backend: agy) ---
+# The vendor distributes a self-contained Linux executable, not an npm package.
+# Pin the version, build ID, and SHA-512 from its public updater manifest; do
+# not use the mutable manifest at image-build time. The CLI requires a
+# pre-authenticated Google OAuth session in $HOME/.gemini: the image supplies
+# only the binary, while an operator seeds that persistent state (a pod cannot
+# complete the interactive OAuth flow itself). This enables a self-hosted Hive
+# controller to use its configured agy fallback rung without pretending that
+# generic contributor containers can bootstrap Google login.
+ARG AGY_VERSION=1.1.19
+ARG AGY_BUILD=4894004681244672
+ARG AGY_SHA512_AMD64=7c3b310c80685adcba714994207eb870fb4817403975da46555b7d9fade446487da3d8f897aa220dfbc30f602ab461a0147a6f7b3c8228fdebd35951e3f250fd
+ARG AGY_SHA512_ARM64=488c3dac1c7ca866a9da990f9a88648bfb7176992a0a2d27605e3bc10143e5b17af552ed99f0bf4250e2d69fed6d0d5f50684c729bf03f269f2b52b44503558d
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64|x86_64) AGY_URL_ARCH=x64; AGY_FILE_ARCH=x64; AGY_SHA512="$AGY_SHA512_AMD64" ;; \
+      arm64|aarch64) AGY_URL_ARCH=arm; AGY_FILE_ARCH=arm64; AGY_SHA512="$AGY_SHA512_ARM64" ;; \
+      *) echo "unsupported arch for agy: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+      -o /tmp/agy.tar.gz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}-${AGY_BUILD}/linux-${AGY_URL_ARCH}/cli_linux_${AGY_FILE_ARCH}.tar.gz" && \
+    echo "${AGY_SHA512}  /tmp/agy.tar.gz" | sha512sum -c - && \
+    tar xzf /tmp/agy.tar.gz -C /tmp && \
+    install -m 0755 /tmp/antigravity /usr/local/bin/agy && \
+    rm -f /tmp/agy.tar.gz /tmp/antigravity && \
+    agy --version
+
 # --- Layer 8.5: pi CLI (@earendil-works/pi-coding-agent — backend: pi) ---
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
