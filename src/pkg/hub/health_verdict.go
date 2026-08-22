@@ -121,6 +121,19 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 	}
 
 	// --- ACMM-banded output freshness. ---
+	// Repo-capability precondition: the spoke's ensure path probes has_issues
+	// before creating the advisory issue (#4329) and reports "Issues are
+	// disabled on <repo>" through AdvisoryError. With the Issues tab off (the
+	// GitHub default on forks — the jeejz/incubator-kie-drools case), the
+	// advisory digest AND every agent-filed issue have nowhere to go, at any
+	// level that produces them. Nothing about the App, key, or agents is
+	// wrong, so the chip must point at the repo setting, not at plumbing.
+	if e.ACMMLevel > acmmInceptionMax && strings.Contains(e.AdvisoryError, "Issues are disabled") {
+		v.State = HealthStateRed
+		v.Reason = "repo Issues disabled — advisory/issues have nowhere to go"
+		return v
+	}
+
 	switch {
 	case e.ACMMLevel <= acmmInceptionMax:
 		// L1 Inception: no output is produced by design. Preconditions were the
@@ -146,6 +159,15 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 		// per-repo activity collector.
 		adv := advisoryIssueActivityFor(e, now)
 		v.LastOutputAt = adv.LastActivityAt
+		// A reported post error is a harder signal than any timestamp: the
+		// spoke PROVED the digest is wedged. Stale/unknown buckets must not
+		// soften it to "no advisory yet". Onboarding hives (App not delivered
+		// yet) are exempt, mirroring the advisory-staleness pill's gate.
+		if e.AdvisoryError != "" && !appAwaitingDelivery(e) {
+			v.State = HealthStateRed
+			v.Reason = "advisory posting failing"
+			return v
+		}
 		switch adv.Bucket {
 		case advisoryIssueBucketFresh, advisoryIssueBucketAging:
 			v.State = HealthStateGreen

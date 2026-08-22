@@ -178,6 +178,15 @@
   .repo-activity { display: flex; flex-direction: column; gap: 3px; }
   .repo-activity-row { font-size: 11.5px; }
   .repo-activity-row .repo { color: var(--fg, inherit); font-weight: 600; margin-right: 6px; }
+  /* Diagnosis block in the expanded sub-row: every raw fact an operator (or
+     an agent watching this page) needs to root-cause the hive without first
+     attaching — full error texts, App state + fix detail, budget numbers. */
+  .diag { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; border-left: 3px solid var(--border, rgba(128,128,128,.3)); padding-left: 8px; }
+  .diag .k { color: var(--muted); font-weight: 600; margin-right: 6px; white-space: nowrap; }
+  .diag .bad { color: var(--red); }
+  .diag .row { display: flex; align-items: baseline; }
+  .diag .row > span:last-child { word-break: break-word; }
+  .diag a { color: inherit; text-decoration: underline; }
   /* Signed-in avatar + its menu, matching the spoke dashboard's nav avatar:
      the image is the affordance, the dialog is right-anchored so extra width
      grows leftward and stays on screen. Shown on hover AND kept open by
@@ -241,7 +250,7 @@
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
-  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 authored writes: issues/PRs created, comments, reviews · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth). Absence of output a level does not produce is never a fault. The <b>⎘ attach</b> chip copies the kubectl+tmux command to jump into the hive's spoke pod for root-causing.</span>
+  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 authored writes: issues/PRs created, comments, reviews · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth / budget exhausted / repo Issues tab disabled). Absence of output a level does not produce is never a fault. The <b>⎘ attach</b> chip copies the kubectl+tmux command to jump into the hive's spoke pod for root-causing.</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
     <label><input type="checkbox" id="problemsOnly"> problems only</label>
@@ -419,6 +428,58 @@ function repoActivityDrilldownHTML(h) {
     return '<div class="repo-activity-row"><span class="repo">' + esc(r.repo) + '</span> <span class="output">' + (bits || "—") + '</span></div>';
   }).join("");
   return '<div class="repo-activity">' + rows + '</div>';
+}
+// linkifyEsc escapes text, then turns bare https URLs into clickable links —
+// GitHub App perm-issue messages carry the exact settings URL to fix them.
+function linkifyEsc(s) {
+  return esc(s).replace(/https:\/\/[^\s"'<>]+/g, function (u) {
+    return '<a href="' + u + '" target="_blank" rel="noopener">' + u + '</a>';
+  });
+}
+// diagnosisHTML renders the expanded "diagnosis" block: every raw fact needed
+// to root-cause the hive WITHOUT attaching first — full spoke-reported error
+// texts (the chips truncate), App state + fix detail, budget numbers, blocked
+// agents, heartbeat age. Facts that are absent or healthy self-suppress, so a
+// green hive renders an empty string and no sub-row at all. This is the
+// machine-readable-at-a-glance surface: an operator (or an agent monitoring
+// /fleet) should never need a second page to know WHY a row is red.
+function diagnosisHTML(h) {
+  var rows = [];
+  function add(label, valueHTML, bad) {
+    if (!valueHTML) return;
+    rows.push('<div class="row"><span class="k">' + esc(label) + '</span><span' + (bad ? ' class="bad"' : '') + '>' + valueHTML + '</span></div>');
+  }
+  var v = h.healthVerdict || {};
+  if (v.state === "red" || v.state === "unknown") {
+    var vbits = esc(v.reason || v.state);
+    if (v.outputKind) vbits += " · judged on " + esc(v.outputKind);
+    if (v.queuedWork) vbits += " · " + esc(v.queuedWork) + " queued";
+    if (v.lastOutputAt) vbits += " · last output " + esc(relTime(v.lastOutputAt));
+    add("verdict", vbits, v.state === "red");
+  }
+  if (h.advisoryError) add("advisory error", linkifyEsc(h.advisoryError), true);
+  if (h.advisoryStaleReason) add("advisory stale", esc(h.advisoryStaleReason), true);
+  var appState = h.githubAppState || "";
+  if (appState && appState !== "ok") add("gh app state", esc(appState), true);
+  if (h.githubAppTokenError) add("gh app token", esc(h.githubAppTokenError), true);
+  if (h.githubAppPermIssue) add("gh app fix", linkifyEsc(h.githubAppPermIssue), true);
+  if (h.budgetExhausted) {
+    var b = "EXHAUSTED — agents halted";
+    if (h.budgetCurrentSpend != null && h.budgetLimit != null) b += " (" + esc(h.budgetCurrentSpend) + " / " + esc(h.budgetLimit) + " tokens";
+    if (h.budgetWindowEndsAt) b += "; window resets " + esc(relTime(h.budgetWindowEndsAt));
+    if (h.budgetCurrentSpend != null && h.budgetLimit != null) b += ")";
+    add("budget", b, true);
+  }
+  if (h.inferenceAuthError) add("inference auth", esc(h.inferenceAuthError), true);
+  var blocked = (h.agentVerdicts || []).filter(function (a) { return a.problem && a.blockedReason; });
+  if (blocked.length) {
+    add("blocked agents", blocked.map(function (a) { return esc(a.name) + ": " + esc(a.blockedReason); }).join(" · "), true);
+  }
+  if (h.inactiveAgentsReason) add("inactive agents", esc(h.inactiveAgentsReason), true);
+  if (h.urlUnreachableReason) add("dashboard url", esc(h.urlUnreachableReason), true);
+  if (!h.online && h.lastHeartbeat) add("last heartbeat", esc(relTime(h.lastHeartbeat)), true);
+  if (!rows.length) return "";
+  return '<div class="diag">' + rows.join("") + '</div>';
 }
 function advisoryActivityHTML(a) {
   a = a || {};
@@ -691,6 +752,19 @@ function renderHives(hives) {
       empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
       tb.appendChild(empty);
       subRows.push(empty);
+    }
+    // Diagnosis block: the raw WHY facts (full error texts, App fix URL,
+    // budget numbers) for any hive whose row is not plainly healthy. Renders
+    // first among the sub-rows so root cause is the first thing an expand
+    // reveals.
+    var diag = diagnosisHTML(h);
+    if (diag) {
+      var drow = document.createElement("tr");
+      drow.className = "agent" + (isProblem ? " is-problem" : "");
+      drow.style.display = open ? "" : "none";
+      drow.innerHTML = '<td></td><td class="aname" colspan="6">' + diag + '</td>';
+      tb.appendChild(drow);
+      subRows.push(drow);
     }
     // Per-repo output drill-down (hive-health): one sub-row listing each repo's
     // created/merged/reviewed counts with recency, so an operator can see WHICH

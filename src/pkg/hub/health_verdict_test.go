@@ -262,6 +262,73 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			wantReason: "budget exhausted",
 		},
 		{
+			// Live jeejz/incubator-kie-drools case: the repo is a fork with the
+			// Issues tab off, so the digest and every agent-filed issue 410.
+			// The spoke's has_issues probe (#4329) reports it via AdvisoryError;
+			// the chip must name the repo setting, not read "advisory stale".
+			name: "L2 repo Issues disabled — red names the repo setting",
+			entry: func() RegistryEntry {
+				e := base(2)
+				e.AdvisoryError = "no advisory issue resolved for incubator-kie-drools — digest not posted: Issues are disabled on jeejz/incubator-kie-drools (it is a fork, and GitHub disables Issues on forks by default)"
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     2,
+			wantState:  HealthStateRed,
+			wantKind:   "advisory",
+			wantReason: "repo Issues disabled",
+		},
+		{
+			// Same condition at a create-judged level: agent-filed issues are
+			// just as impossible, so the precondition outranks write banding.
+			name: "L4 repo Issues disabled — red at create-judged levels too",
+			entry: func() RegistryEntry {
+				e := withActivity(base(4), ractivity("o/r", recent, "", "", ""))
+				e.AdvisoryError = "digest not posted: Issues are disabled on o/r (common on forks)"
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     3,
+			wantState:  HealthStateRed,
+			wantKind:   "creates",
+			wantReason: "repo Issues disabled",
+		},
+		{
+			// A generic advisory post error at L2 must not soften to "no
+			// advisory yet" — the spoke proved the digest is wedged.
+			name: "L2 advisory post error — red, not unknown",
+			entry: func() RegistryEntry {
+				e := base(2)
+				e.AdvisoryError = "posting advisory digest to o/r#5: 502"
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     2,
+			wantState:  HealthStateRed,
+			wantKind:   "advisory",
+			wantReason: "advisory posting failing",
+		},
+		{
+			// Onboarding exemption: an App never delivered can't post; that is
+			// an install journey, not a fault (mirrors the staleness pill).
+			name: "L2 advisory error while App awaiting delivery — not red",
+			entry: func() RegistryEntry {
+				e := base(2)
+				e.AdvisoryError = "no advisory issue resolved for r — digest not posted"
+				e.GitHubAppState = "not-installed"
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     0,
+			wantState:  HealthStateGreen,
+			wantKind:   "advisory",
+			wantReason: "queue empty — idle",
+		},
+		{
 			// The real kellyaa wire shape: paused agents keep ExpectedActive
 			// true (the governor still schedules them) and Enabled true — the
 			// pause lives ONLY in State/Paused. The roster must read them as
