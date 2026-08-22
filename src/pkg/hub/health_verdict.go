@@ -2,6 +2,7 @@ package hub
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -140,6 +141,9 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 	case e.ACMMLevel >= acmmMergeMin:
 		// L6: judged on MERGES. A create that never merges, with work still
 		// queued, is the failure this level exists to catch.
+		if !anyOnDutyGrant(e.Agents, func(a AgentSummary) bool { return a.CanMerge }) {
+			return noWritersOnDuty(v, "merge")
+		}
 		last, ok := newestOutput(e.RepoActivity, func(r RepoActivityWire) string { return r.Merges.NewestAt })
 		return bandFreshness(v, last, ok, queuedWork, now, "merge")
 
@@ -147,11 +151,40 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 		// L3–L5: judged on CREATES (issues or PRs). Merges are the human's job
 		// here, so an unmerged PR is not a fault — only a stalled creation
 		// stream (with work queued) is.
+		if !anyOnDutyGrant(e.Agents, func(a AgentSummary) bool { return a.CanOpenIssue || a.CanOpenPR }) {
+			return noWritersOnDuty(v, "create")
+		}
 		last, ok := newestOutput(e.RepoActivity, func(r RepoActivityWire) string {
 			return maxRFC3339(r.Issues.NewestAt, r.PRs.NewestAt)
 		})
 		return bandFreshness(v, last, ok, queuedWork, now, "create")
 	}
+}
+
+// anyOnDutyGrant reports whether any agent the governor currently expects to
+// work carries the given write grant. Paused and off-schedule agents cannot
+// produce output no matter what their grants say, so they don't count.
+func anyOnDutyGrant(agents []AgentSummary, grant func(AgentSummary) bool) bool {
+	for _, a := range agents {
+		if a.ExpectedActive && grant(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// noWritersOnDuty is the verdict when no on-duty agent holds the write grant
+// the level is judged on (live case: a QUIET-mode L3 hive whose only running
+// agent had no issue/PR grants read "no create output" red — but a hive that
+// CANNOT write by mode/pause configuration is quiet by design, not failing;
+// same spine as L1 "no output expected"). Absence of output the configuration
+// does not permit is never a fault. The grant chips on the agent rows already
+// show the ✗s, so an operator who MEANT it to write can see exactly why it
+// doesn't.
+func noWritersOnDuty(v HealthVerdict, verb string) HealthVerdict {
+	v.State = HealthStateGreen
+	v.Reason = fmt.Sprintf("no %s-capable agent on duty — no output expected", verb)
+	return v
 }
 
 // bandFreshness applies the recency window to a create/merge output stream:
@@ -175,7 +208,9 @@ func bandFreshness(v HealthVerdict, last time.Time, ok bool, queuedWork int, now
 		}
 	case ok:
 		v.State = HealthStateRed
-		v.Reason = fmt.Sprintf("no %s in %s (%d queued)", verb, humanizeAge(now.Sub(last)), queuedWork)
+		// TrimSuffix: humanizeAge says "18h ago" for badge use; "no create in
+		// 18h ago" is not English, so drop the suffix here.
+		v.Reason = fmt.Sprintf("no %s in %s (%d queued)", verb, strings.TrimSuffix(humanizeAge(now.Sub(last)), " ago"), queuedWork)
 	default:
 		v.State = HealthStateRed
 		v.Reason = fmt.Sprintf("no %s output (%d queued)", verb, queuedWork)
