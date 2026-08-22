@@ -386,8 +386,10 @@ func (m *Manager) NextBackend(agentName, currentBackend string) string {
 	return m.nextBackend(agentName, currentBackend, 0)
 }
 
-// NextBackendForCadence is NextBackend with the agent's cadence applied, so
-// high-volume agents are never offered a subscription provider.
+// NextBackendForCadence is NextBackend with the agent's cadence applied.
+// High-volume agents avoid subscription providers during normal operation, but
+// may use one as an availability failover when their current metered provider
+// is positively measured exhausted.
 func (m *Manager) NextBackendForCadence(agentName, currentBackend string, cadenceS int) string {
 	return m.nextBackend(agentName, currentBackend, cadenceS)
 }
@@ -395,6 +397,19 @@ func (m *Manager) NextBackendForCadence(agentName, currentBackend string, cadenc
 func (m *Manager) nextBackend(agentName, currentBackend string, cadenceS int) string {
 	currentProvider := m.providerForBackend(currentBackend)
 	highVolume := cadenceS > 0 && cadenceS <= m.cfg.EffectiveHighVolumeCadenceS()
+
+	// A high-cadence agent normally must not consume a subscription pool: it
+	// can exhaust a weekly allowance and take the operator's own CLI down with
+	// it. But stranding that same agent after a positively measured prepaid
+	// provider exhaustion is worse: the available subscription alternatives are
+	// exactly the failover path. This exception is deliberately narrow:
+	// metered current provider, successful probe, and unavailable headroom.
+	// Probe errors remain fail-open and never trigger a rotation.
+	allowSubscriptionFailover := false
+	if current, ok := m.cfg.Providers[currentProvider]; ok && current.Class == ClassMetered {
+		h := m.HeadroomFor(currentProvider)
+		allowSubscriptionFailover = h.ProbeErr == nil && !h.Available
+	}
 
 	type candidate struct {
 		provider string
@@ -415,8 +430,9 @@ func (m *Manager) nextBackend(agentName, currentBackend string, cadenceS int) st
 		if len(pc.Backends) == 0 {
 			continue
 		}
-		if highVolume && pc.Class == ClassSubscription {
-			// High-volume agents must never land on subscription providers.
+		if highVolume && pc.Class == ClassSubscription && !allowSubscriptionFailover {
+			// Preserve the subscription guard unless a confirmed exhausted
+			// metered provider leaves this high-volume agent without service.
 			continue
 		}
 		h := m.HeadroomFor(name)

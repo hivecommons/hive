@@ -151,6 +151,19 @@ func TestManager_HighVolumeCadence(t *testing.T) {
 	}
 }
 
+func TestManager_HighVolumeMeteredExhaustionFailsOverToSubscription(t *testing.T) {
+	m := NewManager(rotationTestConfig())
+	// worker is on the metered DeepSeek/litellm rung. Its balance is positively
+	// measured exhausted, while Codex/OpenAI has headroom. A high-cadence
+	// agent must fail over rather than strand.
+	m.SetHeadroom(Headroom{Provider: "deepseek", Available: false, PctRemaining: 0})
+	m.SetHeadroom(Headroom{Provider: "anthropic", Available: false})
+	m.SetHeadroom(Headroom{Provider: "openai", Available: true, PctRemaining: 90})
+	if got := m.NextBackendForCadence("worker", "litellm", 300); got != "codex" {
+		t.Errorf("NextBackendForCadence = %q, want %q (metered exhaustion must fail over)", got, "codex")
+	}
+}
+
 func TestManager_StrandRecovered(t *testing.T) {
 	m := NewManager(rotationTestConfig())
 	m.SetHeadroom(Headroom{Provider: "anthropic", Available: false})
