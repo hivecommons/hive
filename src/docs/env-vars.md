@@ -140,6 +140,17 @@ new value at the same time.
 | `HIVE_CONN_<NAME>_URL` | No | generated from agent connection config | Agent API connection URI variable when a connection omits `env_name`; `<NAME>` is the uppercased connection name with `-` replaced by `_`. |
 | Custom connection auth env vars | No | none | If an agent API connection uses `auth.type: env`, Hive reads `auth.env_var` and injects that exact variable into the agent. |
 
+## Linear agent integration
+
+Part 2 of [RFC #4492](https://github.com/kubestellar/hive/issues/4492): the hive can join a Linear workspace as an agent (`actor=app` OAuth), receive `AgentSessionEvent` webhooks, and narrate work back as agent activities. Setup and verification steps live in [linear-agent.md](linear-agent.md).
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `LINEAR_CLIENT_ID` | Yes for the Linear agent integration | none | OAuth client id of your Linear application (Linear → Settings → API → Applications). Without it the install endpoint returns 412 and the integration stays off. |
+| `LINEAR_CLIENT_SECRET` | Yes for the Linear agent integration | none | OAuth ****** for the code exchange and token refresh. Secret — deliver via Kubernetes Secret / env, never config files. |
+| `LINEAR_WEBHOOK_SECRET` | Yes for Linear webhooks | none | HMAC-SHA256 signing secret from the Linear app's webhook settings. The receiver **fails closed**: with this unset every delivery to `/api/linear/webhook` is rejected 401. |
+| `LINEAR_AGENT_STORE` | No | `/data/linear-agent.json` | Path of the persisted install record (workspace identity + OAuth grant, mode 0600). Override for tests or non-container runs. |
+
 ## Hub, SaaS, alerts, and backups
 
 | Variable | Required | Default | Purpose |

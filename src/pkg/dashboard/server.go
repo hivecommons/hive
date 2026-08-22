@@ -186,6 +186,12 @@ type Server struct {
 	openRouterStateOnce  sync.Once
 	openRouterStateStore *openrouter.StateStore
 
+	// Linear agent integration (RFC #4492 Part 2): lazily-built service
+	// bundling the install store, control-plane client, webhook receiver, and
+	// session responder. See api_linear_agent.go.
+	linearAgentOnce sync.Once
+	linearAgentSvc  *linearAgentService
+
 	audit *AuditLog
 
 	// presenceEngagedAt maps a username to the last time their browser
@@ -1322,6 +1328,17 @@ func isPublicPath(path string) bool {
 		// session, so the path must be public. The single-use state token in the
 		// query IS the credential — the handler verifies it (unknown/expired/
 		// replayed states are rejected) before storing anything.
+		return true
+	case path == linearAgentCallbackPath:
+		// Linear agent OAuth return (RFC #4492 Part 2): the installing admin's
+		// browser comes back from linear.app with no hive session. The
+		// single-use state token is the credential, verified server-side.
+		return true
+	case path == linearAgentWebhookPath:
+		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a
+		// dashboard session. NOT actually open — the handler fails closed
+		// without LINEAR_WEBHOOK_SECRET and verifies the HMAC signature over
+		// the raw body plus the signed timestamp's replay window.
 		return true
 	case path == "/sso":
 		// SSO handoff exchange: the caller has no session yet, the signed hub

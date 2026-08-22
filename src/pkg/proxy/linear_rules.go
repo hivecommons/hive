@@ -116,6 +116,15 @@ var linearMutations = map[string]linearRequirement{
 	// Session acknowledgement — reachable at EVERY tier. See above.
 	"agentActivityCreate": {MinMode: agent.ModeAdvisory, Capability: agent.AgentCapabilities.CanConverse},
 
+	// Session presence — same requirement as agentActivityCreate, and for the
+	// same reason. agentSessionUpdate carries the session's externalUrls and
+	// plan: it is how an agent points the user at where the work is happening
+	// and keeps the session from being marked unresponsive. Linear documents
+	// "send an activity OR update your external URL within 10 seconds", so a
+	// tier that can acknowledge must also be able to do this. It cannot touch
+	// issues, comments, or any other entity.
+	"agentSessionUpdate": {MinMode: agent.ModeAdvisory, Capability: agent.AgentCapabilities.CanConverse},
+
 	// Conversation.
 	"commentCreate": {MinMode: agent.ModeIssuesOnly, Capability: agent.AgentCapabilities.CanConverse},
 

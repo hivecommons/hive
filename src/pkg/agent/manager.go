@@ -378,6 +378,14 @@ type Manager struct {
 	// and why it is an atomic.Pointer rather than m.mu-guarded state.
 	auditSink atomic.Pointer[AuditSink]
 
+	// kickObserver, when set, receives kick lifecycle events ("kick-delivered",
+	// "kick-log-archived") for external progress surfaces — the Linear
+	// AgentActivity emitter (RFC #4492 Part 2) is the first consumer. Same
+	// atomic.Pointer discipline as auditSink: both notification sites run under
+	// m.mu, so the pointer must be readable from a locked context, and the
+	// observer is always invoked on its own goroutine. See kick_observer.go.
+	kickObserver atomic.Pointer[func(agentName, event, detail string)]
+
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
@@ -4266,6 +4274,8 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// only carry a truncated preview, which is not enough to answer "what was
 	// my agent asked to do?".
 	m.recordPrompt(agent.Name, trigger, message)
+
+	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, trigger)
 }
 
 func (m *Manager) agentSandboxEnabledLocked(agent *AgentProcess) bool {

@@ -1230,6 +1230,17 @@ type LinearSourceConfig struct {
 	APIKey     string                   `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 	Teams      []LinearTeamSourceConfig `yaml:"teams,omitempty" json:"teams,omitempty"`
 	HoldLabels []string                 `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+	// AssignedOnly narrows enumeration to issues assigned/delegated to the
+	// installed Linear agent app (RFC #4492 Part 2, component E). Opt-in and
+	// fail-closed: it requires the agent to be connected (the app user id is
+	// learned at install time), and worksource construction errors when it is
+	// set without an install rather than silently enumerating everything.
+	AssignedOnly bool `yaml:"assigned_only,omitempty" json:"assigned_only,omitempty"`
+	// SessionAgent names the hive agent that receives Linear agent sessions
+	// (delegations and mentions). When empty and exactly one agent is
+	// configured, that agent is used; otherwise session events are
+	// acknowledged with an error activity naming the missing config.
+	SessionAgent string `yaml:"session_agent,omitempty" json:"session_agent,omitempty"`
 }
 
 // LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
