@@ -187,3 +187,44 @@ func TestTryReEngage_EmptySHAReusesTrackedSHA(t *testing.T) {
 		t.Fatal("empty-SHA re-engagement must respect the cap on the tracked SHA")
 	}
 }
+
+// A PR whose red SHA NEVER changes (fix attempts are not even pushed — e.g.
+// agents lost write credentials) must still escalate once its re-engagement
+// budget is exhausted. Without this, the distinct-SHA count never advances and
+// the PR is nudged forever without ever reaching a human (kubestellar/console,
+// 2026-08-22: eight red PRs re-engaged every cycle for 15h with zero pushes).
+func TestSweep_EscalatesWhenReEngagementBudgetExhaustedOnUnchangedSHA(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+
+	// One red SHA, observed; re-engage to the cap without the SHA ever moving.
+	s.Sweep([]Observation{obs("org/repo", 9, "frozen", true)}, 3)
+	for i := 0; i < MaxReEngagements; i++ {
+		if !s.TryReEngage("org/repo", 9, "frozen") {
+			t.Fatalf("re-engage %d should be allowed", i+1)
+		}
+	}
+	if s.TryReEngage("org/repo", 9, "frozen") {
+		t.Fatal("cap must halt further re-engagements")
+	}
+
+	// Next sweep: still the same red SHA, one distinct attempt — but the
+	// budget is exhausted, so escalation must fire now.
+	r := s.Sweep([]Observation{obs("org/repo", 9, "frozen", true)}, 3)
+	got := r[Key("org/repo", 9)]
+	if got.Attempts != 1 || !got.NewlyEscala {
+		t.Fatalf("exhausted budget on unchanged SHA must escalate: got %+v", got)
+	}
+
+	// A pushed fix (new SHA) resets the budget — a freshly-moving PR must NOT
+	// be treated as exhausted.
+	s2 := Load(filepath.Join(t.TempDir(), "s2.json"))
+	s2.Sweep([]Observation{obs("org/repo", 11, "a", true)}, 3)
+	for i := 0; i < MaxReEngagements; i++ {
+		s2.TryReEngage("org/repo", 11, "a")
+	}
+	r = s2.Sweep([]Observation{obs("org/repo", 11, "b", true)}, 3) // branch moved
+	got = r[Key("org/repo", 11)]
+	if got.NewlyEscala {
+		t.Fatalf("new SHA resets the budget; must not escalate yet: got %+v", got)
+	}
+}
