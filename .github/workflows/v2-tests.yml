@@ -467,6 +467,10 @@ jobs:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const sha = context.sha.substring(0, 7);
+            // The scheduled run executes on the DEFAULT branch (v4) — name the
+            // real branch instead of the workflow's historical "v2" label,
+            // which sent operators to the retired v2 line (#4569).
+            const branch = context.ref.replace('refs/heads/', '');
             const results = [
               '${{ needs.test-hub.result }}',
               '${{ needs.test-agent.result }}',
@@ -475,7 +479,7 @@ jobs:
             ];
             const wasCancelled = results.includes('cancelled');
             const kind = wasCancelled ? 'cancelled (likely timed out)' : 'failure';
-            const title = `[Tests] v2 test ${wasCancelled ? 'cancelled' : 'failure'} on ${sha}`;
+            const title = `[Tests] ${branch} test ${wasCancelled ? 'cancelled' : 'failure'} on ${sha}`;
 
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
@@ -484,7 +488,7 @@ jobs:
               labels: 'ci-failure',
               per_page: 10,
             });
-            const dup = existing.data.find(i => i.title.startsWith('[Tests] v2 test'));
+            const dup = existing.data.find(i => i.title.startsWith(`[Tests] ${branch} test`) || i.title.startsWith('[Tests] v2 test'));
             if (dup) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -499,6 +503,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title,
-              body: `## Test ${wasCancelled ? 'Cancelled' : 'Failure'}\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** v2\n\nScheduled test run was ${kind}. See the [workflow run](${runUrl}) for details.`,
+              body: `## Test ${wasCancelled ? 'Cancelled' : 'Failure'}\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** ${branch}\n\nScheduled test run was ${kind}. See the [workflow run](${runUrl}) for details.`,
               labels: ['ci-failure', 'kind/bug'],
             });
