@@ -227,17 +227,6 @@ func maxRFC3339(a, b string) string {
 	return b
 }
 
-func parseRFC3339(s string) (time.Time, bool) {
-	if s == "" {
-		return time.Time{}, false
-	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t, true
-}
-
 // advisoryAge renders a short age phrase for the advisory reason chip.
 func advisoryAge(adv AdvisoryIssueActivity, now time.Time) string {
 	if t, ok := parseRFC3339(adv.LastActivityAt); ok {
