@@ -912,7 +912,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .feed-empty{padding:40px 20px;text-align:center;color:var(--cc-muted);font-size:.85rem}
 @media(max-width:768px){.page{flex-direction:column}.sidebar{border-left:none;border-top:1px solid var(--cc-border);max-width:none;max-height:300px}}
 /* Management & Operations tab chrome — additive, does not touch onboarding content */
-.page-tabs{display:flex;gap:2px;background:var(--cc-surface);border-bottom:1px solid var(--cc-border);padding:0 48px}
+/* #4537 follow-up: five tabs at 14px 20px plus 96px of gutters are ~700px, so
+   between 600px (where the phone breakpoint's wrap kicks in) and ~700px the bar
+   still overflowed the document and the trailing tabs were unreachable. Wrap in
+   the base rule — a no-op at any width where the tabs fit on one line. */
+.page-tabs{display:flex;flex-wrap:wrap;gap:2px;background:var(--cc-surface);border-bottom:1px solid var(--cc-border);padding:0 48px}
 .page-tab{background:none;border:none;color:var(--cc-muted);font-size:.95rem;font-weight:500;padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
 .page-tab:hover{color:var(--cc-text)}
 .page-tab.active{color:var(--cc-text);border-bottom-color:#58a6ff}
