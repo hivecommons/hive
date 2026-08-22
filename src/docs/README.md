@@ -33,7 +33,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Dashboard API reference](https://github.com/kubestellar/hive/blob/v4/src/docs/api-reference.md) — pragmatic route index for dashboard and hub endpoints.
 - [Dashboard OpenAPI spec](https://github.com/kubestellar/hive/blob/v4/dashboard/openapi.json) — machine-readable REST API reference for integrations.
 - [ioscan status](https://github.com/kubestellar/hive/blob/v4/src/docs/ioscan.md) — the untrusted-input scanner/canary feature (live and default-on in v4).
-- [Deployment scripts](https://github.com/kubestellar/hive/blob/v4/src/deploy/README.md) — inventory of v2 deployment helpers, including dashboard TTY panes and `hive-panes`.
+- [Deployment scripts](https://github.com/kubestellar/hive/blob/v4/src/deploy/README.md) — inventory of deployment helpers, including dashboard TTY panes and `hive-panes`.
 
 ## Contributors and access
 
@@ -66,7 +66,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [CLI backend setup](https://github.com/kubestellar/hive/blob/v4/docs/backend-setup.md) — setup notes for Claude, Copilot, Goose, Bob, Pi, Codex, and Aider.
 - [Inference backends](https://github.com/kubestellar/hive/blob/v4/docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
 - [apiproxy](https://github.com/kubestellar/hive/blob/v4/src/docs/apiproxy.md) — Anthropic-compatible proxy logging and deployment notes.
-- [v1 to v2 migration](https://github.com/kubestellar/hive/blob/v4/docs/migration-v1-v2.md) — migration checklist and rollback notes.
+- [v1 to v2 migration](https://github.com/kubestellar/hive/blob/v4/docs/migration-v1-v2.md) — **historical.** Both ends of this migration are retired; v2 was retired in August 2026. Kept for operators still on v1, who should read it alongside [v2 → v4 migration](migration-v2-v4.md) above. New deployments do not need it.
 
 ## Architecture and design
 

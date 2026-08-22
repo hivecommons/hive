@@ -1,4 +1,4 @@
-# v2 deployment scripts
+# Deployment scripts
 
 This directory contains Kubernetes/LXC manifests plus runtime helper scripts used by the Hive container. The dashboard terminal pane uses two small helpers that are easy to miss:
 
