@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -5943,17 +5944,29 @@ func restoreCopilotTokens(path, token string) error {
 		}
 		cfg = map[string]interface{}{}
 	}
-	// When the config still carries a login identity (preserved by
+	// When the config still carries a VALID login identity (preserved by
 	// clearExpiredTokens), store the token under the "<host>:<login>" key a
 	// real /login writes, so the interactive CLI recognizes the seeded
 	// credential as a signed-in session rather than showing "Please use
 	// /login" over a valid token. The CLI has written lastLoggedInUser in two
 	// shapes across versions — a bare "https://github.com:user" string and a
 	// {"host":…,"login":…} object (the shape observed in a working 1.0.78
-	// config) — accept both. With no identity on file, fall back to the
-	// host-keyed object shape as before.
+	// config) — accept both.
+	//
+	// With no valid identity on file (missing, or junk inherited from the
+	// shared config's polluted lineage), resolve the token's TRUE owner from
+	// the GitHub API and write the full canonical identity. This makes the
+	// seed self-sufficient: whatever garbage the file has decayed into, a
+	// valid token always produces a signed-in config. Only when the lookup
+	// itself fails (offline, revoked token) fall back to the legacy host-keyed
+	// object shape — no worse than before.
 	if key := copilotIdentityKey(cfg["lastLoggedInUser"]); key != "" {
 		cfg["copilotTokens"] = map[string]interface{}{key: token}
+	} else if login := githubTokenLogin(token); login != "" {
+		identity := map[string]interface{}{"host": "https://github.com", "login": login}
+		cfg["copilotTokens"] = map[string]interface{}{"https://github.com:" + login: token}
+		cfg["lastLoggedInUser"] = identity
+		cfg["loggedInUsers"] = []interface{}{identity}
 	} else {
 		cfg["copilotTokens"] = map[string]interface{}{
 			"github.com": map[string]interface{}{"token": token},
@@ -5962,19 +5975,56 @@ func restoreCopilotTokens(path, token string) error {
 	return writeCopilotConfig(path, cfg)
 }
 
+// githubTokenLogin resolves the GitHub login that owns token via GET /user, or
+// "" on any failure. Short-timeout, one call — used only on the rare seed path
+// where the config lacks a valid identity. Overridable in tests.
+var githubTokenLogin = func(token string) string {
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var body struct {
+		Login string `json:"login"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.Login)
+}
+
 // copilotIdentityKey renders a lastLoggedInUser value — string or
 // {"host","login"} object — as the "<host>:<login>" copilotTokens key the CLI
 // uses for a signed-in session, or "" when there is no usable identity.
+//
+// VALIDATION is the point, not just shape conversion: the shared config's
+// lineage accumulates junk identities (a bare "github.com" string was observed
+// live — kubestellar/hive, 2026-08-22 — inherited from stale rewrites), and a
+// junk identity keyed a seeded VALID token under a key the CLI rejects, leaving
+// every agent at "Please use /login" over working credentials. Only a
+// "https://<host>:<login>" string (scheme + host + login = at least two
+// colons) or a {host,login} object whose host looks like a URL qualifies.
 func copilotIdentityKey(v interface{}) string {
 	switch id := v.(type) {
 	case string:
-		if s := strings.TrimSpace(id); s != "" {
+		s := strings.TrimSpace(id)
+		if strings.HasPrefix(s, "http") && strings.Count(s, ":") >= 2 {
 			return s
 		}
 	case map[string]interface{}:
 		host, _ := id["host"].(string)
 		login, _ := id["login"].(string)
-		if strings.TrimSpace(host) != "" && strings.TrimSpace(login) != "" {
+		if strings.HasPrefix(strings.TrimSpace(host), "http") && strings.TrimSpace(login) != "" {
 			return host + ":" + login
 		}
 	}

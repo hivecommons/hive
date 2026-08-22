@@ -228,6 +228,50 @@ func TestRestoreCopilotTokens_IdentityShape(t *testing.T) {
 		t.Errorf("object-identity token = %q, want gho_obj under https://github.com:bob; tokens=%v", got, toks)
 	}
 
+	// JUNK identity (a bare "github.com" string, observed live from the
+	// polluted shared-config lineage) must NOT be used as a key: with the
+	// owner lookup also failing, fall back to the legacy shape.
+	origLookup := githubTokenLogin
+	githubTokenLogin = func(string) string { return "" }
+	defer func() { githubTokenLogin = origLookup }()
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{},"lastLoggedInUser":"github.com"}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreCopilotTokens(path, "gho_junkid"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = readCopilotConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, _ = cfg["copilotTokens"].(map[string]interface{})
+	if _, bad := toks["github.com"].(string); bad {
+		t.Error("junk identity must not become a bare string token key")
+	}
+
+	// No valid identity but the owner lookup SUCCEEDS → full canonical
+	// identity written from the token's true owner.
+	githubTokenLogin = func(string) string { return "alice" }
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreCopilotTokens(path, "gho_resolved"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = readCopilotConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, _ = cfg["copilotTokens"].(map[string]interface{})
+	if got, _ := toks["https://github.com:alice"].(string); got != "gho_resolved" {
+		t.Errorf("resolved owner should key the token, got %v", toks)
+	}
+	id, _ := cfg["lastLoggedInUser"].(map[string]interface{})
+	if id["login"] != "alice" || id["host"] != "https://github.com" {
+		t.Errorf("canonical identity not written: %v", cfg["lastLoggedInUser"])
+	}
+	githubTokenLogin = func(string) string { return "" }
+
 	// No identity → legacy host-keyed object shape (unchanged behavior).
 	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{}}`), 0o660); err != nil {
 		t.Fatal(err)
