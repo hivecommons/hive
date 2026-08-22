@@ -241,8 +241,22 @@ type AgentProcess struct {
 	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
 	LastError         string    // captured from bare copilot diagnostic launch
 	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
-	NeedsLogin        bool      // true when pane shows a login prompt
-	QuotaExhausted    bool      // true when pane shows provider/monthly quota exhaustion
+	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
+	// not clear the login prompt. The restart is a falsifiable theory — "a valid
+	// token exists, the agent just has not picked it up yet" — and this is what
+	// makes it falsifiable: it is incremented when such a restart is issued and
+	// reset the moment the pane stops showing a login prompt. Once the theory
+	// has failed tokenRestartMaxAttempts times the restart stops firing, because
+	// something the restart cannot reach is holding the agent at the prompt
+	// (#4596: the credential is valid but $HOME/.claude.json carries no
+	// signed-in identity). Written only by this agent's pane poller, like
+	// lastTokenRestart beside it.
+	tokenRestartAttempts int
+	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
+	// a single time rather than every poll (~3s). Cleared alongside the counter.
+	tokenRestartGaveUp bool
+	NeedsLogin         bool // true when pane shows a login prompt
+	QuotaExhausted     bool // true when pane shows provider/monthly quota exhaustion
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -2660,6 +2674,11 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				loginStreak++
 			} else {
 				loginStreak = 0
+				// The prompt cleared, so a future "token appeared, nudge it"
+				// restart is a fresh theory rather than a repeat of one that
+				// already failed. Reset both halves of the cap together.
+				agent.tokenRestartAttempts = 0
+				agent.tokenRestartGaveUp = false
 			}
 
 			agent.paneMu.Lock()
@@ -2701,13 +2720,36 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
 					continue
 				}
-				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
-				if sinceLastRestart >= float64(tokenRestartCooldownSec) {
+				// GUARD 4 (#4596): the restart theory must not be retried
+				// forever. decideTokenRestart owns the attempt accounting so
+				// the rule is unit-testable without a tmux pane.
+				switch agent.decideTokenRestart(time.Now()) {
+				case tokenRestartGiveUp:
+					if !agent.tokenRestartGaveUp {
+						agent.tokenRestartGaveUp = true
+						diag := m.diagnoseStuckLogin(agent)
+						agent.LastError = diag
+						m.logger.Warn("giving up on token-triggered restart: the agent is still at a login prompt",
+							"agent", agent.Name,
+							"attempts", agent.tokenRestartAttempts,
+							"diagnosis", diag,
+						)
+					}
+					// Deliberately NOT `continue`: this disables only the
+					// token-triggered restart. The TLS-error and hung-CLI
+					// detectors further down stay live, so an agent that is
+					// both stuck at a login prompt and hitting a transient
+					// network failure is still recovered by the detector that
+					// can actually help.
+				case tokenRestartWait:
+					// Cooldown has not elapsed; fall through to the other
+					// pane detectors below, exactly as before.
+				case tokenRestartFire:
 					m.logger.Info("auto-restarting agent after token detected in shared config",
 						"agent", agent.Name,
-						"cooldown_elapsed_sec", int(sinceLastRestart),
+						"attempt", agent.tokenRestartAttempts,
+						"max_attempts", tokenRestartMaxAttempts,
 					)
-					agent.lastTokenRestart = time.Now()
 					go func() {
 						if err := m.Restart(ctx, agent.Name); err != nil {
 							m.logger.Warn("token-triggered restart failed",
@@ -5700,6 +5742,23 @@ const (
 	// the login prompt before a token-triggered restart may fire — filters the
 	// CLI's transient startup "/login" flash.
 	loginStreakRestartMin = 3
+	// tokenRestartMaxAttempts bounds CONSECUTIVE token-triggered restarts that
+	// fail to clear the login prompt.
+	//
+	// The three guards above answer WHEN to restart; none of them answered HOW
+	// MANY TIMES, so a restart that could never work was retried forever at the
+	// cooldown interval. #4596 is precisely that shape: the shared credential is
+	// valid (so configHasTokens() is true) while $HOME/.claude.json has lost its
+	// oauthAccount (so the CLI shows the login menu regardless), and each
+	// restart re-launched a CLI that rewrote the same contended file and asked
+	// again. Restarts are not free — they destroy in-flight work, which is the
+	// failure the kick grace above was added for.
+	//
+	// Three is deliberately generous: one restart genuinely does fix the case
+	// this feature was built for (an operator authenticates in one agent's
+	// terminal and the others need a nudge), so the cap only engages on a
+	// theory that has now failed repeatedly.
+	tokenRestartMaxAttempts = 3
 	// tokenRestartKickGrace suppresses token-triggered restarts after a kick
 	// delivery so the restart can never destroy just-delivered work.
 	tokenRestartKickGrace      = 10 * time.Minute
