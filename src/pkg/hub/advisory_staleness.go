@@ -106,8 +106,11 @@ func allAgentsQuietByDesign(e RegistryEntry) bool {
 			return false
 		}
 		paused := a.Paused || strings.EqualFold(a.State, agentStatePaused)
-		running := strings.EqualFold(a.State, agentStateRunning)
-		offByDesign := !a.ExpectedActive && !running
+		// Off-schedule counts as quiet REGARDLESS of session state: spokes
+		// keep persistent agent sessions alive between kicks, so an agent the
+		// governor expects off still reports state=running while idle (same
+		// rule as deriveAgentVerdict's quiet-by-design arm).
+		offByDesign := !a.ExpectedActive
 		if !paused && !offByDesign {
 			return false
 		}

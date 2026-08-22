@@ -120,6 +120,42 @@ func TestVerdict_SessionGoneAndIdle(t *testing.T) {
 // never count as impotent/problem. (Fleet rows at L1/L2 previously flagged
 // every working advisory agent "PROBLEM: no write capability at this ACMM
 // level".)
+// A persistent agent session idling OFF-SCHEDULE is quiet by design, never
+// "should be working". Live case (EPM/cdo-data-model-documentation): a
+// surge-mode hive with every agent off in that mode still reported
+// state=running for its parked sessions, and /fleet rendered "4 running ·
+// should be working" against a dashboard showing every agent OFF. The
+// governor's expectation is the schedule truth; the session's existence is
+// not.
+func TestVerdict_OffScheduleRunningSessionIsQuietByDesign(t *testing.T) {
+	now := time.Now()
+	a := AgentSummary{
+		Name: "scanner", State: "running", Backend: "bob",
+		Enabled: true, ExpectedActive: false,
+		CanOpenIssue: true,
+		StartedAt:    settled(now), LastActivityAt: activeAt(now, 1*time.Minute),
+	}
+	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	if v.RunState != runQuietByDesign {
+		t.Errorf("off-schedule agent with a live session: RunState = %v, want quiet-by-design", v.RunState)
+	}
+	if !v.QuietByDesign {
+		t.Error("off-schedule agent with a live session must be QuietByDesign")
+	}
+	if v.Problem {
+		t.Error("off-schedule agent with a live session must never be a PROBLEM")
+	}
+	// The rollup must not count it as running: "expects 0 · 4 running" was the
+	// visible contradiction.
+	r := rollupAgents([]AgentSummary{a}, hiveBlockers{}, 5, now)
+	if r.Running != 0 {
+		t.Errorf("rollup Running = %d, want 0 for an off-schedule idle session", r.Running)
+	}
+	if r.Expected != 0 {
+		t.Errorf("rollup Expected = %d, want 0", r.Expected)
+	}
+}
+
 func TestVerdict_AdvisoryOnlyLevelIsNotAProblem(t *testing.T) {
 	now := time.Now()
 	a := AgentSummary{

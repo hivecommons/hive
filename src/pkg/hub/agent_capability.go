@@ -199,10 +199,18 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	switch {
 	case paused:
 		v.RunState = runQuietByDesign
-	case !legacy && !a.ExpectedActive && !running:
-		// Not scheduled to run in this mode and not running: off by design, not
-		// a fault. (A legacy spoke reports ExpectedActive=false for everything,
-		// so this branch is guarded to spokes that actually speak the field.)
+	case !legacy && !a.ExpectedActive:
+		// Not scheduled to run in this mode: off by design, not a fault —
+		// REGARDLESS of the reported session state. Spokes keep persistent
+		// agent sessions alive between kicks, so an off-schedule agent still
+		// reports state=running while it sits idle; labeling that "should be
+		// working" contradicted the hive's own dashboard, which shows the
+		// agent OFF in the current mode (seen live: a surge-mode hive with
+		// every agent off rendered "4 running · should be working" on /fleet).
+		// The governor's expectation is the schedule truth here, not the
+		// session's existence. (A legacy spoke reports ExpectedActive=false
+		// for everything, so this branch is guarded to spokes that actually
+		// speak the field.)
 		v.RunState = runQuietByDesign
 	case kind == agentInactiveSessionMissing:
 		v.RunState = runSessionGone

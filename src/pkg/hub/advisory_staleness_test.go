@@ -63,6 +63,21 @@ func activeAgent(name string) AgentSummary {
 
 // An aged digest on a hive whose EVERY agent is deliberately quiet (paused or
 // off-schedule) is the operator's own pause, not a wedge — never a pill.
+// An off-schedule agent whose persistent session is still alive
+// (state=running) is quiet all the same — the suppression must not require
+// the session to be torn down.
+func TestAdvisoryStale_OffScheduleRunningSessionStillSuppresses(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+	e.Agents = []AgentSummary{
+		pausedAgent("supervisor"),
+		{Name: "scanner", State: agentStateRunning, ExpectedActive: false, Enabled: true, CanOpenIssue: true},
+	}
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("an off-schedule idle session must still count as quiet, got %q", reason)
+	}
+}
+
 func TestAdvisoryStale_AllAgentsQuietSuppressesAgedTimestamp(t *testing.T) {
 	e := advisoryModeEntry()
 	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
