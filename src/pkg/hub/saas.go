@@ -3656,6 +3656,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 				RepoTargetMisconfigured: result[i].RepoTargetMisconfigured,
 				RepoTargetIssue:         result[i].RepoTargetIssue,
 				InferenceAuthError:      result[i].InferenceAuthError,
+				ProviderLimitReason:     result[i].ProviderLimitReason,
 			}
 			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
 			result[i].FleetRollup = &rollup

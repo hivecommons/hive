@@ -92,3 +92,33 @@ func TestHeartbeatDivergenceFields_SanitizesBackend(t *testing.T) {
 		t.Errorf("backend was not sanitized: %q", got)
 	}
 }
+
+func TestHeartbeatProviderLimitAndQuotaFields_Stored(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+
+	body := `{
+		"hive_id":"h1",
+		"provider_limit_reason":"provider spending limit reached — 682 refused calls",
+		"provider_limit_rebuffs":682,
+		"agents":[{"name":"scanner","state":"running","quotaExhausted":true}]
+	}`
+	rec := postHeartbeat(t, s, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat status = %d (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.registry.Hives) != 1 {
+		t.Fatalf("stored %d hives, want 1", len(s.registry.Hives))
+	}
+	h := s.registry.Hives[0]
+	if h.ProviderLimitReason != "provider spending limit reached — 682 refused calls" || h.ProviderLimitRebuffs != 682 {
+		t.Fatalf("provider limit fields not stored: reason=%q rebuffs=%d", h.ProviderLimitReason, h.ProviderLimitRebuffs)
+	}
+	if len(h.Agents) != 1 || !h.Agents[0].QuotaExhausted {
+		t.Fatalf("agent quota flag not stored: %+v", h.Agents)
+	}
+}

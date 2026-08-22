@@ -160,6 +160,7 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 		PausedBy:       proc.PausedBy,
 		PausedAt:       proc.PausedAt,
 		NeedsLogin:     proc.NeedsLogin,
+		QuotaExhausted: proc.QuotaExhausted,
 		LastActivityAt: proc.LastPaneChange,
 		// A missing tmux session is only meaningful for an agent the manager
 		// believes is running; SessionMissing enforces that itself.
@@ -3581,6 +3582,20 @@ func main() {
 				InferenceAuthError: func() string {
 					errMsg, _ := dashSrv.InferenceAuthState()
 					return errMsg
+				}(),
+				ProviderLimitReason: func() string {
+					errMsg, _, _, rebuffs := dashboard.InferenceBudgetExceeded()
+					if errMsg == "" {
+						return ""
+					}
+					if rebuffs > 1 {
+						return fmt.Sprintf("provider spending limit reached — %d refused calls: %s", rebuffs, errMsg)
+					}
+					return "provider spending limit reached — " + errMsg
+				}(),
+				ProviderLimitRebuffs: func() int {
+					_, _, _, rebuffs := dashboard.InferenceBudgetExceeded()
+					return rebuffs
 				}(),
 				RepoTargetMisconfigured: repoTargetMisconfigured(),
 				RepoTargetIssue:         repoTargetIssueMessage(),

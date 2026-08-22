@@ -99,6 +99,11 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 			}
 			return v
 		}
+		if reason := strings.TrimSpace(e.ProviderLimitReason); reason != "" {
+			v.State = HealthStateRed
+			v.Reason = providerLimitHealthReason(reason, e.ProviderLimitRebuffs)
+			return v
+		}
 		// Budget exhaustion halts every agent, so no output stream can move.
 		// The chip must say THAT instead of the downstream "no write in Nh" —
 		// the operator's remedy (raise budget or wait for the window) is
@@ -111,6 +116,8 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 		if rollup.Problems > 0 {
 			v.State = HealthStateRed
 			switch {
+			case rollup.QuotaExhausted == rollup.Problems:
+				v.Reason = fmt.Sprintf("%d agent(s) out of provider quota", rollup.QuotaExhausted)
 			case rollup.LoginStuck == rollup.Problems:
 				// Every blocked agent is wedged at a login prompt: name the one
 				// actionable cause (operator re-login) instead of the generic
@@ -388,4 +395,12 @@ func humanizeAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours())/24)
 	}
+}
+
+func providerLimitHealthReason(reason string, rebuffs int) string {
+	reason = strings.TrimSpace(reason)
+	if rebuffs > 0 && !strings.Contains(reason, "refused calls") {
+		return fmt.Sprintf("provider spending limit reached — %d refused calls", rebuffs)
+	}
+	return reason
 }

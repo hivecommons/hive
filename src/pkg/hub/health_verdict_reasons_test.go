@@ -82,6 +82,40 @@ func TestHiveHealthForReasons(t *testing.T) {
 			wantReason: "2 agent(s) blocked",
 		},
 		{
+			name: "L3 provider spending limit outranks idle agents",
+			entry: func() RegistryEntry {
+				e := base(3)
+				e.ProviderLimitReason = "provider spending limit reached — 682 refused calls: litellm refused the request on a spending limit (429)"
+				e.ProviderLimitRebuffs = 682
+				return e
+			}(),
+			rollup: agentFleetRollup{Expected: 3, Running: 0, Known: 3, Problems: 3, IdleWithWork: 3},
+			app:    okApp(), queued: 43,
+			wantState:  HealthStateRed,
+			wantReason: "provider spending limit reached — 682 refused calls: litellm refused the request on a spending limit (429)",
+		},
+		{
+			name: "L3 provider limit count is named when reason lacks refused-call count",
+			entry: func() RegistryEntry {
+				e := base(3)
+				e.ProviderLimitReason = "litellm refused the request on a spending limit (429)"
+				e.ProviderLimitRebuffs = 682
+				return e
+			}(),
+			rollup: agentFleetRollup{Expected: 3, Running: 0, Known: 3, Problems: 3, IdleWithWork: 3},
+			app:    okApp(), queued: 43,
+			wantState:  HealthStateRed,
+			wantReason: "provider spending limit reached — 682 refused calls",
+		},
+		{
+			name:   "L3 all problems quota-exhausted — red names provider quota",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 1, Running: 0, Known: 1, Problems: 1, QuotaExhausted: 1, IdleWithWork: 1},
+			app:    okApp(), queued: 8,
+			wantState:  HealthStateRed,
+			wantReason: "1 agent(s) out of provider quota",
+		},
+		{
 			// EPM/alchemy live case: every problem is a wedged interactive
 			// login, so the reason names the one actionable cause.
 			name:   "L3 all problems login-stuck — red names the re-login",

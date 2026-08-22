@@ -145,8 +145,13 @@ type RegistryEntry struct {
 	// hive, also trips advisory staleness immediately with this cause. Self-
 	// clears when inference recovers. Never carries key material.
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
-	PrimaryRepo        string `json:"primaryRepo"`
-	DashboardURL       string `json:"dashboardUrl"`
+	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
+	// banner. It is separate from BudgetExhausted, which is hive-local governor
+	// budget; this means the upstream provider is refusing token purchases.
+	ProviderLimitReason  string `json:"providerLimitReason,omitempty"`
+	ProviderLimitRebuffs int    `json:"providerLimitRebuffs,omitempty"`
+	PrimaryRepo          string `json:"primaryRepo"`
+	DashboardURL         string `json:"dashboardUrl"`
 	// PublicURLSelfCheck is the spoke's own reachability verdict for
 	// DashboardURL. It is intentionally separate from the hub-side probe:
 	// private-network hives may be unreachable from the public hub while alive
@@ -1668,12 +1673,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
-		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
-		DashboardURL:       payload.DashboardURL,
-		PublicURLSelfCheck: sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
-		RouteExists:        sanitizeRouteExistenceCheck(payload.RouteExists),
-		SnapshotURL:        payload.SnapshotURL,
-		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
+		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),
+		ProviderLimitReason:  sanitizeProseField(payload.ProviderLimitReason),
+		ProviderLimitRebuffs: clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
+		DashboardURL:         payload.DashboardURL,
+		PublicURLSelfCheck:   sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
+		RouteExists:          sanitizeRouteExistenceCheck(payload.RouteExists),
+		SnapshotURL:          payload.SnapshotURL,
+		ACMMLevel:            clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {

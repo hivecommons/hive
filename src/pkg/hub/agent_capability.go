@@ -51,6 +51,8 @@ const (
 	runIdleAtPrompt
 	// runStuckAtLogin — running but sitting on a login prompt past grace.
 	runStuckAtLogin
+	// runQuotaExhausted — running but the provider/monthly quota is exhausted.
+	runQuotaExhausted
 	// runSessionGone — the manager believes it runs, but the tmux session is
 	// gone (zombie).
 	runSessionGone
@@ -70,6 +72,8 @@ func (s agentRunState) String() string {
 		return "idle-at-prompt"
 	case runStuckAtLogin:
 		return "stuck-at-login"
+	case runQuotaExhausted:
+		return "quota-exhausted"
 	case runSessionGone:
 		return "session-gone"
 	case runDead:
@@ -102,6 +106,7 @@ type hiveBlockers struct {
 	RepoTargetMisconfigured bool
 	RepoTargetIssue         string
 	InferenceAuthError      string
+	ProviderLimitReason     string
 }
 
 // any reports whether any hive-level blocker is set.
@@ -110,6 +115,7 @@ func (b hiveBlockers) any() bool {
 		strings.TrimSpace(b.GitHubAppPermIssue) != "" ||
 		strings.TrimSpace(b.RepoTargetIssue) != "" ||
 		strings.TrimSpace(b.InferenceAuthError) != "" ||
+		strings.TrimSpace(b.ProviderLimitReason) != "" ||
 		blockingGitHubAppState(b.GitHubAppState)
 }
 
@@ -126,6 +132,8 @@ func (b hiveBlockers) reason() string {
 		return b.RepoTargetIssue
 	case b.RepoTargetMisconfigured:
 		return "repo target misconfigured"
+	case strings.TrimSpace(b.ProviderLimitReason) != "":
+		return b.ProviderLimitReason
 	case strings.TrimSpace(b.InferenceAuthError) != "":
 		return b.InferenceAuthError
 	default:
@@ -180,7 +188,8 @@ func interactiveLoginBackend(backend string) bool {
 // Used only to keep the run-state machine from labeling a legacy agent "dead".
 func legacyAgent(a AgentSummary) bool {
 	return !a.ExpectedActive && !a.Enabled &&
-		!a.CanOpenIssue && !a.CanOpenPR && !a.CanMerge && strings.TrimSpace(a.Backend) == ""
+		!a.CanOpenIssue && !a.CanOpenPR && !a.CanMerge &&
+		!a.NeedsLogin && !a.QuotaExhausted && strings.TrimSpace(a.Backend) == ""
 }
 
 // deriveAgentVerdict computes the full three-leg verdict for one agent.
@@ -203,6 +212,8 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	switch {
 	case paused:
 		v.RunState = runQuietByDesign
+	case a.QuotaExhausted:
+		v.RunState = runQuotaExhausted
 	case kind == agentInactiveNeedsLogin:
 		// A login prompt outranks the off-schedule quiet branch below: a
 		// wedged interactive credential is a HIVE-wide fault (every kick to
@@ -259,8 +270,9 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	}
 
 	loginBlocked := a.NeedsLogin && interactiveLoginBackend(a.Backend)
+	quotaBlocked := a.QuotaExhausted
 	hiveBlocked := blockers.any()
-	blocked := loginBlocked || hiveBlocked
+	blocked := loginBlocked || quotaBlocked || hiveBlocked
 
 	// modeGrantsWrite: the agent's mode grants at least one write action (open
 	// PR or merge) beyond opening issues. An advisory issues-only agent does
@@ -297,6 +309,8 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	switch {
 	case loginBlocked:
 		v.BlockedReason = "sitting at login prompt"
+	case quotaBlocked:
+		v.BlockedReason = "provider quota exhausted"
 	case hiveBlocked:
 		v.BlockedReason = blockers.reason()
 	}
@@ -333,6 +347,10 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 			// credential is hive-wide and the wire may omit expectedActive
 			// entirely (the EPM/alchemy case) — gating on it hid the fault.
 			v.Stuck = true
+		case runQuotaExhausted:
+			// Provider quota exhaustion is a hive/provider fault even if the
+			// schedule bit is absent on the wire.
+			v.Stuck = true
 		}
 		// IMPOTENT: running but not capable of its mission (blocked/gated). Uses
 		// `capable`, not v.Able, because v.Able already requires runWorking —
@@ -354,7 +372,7 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// runStuckAtLogin bypasses the expectedActive gate: the credential fault is
 	// real whether or not the wire carries the schedule bit (see the ACTUAL-leg
 	// ordering above).
-	v.Problem = (a.ExpectedActive || v.RunState == runStuckAtLogin) && !v.QuietByDesign && !v.Able
+	v.Problem = (a.ExpectedActive || v.RunState == runStuckAtLogin || v.RunState == runQuotaExhausted) && !v.QuietByDesign && !v.Able
 
 	return v
 }
@@ -395,6 +413,8 @@ type agentFleetRollup struct {
 	// (dead, or running-with-session-missing zombies). When every problem is
 	// in this class the verdict keeps the familiar "no agents running".
 	DeadOrGone int `json:"deadOrGone,omitempty"`
+	// QuotaExhausted is how many Problems are provider/monthly quota limited.
+	QuotaExhausted int `json:"quotaExhausted,omitempty"`
 	// Known is how many agents reported the new divergence signals (non-legacy).
 	// When Known==0 the whole hive is UNKNOWN (a spoke not yet rolled to this
 	// build) and its dot is gray, never green — absence of a problem we cannot
@@ -422,6 +442,7 @@ type AgentVerdictJSON struct {
 	PausedTrigger   string `json:"pausedTrigger,omitempty"`
 	PausedReason    string `json:"pausedReason,omitempty"`
 	PausedAt        string `json:"pausedAt,omitempty"`
+	QuotaExhausted  bool   `json:"quotaExhausted,omitempty"`
 	CanOpenIssue    bool   `json:"canOpenIssue"`
 	CanOpenPR       bool   `json:"canOpenPR"`
 	CanMerge        bool   `json:"canMerge"`
@@ -462,6 +483,7 @@ func buildAgentVerdicts(agents []AgentSummary, blockers hiveBlockers, queuedWork
 			PausedTrigger:   a.PausedTrigger,
 			PausedReason:    a.PausedReason,
 			PausedAt:        a.PausedAt,
+			QuotaExhausted:  a.QuotaExhausted,
 			CanOpenIssue:    v.CanOpenIssue,
 			CanOpenPR:       v.CanOpenPR,
 			CanMerge:        v.CanMerge,
@@ -592,6 +614,8 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 				r.LoginStuck++
 			case runIdleAtPrompt:
 				r.IdleWithWork++
+			case runQuotaExhausted:
+				r.QuotaExhausted++
 			case runDead, runSessionGone:
 				r.DeadOrGone++
 			}

@@ -283,6 +283,11 @@ type AgentSummary struct {
 	// session is alive, the CLI process is alive, and the agent still cannot do
 	// any work. It is invisible in State, which reads "running" throughout.
 	NeedsLogin bool `json:"needsLogin,omitempty"`
+	// QuotaExhausted is true when the agent pane shows a provider/monthly quota
+	// refusal ("monthly quota", Copilot Free requests exhausted, LiteLLM
+	// budget_exceeded). Unlike NeedsLogin, re-authentication will not help; the
+	// agent cannot buy tokens until the provider quota resets or is raised.
+	QuotaExhausted bool `json:"quotaExhausted,omitempty"`
 	// SessionMissing is true when the manager expected a live tmux session for
 	// a running agent and did not find one — the zombie case. Reported
 	// explicitly rather than inferred hub-side, because only the spoke can see
@@ -352,6 +357,7 @@ type AgentActivity struct {
 	PausedBy       string
 	PausedAt       time.Time
 	NeedsLogin     bool
+	QuotaExhausted bool
 	SessionMissing bool
 	StartedAt      time.Time
 	LastActivityAt time.Time
@@ -378,6 +384,7 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		PausedReason:   act.PausedReason,
 		PausedBy:       act.PausedBy,
 		NeedsLogin:     act.NeedsLogin,
+		QuotaExhausted: act.QuotaExhausted,
 		SessionMissing: act.SessionMissing,
 		ExpectedActive: act.ExpectedActive,
 		CanOpenIssue:   act.CanOpenIssue,
@@ -629,9 +636,15 @@ type HeartbeatPayload struct {
 	// inference-auth alert whose ROOT cause an operator sees directly, distinct
 	// from a GitHub-post advisory staleness. It clears the moment an inference
 	// call succeeds, so a fixed hive self-heals. Never carries key material.
-	InferenceAuthError string         `json:"inference_auth_error,omitempty"`
-	Health             map[string]any `json:"health"`
-	DashboardURL       string         `json:"dashboard_url"`
+	InferenceAuthError string `json:"inference_auth_error,omitempty"`
+	// ProviderLimitReason is the spoke's current provider-side spending/quota
+	// refusal banner (distinct from hive-local governor budget). Empty means no
+	// signal or an old spoke. ProviderLimitRebuffs counts matched refused calls
+	// while latched, when known.
+	ProviderLimitReason  string         `json:"provider_limit_reason,omitempty"`
+	ProviderLimitRebuffs int            `json:"provider_limit_rebuffs,omitempty"`
+	Health               map[string]any `json:"health"`
+	DashboardURL         string         `json:"dashboard_url"`
 	// PublicURLSelfCheck is the spoke's own end-to-end probe of the dashboard
 	// URL it is advertising to the hub. It exists because the hub's public
 	// network can be the wrong vantage point for private-network hives: a URL

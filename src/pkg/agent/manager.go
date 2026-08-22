@@ -241,6 +241,7 @@ type AgentProcess struct {
 	LastError         string    // captured from bare copilot diagnostic launch
 	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
 	NeedsLogin        bool      // true when pane shows a login prompt
+	QuotaExhausted    bool      // true when pane shows provider/monthly quota exhaustion
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -2651,7 +2652,9 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			if tailStart < 0 {
 				tailStart = 0
 			}
-			showsLogin := paneShowsLoginPrompt(filtered[tailStart:])
+			tail := filtered[tailStart:]
+			showsLogin := paneShowsLoginPrompt(tail)
+			quotaExhausted := paneShowsQuotaExhausted(tail)
 			if showsLogin {
 				loginStreak++
 			} else {
@@ -2670,6 +2673,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			}
 			agent.lastPaneCapture = filtered
 			agent.NeedsLogin = showsLogin
+			agent.QuotaExhausted = quotaExhausted
 			agent.paneMu.Unlock()
 
 			// Auto-restart agents stuck on the login prompt when a valid
@@ -5390,6 +5394,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	copy(pane, a.lastPaneCapture)
 	// NeedsLogin and LastPaneChange are written by the pane poller under paneMu.
 	needsLogin := a.NeedsLogin
+	quotaExhausted := a.QuotaExhausted
 	lastPaneChange := a.LastPaneChange
 	a.paneMu.RUnlock()
 	return AgentProcess{
@@ -5414,6 +5419,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		KickHistory:     history,
 		LastKickMessage: a.LastKickMessage,
 		NeedsLogin:      needsLogin,
+		QuotaExhausted:  quotaExhausted,
 		LastPaneChange:  lastPaneChange,
 		StallNudges:     a.StallNudges,
 		ActionNudges:    a.ActionNudges,
@@ -6130,6 +6136,27 @@ func lineShowsUpstreamAuthorizationError(line string) bool {
 	return false
 }
 
+var quotaExhaustionPatterns = []string{
+	"exceeded your monthly quota",
+	"used all your copilot free chat requests",
+	"budget_exceeded",
+	"budget has been exceeded",
+	"provider spending limit reached",
+	"refused the request on a spending limit",
+}
+
+func paneShowsQuotaExhausted(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		for _, pat := range quotaExhaustionPatterns {
+			if strings.Contains(lower, pat) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // paneShowsLoginPrompt returns true if any line in the pane output matches a
 // known login/authentication prompt pattern.
 //
@@ -6155,7 +6182,7 @@ func paneShowsLoginPrompt(lines []string) bool {
 	for _, line := range lines {
 		// An upstream authorization failure is not a login prompt, whatever
 		// the CLI decorated it with.
-		if lineShowsUpstreamAuthorizationError(line) {
+		if lineShowsUpstreamAuthorizationError(line) || paneShowsQuotaExhausted([]string{line}) {
 			continue
 		}
 		if lineHasLoginDirective(line) {

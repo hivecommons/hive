@@ -71,6 +71,27 @@ func TestVerdict_StuckAtLoginIsImpotentAndStuck(t *testing.T) {
 	}
 }
 
+func TestVerdict_QuotaExhaustedOutranksIdle(t *testing.T) {
+	now := time.Now()
+	a := modernWorking(now)
+	a.LastActivityAt = activeAt(now, 2*time.Hour)
+	a.QuotaExhausted = true
+	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	if v.RunState != runQuotaExhausted {
+		t.Fatalf("runState = %v, want quota-exhausted", v.RunState)
+	}
+	if !v.Problem || !v.Stuck || !v.Impotent {
+		t.Fatalf("quota-exhausted expected-active agent must be a stuck/impotent problem: %+v", v)
+	}
+	if v.BlockedReason != "provider quota exhausted" {
+		t.Fatalf("blockedReason = %q, want provider quota exhausted", v.BlockedReason)
+	}
+	r := rollupAgents([]AgentSummary{a}, hiveBlockers{}, 5, now)
+	if r.QuotaExhausted != 1 || r.IdleWithWork != 0 {
+		t.Fatalf("rollup quota=%d idle=%d, want quota=1 idle=0", r.QuotaExhausted, r.IdleWithWork)
+	}
+}
+
 // A hive-level blocker (App perm) makes a running, capable agent IMPOTENT even
 // though its ACMM gates say it can push/merge.
 func TestVerdict_HiveBlockerMakesImpotent(t *testing.T) {
