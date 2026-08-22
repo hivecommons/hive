@@ -8351,8 +8351,13 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	// (kubestellar/hive, 2026-08-22): exactly one auto-answered trust prompt
 	// per agent per pod boot, then wedged panes forever after the first
 	// token-detected restart. A relaunch must never be aborted by the
-	// cancellation of the launch it replaces.
-	ctx = context.WithoutCancel(ctx)
+	// cancellation of the launch it replaces. (Nil-guarded: WithoutCancel
+	// panics on a nil parent, and callers pass nil for "no context".)
+	if ctx == nil {
+		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
