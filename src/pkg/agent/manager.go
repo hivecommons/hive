@@ -1518,13 +1518,32 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// (kellyaa: her litellm-routed agents un-paused while the copilot
 		// strategist stayed paused, which is what exposed this).
 		operatorPaused := agent.Config.Paused || agent.PausedTrigger == "dashboard-api"
-		if IsInferenceBackend(backend) && !operatorPaused {
+		// A login-detector pause describes a LIVE pane condition ("a login
+		// prompt is on screen right now") that cannot outlive the pane — after
+		// a restart/pod roll there is no pane, so restoring the pause just
+		// strands the agent forever with nothing left to re-evaluate it
+		// (kubestellar/hive, 2026-08-22: four copilot agents stayed
+		// persisted-paused across every roll). Drop it on startup and let the
+		// agent launch; if the condition still holds, the detector re-pauses
+		// within one tick — and with PaneShowsBlockingPrompt it now only
+		// pauses for REAL login prompts. Keyed strictly on the trigger so an
+		// operator pause (dashboard-api / hand-set Config.Paused without a
+		// system trigger) is never touched — the kellyaa regression above is
+		// exactly what happens when this distinction is dropped.
+		loginDetectorPaused := agent.PausedTrigger == "login-detector"
+		if (IsInferenceBackend(backend) && !operatorPaused) || loginDetectorPaused {
 			// agent.Paused is an m.mu-guarded field; brief re-lock around the
 			// write so it stays atomic against AllStatuses()/setters.
 			m.mu.Lock()
 			agent.Paused = false
+			if loginDetectorPaused {
+				// The system pause persisted Config.Paused; clear it so the
+				// launch below isn't re-blocked and a later save doesn't
+				// re-persist a pause nobody owns anymore.
+				agent.Config.Paused = false
+			}
 			m.mu.Unlock()
-			m.logger.Info("auto-unpaused inference agent (transient pause, not operator)", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
+			m.logger.Info("auto-unpaused transiently paused agent on startup", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
 		} else {
 			m.mu.Lock()
 			agent.State = StatePaused
