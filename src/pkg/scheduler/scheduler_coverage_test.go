@@ -297,8 +297,12 @@ func TestSubstituteTemplate_TimestampPresent(t *testing.T) {
 
 func TestLoadPromptTemplate_FromPoliciesDir(t *testing.T) {
 	tmpDir := t.TempDir()
+	// Use an agent name that cannot exist in the live /data/agents or
+	// /data/policies paths, which loadPromptTemplate consults first; a real
+	// deployed name like "scanner" would be shadowed on a hive host.
+	const agentName = "hermetic-test-agent-xyz"
 	// Create the template file
-	templatePath := tmpDir + "/examples/kubestellar/agents/scanner.md"
+	templatePath := tmpDir + "/examples/kubestellar/agents/" + agentName + ".md"
 	os.MkdirAll(tmpDir+"/examples/kubestellar/agents", 0o755)
 	os.WriteFile(templatePath, []byte("Hello ${AGENT_NAME}"), 0o644)
 
@@ -309,7 +313,7 @@ func TestLoadPromptTemplate_FromPoliciesDir(t *testing.T) {
 		Project: config.ProjectConfig{Org: "org", Repos: []string{"r"}},
 	}
 	s := New(cfg, testLogger())
-	result := s.loadPromptTemplate("scanner")
+	result := s.loadPromptTemplate(agentName)
 	if result != "Hello ${AGENT_NAME}" {
 		t.Errorf("got %q, want template content", result)
 	}

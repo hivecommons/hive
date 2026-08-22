@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -287,23 +288,14 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 // ---------- NewGitHubProxy: test with writable directory ----------
 
 func TestNewGitHubProxyWithWritableDir(t *testing.T) {
-	// Create temp directory for CA cert
+	// CACertPath and caKeyPath are vars precisely so tests can redirect the
+	// CA read/write to a temp dir. Never write to — or delete — the live
+	// /data/proxy-ca.pem: on a hive host that is the production proxy CA.
 	tmpDir := t.TempDir()
-	certPath := tmpDir + "/proxy-ca.pem"
-
-	// We can't override the const CACertPath, but we can test the function
-	// if /data is writable. If not, try to create it.
-	var cleanup func()
-	if _, err := os.Stat("/data"); os.IsNotExist(err) {
-		if err := os.MkdirAll("/data", 0755); err != nil {
-			t.Skipf("cannot create /data: %v", err)
-		}
-		cleanup = func() { os.RemoveAll("/data") }
-	} else {
-		cleanup = func() {}
-	}
-	defer cleanup()
-	defer os.Remove(CACertPath)
+	origCert, origKey := CACertPath, caKeyPath
+	CACertPath = filepath.Join(tmpDir, "proxy-ca.pem")
+	caKeyPath = filepath.Join(tmpDir, "proxy-ca-key.pem")
+	t.Cleanup(func() { CACertPath, caKeyPath = origCert, origKey })
 
 	p, err := NewGitHubProxy(slog.Default(), "testorg", []string{"repo-a", "repo-b"})
 	if err != nil {
@@ -349,8 +341,6 @@ func TestNewGitHubProxyWithWritableDir(t *testing.T) {
 	if p.inference == nil {
 		t.Error("inference router should not be nil")
 	}
-
-	_ = certPath
 }
 
 // ---------- handleTransparentTLS: non-GitHub host tunnel success ----------

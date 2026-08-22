@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,15 +24,14 @@ import (
 // ---------- NewGitHubProxy: test construction ----------
 
 func TestNewGitHubProxy(t *testing.T) {
-	// NewGitHubProxy writes CA cert to CACertPath (/data/proxy-ca.pem)
-	// which may not be writable. Skip if so.
-	dir := "/data"
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Skipf("cannot create %s: %v", dir, err)
-		}
-		defer os.RemoveAll(dir)
-	}
+	// NewGitHubProxy writes the CA cert/key to CACertPath/caKeyPath, which
+	// default to live /data paths. Redirect them to a temp dir so the test
+	// is hermetic and never touches (or requires) the host's real CA files.
+	tmpDir := t.TempDir()
+	origCert, origKey := CACertPath, caKeyPath
+	CACertPath = filepath.Join(tmpDir, "proxy-ca.pem")
+	caKeyPath = filepath.Join(tmpDir, "proxy-ca-key.pem")
+	t.Cleanup(func() { CACertPath, caKeyPath = origCert, origKey })
 
 	p, err := NewGitHubProxy(slog.Default(), "myorg", []string{"console", "docs"})
 	if err != nil {
