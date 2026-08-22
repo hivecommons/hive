@@ -920,8 +920,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tab-panel.active{display:block}
 .ops{padding:40px 48px;overflow-y:auto}
 .ops h1{font-size:1.7rem;margin-bottom:6px}
-.ops-grid{display:grid;grid-template-columns:340px 1fr;gap:20px;margin-top:24px}
-@media(max-width:900px){.ops-grid{grid-template-columns:1fr}}
+/* #4537: minmax(0,1fr), not 1fr. A 1fr track's automatic minimum is min-content,
+   and the cards it holds contain white-space:nowrap text (.cc-q-title, .cc-army,
+   the clanker sub-lines), so the track resolved to the widest unbreakable line
+   and the whole panel outgrew .ops. The explicit 0 minimum lets the track shrink
+   to the viewport and hands the overflow back to the ellipsis/wrapping the cards
+   already declare. */
+.ops-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;margin-top:24px}
+@media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr)}}
 .ops-card{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:0;overflow:hidden}
 .ops-card-head{padding:16px 20px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--cc-text);margin:0}
@@ -966,7 +972,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    horizontally with the multi-line text. Long repo paths in .clanker-sub wrap
    (overflow-wrap:anywhere) rather than pushing into anything. align-items:start
    keeps the dot/avatar top-aligned with the first text line. */
-.clanker-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2)}
+/* #4537: the first two tracks are SIZED, not auto. .admin-actions below spans
+   1/-1, and a spanning item's min-content contribution is distributed into the
+   spanned tracks that can take it — the third is minmax(0,1fr) with a fixed 0
+   minimum and absorbs none, so both auto tracks grew until the row was wider
+   than its card. The dot and the avatar are 8px and 28px at every width, so
+   naming those widths is what auto already resolved to when nothing spanned;
+   it just leaves nothing for the spanning row to inflate. */
+.clanker-row{display:grid;grid-template-columns:8px 28px minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2)}
 /* The trailing controls / timestamp: full-width line beneath the identity. It is
    always the LAST grid child, so grid-column:1/-1 drops it below regardless of
    whether it's .admin-actions or the .feed-time fallback. */
@@ -1331,7 +1344,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .agent-role-grants{display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%%;font-size:.7rem;color:var(--cc-muted)}
 .agent-role-grants__label{font-weight:600;color:var(--cc-text-2)}
-.clanker-act-as{display:inline-flex;align-items:center;gap:4px;color:var(--cc-muted);font-size:.72rem}
+/* #4537: a flex item defaults to min-width:auto, so this one held the literal
+   "Acting as" plus a <select> whose intrinsic width is its widest option
+   ("none (general work)") and refused to shrink — .admin-actions' flex-wrap had
+   nothing it was allowed to break, so the whole line ran off the card. */
+.clanker-act-as{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px;min-width:0;max-width:100%%;color:var(--cc-muted);font-size:.72rem}
+/* The tier and acting-as controls ARE the <select> (class on the element), which
+   is why the .admin-act select descendant rule above never matched them. */
+select.admin-act{min-width:0;max-width:100%%}
 .agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:#79c0ff}
 .agent-role-chip button{border:none;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:1;opacity:.75;font:inherit}
 .agent-role-chip button:hover{opacity:1;color:#f85149}
@@ -1797,6 +1817,65 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .lb-custom-style-note code{color:var(--cc-accent)}
 .lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
 .lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
+/* ── #4537 Phone portrait (~390 CSS px). The page had breakpoints at 900/860/768/
+   560/520 and then nothing, so an iPhone in portrait fell off the right edge.
+   Four compounding causes, fixed here plus two structural ones above
+   (.clanker-row track sizing, .clanker-act-as shrinkability):
+
+   1. .page-tabs could neither wrap nor scroll. Five tabs at 14px 20px come to
+      roughly 600px, plus 96px of gutters — about 700px against 390px — so the
+      bar overflowed the document and "Management" onward were unreachable.
+   2. .ops / .main set only overflow-y:auto, which makes the computed
+      overflow-x auto as well. That turns the panel into a scroll container
+      clipping at its padding box, i.e. flush with the screen edge, which is why
+      the cut looked like the display rather than a card border. Naming the
+      horizontal axis makes that deliberate instead of inherited.
+   3. padding:40px 48px at every width spends a quarter of the screen on
+      gutters, leaving ~294px of content column.
+   4. .lb-row's seven tracks are ~470px of fixed widths before gaps or padding.
+
+   Kept as one block at the end of the sheet so the phone overrides win on
+   source order without inflating specificity. It stays ahead of the %%s custom
+   CSS slot below, so an operator's own stylesheet still has the last word. */
+@media(max-width:600px){
+  /* Wrap rather than scroll: a horizontal scroller with no visible scrollbar
+     hides the trailing tabs just as effectively as the overflow did. Wrapping
+     puts all five on screen and tappable. */
+  .page-tabs{flex-wrap:wrap;padding:0 16px}
+  .page-tab{flex:0 0 auto;padding:12px 12px;font-size:.88rem}
+
+  /* Gutters back to something a phone can spare, and the horizontal axis stated
+     outright. The overflow sources are fixed above, so hidden is a backstop
+     against a stray wide child, not the thing holding the layout together. */
+  .main,.ops{padding:28px 16px;overflow-x:hidden}
+
+  /* The army roster is a nowrap flex row of four labels; let it wrap. */
+  .cc-army{flex-wrap:wrap;gap:6px 14px}
+
+  /* Slightly tighter card-internal gutters on the densest rows. */
+  .clanker-row,.lb-row,.cc-q-item,.cc-tg-item,.cc-tg-head{padding-left:14px;padding-right:14px}
+
+  /* Leaderboard: 56px/1fr/120px/70px/70px/80px/72px cannot fit, so the seven cells reflow
+     onto three lines — rank + contributor, then tier + the three counts, then
+     the sparkline — instead of scrolling sideways. Placement is by child
+     position because .lb-head and the body rows emit the same seven children in
+     the same order, so the header keeps sitting over the column it labels. The
+     stat tracks stay fixed rem widths for exactly that reason: auto would size
+     per row and the header would drift out of alignment with the numbers. */
+  .lb-row{grid-template-columns:2.1rem minmax(0,1fr) 3.2rem 3.2rem 3.4rem;column-gap:6px;row-gap:4px}
+  .lb-row>:nth-child(1){grid-column:1;grid-row:1}
+  .lb-row>:nth-child(2){grid-column:2/-1;grid-row:1}
+  .lb-row>:nth-child(3){grid-column:1/3;grid-row:2}
+  .lb-row>:nth-child(4){grid-column:3;grid-row:2}
+  .lb-row>:nth-child(5){grid-column:4;grid-row:2}
+  .lb-row>:nth-child(6){grid-column:5;grid-row:2}
+  .lb-row>:nth-child(7){grid-column:1/-1;grid-row:3;text-align:left}
+  /* The uppercase, letter-spaced header labels are the widest thing in the stat
+     tracks; drop them a notch so "Findings" fits 3.4rem. */
+  .lb-head .lb-stat,.lb-head .lb-rank{font-size:.6rem}
+  .lb-spark{justify-content:flex-start}
+  .lb-trend{padding-left:14px;padding-right:14px}
+}
 </style>%s</head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
