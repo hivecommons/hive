@@ -696,14 +696,16 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 		color string
 		count int
 	}
+	// Tier colors route through the palette tokens so the light ramp reaches
+	// them (#4560); each token's dark value is the exact hex this table used.
 	tierStats := []tierStat{
-		{"Active", "#3fb950", activeCount},
-		{"Newcomer", "#d29922", tierCounts["newcomer"]},
-		{"Contributor", "#58a6ff", tierCounts["contributor"]},
-		{"Trusted", "#3fb950", tierCounts["trusted"]},
-		{"Merger", "#f778ba", tierCounts["merger"]},
-		{"Advisor", "#bc8cff", tierCounts["advisor"]},
-		{"Revoked", "#f85149", tierCounts["revoked"]},
+		{"Active", "var(--cc-green)", activeCount},
+		{"Newcomer", "var(--cc-amber)", tierCounts["newcomer"]},
+		{"Contributor", "var(--cc-accent)", tierCounts["contributor"]},
+		{"Trusted", "var(--cc-green)", tierCounts["trusted"]},
+		{"Merger", "var(--cc-pink)", tierCounts["merger"]},
+		{"Advisor", "var(--cc-purple)", tierCounts["advisor"]},
+		{"Revoked", "var(--cc-red)", tierCounts["revoked"]},
 	}
 	var tierBoxes strings.Builder
 	for _, ts := range tierStats {
@@ -853,10 +855,13 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-muted-2:#6e7681;
   --cc-code-bg:#0d1117;
   --cc-accent:#58a6ff;
+  --cc-accent-2:#79c0ff;
   --cc-accent-fg:#1f6feb;
   --cc-green:#3fb950;
   --cc-amber:#d29922;
   --cc-red:#f85149;
+  --cc-pink:#f778ba;
+  --cc-purple:#bc8cff;
 }
 @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
   color-scheme:light;
@@ -871,10 +876,13 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-muted-2:#7d858e;
   --cc-code-bg:#eff1f3;
   --cc-accent:#0969da;
+  --cc-accent-2:#0550ae;
   --cc-accent-fg:#0969da;
   --cc-green:#1a7f37;
   --cc-amber:#9a6700;
   --cc-red:#cf222e;
+  --cc-pink:#bf3989;
+  --cc-purple:#8250df;
 }}
 :root[data-theme="light"]{
   color-scheme:light;
@@ -889,10 +897,13 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-muted-2:#7d858e;
   --cc-code-bg:#eff1f3;
   --cc-accent:#0969da;
+  --cc-accent-2:#0550ae;
   --cc-accent-fg:#0969da;
   --cc-green:#1a7f37;
   --cc-amber:#9a6700;
   --cc-red:#cf222e;
+  --cc-pink:#bf3989;
+  --cc-purple:#8250df;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--cc-bg);color:var(--cc-text);margin:0;min-height:100vh}
@@ -903,10 +914,10 @@ h1{font-size:2rem;margin-bottom:8px}
 .subtitle{color:var(--cc-muted);font-size:1.1rem;margin-bottom:32px}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:24px}
 .stat{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:14px 8px;text-align:center}
-.stat-num{font-size:1.5rem;font-weight:700;color:#58a6ff}
+.stat-num{font-size:1.5rem;font-weight:700;color:var(--cc-accent)}
 .stat-label{font-size:.7rem;color:var(--cc-muted);margin-top:4px}
 .steps{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:24px;margin-top:24px}
-.steps h3{margin-top:0;color:#58a6ff}
+.steps h3{margin-top:0;color:var(--cc-accent)}
 .steps ol{padding-left:20px;line-height:2}
 code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .how{margin-top:32px}
@@ -917,7 +928,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tier-table th{color:var(--cc-muted);font-weight:600}
 .feed-header{padding:20px 20px 12px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:8px}
 .feed-header h3{font-size:.95rem;color:var(--cc-text)}
-.feed-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
+.feed-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
 @keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:.4}}
 .feed-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
 .feed-scroll{flex:1;overflow-y:auto;padding:0}
@@ -926,7 +937,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .feed-entry:hover{background:rgba(88,166,255,.04)}
 .feed-text{flex:1;min-width:0}
 .feed-time{color:var(--cc-muted);font-size:.75rem;white-space:nowrap;flex-shrink:0}
-.feed-role{color:#58a6ff;font-weight:500}
+.feed-role{color:var(--cc-accent);font-weight:500}
 .feed-cli{color:var(--cc-muted);font-size:.8rem}
 .feed-empty{padding:40px 20px;text-align:center;color:var(--cc-muted);font-size:.85rem}
 @media(max-width:768px){.page{flex-direction:column}.sidebar{border-left:none;border-top:1px solid var(--cc-border);max-width:none;max-height:300px}}
@@ -938,7 +949,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .page-tabs{display:flex;flex-wrap:wrap;gap:2px;background:var(--cc-surface);border-bottom:1px solid var(--cc-border);padding:0 48px}
 .page-tab{background:none;border:none;color:var(--cc-muted);font-size:.95rem;font-weight:500;padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
 .page-tab:hover{color:var(--cc-text)}
-.page-tab.active{color:var(--cc-text);border-bottom-color:#58a6ff}
+.page-tab.active{color:var(--cc-text);border-bottom-color:var(--cc-accent)}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .ops{padding:40px 48px;overflow-y:auto}
@@ -957,7 +968,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-card-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
 .ops-filters{display:flex;gap:4px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2);flex-wrap:wrap}
 .ops-filter{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-muted);font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
-.ops-filter.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.ops-filter.active{background:#1f6feb;border-color:var(--cc-accent-fg);color:#fff}
 .work-list{max-height:520px;overflow-y:auto}
 .work-item{padding:14px 20px;border-bottom:1px solid var(--cc-border-2);cursor:pointer}
 .work-item:hover{background:rgba(88,166,255,.04)}
@@ -970,18 +981,18 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    a small external-link glyph — so it reads as an obvious "open on GitHub"
    action, not decoration. Inherits the host element's font (monospace repo#num,
    or inline log text) so it drops into any of those contexts unchanged. */
-.cc-issue-link{display:inline-flex;align-items:center;gap:3px;color:#58a6ff;text-decoration:none;font:inherit;border-radius:4px;transition:color .15s}
-.cc-issue-link:hover,.cc-issue-link:focus-visible{color:#79c0ff;text-decoration:underline}
-.cc-issue-link:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+.cc-issue-link{display:inline-flex;align-items:center;gap:3px;color:var(--cc-accent);text-decoration:none;font:inherit;border-radius:4px;transition:color .15s}
+.cc-issue-link:hover,.cc-issue-link:focus-visible{color:var(--cc-accent-2);text-decoration:underline}
+.cc-issue-link:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
 .cc-issue-link-ic{flex-shrink:0;opacity:.85}
 .cc-issue-link:hover .cc-issue-link-ic{opacity:1}
 .work-title{font-size:.9rem;color:var(--cc-text);margin:2px 0 6px}
 .work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:var(--cc-muted)}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
-.pill-progress{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
-.pill-review{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
-.pill-passed{background:rgba(63,185,80,.12);color:#3fb950;border-color:rgba(63,185,80,.3)}
-.pill-blocked{background:rgba(248,81,73,.12);color:#f85149;border-color:rgba(248,81,73,.3)}
+.pill-progress{background:rgba(88,166,255,.12);color:var(--cc-accent);border-color:rgba(88,166,255,.3)}
+.pill-review{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
+.pill-passed{background:rgba(63,185,80,.12);color:var(--cc-green);border-color:rgba(63,185,80,.3)}
+.pill-blocked{background:rgba(248,81,73,.12);color:var(--cc-red);border-color:rgba(248,81,73,.3)}
 .pill-idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* #2574 (follow-up): the Connected-clankers card is a NARROW column. The old
    layout put the multi-line identity text (.clanker-main) and the inline
@@ -1013,11 +1024,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-sub{font-size:.74rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
 /* Row is align-items:start (grid), so nudge the small dot down to sit level with
    the username's first line instead of the very top of the row. */
-.clanker-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex-shrink:0;margin-top:7px}
+.clanker-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);flex-shrink:0;margin-top:7px}
 .clanker-dot.stale{background:var(--cc-muted)}
 .pipeline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0}
 .pipe-node{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:8px 14px;font-size:.82rem;color:var(--cc-text)}
-.pipe-node .lgtm{color:#3fb950;font-size:.72rem}
+.pipe-node .lgtm{color:var(--cc-green);font-size:.72rem}
 .pipe-arrow{color:var(--cc-muted)}
 .policy-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--cc-border-2);font-size:.85rem}
 .policy-row:last-child{border-bottom:none}
@@ -1029,7 +1040,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
    accent border, professional not loud. Readability preserved. */
 .lb-row--me{background:rgba(31,111,235,.09);box-shadow:inset 3px 0 0 0 #1f6feb}
-.lb-you{display:inline-block;margin-left:8px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.3);border-radius:999px;padding:1px 7px;vertical-align:middle}
+.lb-you{display:inline-block;margin-left:8px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-accent);background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.3);border-radius:999px;padding:1px 7px;vertical-align:middle}
 .lb-head{color:var(--cc-muted);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:var(--cc-bg)}
 .lb-rank{color:var(--cc-muted);font-variant-numeric:tabular-nums}
 .lb-name{color:var(--cc-text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1055,7 +1066,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid var(--cc-border);background:var(--cc-bg);color:var(--cc-muted);text-transform:capitalize;white-space:nowrap}
 .tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
 .tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
-.tier-badge.tier-merger{border-color:rgba(247,120,186,.42);background:rgba(247,120,186,.10);color:#f778ba}
+.tier-badge.tier-merger{border-color:rgba(247,120,186,.42);background:rgba(247,120,186,.10);color:var(--cc-pink)}
 .tier-badge.tier-trusted{border-color:rgba(201,162,39,.40);background:rgba(201,162,39,.08);color:#c9a94a}
 .tier-badge.tier-contributor{border-color:rgba(110,163,201,.38);background:rgba(110,163,201,.08);color:#6ea3c9}
 .tier-badge.tier-newcomer{border-color:var(--cc-border);background:var(--cc-bg);color:var(--cc-muted)}
@@ -1080,14 +1091,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    anchored to the wrapper so it sits just under the glyph. */
 .info-affordance{position:relative;display:inline-flex;align-items:center}
 .info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:var(--cc-muted-2);cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
-.info-btn:hover,.info-btn:focus{color:#58a6ff;outline:none}
+.info-btn:hover,.info-btn:focus{color:var(--cc-accent);outline:none}
 .info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:var(--cc-text-2);font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
 .info-pop[hidden]{display:none}
 .info-pop h4{margin:0 0 4px;font-size:.76rem;color:var(--cc-text);font-weight:600}
 .info-pop ul{margin:4px 0 0;padding-left:16px}
 .info-pop li{margin:2px 0}
 .info-pop code{background:var(--cc-surface);border:1px solid var(--cc-border-2);border-radius:4px;padding:0 3px;font-size:.7rem}
-.custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:#58a6ff}
+.custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:var(--cc-accent)}
 .custom-css-pop{width:min(320px,calc(100vw - 32px));z-index:10002}
 .custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text-2);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
 /* Compact tier badge inline next to a connected clanker's identity. */
@@ -1140,9 +1151,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .dz-rankpill .rank-sub{font-size:.64rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cc-muted);margin-top:4px}
 /* Livebar strip along the bottom of the plate — only when a task is live. */
 .dz-livebar{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 26px 12px;border-top:1px solid var(--cc-border-2);background:color-mix(in srgb,var(--cc-bg-deep) 40%%,transparent);font-size:.74rem;color:var(--cc-text-2)}
-.dz-livebar .dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex:none}
+.dz-livebar .dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);flex:none}
 @media(prefers-reduced-motion:no-preference){.dz-livebar .dot{animation:dzpulse 2s infinite}@keyframes dzpulse{50%%{opacity:.35}}}
-.dz-livebar .live-tag{font-weight:700;font-size:.68rem;letter-spacing:.06em;color:#3fb950}
+.dz-livebar .live-tag{font-weight:700;font-size:.68rem;letter-spacing:.06em;color:var(--cc-green)}
 .dz-livebar .live-dim{color:var(--cc-muted);font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.7rem}
 /* Founding mark: real registration order only (first twenty), never faked. */
 .me-founding{display:inline-block;margin-top:8px;padding:2px 9px;border-radius:999px;font-size:.64rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--me-accent);border:1px solid var(--me-accent);background:var(--me-accent-soft)}
@@ -1199,7 +1210,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-hive{display:flex;align-items:center;gap:10px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:10px 14px;font-size:.82rem;color:var(--cc-text-2)}
 .me-hive__name{font-size:.82rem;font-weight:700;letter-spacing:.03em;color:var(--cc-text);flex:1;text-transform:uppercase}
 .me-hive__rel{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:var(--me-accent-soft);color:var(--me-accent)}
-.me-hive__rel--owner{background:rgba(210,153,34,.16);color:#d29922}
+.me-hive__rel--owner{background:rgba(210,153,34,.16);color:var(--cc-amber)}
 .me-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
 .me-share{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;font-size:.85rem;font-weight:600;text-decoration:none;background:var(--me-accent);color:var(--cc-bg);border:1px solid var(--me-accent);cursor:pointer;font-family:inherit}
 .me-share:hover{filter:brightness(1.08)}
@@ -1303,7 +1314,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-note{color:var(--cc-muted-2);font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:var(--cc-bg);padding:1px 6px;border-radius:4px}
 .prompt-preview{margin-top:10px;border-top:1px solid var(--cc-border-2);padding-top:8px}
-.prompt-preview summary{cursor:pointer;color:#58a6ff;font-size:.78rem;list-style:none}
+.prompt-preview summary{cursor:pointer;color:var(--cc-accent);font-size:.78rem;list-style:none}
 .prompt-preview summary::-webkit-details-marker{display:none}
 .prompt-preview summary::before{content:'\25B8 ';color:var(--cc-muted)}
 .prompt-preview[open] summary::before{content:'\25BE '}
@@ -1314,13 +1325,13 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    Management & Operations tab. Owner/read-write only; a read viewer never sees them. */
 .ops-admin{display:none}
 .ops-admin.enabled{display:block}
-.admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:#d29922;border:1px solid rgba(210,153,34,.3);margin-left:auto}
+.admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:var(--cc-amber);border:1px solid rgba(210,153,34,.3);margin-left:auto}
 .admin-body{padding:16px 20px}
 .admin-toggle{display:flex;align-items:center;gap:10px;padding:8px 0}
 .admin-switch{width:38px;height:20px;border-radius:999px;background:var(--cc-border);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
 .admin-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%%;background:var(--cc-text);transition:left .15s}
 .admin-switch.on{background:#1f6feb}
-.admin-switch.on.danger{background:#f85149}
+.admin-switch.on.danger{background:var(--cc-red)}
 .admin-switch.on::after{left:20px}
 .admin-toggle-label{font-size:.85rem;color:var(--cc-text)}
 .admin-toggle-sub{font-size:.74rem;color:var(--cc-muted)}
@@ -1332,7 +1343,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
 .admin-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:var(--cc-text-2);border:1px solid var(--cc-border)}
 .admin-chip .x{cursor:pointer;opacity:.7}
-.admin-chip .x:hover{opacity:1;color:#f85149}
+.admin-chip .x:hover{opacity:1;color:var(--cc-red)}
 .admin-addrow{display:flex;gap:4px}
 .admin-addrow input{flex:1;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font-size:.78rem;padding:5px 8px;font-family:inherit}
 .admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
@@ -1353,7 +1364,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-tier__head{display:flex;align-items:center;gap:8px;min-width:0}
 .admin-tier__name{font-size:.8rem;color:var(--cc-text);text-transform:capitalize}
 .admin-tier input{width:100%%;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.78rem;padding:4px 6px;outline:none;text-align:right}
-.admin-tier input:focus{border-color:#1f6feb}
+.admin-tier input:focus{border-color:var(--cc-accent-fg)}
 .admin-tier input:disabled{opacity:.45}
 .admin-tier__col{font-size:.62rem;color:var(--cc-muted-2);text-align:right;text-transform:uppercase;letter-spacing:.03em}
 .admin-tier--head{border-bottom:1px solid var(--cc-border);padding-bottom:4px}
@@ -1363,7 +1374,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-actions{display:flex;gap:6px;flex-wrap:wrap}
 .admin-act{background:var(--cc-border-2);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
 .admin-act:hover{border-color:var(--cc-muted)}
-.admin-act.danger:hover{border-color:#f85149;color:#f85149}
+.admin-act.danger:hover{border-color:var(--cc-red);color:var(--cc-red)}
 .admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .agent-role-grants{display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%%;font-size:.7rem;color:var(--cc-muted)}
 .agent-role-grants__label{font-weight:600;color:var(--cc-text-2)}
@@ -1375,9 +1386,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* The tier and acting-as controls ARE the <select> (class on the element), which
    is why the .admin-act select descendant rule above never matched them. */
 select.admin-act{min-width:0;max-width:100%%}
-.agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:#79c0ff}
+.agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:var(--cc-accent-2)}
 .agent-role-chip button{border:none;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:1;opacity:.75;font:inherit}
-.agent-role-chip button:hover{opacity:1;color:#f85149}
+.agent-role-chip button:hover{opacity:1;color:var(--cc-red)}
 .agent-role-add{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .admin-modal-back{display:none;position:fixed;inset:0;background:rgba(1,4,9,.7);z-index:1000;align-items:center;justify-content:center}
 .admin-modal-back.show{display:flex}
@@ -1386,17 +1397,17 @@ select.admin-act{min-width:0;max-width:100%%}
 .admin-modal p{font-size:.85rem;color:var(--cc-muted);line-height:1.5;margin:0 0 18px}
 .admin-modal-btns{display:flex;gap:8px;justify-content:flex-end}
 .admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid var(--cc-border);background:var(--cc-border-2);color:var(--cc-text-2)}
-.admin-modal-btns button.confirm{background:#da3633;border-color:#f85149;color:#fff}
+.admin-modal-btns button.confirm{background:#da3633;border-color:var(--cc-red);color:#fff}
 .admin-note{color:var(--cc-muted-2);font-size:.76rem;margin-top:10px;line-height:1.5}
 /* ── Operations command center — live SSE-driven queue / travel / dev-log /
    achievements / army framing. Subtle-professional motion only; degrades to the
    existing poll when SSE is unavailable. Additive, read-only. ─────────────── */
-.cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:#3fb950}
-.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
-.cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:#d29922}
+.cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:var(--cc-green)}
+.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
+.cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:var(--cc-amber)}
 /* Polling (stale) dot: a very slow, gentle breathe rather than the brisk live
    pulse — signals "still watching, just on the calmer poll cadence". */
-.cc-live.stale .cc-live-dot{background:#d29922;animation:cc-slowpulse 2.8s ease-in-out infinite}
+.cc-live.stale .cc-live-dot{background:var(--cc-amber);animation:cc-slowpulse 2.8s ease-in-out infinite}
 @keyframes cc-slowpulse{0%%,100%%{opacity:1}50%%{opacity:.45}}
 @media(prefers-reduced-motion:reduce){.cc-live .cc-live-dot,.cc-live.stale .cc-live-dot{animation:none!important}}
 /* Ready-work queue play/pause — the SAME contribute_suspended control as the
@@ -1413,7 +1424,7 @@ select.admin-act{min-width:0;max-width:100%%}
    pair off-center inside the circle. */
 .queue-suspend-btn svg{display:block;width:12px;height:12px;fill:currentColor}
 .queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:var(--cc-text-2)}
-.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:#f85149;background:rgba(248,81,73,.08)}
+.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:var(--cc-red);background:rgba(248,81,73,.08)}
 .queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
 .queue-suspend-btn:disabled{opacity:.5;cursor:not-allowed}
 /* Army roster header line under the clanker card */
@@ -1421,8 +1432,8 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-army b{color:var(--cc-text);font-weight:600}
 .cc-army-stat{display:inline-flex;align-items:center;gap:5px}
 .cc-army-stat .dot{width:7px;height:7px;border-radius:50%%}
-.cc-army-stat.working .dot{background:#58a6ff}
-.cc-army-stat.reviewing .dot{background:#d29922}
+.cc-army-stat.working .dot{background:var(--cc-accent)}
+.cc-army-stat.reviewing .dot{background:var(--cc-amber)}
 .cc-army-stat.idle .dot{background:var(--cc-muted)}
 /* Clanker rows: enter pop-in / leave fade so the roster feels alive */
 @keyframes cc-popin{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
@@ -1433,8 +1444,8 @@ select.admin-act{min-width:0;max-width:100%%}
 @keyframes cc-landing{0%%{box-shadow:0 0 0 0 rgba(88,166,255,.5)}100%%{box-shadow:0 0 0 6px rgba(88,166,255,0)}}
 .clanker-row.cc-landing{animation:cc-landing .8s ease}
 .clanker-status{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;margin-left:6px;border:1px solid transparent}
-.clanker-status.working{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
-.clanker-status.reviewing{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
+.clanker-status.working{background:rgba(88,166,255,.12);color:var(--cc-accent);border-color:rgba(88,166,255,.3)}
+.clanker-status.reviewing{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
 .clanker-status.idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
@@ -1460,7 +1471,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .cc-q-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cc-q-labels{display:flex;flex-wrap:wrap;gap:4px}
-.cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;flex-shrink:0;padding-top:2px}
+.cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-accent);flex-shrink:0;padding-top:2px}
 .cc-q-item.cc-leaving{animation:cc-fadeout .45s ease forwards}
 /* FLIP glide for operator drag-reorder: items that changed slot are given an
    inverse transform (see ccFlipQueue) then eased back to translateY(0). Subtle —
@@ -1476,7 +1487,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-q-search-ic{color:var(--cc-muted-2);font-size:.85rem;flex-shrink:0;line-height:1}
 .cc-q-search input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.82rem;padding:6px 10px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-q-search input::placeholder{color:var(--cc-muted-2)}
-.cc-q-search input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-q-search input:focus{border-color:var(--cc-accent-fg);box-shadow:0 0 0 3px rgba(31,111,235,.25)}
 .cc-q-search-clear{background:none;border:none;color:var(--cc-muted-2);cursor:pointer;font-size:1rem;line-height:1;padding:2px 4px;display:none}
 .cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
 .cc-q-search-clear:hover{color:var(--cc-text-2)}
@@ -1494,7 +1505,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-interests-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
 .cc-interests-empty{font-size:.72rem;color:var(--cc-muted-2)}
 .cc-interests-empty code{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:4px;padding:0 4px;font-size:.9em}
-.cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:var(--cc-green);border:1px solid rgba(46,160,67,.3)}
 .cc-interest-x{cursor:pointer;opacity:.7;font-size:.95rem;line-height:1}
 .cc-interest-x:hover{opacity:1}
 /* #2677: read-only mirror of a contributor's OWN label interests, shown on their
@@ -1504,13 +1515,13 @@ select.admin-act{min-width:0;max-width:100%%}
    here — editing stays contributor-owned via My label interests above. */
 .clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:var(--cc-muted-2)}
 .clanker-interests-label{color:var(--cc-muted-2)}
-.clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:var(--cc-green);border:1px solid rgba(46,160,67,.3)}
 /* #2547 peer compatibility: the hub-vs-client protocol comparison, rendered ONLY
    when the versions actually differ so a healthy fleet stays quiet. Amber (not
    red) on purpose — a drifted peer is still fully served; this is a notice, not
    an error state, and must not read as "this clanker is broken/blocked". */
-.clanker-proto{margin-top:3px;font-size:.68rem;color:#d29922}
-.clanker-proto.incompatible{color:#f85149}
+.clanker-proto{margin-top:3px;font-size:.68rem;color:var(--cc-amber)}
+.clanker-proto.incompatible{color:var(--cc-red)}
 /* #2637 owner roster: an OWNER-facing aggregate of which labels connected
    contributors subscribe to, and who — so the owner can label matching issues to
    route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
@@ -1519,21 +1530,21 @@ select.admin-act{min-width:0;max-width:100%%}
 .label-affinity-title{font-size:.82rem;font-weight:600;color:var(--cc-text-2)}
 .label-affinity-body{display:flex;flex-direction:column;gap:7px}
 .affinity-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:.78rem}
-.affinity-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3);flex-shrink:0}
-.affinity-count{font-weight:700;color:#3fb950;font-size:.7rem}
+.affinity-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:var(--cc-green);border:1px solid rgba(46,160,67,.3);flex-shrink:0}
+.affinity-count{font-weight:700;color:var(--cc-green);font-size:.7rem}
 .affinity-who{color:var(--cc-muted);word-break:break-word}
 .affinity-empty{font-size:.74rem;color:var(--cc-muted-2);line-height:1.5}
 .cc-interests-add{display:flex;gap:6px}
 .cc-interests-add input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-interests-add input::placeholder{color:var(--cc-muted-2)}
-.cc-interests-add input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-interests-add input:focus{border-color:var(--cc-accent-fg);box-shadow:0 0 0 3px rgba(31,111,235,.25)}
 .cc-interests-add button{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text-2);cursor:pointer;font:inherit;font-size:.78rem;padding:5px 12px}
-.cc-interests-add button:hover{border-color:#3fb950;color:#3fb950}
+.cc-interests-add button:hover{border-color:var(--cc-green);color:var(--cc-green)}
 /* A queue row matching one of the viewer's label interests: a soft green rail on
    the leading edge + faint tint. Never hides the row — pure emphasis. */
 .cc-q-item.cc-q-mine{background:rgba(46,160,67,.06);box-shadow:inset 3px 0 0 0 #2ea043}
 .cc-q-item.cc-q-mine:first-child{background:rgba(46,160,67,.1)}
-.cc-q-mine-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#3fb950;background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+.cc-q-mine-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-green);background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* Per-row "⋯" context affordance — owner/read-write only (rendered only when
    adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
 .cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
@@ -1556,23 +1567,23 @@ select.admin-act{min-width:0;max-width:100%%}
    belt-and-braces fallback for engines that don't honour color-scheme on the
    control; the field itself flips with the (#2612) light/dark tokens. */
 .cc-q-moverow input[type=number]{width:56px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:4px 6px;outline:none;color-scheme:light dark}
-.cc-q-moverow input:focus{border-color:#1f6feb}
+.cc-q-moverow input:focus{border-color:var(--cc-accent-fg)}
 .cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
 .cc-q-moverow button:hover{background:#388bfd}
 /* Optional hold-reason field (#queue-hold-reason) in the ⋯ menu — a compact inline
    note the operator can fill before Hold. Empty is fine (holding without a note). */
 .cc-q-holdreason{padding:2px 9px 7px}
 .cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.76rem;padding:4px 7px;outline:none}
-.cc-q-holdreason-input:focus{border-color:#1f6feb}
+.cc-q-holdreason-input:focus{border-color:var(--cc-accent-fg)}
 /* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
    not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
-.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#d29922;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-amber);background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
    least one held issue and the viewer is owner/read-write (JS-toggled display). */
-.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:#d29922;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
+.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:var(--cc-amber);background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
 .queue-resume-all-btn:hover{background:rgba(210,153,34,.2)}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
@@ -1580,22 +1591,22 @@ select.admin-act{min-width:0;max-width:100%%}
 .opp-list{padding:2px 0}
 .opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2)}
 .opp-item:last-child{border-bottom:none}
-.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.14)}
-.opp-heat.warm{background:#d29922;box-shadow:0 0 0 3px rgba(210,153,34,.14)}
+.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:var(--cc-green);box-shadow:0 0 0 3px rgba(63,185,80,.14)}
+.opp-heat.warm{background:var(--cc-amber);box-shadow:0 0 0 3px rgba(210,153,34,.14)}
 .opp-heat.cool{background:var(--cc-muted-2);box-shadow:none}
 .opp-body{flex:1;min-width:0}
 .opp-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .opp-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .opp-reason{font-size:.7rem;color:var(--cc-muted-2)}
 .opp-add{flex-shrink:0;align-self:center;background:none;border:1px solid var(--cc-border);color:var(--cc-text-2);font:inherit;font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:7px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
-.opp-add:hover{border-color:#1f6feb;color:#fff;background:rgba(31,111,235,.15)}
+.opp-add:hover{border-color:var(--cc-accent-fg);color:#fff;background:rgba(31,111,235,.15)}
 .opp-add:disabled{opacity:.55;cursor:default;border-color:var(--cc-border);color:var(--cc-muted);background:none}
 /* ── End-of-queue + hive-settings (#2595) — turn a short queue into an intentional,
    reassuring moment: a calm "all caught up" marker, the managed-queue rate limits
    presented readably, and the viewer's own daily quota. Sober, ranked-family styling. */
 .cc-q-end{padding:18px 20px 6px;text-align:center}
 .cc-q-end-badge{display:inline-flex;align-items:center;gap:8px;font-size:.82rem;color:var(--cc-muted);background:var(--cc-bg);border:1px solid var(--cc-border-2);border-radius:999px;padding:7px 16px}
-.cc-q-end-badge .cc-q-end-ic{color:#3fb950;font-size:.95rem;line-height:1}
+.cc-q-end-badge .cc-q-end-ic{color:var(--cc-green);font-size:.95rem;line-height:1}
 .hive-settings{margin:14px 20px 4px;background:var(--cc-bg);border:1px solid var(--cc-border-2);border-radius:10px;padding:14px 16px}
 .hive-settings h4{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-muted)}
 .hive-settings p.hs-lead{margin:0 0 10px;font-size:.82rem;color:var(--cc-text-2);line-height:1.5}
@@ -1603,8 +1614,8 @@ select.admin-act{min-width:0;max-width:100%%}
 .hs-tier{flex:1 1 130px;min-width:120px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;padding:9px 11px}
 .hs-tier__name{font-size:.72rem;font-weight:600;text-transform:capitalize;color:var(--cc-text);display:flex;align-items:center;gap:6px}
 .hs-tier__lim{font-size:.74rem;color:var(--cc-muted);margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.hs-tier.is-you{border-color:#1f6feb;box-shadow:0 0 0 2px rgba(31,111,235,.18)}
-.hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff}
+.hs-tier.is-you{border-color:var(--cc-accent-fg);box-shadow:0 0 0 2px rgba(31,111,235,.18)}
+.hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-accent)}
 /* Daily quota widget — a slim progress meter, calm. Used at end-of-queue AND on
    the Me card. Fill width is set inline from the REAL used/limit ratio. */
 .quota{margin-top:12px}
@@ -1650,10 +1661,10 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-log-ic{flex-shrink:0}
 .cc-log-body{flex:1;min-width:0;color:var(--cc-text-2);line-height:1.45}
 .cc-log-body b{color:var(--cc-text)}
-.cc-log-body .who{color:#58a6ff;font-weight:600}
+.cc-log-body .who{color:var(--cc-accent);font-weight:600}
 .cc-log-body .ref{color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
-.cc-log-body a.ref.cc-issue-link{color:#58a6ff}
-.cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:#79c0ff}
+.cc-log-body a.ref.cc-issue-link{color:var(--cc-accent)}
+.cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:var(--cc-accent-2)}
 .cc-log-time{flex-shrink:0;color:var(--cc-muted-2);font-size:.72rem;white-space:nowrap;padding-top:1px}
 /* Achievement pops — tasteful badge toast, top-right, debounced */
 .cc-ach-wrap{position:fixed;top:16px;right:16px;z-index:1150;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -1663,7 +1674,7 @@ select.admin-act{min-width:0;max-width:100%%}
 @keyframes cc-ach-out{to{opacity:0;transform:translateX(24px)}}
 .cc-ach-ic{font-size:1.3rem;flex-shrink:0}
 .cc-ach-txt{min-width:0}
-.cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#d29922}
+.cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--cc-amber)}
 .cc-ach-s{font-size:.82rem;color:var(--cc-text);margin-top:1px}
 /* ── Operations two-region shell: MAIN area + full-height DEV-LOG RAIL ──────────
    The main area flexes to fill remaining width; the rail is a fixed-width panel
@@ -1714,10 +1725,10 @@ select.admin-act{min-width:0;max-width:100%%}
    theme-consistent with the dark palette, reduced-motion safe. */
 .client-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:4px 0 20px}
 .client-tile{display:flex;align-items:flex-start;gap:9px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:var(--cc-text);font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
-.client-tile:hover{border-color:#58a6ff;background:#1b2230}
+.client-tile:hover{border-color:var(--cc-accent);background:#1b2230}
 .client-tile:active{transform:translateY(1px)}
-.client-tile:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
-.client-tile.sel{border-color:#58a6ff;background:rgba(88,166,255,.10);box-shadow:inset 0 0 0 1px rgba(88,166,255,.35)}
+.client-tile:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
+.client-tile.sel{border-color:var(--cc-accent);background:rgba(88,166,255,.10);box-shadow:inset 0 0 0 1px rgba(88,166,255,.35)}
 .client-tile .ct-emblem{width:24px;height:24px;flex:0 0 24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--cc-bg);overflow:hidden}
 .client-tile .ct-emblem svg{width:18px;height:18px;display:block}
 .client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
@@ -1731,10 +1742,10 @@ select.admin-act{min-width:0;max-width:100%%}
 .openin-row.show{display:flex}
 .openin-row .oi-body{min-width:0;font-size:.8rem;color:var(--cc-muted);line-height:1.4}
 .openin-row .oi-body strong{color:var(--cc-text)}
-.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:#58a6ff;text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
-.openin-link:hover{border-color:#58a6ff}
+.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-accent);text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
+.openin-link:hover{border-color:var(--cc-accent)}
 .openin-link svg{width:14px;height:14px}
-.oi-note{color:#d29922;font-weight:600}
+.oi-note{color:var(--cc-amber);font-weight:600}
 /* Customizable, copy-pasteable per-client PROMPT (kept in an editable block the
    contributor can read/tweak, NOT compressed into a URL). Additive to the shell
    command copy block above it. */
@@ -1742,7 +1753,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .prompt-block h4{margin:0 0 6px;font-size:.82rem;color:var(--cc-text);font-weight:600}
 .prompt-block p.pb-sub{margin:0 0 10px;color:var(--cc-muted);font-size:.76rem;line-height:1.4}
 .prompt-block textarea{width:100%%;min-height:118px;resize:vertical;background:var(--cc-bg-deep);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5}
-.prompt-block textarea:focus{outline:none;border-color:#58a6ff}
+.prompt-block textarea:focus{outline:none;border-color:var(--cc-accent)}
 .pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
@@ -1818,6 +1829,8 @@ select.admin-act{min-width:0;max-width:100%%}
 :root:not([data-theme="dark"]) .pill-review,:root:not([data-theme="dark"]) .clanker-status.reviewing{background:rgba(154,103,0,.12);color:var(--cc-amber);border-color:rgba(154,103,0,.30)}
 :root:not([data-theme="dark"]) .pill-passed{background:rgba(26,127,55,.12);color:var(--cc-green);border-color:rgba(26,127,55,.30)}
 :root:not([data-theme="dark"]) .pill-blocked{background:rgba(207,34,46,.10);color:var(--cc-red);border-color:rgba(207,34,46,.30)}
+:root:not([data-theme="dark"]) .cc-live{background:rgba(26,127,55,.08);border-color:rgba(26,127,55,.30);color:#116329}
+:root:not([data-theme="dark"]) .cc-live.stale{background:rgba(154,103,0,.08);border-color:rgba(154,103,0,.30);color:#7d4e00}
 }
 :root[data-theme="light"] .ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,var(--cc-border-2) 0%%,var(--cc-surface) 100%%)}
 :root[data-theme="light"] .cc-ach{background:var(--cc-surface)}
@@ -1828,6 +1841,8 @@ select.admin-act{min-width:0;max-width:100%%}
 :root[data-theme="light"] .pill-review,:root[data-theme="light"] .clanker-status.reviewing{background:rgba(154,103,0,.12);color:var(--cc-amber);border-color:rgba(154,103,0,.30)}
 :root[data-theme="light"] .pill-passed{background:rgba(26,127,55,.12);color:var(--cc-green);border-color:rgba(26,127,55,.30)}
 :root[data-theme="light"] .pill-blocked{background:rgba(207,34,46,.10);color:var(--cc-red);border-color:rgba(207,34,46,.30)}
+:root[data-theme="light"] .cc-live{background:rgba(26,127,55,.08);border-color:rgba(26,127,55,.30);color:#116329}
+:root[data-theme="light"] .cc-live.stale{background:rgba(154,103,0,.08);border-color:rgba(154,103,0,.30);color:#7d4e00}
 /* ── (#2612 part d) Conservative de-crowd: small uniform breathing room on the
    densest grids (the onboarding stat row and the Operations cards). No card
    removed, no structural/layout change — just a touch more gap/padding so the
@@ -1949,7 +1964,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
 <p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:var(--cc-text)">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
 <div class="stat-row">
-<div class="stat"><div class="stat-num" style="color:#58a6ff">%d</div><div class="stat-label">Total</div></div>
+<div class="stat"><div class="stat-num" style="color:var(--cc-accent)">%d</div><div class="stat-label">Total</div></div>
 %s
 </div>
 <div class="steps">
@@ -2023,7 +2038,7 @@ select.admin-act{min-width:0;max-width:100%%}
      the per-task credential boundary tracked in #2537. -->
 <div id="k8s-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
 <strong style="color:var(--cc-text)">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
-<span style="color:var(--cc-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
+<span style="color:var(--cc-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2537</a> and is not solved by this path.</span>
 </div>
 <!-- Host-only note. Shown for backends the containerized/Kubernetes paths cannot
      run, so the mode flip to Host is explained rather than mysterious: "other"
@@ -2033,7 +2048,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <strong style="color:var(--cc-text)">This backend runs on your host, not in a container.</strong> The mode selector has been switched to <strong>Host</strong> for you. <strong>Antigravity (agy)</strong> signs in through an interactive Google OAuth flow &mdash; a browser URL plus a pasted code, with no API-key mode &mdash; so a container or pod has no session to inherit, and the contributor image does not ship the binary. Run <code>agy</code> once to sign in, then start the relay on the host. Its print mode (<code>agy -p</code>) is verified, so headless host runs work; Kubernetes does not.
 </div>
 <div id="multi-hub-note" style="margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
-<strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:#58a6ff">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:#58a6ff">#2846</a>.
+<strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
 </div>
 <p style="color:var(--cc-muted);margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div style="margin-top:16px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:16px;position:relative">
@@ -2342,10 +2357,10 @@ update();  // initial paint: copy block + branded UI in sync from first load
 })();
 </script>
 </div>
-<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:#58a6ff">docs/podman-rootless-ci.md</a>.</p>
-<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:var(--cc-accent)">docs/podman-rootless-ci.md</a>.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:var(--cc-accent)">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
+<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-accent);text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
 </div>
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
@@ -6240,7 +6255,7 @@ poll();setInterval(poll,3000);
 fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   var el=document.getElementById('hive-version');
   var dot=d.behind?'\u{1F7E1}':'\u{1F7E2}';
-  el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
+  el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
 </body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
@@ -8258,16 +8273,16 @@ func (s *Server) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;padding:40px;max-width:900px;margin:0 auto}
 h1{margin-bottom:8px;font-size:1.8rem}
 .subtitle{color:#8b949e;margin-bottom:32px}
-h2{margin-top:32px;margin-bottom:12px;color:#58a6ff;font-size:1.2rem}
+h2{margin-top:32px;margin-bottom:12px;color:var(--cc-accent);font-size:1.2rem}
 .endpoint{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:12px}
-.method{color:#3fb950;font-weight:bold;margin-right:8px}
-.path{color:#58a6ff;font-family:monospace}
+.method{color:var(--cc-green);font-weight:bold;margin-right:8px}
+.path{color:var(--cc-accent);font-family:monospace}
 .desc{color:#8b949e;margin-top:4px;font-size:0.9rem}
 pre{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:12px;overflow-x:auto;font-size:0.85rem;color:#e6edf3}
 code{font-family:'SF Mono',monospace;font-size:0.85rem}
 .token-box{background:#161b22;border:1px solid #f0883e;border-radius:8px;padding:16px;margin:16px 0}
 .token-box h3{color:#f0883e;margin-bottom:8px}
-a{color:#58a6ff}
+a{color:var(--cc-accent)}
 </style></head><body>
 <h1>🐝 Hive API</h1>
 <p class="subtitle">Authenticated access to the contributor API</p>
