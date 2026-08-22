@@ -74,13 +74,28 @@ Important environment variables:
 | `AGENT_REASONING_EFFORT` | unset | Reasoning effort override. Consumed by `codex` (`-c model_reasoning_effort`) and by `agy` (`--effort low\|medium\|high`, required whenever a model is set, else agy ignores the model). Ignored by other backends. |
 | `CONTRIBUTOR_MODE` | `interactive` | `interactive` keeps a tmux/TTY session. `headless` is for one-shot/no-TTY task delivery. |
 | `HIVE_AGENT_SESSION` | `contributor` | tmux session name for interactive mode. |
-| `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. |
+| `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. Set it to the **empty string** to omit the `-c approvals_reviewer=` key entirely — the escape hatch if a Codex release rejects that config key at startup. Doing so keeps the sandbox posture; it is not the same as the dangerous bypass. |
 
 For Codex, Hive also passes `--add-dir "$HIVE_WORKSPACE_DIR"`. The CLI itself
 starts in the stable, credential-free `HIVE_AGENT_CWD`, while assigned checkouts
 live below the separately bounded writable workspace. Automatic-review denial
 or timeout remains a failure; headless mode reports the redacted terminal
 diagnostic to Hive and returns the contributor to the ready pool.
+
+`HIVE_WORKSPACE_DIR` must not contain whitespace. `backend_perm_flag` returns a
+whitespace-separated flag string that the launcher word-splits, so a path with a
+space cannot be expressed as a single argument — `--add-dir /work space` would
+reach Codex as three separate words and grant the wrong directory. Hive detects
+this, omits `--add-dir`, and warns on stderr rather than corrupting the argv;
+the sandbox posture still applies, but the workspace is not granted. Move the
+workspace to a path without spaces.
+
+Codex config-key compatibility: `approvals_reviewer` is passed with `-c`, so it
+depends on the installed Codex release accepting that key. If a version rejects
+it at startup, set `HIVE_CODEX_APPROVALS_REVIEWER=` (empty) to drop the key
+while keeping `--ask-for-approval`/`--sandbox` — prefer that over
+`HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1`, which removes the
+sandbox altogether.
 
 To change hubs for direct Compose, re-run the registration/setup flow for the target hub or edit `${HOME}/.config/hive/contributor.env` so `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` stay matched.
 

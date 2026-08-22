@@ -232,6 +232,74 @@ case "$codex_reviewer_override_output" in
     ;;
 esac
 
+# An EXPLICITLY EMPTY reviewer must drop the -c key while KEEPING the sandbox.
+# This is the escape hatch for a Codex release that rejects the unknown
+# approvals_reviewer config key at startup: without it the only way out is
+# HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1, i.e. no sandbox at all.
+# ${VAR:-default} would defeat this by treating empty as unset, so the guard is
+# the parameter expansion as much as the branch.
+codex_reviewer_disabled_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_CODEX_APPROVALS_REVIEWER= \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+case "$codex_reviewer_disabled_output" in
+  *"approvals_reviewer"* )
+    echo "expected an empty HIVE_CODEX_APPROVALS_REVIEWER to drop the -c key; got:" >&2
+    echo "$codex_reviewer_disabled_output" >&2
+    exit 1
+    ;;
+esac
+# ...but the sandbox posture and the workspace grant must survive.
+case "$codex_reviewer_disabled_output" in
+  *"backend_perm_flag=--ask-for-approval on-request --sandbox workspace-write --add-dir ${WORK_DIR}/workspace"* ) ;;
+  *)
+    echo "expected the sandbox posture to survive a disabled reviewer; got:" >&2
+    echo "$codex_reviewer_disabled_output" >&2
+    exit 1
+    ;;
+esac
+
+# A workspace path containing whitespace CANNOT be expressed: the caller
+# word-splits this string (agent-launch.sh: read -r -a PERM_ARGS <<< ...), so
+# "--add-dir /work space" would arrive as three argv words and grant Codex the
+# wrong directory. The flag must be omitted, not silently corrupted.
+mkdir -p "${WORK_DIR}/work space"
+codex_spaced_workspace_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/work space" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>/dev/null
+)"
+case "$codex_spaced_workspace_output" in
+  *"--add-dir"* )
+    echo "expected --add-dir to be omitted for a whitespace workspace path; got:" >&2
+    echo "$codex_spaced_workspace_output" >&2
+    exit 1
+    ;;
+esac
+# The sandbox posture still applies — only the ungrantable flag is dropped.
+case "$codex_spaced_workspace_output" in
+  *"backend_perm_flag=--ask-for-approval on-request --sandbox workspace-write -c approvals_reviewer=auto_review"* ) ;;
+  *)
+    echo "expected the sandbox posture to survive a whitespace workspace path; got:" >&2
+    echo "$codex_spaced_workspace_output" >&2
+    exit 1
+    ;;
+esac
+
 codex_bypass_output="$(
   env -i \
     PATH="${PATH}" \
