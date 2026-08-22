@@ -2619,6 +2619,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	defer ticker.Stop()
 
 	var prevLines []string
+	loginStreak := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -2640,7 +2641,22 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				continue
 			}
 
-			showsLogin := paneShowsLoginPrompt(filtered)
+			// Match login prompts against the pane TAIL only: a prompt the CLI
+			// is genuinely stuck at sits at the bottom of the pane, while the
+			// two false-positive classes that plagued this check — login-ish
+			// phrases inside ECHOED KICK TEXT (agent policies discuss auth) and
+			// the CLI's transient startup "/login" flash during its auth
+			// handshake — live in scrollback or vanish within a poll or two.
+			tailStart := len(filtered) - loginPromptTailLines
+			if tailStart < 0 {
+				tailStart = 0
+			}
+			showsLogin := paneShowsLoginPrompt(filtered[tailStart:])
+			if showsLogin {
+				loginStreak++
+			} else {
+				loginStreak = 0
+			}
 
 			agent.paneMu.Lock()
 			// Advance the activity clock only when the pane actually changed.
@@ -2660,7 +2676,26 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// token exists in the shared config.json. This handles the case
 			// where a user authenticates via one agent's terminal and other
 			// agents don't pick up the new token automatically.
-			if showsLogin && configHasTokens() {
+			//
+			// THREE guards, each traced to a live failure (kubestellar/hive,
+			// 2026-08-22, scanner restart_count=28 with every kick destroyed):
+			//   1. loginStreak: the login line must persist across consecutive
+			//      polls (~9s). The CLI flashes "Please use /login" during its
+			//      startup auth handshake even when the seeded token is about
+			//      to be accepted; one-poll sightings restarted HEALTHY agents.
+			//   2. Kick grace: never restart within tokenRestartKickGrace of a
+			//      delivered kick — the restart at 02:28:00 landed the same
+			//      second as a 14KB scan prompt and destroyed it. A stuck-at-
+			//      login agent that was kicked long ago restarts after the
+			//      grace expires; delivered work is never killed mid-scan.
+			//   3. The existing cooldown.
+			if showsLogin && loginStreak >= loginStreakRestartMin && configHasTokens() {
+				m.mu.RLock()
+				lastKick := agent.LastKick
+				m.mu.RUnlock()
+				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
+					continue
+				}
 				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
 				if sinceLastRestart >= float64(tokenRestartCooldownSec) {
 					m.logger.Info("auto-restarting agent after token detected in shared config",
@@ -5649,7 +5684,18 @@ const (
 	// is the constant it should replace.
 	agyDefaultEffort = "low"
 
-	tokenRestartCooldownSec    = 60  // minimum seconds between token-triggered restarts per agent
+	tokenRestartCooldownSec = 60 // minimum seconds between token-triggered restarts per agent
+	// loginPromptTailLines bounds the pane region the login-prompt detector
+	// reads: a prompt the CLI is stuck at sits at the pane bottom, while
+	// echoed kick text and startup flashes live in scrollback (see the poller).
+	loginPromptTailLines = 15
+	// loginStreakRestartMin is how many consecutive polls (~3s apart) must see
+	// the login prompt before a token-triggered restart may fire — filters the
+	// CLI's transient startup "/login" flash.
+	loginStreakRestartMin = 3
+	// tokenRestartKickGrace suppresses token-triggered restarts after a kick
+	// delivery so the restart can never destroy just-delivered work.
+	tokenRestartKickGrace      = 10 * time.Minute
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
 	tlsErrorRestartCooldownSec = 120 // minimum seconds between TLS-error-triggered restarts per agent
 )
