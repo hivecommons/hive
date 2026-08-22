@@ -312,6 +312,18 @@ type RegistryEntry struct {
 	// treated as "not stale" so an upgrade does not blank the strip.
 	FleetStatsCollectedAt time.Time `json:"fleetStatsCollectedAt,omitempty"`
 
+	// RepoActivity is the spoke's audit-derived per-repo output summary
+	// (hive-health), always the sanitized product of sanitizeRepoActivity,
+	// never the raw payload. nil = the spoke is too old to report it ("no
+	// data", never "zero output"); carried forward across beats that omit it,
+	// like ComponentReach, so a restart or minimal upgrade-beat does not blank
+	// the last real summary. RepoActivityCollectedAt / RepoActivityWindowHours
+	// travel with it so the hub can age the summary and know the intended
+	// freshness window (see health_verdict.go).
+	RepoActivity            []RepoActivityWire `json:"repoActivity,omitempty"`
+	RepoActivityCollectedAt time.Time          `json:"repoActivityCollectedAt,omitempty"`
+	RepoActivityWindowHours int                `json:"repoActivityWindowHours,omitempty"`
+
 	// Quadrant signals reported by the spoke (nil = not reported). These back
 	// the per-hive quadrant score; see quadrant.go for how each is used and
 	// why absent evidence must never collapse to zero.
@@ -1803,6 +1815,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Component reach (#3993): sanitized + clipped, never the raw spoke
 		// report — see sanitizeComponentReach for the bounds. Storage only.
 		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
+		// Per-repo output activity (hive-health): sanitized/clamped, never the
+		// raw payload. The collected-at + window travel with it so the verdict
+		// can age the summary.
+		RepoActivity:            sanitizeRepoActivity(payload.RepoActivity),
+		RepoActivityCollectedAt: parseHeartbeatTime(payload.RepoActivityCollectedAt),
+		RepoActivityWindowHours: clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
 	}
 
 	// Fleet error-rate history (#3995, phase 2c): fold this beat's rolling
@@ -2012,6 +2030,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// that gap. Same pattern as the fleet-stat counts above.
 			if entry.ComponentReach == nil && h.ComponentReach != nil {
 				entry.ComponentReach = h.ComponentReach
+			}
+			// Carry the last real repo-activity summary forward when this beat
+			// omits it (minimal upgrade-beat, or a spoke whose collector hasn't
+			// re-warmed from /data/activity.json yet). The collected-at and
+			// window travel WITH the summary — same reasoning as the budget
+			// window: a count aged by a stale timestamp is honest, a count
+			// carried without its timestamp looks current when it isn't.
+			if entry.RepoActivity == nil && h.RepoActivity != nil {
+				entry.RepoActivity = h.RepoActivity
+				entry.RepoActivityCollectedAt = h.RepoActivityCollectedAt
+				entry.RepoActivityWindowHours = h.RepoActivityWindowHours
 			}
 			// Advisory post time survives a spoke restart — see
 			// carryAdvisoryPostTime for why that is the difference between a

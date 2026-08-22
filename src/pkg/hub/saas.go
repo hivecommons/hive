@@ -3002,6 +3002,13 @@ type MyHiveEntry struct {
 	FleetRollup   *agentFleetRollup  `json:"fleetRollup,omitempty"`
 	AgentVerdicts []AgentVerdictJSON `json:"agentVerdicts,omitempty"`
 
+	// Health is the at-a-glance hive-health verdict (hive-health): does this
+	// spoke have RECENT OUTPUT back to its work source, banded by ACMM level?
+	// green/red/unknown with a WHY reason, computed on read from the same
+	// rollup/app-health/queue/advisory/repo-activity signals the row already
+	// carries. nil for placeholder rows (nothing to judge). See health_verdict.go.
+	Health *HealthVerdict `json:"health,omitempty"`
+
 	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
 	// serve on the last several probes — the link in this very table is dead.
 	// Computed on read from the auth-audit loop's observations, so the browser
@@ -3497,6 +3504,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
 			result[i].FleetRollup = &rollup
 			result[i].AgentVerdicts = buildAgentVerdicts(result[i].Agents, blockers, queuedWork, journeyNow)
+
+			// Hive-health verdict: reuse the rollup + app-health + queue depth we
+			// just computed. Only for real (non-placeholder) hives with reported
+			// agents — a placeholder has nothing to produce.
+			verdict := hiveHealthFor(result[i].RegistryEntry, rollup, result[i].GitHubAppHealth, queuedWork, journeyNow)
+			result[i].Health = &verdict
 		}
 
 		// Sparkline history dominated this payload: at 42 hives the two series

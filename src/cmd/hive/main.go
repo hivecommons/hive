@@ -3392,6 +3392,20 @@ func main() {
 					fleetStatsCollectedAt = t.UTC().Format(time.RFC3339)
 				}
 			}
+			// Per-repo output-activity summary (hive-health): map the dashboard
+			// collector's snapshot into the plain hub wire structs. Nil when the
+			// collector hasn't produced a snapshot yet, so the hub carries the
+			// last one forward rather than seeing a fabricated empty summary.
+			var repoActivity []hub.RepoActivityWire
+			repoActivityCollectedAt := ""
+			repoActivityWindowHours := 0
+			if asnap, ok := activityCollector.Snapshot(); ok {
+				repoActivity = buildRepoActivityWire(asnap.Repos)
+				repoActivityWindowHours = asnap.WindowHours
+				if t := activityCollector.CollectedAt(); !t.IsZero() {
+					repoActivityCollectedAt = t.UTC().Format(time.RFC3339)
+				}
+			}
 			// Count agents with a method/model assigned for the hub's
 			// user-journey stage detection. Always a non-nil pointer from a
 			// spoke new enough to compute it, so the hub can distinguish
@@ -3695,10 +3709,13 @@ func main() {
 					}
 					return hub.CollectClusterHealth(logger)
 				}(),
-				PRsMerged90d:          prsMerged,
-				PRsRejected90d:        prsRejected,
-				CVEsClosed:            cvesClosed,
-				FleetStatsCollectedAt: fleetStatsCollectedAt,
+				PRsMerged90d:            prsMerged,
+				PRsRejected90d:          prsRejected,
+				CVEsClosed:              cvesClosed,
+				FleetStatsCollectedAt:   fleetStatsCollectedAt,
+				RepoActivity:            repoActivity,
+				RepoActivityCollectedAt: repoActivityCollectedAt,
+				RepoActivityWindowHours: repoActivityWindowHours,
 				// Report WHICH App key we hold, never the key. The hub compares
 				// this against its per-cluster key and pushes a correction only
 				// on a mismatch, so a spoke already holding the right key costs
@@ -4622,6 +4639,35 @@ const (
 	// our token allowance" from "the gateway will not spend more money".
 	providerBudgetAlertID = "provider-budget-exceeded"
 )
+
+// buildRepoActivityWire maps the dashboard activity collector's per-repo
+// snapshot into the plain hub wire structs the heartbeat carries. Kept here (in
+// the one package that imports both hub and dashboard) so pkg/hub never has to
+// import pkg/dashboard back — that would be an import cycle, since dashboard
+// already imports hub. A field-by-field copy, mirroring how the fleet-stat
+// scalars are lifted out of their snapshot at the beat's build site.
+func buildRepoActivityWire(repos []dashboard.RepoActivity) []hub.RepoActivityWire {
+	if len(repos) == 0 {
+		return nil
+	}
+	stat := func(s dashboard.ActivityActionStat) hub.ActivityStatWire {
+		return hub.ActivityStatWire{Count: s.Count, NewestAt: s.NewestAt}
+	}
+	out := make([]hub.RepoActivityWire, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, hub.RepoActivityWire{
+			Repo:     r.Repo,
+			Issues:   stat(r.Issues),
+			PRs:      stat(r.PRs),
+			Comments: stat(r.Comments),
+			Merges:   stat(r.Merges),
+			Claims:   stat(r.Claims),
+			Reviews:  stat(r.Reviews),
+			Advisory: stat(r.Advisory),
+		})
+	}
+	return out
+}
 
 // providerBudgetNotify is the one-shot guard for the provider spend-rebuff
 // notification (#4294). runEvalCycle sees the CONDITION every cycle for as long
