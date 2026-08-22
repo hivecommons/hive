@@ -23,20 +23,13 @@ func TestNewCollector(t *testing.T) {
 }
 
 func TestCollector_Summary_Initially(t *testing.T) {
-	// NewCollector loads a persisted snapshot from the fixed
-	// /data/token-summary.json path, which exists on a live hive host and
-	// would make Summary non-nil. Build the collector with a persist path in
-	// a temp dir so "no snapshot on disk" is actually true for this test.
-	c := &Collector{
-		sessionsDir:  "/tmp/nonexistent-sessions",
-		persistPath:  filepath.Join(t.TempDir(), "absent-token-summary.json"),
-		detector:     DefaultAgentDetector,
-		logger:       testLogger(),
-		issueCosts:   make(map[string]int64),
-		scanInterval: defaultScanInterval,
-		prevByAgent:  make(map[string]int64),
-	}
-	c.loadSnapshot()
+	// Redirect the snapshot path away from the live /data location so the
+	// lazy initial load cannot pick up production state on a hive host (#4585).
+	prev := defaultPersistPath
+	defaultPersistPath = filepath.Join(t.TempDir(), "token-summary.json")
+	t.Cleanup(func() { defaultPersistPath = prev })
+
+	c := NewCollector("/tmp/nonexistent-sessions", testLogger())
 	summary := c.Summary()
 	if summary != nil {
 		t.Errorf("expected nil summary initially, got %v", summary)

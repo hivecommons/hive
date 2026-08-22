@@ -72,8 +72,12 @@ type AggregateSummary struct {
 
 const (
 	defaultScanInterval = 30 * time.Second
-	defaultPersistPath  = "/data/token-summary.json"
 )
+
+// defaultPersistPath is the PVC location of the token summary snapshot.
+// It is a var (not a const) only so tests can point it at a temp path;
+// production always uses the fixed /data/token-summary.json location.
+var defaultPersistPath = "/data/token-summary.json"
 
 type Collector struct {
 	sessionsDir               string
@@ -91,6 +95,14 @@ type Collector struct {
 	prevSessionCount          int
 	prevTotalTokens           int64
 	prevByAgent               map[string]int64
+
+	// loadOnce guards the one-time restore of the persisted snapshot. The
+	// load is deferred until first read (see Summary) instead of happening in
+	// NewCollector so callers may redirect defaultPersistPath or call
+	// SetPersistPath after construction — otherwise the constructor eagerly
+	// reads the live /data/token-summary.json on a hive host and tests see
+	// production data instead of a clean initial state (#4585).
+	loadOnce sync.Once
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
@@ -103,11 +115,13 @@ func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
 		scanInterval: defaultScanInterval,
 		prevByAgent:  make(map[string]int64),
 	}
-	c.loadSnapshot()
 	return c
 }
 
 // SetPersistPath overrides the default path for the token summary snapshot.
+// Safe to call after construction and before first use: the persisted
+// snapshot is loaded lazily on first Summary/scan, so the override wins even
+// when set later than NewCollector (#4585).
 func (c *Collector) SetPersistPath(path string) {
 	c.persistPath = path
 }
@@ -164,6 +178,12 @@ func (c *Collector) Start(stop <-chan struct{}) {
 }
 
 func (c *Collector) scan() {
+	// Restore the persisted snapshot once, BEFORE the first scan overwrites
+	// c.latest, preserving the original constructor-time load order (#4585).
+	c.mu.Lock()
+	c.loadOnce.Do(c.loadSnapshot)
+	c.mu.Unlock()
+
 	agg, err := CollectFromDir(c.sessionsDir, c.detector)
 	if err != nil {
 		c.logger.Warn("token scan failed", "error", err)
@@ -234,6 +254,12 @@ func (c *Collector) scan() {
 }
 
 func (c *Collector) Summary() *AggregateSummary {
+	// Restore the persisted snapshot once, on first read, under the write
+	// lock so a concurrent reader never observes the load mid-write.
+	c.mu.Lock()
+	c.loadOnce.Do(c.loadSnapshot)
+	c.mu.Unlock()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.latest
