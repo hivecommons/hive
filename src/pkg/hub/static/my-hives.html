@@ -612,11 +612,12 @@ function budgetHealthHTML(b) {
   b = b || {};
   var bucket = b.bucket || "unknown";
   var pct = Math.round(b.percentUsed || 0);
-  var label = bucket === "unknown" ? (b.ignored ? "budget ignored" : "budget n/a") : "budget " + pct + "%";
+  var label = b.providerLimited ? "provider quota exhausted" : (bucket === "unknown" ? (b.ignored ? "budget ignored" : "budget n/a") : "budget " + pct + "%");
   var title = bucket === "unknown"
     ? label
     : "budget " + pct + "% used this window (" + (b.usedTokens || 0) + " / " + (b.limitTokens || 0) + " tokens)";
-  if (b.exhausted) title += " — exhausted; governor may throttle";
+  if (b.providerLimited) title = b.reason || label;
+  if (b.exhausted && !b.providerLimited) title += " — exhausted; governor may throttle";
   return '<span class="budget-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }

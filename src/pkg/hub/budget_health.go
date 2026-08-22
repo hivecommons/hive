@@ -1,6 +1,10 @@
 package hub
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 const (
 	budgetBucketOK        = "ok"
@@ -16,17 +20,25 @@ const (
 )
 
 type BudgetHealth struct {
-	UsedTokens     int64   `json:"usedTokens,omitempty"`
-	LimitTokens    int64   `json:"limitTokens,omitempty"`
-	PercentUsed    float64 `json:"percentUsed,omitempty"`
-	Bucket         string  `json:"bucket"`
-	Exhausted      bool    `json:"exhausted,omitempty"`
-	Ignored        bool    `json:"ignored,omitempty"`
-	WindowStartsAt string  `json:"windowStartsAt,omitempty"`
-	WindowEndsAt   string  `json:"windowEndsAt,omitempty"`
+	UsedTokens      int64   `json:"usedTokens,omitempty"`
+	LimitTokens     int64   `json:"limitTokens,omitempty"`
+	PercentUsed     float64 `json:"percentUsed,omitempty"`
+	Bucket          string  `json:"bucket"`
+	Exhausted       bool    `json:"exhausted,omitempty"`
+	ProviderLimited bool    `json:"providerLimited,omitempty"`
+	Reason          string  `json:"reason,omitempty"`
+	Ignored         bool    `json:"ignored,omitempty"`
+	WindowStartsAt  string  `json:"windowStartsAt,omitempty"`
+	WindowEndsAt    string  `json:"windowEndsAt,omitempty"`
 }
 
 func budgetHealthFor(e RegistryEntry) BudgetHealth {
+	if reason := providerLimitHealthReason(e.ProviderLimitReason, e.ProviderLimitRebuffs); reason != "" {
+		return BudgetHealth{Bucket: budgetBucketExhausted, Exhausted: true, ProviderLimited: true, Reason: reason}
+	}
+	if n := quotaExhaustedAgentCountForBudget(e.Agents); n > 0 {
+		return BudgetHealth{Bucket: budgetBucketExhausted, Exhausted: true, ProviderLimited: true, Reason: fmt.Sprintf("%d agent(s) out of provider quota", n)}
+	}
 	if e.BudgetIgnored != nil && *e.BudgetIgnored {
 		return BudgetHealth{Bucket: budgetBucketUnknown, Ignored: true}
 	}
@@ -81,6 +93,18 @@ func budgetHealthFor(e RegistryEntry) BudgetHealth {
 		out.Bucket = budgetBucketWarning
 	}
 	return out
+}
+
+func quotaExhaustedAgentCountForBudget(agents []AgentSummary) int {
+	count := 0
+	for _, a := range agents {
+		if a.QuotaExhausted && !a.Paused &&
+			!strings.EqualFold(a.State, agentStatePaused) &&
+			strings.EqualFold(a.State, agentStateRunning) {
+			count++
+		}
+	}
+	return count
 }
 
 func formatOptionalTime(t time.Time) string {

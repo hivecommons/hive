@@ -59,6 +59,44 @@ func TestBudgetHealthExhaustedFlagWinsWithoutNumbers(t *testing.T) {
 	}
 }
 
+func TestBudgetHealthProviderLimitWinsWithoutLocalBudget(t *testing.T) {
+	got := budgetHealthFor(RegistryEntry{
+		ProviderLimitReason: "1 agent(s) out of provider quota",
+	})
+	if got.Bucket != budgetBucketExhausted || !got.Exhausted || !got.ProviderLimited {
+		t.Fatalf("provider-limited budget health = %+v, want exhausted provider-limited", got)
+	}
+	if got.Reason != "1 agent(s) out of provider quota" {
+		t.Fatalf("reason = %q, want provider quota reason", got.Reason)
+	}
+
+	got = budgetHealthFor(RegistryEntry{
+		ProviderLimitReason:  "litellm refused the request on a spending limit (429)",
+		ProviderLimitRebuffs: 682,
+		BudgetIgnored:        boolptr(true),
+	})
+	if got.Bucket != budgetBucketExhausted || !got.ProviderLimited || got.Ignored {
+		t.Fatalf("provider limit should outrank ignored local budget, got %+v", got)
+	}
+	if got.Reason != "provider spending limit reached — 682 refused calls" {
+		t.Fatalf("reason = %q, want refused-call provider limit", got.Reason)
+	}
+}
+
+func TestBudgetHealthAgentQuotaExhaustionWinsWithoutReason(t *testing.T) {
+	got := budgetHealthFor(RegistryEntry{Agents: []AgentSummary{
+		{Name: "guide", State: agentStateRunning, QuotaExhausted: true},
+		{Name: "scanner", State: agentStateRunning, QuotaExhausted: true},
+		{Name: "paused", State: agentStatePaused, Paused: true, QuotaExhausted: true},
+	}})
+	if got.Bucket != budgetBucketExhausted || !got.Exhausted || !got.ProviderLimited {
+		t.Fatalf("agent quota budget health = %+v, want exhausted provider-limited", got)
+	}
+	if got.Reason != "2 agent(s) out of provider quota" {
+		t.Fatalf("reason = %q, want provider quota count", got.Reason)
+	}
+}
+
 func TestBudgetHealthUnknownWithoutConfiguredBudget(t *testing.T) {
 	cases := []RegistryEntry{
 		{},
