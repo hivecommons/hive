@@ -717,6 +717,19 @@ const ExplainLinePrefix = "EXPLAIN:"
 // ValidateExplainMode reports whether v is an accepted explain_mode value.
 func ValidateExplainMode(v string) bool { return ValidExplainModes[v] }
 
+// ValidCavemanModes are the accepted caveman_mode values. "" means "caveman
+// disabled"; it is valid on an agent but is not a mode in itself.
+var ValidCavemanModes = map[string]bool{
+	"":       true,
+	"lite":   true,
+	"full":   true,
+	"ultra":  true,
+	"wenyan": true,
+}
+
+// ValidateCavemanMode reports whether v is an accepted caveman_mode value.
+func ValidateCavemanMode(v string) bool { return ValidCavemanModes[v] }
+
 type AgentConfig struct {
 	ID           string `yaml:"id" json:"id,omitempty"`
 	Backend      string `yaml:"backend" json:"backend,omitempty"`
@@ -4455,8 +4468,7 @@ func (c *Config) validate() error {
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
 			return fmt.Errorf("agent %s: %w", name, err)
 		}
-		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
-		if !validCavemanModes[agent.CavemanMode] {
+		if !ValidateCavemanMode(agent.CavemanMode) {
 			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)
 		}
 		if !ValidateExplainMode(agent.ExplainMode) {

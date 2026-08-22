@@ -82,6 +82,14 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same reasoning for caveman_mode: reject at the request rather than
+	// persisting a value the config loader would fail on later (#4531,
+	// flagged as a follow-up in #3897).
+	if !config.ValidateCavemanMode(body.Agent.CavemanMode) {
+		jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
+		return
+	}
+
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
