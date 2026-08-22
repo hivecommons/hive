@@ -36,6 +36,14 @@ func TestExtractCopilotToken(t *testing.T) {
 	if got := extractCopilotToken(filepath.Join(dir, "nope.json")); got != "" {
 		t.Errorf("missing file: got %q, want \"\"", got)
 	}
+	// masked placeholder (the CLI redacts a rejected token as asterisks) must
+	// never be extracted — promoting it would overwrite the durable token.
+	if got := extractCopilotToken(write(`{"copilotTokens":{"github.com":"******"}}`)); got != "" {
+		t.Errorf("masked string shape: got %q, want \"\"", got)
+	}
+	if got := extractCopilotToken(write(`{"copilotTokens":{"github.com":{"token":"********"}}}`)); got != "" {
+		t.Errorf("masked object shape: got %q, want \"\"", got)
+	}
 }
 
 func TestWriteDurableCopilotToken(t *testing.T) {
@@ -120,6 +128,35 @@ func TestSyncCopilotToken_Seed(t *testing.T) {
 	}
 	if !copilotCredentialFileHasTokens(cfg) {
 		t.Error("config must be re-seeded")
+	}
+}
+
+// MASKED-ONLY config: the CLI has redacted its token to "******" (rejected
+// credential — the live EPM shape). Must take the SEED path (restore the valid
+// durable token over the placeholder), NOT promote the asterisks into the
+// durable store, which would destroy the one good credential.
+func TestSyncCopilotToken_MaskedConfigSeedsNotPromotes(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	dur := filepath.Join(dir, "durable")
+	if err := os.WriteFile(cfg, []byte(copilotConfigHeader+`{"copilotTokens":{"github.com":"******"},"lastLoggedInUser":"https://github.com:me","loggedInUsers":["https://github.com:me"]}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dur, []byte("ghu_valid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(5)
+	m.agents["scanner"] = &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "copilot"}}
+	m.copilotAuthToken = "ghu_valid"
+	if act := m.syncCopilotToken(cfg, dur); act != copilotSyncSeed {
+		t.Fatalf("action = %v, want seed (masked placeholder is not a token)", act)
+	}
+	b, _ := os.ReadFile(dur)
+	if string(b) != "ghu_valid" {
+		t.Errorf("durable file = %q — masked garbage was promoted over the valid token", string(b))
+	}
+	if got := extractCopilotToken(cfg); got != "ghu_valid" {
+		t.Errorf("config token after seed = %q, want ghu_valid", got)
 	}
 }
 

@@ -5758,7 +5758,25 @@ func copilotCredentialFileHasTokens(path string) bool {
 		if !ok {
 			return false
 		}
-		return len(tokensMap) > 0
+		// Count only USABLE tokens. The CLI masks a token it refuses to use
+		// (foreign/expired) as a literal run of asterisks; a config holding
+		// only masked entries must read as empty so the sync takes the SEED
+		// path (restore the valid durable token) instead of the PROMOTE path
+		// — promoting would overwrite the durable file with "******" and
+		// destroy the one good credential (seen live on the EPM hive).
+		for _, v := range tokensMap {
+			switch t := v.(type) {
+			case string:
+				if copilotTokenValueUsable(t) {
+					return true
+				}
+			case map[string]interface{}:
+				if s, ok := t["token"].(string); ok && copilotTokenValueUsable(s) {
+					return true
+				}
+			}
+		}
+		return false
 	}
 	// apps.json / hosts.json shape: host -> {oauth_token: ...}
 	if strings.HasSuffix(path, "apps.json") || strings.HasSuffix(path, "hosts.json") {
@@ -5907,18 +5925,30 @@ func extractCopilotToken(path string) string {
 	for _, v := range tokens {
 		switch t := v.(type) {
 		case string:
-			if s := strings.TrimSpace(t); s != "" {
+			if s := strings.TrimSpace(t); copilotTokenValueUsable(s) {
 				return s
 			}
 		case map[string]interface{}:
 			if s, ok := t["token"].(string); ok {
-				if s = strings.TrimSpace(s); s != "" {
+				if s = strings.TrimSpace(s); copilotTokenValueUsable(s) {
 					return s
 				}
 			}
 		}
 	}
 	return ""
+}
+
+// copilotTokenValueUsable reports whether a copilotTokens value is a real
+// credential. The CLI redacts tokens it has rejected by rewriting them as a
+// run of asterisks ("******"); treating that placeholder as a token let the
+// promote path mirror garbage over the durable user token.
+func copilotTokenValueUsable(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	return strings.ContainsFunc(s, func(r rune) bool { return r != '*' })
 }
 
 // writeDurableCopilotToken persists token to durablePath via a temp file +
