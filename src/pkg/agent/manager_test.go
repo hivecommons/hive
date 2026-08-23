@@ -364,7 +364,22 @@ func TestAgentEnvPairs_ContainsRequiredKeys(t *testing.T) {
 
 const baseEnvVarCount = 13 // HIVE_AGENT, HIVE_AGENT_DISPLAY_NAME, HIVE_BACKEND, HIVE_MODEL, HIVE_ACMM_LEVEL, HIVE_AGENT_MODE, HTTPS_PROXY, HTTP_PROXY, HIVE_PROXY_AGENT, GIT_TERMINAL_PROMPT, NODE_EXTRA_CA_CERTS, GIT_SSL_CAINFO, HIVE_EXPLAIN_MODE
 
+// clearAmbientHiveEnv blanks the process env vars that agentEnvPairs
+// conditionally forwards (HIVE_ID, HIVE_SHA, HIVE_ADVISORY_ISSUE) so
+// count-sensitive assertions are hermetic. On a live hive host these are
+// exported into agent sessions, which made the exact-count tests below fail
+// on pristine v4 (15/16 pairs observed vs 13/14 expected). t.Setenv restores
+// the original values on cleanup and marks the test non-parallel, which is
+// required anyway since agentEnvPairs reads the process environment.
+func clearAmbientHiveEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HIVE_ID", "")
+	t.Setenv("HIVE_SHA", "")
+	t.Setenv("HIVE_ADVISORY_ISSUE", "")
+}
+
 func TestAgentEnvPairs_BaseEntryCount(t *testing.T) {
+	clearAmbientHiveEnv(t)
 	ap := &AgentProcess{
 		Name:   "agent",
 		Config: config.AgentConfig{Backend: "gemini", Model: "pro"},
@@ -394,6 +409,7 @@ func TestAgentEnvPairs_EmptyModelAllowed(t *testing.T) {
 }
 
 func TestAgentEnvPairs_BDDirFromBeadsDir(t *testing.T) {
+	clearAmbientHiveEnv(t)
 	ap := &AgentProcess{
 		Name: "scanner",
 		Config: config.AgentConfig{
