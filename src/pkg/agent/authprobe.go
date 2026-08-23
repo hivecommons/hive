@@ -93,6 +93,13 @@ func AgentHome(agentName string, uid int, backend string) string {
 // Ordering matters: the per-UID file is the one the agent's CLI actually writes.
 func agentClaudeCredentialPaths(agentName string, uid int, backend string) []string {
 	paths := []string{}
+	if uid > 0 && backend == "claude" {
+		// Per-agent CLAUDE_CONFIG_DIR first (#4596): under that layout this is
+		// the file the agent's CLI actually reads and writes. Note the config
+		// dir REPLACES ~/.claude, so the credential sits at its top level —
+		// not under a .claude/ subdirectory.
+		paths = append(paths, filepath.Join(claudeConfigDirPath(agentName), ".credentials.json"))
+	}
 	if home := AgentHome(agentName, uid, backend); home != "" {
 		paths = append(paths, filepath.Join(home, ".claude", ".credentials.json"))
 	}

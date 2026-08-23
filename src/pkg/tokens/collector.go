@@ -78,6 +78,7 @@ const (
 type Collector struct {
 	sessionsDir               string
 	claudeSessionsDir         string
+	claudeSessionsGlob        string
 	copilotSessionsDir        string
 	bobSessionsDir            string
 	copilotLiveCaptureSinceMs int64
@@ -114,6 +115,18 @@ func (c *Collector) SetPersistPath(path string) {
 
 func (c *Collector) SetClaudeSessionsDir(dir string) {
 	c.claudeSessionsDir = dir
+}
+
+// SetClaudeSessionsGlob sets a glob of ADDITIONAL Claude transcript roots to
+// scan each pass, on top of claudeSessionsDir. Under the per-agent
+// CLAUDE_CONFIG_DIR layout (kubestellar/hive#4596) each agent writes its
+// transcripts to its own <config dir>/projects; the glob is evaluated at scan
+// time so agents added while the hive is running are picked up without a
+// restart. The legacy shared dir keeps being scanned too, so pre-migration
+// history stays in the totals — roots are distinct directories, so no session
+// file is ever counted twice.
+func (c *Collector) SetClaudeSessionsGlob(pattern string) {
+	c.claudeSessionsGlob = pattern
 }
 
 func (c *Collector) SetCopilotSessionsDir(dir string) {
@@ -176,6 +189,18 @@ func (c *Collector) scan() {
 			c.logger.Warn("claude session scan failed", "error", err)
 		} else if claudeAgg != nil && claudeAgg.SessionCount > 0 {
 			MergeAggregates(agg, claudeAgg)
+		}
+	}
+
+	if c.claudeSessionsGlob != "" {
+		roots, _ := filepath.Glob(c.claudeSessionsGlob)
+		for _, root := range roots {
+			claudeAgg, err := ScanClaudeSessionsWithPathDetection(root)
+			if err != nil {
+				c.logger.Warn("claude session scan failed", "root", root, "error", err)
+			} else if claudeAgg != nil && claudeAgg.SessionCount > 0 {
+				MergeAggregates(agg, claudeAgg)
+			}
 		}
 	}
 

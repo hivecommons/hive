@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/kubestellar/hive/pkg/claude"
@@ -46,7 +48,21 @@ func (m *Manager) diagnoseStuckLogin(agent *AgentProcess) string {
 		}
 	}
 
-	session := inspectClaudeSession(claudeSessionFile(home))
+	sessionPath := claudeSessionFile(home)
+	if uid > 0 && backend == "claude" {
+		// Under the per-agent CLAUDE_CONFIG_DIR layout (#4596) the CLI's real
+		// session state lives in the agent's own config dir; the HOME-based
+		// file is the frozen pre-migration copy. Diagnose the file the CLI
+		// actually reads, falling back to the legacy location only when the
+		// per-agent file does not exist yet (pre-migration, or the dir was
+		// never created).
+		if perAgent := filepath.Join(claudeConfigDirPath(agent.Name), ".claude.json"); perAgent != "" {
+			if _, err := os.Lstat(perAgent); err == nil {
+				sessionPath = perAgent
+			}
+		}
+	}
+	session := inspectClaudeSession(sessionPath)
 
 	switch {
 	case credValid && session.State == claudeSessionSkeleton:

@@ -1810,6 +1810,11 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if launchBackend == codexBackend {
 			m.setupCodexHome(agent)
 		}
+		// Pre-create the agent-owned CLAUDE_CONFIG_DIR before launch, for the
+		// same reason and by the same mechanism (#4596).
+		if launchBackend == "claude" {
+			m.setupClaudeConfigDir(agent)
+		}
 	}
 
 	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
@@ -6698,6 +6703,205 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	}
 }
 
+// ── Per-agent CLAUDE_CONFIG_DIR (kubestellar/hive#4596) ──────────────────────
+//
+// Claude Code keeps its login/onboarding state in $CLAUDE_CONFIG_DIR/.claude.json
+// (default ~/.claude.json) and REWRITES that file wholesale — tmp file plus
+// rename — from whatever its in-memory view is. Interactive claude agents all
+// shared HOME=/data/home, so N agents raced on ONE state file: an agent still
+// sitting at the login menu holds the fresh-boot skeleton (no oauthAccount, no
+// hasCompletedOnboarding) in memory, and its next flush writes that skeleton
+// over the logged-in state another agent had just established. Observed live
+// (#4596): a valid, unexpired, group-readable .credentials.json sitting next to
+// a .claude.json reduced to the 8-key fresh-boot skeleton, ten orphaned
+// .claude.json.tmp.* rename losers, and every agent back at "Select login
+// method". Verified against Claude Code v2.1.231 with a scratch
+// CLAUDE_CONFIG_DIR: a fresh boot writes exactly that skeleton, and a valid
+// credential next to a state file WITHOUT oauthAccount but WITH
+// hasCompletedOnboarding comes up authenticated and self-heals oauthAccount —
+// the state file, not the credential, is what the login menu keys on.
+//
+// The fix is the same shape as CODEX_HOME above: give each agent its own
+// private state dir, and bridge the SHARED credential into it with a symlink so
+// one login — interactive on any agent, or the dashboard OAuth flow that writes
+// claude.CredentialsPath (see ReloadClaudeToken) — reaches every agent. State
+// stops being contended; the credential stays shared. If a Claude Code version
+// ever replaces the symlink on refresh (rename-over instead of write-through),
+// that agent detaches onto its own private credential: per-agent logins, still
+// zero contention — strictly better than the clobber either way.
+
+// claudeConfigDirPrefix is the per-agent CLAUDE_CONFIG_DIR prefix. Lives on the
+// persistent /data volume, alongside codexHomePrefix, and is a var (not a
+// const) solely as a test seam — mirroring codexHomePrefix.
+var claudeConfigDirPrefix = "/data/home/.claude-"
+
+// claudeConfigDirPath returns the per-agent CLAUDE_CONFIG_DIR directory.
+func claudeConfigDirPath(agentName string) string {
+	return claudeConfigDirPrefix + agentName
+}
+
+// ClaudeConfigProjectsGlob matches every per-agent CLAUDE_CONFIG_DIR transcript
+// root. Exported for cmd/hive, which hands it to the token collector so session
+// transcripts keep feeding token/cost accounting now that they land per agent
+// instead of in the single shared /data/home/.claude/projects.
+func ClaudeConfigProjectsGlob() string {
+	return claudeConfigDirPrefix + "*/projects"
+}
+
+// Legacy shared locations, kept as the migration SOURCE (read-only here): a
+// hive that had a working login before this change carries it in these files,
+// and each agent's first launch under the per-agent layout seeds from them so
+// the upgrade does not log anyone out. Vars, not consts, as test seams.
+var (
+	claudeLegacyStateFile       = "/data/home/.claude.json"
+	claudeLegacySettingsFile    = "/data/home/.claude/settings.json"
+	claudeSharedCredentialsFile = claude.CredentialsPath
+)
+
+// interactiveClaudeStateSeed returns the required keys for an interactive
+// claude agent's per-agent .claude.json. Like inferenceUserConfigSeed these
+// skip first-run onboarding and migrations — an agent pane has no human to
+// click through a theme picker, and hasCompletedOnboarding is what lets the
+// CLI use an existing .credentials.json instead of showing "Select login
+// method" (verified live, see the block comment above). Unlike the inference
+// seed there is no customApiKeyResponses entry: interactive agents
+// authenticate with the subscription OAuth credential, not an sk-hive key.
+func interactiveClaudeStateSeed() map[string]any {
+	return map[string]any{
+		"hasCompletedOnboarding":        true,
+		"opusProMigrationComplete":      true,
+		"sonnet1m45MigrationComplete":   true,
+		"migrationVersion":              inferenceConfigMigrationVersion,
+		"bypassPermissionsModeAccepted": true,
+	}
+}
+
+// mergeSeedKeys fills any seed keys missing from base (existing keys always
+// win) and reports whether anything was added. base may be nil.
+func mergeSeedKeys(base, seed map[string]any) (map[string]any, bool) {
+	if base == nil {
+		base = map[string]any{}
+	}
+	changed := false
+	for k, v := range seed {
+		if _, ok := base[k]; !ok {
+			base[k] = v
+			changed = true
+		}
+	}
+	return base, changed
+}
+
+// writeFileAsAgent writes data to path AS the agent user via su-exec, with a
+// same-directory tmp + rename so a concurrently starting CLI never reads a
+// half-written file. Every write into the agent-owned config dir goes through
+// this: the manager runs as dev and cannot write there directly (the dir is
+// created by, and owned by, the agent UID — same constraint as setupCodexHome),
+// and writing as the agent also makes ownership come out right with no chown.
+func (m *Manager) writeFileAsAgent(agent *AgentProcess, path string, data []byte) error {
+	cmd := exec.Command("su-exec", m.agentExecUserSpec(agent), "sh", "-c",
+		`tmp="$1.tmp.$$"; cat > "$tmp" && mv "$tmp" "$1"`, "sh", path)
+	cmd.Stdin = strings.NewReader(string(data))
+	return cmd.Run()
+}
+
+// setupClaudeConfigDir pre-creates and seeds the agent's private
+// CLAUDE_CONFIG_DIR before launch. Mirrors setupCodexHome: mkdir AS the agent
+// (the manager cannot chown), seed state/settings, then bridge the shared
+// credential with a symlink. No-op for root agents (UID 0), which run out of
+// the process HOME exactly as before. Every step is idempotent and
+// create-or-repair only — an existing per-agent state file is never replaced,
+// because "exactly one writer for .claude.json" is the entire point of #4596.
+func (m *Manager) setupClaudeConfigDir(agent *AgentProcess) {
+	if agent.UID <= 0 {
+		return
+	}
+	dir := claudeConfigDirPath(agent.Name)
+	agentUser := m.agentExecUserSpec(agent)
+	if err := exec.Command("su-exec", agentUser, "mkdir", "-p", dir).Run(); err != nil {
+		m.logger.Warn("failed to pre-create claude config dir", "agent", agent.Name, "dir", dir, "error", err)
+		return
+	}
+
+	// .claude.json — the contended file this whole layout exists for.
+	//   absent      -> create from the legacy shared state (migration: carries
+	//                  a pre-upgrade login forward) merged with the seed keys.
+	//   readable    -> fill missing seed keys only; existing keys always win.
+	//   unreadable  -> agent-owned private state (the CLI tightens it to 0600);
+	//                  healthy under this layout, leave it alone.
+	//   unparseable -> leave it: clobbering a file we cannot parse is exactly
+	//                  the class of damage this change removes.
+	statePath := filepath.Join(dir, ".claude.json")
+	if existing, readErr := os.ReadFile(statePath); readErr == nil {
+		var cur map[string]any
+		if json.Unmarshal(existing, &cur) == nil {
+			if merged, changed := mergeSeedKeys(cur, interactiveClaudeStateSeed()); changed {
+				if data, err := json.Marshal(merged); err == nil {
+					if werr := m.writeFileAsAgent(agent, statePath, data); werr != nil {
+						m.logger.Warn("failed to repair claude state file", "agent", agent.Name, "path", statePath, "error", werr)
+					}
+				}
+			}
+		}
+	} else if os.IsNotExist(readErr) {
+		var base map[string]any
+		if legacy, lerr := os.ReadFile(claudeLegacyStateFile); lerr == nil {
+			_ = json.Unmarshal(legacy, &base) // best-effort; nil base is fine
+		}
+		merged, _ := mergeSeedKeys(base, interactiveClaudeStateSeed())
+		if data, err := json.Marshal(merged); err == nil {
+			if werr := m.writeFileAsAgent(agent, statePath, data); werr != nil {
+				m.logger.Warn("failed to seed claude state file", "agent", agent.Name, "path", statePath, "error", werr)
+			}
+		}
+	}
+
+	// settings.json — under CLAUDE_CONFIG_DIR this replaces the shared
+	// ~/.claude/settings.json as userSettings, so without seeding every agent
+	// would hit the "Bypass Permissions mode" consent dialog on a fresh dir
+	// (default selection "No, exit" — see inferenceSettingsSeed). First create
+	// starts from the legacy shared settings so operator keys set there (e.g.
+	// effortLevel) carry forward; repair fills missing required keys only.
+	settingsPath := filepath.Join(dir, "settings.json")
+	if existing, readErr := os.ReadFile(settingsPath); readErr == nil {
+		var cur map[string]any
+		if json.Unmarshal(existing, &cur) == nil {
+			if merged, changed := mergeSeedKeys(cur, inferenceSettingsSeed()); changed {
+				if data, err := json.Marshal(merged); err == nil {
+					if werr := m.writeFileAsAgent(agent, settingsPath, data); werr != nil {
+						m.logger.Warn("failed to repair claude settings", "agent", agent.Name, "path", settingsPath, "error", werr)
+					}
+				}
+			}
+		}
+	} else if os.IsNotExist(readErr) {
+		var base map[string]any
+		if legacy, lerr := os.ReadFile(claudeLegacySettingsFile); lerr == nil {
+			_ = json.Unmarshal(legacy, &base)
+		}
+		merged, _ := mergeSeedKeys(base, inferenceSettingsSeed())
+		if data, err := json.Marshal(merged); err == nil {
+			if werr := m.writeFileAsAgent(agent, settingsPath, data); werr != nil {
+				m.logger.Warn("failed to seed claude settings", "agent", agent.Name, "path", settingsPath, "error", werr)
+			}
+		}
+	}
+
+	// Credential bridge (mirrors setupCodexHome's auth.json symlink): the
+	// per-agent .credentials.json is a symlink to the shared credential, so one
+	// login — interactive on any agent, or the dashboard OAuth flow — reaches
+	// every agent, and a refresh written through the link stays shared. A
+	// REGULAR file here is a credential the agent's own CLI wrote (a refresh
+	// that replaced the link); it is newer than the shared one — leave it.
+	credPath := filepath.Join(dir, ".credentials.json")
+	if fi, lerr := os.Lstat(credPath); lerr == nil && fi.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+	if err := exec.Command("su-exec", agentUser, "ln", "-sfn", claudeSharedCredentialsFile, credPath).Run(); err != nil {
+		m.logger.Warn("failed to link claude credentials", "agent", agent.Name, "link", credPath, "error", err)
+	}
+}
+
 // inferenceConfigMigrationVersion matches the Claude CLI internal config
 // migration version so the CLI skips first-run migration prompts.
 const inferenceConfigMigrationVersion = 13
@@ -7865,6 +8069,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			home = inferenceHomePath(agent.Name)
 		}
 		vars = append(vars, agentEnvPair{"HOME", home, false})
+		if backend == "claude" {
+			// Per-agent Claude Code state dir (#4596). HOME stays shared —
+			// only the CLI's own state/config moves. See setupClaudeConfigDir.
+			vars = append(vars, agentEnvPair{"CLAUDE_CONFIG_DIR", claudeConfigDirPath(agent.Name), false})
+		}
 
 		// Under the per-agent-UID layout the global npm prefix is owned by the
 		// image's build user, so the Claude Code CLI's self-updater fails on

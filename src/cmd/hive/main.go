@@ -1995,6 +1995,9 @@ func main() {
 
 	tokenCollector := tokens.NewCollector(cfg.Data.MetricsDir, logger)
 	tokenCollector.SetClaudeSessionsDir(cfg.Data.ClaudeSessionsDir)
+	// Per-agent CLAUDE_CONFIG_DIR transcript roots (#4596) — scanned in
+	// addition to the legacy shared dir above.
+	tokenCollector.SetClaudeSessionsGlob(agent.ClaudeConfigProjectsGlob())
 	tokenCollector.SetCopilotSessionsDir(cfg.Data.CopilotSessionsDir)
 	tokenCollector.SetBobSessionsDir(cfg.Data.BobSessionsDir)
 	if len(savedIssueCosts) > 0 {
