@@ -11,11 +11,13 @@ merge-gating, permission enforcement) from **judgment calls** (reading code,
 reasoning about a fix, writing a PR). Deterministic work runs in Go and shell
 before any LLM sees the task; agents only handle the judgment.
 
-> Automatic goal decomposition, plan review, and stall-triggered re-planning are
-> **not** covered on this page — they are the planning-intelligence lane, and
-> every entry point is gated at ACMM **L5+**, because the architect agent that
-> decomposes epics has no cadence below L5. See
-> [`planning-intelligence.md`](planning-intelligence.md) and
+> Goal decomposition, plan review, and stall-triggered re-planning are **not**
+> covered on this page — they are the planning-intelligence lane. Plan review and
+> the stall-replan lane run automatically (replan is on by default); decomposition
+> is gated at ACMM **L5+**, because the architect that decomposes epics has no
+> cadence below L5, and its final step — turning the architect's plan into child
+> beads — currently runs through the `bd decompose` CLI rather than automatically.
+> See [`planning-intelligence.md`](planning-intelligence.md) and
 > [ADR-0006](adr/0006-planning-intelligence.md).
 
 ---
