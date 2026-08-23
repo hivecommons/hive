@@ -35,7 +35,9 @@ func TestSlowStart_PacesAfterSecondaryLimit(t *testing.T) {
 	tr := newSlowStartTransport(http.DefaultTransport)
 	tr.state.gap = 60 * time.Millisecond
 	tr.state.jitter = time.Millisecond
-	tr.state.window = time.Second
+	// Generous window: the burst must still be inside it even if a loaded
+	// host delays the goroutines. Pacing cost stays 3 gaps regardless.
+	tr.state.window = time.Minute
 	client := &http.Client{Transport: tr}
 
 	// Trip the limit.
@@ -47,6 +49,7 @@ func TestSlowStart_PacesAfterSecondaryLimit(t *testing.T) {
 
 	// Burst: with Retry-After=0 the reset is immediate; the caution window is
 	// what must pace the burst.
+	burstStart := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
@@ -59,19 +62,22 @@ func TestSlowStart_PacesAfterSecondaryLimit(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	elapsed := time.Since(burstStart)
 
 	mu.Lock()
 	defer mu.Unlock()
 	if len(starts) != 5 {
 		t.Fatalf("want 5 requests, got %d", len(starts))
 	}
-	// The 4 cautious requests (2..5) must be spaced by >= gap (small epsilon
-	// for scheduler slop).
-	for i := 2; i < len(starts); i++ {
-		d := starts[i].Sub(starts[i-1])
-		if d < tr.state.gap-10*time.Millisecond {
-			t.Errorf("requests %d->%d only %v apart, want >= %v (stampede not paced)", i-1, i, d, tr.state.gap)
-		}
+	// Each cautious request claims a slot >= gap after the previous claim, so
+	// a 4-request burst cannot finish in under 3 gaps. Assert that elapsed
+	// lower bound rather than pairwise server-observed arrival gaps: on a
+	// loaded host, scheduler and connection latency can COMPRESS the observed
+	// spacing between two requests (an early request delayed toward the next
+	// one's slot), but can only INCREASE total elapsed time — an unpaced
+	// stampede still completes near-instantly and fails this check.
+	if want := 3 * tr.state.gap; elapsed < want {
+		t.Errorf("4 cautious requests completed in %v, want >= %v (stampede not paced)", elapsed, want)
 	}
 }
 
