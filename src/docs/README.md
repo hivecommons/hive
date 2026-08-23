@@ -80,14 +80,14 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.
 - [CNCF reference architecture](https://github.com/kubestellar/hive/blob/v4/src/docs/cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Podman CI runner map](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
-- [Knowledge system design](https://github.com/kubestellar/hive/blob/v4/src/docs/design/knowledge-system.md) — llm-wiki layers, subscriptions, and APIs.
+- [Design documents](design/README.md) — longer-form design records with the full reasoning behind a decision, indexed with a status each (shipped / partly shipped / design only / historical) so a proposal is not mistaken for current behaviour: master secret rotation, wrapped master delivery to pull-only spokes, PR reach telemetry, and the knowledge system.
 - [Podman Compose-provider selection spike](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-compose-provider-spike.md) — why `podman compose` must name its provider explicitly, and which provider needs no Docker tooling.
 - [Trajectory review](https://github.com/kubestellar/hive/blob/v4/src/docs/trajectory-review.md) — trajectory safety lane and review signals.
 - [Podman Quadlet `.container`/`.pod` spike](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-quadlet-container-pod-spike.md) — feasibility result for explicit Quadlet units: readiness via `Notify=healthy`, the startup-timeout trap, and what the generator does not validate.
 
 ## Historical/design notes
 
-Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](https://github.com/kubestellar/hive/blob/v4/src/docs/credly-badges.md).
+Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](https://github.com/kubestellar/hive/blob/v4/src/docs/credly-badges.md). The longer-form design records under [`design/`](design/README.md) are a whole directory of these: each entry in that index carries a status, because those pages are the reference record of a decision and are deliberately not rewritten as later stages ship.
 
 ## Security (v4)
 
