@@ -251,7 +251,7 @@ func (m *Manager) AgentAuthState(agentName string, uid int, backend string, runn
 		if tok != "" {
 			return true, true
 		}
-		if _, err := os.Stat(CopilotUserTokenPath); err == nil {
+		if _, err := os.Stat(copilotUserTokenProbePath); err == nil {
 			return true, true
 		}
 		for _, p := range agentCopilotConfigPaths(agentName, uid, backend) {

@@ -54,11 +54,17 @@ func emptySharedPaths(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	origClaude, origCopilot := sharedClaudeCredentialPath, sharedCopilotConfigPath
+	origUserToken := copilotUserTokenProbePath
 	sharedClaudeCredentialPath = filepath.Join(dir, "absent-claude.json")
 	sharedCopilotConfigPath = filepath.Join(dir, "absent-copilot.json")
+	// The dashboard device-flow token at /data/copilot-user-token exists on a
+	// live hive host and short-circuits the copilot probe to "authenticated",
+	// so "no shared credentials" must redirect it too (#4585).
+	copilotUserTokenProbePath = filepath.Join(dir, "absent-copilot-user-token")
 	t.Cleanup(func() {
 		sharedClaudeCredentialPath = origClaude
 		sharedCopilotConfigPath = origCopilot
+		copilotUserTokenProbePath = origUserToken
 	})
 }
 
@@ -242,6 +248,10 @@ func TestAgentAuthPathConstructionUsesIsolatedHomes(t *testing.T) {
 // TestAgentAuthState_ClaudeCredentialFileMissingThenPresent.)
 func TestAgentAuthState_TruePositivePreserved(t *testing.T) {
 	emptySharedPaths(t)
+	// uid>0 resolves HOME to <sharedAgentHome>/agents/scanner — on a live hive
+	// host that is a REAL agent home holding real copilot credentials, so the
+	// per-agent probe must be pointed at a temp tree too (#4585).
+	withSharedAgentHome(t)
 	t.Setenv("HOME", t.TempDir())
 	m := &Manager{}
 

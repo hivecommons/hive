@@ -5782,6 +5782,13 @@ const CopilotUserTokenPath = "/data/copilot-user-token"
 
 var copilotUserTokenWatchPath = CopilotUserTokenPath
 
+// copilotUserTokenProbePath is the same location as consulted by the
+// AgentAuthState file probe. A var (not the const directly) purely as a TEST
+// SEAM, matching sharedCopilotConfigPath above: on a live hive host the real
+// /data/copilot-user-token exists, and a probe that cannot be redirected makes
+// every "no copilot credentials" test assert against production login state.
+var copilotUserTokenProbePath = CopilotUserTokenPath
+
 // loginPromptPatterns are substrings that indicate an agent is stuck on a
 // login/authentication screen (Copilot text prompts, Claude Code OAuth flow,
 // GitHub device flow). Each must be distinctive enough to never appear in
