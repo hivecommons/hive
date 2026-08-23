@@ -81,7 +81,7 @@ Each hive owns:
 
 ## Design-future items
 
-These are not complete in v2 HEAD and should be treated as future design work:
+These are not complete today and should be treated as future design work:
 
 - A polished web UI for joining hives from project cards.
 - Screenshot-level GitHub App installation guide.

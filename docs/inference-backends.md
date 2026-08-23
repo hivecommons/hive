@@ -1,6 +1,6 @@
 # Inference backends
 
-Hive can route agents through OpenAI-compatible model gateways instead of a subscription CLI model. The supported gateway backend IDs in v2 HEAD are `vllm`, `llm-d`, `litellm`, `watsonx`, and named Model Gateways such as `openrouter`.
+Hive can route agents through OpenAI-compatible model gateways instead of a subscription CLI model. The supported gateway backend IDs are `vllm`, `llm-d`, `litellm`, `watsonx`, and named Model Gateways such as `openrouter`.
 
 ## How routing works
 

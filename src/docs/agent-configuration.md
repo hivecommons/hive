@@ -290,7 +290,7 @@ Leave it off outside of debugging: the explanation is extra output tokens on eve
 | `ultra` | Telegraphic compression. | High-volume lanes where compact summaries are more important than nuance. |
 | `wenyan` | Classical Chinese-style compression. | Specialized/experimental mode; use only when readers and downstream tools can tolerate it. |
 
-Implementation notes from v2 HEAD:
+Implementation notes:
 
 - Config validation accepts only `lite`, `full`, `ultra`, `wenyan`, or empty.
 - `claude`, `copilot`, and `gemini` are auto-wired before first message.
