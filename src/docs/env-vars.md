@@ -246,8 +246,8 @@ With two or more providers configured, `/login` renders a provider picker; with 
 The table above was cross-checked with these mechanical searches from the repository root:
 
 ```sh
-rg 'os\.(Getenv|LookupEnv)\(' v2 --glob '*.go'
-rg '\bHIVE_[A-Z0-9_]+\b|\bBD_DIR\b|\bGH_APP_KEY_FILE\b|\bAGENT_BACKEND\b' v2 bin config Justfile
-rg '\b(ANTHROPIC|COPILOT|GOOSE|BOBSHELL|OCI|KUBERNETES|POD|NAMESPACE|DASHBOARD|PROXY|SLACK|DISCORD|NTFY)_[A-Z0-9_]+\b' v2 bin config Justfile
+rg 'os\.(Getenv|LookupEnv)\(' src --glob '*.go'
+rg '\bHIVE_[A-Z0-9_]+\b|\bBD_DIR\b|\bGH_APP_KEY_FILE\b|\bAGENT_BACKEND\b' src bin config Justfile
+rg '\b(ANTHROPIC|COPILOT|GOOSE|BOBSHELL|OCI|KUBERNETES|POD|NAMESPACE|DASHBOARD|PROXY|SLACK|DISCORD|NTFY)_[A-Z0-9_]+\b' src bin config Justfile
 rg 'HIVE_[A-Z0-9_]+|BD_DIR|GH_APP_KEY_FILE|AGENT_BACKEND' src/deploy
 ```

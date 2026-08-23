@@ -245,7 +245,7 @@ agents:
 
 - **The agent still acts.** The instruction states that tool execution remains the requirement and that a response containing only explanation is a failure. It is appended *after* the `EXECUTE, DO NOT NARRATE` block, so it reads as a qualification of that rule rather than a replacement for it.
 - **Terse mode is suspended on `EXPLAIN:` lines only.** A caveman-compressed explanation would be useless to the human reading it, but the agent's real output — log lines, bead titles, PR descriptions — keeps whatever compression you configured.
-- **It is per-kick, not a prompt edit.** Nothing in `v2/policies/` or `examples/*/agents/*.md` changes, so toggling it does not alter any agent's actual instructions and does not require a redeploy.
+- **It is per-kick, not a prompt edit.** Nothing in `src/policies/` or `examples/*/agents/*.md` changes, so toggling it does not alter any agent's actual instructions and does not require a redeploy.
 
 ### Reading the explanation
 

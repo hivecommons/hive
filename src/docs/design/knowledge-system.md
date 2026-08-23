@@ -263,9 +263,9 @@ ACMM Level 4:   testMode = "tdd"
 
 ---
 
-## 4. v2 Architecture Integration
+## 4. Architecture Integration
 
-Hive v2 is a Go binary with structured packages under `src/pkg/`. The knowledge system adds a new `pkg/knowledge/` package and extends existing packages.
+Hive is a Go binary with structured packages under `src/pkg/`. The knowledge system adds a new `pkg/knowledge/` package and extends existing packages.
 
 ### New package: `src/pkg/knowledge/`
 
@@ -282,9 +282,9 @@ src/pkg/knowledge/
   promote_test.go
 ```
 
-### How it integrates with existing v2 packages
+### How it integrates with existing packages
 
-| v2 Package | Integration |
+| Package | Integration |
 |------------|-------------|
 | `pkg/config/` | Add `Knowledge` section to `hive.yaml` (layers, wiki paths, curator schedule, primer config) |
 | `pkg/snapshot/` | Add `Knowledge []Fact` field to snapshot state — primed facts per work item |
@@ -294,9 +294,9 @@ src/pkg/knowledge/
 | `pkg/dashboard/` | Add `/api/knowledge/*` endpoints proxying to llm-wiki MCP; Knowledge tab in frontend |
 | `pkg/agent/` | Include primed facts in agent work orders |
 
-### Pipeline flow (v2)
+### Pipeline flow
 
-In v2, the pipeline is Go code, not shell scripts:
+The pipeline is Go code, not shell scripts:
 
 ```
 snapshot.Build()

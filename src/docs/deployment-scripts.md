@@ -53,9 +53,14 @@ capability drop), then starts SSH. Tunable flags include `--ctid`, `--hostname`,
 `--password`, `--disk`, `--memory`, and `--cores`.
 
 `deploy/bootstrap-lxc.sh` runs inside that LXC. It installs Docker Engine and the
-Compose plugin, clones the `v2` branch to `/opt/hive`, builds the Hive image, and
+Compose plugin, clones the repository to `/opt/hive`, builds the Hive image, and
 writes `/opt/hive/.env` with placeholders for GitHub, dashboard, model, and
 notification credentials.
+
+**Known defect.** The script still hardcodes `git clone --branch v2`, and `v2` is
+a retired branch — so it provisions a retired release line rather than mainline
+`v4`. Until that is fixed in the script, pass the branch you want explicitly or
+re-point `/opt/hive` at `v4` after bootstrap.
 
 Use this path when you operate Hive on Proxmox or another LXC-first host and want
 a lightweight VM-like container that still runs the normal Docker Compose

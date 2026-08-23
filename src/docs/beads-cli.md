@@ -16,7 +16,7 @@
 | `bd reset [--reason "..."]` | Close all open/in-progress/blocked beads with an audit reason. |
 | `bd remember "fact"` | Quick-add an advisory bead authored by `system`. |
 | `bd init` | No-op compatibility command; opening the store creates it. |
-| `bd dolt push` | No-op compatibility command; v2 data is already persisted on disk. |
+| `bd dolt push` | No-op compatibility command; bead data is already persisted on disk. |
 
 Examples:
 

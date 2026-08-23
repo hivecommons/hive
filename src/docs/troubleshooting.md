@@ -50,7 +50,7 @@ In Kubernetes, edit the ConfigMap/Secret source and restart the pod; dashboard e
 
 ## GitHub credentials are missing or invalid
 
-When no token or App credentials are usable, v2 starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main.go` depending on the state:
+When no token or App credentials are usable, Hive starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main.go` depending on the state:
 
 - `no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode`
 - `GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.`
@@ -70,7 +70,7 @@ On GitHub Enterprise, a 404 from the install link usually means the hive is poin
 
 ## Agents are stuck, paused, or need CLI login
 
-Agents run in tmux sessions named `hive-<agent>` managed by the v2 agent manager. There is no v1 `AGENT_READY_MARKER` or `bin/supervisor.sh` loop: the manager drives each agent by delivering a *kick* (its next work prompt) directly into the session and, once running, auto-dismisses the CLI's own startup consent screens.
+Agents run in tmux sessions named `hive-<agent>` managed by Hive's agent manager. There is no v1 `AGENT_READY_MARKER` or `bin/supervisor.sh` loop: the manager drives each agent by delivering a *kick* (its next work prompt) directly into the session and, once running, auto-dismisses the CLI's own startup consent screens.
 
 The login detector (`scanForLoginRequired` in `src/cmd/hive/main.go`) scans recent tmux pane output for the regexes in `governor.sensing.login_patterns`. On a match it logs `login required detected`, pauses the agent, and sends a high-priority notification telling you to attach to `hive-<agent>` and run that backend's login command.
 
