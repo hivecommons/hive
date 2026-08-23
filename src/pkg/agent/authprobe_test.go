@@ -201,8 +201,8 @@ func TestAgentAuthPathConstructionUsesIsolatedHomes(t *testing.T) {
 	if got := AgentHome("writer", 0, "claude"); got != home {
 		t.Fatalf("uid 0 AgentHome = %q, want HOME %q", got, home)
 	}
-	if got := AgentHome("writer", 2001, "claude"); got != bobSharedHome {
-		t.Fatalf("claude agent home = %q, want shared home %q", got, bobSharedHome)
+	if got := AgentHome("writer", 2001, "claude"); got != interactiveHomePath("writer") {
+		t.Fatalf("claude agent home = %q, want per-agent home %q (#4596)", got, interactiveHomePath("writer"))
 	}
 	if got := AgentHome("writer", 2001, "litellm"); got != prefix+"writer" {
 		t.Fatalf("inference agent home = %q, want %q", got, prefix+"writer")
@@ -370,8 +370,8 @@ func TestAgentAuthState_BobAPIKeyGate(t *testing.T) {
 	if home := AgentHome("shared", 0, "claude"); home != "/data/home" {
 		t.Fatalf("fallback HOME = %q, want /data/home", home)
 	}
-	if home := AgentHome("claude-agent", 2001, "claude"); home != "/data/home" {
-		t.Fatalf("claude per-UID home = %q, want /data/home", home)
+	if home := AgentHome("claude-agent", 2001, "claude"); home != interactiveHomePath("claude-agent") {
+		t.Fatalf("claude per-UID home = %q, want %q (#4596 per-agent layout)", home, interactiveHomePath("claude-agent"))
 	}
 	if avail, known := m.AgentAuthState("custom", 0, "custom-backend", false, false); avail || known {
 		t.Fatalf("custom non-interactive backend: got (avail=%v, known=%v), want unknown", avail, known)

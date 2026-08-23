@@ -521,6 +521,13 @@ if [ "$(id -u)" = "0" ]; then
   # is perfectly writable. 2775 = rwxrwxr-x + setgid (new entries inherit node).
   chmod 2775 /data/home 2>/dev/null || true
   chown dev:node /data/home 2>/dev/null || true
+  # Per-agent interactive HOMEs live here (#4596): the manager provisions
+  # /data/home/agents/<name> per agent at launch, bridged by symlinks back to
+  # the shared dot-dirs below. 0755: every agent UID traverses it, none write
+  # directly in it (each agent's own home is chowned to that agent).
+  mkdir -p /data/home/agents
+  chmod 0755 /data/home/agents 2>/dev/null || true
+  chown dev:node /data/home/agents 2>/dev/null || true
   chmod 2770 /data/home/.copilot 2>/dev/null || true
   chown dev:node /data/home/.copilot 2>/dev/null || true
   chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true

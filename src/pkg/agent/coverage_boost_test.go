@@ -304,8 +304,14 @@ func TestAgentEnvPairs_UID_NonInference_HOME(t *testing.T) {
 	pairs := m.agentEnvPairs(ap)
 	for _, p := range pairs {
 		if p.Key == "HOME" {
-			if p.Value != "/data/home" {
-				t.Errorf("non-inference UID agent HOME = %q, want /data/home", p.Value)
+			// #4596: per-UID interactive agents get a per-agent HOME under the
+			// shared home, so one agent's .claude.json rewrite can never sign
+			// out the fleet. Must match AgentHome exactly.
+			if want := AgentHome("scanner", 1001, "claude"); p.Value != want {
+				t.Errorf("non-inference UID agent HOME = %q, want %q", p.Value, want)
+			}
+			if p.Value != "/data/home/agents/scanner" {
+				t.Errorf("non-inference UID agent HOME = %q, want /data/home/agents/scanner", p.Value)
 			}
 			return
 		}

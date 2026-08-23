@@ -75,17 +75,25 @@ func BackendRequiresInteractiveAuth(backend string) bool {
 // exactly what buildAgentEnv exports as HOME on the launch path, so the auth
 // probe reads the same filesystem location the CLI writes to. Agents with no
 // allocated UID (UID == 0) run as the hive user out of the process HOME.
+//
+// Per-UID interactive agents get a PER-AGENT home (#4596 — the shared
+// /data/home let any agent's atomic .claude.json rewrite sign out the whole
+// fleet); inference agents keep their /tmp-based per-agent home; the
+// HIVE_SHARED_AGENT_HOME=1 escape hatch restores the legacy shared layout.
 func AgentHome(agentName string, uid int, backend string) string {
 	if uid <= 0 {
 		if h := os.Getenv("HOME"); h != "" {
 			return h
 		}
-		return "/data/home"
+		return sharedAgentHome
 	}
 	if IsInferenceBackend(backend) {
 		return inferenceHomePath(agentName)
 	}
-	return "/data/home"
+	if sharedAgentHomeForced() {
+		return sharedAgentHome
+	}
+	return interactiveHomePath(agentName)
 }
 
 // agentClaudeCredentialPaths returns the .credentials.json locations to try for

@@ -1810,6 +1810,9 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if launchBackend == codexBackend {
 			m.setupCodexHome(agent)
 		}
+		// Provision the per-agent interactive HOME (#4596): directory, shared-
+		// state bridges, signed-in Claude session adoption, legacy tmp sweep.
+		m.setupInteractiveHome(agent, launchBackend)
 	}
 
 	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
@@ -2556,7 +2559,9 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 		return
 	}
 
-	home := "/data/home"
+	// AgentHome so caveman's ~/.claude / ~/.copilot writes land in the same
+	// HOME the agent's CLI runs with (per-agent layout, bridged to shared).
+	home := AgentHome(agent.Name, agent.UID, backend)
 	if agent.UID == 0 {
 		home = os.Getenv("HOME")
 		if home == "" {
@@ -7860,11 +7865,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"HIVE_AGENT_TOKEN_CACHE", ghpkg.AgentTokenCachePath(agent.Name), false})
 	}
 	if agent.UID > 0 {
-		home := "/data/home"
-		if IsInferenceBackend(backend) {
-			home = inferenceHomePath(agent.Name)
-		}
-		vars = append(vars, agentEnvPair{"HOME", home, false})
+		// Per-UID agents get a per-agent HOME (#4596) — AgentHome is the single
+		// source of truth so the auth probe and this export can never diverge.
+		vars = append(vars, agentEnvPair{"HOME", AgentHome(agent.Name, agent.UID, backend), false})
 
 		// Under the per-agent-UID layout the global npm prefix is owned by the
 		// image's build user, so the Claude Code CLI's self-updater fails on
