@@ -4,12 +4,17 @@
 package rotation
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -98,56 +103,235 @@ func failOpen(provider string, err error) Headroom {
 	return Headroom{Provider: provider, Available: true, ProbeErr: err}
 }
 
-// ClaudeProber probes Anthropic subscription usage via `claude /usage`.
+// ClaudeProber probes Anthropic subscription usage via the OAuth usage API.
+//
+// `claude /usage` no longer renders the weekly-quota block (current builds
+// show session stats only) and headless `/status` is unavailable, so the probe
+// uses the same undocumented endpoint Claude Code's own HUD polls:
+//
+//	GET https://api.anthropic.com/api/oauth/usage
+//	Authorization: Bearer <accessToken from ~/.claude/.credentials.json>
+//	anthropic-beta: oauth-2025-04-20        (required, else 401)
+//
+// The `limits` array carries per-kind percent + resets_at (session /
+// weekly_all / weekly_scoped); the binding limit is the max percent. The
+// endpoint rate-limits aggressively, so a 429/401/parse failure is fail-open
+// (never evidence of exhaustion).
 type ClaudeProber struct {
 	ThresholdPct int
+	// BaseURL overrides the API endpoint (tests). Default production host.
+	BaseURL string
+	// Client overrides the HTTP client (tests).
+	Client *http.Client
+	// CredentialsPath overrides the default ~/.claude/.credentials.json.
+	CredentialsPath string
 }
 
-var claudeUsageRe = regexp.MustCompile(`Current week \(all models\)[^\d]*(\d+)%`)
+const claudeUsageBaseURL = "https://api.anthropic.com"
+const claudeOAuthBeta = "oauth-2025-04-20"
+
+type claudeCredentials struct {
+	ClaudeAiOauth struct {
+		AccessToken string `json:"accessToken"`
+	} `json:"claudeAiOauth"`
+}
+
+type claudeUsageResponse struct {
+	Limits []struct {
+		Kind     string     `json:"kind"`
+		Percent  *float64   `json:"percent"`
+		ResetsAt *time.Time `json:"resets_at"`
+	} `json:"limits"`
+}
 
 func (p ClaudeProber) Provider() string { return "anthropic" }
 
 func (p ClaudeProber) Probe(ctx context.Context) Headroom {
-	out, err := runCLI(ctx, "claude", "/usage", "--output-format", "text")
+	credPath := p.CredentialsPath
+	if credPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return failOpen(p.Provider(), err)
+		}
+		credPath = filepath.Join(home, ".claude", ".credentials.json")
+	}
+	raw, err := os.ReadFile(credPath)
+	if err != nil {
+		return failOpen(p.Provider(), fmt.Errorf("claude credentials: %w", err))
+	}
+	var creds claudeCredentials
+	if err := json.Unmarshal(raw, &creds); err != nil {
+		return failOpen(p.Provider(), fmt.Errorf("claude credentials parse: %w", err))
+	}
+	if creds.ClaudeAiOauth.AccessToken == "" {
+		// An empty token is the signature of an expired OAuth session; the
+		// CLI reports "Login expired" and serves nothing. Not exhaustion.
+		return failOpen(p.Provider(), errors.New("claude credentials: empty accessToken"))
+	}
+	base := p.BaseURL
+	if base == "" {
+		base = claudeUsageBaseURL
+	}
+	client := p.Client
+	if client == nil {
+		client = &http.Client{Timeout: probeTimeout}
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/oauth/usage", nil)
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	m := claudeUsageRe.FindStringSubmatch(out)
-	if m == nil {
-		return failOpen(p.Provider(), fmt.Errorf("claude usage output did not match"))
+	req.Header.Set("Authorization", "Bearer "+creds.ClaudeAiOauth.AccessToken)
+	req.Header.Set("anthropic-beta", claudeOAuthBeta)
+	resp, err := client.Do(req)
+	if err != nil {
+		return failOpen(p.Provider(), err)
 	}
-	used, _ := strconv.Atoi(m[1])
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return failOpen(p.Provider(), fmt.Errorf("claude usage HTTP %d", resp.StatusCode))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	var parsed claudeUsageResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	used := 0
+	var resetAt time.Time
+	for _, l := range parsed.Limits {
+		if l.Percent == nil {
+			continue
+		}
+		pct := int(*l.Percent)
+		if pct > used {
+			used = pct
+			if l.ResetsAt != nil {
+				resetAt = *l.ResetsAt
+			}
+		}
+	}
 	return Headroom{
 		Provider:     p.Provider(),
 		Available:    used < p.ThresholdPct,
 		PctRemaining: fullPct - used,
+		ResetAt:      resetAt,
 	}
 }
 
-// CodexProber probes OpenAI subscription usage via `codex /status`.
+// CodexProber probes OpenAI subscription usage via the codex app-server
+// JSON-RPC interface.
+//
+// `codex /status` is TUI-only: current builds reject `--output-format` and
+// headless invocations die with "stdin is not a terminal", so the probe drives
+// the app-server protocol directly: spawn `codex app-server`, exchange an
+// initialize handshake, then call `account/rateLimits/read`. The reply carries
+// rateLimits.primary (the binding window) with usedPercent + resetsAt. A probe
+// failure is fail-open: never evidence of exhaustion.
 type CodexProber struct {
 	ThresholdPct int
 }
 
-var codexWeeklyRe = regexp.MustCompile(`Weekly limit:[^\d]*(\d+)%`)
+type codexRateLimitsResult struct {
+	RateLimits struct {
+		Primary struct {
+			UsedPercent int   `json:"usedPercent"`
+			ResetsAt    int64 `json:"resetsAt"`
+		} `json:"primary"`
+	} `json:"rateLimits"`
+}
 
 func (p CodexProber) Provider() string { return "openai" }
 
 func (p CodexProber) Probe(ctx context.Context) Headroom {
-	out, err := runCLI(ctx, "codex", "/status", "--output-format", "text")
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout+5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "codex", "app-server")
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	m := codexWeeklyRe.FindStringSubmatch(out)
-	if m == nil {
-		return failOpen(p.Provider(), fmt.Errorf("codex status output did not match"))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return failOpen(p.Provider(), err)
 	}
-	remaining, _ := strconv.Atoi(m[1])
-	return Headroom{
-		Provider:     p.Provider(),
-		Available:    fullPct-remaining < p.ThresholdPct,
-		PctRemaining: remaining,
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return failOpen(p.Provider(), err)
 	}
+	defer cmd.Process.Kill()
+	send := func(id int, method string, params any) error {
+		msg := struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params any    `json:"params,omitempty"`
+		}{ID: id, Method: method, Params: params}
+		b, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		_, err = stdin.Write(append(b, '\n'))
+		return err
+	}
+	if err := send(0, "initialize", map[string]any{
+		"clientInfo": map[string]string{"name": "hive-rotation", "title": "Hive Rotation", "version": "1.0"},
+	}); err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	handshake := false
+	sc := bufio.NewScanner(stdout)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var m struct {
+			ID     int              `json:"id"`
+			Result json.RawMessage  `json:"result"`
+			Error  *json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal(line, &m); err != nil {
+			continue // keepalives / config warnings that are not JSON objects
+		}
+		if m.Error != nil {
+			return failOpen(p.Provider(), fmt.Errorf("codex app-server error: %s", string(*m.Error)))
+		}
+		if m.ID == 0 && !handshake {
+			handshake = true
+			if err := send(1, "account/rateLimits/read", map[string]any{}); err != nil {
+				return failOpen(p.Provider(), err)
+			}
+			continue
+		}
+		if m.ID == 1 {
+			used, resetAt, err := parseCodexRateLimits(m.Result)
+			if err != nil {
+				return failOpen(p.Provider(), err)
+			}
+			return Headroom{
+				Provider:     p.Provider(),
+				Available:    used < p.ThresholdPct,
+				PctRemaining: fullPct - used,
+				ResetAt:      resetAt,
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return failOpen(p.Provider(), err)
+	}
+	return failOpen(p.Provider(), errors.New("codex app-server: no rateLimits response"))
+}
+
+func parseCodexRateLimits(result json.RawMessage) (usedPct int, resetAt time.Time, err error) {
+	var res codexRateLimitsResult
+	if err := json.Unmarshal(result, &res); err != nil {
+		return 0, time.Time{}, err
+	}
+	return res.RateLimits.Primary.UsedPercent,
+		time.Unix(res.RateLimits.Primary.ResetsAt, 0).UTC(), nil
 }
 
 // AgyProber probes Google usage via `agy --print "/usage"`.

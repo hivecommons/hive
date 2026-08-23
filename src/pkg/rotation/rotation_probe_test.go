@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,13 +28,48 @@ func fakeCLI(t *testing.T, name, output string, exitCode int) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+// claudeCredsFile writes a credentials file holding the given token and
+// returns its path.
+func claudeCredsFile(t *testing.T, token string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	body := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q}}`, token)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// claudeUsageServer serves /api/oauth/usage and verifies the Authorization
+// and anthropic-beta headers the probe must send.
+func claudeUsageServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/oauth/usage" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want Bearer test-token", got)
+		}
+		if got := r.Header.Get("anthropic-beta"); got != "oauth-2025-04-20" {
+			t.Errorf("anthropic-beta = %q, want oauth-2025-04-20", got)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func TestClaudeProber_UsedBelowThreshold(t *testing.T) {
-	fakeCLI(t, "claude", "Current week (all models): 40% used", 0)
-	p := ClaudeProber{ThresholdPct: 80}
-	h := p.Probe(context.Background())
+	srv := claudeUsageServer(t, http.StatusOK, `{"limits":[
+		{"kind":"session","percent":11,"resets_at":"2026-08-23T16:49:59Z"},
+		{"kind":"weekly_all","percent":40,"resets_at":"2026-08-26T23:00:00Z"}]}`)
+	p := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}
 	if p.Provider() != "anthropic" {
 		t.Errorf("Provider = %q, want anthropic", p.Provider())
 	}
+	h := p.Probe(context.Background())
 	if h.ProbeErr != nil {
 		t.Fatalf("ProbeErr = %v", h.ProbeErr)
 	}
@@ -43,11 +79,14 @@ func TestClaudeProber_UsedBelowThreshold(t *testing.T) {
 	if h.PctRemaining != 60 {
 		t.Errorf("PctRemaining = %d, want 60", h.PctRemaining)
 	}
+	if h.ResetAt.IsZero() {
+		t.Error("ResetAt unset, want the weekly resets_at")
+	}
 }
 
 func TestClaudeProber_Exhausted(t *testing.T) {
-	fakeCLI(t, "claude", "Current week (all models): 95% used", 0)
-	h := ClaudeProber{ThresholdPct: 80}.Probe(context.Background())
+	srv := claudeUsageServer(t, http.StatusOK, `{"limits":[{"kind":"weekly_all","percent":95,"resets_at":"2026-08-26T23:00:00Z"}]}`)
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
 	if h.ProbeErr != nil {
 		t.Fatalf("ProbeErr = %v", h.ProbeErr)
 	}
@@ -56,30 +95,53 @@ func TestClaudeProber_Exhausted(t *testing.T) {
 	}
 }
 
-func TestClaudeProber_UnparseableOutput(t *testing.T) {
-	fakeCLI(t, "claude", "unexpected output", 0)
-	h := ClaudeProber{ThresholdPct: 80}.Probe(context.Background())
+func TestClaudeProber_Unauthenticated(t *testing.T) {
+	srv := claudeUsageServer(t, http.StatusUnauthorized, `{"error":{"type":"authentication_error"}}`)
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
 	if h.ProbeErr == nil {
-		t.Fatal("ProbeErr = nil, want parse error")
+		t.Fatal("ProbeErr = nil, want error")
 	}
 	if !h.Available {
 		t.Error("Available = false, want true (fail-open)")
 	}
 }
 
-func TestClaudeProber_CommandFailure(t *testing.T) {
-	fakeCLI(t, "claude", "boom", 1)
-	h := ClaudeProber{ThresholdPct: 80}.Probe(context.Background())
-	if h.ProbeErr == nil {
-		t.Fatal("ProbeErr = nil, want command error")
+func TestClaudeProber_EmptyToken(t *testing.T) {
+	h := ClaudeProber{ThresholdPct: 80, CredentialsPath: claudeCredsFile(t, "")}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Error("want fail-open with error on empty accessToken")
 	}
-	if !h.Available {
-		t.Error("Available = false, want true (fail-open)")
+}
+
+func TestClaudeProber_MissingCredentials(t *testing.T) {
+	h := ClaudeProber{ThresholdPct: 80, CredentialsPath: filepath.Join(t.TempDir(), "nope.json")}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Error("want fail-open with error on missing credentials file")
 	}
+}
+
+// fakeCodexAppServer installs a `codex` script that speaks the app-server
+// JSON-RPC protocol: it answers the initialize handshake, then the
+// account/rateLimits/read call with the given primary window.
+func fakeCodexAppServer(t *testing.T, usedPercent int, resetsAt int64) {
+	t.Helper()
+	reply := fmt.Sprintf(`{"id":1,"result":{"rateLimits":{"primary":{"usedPercent":%d,"resetsAt":%d}}}}`,
+		usedPercent, resetsAt)
+	script := "#!/bin/sh\n" +
+		"IFS= read -r line\n" +
+		"printf '%s\\n' '{\"id\":0,\"result\":{\"userAgent\":\"fake/1\"}}'\n" +
+		"IFS= read -r line\n" +
+		fmt.Sprintf("printf '%%s\\n' '%s'\n", reply) +
+		"exit 0\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestCodexProber(t *testing.T) {
-	fakeCLI(t, "codex", "Weekly limit: 70% remaining", 0)
+	fakeCodexAppServer(t, 30, 1787968245)
 	p := CodexProber{ThresholdPct: 80}
 	if p.Provider() != "openai" {
 		t.Errorf("Provider = %q, want openai", p.Provider())
@@ -94,22 +156,29 @@ func TestCodexProber(t *testing.T) {
 	if h.PctRemaining != 70 {
 		t.Errorf("PctRemaining = %d, want 70", h.PctRemaining)
 	}
+	if want := time.Unix(1787968245, 0).UTC(); !h.ResetAt.Equal(want) {
+		t.Errorf("ResetAt = %v, want %v", h.ResetAt, want)
+	}
 }
 
 func TestCodexProber_ExhaustedAndErrors(t *testing.T) {
-	fakeCLI(t, "codex", "Weekly limit: 5% remaining", 0)
+	fakeCodexAppServer(t, 95, 1787968245)
 	h := CodexProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
 	if h.Available {
 		t.Error("Available = true, want false (95 used >= 80 threshold)")
 	}
 
+	// A codex that exits without answering the rate-limits call is fail-open.
 	fakeCLI(t, "codex", "garbage", 0)
 	h = CodexProber{ThresholdPct: 80}.Probe(context.Background())
 	if h.ProbeErr == nil || !h.Available {
-		t.Error("want fail-open with parse error on garbage output")
+		t.Error("want fail-open with error on garbage output")
 	}
 
-	fakeCLI(t, "codex", "x", 2)
+	fakeCLI(t, "codex", "", 3)
 	h = CodexProber{ThresholdPct: 80}.Probe(context.Background())
 	if h.ProbeErr == nil || !h.Available {
 		t.Error("want fail-open with error on non-zero exit")
