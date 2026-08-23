@@ -11,10 +11,12 @@ merge-gating, permission enforcement) from **judgment calls** (reading code,
 reasoning about a fix, writing a PR). Deterministic work runs in Go and shell
 before any LLM sees the task; agents only handle the judgment.
 
-> This document describes the `v2` branch. Automatic goal decomposition, plan
-> review, and stall-triggered re-planning are not implemented in v2 HEAD; treat
-> any mention of those capabilities outside this page as future/design-only
-> material unless the code grows matching planner/replan paths.
+> Automatic goal decomposition, plan review, and stall-triggered re-planning are
+> **not** covered on this page — they are the planning-intelligence lane, and
+> every entry point is gated at ACMM **L5+**, because the architect agent that
+> decomposes epics has no cadence below L5. See
+> [`planning-intelligence.md`](planning-intelligence.md) and
+> [ADR-0006](adr/0006-planning-intelligence.md).
 
 ---
 
