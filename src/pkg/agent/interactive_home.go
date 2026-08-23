@@ -151,7 +151,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	}
 
 	m.bridgeInteractiveHome(agent.Name, home)
-	m.seedClaudeSessionForAgent(agent.Name, home, agent.UID)
+	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
 }
@@ -204,33 +204,47 @@ func (m *Manager) bridgeInteractiveHome(agentName, home string) {
 //     #4606 restart path re-authenticates an agent after an operator logs in
 //     on a sibling.
 //
+// On a FRESH install source (2) is the only one that can ever exist, and it is
+// always agent-owned at mode 0600 because the operator's login was written by
+// that agent's OWN CLI — there is no legacy shared file to inherit. Reading it
+// therefore goes through the su-exec seam in claude_session_adopt.go, the same
+// way tmuxCmd and setupCodexHome reach across UIDs. Without that, seeding found
+// no source on fresh installs and every agent needed its own interactive login
+// (#4637), contradicting the "log in once per method" contract this whole
+// layout exists to keep.
+//
 // ADOPT-ONLY: a signed-in per-agent file is NEVER overwritten, and no
 // synthetic session is fabricated — when no signed-in source exists anywhere,
 // the login menu is the honest state and must appear. Sources are read whole;
 // Claude's atomic rename writes mean a read never observes a torn file.
-func (m *Manager) seedClaudeSessionForAgent(agentName, home string, uid int) {
+func (m *Manager) seedClaudeSessionForAgent(agent *AgentProcess, home string) {
+	agentName, uid := agent.Name, agent.UID
 	target := claudeSessionFile(home)
-	if inspectClaudeSession(target).State == claudeSessionSignedIn {
+	// Owner-aware on purpose: an unreadable target may be this agent's own
+	// signed-in session, and adopt-only must not clobber it with a sibling's
+	// identity just because the hive process cannot open it.
+	if m.inspectClaudeSessionForAdoption(target).State == claudeSessionSignedIn {
 		return
 	}
 	source := m.findSignedInClaudeSession(agentName)
 	if source == "" {
 		return
 	}
-	data, err := os.ReadFile(source)
+	data, err := m.readClaudeSessionForAdoption(source)
 	if err != nil {
 		m.logger.Warn("failed to read claude session seed source",
 			"agent", agentName, "source", source, "error", err)
 		return
 	}
-	if err := os.WriteFile(target, data, claudeSessionSeedFileMode); err != nil {
+	if err := m.writeClaudeSessionForAgent(target, data, m.agentExecUserSpec(agent)); err != nil {
 		m.logger.Warn("failed to seed claude session",
 			"agent", agentName, "target", target, "error", err)
 		return
 	}
 	if uid > 0 {
-		// Best-effort: unprivileged deployments cannot chown, and the 0666
-		// mode above already keeps the file usable there.
+		// Best-effort: unprivileged deployments cannot chown, and the seed mode
+		// already keeps the file usable there. A no-op when the write above went
+		// through su-exec, which produced an agent-owned file already.
 		_ = os.Chown(target, uid, -1)
 	}
 	m.logger.Info("adopted signed-in claude session for agent",
@@ -240,9 +254,13 @@ func (m *Manager) seedClaudeSessionForAgent(agentName, home string, uid int) {
 // findSignedInClaudeSession locates a signed-in .claude.json to adopt: legacy
 // shared file first, then siblings (sorted for determinism), skipping the
 // requesting agent's own home.
+//
+// Candidates are classified owner-aware, so an agent-owned 0600 sibling — the
+// ONLY shape a fresh install's first login ever takes — counts as a source
+// instead of reading as claudeSessionUnreadable and being skipped.
 func (m *Manager) findSignedInClaudeSession(agentName string) string {
 	legacy := claudeSessionFile(sharedAgentHome)
-	if inspectClaudeSession(legacy).State == claudeSessionSignedIn {
+	if m.inspectClaudeSessionForAdoption(legacy).State == claudeSessionSignedIn {
 		return legacy
 	}
 	entries, err := os.ReadDir(interactiveHomeRoot())
@@ -258,7 +276,7 @@ func (m *Manager) findSignedInClaudeSession(agentName string) string {
 	sort.Strings(names)
 	for _, name := range names {
 		candidate := claudeSessionFile(interactiveHomePath(name))
-		if inspectClaudeSession(candidate).State == claudeSessionSignedIn {
+		if m.inspectClaudeSessionForAdoption(candidate).State == claudeSessionSignedIn {
 			return candidate
 		}
 	}

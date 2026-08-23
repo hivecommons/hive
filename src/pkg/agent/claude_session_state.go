@@ -138,6 +138,16 @@ func inspectClaudeSession(path string) claudeSessionInfo {
 		}
 		return info
 	}
+	return classifyClaudeSession(path, data)
+}
+
+// classifyClaudeSession is inspectClaudeSession's judgement applied to bytes
+// that are already in hand. Split out because the same classification has to
+// run over content this process could not open itself — the seeding path reads
+// agent-owned files through su-exec (see claude_session_adopt.go) and must
+// reach the identical verdict as a direct read.
+func classifyClaudeSession(path string, data []byte) claudeSessionInfo {
+	info := claudeSessionInfo{Path: path, State: claudeSessionUnknown}
 
 	// Decode into a raw map: .claude.json's full schema is Claude Code's, it
 	// changes between versions, and this must not fail closed on a key it has

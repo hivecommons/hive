@@ -315,7 +315,7 @@ Implementation notes:
 
 Two rules of thumb:
 
-- **CLI methods are subscriptions.** You log in once per method from the dashboard, and every agent using that method shares the login.
+- **CLI methods are subscriptions.** You log in once per method from the dashboard, and every agent using that method shares the login. For `claude`, sharing is not instantaneous: the OAuth token is shared immediately through the per-agent home bridge, while the session identity (`~/.claude.json`, which is what decides whether the CLI shows a login menu) is adopted from an already-signed-in agent the next time each other agent launches or is restarted. So on a fresh install, expect the remaining agents to clear their 🔑 badge on their next start rather than the moment you finish logging in.
 - **Inference methods are endpoints.** You configure a base URL and a key *reference* (env var name or key-file path — the value goes in `/data/secrets/`, never in YAML). Agents on `vllm`/`llm-d`/`litellm` launch the Claude CLI routed through hive's inference translator, so there is no separate login.
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
