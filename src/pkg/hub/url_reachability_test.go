@@ -22,7 +22,17 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func newURLHealthTestHub(domain string) *HubServer {
+// newURLHealthTestHub builds a hub whose domain suffix comes ONLY from the
+// cluster config passed here. hubDomainSuffix consults HIVE_HUB_URL and
+// friends first, and on a live hive host those are set to the real hub URL,
+// which silently overrides the test domain and suppresses every alert the
+// tests expect. Pin them empty so the tests are hermetic (see hive#4595 for
+// the same class of failure in scheduler/tokens/proxy).
+func newURLHealthTestHub(t *testing.T, domain string) *HubServer {
+	t.Helper()
+	for _, key := range []string{"HIVE_HUB_PUBLIC_URL", "HIVE_PUBLIC_URL", "HIVE_HUB_BASE_URL", "HIVE_DASHBOARD_URL", "HIVE_HUB_URL"} {
+		t.Setenv(key, "")
+	}
 	return &HubServer{
 		urlHealth: newURLHealthState(),
 		clusters: map[string]ClusterConfig{
@@ -280,7 +290,7 @@ func TestURLUnreachableAlerts(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
 
-	s := newURLHealthTestHub("example.com")
+	s := newURLHealthTestHub(t, "example.com")
 	hives := []RegistryEntry{
 		{ID: "broken", Name: "org/broken", ClusterID: "c1", RegisteredAt: oldEnough, DashboardURL: "https://broken.example.com"},
 		{ID: "fine1", ClusterID: "c1", RegisteredAt: oldEnough, DashboardURL: "https://f1.example.com"},
@@ -306,14 +316,14 @@ func TestURLUnreachableAlerts(t *testing.T) {
 	}
 
 	// A single failure is below the threshold — a blip must never alert.
-	s2 := newURLHealthTestHub("example.com")
+	s2 := newURLHealthTestHub(t, "example.com")
 	s2.urlHealth.observe("broken", urlProbeResult{Status: 503})
 	if got := s2.urlUnreachableAlerts(hives, now); len(got) != 0 {
 		t.Errorf("one failure must not alert, got %+v", got)
 	}
 
 	// Whole cluster down -> suppressed into an outage, zero per-hive alerts.
-	s3 := newURLHealthTestHub("example.com")
+	s3 := newURLHealthTestHub(t, "example.com")
 	for _, h := range hives {
 		for i := 0; i < urlUnreachableMinFailures; i++ {
 			s3.urlHealth.observe(h.ID, urlProbeResult{Status: 0})
@@ -353,7 +363,7 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 		{"private healthy no chip", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, &RouteExistenceCheck{Status: RouteExistenceFound}, "https://spoke.apps.fmaas.example.net", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newURLHealthTestHub("example.com")
+			s := newURLHealthTestHub(t, "example.com")
 			if tc.hubFails {
 				for i := 0; i < urlUnreachableMinFailures; i++ {
 					s.urlHealth.observe("h1", urlProbeResult{Status: 0})
@@ -396,7 +406,7 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 }
 
 func TestHubProbeDomainSuffixGating(t *testing.T) {
-	s := newURLHealthTestHub("hive.kubestellar.io")
+	s := newURLHealthTestHub(t, "hive.kubestellar.io")
 	if !s.hubFrontedDashboardURL("https://spoke.hive.kubestellar.io") {
 		t.Fatal("hub-fronted subdomain should be probed")
 	}
@@ -565,7 +575,7 @@ func TestURLUnreachableCriticalFlapSuppression(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
 	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
-	s := newURLHealthTestHub("example.com")
+	s := newURLHealthTestHub(t, "example.com")
 	for i := 0; i < urlUnreachableMinFailures; i++ {
 		s.urlHealth.observe("h1", urlProbeResult{Status: 503})
 	}
@@ -594,7 +604,7 @@ func TestURLUnreachableSuppressesUnassignedPlaceholders(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
 	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
-	s := newURLHealthTestHub("example.com")
+	s := newURLHealthTestHub(t, "example.com")
 	for i := 0; i < urlUnreachableMinFailures; i++ {
 		s.urlHealth.observe("ph", urlProbeResult{Status: 503})
 	}
