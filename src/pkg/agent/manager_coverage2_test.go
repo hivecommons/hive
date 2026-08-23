@@ -1769,10 +1769,21 @@ func TestValidateTmuxKillSessionArgs(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestConcurrentPauseResume_NoPanic(t *testing.T) {
+	// Sandbox-enabled agents keep every Pause/Resume cycle a pure in-memory
+	// state transition — which is all this test pins: the pause/resume mutex
+	// accounting under concurrency. Without the sandbox gate, each Resume of a
+	// StatePaused agent takes the relaunch path (ensureTmuxSession +
+	// launchInTmux): a REAL tmux session create plus CLI launch per cycle,
+	// ~250 launches per run, none of them cleaned up. On hosts with a writable
+	// HIVE_WORK_DIR that took 220s+ alone and pushed the whole package past
+	// go test's 600s default timeout (#4628).
+	sandboxOn := true
+	sandbox := &config.AgentSandboxOverride{Enabled: &sandboxOn}
 	m := NewManager(map[string]config.AgentConfig{
-		"a": {Backend: "claude"},
-		"b": {Backend: "claude"},
+		"a": {Backend: "claude", Sandbox: sandbox},
+		"b": {Backend: "claude", Sandbox: sandbox},
 	}, discardLogger(), ProjectContext{})
+	m.SetSandboxConfig(config.AgentSandboxConfig{Enabled: true})
 
 	done := make(chan struct{})
 	for i := 0; i < 5; i++ {

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
 
@@ -25,14 +24,18 @@ func TestStart_CLIAlreadyRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	// Pre-create the session and render a CLI marker.
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	// Pre-create the session and render a CLI marker. This must land on the
+	// package test tmux server (-L defaultTmuxSocket) — the same server the
+	// manager inspects. A bare `tmux` exec would hit the default-socket server
+	// instead, where the manager never looks, so the adopt branch under test
+	// would silently never trigger (#4628).
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 	// Inject a marker; forceRelaunch defaults to false.
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": goose is ready").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": goose is ready").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
@@ -62,12 +65,13 @@ func TestStart_InferenceCLIAlreadyRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	// Same-server requirement as TestStart_CLIAlreadyRunning above.
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": esc to interrupt bypass permissions on Claude").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": esc to interrupt bypass permissions on Claude").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
@@ -91,12 +95,13 @@ func TestStart_CopilotAdoptsRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	// Same-server requirement as TestStart_CLIAlreadyRunning above.
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": Copilot ready").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": Copilot ready").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
