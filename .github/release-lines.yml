@@ -53,6 +53,17 @@ pinned:
   # recorded as an exclusion rather than quietly corrected, because turning
   # OpenSSF Scorecard on for a release line is a maintainer decision, not a
   # side effect of adding a CI guard. See the note at the bottom of this file.
+  #
+  # scorecard.yml is ALSO the one pinned workflow that the automated workflow
+  # sync from kubestellar/infra used to overwrite (#4616): the synced copy pins
+  # `[main]` only, so every `sync/workflows-from-infra` branch arrived with
+  # this guard red, and merging one would have silently stopped Scorecard on
+  # v4 — #4339 again. The sync now skips scorecard.yml for this repo
+  # (kubestellar/infra `caller-workflows/workflow-exclusions.yml`); this file
+  # is the pin the exclusion protects. If a sync branch ever goes red on this
+  # entry again, the exclusion has been lost upstream — restore it there; do
+  # not merge the sync branch, and do not "fix" it by widening this entry.
+  # See src/docs/release-line-guard.md, "The infra workflow sync".
   scorecard.yml: [main, -v2]
   suid-contract.yml: []
   v2-ci.yml: []

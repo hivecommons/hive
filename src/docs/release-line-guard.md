@@ -139,6 +139,41 @@ The workflow runs the self-test *before* the check, because a checker that has
 quietly stopped detecting anything would otherwise pass the real check for the
 wrong reason.
 
+## The infra workflow sync ([#4616](https://github.com/kubestellar/hive/issues/4616))
+
+`scorecard.yml` is not only pinned — it is also one of the files the automated
+workflow sync from [kubestellar/infra](https://github.com/kubestellar/infra)
+distributes to every repo in the org (`sync-workflows.yml`, pushing branch
+`sync/workflows-from-infra`). The infra copy pins `push.branches: [ "main" ]`
+only; it cannot know about this repository's release-line manifest. So every
+sync used to arrive with this guard red:
+
+```
+FAIL: scorecard.yml:7 branches: has [main], expected [main,v4] — missing: v4
+```
+
+That red is the guard doing its job. Merging such a sync branch as-is would
+have silently stopped OpenSSF Scorecard running on `v4` — a workflow that
+stops *triggering* reports nothing, which is exactly the #4339 failure mode
+this guard exists to catch. The same sync also reverts other deliberate local
+hardening (immutable-SHA pins on the cross-repo reusable workflows back to
+`@main`, `pull_request` → `pull_request_target` with `secrets: inherit`), which
+this guard does not check — a red guard on a sync branch is a reason to review
+the whole sync diff, not just the line the guard names.
+
+The resolution ([#4616](https://github.com/kubestellar/hive/issues/4616),
+recommendation 2): the sync tool supports per-repo exclusions in
+kubestellar/infra `caller-workflows/workflow-exclusions.yml`, and hive's
+`scorecard.yml` is excluded there
+([kubestellar/infra#145](https://github.com/kubestellar/infra/pull/145)). This
+repo maintains `scorecard.yml` locally and bumps its pinned
+`reusable-scorecard.yml` SHA deliberately.
+
+If a `sync/workflows-from-infra` branch ever goes guard-red on `scorecard.yml`
+again, the upstream exclusion has been lost — restore it in
+kubestellar/infra's `workflow-exclusions.yml`. Do not merge the sync branch,
+and do not widen this repo's manifest entry to make the guard pass.
+
 ## Open: should `v2` still be in these lists?
 
 Deliberately **not** answered by this guard — it is a maintainer call about
