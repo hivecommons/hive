@@ -191,6 +191,9 @@ func TestEvalCredentialWatch_TransitionOnlyAudits(t *testing.T) {
 // is absent (the production path does not exist under the test sandbox).
 func TestStartCredentialWatchdog_AuditsOnMissing(t *testing.T) {
 	t.Setenv(CredentialWatchdogIntervalEnv, "10ms")
+	orig := copilotUserTokenWatchPath
+	copilotUserTokenWatchPath = filepath.Join(t.TempDir(), "missing-copilot-user-token")
+	t.Cleanup(func() { copilotUserTokenWatchPath = orig })
 
 	m, sink := testManagerWithSink(t)
 	m.mu.Lock()

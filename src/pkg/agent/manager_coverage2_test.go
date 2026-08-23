@@ -83,41 +83,21 @@ func TestReadCoveragePreamble_ValidFile(t *testing.T) {
 	data, _ := json.Marshal(metrics)
 	os.WriteFile(cacheFile, data, 0o644)
 
-	// Temporarily override the constant path by writing to the actual path
-	// We test the function via a custom approach: read the file ourselves
-	// and verify the parsing logic since we can't change the const.
-	// Instead, write to the actual path if accessible, or test the logic inline.
+	orig := metricsCachePath
+	metricsCachePath = cacheFile
+	t.Cleanup(func() { metricsCachePath = orig })
 
-	// Since metricsCachePath is a const, we test the parsing logic directly
-	var parsed map[string]map[string]json.Number
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("JSON unmarshal: %v", err)
-	}
-	ci, ok := parsed["ci-maintainer"]
-	if !ok {
-		t.Fatal("ci-maintainer not found")
-	}
-	cov, err := ci["coverage"].Int64()
-	if err != nil {
-		t.Fatalf("coverage Int64: %v", err)
-	}
-	if cov != 85 {
-		t.Errorf("coverage = %d, want 85", cov)
-	}
-	target, err := ci["coverageTarget"].Int64()
-	if err != nil {
-		t.Fatalf("target Int64: %v", err)
-	}
-	if target != 91 {
-		t.Errorf("target = %d, want 91", target)
-	}
-	expected := fmt.Sprintf("[COVERAGE] Current: %d%% | Target: %d%%.", cov, target)
-	if expected != "[COVERAGE] Current: 85% | Target: 91%." {
-		t.Errorf("unexpected preamble: %q", expected)
+	got := (&Manager{logger: discardLogger()}).readCoveragePreamble()
+	if got != "[COVERAGE] Current: 85% | Target: 91%." {
+		t.Errorf("readCoveragePreamble = %q, want '[COVERAGE] Current: 85%% | Target: 91%%.'", got)
 	}
 }
 
 func TestReadCoveragePreamble_MissingFile(t *testing.T) {
+	orig := metricsCachePath
+	metricsCachePath = filepath.Join(t.TempDir(), "missing-agent-metrics-cache.json")
+	t.Cleanup(func() { metricsCachePath = orig })
+
 	m := &Manager{logger: discardLogger()}
 	got := m.readCoveragePreamble()
 	if got != "" {
@@ -126,9 +106,13 @@ func TestReadCoveragePreamble_MissingFile(t *testing.T) {
 }
 
 func TestReadCoveragePreamble_InvalidJSON(t *testing.T) {
-	// Write invalid JSON to the metrics cache path if possible
-	// Since metricsCachePath is /data/metrics/..., this test verifies
-	// the function handles the missing file case (returns "")
+	orig := metricsCachePath
+	metricsCachePath = filepath.Join(t.TempDir(), "agent-metrics-cache.json")
+	t.Cleanup(func() { metricsCachePath = orig })
+	if err := os.WriteFile(metricsCachePath, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	m := &Manager{logger: discardLogger()}
 	got := m.readCoveragePreamble()
 	if got != "" {

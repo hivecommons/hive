@@ -949,7 +949,7 @@ func claudeTokenUsable(path string) (bool, string) {
 // entry here — nothing else in the loop changes.
 func credentialWatches() []credentialWatch {
 	return []credentialWatch{
-		{backend: "copilot", path: CopilotUserTokenPath, auditAction: AuditCopilotTokenMissing, probe: copilotTokenUsable},
+		{backend: "copilot", path: copilotUserTokenWatchPath, auditAction: AuditCopilotTokenMissing, probe: copilotTokenUsable},
 		{backend: "claude", path: claude.CredentialsPath, auditAction: AuditClaudeTokenMissing, probe: claudeTokenUsable},
 	}
 }
@@ -3163,6 +3163,11 @@ func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
 
 // findACMMFragments returns paths to ACMM policy files the agent should read.
 // Order: base.md (shared rules) then l<N>.md (level-specific).
+var acmmFragmentFallbackDirs = []string{
+	"/data/policies/examples/acmm",
+	"/opt/hive/examples/acmm",
+}
+
 func (m *Manager) findACMMFragments() []string {
 	level := m.project.ACMMLevel
 	if level <= 0 {
@@ -3175,11 +3180,7 @@ func (m *Manager) findACMMFragments() []string {
 		policiesRoot = "/data/policies"
 	}
 
-	acmmDirs := []string{
-		filepath.Join(policiesRoot, "examples", "acmm"),
-		"/data/policies/examples/acmm",
-		"/opt/hive/examples/acmm",
-	}
+	acmmDirs := append([]string{filepath.Join(policiesRoot, "examples", "acmm")}, acmmFragmentFallbackDirs...)
 
 	var acmmDir string
 	for _, d := range acmmDirs {
@@ -5778,6 +5779,8 @@ const (
 // CopilotUserTokenPath is where the dashboard's device-flow login persists
 // the Copilot OAuth token; injected into agents as COPILOT_GITHUB_TOKEN.
 const CopilotUserTokenPath = "/data/copilot-user-token"
+
+var copilotUserTokenWatchPath = CopilotUserTokenPath
 
 // loginPromptPatterns are substrings that indicate an agent is stuck on a
 // login/authentication screen (Copilot text prompts, Claude Code OAuth flow,
