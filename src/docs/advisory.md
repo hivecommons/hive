@@ -133,6 +133,9 @@ nothing to post to.
 
 ## Related
 
+- [Advisory digest staleness](advisory-staleness.md) — the other side of the
+  section above: which of these failures light the hub's stale-advisory pill,
+  which are deliberately suppressed, and how to measure the suppressed ones.
 - [`bd` beads CLI](beads-cli.md) — inspecting advisory beads directly, including
   their `close_reason`.
 - [Governor mode thresholds](governor-thresholds.md) — the eval cycle the digest
