@@ -33,9 +33,9 @@ func TestSlowStart_PacesAfterSecondaryLimit(t *testing.T) {
 	defer srv.Close()
 
 	tr := newSlowStartTransport(http.DefaultTransport)
-	tr.gap = 60 * time.Millisecond
-	tr.jitter = time.Millisecond
-	tr.window = time.Second
+	tr.state.gap = 60 * time.Millisecond
+	tr.state.jitter = time.Millisecond
+	tr.state.window = time.Second
 	client := &http.Client{Transport: tr}
 
 	// Trip the limit.
@@ -69,8 +69,8 @@ func TestSlowStart_PacesAfterSecondaryLimit(t *testing.T) {
 	// for scheduler slop).
 	for i := 2; i < len(starts); i++ {
 		d := starts[i].Sub(starts[i-1])
-		if d < tr.gap-10*time.Millisecond {
-			t.Errorf("requests %d->%d only %v apart, want >= %v (stampede not paced)", i-1, i, d, tr.gap)
+		if d < tr.state.gap-10*time.Millisecond {
+			t.Errorf("requests %d->%d only %v apart, want >= %v (stampede not paced)", i-1, i, d, tr.state.gap)
 		}
 	}
 }
@@ -84,8 +84,8 @@ func TestSlowStart_Plain403AndNormalTrafficUnpaced(t *testing.T) {
 	defer srv.Close()
 
 	tr := newSlowStartTransport(http.DefaultTransport)
-	tr.gap = time.Hour // if pacing engaged, the test would hang far past its deadline
-	tr.window = time.Hour
+	tr.state.gap = time.Hour // if pacing engaged, the test would hang far past its deadline
+	tr.state.window = time.Hour
 	client := &http.Client{Transport: tr}
 
 	start := time.Now()

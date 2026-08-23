@@ -44,8 +44,14 @@ const (
 	slowStartDefaultRetryAfter = time.Hour
 )
 
-type slowStartTransport struct {
-	inner http.RoundTripper
+// slowStartState is the shared pacing ledger. It is deliberately SEPARATE
+// from the wrapper that carries the inner transport: pacing must be global
+// (the herd is a cross-caller phenomenon — per-client pacing would still
+// stampede in aggregate), but the inner transport must be whatever is CURRENT
+// at wrap time. An earlier design cached the first inner in a sync.Once,
+// which pinned the process to a stale transport after the proxy-trust layer
+// rebuilt it (new CA) — every later client silently used dead TLS roots.
+type slowStartState struct {
 	// gap/jitter/window default from the package consts; fields so tests can
 	// use millisecond values without minute-long sleeps.
 	gap    time.Duration
@@ -57,47 +63,50 @@ type slowStartTransport struct {
 	nextSlot      time.Time
 }
 
-func newSlowStartTransport(inner http.RoundTripper) *slowStartTransport {
-	return &slowStartTransport{
-		inner:  inner,
+type slowStartTransport struct {
+	inner http.RoundTripper
+	state *slowStartState
+}
+
+func newSlowStartState() *slowStartState {
+	return &slowStartState{
 		gap:    slowStartGap,
 		jitter: slowStartJitter,
 		window: slowStartWindow,
 	}
 }
 
-// sharedSlowStart wraps the process-wide proxy-trusting transport exactly once
-// so pacing is GLOBAL: the herd is a cross-caller phenomenon, and per-client
-// pacing would still stampede in aggregate.
-var (
-	sharedSlowStartOnce sync.Once
-	sharedSlowStartRT   *slowStartTransport
-)
+func newSlowStartTransport(inner http.RoundTripper) *slowStartTransport {
+	return &slowStartTransport{inner: inner, state: newSlowStartState()}
+}
+
+// sharedSlowStartState is the process-wide pacing ledger every wrapped client
+// shares. The wrapper itself is cheap and constructed per client around the
+// CURRENT inner transport.
+var sharedSlowStartState = newSlowStartState()
 
 func slowStartWrap(inner http.RoundTripper) http.RoundTripper {
-	sharedSlowStartOnce.Do(func() {
-		sharedSlowStartRT = newSlowStartTransport(inner)
-	})
-	return sharedSlowStartRT
+	return &slowStartTransport{inner: inner, state: sharedSlowStartState}
 }
 
 func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Pacing: while cautious, hand each request the next free slot and sleep
 	// until it. Slots are claimed under the lock; the sleep happens outside it
 	// so pacing serializes REQUEST STARTS, not the lock.
-	t.mu.Lock()
+	st := t.state
+	st.mu.Lock()
 	var wait time.Duration
 	now := time.Now()
-	if now.Before(t.cautiousUntil) {
-		gap := t.gap + time.Duration(rand.Int63n(int64(t.jitter)+1))
-		slot := t.nextSlot
+	if now.Before(st.cautiousUntil) {
+		gap := st.gap + time.Duration(rand.Int63n(int64(st.jitter)+1))
+		slot := st.nextSlot
 		if slot.Before(now) {
 			slot = now
 		}
-		t.nextSlot = slot.Add(gap)
+		st.nextSlot = slot.Add(gap)
 		wait = slot.Sub(now)
 	}
-	t.mu.Unlock()
+	st.mu.Unlock()
 
 	if wait > 0 {
 		timer := time.NewTimer(wait)
@@ -119,12 +128,12 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 			if secs, perr := strconv.Atoi(ra); perr == nil && secs >= 0 {
 				after = time.Duration(secs) * time.Second
 			}
-			until := time.Now().Add(after + t.window)
-			t.mu.Lock()
-			if until.After(t.cautiousUntil) {
-				t.cautiousUntil = until
+			until := time.Now().Add(after + st.window)
+			st.mu.Lock()
+			if until.After(st.cautiousUntil) {
+				st.cautiousUntil = until
 			}
-			t.mu.Unlock()
+			st.mu.Unlock()
 		}
 	}
 	return resp, err
