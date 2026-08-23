@@ -55,6 +55,11 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [GitHub App setup](https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md) — the Forge App on GitHub and GitHub Enterprise: app creation, permissions, Setup URL, and `/gh-setup`.
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [Inception](https://github.com/kubestellar/hive/blob/v4/src/docs/inception.md) — operator guide to the L1 brainstorm/inception workflow: phases, API, and template variables.
+- [Planning intelligence](planning-intelligence.md) — how a large GitHub issue becomes an epic the architect lane decomposes into child beads, the human plan-review gate that withholds those children until approved, and stall-replan.
+- [Review swarm](review-swarm.md) — the five review perspectives, the verdict collector and its report contract, and the opt-in merge-gate integration and bounded auto-fix cycle for review findings.
+- [Retro lane](retro-lane.md) — the opt-in (`retro.enabled`) post-completion pass that reconstructs a record for each closed bead and flags patterns such as excessive fix attempts or kicks; deterministic by default, with LLM analysis separately opt-in.
+- [Linear agent integration](linear-agent.md) — joining a Linear workspace as a first-class agent member: webhook verification, the 10-second session acknowledgement, which hive agent takes sessions, and narrating completion back as agent activities.
+- [Lite enrollment](lite-enrollment.md) — the zero-repo-secret on-ramp: `hivectl enroll OWNER/REPO` adds a repo to a spoke's `project.repos`, with prerequisites and the hosted lite-spoke path.
 - [ACMM policy fragments](https://github.com/kubestellar/hive/blob/v4/examples/acmm/README.md) — per-level ACMM policy references.
 - [Sandbox isolation and agent guardrails](https://github.com/kubestellar/hive/blob/v4/src/docs/sandbox-isolation.md) — isolation layers and operator guardrail notes.
 - [Per-agent gh restrictions](https://github.com/kubestellar/hive/blob/v4/config/restrictions/README.md) — file-based wrapper denials in `/etc/hive/restrictions/`.
@@ -71,6 +76,8 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 ## Architecture and design
 
 - [Architecture](architecture.md) — process model, governor loop, guardrails, hub/spoke, and walkthrough.
+- [Public roadmap](roadmap.md) — the v4 direction as Now / Next / Later, with the tracking issue behind each item. Directional rather than a promise, maintained by pull request; check the date in its header before relying on the ordering.
+- [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.
 - [CNCF reference architecture](https://github.com/kubestellar/hive/blob/v4/src/docs/cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Podman CI runner map](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
 - [Knowledge system design](https://github.com/kubestellar/hive/blob/v4/src/docs/design/knowledge-system.md) — llm-wiki layers, subscriptions, and APIs.
@@ -86,6 +93,7 @@ Some documents describe planned or design-only work rather than live features. T
 
 - [Security model — operator guide](security-model.md) — Ed25519-only sessions/SSO, per-hive keys, master key rotation, forced proxy egress and `CAP_NET_ADMIN`, privilege model, and supply-chain posture.
 - [Security threat model](https://github.com/kubestellar/hive/blob/v4/src/docs/security-threat-model.md) — actors, boundaries, layered defenses, known gaps, and reporting.
+- [Heartbeat bearer cutover](heartbeat-bearer-cutover.md) — retiring the fleet-wide heartbeat bearer, whose possession proves only "some provisioned spoke" and lets any spoke heartbeat as any hive, in favour of the per-hive key — without re-provisioning the fleet, and the precondition that gates the removal.
 - [Rootless Podman startup and exit-77 behavior](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootless-startup-spike.md) — measured rootless matrix: fail-closed exit 77, gate installation under `--cap-add NET_ADMIN`, proven interception, and what is still unproven.
 - [IPv6 egress-gate bypass](podman-ipv6-egress-bypass.md) — measured: the forced-proxy redirect is IPv4-only, so agent traffic to `:443` over IPv6 never meets it (5 IPv6 connections, 0 redirects; 5 IPv4 connections, 5 redirects, same run). Names the fix slice.
 - [Rootful Podman egress-gate baseline](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootful-egress-baseline.md) — the rootful baseline the rootless result is measured against: fail-closed exit 77, redirect and ambient-capability evidence, and `SO_MARK` isolated from the owner-UID exemption.
