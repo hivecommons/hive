@@ -1,6 +1,6 @@
-# ADR-0011: Durable knowledge graph for agent context
+# ADR-0011: Knowledge system for durable agent context
 
-Status: Accepted (retroactive)
+Status: Accepted (back-filled)
 
 ## Context
 
@@ -31,6 +31,8 @@ deduplication gates, then stores them as ordinary project facts derived from the
 source bead or PR ([retro lessons](../../pkg/knowledge/retro_lesson.go)).
 
 ## Consequences
+
+Rationale not recorded beyond the implementation, linked code, and cited design notes.
 
 Agents can receive durable, source-backed context without depending on an LLM's
 conversation memory or a hosted embedding API. Layer precedence and explicit

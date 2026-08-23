@@ -105,7 +105,7 @@ chmod +x ~/.hive-fix-loop/worker.sh
 
 # NOTE: No cron installation needed. EXECUTOR MODE — agents are kicked by
 # the governor (systemd timer) and supervisor, not by self-scheduled crons.
-# See docs/architecture.md for details.
+# See src/docs/architecture.md for details.
 ```
 
 ## Step 5: Copy policy files + env files

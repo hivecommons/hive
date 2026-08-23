@@ -25,7 +25,7 @@ order, not priority rank.
 
 | Work | Outcome | Tracking |
 | --- | --- | --- |
-| ADR back-fill for remaining subsystems | Capture decisions for the knowledge system, skill registry, CEL/channel triggers, and hub/spoke mechanics so architecture docs stay auditable. | [#2811](https://github.com/kubestellar/hive/issues/2811), [ADR index](adr/README.md), [knowledge design](design/knowledge-system.md), [agent configuration](agent-configuration.md) |
+| ADR back-fill for remaining subsystems | Back-filled accepted ADRs now capture the knowledge system, skill registry, CEL/channel triggers, and hub/spoke mechanics so architecture docs stay auditable. | [#2811](https://github.com/kubestellar/hive/issues/2811), [ADR-0011](adr/0011-knowledge-system.md), [ADR-0012](adr/0012-skill-registry.md), [ADR-0013](adr/0013-cel-triggers.md), [ADR-0014](adr/0014-hub-spoke.md) |
 | Docs site publication | Turn `src/docs/` into a published, navigable documentation site. This PR creates the index; the MkDocs/site pipeline remains deferred. | [#2811](https://github.com/kubestellar/hive/issues/2811), [docs index](README.md) |
 | GitLab through `pkg/forge` | Move more GitHub-specific operations behind the forge abstraction and add GitLab support incrementally rather than forking the scheduler. | [ADR-0005](adr/0005-forge-abstraction.md), [#2812](https://github.com/kubestellar/hive/issues/2812) |
 
