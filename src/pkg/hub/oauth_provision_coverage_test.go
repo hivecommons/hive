@@ -2,10 +2,10 @@ package hub
 
 import (
 	"log/slog"
-	"net/url"
-	"strings"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -242,6 +242,9 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 // ============================================================
 
 func TestReadSAToken(t *testing.T) {
+	oldDir := serviceAccountDir
+	serviceAccountDir = t.TempDir()
+	t.Cleanup(func() { serviceAccountDir = oldDir })
 	// SA token file absent in test env -> "".
 	if got := readSAToken(); got != "" {
 		t.Errorf("readSAToken = %q, want empty in test env", got)

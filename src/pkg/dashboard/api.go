@@ -1993,7 +1993,7 @@ func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const userTokenPath = "/data/gh-user-token"
+var userTokenPath = "/data/gh-user-token"
 
 func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) {
 	// The login status must reflect THIS request's user, not the single

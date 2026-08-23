@@ -441,7 +441,7 @@ func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 
 // readSAToken reads the current service account token from the projected volume.
 func readSAToken() string {
-	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	data, err := os.ReadFile(filepath.Join(serviceAccountDir, "token"))
 	if err != nil {
 		return ""
 	}

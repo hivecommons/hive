@@ -66,6 +66,8 @@ func deviceFlowMock(t *testing.T, tokenStatus, login string) *httptest.Server {
 // and returns it along with the deps for further tweaking.
 func dfServer(t *testing.T, tokenStatus, login string) (*Server, *Dependencies, *httptest.Server) {
 	t.Helper()
+	t.Setenv("HIVE_SSO_PUBLIC_KEY", "")
+	t.Setenv("HIVE_SSO_PUBLIC_KEY_PREV", "")
 	mock := deviceFlowMock(t, tokenStatus, login)
 	s := NewServerWithAuth(0, "authsecret", dfLogger())
 	deps := testDeps(t)

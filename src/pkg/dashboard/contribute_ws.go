@@ -473,9 +473,17 @@ type ContributeWSHub struct {
 	// EXPIRING before the next dispatch, so this must survive that sweep.
 	// Guarded by completedMu; persisted in the same PVC-backed ledger dir as
 	// the cooldowns so a pod restart does not forget the verdict.
-	noWorkVerdicts map[string]noWorkVerdictRecord
-	completedMu    sync.Mutex
-	selectMu       sync.Mutex
+	noWorkVerdicts     map[string]noWorkVerdictRecord
+	activityFilePath   string
+	completedTasksFile string
+	failedTasksFile    string
+	noPRStreaksFile    string
+	noWorkVerdictsFile string
+	asyncActivitySave  bool
+	persistActivity    bool
+	persistTaskLedgers bool
+	completedMu        sync.Mutex
+	selectMu           sync.Mutex
 	// assignmentTimes records, per contributor identity (identityOf), the wall-clock
 	// times of the task_assign messages that identity has been handed. It backs the
 	// #2436/#2566 per-tier rate gate: tier_limits.max_per_hour / max_per_day were
@@ -801,6 +809,14 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		consecutiveFailures:   make(map[string]int),
 		noPRStreaks:           make(map[string]noPRStreakRecord),
 		noWorkVerdicts:        make(map[string]noWorkVerdictRecord),
+		activityFilePath:      activityFilePath,
+		completedTasksFile:    completedTasksFile,
+		failedTasksFile:       failedTasksFile,
+		noPRStreaksFile:       noPRStreaksFile,
+		noWorkVerdictsFile:    noWorkVerdictsPath(),
+		asyncActivitySave:     asyncActivitySave,
+		persistActivity:       activityPersistenceEnabled,
+		persistTaskLedgers:    taskLedgerPersistenceEnabled,
 		assignmentTimes:       make(map[string][]time.Time),
 		leases:                make(map[string]*taskLease),
 		yankExclusions:        make(map[string]time.Time),
@@ -817,10 +833,18 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	return hub
 }
 
-const activityFilePath = "/data/contributors/activity.json"
+var activityFilePath = "/data/contributors/activity.json"
+
+var asyncActivitySave = true
+var activityPersistenceEnabled = true
+var taskLedgerPersistenceEnabled = true
 
 func (h *ContributeWSHub) loadActivity() {
-	data, err := os.ReadFile(activityFilePath)
+	if h != nil && !h.persistActivity {
+		return
+	}
+	path := h.activityPath()
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
@@ -834,6 +858,9 @@ func (h *ContributeWSHub) loadActivity() {
 }
 
 func (h *ContributeWSHub) saveActivity() {
+	if h != nil && !h.persistActivity {
+		return
+	}
 	h.activityMu.RLock()
 	entries := make([]ActivityEntry, len(h.activity))
 	copy(entries, h.activity)
@@ -842,15 +869,23 @@ func (h *ContributeWSHub) saveActivity() {
 	if err != nil {
 		return
 	}
-	os.MkdirAll("/data/contributors", 0o755)
-	tmpPath := activityFilePath + ".tmp"
+	path := h.activityPath()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		h.logger.Warn("[contribute-ws] activity write failed", "error", err)
 		return
 	}
-	if err := os.Rename(tmpPath, activityFilePath); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		h.logger.Warn("[contribute-ws] activity rename failed", "error", err)
 	}
+}
+
+func (h *ContributeWSHub) activityPath() string {
+	if h != nil && h.activityFilePath != "" {
+		return h.activityFilePath
+	}
+	return activityFilePath
 }
 
 const activityDebounceSecs = 60
@@ -881,7 +916,11 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort
 		h.activity = h.activity[len(h.activity)-maxActivityEntries:]
 	}
 	h.activityMu.Unlock()
-	go h.saveActivity()
+	if h.asyncActivitySave {
+		go h.saveActivity()
+	} else {
+		h.saveActivity()
+	}
 	// Fan the appended event out to any live SSE subscribers (Operations command
 	// center). Done AFTER releasing activityMu, and the fan-out itself is a
 	// non-blocking send, so a subscribed browser can never stall the WS path.
@@ -896,7 +935,7 @@ func (h *ContributeWSHub) RecentActivity() []ActivityEntry {
 	return out
 }
 
-const completedTasksFile = "/data/contributors/completed-tasks.json"
+var completedTasksFile = "/data/contributors/completed-tasks.json"
 
 // completedTaskRecord is the on-disk shape of one completed-task entry. It
 // carries the completion time plus, since #2393 item 7, the per-task cooldown
@@ -910,9 +949,9 @@ type completedTaskRecord struct {
 	PRURL         string    `json:"pr_url,omitempty"`
 }
 
-const failedTasksFile = "/data/contributors/failed-tasks.json"
+var failedTasksFile = "/data/contributors/failed-tasks.json"
 
-const noPRStreaksFile = "/data/contributors/no-pr-streaks.json"
+var noPRStreaksFile = "/data/contributors/no-pr-streaks.json"
 
 // noPRStreakRecord is the in-memory and on-disk shape of one no-PR completion
 // streak (#3980). LastAt is the most recent no-PR completion; the streak is
@@ -925,9 +964,12 @@ type noPRStreakRecord struct {
 }
 
 func (h *ContributeWSHub) loadNoPRStreaks() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
-	data, err := os.ReadFile(noPRStreaksFile)
+	data, err := os.ReadFile(h.noPRStreaksPath())
 	if err != nil {
 		return
 	}
@@ -950,6 +992,9 @@ func (h *ContributeWSHub) loadNoPRStreaks() {
 }
 
 func (h *ContributeWSHub) saveNoPRStreaks() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	saved := make(map[string]noPRStreakRecord, len(h.noPRStreaks))
 	for k, rec := range h.noPRStreaks {
@@ -964,15 +1009,23 @@ func (h *ContributeWSHub) saveNoPRStreaks() {
 		h.logger.Warn("[contribute-ws] no-PR streaks marshal failed", "error", err)
 		return
 	}
-	os.MkdirAll("/data/contributors", 0o755)
-	tmpPath := noPRStreaksFile + ".tmp"
+	path := h.noPRStreaksPath()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		h.logger.Warn("[contribute-ws] no-PR streaks write failed", "error", err)
 		return
 	}
-	if err := os.Rename(tmpPath, noPRStreaksFile); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		h.logger.Warn("[contribute-ws] no-PR streaks rename failed", "error", err)
 	}
+}
+
+func (h *ContributeWSHub) noPRStreaksPath() string {
+	if h != nil && h.noPRStreaksFile != "" {
+		return h.noPRStreaksFile
+	}
+	return noPRStreaksFile
 }
 
 // advanceNoPRStreakLocked books one more consecutive no-PR completion against
@@ -1021,6 +1074,13 @@ func noWorkVerdictsPath() string {
 	return filepath.Join(getContributorsDir(), noWorkVerdictsFileName)
 }
 
+func (h *ContributeWSHub) noWorkVerdictsPath() string {
+	if h != nil && h.noWorkVerdictsFile != "" {
+		return h.noWorkVerdictsFile
+	}
+	return noWorkVerdictsPath()
+}
+
 // noWorkVerdictRecord is the in-memory and on-disk shape of one no_work_needed
 // verdict (#3987). RecordedAt anchors both the suppression window and the
 // invalidation comparison (issue updated_at newer than RecordedAt voids the
@@ -1045,9 +1105,12 @@ func (r noWorkVerdictRecord) suppressWindow() time.Duration {
 }
 
 func (h *ContributeWSHub) loadNoWorkVerdicts() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
-	data, err := os.ReadFile(noWorkVerdictsPath())
+	data, err := os.ReadFile(h.noWorkVerdictsPath())
 	if err != nil {
 		return
 	}
@@ -1072,6 +1135,9 @@ func (h *ContributeWSHub) loadNoWorkVerdicts() {
 }
 
 func (h *ContributeWSHub) saveNoWorkVerdicts() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	saved := make(map[string]noWorkVerdictRecord, len(h.noWorkVerdicts))
 	for k, rec := range h.noWorkVerdicts {
@@ -1086,7 +1152,7 @@ func (h *ContributeWSHub) saveNoWorkVerdicts() {
 		h.logger.Warn("[contribute-ws] no-work verdicts marshal failed", "error", err)
 		return
 	}
-	path := noWorkVerdictsPath()
+	path := h.noWorkVerdictsPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
@@ -1199,9 +1265,12 @@ type failedTaskRecord struct {
 }
 
 func (h *ContributeWSHub) loadFailedTasks() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
-	data, err := os.ReadFile(failedTasksFile)
+	data, err := os.ReadFile(h.failedTasksPath())
 	if err != nil {
 		return
 	}
@@ -1229,6 +1298,9 @@ func (h *ContributeWSHub) loadFailedTasks() {
 }
 
 func (h *ContributeWSHub) saveFailedTasks() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	saved := make(map[string]failedTaskRecord, len(h.failedTasks))
 	for k, t := range h.failedTasks {
@@ -1244,21 +1316,32 @@ func (h *ContributeWSHub) saveFailedTasks() {
 		h.logger.Warn("[contribute-ws] failed tasks marshal failed", "error", err)
 		return
 	}
-	os.MkdirAll("/data/contributors", 0o755)
-	tmpPath := failedTasksFile + ".tmp"
+	path := h.failedTasksPath()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		h.logger.Warn("[contribute-ws] failed tasks write failed", "error", err)
 		return
 	}
-	if err := os.Rename(tmpPath, failedTasksFile); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		h.logger.Warn("[contribute-ws] failed tasks rename failed", "error", err)
 	}
 }
 
+func (h *ContributeWSHub) failedTasksPath() string {
+	if h != nil && h.failedTasksFile != "" {
+		return h.failedTasksFile
+	}
+	return failedTasksFile
+}
+
 func (h *ContributeWSHub) loadCompletedTasks() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
-	data, err := os.ReadFile(completedTasksFile)
+	data, err := os.ReadFile(h.completedTasksPath())
 	if err != nil {
 		return
 	}
@@ -1304,6 +1387,9 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 }
 
 func (h *ContributeWSHub) saveCompletedTasks() {
+	if h != nil && !h.persistTaskLedgers {
+		return
+	}
 	h.completedMu.Lock()
 	saved := make(map[string]completedTaskRecord, len(h.completedTasks))
 	for k, t := range h.completedTasks {
@@ -1324,15 +1410,23 @@ func (h *ContributeWSHub) saveCompletedTasks() {
 		h.logger.Warn("[contribute-ws] completed tasks marshal failed", "error", err)
 		return
 	}
-	os.MkdirAll("/data/contributors", 0o755)
-	tmpPath := completedTasksFile + ".tmp"
+	path := h.completedTasksPath()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		h.logger.Warn("[contribute-ws] completed tasks write failed", "error", err)
 		return
 	}
-	if err := os.Rename(tmpPath, completedTasksFile); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		h.logger.Warn("[contribute-ws] completed tasks rename failed", "error", err)
 	}
+}
+
+func (h *ContributeWSHub) completedTasksPath() string {
+	if h != nil && h.completedTasksFile != "" {
+		return h.completedTasksFile
+	}
+	return completedTasksFile
 }
 
 // markTaskCompleted records a completed task and starts its issue cooldown.

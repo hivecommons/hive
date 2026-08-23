@@ -205,6 +205,7 @@ func TestSendHeartbeatWithSecret(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("HIVE_HUB_SECRET", "test-secret-123")
+	t.Setenv(EnvHeartbeatKey, "")
 	// F2: the spoke self-derives its PER-HIVE bearer from the master plus its own
 	// HIVE_ID. Without HIVE_ID it would fall back to the fleet-wide value, which
 	// the hub no longer accepts — so this env var is what a real spoke relies on.

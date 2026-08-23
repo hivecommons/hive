@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,8 +20,17 @@ import (
 
 // ---------- helpers ----------
 
+func isolateDashboardState(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	oldUserTokenPath := userTokenPath
+	userTokenPath = filepath.Join(dir, "gh-user-token")
+	t.Cleanup(func() { userTokenPath = oldUserTokenPath })
+}
+
 func testDeps(t *testing.T) *Dependencies {
 	t.Helper()
+	isolateDashboardState(t)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	cfg := &config.Config{

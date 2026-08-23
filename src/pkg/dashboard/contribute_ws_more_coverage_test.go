@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,12 @@ import (
 
 func covK2Hub(t *testing.T) (*ContributeWSHub, *Server) {
 	t.Helper()
+	dir := os.Getenv("HIVE_CONTRIBUTORS_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+		t.Setenv("HIVE_CONTRIBUTORS_DIR", dir)
+	}
+	redirectContributeWSDisk(t, dir)
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := NewServer(0, logger)
 	s.RegisterAPI(testDeps(t))

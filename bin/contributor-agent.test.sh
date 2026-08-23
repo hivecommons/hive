@@ -9,6 +9,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${ROOT_DIR}/.contributor-agent-test-work-$$"
 HOOK_DIR="${WORK_DIR}/entrypoint.d"
 HOME_DIR="${WORK_DIR}/home"
+CORE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 SERVER_PID=""
 
 cleanup() {
@@ -345,7 +346,7 @@ mkdir -p "$CODEX_HOME_DIR"
 
 run_codex_detect() {
   env -i \
-    PATH="${FAKE_BIN}:${PATH}" \
+    PATH="${FAKE_BIN}:${CORE_PATH}" \
     HOME="$HOME_DIR" \
     CODEX_HOME="$CODEX_HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \
@@ -379,7 +380,7 @@ fi
 rm -f "${CODEX_HOME_DIR}/auth.json"
 if output="$(
   env -i \
-    PATH="${FAKE_BIN}:${PATH}" \
+    PATH="${FAKE_BIN}:${CORE_PATH}" \
     HOME="$HOME_DIR" \
     CODEX_HOME="$CODEX_HOME_DIR" \
     CODEX_API_KEY="api-key-env" \
@@ -394,7 +395,7 @@ fi
 
 if output="$(
   env -i \
-    PATH="${FAKE_BIN}:${PATH}" \
+    PATH="${FAKE_BIN}:${CORE_PATH}" \
     HOME="$HOME_DIR" \
     CODEX_HOME="$CODEX_HOME_DIR" \
     CODEX_API_KEY="api-key-env" \
@@ -410,7 +411,7 @@ fi
 
 if output="$(
   env -i \
-    PATH="${PATH}" \
+    PATH="${CORE_PATH}" \
     HOME="$HOME_DIR" \
     CODEX_HOME="$CODEX_HOME_DIR" \
     HIVE_REGISTRATION_TOKEN="test-token" \

@@ -18,6 +18,7 @@ func setupContributeEnv(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", filepath.Join(tmpDir, "contributors"))
 	t.Setenv("HIVE_FEDERATION_REGISTRY_PATH", filepath.Join(tmpDir, "federation", "registry.json"))
+	redirectContributeWSDisk(t, filepath.Join(tmpDir, "ws-state"))
 
 	// Stub DNS so tests with fake hostnames don't hit the fail-closed resolver.
 	orig := privateURLResolver
@@ -25,6 +26,24 @@ func setupContributeEnv(t *testing.T) {
 		return []string{"93.184.216.34"}, nil
 	}
 	t.Cleanup(func() { privateURLResolver = orig })
+}
+
+func redirectContributeWSDisk(t *testing.T, dir string) {
+	t.Helper()
+	oldActivity, oldCompleted, oldFailed, oldNoPR := activityFilePath, completedTasksFile, failedTasksFile, noPRStreaksFile
+	oldAsyncActivitySave := asyncActivitySave
+	oldActivityPersistenceEnabled := activityPersistenceEnabled
+	activityFilePath = filepath.Join(dir, "activity.json")
+	completedTasksFile = filepath.Join(dir, "completed-tasks.json")
+	failedTasksFile = filepath.Join(dir, "failed-tasks.json")
+	noPRStreaksFile = filepath.Join(dir, "no-pr-streaks.json")
+	asyncActivitySave = false
+	activityPersistenceEnabled = false
+	t.Cleanup(func() {
+		activityFilePath, completedTasksFile, failedTasksFile, noPRStreaksFile = oldActivity, oldCompleted, oldFailed, oldNoPR
+		asyncActivitySave = oldAsyncActivitySave
+		activityPersistenceEnabled = oldActivityPersistenceEnabled
+	})
 }
 
 func TestContributeRegister(t *testing.T) {
