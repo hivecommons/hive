@@ -460,6 +460,7 @@ type Manager struct {
 	sandboxPRClient      PRCreator
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
 
+	paneCapture          func(agent *AgentProcess) string
 	visiblePaneCapture   func(agent *AgentProcess) string
 	sendKeysForAgent     func(agent *AgentProcess, keys ...string)
 	promptDismissSleep   func(time.Duration)
@@ -3736,6 +3737,9 @@ func (m *Manager) tmuxRawCmd(args ...string) *exec.Cmd {
 // captureTmuxPaneForAgent captures pane content using the agent's tmux socket.
 // Includes scrollback for diff-based output signal detection.
 func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
+	if m.paneCapture != nil {
+		return m.paneCapture(agent)
+	}
 	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p",
 		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
 	out, err := cmd.Output()

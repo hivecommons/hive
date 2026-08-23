@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,46 @@ func TestCopilotSessionRefreshInterval(t *testing.T) {
 	t.Setenv(CopilotSessionRefreshIntervalEnv, "garbage")
 	if got := copilotSessionRefreshInterval(); got != defaultCopilotSessionRefreshInterval {
 		t.Errorf("invalid override should fall back to default, got %v", got)
+	}
+}
+
+func TestStartCopilotSessionRefreshSeedsAndStops(t *testing.T) {
+	t.Setenv(CopilotSessionRefreshStartDelayEnv, "0s")
+	t.Setenv(CopilotSessionRefreshIntervalEnv, "10ms")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	orig := sharedCopilotConfigPath
+	sharedCopilotConfigPath = path
+	defer func() { sharedCopilotConfigPath = orig }()
+	if err := os.WriteFile(path, []byte(copilotConfigHeader+`{"copilotTokens":{}}`), 0o660); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "copilot"}}, discardLogger(), ProjectContext{})
+	m.SetCopilotToken("ghu_held")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		m.StartCopilotSessionRefresh(ctx)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for !copilotCredentialFileHasTokens(path) {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("session refresh loop did not seed copilotTokens")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartCopilotSessionRefresh did not stop after context cancellation")
 	}
 }
 
