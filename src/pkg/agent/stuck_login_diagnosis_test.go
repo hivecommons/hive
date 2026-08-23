@@ -345,3 +345,41 @@ func TestDiagnoseStuckLoginNonClaudeBackendStaysGeneric(t *testing.T) {
 		t.Errorf("diagnosis should name the backend:\n%s", got)
 	}
 }
+
+// TestDiagnoseStuckLoginUnreadableDoesNotBlameTheAgent pins the perspective
+// of the unreadable-session diagnosis. Under the per-agent home layout the
+// agent's CLI rewrites .claude.json agent-owned at 0600, which the hive
+// process cannot read — the NORMAL state of a healthy signed-in agent. An
+// earlier wording claimed "the CLI cannot load the signed-in identity",
+// which is a statement about the AGENT's view made from a process that
+// merely could not look; it sent a real investigation chasing a permission
+// problem on a file the agent read fine.
+func TestDiagnoseStuckLoginUnreadableDoesNotBlameTheAgent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — mode 0000 is still readable, so this cannot be measured")
+	}
+	home := t.TempDir()
+	agent := claudeHomeAgent(t, home)
+	m := &Manager{logger: slog.Default()}
+
+	credPath := writeClaudeCredential(t, home, time.Now().Add(6*time.Hour))
+	sessionPath := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(sessionPath, []byte(`{"oauthAccount":{"accountUuid":"a-1"}}`), 0o000); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	got := m.diagnoseStuckLogin(agent)
+	for _, want := range []string{credPath, sessionPath, "hive process"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("diagnosis does not mention %q:\n%s", want, got)
+		}
+	}
+	// The message must not assert what the agent's own CLI can or cannot
+	// load — that is exactly the overclaim being removed.
+	if strings.Contains(got, "cannot load") {
+		t.Errorf("diagnosis must not claim the agent's CLI cannot load the identity:\n%s", got)
+	}
+	if !strings.Contains(got, "cannot be determined") {
+		t.Errorf("diagnosis should say the identity is undetermined from the hive's view:\n%s", got)
+	}
+}

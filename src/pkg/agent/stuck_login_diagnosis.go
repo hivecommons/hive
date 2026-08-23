@@ -62,10 +62,20 @@ func (m *Manager) diagnoseStuckLogin(agent *AgentProcess) string {
 			credPath, session.Path, claudeOAuthAccountKey, home)
 
 	case credValid && session.State == claudeSessionUnreadable:
+		// Unreadable means unreadable BY THE HIVE PROCESS. Under the
+		// per-agent home layout that is the NORMAL state of a healthy
+		// signed-in agent — the CLI rewrites its session file agent-owned at
+		// 0600, which the hive user cannot read — so nothing about the
+		// agent's own view can be concluded from here. An earlier version of
+		// this message claimed the CLI itself could not load the identity,
+		// and that claim sent a real investigation down a permissions
+		// rabbit hole on a file the agent could read fine.
 		return fmt.Sprintf(
-			"credential at %s is present and valid, but the Claude session state at %s cannot be read "+
-				"(permission). The CLI shows the login menu because it cannot load the signed-in "+
-				"identity, not because the credential is missing. See kubestellar/hive#4596",
+			"credential at %s is present and valid, but the Claude session state at %s is not readable "+
+				"by the hive process (normal when the agent's CLI owns it at 0600), so whether it carries "+
+				"a signed-in identity cannot be determined from here — the agent itself may read it fine. "+
+				"Check the agent terminal before treating this as a permission problem. "+
+				"See kubestellar/hive#4596",
 			credPath, session.Path)
 
 	case credValid && session.State == claudeSessionSignedIn:
