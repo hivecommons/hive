@@ -53,7 +53,7 @@ func runGHAppTokenScript(t *testing.T, warmCache bool, args ...string) scriptRun
 	if err != nil {
 		t.Skipf("gh-app-token.sh not readable from this package: %v", err)
 	}
-	for _, tool := range []string{"bash", "openssl", "jq"} {
+	for _, tool := range []string{"bash", "openssl", "jq", "python3"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not available: %v", tool, err)
 		}
@@ -97,6 +97,22 @@ func runGHAppTokenScript(t *testing.T, warmCache bool, args ...string) scriptRun
 		"  echo '{\"token\":\"ghs_FRESH_FULL\",\"expires_at\":\"2026-08-16T12:00:00Z\"}'\n" +
 		"fi\n"
 	if err := os.WriteFile(filepath.Join(stubDir, "curl"), []byte(curlStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The production script uses GNU stat flags because it runs on Linux.
+	// Provide the tiny subset it needs so this package test is hermetic on
+	// developer Macs too.
+	statStub := "#!/bin/bash\nif [ \"$1\" = \"-c\" ]; then\n" +
+		"  case \"$2\" in\n" +
+		"    %Y) python3 -c 'import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))' \"$3\" ;;\n" +
+		"    %a) python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' \"$3\" ;;\n" +
+		"    *) echo \"unsupported stat format: $2\" >&2; exit 1 ;;\n" +
+		"  esac\n" +
+		"else\n" +
+		"  echo \"unsupported stat invocation: $*\" >&2; exit 1\n" +
+		"fi\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "stat"), []byte(statStub), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
