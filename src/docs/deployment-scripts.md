@@ -34,7 +34,7 @@ level. It is the fastest way from a fresh Ubuntu 24.04 LXC to a running hive.
 pulls the image, and drives the stack with `docker compose`. It predates
 `HIVE_DEPLOY_RUNTIME` (#4205) and has no concept that a runtime choice exists,
 so setting that variable does not redirect it — the `--compose FILE` flag and
-its own header ("a Hive v2 instance (Docker-based)") are the honest description
+its own header ("a Hive instance (Docker-based)") are the honest description
 of what it builds.
 
 **On Podman**, install from the [README's Quick Start (Podman)](../../README.md#quick-start-podman),
@@ -53,14 +53,9 @@ capability drop), then starts SSH. Tunable flags include `--ctid`, `--hostname`,
 `--password`, `--disk`, `--memory`, and `--cores`.
 
 `deploy/bootstrap-lxc.sh` runs inside that LXC. It installs Docker Engine and the
-Compose plugin, clones the repository to `/opt/hive`, builds the Hive image, and
-writes `/opt/hive/.env` with placeholders for GitHub, dashboard, model, and
-notification credentials.
-
-**Known defect.** The script still hardcodes `git clone --branch v2`, and `v2` is
-a retired branch — so it provisions a retired release line rather than mainline
-`v4`. Until that is fixed in the script, pass the branch you want explicitly or
-re-point `/opt/hive` at `v4` after bootstrap.
+Compose plugin, clones the `v4` branch (override with `HIVE_BRANCH`) to
+`/opt/hive`, builds the Hive image, and writes `/opt/hive/.env` with
+placeholders for GitHub, dashboard, model, and notification credentials.
 
 Use this path when you operate Hive on Proxmox or another LXC-first host and want
 a lightweight VM-like container that still runs the normal Docker Compose
