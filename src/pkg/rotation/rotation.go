@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/pkg/claude"
 	"github.com/kubestellar/hive/pkg/config"
 )
 
@@ -130,6 +131,11 @@ type ClaudeProber struct {
 const claudeUsageBaseURL = "https://api.anthropic.com"
 const claudeOAuthBeta = "oauth-2025-04-20"
 
+// sharedCLIHome is the durable shared CLI home on the PVC — the HOME the
+// manager gives agent tmux sessions and where fleet-level CLI auth state
+// (.claude, .codex, .copilot) persists across pod restarts.
+const sharedCLIHome = "/data/home"
+
 type claudeCredentials struct {
 	ClaudeAiOauth struct {
 		AccessToken string `json:"accessToken"`
@@ -149,11 +155,21 @@ func (p ClaudeProber) Provider() string { return "anthropic" }
 func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 	credPath := p.CredentialsPath
 	if credPath == "" {
+		// The hive main process runs with HOME=/home/dev (Dockerfile), but the
+		// durable OAuth credentials live in the shared CLI home on the PVC —
+		// claude.CredentialsPath (/data/home/.claude/.credentials.json), the
+		// same canonical location authprobe and the session watcher use. Try
+		// $HOME first (dev shells, tests), then fall back to the shared home.
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return failOpen(p.Provider(), err)
 		}
 		credPath = filepath.Join(home, ".claude", ".credentials.json")
+		if _, statErr := os.Stat(credPath); statErr != nil {
+			if _, sharedErr := os.Stat(claude.CredentialsPath); sharedErr == nil {
+				credPath = claude.CredentialsPath
+			}
+		}
 	}
 	raw, err := os.ReadFile(credPath)
 	if err != nil {
@@ -250,6 +266,13 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout+5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "codex", "app-server")
+	// The hive main process runs with HOME=/home/dev, but codex auth state
+	// lives in the shared CLI home on the PVC (/data/home/.codex — the HOME
+	// the manager gives agent sessions). Point the app-server there when it
+	// exists so the probe sees the fleet's real login, not an empty home.
+	if fi, err := os.Stat(sharedCLIHome); err == nil && fi.IsDir() {
+		cmd.Env = append(os.Environ(), "HOME="+sharedCLIHome)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return failOpen(p.Provider(), err)
@@ -262,7 +285,12 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	if err := cmd.Start(); err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	defer cmd.Process.Kill()
+	// Kill AND reap: without Wait the killed app-server stays a zombie for the
+	// life of the hive process, one per probe cycle.
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
 	send := func(id int, method string, params any) error {
 		msg := struct {
 			ID     int    `json:"id"`

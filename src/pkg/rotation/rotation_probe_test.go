@@ -440,3 +440,88 @@ func TestRunCLI_MissingBinary(t *testing.T) {
 		t.Fatalf("err = nil, out = %q; want lookup error", out)
 	}
 }
+
+// The default (no CredentialsPath override) must resolve $HOME/.claude/
+// .credentials.json — the same file the claude CLI itself writes — before
+// falling back to the shared /data/home location the hive main process needs
+// in production (where HOME=/home/dev holds no CLI state).
+func TestClaudeProber_DefaultCredentialsFromHome(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"claudeAiOauth":{"accessToken":"test-token"}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	srv := claudeUsageServer(t, http.StatusOK, `{"limits":[{"kind":"weekly_all","percent":10,"resets_at":"2026-08-26T23:00:00Z"}]}`)
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
+	if !h.Available || h.PctRemaining != 90 {
+		t.Errorf("got (avail=%v, pct=%d), want (true, 90)", h.Available, h.PctRemaining)
+	}
+}
+
+func TestClaudeProber_CorruptCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := ClaudeProber{ThresholdPct: 80, CredentialsPath: path}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Error("want fail-open with error on corrupt credentials JSON")
+	}
+}
+
+func TestClaudeProber_MalformedUsageBody(t *testing.T) {
+	srv := claudeUsageServer(t, http.StatusOK, `{"limits": not-json`)
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Error("want fail-open with error on unparseable usage body")
+	}
+}
+
+// Limits without a percent (some kinds omit it) must be skipped, not counted
+// as 0% used — the binding limit is the max percent among those that have one.
+func TestClaudeProber_SkipsLimitsWithoutPercent(t *testing.T) {
+	srv := claudeUsageServer(t, http.StatusOK, `{"limits":[
+		{"kind":"session"},
+		{"kind":"weekly_all","percent":85,"resets_at":"2026-08-26T23:00:00Z"}]}`)
+	h := ClaudeProber{ThresholdPct: 80, BaseURL: srv.URL, CredentialsPath: claudeCredsFile(t, "test-token")}.Probe(context.Background())
+	if h.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v", h.ProbeErr)
+	}
+	if h.Available {
+		t.Error("Available = true, want false (85 >= 80 threshold from the percented limit)")
+	}
+}
+
+// An app-server that answers with a JSON-RPC error object (auth failure,
+// unsupported method) is a failed measurement — fail-open, never exhaustion.
+func TestCodexProber_AppServerError(t *testing.T) {
+	script := "#!/bin/sh\n" +
+		"IFS= read -r line\n" +
+		"printf '%s\\n' '{\"id\":0,\"error\":{\"code\":-32000,\"message\":\"not logged in\"}}'\n" +
+		"exit 0\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	h := CodexProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr == nil || !h.Available {
+		t.Error("want fail-open with error on app-server JSON-RPC error")
+	}
+	if h.ProbeErr != nil && !strings.Contains(h.ProbeErr.Error(), "not logged in") {
+		t.Errorf("ProbeErr = %v, want the app-server error surfaced", h.ProbeErr)
+	}
+}
+
+func TestParseCodexRateLimits_Invalid(t *testing.T) {
+	if _, _, err := parseCodexRateLimits([]byte("not-json")); err == nil {
+		t.Error("err = nil, want parse error")
+	}
+}
