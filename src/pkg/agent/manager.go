@@ -303,8 +303,16 @@ type AgentProcess struct {
 	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
 	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
 	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
-	launchGen          int       // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
+	// is the cooldown anchor — the poller runs every 3s and the error text stays
+	// on screen after the nudge is typed, so without it one incident would fire
+	// a nudge per tick. transientNudgesThisKick is the per-kick cap; both it and
+	// the cooldown reset on the next kick.
+	lastTransientNudge      time.Time
+	transientNudgesThisKick int
+	TransientNudges         int // total transient-API-error nudges sent (surfaced to the dashboard)
+	launchGen               int // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks      int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
 	// kickLogPending is true while the current tmux session holds kick output
 	// that has not yet been archived to a per-kick log file (see
 	// kick_logs.go). Set after every kick delivery; cleared when the
@@ -2940,6 +2948,19 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				}
 			}
 
+			// #4697: a RETRYABLE API failure leaves the CLI alive at its idle
+			// prompt with the response truncated, where it waits for the next
+			// scheduled kick. Unlike the restart above, the fix is to type at
+			// the session that is already holding the context.
+			//
+			// `filtered` is scrollback, so it is used only as a cheap gate —
+			// no match means no tmux exec. The decision itself is made on the
+			// VISIBLE pane, because a matched line in scrollback is usually an
+			// error the agent already recovered from.
+			if paneShowsTransientAPIError(filtered) {
+				m.nudgeIfTransientAPIError(agent, m.captureVisiblePaneForAgent(agent))
+			}
+
 			// Detect copilot hung: if running long enough with no CLI prompt,
 			// launch bare `copilot` to diagnose the error. Only clear the
 			// token if the diagnostic shows an auth error.
@@ -4539,6 +4560,14 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	if IsInferenceBackend(effectiveBackend(agent)) {
 		m.recordInferenceKick(agent, now)
 	}
+	// #4697: a new kick is a new incident, so the transient-API-error budget
+	// starts over. Reset for EVERY backend, not just inference ones — this is
+	// the CLI-backend watchdog's only per-kick anchor, and leaving a spent
+	// budget in place would make one bad kick window silence the nudge for the
+	// life of the process. Clearing the cooldown too lets a fresh kick that
+	// fails immediately be recovered without waiting it out.
+	agent.transientNudgesThisKick = 0
+	agent.lastTransientNudge = time.Time{}
 
 	snippet := message
 	const maxSnippetLen = 120
@@ -5218,6 +5247,32 @@ const (
 	// inferenceStallNudgeMessage is the literal message typed into the CLI to
 	// unstick a stalled kick.
 	inferenceStallNudgeMessage = "continue"
+	// transientAPIErrorNudgeMessage is typed into a CLI agent that dropped back
+	// to its idle prompt after a retryable API failure (#4697).
+	//
+	// "try again", not the "continue" above, because the two situations differ:
+	// a stalled kick was never consumed, so "continue" means "get on with it",
+	// while here a request FAILED mid-flight and the work needs re-attempting.
+	// "try again" is also the exact wording an operator used on the live pane
+	// in #4697, which recovered the agent every time — no reason to ship an
+	// untested synonym in place of the phrase with evidence behind it.
+	transientAPIErrorNudgeMessage = "try again"
+	// transientAPIErrorNudgeCooldown is the minimum gap between two nudges for
+	// the same agent. The error line remains on screen after the nudge is
+	// typed, so the next poll still matches; this is what stops a single
+	// incident from firing every 3s until the pane scrolls.
+	transientAPIErrorNudgeCooldown = 90 * time.Second
+	// transientAPIErrorMaxNudgesPerKick caps how many times one kick window may
+	// be nudged. A connection that fails three times in a row is not a blip the
+	// hive can type its way out of; past the cap the agent surfaces LastError
+	// and waits for an operator instead of nudging forever.
+	transientAPIErrorMaxNudgesPerKick = 3
+	// transientAPIErrorTailLines is how much of the VISIBLE pane is examined.
+	// Scrollback is deliberately excluded: an error the agent already recovered
+	// from stays in history forever, and matching it there would re-nudge a
+	// working agent. Sized to cover the error block plus the idle prompt under
+	// it without reaching back into the previous response.
+	transientAPIErrorTailLines = 12
 	// cliInputPromptMarker is the CLI's idle input prompt indicator.
 	cliInputPromptMarker = "❯"
 	// inferenceActionNudgeGrace is the minimum time after a kick before the
@@ -5434,6 +5489,93 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 	m.tmuxSendEntersForAgent(agent)
 }
 
+// nudgeIfTransientAPIError recovers a CLI agent that a retryable API failure
+// left parked at its idle prompt (#4697).
+//
+// THE GAP THIS FILLS. Every neighbouring recovery path deliberately excludes
+// this case: the crash watcher wants a dead process and the CLI is alive; the
+// fatal-network restart (paneShowsFatalNetworkError) is copilot-only and would
+// be the wrong medicine anyway, since a restart throws away the very context
+// that makes recovery cheap; the login detector wants a login prompt; #4400 and
+// #4583 handle errors retrying CANNOT fix. And nudgeIfKickStalled — the one
+// piece that already types "continue" at a frozen pane — is armed only from
+// recordInferenceKick, which sits behind an IsInferenceBackend guard, so CLI
+// backends never arm it. The result was an agent that is healthy,
+// authenticated, under quota, mid-task and one Enter from resuming, sitting
+// idle until the next scheduled kick hours later.
+//
+// pane must be the VISIBLE pane, not scrollback — see transientAPIErrorTailLines.
+//
+// Every precondition is a refusal to nudge something that is not stuck:
+//
+//   - inference backends are skipped: nudgeIfKickStalled already covers them,
+//     and two watchdogs typing at one pane would race;
+//   - paneShowsActiveWork or a missing idle prompt means the CLI is streaming
+//     or mid-retry (Claude Code retries some failures itself, rendering a
+//     countdown) — interrupting that would CAUSE the stall it is meant to fix;
+//   - an authorization or quota failure on screen is re-checked here even
+//     though the pattern list excludes both, because Claude Code prefixes every
+//     API failure with the same "API Error:" chrome and a nudge into a wall
+//     burns tokens to no effect.
+func (m *Manager) nudgeIfTransientAPIError(agent *AgentProcess, pane string) {
+	// Inference backends have their own watchdog; see the doc comment.
+	if IsInferenceBackend(effectiveBackend(agent)) {
+		return
+	}
+	tail := paneTail(pane, transientAPIErrorTailLines)
+	if tail == "" {
+		return
+	}
+	// Mid-response or mid-retry: leave it alone.
+	if paneShowsActiveWork(tail) || !strings.Contains(tail, cliInputPromptMarker) {
+		return
+	}
+	lines := strings.Split(tail, "\n")
+	if !paneShowsTransientAPIError(lines) {
+		return
+	}
+	// Guardrails: never nudge an error a retry cannot clear.
+	if paneShowsQuotaExhausted(lines) {
+		return
+	}
+	for _, line := range lines {
+		if lineShowsUpstreamAuthorizationError(line) {
+			return
+		}
+	}
+
+	now := time.Now()
+	m.mu.Lock()
+	if now.Sub(agent.lastTransientNudge) < transientAPIErrorNudgeCooldown {
+		m.mu.Unlock()
+		return
+	}
+	if agent.transientNudgesThisKick >= transientAPIErrorMaxNudgesPerKick {
+		// Past the cap the failure is an operator problem. Surface it once —
+		// re-stamping LastError every poll would hide whatever else the agent
+		// reports — and stop typing.
+		if agent.LastError == "" {
+			agent.LastError = "repeated transient API errors; nudges exhausted"
+		}
+		m.mu.Unlock()
+		return
+	}
+	agent.lastTransientNudge = now
+	agent.transientNudgesThisKick++
+	agent.TransientNudges++
+	attempt, total := agent.transientNudgesThisKick, agent.TransientNudges
+	m.mu.Unlock()
+
+	m.logger.Warn("CLI agent idle after a transient API error, sending retry nudge",
+		"name", agent.Name,
+		"attempt", attempt,
+		"max_per_kick", transientAPIErrorMaxNudgesPerKick,
+		"total_nudges", total)
+	m.tmuxSendLiteralForAgent(agent, transientAPIErrorNudgeMessage)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
+}
+
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
 func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 	for i := 0; i < enterCount; i++ {
@@ -5641,6 +5783,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		LastPaneChange:  lastPaneChange,
 		StallNudges:     a.StallNudges,
 		ActionNudges:    a.ActionNudges,
+		TransientNudges: a.TransientNudges,
 		HasLaunched:     a.HasLaunched,
 		LaunchedMode:    a.LaunchedMode,
 		tmuxSession:     a.tmuxSession,
@@ -6035,6 +6178,53 @@ var fatalNetworkErrorPatterns = []string{
 func paneShowsFatalNetworkError(lines []string) bool {
 	for _, line := range lines {
 		for _, pat := range fatalNetworkErrorPatterns {
+			if strings.Contains(line, pat) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// transientAPIErrorPatterns are substrings of API failures that a plain retry
+// fixes (#4697). They are the OPPOSITE of fatalNetworkErrorPatterns above: the
+// CLI survives, drops back to its idle prompt with the response truncated, and
+// stays there until the next scheduled kick — which can be hours away. The
+// session is alive with full context, so the remedy is a nudge, not a restart.
+//
+// Membership is deliberately narrow. Every pattern here must be an error where
+// REPEATING THE SAME REQUEST CAN SUCCEED:
+//
+//   - a dropped/timed-out connection — the request never completed;
+//   - 5xx and "overloaded" — the upstream failed this attempt, not this caller.
+//
+// Errors a retry cannot fix must NOT be listed, because nudging them loops the
+// agent against a wall: 403/model-refusal (#4400) and quota exhaustion (#4583)
+// are both excluded here AND re-checked at the call site via
+// lineShowsUpstreamAuthorizationError / paneShowsQuotaExhausted, since Claude
+// Code renders every API failure under the same "API Error:" prefix and a
+// substring match alone cannot tell them apart.
+var transientAPIErrorPatterns = []string{
+	// The shape reported in #4697, observed repeatedly on a claude-backend
+	// agent: the response is cut off mid-stream and the CLI returns to ❯.
+	"Connection lost mid-response",
+	"API Error: Connection error",
+	"API Error: Request timed out",
+	"API Error: 500",
+	"API Error: 502",
+	"API Error: 503",
+	// 529 is Anthropic's "overloaded" status.
+	"API Error: 529",
+	"Overloaded",
+}
+
+// paneShowsTransientAPIError reports whether any line carries a retryable API
+// failure. Pure over its input so the decision is table-testable without tmux;
+// the call site supplies the VISIBLE pane tail rather than scrollback, so an
+// error the agent already recovered from does not read as current.
+func paneShowsTransientAPIError(lines []string) bool {
+	for _, line := range lines {
+		for _, pat := range transientAPIErrorPatterns {
 			if strings.Contains(line, pat) {
 				return true
 			}

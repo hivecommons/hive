@@ -589,6 +589,9 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			LastError:     proc.LastError,
 			StallNudges:   proc.StallNudges,
 			ActionNudges:  proc.ActionNudges,
+			// #4697: transient-API-error retry nudges, surfaced beside the
+			// other two nudge counters.
+			TransientNudges: proc.TransientNudges,
 		}
 
 		acmmLevel := 0

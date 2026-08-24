@@ -480,6 +480,7 @@ type FrontendAgent struct {
 	LastError        string `json:"lastError,omitempty"`
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
+	TransientNudges  int    `json:"transientNudges,omitempty"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the
