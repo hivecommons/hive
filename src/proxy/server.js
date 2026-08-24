@@ -930,6 +930,32 @@ app.get('/api-docs', (_req, res) => {
 
 app.use('/api', apiProxy);
 
+// GitHub App setup callback. After the operator installs the App, GitHub
+// redirects their browser to /gh-setup?installation_id=...&setup_action=...,
+// and the Go API's GET /gh-setup handler verifies the installation with the
+// App key and persists installation_id. This route was missing here: the
+// request fell through to the SPA fallback below, the dashboard rendered at
+// the /gh-setup URL, and the documented setup flow silently did nothing on
+// every gateway deployment — the operator had to find and paste the
+// installation ID by hand. Proxy it to the Go API exactly like /api.
+app.use('/gh-setup', createProxyMiddleware({
+  target: GO_API_URL,
+  changeOrigin: true,
+  // The express mount strips the /gh-setup prefix (same as /api above);
+  // re-prepend it, collapsing the bare "/" express leaves before a query
+  // string so the Go mux pattern "GET /gh-setup" still matches.
+  pathRewrite: (p) => '/gh-setup' + p.replace(/^\/(?=\?|$)/, ''),
+  on: {
+    error(err, req, res) {
+      console.error(`[gh-setup-proxy] ${req.method} ${req.url} → ${err.message}`);
+      if (res.writeHead) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('GitHub App setup endpoint unavailable');
+      }
+    },
+  },
+}));
+
 const ttydProxy = createProxyMiddleware({
   target: TTYD_URL,
   changeOrigin: true,
