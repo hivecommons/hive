@@ -3,6 +3,7 @@ package dashboard
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -875,8 +876,12 @@ func TestBuildBudget_BurnRate(t *testing.T) {
 func TestBuildBudget_WithTokenCollectorSummary(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)
-	// No weekly limit — should use totalTokens as used but no percentage calc
-	collector := tokens.NewCollector("/nonexistent", nil)
+	// No weekly limit — should use totalTokens as used but no percentage calc.
+	// Real logger + redirected persist path: the collector's lazy snapshot
+	// restore would otherwise read the live /data/token-summary.json on a hive
+	// host and, before NewCollector was nil-safe, panic on the nil logger (#4664).
+	collector := tokens.NewCollector("/nonexistent", slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	collector.SetPersistPath(filepath.Join(t.TempDir(), "token-summary.json"))
 	fb := buildBudget(gov, collector)
 	// With no spend and no limit, used should be 0 or whatever the collector says
 	if fb.PctUsed != 0 {

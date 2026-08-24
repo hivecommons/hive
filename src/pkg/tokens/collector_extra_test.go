@@ -22,21 +22,37 @@ func TestNewCollector(t *testing.T) {
 	}
 }
 
-func TestCollector_Summary_Initially(t *testing.T) {
-	// NewCollector loads a persisted snapshot from the fixed
-	// /data/token-summary.json path, which exists on a live hive host and
-	// would make Summary non-nil. Build the collector with a persist path in
-	// a temp dir so "no snapshot on disk" is actually true for this test.
-	c := &Collector{
-		sessionsDir:  "/tmp/nonexistent-sessions",
-		persistPath:  filepath.Join(t.TempDir(), "absent-token-summary.json"),
-		detector:     DefaultAgentDetector,
-		logger:       testLogger(),
-		issueCosts:   make(map[string]int64),
-		scanInterval: defaultScanInterval,
-		prevByAgent:  make(map[string]int64),
+// A nil logger must never panic — the failure mode is nasty because it only
+// fires on hosts where the snapshot file EXISTS (loadSnapshot logs on a
+// successful restore), i.e. live hive hosts but not clean CI runners (#4664).
+// This test recreates exactly that environment: nil logger + a real snapshot
+// at the persist path, then forces the lazy load via Summary.
+func TestNewCollector_NilLoggerSafeOnSnapshotLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token-summary.json")
+	if err := os.WriteFile(path, []byte(`{"session_count":3,"total_tokens":42}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	c.loadSnapshot()
+
+	c := NewCollector("/tmp/nonexistent-sessions", nil)
+	if c.logger == nil {
+		t.Fatal("NewCollector must default a nil logger, got nil")
+	}
+	c.SetPersistPath(path)
+
+	summary := c.Summary() // triggers loadSnapshot's success-path logging
+	if summary == nil || summary.TotalTokens != 42 {
+		t.Errorf("Summary = %+v, want restored snapshot with TotalTokens=42", summary)
+	}
+}
+
+func TestCollector_Summary_Initially(t *testing.T) {
+	// Redirect the snapshot path away from the live /data location so the
+	// lazy initial load cannot pick up production state on a hive host (#4585).
+	prev := defaultPersistPath
+	defaultPersistPath = filepath.Join(t.TempDir(), "token-summary.json")
+	t.Cleanup(func() { defaultPersistPath = prev })
+
+	c := NewCollector("/tmp/nonexistent-sessions", testLogger())
 	summary := c.Summary()
 	if summary != nil {
 		t.Errorf("expected nil summary initially, got %v", summary)

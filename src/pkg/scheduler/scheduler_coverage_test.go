@@ -295,7 +295,27 @@ func TestSubstituteTemplate_TimestampPresent(t *testing.T) {
 // loadPromptTemplate — test with temp file
 // ---------------------------------------------------------------------------
 
+// redirectPolicySeams points every /data policy seam (agentHomeDir,
+// userSavedPolicyDir, clonedPoliciesDir) at fresh empty temp dirs so the
+// template loaders can never read live production state on a hive host
+// (#4585). Restores the originals via t.Cleanup.
+func redirectPolicySeams(t *testing.T) {
+	t.Helper()
+	prevAgentHome := agentHomeDir
+	prevUserSaved := userSavedPolicyDir
+	prevCloned := clonedPoliciesDir
+	agentHomeDir = t.TempDir()
+	userSavedPolicyDir = t.TempDir()
+	clonedPoliciesDir = t.TempDir()
+	t.Cleanup(func() {
+		agentHomeDir = prevAgentHome
+		userSavedPolicyDir = prevUserSaved
+		clonedPoliciesDir = prevCloned
+	})
+}
+
 func TestLoadPromptTemplate_FromPoliciesDir(t *testing.T) {
+	redirectPolicySeams(t)
 	tmpDir := t.TempDir()
 	// Use an agent name that cannot exist in the live /data/agents or
 	// /data/policies paths, which loadPromptTemplate consults first; a real
@@ -320,6 +340,7 @@ func TestLoadPromptTemplate_FromPoliciesDir(t *testing.T) {
 }
 
 func TestLoadPromptTemplate_NotFound(t *testing.T) {
+	redirectPolicySeams(t)
 	cfg := &config.Config{
 		Policies: config.PoliciesConfig{
 			LocalDir: "/nonexistent",
@@ -337,6 +358,7 @@ func TestLoadPromptTemplate_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildAgentMessage_UsesTemplate(t *testing.T) {
+	redirectPolicySeams(t)
 	tmpDir := t.TempDir()
 	templatePath := tmpDir + "/examples/kubestellar/agents/custom-agent.md"
 	os.MkdirAll(tmpDir+"/examples/kubestellar/agents", 0o755)

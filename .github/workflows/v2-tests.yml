@@ -28,6 +28,17 @@ permissions:
   contents: read
   issues: write
 
+# Cancel superseded PR runs only (#4623). A new push to a PR makes the
+# in-flight run's verdict irrelevant, so cancelling it is pure runner-minute
+# savings. Scheduled and workflow_dispatch runs must NEVER be cancelable:
+# the scheduled run feeds create-issue-on-failure (the merge-race/flake
+# auto-filer) — cancelling one blinds it for that window. Keying the non-PR
+# group on run_id gives every such run its own group, so they can neither
+# cancel each other nor queue behind one another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # ── Sharding layout (#4118) ──────────────────────────────────────────────────
 # The suite is split so PR wall-clock ≈ the slowest single piece, not the sum.
 # Measured on CI (v4, ubuntu-latest, -short -race): pkg/hub ≈ 117s and

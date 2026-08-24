@@ -126,15 +126,27 @@ func (s *Scheduler) GetLastActionable() *github.ActionableResult {
 // always uses the fixed /data/policies path that handleAgentPromptSave writes to.
 var userSavedPolicyDir = "/data/policies"
 
+// agentHomeDir is where per-agent homes live on a hive host; the per-agent
+// CLAUDE.md (<agentHomeDir>/<name>/CLAUDE.md) is checked first by
+// loadPromptTemplate. It is a var (not a const) only so tests can point it at
+// a temp dir; production always uses the fixed /data/agents path.
+var agentHomeDir = "/data/agents"
+
+// clonedPoliciesDir is the root of the git-cloned policies repo checkout on a
+// hive host (…/<root>/examples/kubestellar/agents/). Like userSavedPolicyDir,
+// it is a var only so tests can point it at a temp dir; production always
+// uses /data/policies.
+var clonedPoliciesDir = "/data/policies"
+
 // loadPromptTemplate searches standard paths for an agent's policy template.
 // It checks on-disk paths first, then falls back to embedded default policies.
 func (s *Scheduler) loadPromptTemplate(agentName string) string {
 	paths := []string{
-		fmt.Sprintf("/data/agents/%s/CLAUDE.md", agentName),
+		fmt.Sprintf("%s/%s/CLAUDE.md", agentHomeDir, agentName),
 		// User-saved override from the dashboard prompt editor wins over the
 		// git-cloned examples copy and embedded defaults (#3239).
 		fmt.Sprintf("%s/%s.md", userSavedPolicyDir, agentName),
-		fmt.Sprintf("/data/policies/examples/kubestellar/agents/%s.md", agentName),
+		fmt.Sprintf("%s/examples/kubestellar/agents/%s.md", clonedPoliciesDir, agentName),
 	}
 	if s.cfg.Policies.LocalDir != "" {
 		paths = append(paths,
@@ -163,7 +175,7 @@ func (s *Scheduler) loadNamedTemplate(templateName string) string {
 		// agent has a kick_template set (e.g. quality-advisory.md at ACMM L2) the
 		// edit lands here and must be picked up on the next kick.
 		fmt.Sprintf("%s/%s", userSavedPolicyDir, templateName),
-		fmt.Sprintf("/data/policies/examples/kubestellar/agents/%s", templateName),
+		fmt.Sprintf("%s/examples/kubestellar/agents/%s", clonedPoliciesDir, templateName),
 	}
 	if s.cfg.Policies.LocalDir != "" {
 		paths = append(paths,
