@@ -146,6 +146,7 @@ Part 2 of [RFC #4492](https://github.com/kubestellar/hive/issues/4492): the hive
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
+| `LINEAR_API_KEY` | Yes for the Linear work source | none | Personal API key used to enumerate Linear issues. Reference it from `governor.work_source.linear.api_key` as `${LINEAR_API_KEY}` rather than storing the key in `hive.yaml`. |
 | `LINEAR_CLIENT_ID` | Yes for the Linear agent integration | none | OAuth client id of your Linear application (Linear → Settings → API → Applications). Without it the install endpoint returns 412 and the integration stays off. |
 | `LINEAR_CLIENT_SECRET` | Yes for the Linear agent integration | none | OAuth ****** for the code exchange and token refresh. Secret — deliver via Kubernetes Secret / env, never config files. |
 | `LINEAR_WEBHOOK_SECRET` | Yes for Linear webhooks | none | HMAC-SHA256 signing secret from the Linear app's webhook settings. The receiver **fails closed**: with this unset every delivery to `/api/linear/webhook` is rejected 401. |

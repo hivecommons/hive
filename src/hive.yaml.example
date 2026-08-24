@@ -197,6 +197,18 @@ governor:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
 
+  # Work is read from GitHub Issues by default. To enumerate Linear instead,
+  # pass LINEAR_API_KEY into the hive container and map each team to the GitHub
+  # repository where agents should open PRs:
+  # work_source:
+  #   type: linear
+  #   linear:
+  #     api_key: ${LINEAR_API_KEY}
+  #     teams:
+  #       - key: ENG
+  #         repo: my-org/my-repo
+  #         states: [Todo, In Progress, Backlog]
+
   modes:
     surge:
       threshold: 20                       # Queue depth >= 20 triggers SURGE

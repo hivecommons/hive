@@ -5469,11 +5469,9 @@ func runEvalCycle(
 		} else if wsIssues, listErr := ws.ListIssues(ctx); listErr != nil {
 			logger.Warn("work_source enumeration failed, falling back to GitHub Issues", "source", ws.SourceType(), "error", listErr)
 		} else {
-			// Replace the Issues portion of actionable with worksource results.
-			actionable.Issues = github.IssueResult{
-				Count: len(wsIssues),
-				Items: worksource.ToGitHubIssues(wsIssues),
-			}
+			// Replace the Issues portion of actionable with worksource results,
+			// including the same SLA summary native GitHub enumeration produces.
+			actionable.Issues = github.IssueResultFromItems(worksource.ToGitHubIssues(wsIssues))
 		}
 	}
 

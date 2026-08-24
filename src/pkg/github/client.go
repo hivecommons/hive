@@ -311,6 +311,19 @@ type IssueResult struct {
 	SLAViolations int     `json:"sla_violations"`
 }
 
+// IssueResultFromItems builds the queue summary consumed by the governor.
+// Work-source overlays must use the same SLA accounting as native GitHub
+// enumeration; otherwise replacing Items silently resets SLAViolations to zero.
+func IssueResultFromItems(items []Issue) IssueResult {
+	result := IssueResult{Count: len(items), Items: items}
+	for _, issue := range items {
+		if issue.AgeMinutes > slaThresholdMinutes {
+			result.SLAViolations++
+		}
+	}
+	return result
+}
+
 type PRResult struct {
 	Count int           `json:"count"`
 	Items []PullRequest `json:"items"`
@@ -483,13 +496,6 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		return allIssues[i].AgeMinutes > allIssues[j].AgeMinutes
 	})
 
-	slaViolations := 0
-	for _, issue := range allIssues {
-		if issue.AgeMinutes > slaThresholdMinutes {
-			slaViolations++
-		}
-	}
-
 	holdIssueCount := 0
 	holdPRCount := 0
 	for _, h := range holdItems {
@@ -500,11 +506,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		}
 	}
 
-	result.Issues = IssueResult{
-		Count:         len(allIssues),
-		Items:         allIssues,
-		SLAViolations: slaViolations,
-	}
+	result.Issues = IssueResultFromItems(allIssues)
 	result.PRs = PRResult{
 		Count:       len(allPRs),
 		Items:       allPRs,
