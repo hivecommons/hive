@@ -1,4 +1,5 @@
 import express from 'express';
+import httpBase from 'http';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import path from 'path';
 import fs from 'fs';
@@ -932,6 +933,16 @@ app.use('/api', apiProxy);
 const ttydProxy = createProxyMiddleware({
   target: TTYD_URL,
   changeOrigin: true,
+  // ttyd (libwebsockets) serves ONE request per TCP connection and hangs up
+  // on any reuse. Without an explicit agent, httpxy (the proxy engine) pools
+  // upstream sockets in its own keepAlive:true default agents, so the
+  // browser's basic-auth flow — an unauthenticated request answered 401,
+  // then an authenticated retry — deterministically rode a dead pooled
+  // socket and surfaced as 502 "Terminal unavailable" with the CORRECT
+  // password. A non-pooling agent gives every request a fresh connection;
+  // pooling buys nothing here anyway, because the endpoint's real traffic
+  // is a single long-lived websocket.
+  agent: new httpBase.Agent({ keepAlive: false }),
   pathRewrite: (p) => p.replace(/^\/terminal/, '') || '/',
   on: {
     error(err, req, res) {
