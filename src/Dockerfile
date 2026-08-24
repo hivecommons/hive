@@ -562,5 +562,20 @@ RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
       exit 1; \
     fi
 
+
+# --- Layer 8.26: shared-$HOME state hygiene (umask 007 wrappers) ---
+# Agent CLIs rewrite their credential/settings state as mode 600 owned by the
+# writing agent (agy: antigravity-cli/*.json + oauth token; claude:
+# .credentials.json). With a shared $HOME (/data/home) that breaks every other
+# agent on the same provider (EACCES -> login/onboarding screens). Launch
+# through wrappers that set umask 007 so shared state stays group-readable.
+# See RFC #4665.
+RUN for b in agy claude; do \
+      [ -e "/usr/local/bin/$b" ] || continue; \
+      mv "/usr/local/bin/$b" "/usr/local/bin/$b.real"; \
+      printf '#!/bin/sh\numask 007\nexec /usr/local/bin/%s.real "$@"\n' "$b" > "/usr/local/bin/$b"; \
+      chmod 755 "/usr/local/bin/$b"; \
+    done
+
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["--config", "/etc/hive/hive.yaml"]
