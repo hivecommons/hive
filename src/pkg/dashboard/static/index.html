@@ -15532,6 +15532,7 @@ function burnAreaChart() {
         }
         const created = (data.created || []).length;
         const skipped = (data.skipped || []).length;
+        const governorChanges = formatGovernorChanges(data.governor_changes);
         closeACMMDialog();
         window._acmmOverride = { level: level, packAgents: data.packAgents || [] };
         if (window._lastStatus) {
@@ -15540,7 +15541,8 @@ function burnAreaChart() {
           window._lastStatus.acmmPackAgents = data.packAgents || [];
           render(window._lastStatus);
         }
-        showToast(`Level ${level} applied: ${created} created, ${skipped} skipped`, 'success');
+        showToast(`Level ${level} applied: ${created} created, ${skipped} skipped` + (governorChanges ? ' — governor settings changed' : ''), governorChanges ? 'info' : 'success');
+        if (governorChanges) await hiveAlert(governorChanges, 'Governor settings changed');
         _acmmPacks = null;
       } catch (err) {
         hideACMMLoading();
@@ -15567,6 +15569,7 @@ function burnAreaChart() {
           errEl.style.display = 'block';
           return;
         }
+        const governorChanges = formatGovernorChanges(data.governor_changes);
         closeACMMDialog();
         window._acmmOverride = { level: level, packAgents: data.packAgents || [] };
         if (window._lastStatus) {
@@ -15575,13 +15578,29 @@ function burnAreaChart() {
           window._lastStatus.acmmPackAgents = data.packAgents || [];
           render(window._lastStatus);
         }
-        showToast(`ACMM level set to L${level} (${name})`, 'success');
+        showToast(`ACMM level set to L${level} (${name})` + (governorChanges ? ' — governor settings changed' : ''), governorChanges ? 'info' : 'success');
+        if (governorChanges) await hiveAlert(governorChanges, 'Governor settings changed');
         _acmmPacks = null;
       } catch (err) {
         hideACMMLoading();
         errEl.textContent = 'Network error: ' + err.message;
         errEl.style.display = 'block';
       }
+    }
+
+    // Packs reconcile scheduling as part of an explicit level apply. Show the
+    // exact mutation instead of leaving an operator to discover it after restart.
+    function formatGovernorChanges(changes) {
+      if (!changes) return '';
+      const lines = [];
+      const interval = changes.eval_interval_s;
+      if (interval && interval.from !== interval.to) {
+        lines.push(`Evaluation interval: ${interval.from}s → ${interval.to}s`);
+      }
+      for (const cadence of changes.cadences || []) {
+        lines.push(`${cadence.mode} / ${cadence.agent}: ${cadence.from || 'unset'} → ${cadence.to || 'unset'}`);
+      }
+      return lines.join('\n');
     }
 
     // Short "L3 Quality-Gated"-style label for an ACMM pack level. Shared by the

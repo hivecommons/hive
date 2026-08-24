@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,16 +43,41 @@ func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
 
 // ApplyPackResult holds the outcome of applying an ACMM pack.
 type ApplyPackResult struct {
-	Name    string   `json:"name"`
-	Created []string `json:"created"`
-	Updated []string `json:"updated"`
-	Skipped []string `json:"skipped"`
-	Paused  []string `json:"paused"`
-	Resumed []string `json:"resumed"`
+	Name            string           `json:"name"`
+	Created         []string         `json:"created"`
+	Updated         []string         `json:"updated"`
+	Skipped         []string         `json:"skipped"`
+	Paused          []string         `json:"paused"`
+	Resumed         []string         `json:"resumed"`
+	GovernorChanges *GovernorChanges `json:"governor_changes,omitempty"`
 	// Tombstoned lists pack agents deliberately deleted by the operator and
 	// therefore NOT re-created. Surfaced so an under-full roster reads as an
 	// honored choice rather than an apply that quietly dropped agents.
 	Tombstoned []string `json:"tombstoned,omitempty"`
+}
+
+// GovernorChanges reports the governor settings a pack apply actually changed.
+// It captures old values before reconciliation, because a running governor can
+// retain its current ticker until the hive restarts.
+type GovernorChanges struct {
+	EvalIntervalS *GovernorIntervalChange `json:"eval_interval_s,omitempty"`
+	Cadences      []GovernorCadenceChange `json:"cadences,omitempty"`
+}
+
+type GovernorIntervalChange struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+type GovernorCadenceChange struct {
+	Mode  string `json:"mode"`
+	Agent string `json:"agent"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+}
+
+func (g *GovernorChanges) empty() bool {
+	return g == nil || (g.EvalIntervalS == nil && len(g.Cadences) == 0)
 }
 
 // ApplyPack applies the ACMM pack for the given level. It creates agents,
@@ -256,9 +282,15 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// agent) kept the previous level's cadences — including a stale SURGE=pause —
 	// so the hive stopped kicking agents after a level switch.
 	isFirstApplyOrExpansion := len(created) > 0 || forceGovernor
+	governorChanges := &GovernorChanges{}
 
 	if pack.Governor.EvalIntervalS > 0 && isFirstApplyOrExpansion {
-		s.deps.Config.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
+		from := s.deps.Config.Governor.EvalIntervalS
+		to := pack.Governor.EvalIntervalS
+		if from != to {
+			governorChanges.EvalIntervalS = &GovernorIntervalChange{From: from, To: to}
+			s.deps.Config.Governor.EvalIntervalS = to
+		}
 	}
 
 	if len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 {
@@ -272,7 +304,13 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			}
 			for agent, interval := range agentCadences {
 				if isFirstApplyOrExpansion {
-					mode.Cadences[agent] = config.Cadence(interval)
+					from := string(mode.Cadences[agent])
+					if from != interval {
+						governorChanges.Cadences = append(governorChanges.Cadences, GovernorCadenceChange{
+							Mode: modeName, Agent: agent, From: from, To: interval,
+						})
+						mode.Cadences[agent] = config.Cadence(interval)
+					}
 				} else if _, exists := mode.Cadences[agent]; !exists {
 					mode.Cadences[agent] = config.Cadence(interval)
 				}
@@ -301,6 +339,12 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			}
 		}
 	}
+	sort.Slice(governorChanges.Cadences, func(i, j int) bool {
+		if governorChanges.Cadences[i].Mode == governorChanges.Cadences[j].Mode {
+			return governorChanges.Cadences[i].Agent < governorChanges.Cadences[j].Agent
+		}
+		return governorChanges.Cadences[i].Mode < governorChanges.Cadences[j].Mode
+	})
 
 	for _, pa := range pack.Agents {
 		if pa.StaleTimeout > 0 {
@@ -322,6 +366,16 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 
 	s.persistOnly()
 	go s.refreshAsync()
+	if !governorChanges.empty() {
+		logArgs := []any{"hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name}
+		if interval := governorChanges.EvalIntervalS; interval != nil {
+			logArgs = append(logArgs, "governor_eval_interval_s_from", interval.From, "governor_eval_interval_s_to", interval.To)
+		}
+		if len(governorChanges.Cadences) > 0 {
+			logArgs = append(logArgs, "cadence_changes", governorChanges.Cadences)
+		}
+		s.logger.Warn("ACMM pack changed governor settings", logArgs...)
+	}
 	// Observability (#2439): the counts alone ("tombstoned":0) were the tell in the
 	// field report, so also list WHICH agents were tombstoned (deleted by the operator
 	// and NOT re-created) vs skipped (already present) — a grep by agent name against
@@ -343,6 +397,9 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		Paused:     paused,
 		Resumed:    resumed,
 		Tombstoned: tombstoned,
+	}
+	if !governorChanges.empty() {
+		result.GovernorChanges = governorChanges
 	}
 	if len(createErrs) > 0 {
 		// Return the result alongside the error so callers can still see what
@@ -388,6 +445,9 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		"skipped": result.Skipped,
 		"paused":  result.Paused,
 		"resumed": result.Resumed,
+		// Exact before/after values let the dashboard warn before a restart
+		// activates a different evaluation cadence.
+		"governor_changes": result.GovernorChanges,
 		// Empty unless the operator deleted one of this level's agents.
 		"tombstoned": result.Tombstoned,
 	})
@@ -507,12 +567,13 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "set_acmm_level", auditDetail("level", strconv.Itoa(body.Level)), "")
 	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
 	jsonResponse(w, map[string]interface{}{
-		"ok":          true,
-		"level":       body.Level,
-		"packAgents":  packAgentNames,
-		"packUpdated": packUpdated,
-		"paused":      paused,
-		"resumed":     resumed,
+		"ok":               true,
+		"level":            body.Level,
+		"packAgents":       packAgentNames,
+		"packUpdated":      packUpdated,
+		"governor_changes": packResult.GovernorChanges,
+		"paused":           paused,
+		"resumed":          resumed,
 	})
 }
 
