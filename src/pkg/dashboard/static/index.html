@@ -16554,15 +16554,15 @@ function burnAreaChart() {
           </div>
           <div class="config-field" style="margin-bottom:10px">
             <label>API key header <span class="config-info">i<span class="config-tooltip">Header NAME the key is sent in. Leave blank for the default (Authorization).</span></span></label>
-            <input type="text" value="${esc(cfg.api_key_header || '')}" placeholder="Authorization" onchange="saveInferenceAuthField('${id}', 'api_key_header', this.value)" style="width:100%">
+            <input type="text" value="${esc(cfg.api_key_header || '')}" placeholder="Authorization" data-change-action="saveInferenceAuthField" data-arg0="${esc(id)}" data-arg1="api_key_header" data-arg-types="s,s,v" style="width:100%">
           </div>
           <div class="config-field" style="margin-bottom:10px">
             <label>API key env var <span class="config-info">i<span class="config-tooltip">Environment variable NAME holding the key — never paste the key value here.</span></span></label>
-            <input type="text" value="${esc(cfg.api_key_env || '')}" placeholder="${esc(defEnv)}" onchange="saveInferenceAuthField('${id}', 'api_key_env', this.value)" style="width:100%">
+            <input type="text" value="${esc(cfg.api_key_env || '')}" placeholder="${esc(defEnv)}" data-change-action="saveInferenceAuthField" data-arg0="${esc(id)}" data-arg1="api_key_env" data-arg-types="s,s,v" style="width:100%">
           </div>
           <div class="config-field" style="margin-bottom:4px">
             <label>Endpoint override (optional) <span class="config-info">i<span class="config-tooltip">OpenAI-compatible base URL used instead of the default for this backend. Leave blank to keep the default.</span></span></label>
-            <input type="text" value="${esc(cfg.endpoint || '')}" placeholder="https://…/v1" onchange="saveInferenceAuthField('${id}', 'endpoint', this.value)" style="width:100%">
+            <input type="text" value="${esc(cfg.endpoint || '')}" placeholder="https://…/v1" data-change-action="saveInferenceAuthField" data-arg0="${esc(id)}" data-arg1="endpoint" data-arg-types="s,s,v" style="width:100%">
           </div>
         </div>`;
     }
@@ -17747,7 +17747,7 @@ function burnAreaChart() {
         </div>
         <div class="config-field">
           <label>Explain Mode <span class="config-info">i<span class="config-tooltip">Ask this agent to say WHY it made each tool call, for debugging. Reasoning is emitted on EXPLAIN: lines alongside the work — the agent still acts, it does not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. View the reasoning on its own with "?explain=only" on the agent's full log. "(hive default)" follows the HIVE_EXPLAIN_MODE setting; "off" opts this agent out even when the hive default is on.</span></span></label>
-          <select id="cfg-explain-mode" onchange="markDirty('general','explainMode',this.value)">
+          <select id="cfg-explain-mode" data-change-action="markDirty" data-arg0="general" data-arg1="explainMode" data-arg-types="s,s,v">
             ${EXPLAIN_MODES.map(m => `<option value="${m.value}" ${(g.explainMode || '') === m.value ? 'selected' : ''}>${m.label}</option>`).join('')}
           </select>
         </div>
