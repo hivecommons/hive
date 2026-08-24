@@ -1577,6 +1577,16 @@ func main() {
 	// Gated on a real client + usable App — with no App there is no bot to author
 	// as, and requests simply accumulate rather than opening under a wrong
 	// identity. ghClient uses the App installation token (see ghAuth wiring).
+	// Create the agent-facing request queues REGARDLESS of App state. The
+	// watchers below stay gated (no App, no bot to author as), but the queues
+	// must exist either way or the "requests simply accumulate" behavior above
+	// is a fiction: hive-open-pr / hive-open-issue run in the AGENT's shell and
+	// hard-fail on a missing directory, discarding the finding instead of
+	// queueing it. App setup routinely completes after boot (operator saves the
+	// installation ID, /gh-setup persists it, auto-discovery finds it later), so
+	// this gap silently disarms agent writes on a hive that looks healthy.
+	github.PrepareRequestDirs(logger)
+
 	if ghClient != nil && cfg.GitHub.HasUsableApp() {
 		// Attribution resolver: effective backend/model from the manager
 		// (runtime overrides included), falling back to the configured values

@@ -1,0 +1,106 @@
+package github
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// The agent-facing request queues must exist even when no watcher is running.
+//
+// The PR/issue watchers are gated on a usable GitHub App, and the design says
+// that with no App "requests simply accumulate rather than opening under a
+// wrong identity". That was not true: the queues were created INSIDE the same
+// gate, so on a hive whose App was not usable at boot the directories did not
+// exist and hive-open-pr / hive-open-issue hard-failed in the agent's shell —
+// the finding was discarded, not queued, and the only trace was in that
+// agent's terminal pane.
+//
+// Measured on a live L3 hive: the App installation ID was saved from the
+// dashboard AFTER boot, so auto-discovery repaired App auth at runtime and
+// everything reported healthy — while quality had analysed the repo, pushed a
+// branch, composed a PR and an issue, and then had nowhere to put them.
+
+func testQueueDirs(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	pr := filepath.Join(root, "pr-requests")
+	issue := filepath.Join(root, "issue-requests")
+	prev, prevIssue := prRequestDirForTest, issueRequestDirForTest
+	prRequestDirForTest, issueRequestDirForTest = pr, issue
+	t.Cleanup(func() { prRequestDirForTest, issueRequestDirForTest = prev, prevIssue })
+	return pr, issue
+}
+
+// TestPrepareRequestDirsCreatesBothQueues is the regression: both queues exist
+// after PrepareRequestDirs, with no client and no App anywhere in sight.
+func TestPrepareRequestDirsCreatesBothQueues(t *testing.T) {
+	pr, issue := testQueueDirs(t)
+
+	PrepareRequestDirs(quietLogger())
+
+	for name, dir := range map[string]string{"pr": pr, "issue": issue} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("%s queue was not created: %v — agents hard-fail instead of queueing", name, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("%s queue is not a directory", name)
+		}
+	}
+}
+
+// TestPrepareRequestDirsIsAgentWritable pins the permissions agents depend on.
+// MkdirAll is umask-masked to 0755; without the explicit chmod an agent's drop
+// gets EACCES and the write is lost exactly as if the dir were missing.
+func TestPrepareRequestDirsIsAgentWritable(t *testing.T) {
+	pr, issue := testQueueDirs(t)
+
+	PrepareRequestDirs(quietLogger())
+
+	for name, dir := range map[string]string{"pr": pr, "issue": issue} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("%s queue: %v", name, err)
+		}
+		if perm := info.Mode().Perm(); perm&0o070 != 0o070 {
+			t.Errorf("%s queue perm = %#o, want group rwx — agents cannot drop request files", name, perm)
+		}
+	}
+}
+
+// TestPrepareRequestDirsIsIdempotent: it runs on every boot, and an existing
+// queue holding queued requests must survive untouched.
+func TestPrepareRequestDirsIsIdempotent(t *testing.T) {
+	pr, _ := testQueueDirs(t)
+	if err := os.MkdirAll(pr, 0o2775); err != nil {
+		t.Fatalf("pre-create: %v", err)
+	}
+	queued := filepath.Join(pr, "pending.json")
+	if err := os.WriteFile(queued, []byte(`{"agent":"quality"}`), 0o664); err != nil {
+		t.Fatalf("write queued request: %v", err)
+	}
+
+	PrepareRequestDirs(quietLogger())
+
+	if _, err := os.Stat(queued); err != nil {
+		t.Fatalf("a queued request was lost across PrepareRequestDirs: %v", err)
+	}
+}
+
+// TestEnsureRequestDirReportsFailure: the watcher disables itself only when the
+// queue genuinely cannot be created, so that signal must stay truthful.
+func TestEnsureRequestDirReportsFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — an unwritable parent is still writable")
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+
+	if ensureRequestDir(quietLogger(), "pr", filepath.Join(parent, "nope")) {
+		t.Error("ensureRequestDir reported success for an uncreatable directory")
+	}
+}

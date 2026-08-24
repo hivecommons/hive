@@ -116,16 +116,10 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 	if nowFn == nil {
 		nowFn = time.Now
 	}
-	if err := os.MkdirAll(issueRequestDir(), 0o777); err != nil {
-		c.logger.Warn("issue-request watcher: cannot create request dir; disabled",
-			slog.String("dir", issueRequestDir()), slog.String("error", err.Error()))
+	// Shared with PrepareRequestDirs, which creates this queue unconditionally
+	// at boot so findings can accumulate even before a watcher runs.
+	if !ensureRequestDir(c.logger, "issue", issueRequestDir()) {
 		return
-	}
-	// Same rationale as the PR watcher: agents (UID >= 2001) must be able to
-	// DROP request files; MkdirAll is umask-masked, so force group-write+setgid.
-	if err := os.Chmod(issueRequestDir(), 0o2775); err != nil {
-		c.logger.Warn("issue-request watcher: could not set group-writable perms on request dir; agents may be unable to file issues",
-			slog.String("dir", issueRequestDir()), slog.String("error", err.Error()))
 	}
 	go func() {
 		t := time.NewTicker(issueRequestPollInterval)

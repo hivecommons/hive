@@ -105,22 +105,10 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 	if nowFn == nil {
 		nowFn = time.Now
 	}
-	if err := os.MkdirAll(prRequestDir(), 0o777); err != nil {
-		c.logger.Warn("pr-request watcher: cannot create request dir; disabled",
-			slog.String("dir", prRequestDir()), slog.String("error", err.Error()))
+	// Shared with PrepareRequestDirs, which creates this queue unconditionally
+	// at boot so requests can accumulate even before a watcher runs.
+	if !ensureRequestDir(c.logger, "pr", prRequestDir()) {
 		return
-	}
-	// Agents (UID >= 2001, in the shared "node" group) must be able to DROP request
-	// files here — hive-open-pr runs AS the agent. MkdirAll is masked by umask to
-	// 0755 (not group-writable), so an agent's write gets EACCES and, under the
-	// hard switch, its PR silently fails to open. Force group-write + setgid (like
-	// /data/beads) so agent-written files inherit the node group and the dir is
-	// writable by every agent. The forge-check still holds: the watcher reads each
-	// file's OWNING UID, which is the agent that wrote it — group-writability lets
-	// them write, it does not let one agent forge another's ownership.
-	if err := os.Chmod(prRequestDir(), 0o2775); err != nil {
-		c.logger.Warn("pr-request watcher: could not set group-writable perms on request dir; agents may be unable to open PRs",
-			slog.String("dir", prRequestDir()), slog.String("error", err.Error()))
 	}
 	go func() {
 		t := time.NewTicker(prRequestPollInterval)
