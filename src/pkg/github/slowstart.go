@@ -1,6 +1,8 @@
 package github
 
 import (
+	"bytes"
+	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -120,14 +122,16 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 	resp, err := t.inner.RoundTrip(req)
 
-	// A real secondary-limit 403 carries Retry-After. Enter (or extend) the
-	// caution window to its reset plus the slow-start tail.
+	// Detect a secondary-limit 403 and enter (or extend) the caution window to
+	// its reset plus the slow-start tail. GitHub does NOT reliably attach
+	// Retry-After to secondary blocks (observed live: the 2026-08-23 re-trip
+	// happened with header-only detection armed — caution never engaged and the
+	// reset-boundary stampede fired anyway), so match the way go-github itself
+	// does: the documented "secondary rate limit" phrase in the 403 body. The
+	// body is peeked and restored so downstream error decoding still sees it.
 	if err == nil && resp != nil && resp.StatusCode == http.StatusForbidden {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			after := slowStartDefaultRetryAfter
-			if secs, perr := strconv.Atoi(ra); perr == nil && secs >= 0 {
-				after = time.Duration(secs) * time.Second
-			}
+		after, secondary := secondaryLimitBackoff(resp)
+		if secondary {
 			until := time.Now().Add(after + st.window)
 			st.mu.Lock()
 			if until.After(st.cautiousUntil) {
@@ -137,4 +141,38 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 		}
 	}
 	return resp, err
+}
+
+// secondaryLimitSniffBytes bounds how much of a 403 body is peeked for the
+// secondary-limit phrase. GitHub's abuse/secondary payloads are a couple
+// hundred bytes; 2 KiB is generous without buffering real content responses.
+const secondaryLimitSniffBytes = 2048
+
+// secondaryLimitBackoff reports whether resp is a secondary-rate-limit 403 and
+// how long GitHub asked us to back off. Retry-After is honored when present;
+// otherwise the 403 body is peeked (and RESTORED onto resp.Body) for the
+// "secondary rate limit" phrase, with the default backoff covering a full
+// window. A plain permission 403 returns false.
+func secondaryLimitBackoff(resp *http.Response) (time.Duration, bool) {
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		after := slowStartDefaultRetryAfter
+		if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
+			after = time.Duration(secs) * time.Second
+		}
+		return after, true
+	}
+	if resp.Body == nil {
+		return 0, false
+	}
+	peek := make([]byte, secondaryLimitSniffBytes)
+	n, _ := io.ReadFull(resp.Body, peek)
+	rest := resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(peek[:n]), rest), rest}
+	if bytes.Contains(bytes.ToLower(peek[:n]), []byte("secondary rate limit")) {
+		return slowStartDefaultRetryAfter, true
+	}
+	return 0, false
 }

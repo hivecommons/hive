@@ -1,6 +1,7 @@
 package github
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -104,5 +105,39 @@ func TestSlowStart_Plain403AndNormalTrafficUnpaced(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("plain 403s must not engage pacing; 3 requests took %v", elapsed)
+	}
+}
+
+// A secondary-limit 403 WITHOUT Retry-After (GitHub does not reliably send
+// it — the 2026-08-23 re-trip slipped past header-only detection) must still
+// engage caution via the body phrase, and the peeked body must be restored
+// intact for downstream error decoding.
+func TestSlowStart_BodySniffEngagesCaution(t *testing.T) {
+	body := `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","documentation_url":"x"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden) // deliberately no Retry-After
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	tr := newSlowStartTransport(http.DefaultTransport)
+	tr.state.window = time.Hour
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(got) != body {
+		t.Errorf("peeked body not restored: got %q", got)
+	}
+
+	tr.state.mu.Lock()
+	cautious := time.Now().Before(tr.state.cautiousUntil)
+	tr.state.mu.Unlock()
+	if !cautious {
+		t.Fatal("body-sniffed secondary 403 must engage the caution window")
 	}
 }
