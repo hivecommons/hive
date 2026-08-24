@@ -1,9 +1,9 @@
-# Pinned to the golang:1.26-alpine multi-arch index digest to prevent
+# Pinned to the golang:1.27-alpine multi-arch index digest to prevent
 # floating-tag supply-chain risk. Refresh deliberately:
 #   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/golang:pull" | jq -r .token)
 #   curl -sI -H "Authorization: Bearer $TOKEN" \
 #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
-#     https://registry-1.docker.io/v2/library/golang/manifests/1.26-alpine | grep -i docker-content-digest
+#     https://registry-1.docker.io/v2/library/golang/manifests/1.27-alpine | grep -i docker-content-digest
 # and update both the tag and the @sha256 digest together.
 FROM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
 RUN apk add --no-cache git
