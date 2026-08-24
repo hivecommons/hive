@@ -193,6 +193,26 @@ agents:
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
+
+  # Agent self-healing watchdog (RFC #4665): k8s-style liveness/readiness
+  # reconciliation. Observes the tmux pane (not the state echo), restarts dead
+  # agents with exponential backoff, escalates crash loops to pause + alert,
+  # and publishes Ready/Authenticated/Producing conditions per agent. The whole
+  # block is optional — omitted fields use the defaults shown.
+  # watchdog:
+  #   enabled: true
+  #   probe_interval_s: 300               # Minimum seconds between sweeps
+  #   liveness:
+  #     stuck_overlay_after: 10m          # Unanswered modal older than this -> restart
+  #     shell_prompt_after: 5m            # Bare shell / silent pane grace before restart
+  #   restart:
+  #     backoff: [1m, 2m, 4m, 8m, 16m]    # Per-consecutive-failure delay; last entry is the cap
+  #     crash_loop_after: 5               # Consecutive failures before pause + alert
+  #     healthy_reset: 30m                # Continuous-ready window that clears the counter
+  #   readiness:
+  #     no_production_for: 6h             # Zero production evidence -> Producing=False + warning
+  #   auth_probe: true                    # Per-provider credential probes (rotation machinery)
+
   labels:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
