@@ -78,24 +78,20 @@ jobs:
     timeout-minutes: 15
 
     env:
-      # quay.io/podman/stable, podman 5.8.4. Pinned by index digest so the
-      # generator version is a property of this file rather than of whatever
-      # the tag points at today. To move it: pull the new tag, take
-      # `skopeo inspect --format '{{.Digest}}' docker://quay.io/podman/stable`,
+      # quay.io/podman/stable, podman 5.8.4, pinned via the v5.8.4-immutable
+      # tag's digest so the generator version is a property of this file rather
+      # than of whatever a floating tag points at today.
+      #
+      # WHY THE -immutable TAG'S DIGEST: pinning the digest behind a FLOATING
+      # tag (latest/v5.8.4) broke this gate on every branch twice in four days
+      # (2026-08-21 sha256:312a77be…, 2026-08-24 sha256:8923deff…) — quay
+      # re-pushes the tag and garbage-collects the previous index, which then
+      # 404s with "manifest unknown". quay's *-immutable tags are never
+      # re-pushed, so their digests stay resolvable. To move versions: pick the
+      # new vX.Y.Z-immutable tag, take
+      # `skopeo inspect --format '{{.Digest}}' docker://quay.io/podman/stable:vX.Y.Z-immutable`,
       # and update the version in this comment to match.
-      #
-      # Refreshed 2026-08-21: quay.io re-pushed the image and garbage-collected
-      # the previous index (sha256:312a77be…), which began 404ing with
-      # "manifest unknown" and failed this gate on every branch. The new index
-      # still carries org.opencontainers.image.version=5.8.4 — same podman,
-      # same generator, new digest.
-      #
-      # Refreshed 2026-08-24: the same recurrence — quay.io garbage-collected
-      # the 2026-08-21 index (sha256:8923deff…), 404ing with "manifest unknown"
-      # on every branch again. The replacement index still carries
-      # org.opencontainers.image.version=5.8.4 — same podman, same generator,
-      # new digest (verified via the amd64 config blob's OCI version label).
-      PODMAN_IMAGE: quay.io/podman/stable@sha256:3b9f8367aa3e71b88914ea391f083fccc58c133d07b72f506e7104072ae4a6ed
+      PODMAN_IMAGE: quay.io/podman/stable@sha256:b0173238dceedf46a10d2c3a7bf9b217a85dce19706d2d9c80b01345839ae779
       QUADLET_PATH: /usr/libexec/podman/quadlet
 
     steps:
