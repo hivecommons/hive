@@ -368,6 +368,16 @@ type DigestOptions struct {
 	// PrimaryRepo is the repo the digest is posted to, used to resolve
 	// repo-less "gh-123" references.
 	PrimaryRepo string
+	// Snapshot pins the digest to one repo commit. BuildDigestFromBeads copies
+	// it to Digest.AnalyzedSnapshot so the rendered comment cites the exact tree
+	// the findings were checked against (#3704).
+	Snapshot *Snapshot
+	// VerifyPath reports whether a repo file path exists at Snapshot. When set,
+	// BuildDigestFromBeads consults it while ranking so a finding whose file is
+	// gone loses its top-N slot to a live one (#2364). It is called only for
+	// file-path refs, only for findings the ranking actually reaches, and at
+	// most once per distinct path. nil disables verification entirely.
+	VerifyPath func(path string) bool
 }
 
 // effectiveCap returns the number of findings to render, or 0 for "no cap".
@@ -384,10 +394,24 @@ func (o DigestOptions) effectiveCap() int {
 // The ranking is global rather than per-agent on purpose: a repo owner cares
 // which findings matter most, not which agent produced them, and a per-agent
 // quota would let a chatty agent's low-severity items displace another agent's
-// critical one. Ordering is severity first, then most-recent-first within a
-// severity — the newest report of an equally severe problem is the one still
-// happening.
-func applyTopN(byAgent map[string][]Finding, cap int) (map[string][]Finding, int) {
+// critical one. Ordering is severity first, then — when verify is supplied —
+// findings whose file still exists, then most-recent-first: the newest report of
+// an equally severe problem is the one still happening.
+//
+// verify, when non-nil, reports whether a finding's file path still exists at
+// the analyzed snapshot. A finding whose path is gone is one the renderer must
+// caption "may be outdated" (#3704), so it does not hold a top-N slot ahead of
+// a live finding of the SAME severity — it is set aside and used only to
+// backfill slots no fresh finding of that severity claims. This is the same
+// principle as capping AFTER collapseNearDuplicates: a scarce top-N is spent on
+// distinct, current problems or it is not worth reading. Freshness deliberately
+// does not cross severity bands (see the loop below).
+//
+// Verification is on-demand and ordered: the ranked list is walked from the top
+// and verify is called only until cap findings are in hand, at most once per
+// distinct path. Ranking the full set therefore costs about as many lookups as
+// verifying the survivors alone did, not one per finding.
+func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) bool) (map[string][]Finding, int) {
 	if cap <= 0 {
 		return byAgent, 0
 	}
@@ -413,8 +437,59 @@ func applyTopN(byAgent map[string][]Finding, cap int) (map[string][]Finding, int
 		}
 		return all[i].Title < all[j].Title
 	})
+
 	overflow := len(all) - cap
-	kept := all[:cap]
+	var kept []Finding
+	if verify == nil {
+		kept = all[:cap]
+	} else {
+		checked := make(map[string]bool)
+		markStale := func(f *Finding) {
+			if !isFilePathRef(f.File) {
+				return
+			}
+			path := splitFilePathRef(f.File)
+			ok, seen := checked[path]
+			if !seen {
+				ok = verify(path)
+				checked[path] = ok
+			}
+			f.PathStale = !ok
+		}
+		// Walk severity band by severity band, highest first. Freshness only
+		// breaks ties WITHIN a band: PathStale means the cited path moved, not
+		// that the problem is gone, so a stale critical must still outrank a
+		// live low — demoting across bands would let a cosmetic nit displace a
+		// security finding whose file was merely renamed.
+		for i := 0; i < len(all) && len(kept) < cap; {
+			rank := severityRank(all[i].Severity)
+			j := i
+			for j < len(all) && severityRank(all[j].Severity) == rank {
+				j++
+			}
+			// Stale findings in this band are set aside rather than dropped so
+			// they can backfill slots no fresh finding of equal severity claims
+			// — rendering 6 findings under a cap of 10 would hide work for no
+			// reason.
+			var stale []Finding
+			for _, f := range all[i:j] {
+				if len(kept) == cap {
+					break
+				}
+				markStale(&f)
+				if f.PathStale {
+					stale = append(stale, f)
+					continue
+				}
+				kept = append(kept, f)
+			}
+			for k := 0; len(kept) < cap && k < len(stale); k++ {
+				kept = append(kept, stale[k])
+			}
+			i = j
+		}
+	}
+
 	capped := make(map[string][]Finding, len(byAgent))
 	for _, f := range kept {
 		capped[f.Agent] = append(capped[f.Agent], f)
@@ -497,8 +572,10 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 		total += len(byAgent[agent])
 	}
 	// Cap AFTER collapsing: a top-10 built from uncollapsed restatements would
-	// spend its ten slots on one recurring problem.
-	byAgent, overflow := applyTopN(byAgent, opts.effectiveCap())
+	// spend its ten slots on one recurring problem. For the same reason the cap
+	// is staleness-aware (opts.VerifyPath) — a finding whose file no longer
+	// exists is not worth a slot a live finding could have had (#2364).
+	byAgent, overflow := applyTopN(byAgent, opts.effectiveCap(), opts.VerifyPath)
 	if overflow > 0 {
 		total -= overflow
 	}
@@ -509,7 +586,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	if len(resolved) > maxRecentlyResolved {
 		resolved = resolved[:maxRecentlyResolved]
 	}
-	return &Digest{
+	d := &Digest{
 		GeneratedAt:      time.Now(),
 		Mode:             mode,
 		ByAgent:          byAgent,
@@ -517,7 +594,15 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 		RecentlyResolved: resolved,
 		Capped:           overflow > 0,
 		OverflowCount:    overflow,
+		AnalyzedSnapshot: opts.Snapshot,
 	}
+	// When the cap was not reached, applyTopN returned early and never verified
+	// anything, so the surviving findings still need their paths checked before
+	// the renderer cites them as live.
+	if opts.VerifyPath != nil && overflow == 0 {
+		VerifyFindingPaths(d, opts.VerifyPath)
+	}
+	return d
 }
 
 // normalizedFindingKey collapses a finding title to a duplicate-detection key:

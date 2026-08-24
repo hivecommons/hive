@@ -72,9 +72,10 @@ the staleness window.
 ## How much the digest shows
 
 By default the digest renders the **top 10** findings, ranked by severity
-(critical → high → medium → low → minor) and then by recency within a severity,
-across all agents at once. Ranking globally rather than per agent is deliberate:
-an owner cares which findings matter most, not which agent produced them.
+(critical → high → medium → low → minor), then by whether the finding's file
+still exists at the analyzed commit, and then by recency, across all agents at
+once. Ranking globally rather than per agent is deliberate: an owner cares which
+findings matter most, not which agent produced them.
 
 - `governor.advisory.max_findings` — default `10`, minimum `1`.
 - `governor.advisory.show_all` — default `false`. `true` bypasses the cap
@@ -97,6 +98,21 @@ budget. A separate, unconditional cap still limits how many findings one agent
 may render under one finding type in a single severity section — that one exists
 to keep the comment inside GitHub's 65,536-character limit and is not
 configurable.
+
+For the same reason, a finding whose file no longer exists at the analyzed
+commit — the ones captioned *"file path not found at analyzed commit — finding
+may be outdated"* — does not take a slot ahead of a live finding of the **same
+severity**. Freshness only breaks ties within a severity band: a path that moved
+does not prove the problem is gone, so a stale critical still outranks a live
+low. Stale findings are set aside rather than dropped, and backfill any slot no
+live finding of that severity claims, so the digest never renders short.
+
+This ordering requires a pinned `AnalyzedSnapshot`, which the governor resolves
+once per post cycle. Without one (no GitHub client, or the commit could not be
+resolved) the ranking falls back to severity-then-recency and no path is
+checked. Path lookups are cached per commit and stop as soon as the cap is
+filled, so ranking the full finding set costs roughly what verifying only the
+rendered ones used to.
 
 ## The digest stopped updating
 
