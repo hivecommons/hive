@@ -3547,6 +3547,9 @@
       // this path simply never triggers a prompt.
       let _authToken = localStorage.getItem('hive-token') || null;
       let _authConfigured = null; // null=unknown, true/false once checked
+      // Set only while re-prompting after the server rejected a stored token,
+      // so the prompt can say WHY it is asking again.
+      let _authRejected = false;
       async function _ensureAuthToken() {
         if (_authToken) return _authToken;
         if (_authConfigured === null) {
@@ -3569,7 +3572,9 @@
           } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
-          const entered = window.prompt('This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:');
+          const entered = window.prompt(_authRejected
+            ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
+            : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:');
           if (entered && entered.trim()) {
             _authToken = entered.trim();
             try { localStorage.setItem('hive-token', _authToken); } catch {}
@@ -3578,10 +3583,20 @@
         return _authToken;
       }
       const _origFetch = window.fetch;
+      function _attachAuthHeader(opts) {
+        if (!_authToken) return;
+        opts.headers = opts.headers || {};
+        if (opts.headers instanceof Headers) {
+          opts.headers.set('Authorization', 'Bearer ' + _authToken);
+        } else {
+          opts.headers['Authorization'] = 'Bearer ' + _authToken;
+        }
+      }
       window.fetch = async function(url, opts) {
         opts = opts || {};
         const method = (opts.method || 'GET').toUpperCase();
-        if (['PUT','POST','PATCH','DELETE'].includes(method)) {
+        const isMutation = ['PUT','POST','PATCH','DELETE'].includes(method);
+        if (isMutation) {
           await _ensureAuthToken();
           if (_authToken) {
             opts.headers = opts.headers || {};
@@ -3592,7 +3607,40 @@
             }
           }
         }
-        return _origFetch(url, opts);
+        const res = await _origFetch(url, opts);
+        // A STORED token that the server rejects is stale — the operator
+        // rotated HIVE_DASHBOARD_TOKEN since this browser saved it. Without
+        // this branch that state is permanent and SILENT: the wrapper only
+        // ever prompts when it has no token at all, so every mutation 401s
+        // forever while each feature reports the failure in its own idiom (a
+        // toast, a no-op button, a confirm dialog that closes as if it
+        // worked). Measured on a live hive: a browser window kept failing
+        // Save / Re-check / terminal auth / pack-apply for a full day after a
+        // rotation. Drop the bad token, re-prompt once saying why, retry once.
+        //
+        // Retry exactly once (__hiveAuthRetried): a genuinely wrong token
+        // must not loop. Only when a token was actually SENT — on a hosted
+        // hive identity comes from the hub login, where 401/403 is a real
+        // authorization denial and clearing anything would be wrong.
+        if (isMutation && _authToken && !opts.__hiveAuthRetried &&
+            (res.status === 401 || res.status === 403)) {
+          try { localStorage.removeItem('hive-token'); } catch {}
+          _authToken = null;
+          _authRejected = true;
+          try {
+            await _ensureAuthToken();
+          } finally {
+            _authRejected = false;
+          }
+          if (_authToken) {
+            const retryOpts = Object.assign({}, opts, { __hiveAuthRetried: true });
+            if (opts.headers instanceof Headers) retryOpts.headers = new Headers(opts.headers);
+            else if (opts.headers) retryOpts.headers = Object.assign({}, opts.headers);
+            _attachAuthHeader(retryOpts);
+            return _origFetch(url, retryOpts);
+          }
+        }
+        return res;
       };
     })();
 
