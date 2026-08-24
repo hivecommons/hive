@@ -84,12 +84,13 @@ jobs:
       # `skopeo inspect --format '{{.Digest}}' docker://quay.io/podman/stable`,
       # and update the version in this comment to match.
       #
-      # Refreshed 2026-08-21: quay.io re-pushed the image and garbage-collected
-      # the previous index (sha256:312a77be…), which began 404ing with
+      # Refreshed 2026-08-24: quay.io re-pushed the image and garbage-collected
+      # the previous index (sha256:8923deff…, itself a 2026-08-21 refresh of
+      # sha256:312a77be… for the same reason), which began 404ing with
       # "manifest unknown" and failed this gate on every branch. The new index
       # still carries org.opencontainers.image.version=5.8.4 — same podman,
       # same generator, new digest.
-      PODMAN_IMAGE: quay.io/podman/stable@sha256:8923deffca4caa8338b5dd4f553a86736f2aab424a4743827fccce632fecd750
+      PODMAN_IMAGE: quay.io/podman/stable@sha256:3b9f8367aa3e71b88914ea391f083fccc58c133d07b72f506e7104072ae4a6ed
       QUADLET_PATH: /usr/libexec/podman/quadlet
 
     steps:
