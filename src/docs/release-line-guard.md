@@ -165,7 +165,9 @@ The resolution ([#4616](https://github.com/kubestellar/hive/issues/4616),
 recommendation 2): the sync tool supports per-repo exclusions in
 kubestellar/infra `caller-workflows/workflow-exclusions.yml`, and hive's
 `scorecard.yml` is excluded there
-([kubestellar/infra#145](https://github.com/kubestellar/infra/pull/145)). This
+([kubestellar/infra#146](https://github.com/kubestellar/infra/pull/146); the
+equivalent [kubestellar/infra#145](https://github.com/kubestellar/infra/pull/145)
+was superseded by it). This
 repo maintains `scorecard.yml` locally and bumps its pinned
 `reusable-scorecard.yml` SHA deliberately.
 
