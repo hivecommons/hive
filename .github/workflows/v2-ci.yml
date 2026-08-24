@@ -31,6 +31,17 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded PR runs only (#4623). A new push to a PR makes the
+# in-flight run's verdict irrelevant, so cancelling it is pure runner-minute
+# savings. Push-to-v4 (post-merge) runs must NEVER be cancelable: they feed
+# the docker publish gate and the coverage/monitoring surface — cancelling
+# one on a merge burst would silently skip a merged commit. Keying the
+# non-PR group on run_id gives every such run its own group, so they can
+# neither cancel each other nor queue behind one another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest

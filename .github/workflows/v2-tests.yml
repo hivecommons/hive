@@ -2,7 +2,12 @@ name: v2 Tests
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Four scheduled runs a day (#4650). The scheduled run exists to catch
+    # merge races and flakes that slip past per-PR runs on v4 — a 6-hour
+    # cadence bounds detection latency at 6h while cutting ~96 redundant
+    # full-suite runs/day to 4. Minute 17 avoids the top-of-hour scheduler
+    # rush, when GitHub delays or drops cron runs.
+    - cron: '17 */6 * * *'
   workflow_dispatch:
   # Gate PRs, not just the cron. `go test ./pkg/...` runs nowhere else — v2-ci.yml
   # builds and vets but never runs the unit tests — so before this, a Go
@@ -19,6 +24,17 @@ on:
 permissions:
   contents: read
   issues: write
+
+# Cancel superseded PR runs only (#4623). A new push to a PR makes the
+# in-flight run's verdict irrelevant, so cancelling it is pure runner-minute
+# savings. Scheduled and workflow_dispatch runs must NEVER be cancelable:
+# the scheduled run feeds create-issue-on-failure (the merge-race/flake
+# auto-filer) — cancelling one blinds it for that window. Keying the non-PR
+# group on run_id gives every such run its own group, so they can neither
+# cancel each other nor queue behind one another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # ── Sharding layout (#4118) ──────────────────────────────────────────────────
 # The suite is split so PR wall-clock ≈ the slowest single piece, not the sum.
@@ -295,7 +311,7 @@ jobs:
 
   # Per-package coverage-floor gate (#4112): parse-only, consumes the shard
   # artifacts — it runs no tests, so PRs run the suite exactly once. PR-only:
-  # on the 15-minute schedule the hourly coverage workflow remains the
+  # on the 6-hourly schedule the hourly coverage workflow remains the
   # monitoring + issue-filing authority.
   #
   # Scoring is computed from the coverage PROFILES, not from the `ok ...
