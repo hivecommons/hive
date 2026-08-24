@@ -108,7 +108,8 @@ low. Stale findings are set aside rather than dropped, and backfill any slot no
 live finding of that severity claims, so the digest never renders short.
 
 This ordering requires a pinned `AnalyzedSnapshot`, which the governor resolves
-once per post cycle. Without one (no GitHub client, or the commit could not be
+once per evaluation cycle (so the dashboard and status digests are snapshot-pinned
+too, not only the posted comment). Without one (no GitHub client, or the commit could not be
 resolved) the ranking falls back to severity-then-recency and no path is
 checked. Path lookups are cached per commit and stop as soon as the cap is
 filled, so ranking the full finding set costs roughly what verifying only the
