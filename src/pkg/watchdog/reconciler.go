@@ -1,0 +1,576 @@
+package watchdog
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+)
+
+// Fleet is the reconciler's window onto the agent manager. Implemented by
+// pkg/agent's watchdog adapter so every observation and action reuses the
+// manager's existing pane-capture, restart, and pause machinery — the
+// watchdog never grows a second uncoordinated control loop.
+type Fleet interface {
+	// AgentNames lists the agents to reconcile.
+	AgentNames() []string
+	// Observe gathers one agent's observed truth. An error means the agent
+	// could not be observed at all (removed mid-tick).
+	Observe(name string) (Observation, error)
+	// IsPaused reports the operator/escalation pause state; paused agents
+	// are observed but never acted on.
+	IsPaused(name string) bool
+	// Restart kills and relaunches the agent's session. It must honor ctx as
+	// far as the underlying machinery allows; the reconciler additionally
+	// hard-bounds the call and never blocks on it.
+	Restart(ctx context.Context, name string) error
+	// Pause pauses the agent, recording the trigger/reason (crash-loop
+	// escalation).
+	Pause(name, trigger, reason string) error
+	// LastProduction returns the newest production evidence timestamp for
+	// the agent (state-file mtimes, pane activity). ok=false means no
+	// evidence source is readable — reported as Producing=Unknown, never
+	// silently as healthy or as failed.
+	LastProduction(name string) (time.Time, bool)
+	// SetConditions publishes the agent's observed conditions so the
+	// dashboard renders truth instead of the state echo.
+	SetConditions(name string, conds []Condition)
+}
+
+// AuthStatus is the tri-state outcome of one provider credential probe.
+type AuthStatus string
+
+const (
+	AuthOK      AuthStatus = "ok"
+	AuthFailed  AuthStatus = "failed"
+	AuthUnknown AuthStatus = "unknown"
+)
+
+// AuthProbe verifies one provider's credential source independent of the CLI
+// (RFC #4665: a dead refresh token behind a live-looking pane). Implemented
+// by adapting the rotation package's provider probers — when the #4645
+// OAuth/JSON-RPC probe rewrite lands, it plugs in through this same seam.
+type AuthProbe interface {
+	// Provider is the provider key this probe answers for (e.g. "anthropic").
+	Provider() string
+	// ProbeAuth returns the credential verdict. It must be bounded by ctx.
+	ProbeAuth(ctx context.Context) (AuthStatus, string)
+}
+
+// Alerter is the escalation surface: the dashboard's system-alert banner.
+// The journal side of every escalation goes through the logger.
+type Alerter interface {
+	AddSystemAlert(id, severity, message string)
+	ClearSystemAlert(id string)
+}
+
+// Alert/trigger identity strings. Named so the dashboard, audit log, and
+// tests agree on the exact values.
+const (
+	// CrashLoopTrigger is the PausedTrigger stamped on a crash-loop pause.
+	CrashLoopTrigger = "watchdog-crashloop"
+	// alertPrefix namespaces every watchdog system alert id.
+	alertPrefix = "watchdog-"
+
+	severityError   = "error"
+	severityWarning = "warning"
+)
+
+// agentRecord is the reconciler's per-agent memory. Guarded by Reconciler.mu.
+type agentRecord struct {
+	// Failures counts consecutive dead classifications that led (or would
+	// lead) to a restart — the CrashLoopBackOff counter.
+	Failures int
+	// BackoffUntil gates the next restart attempt.
+	BackoffUntil time.Time
+	// HealthySince is when the agent was first observed continuously ready;
+	// zero while unhealthy. Failures reset after HealthyReset of this.
+	HealthySince time.Time
+	// CrashLooping latches once the crash-loop cap escalated, so the pause +
+	// alert fire once, not every tick.
+	CrashLooping bool
+	// LastClass is the previous liveness verdict, for transition logging.
+	LastClass PaneClass
+	// restartInFlight is true while a restart goroutine is running; the
+	// reconciler never stacks a second restart on a wedged one.
+	restartInFlight bool
+	// restartStartedAt dates the in-flight restart so a wedge past the hard
+	// timeout is alerted on (the control-plane guard for failure mode 4).
+	restartStartedAt time.Time
+	// wedgeAlerted latches the wedged-restart alert.
+	wedgeAlerted bool
+	// Conditions is the agent's published condition set.
+	Conditions []Condition
+}
+
+// PersistedAgent is the durable subset of agentRecord, stored in the
+// dashboard state file so backoff/crash-loop progress survives pod restarts
+// (RFC open question 2).
+type PersistedAgent struct {
+	Failures     int         `json:"failures,omitempty"`
+	BackoffUntil *time.Time  `json:"backoff_until,omitempty"`
+	HealthySince *time.Time  `json:"healthy_since,omitempty"`
+	CrashLooping bool        `json:"crash_looping,omitempty"`
+	Conditions   []Condition `json:"conditions,omitempty"`
+}
+
+// Reconciler is the watchdog control loop. One instance per hive process; Tick is
+// called from the governor eval tick and self-gates to ProbeInterval.
+type Reconciler struct {
+	settings Settings
+	fleet    Fleet
+	alerter  Alerter
+	logger   *slog.Logger
+	now      func() time.Time
+
+	// authProbes maps provider key → probe. Nil/empty disables auth probing
+	// for providers without one (verdict: Unknown, never fabricated).
+	authProbes map[string]AuthProbe
+	// backendProvider maps a backend name to its provider key.
+	backendProvider func(backend string) string
+
+	mu       sync.Mutex
+	agents   map[string]*agentRecord
+	lastTick time.Time
+}
+
+// Option customizes a Reconciler.
+type Option func(*Reconciler)
+
+// WithClock injects a fake clock for tests.
+func WithClock(now func() time.Time) Option {
+	return func(r *Reconciler) { r.now = now }
+}
+
+// WithAuthProbes registers per-provider credential probes.
+func WithAuthProbes(probes map[string]AuthProbe) Option {
+	return func(r *Reconciler) { r.authProbes = probes }
+}
+
+// WithBackendProvider injects the backend→provider mapping.
+func WithBackendProvider(f func(string) string) Option {
+	return func(r *Reconciler) { r.backendProvider = f }
+}
+
+// New builds a Reconciler. alerter may be nil (alerts go to the journal via
+// logger only); logger must not be nil.
+func New(settings Settings, fleet Fleet, alerter Alerter, logger *slog.Logger, opts ...Option) *Reconciler {
+	r := &Reconciler{
+		settings:        settings,
+		fleet:           fleet,
+		alerter:         alerter,
+		logger:          logger,
+		now:             time.Now,
+		agents:          make(map[string]*agentRecord),
+		backendProvider: DefaultBackendProvider,
+	}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
+}
+
+// DefaultBackendProvider maps agent backends to the provider keys the
+// rotation package's probers answer for.
+func DefaultBackendProvider(backend string) string {
+	switch backend {
+	case "claude":
+		return "anthropic"
+	case "codex":
+		return "openai"
+	case "agy":
+		return "google"
+	case "deepseek":
+		return "deepseek"
+	}
+	return ""
+}
+
+// Enabled reports whether the reconciler will act on Tick.
+func (r *Reconciler) Enabled() bool { return r.settings.Enabled }
+
+// Conditions returns a copy of the agent's current condition set.
+func (r *Reconciler) Conditions(name string) []Condition {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.agents[name]
+	if !ok {
+		return nil
+	}
+	out := make([]Condition, len(rec.Conditions))
+	copy(out, rec.Conditions)
+	return out
+}
+
+// Snapshot exports the durable per-agent state for the dashboard state file.
+func (r *Reconciler) Snapshot() map[string]PersistedAgent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]PersistedAgent, len(r.agents))
+	for name, rec := range r.agents {
+		p := PersistedAgent{
+			Failures:     rec.Failures,
+			CrashLooping: rec.CrashLooping,
+		}
+		if !rec.BackoffUntil.IsZero() {
+			t := rec.BackoffUntil
+			p.BackoffUntil = &t
+		}
+		if !rec.HealthySince.IsZero() {
+			t := rec.HealthySince
+			p.HealthySince = &t
+		}
+		if len(rec.Conditions) > 0 {
+			p.Conditions = make([]Condition, len(rec.Conditions))
+			copy(p.Conditions, rec.Conditions)
+		}
+		out[name] = p
+	}
+	return out
+}
+
+// Restore seeds per-agent state from a persisted snapshot, so a pod restart
+// neither forgets a crash-loop nor re-runs a backoff ladder from the top.
+func (r *Reconciler) Restore(saved map[string]PersistedAgent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, p := range saved {
+		rec := r.recordLocked(name)
+		rec.Failures = p.Failures
+		rec.CrashLooping = p.CrashLooping
+		if p.BackoffUntil != nil {
+			rec.BackoffUntil = *p.BackoffUntil
+		}
+		if p.HealthySince != nil {
+			rec.HealthySince = *p.HealthySince
+		}
+		if len(p.Conditions) > 0 {
+			rec.Conditions = make([]Condition, len(p.Conditions))
+			copy(rec.Conditions, p.Conditions)
+		}
+	}
+}
+
+func (r *Reconciler) recordLocked(name string) *agentRecord {
+	rec, ok := r.agents[name]
+	if !ok {
+		rec = &agentRecord{}
+		r.agents[name] = rec
+	}
+	return rec
+}
+
+// Tick runs one reconciliation sweep. It is synchronous and bounded: every
+// probe carries a deadline and every restart runs detached under the hard
+// RestartTimeout, so the governor tick that hosts it can never wedge on a
+// stuck agent (the RFC's control-plane guard). Calls inside ProbeInterval of
+// the previous sweep are no-ops.
+func (r *Reconciler) Tick(ctx context.Context) {
+	if !r.settings.Enabled {
+		return
+	}
+	now := r.now()
+	r.mu.Lock()
+	if !r.lastTick.IsZero() && now.Sub(r.lastTick) < r.settings.ProbeInterval {
+		r.mu.Unlock()
+		return
+	}
+	r.lastTick = now
+	r.mu.Unlock()
+
+	authCache := make(map[string]authVerdict)
+	for _, name := range r.fleet.AgentNames() {
+		r.reconcileAgent(ctx, name, now, authCache)
+	}
+}
+
+type authVerdict struct {
+	status AuthStatus
+	detail string
+}
+
+func (r *Reconciler) reconcileAgent(ctx context.Context, name string, now time.Time, authCache map[string]authVerdict) {
+	obs, err := r.fleet.Observe(name)
+	if err != nil {
+		r.logger.Warn("watchdog: agent unobservable", "agent", name, "error", err)
+		return
+	}
+	cls := Classify(obs, now, r.settings)
+	paused := r.fleet.IsPaused(name)
+
+	r.mu.Lock()
+	rec := r.recordLocked(name)
+	if cls.Class != rec.LastClass {
+		r.logger.Info("watchdog: liveness transition",
+			"agent", name, "from", string(rec.LastClass), "to", string(cls.Class), "reason", cls.Reason)
+	}
+	rec.LastClass = cls.Class
+
+	r.updateReadyConditionLocked(rec, cls, now)
+	r.updateHealthyWindowLocked(name, rec, cls, now)
+	r.checkWedgedRestartLocked(name, rec, now)
+
+	var act func()
+	switch {
+	case paused:
+		// Operator intent outranks the watchdog: observe, publish, never act.
+	case cls.Class.Dead():
+		act = r.planRestartLocked(name, rec, cls, now)
+	case cls.Class == ClassAuthRequired:
+		// Handled below via the auth condition; the pane already IS the
+		// evidence. No restart: see PaneClass.Dead.
+	}
+	r.mu.Unlock()
+
+	r.reconcileAuth(ctx, name, obs, cls, now, authCache)
+	r.reconcileReadiness(name, now)
+
+	if act != nil {
+		act()
+	}
+
+	r.publish(name)
+}
+
+// updateReadyConditionLocked maps the liveness class onto the Ready condition.
+func (r *Reconciler) updateReadyConditionLocked(rec *agentRecord, cls Classification, now time.Time) {
+	status := ConditionUnknown
+	switch {
+	case cls.Class == ClassReady:
+		status = ConditionTrue
+	case cls.Class.Dead() || cls.Class == ClassAuthRequired:
+		status = ConditionFalse
+	}
+	rec.Conditions = setCondition(rec.Conditions, Condition{
+		Type:    ConditionReady,
+		Status:  status,
+		Reason:  string(cls.Class),
+		Message: cls.Reason,
+	}, now)
+}
+
+// updateHealthyWindowLocked implements the healthyReset half of the
+// CrashLoopBackOff analog: Failures clear only after a continuous ready
+// window, so a flapping agent cannot launder its counter with one good probe.
+func (r *Reconciler) updateHealthyWindowLocked(name string, rec *agentRecord, cls Classification, now time.Time) {
+	if cls.Class != ClassReady {
+		rec.HealthySince = time.Time{}
+		return
+	}
+	if rec.HealthySince.IsZero() {
+		rec.HealthySince = now
+		return
+	}
+	if now.Sub(rec.HealthySince) >= r.settings.HealthyReset && (rec.Failures > 0 || rec.CrashLooping) {
+		r.logger.Info("watchdog: healthy window elapsed, failure counter reset",
+			"agent", name, "failures_were", rec.Failures)
+		rec.Failures = 0
+		rec.CrashLooping = false
+		rec.BackoffUntil = time.Time{}
+		if r.alerter != nil {
+			r.alerter.ClearSystemAlert(crashLoopAlertID(name))
+		}
+	}
+}
+
+// checkWedgedRestartLocked alerts when a detached restart has run past the
+// hard timeout — the observable form of RFC failure mode 4 (wedged kick API).
+func (r *Reconciler) checkWedgedRestartLocked(name string, rec *agentRecord, now time.Time) {
+	if !rec.restartInFlight || rec.wedgeAlerted {
+		return
+	}
+	if now.Sub(rec.restartStartedAt) < r.settings.RestartTimeout {
+		return
+	}
+	rec.wedgeAlerted = true
+	msg := fmt.Sprintf("Watchdog restart of agent %q has been running for over %v — the restart path may be wedged; no further restarts will stack on it.", name, r.settings.RestartTimeout)
+	r.logger.Error("watchdog: restart wedged", "agent", name, "timeout", r.settings.RestartTimeout)
+	if r.alerter != nil {
+		r.alerter.AddSystemAlert(wedgeAlertID(name), severityError, msg)
+	}
+}
+
+// planRestartLocked decides the reconciliation action for a dead agent and
+// returns the side-effecting closure to run OUTSIDE the lock (nil = no-op).
+func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classification, now time.Time) func() {
+	if rec.restartInFlight {
+		return nil
+	}
+	if rec.CrashLooping {
+		return nil
+	}
+	if rec.Failures >= r.settings.CrashLoopAfter {
+		rec.CrashLooping = true
+		reason := fmt.Sprintf("crash loop: %d consecutive failed restarts (last: %s — %s)", rec.Failures, cls.Class, cls.Reason)
+		r.logger.Error("watchdog: crash loop, escalating to pause",
+			"agent", name, "failures", rec.Failures, "class", string(cls.Class))
+		if r.alerter != nil {
+			r.alerter.AddSystemAlert(crashLoopAlertID(name), severityError,
+				fmt.Sprintf("Agent %q is crash-looping (%d failed restarts) and has been paused by the watchdog. Investigate, then resume it from the dashboard.", name, rec.Failures))
+		}
+		return func() {
+			if err := r.fleet.Pause(name, CrashLoopTrigger, reason); err != nil {
+				r.logger.Error("watchdog: crash-loop pause failed", "agent", name, "error", err)
+			}
+		}
+	}
+	if now.Before(rec.BackoffUntil) {
+		return nil
+	}
+	rec.Failures++
+	rec.BackoffUntil = now.Add(r.settings.backoffFor(rec.Failures))
+	rec.restartInFlight = true
+	rec.restartStartedAt = now
+	rec.wedgeAlerted = false
+	failures := rec.Failures
+	r.logger.Warn("watchdog: restarting dead agent",
+		"agent", name, "class", string(cls.Class), "reason", cls.Reason,
+		"failure", failures, "next_backoff", r.settings.backoffFor(failures+1))
+	return func() { r.restartDetached(name) }
+}
+
+// restartDetached runs the restart under the hard timeout without ever
+// blocking the reconciler. If the underlying restart ignores its context and
+// wedges, restartInFlight stays true — the next tick alerts (see
+// checkWedgedRestartLocked) and no second restart stacks on it. At most one
+// goroutine exists per agent.
+func (r *Reconciler) restartDetached(name string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), r.settings.RestartTimeout)
+		defer cancel()
+		err := r.fleet.Restart(ctx, name)
+		r.mu.Lock()
+		rec := r.recordLocked(name)
+		rec.restartInFlight = false
+		r.mu.Unlock()
+		if r.alerter != nil {
+			r.alerter.ClearSystemAlert(wedgeAlertID(name))
+		}
+		if err != nil {
+			r.logger.Error("watchdog: restart failed", "agent", name, "error", err)
+			return
+		}
+		r.logger.Info("watchdog: restart completed", "agent", name)
+	}()
+}
+
+// reconcileAuth updates the Authenticated condition from (a) the pane's own
+// evidence and (b) the provider credential probe, cached per provider per
+// sweep so N agents on one provider cost one probe.
+func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observation, cls Classification, now time.Time, cache map[string]authVerdict) {
+	status := ConditionUnknown
+	reason := "NoProbe"
+	message := "no credential probe available for backend " + obs.Backend
+
+	if cls.Class == ClassAuthRequired {
+		status = ConditionFalse
+		reason = "PaneShowsLogin"
+		message = cls.Reason
+	} else if obs.AuthKnown && !obs.AuthAvailable {
+		// The manager's owner-aware per-agent credential probe (#4619/#4641)
+		// says the credential file is definitively absent for an agent whose
+		// backend requires interactive auth.
+		status = ConditionFalse
+		reason = "CredentialMissing"
+		message = "per-agent credential probe reports no credential for backend " + obs.Backend
+	} else if r.settings.AuthProbe {
+		provider := r.backendProvider(obs.Backend)
+		if probe, ok := r.authProbes[provider]; ok && provider != "" {
+			v, cached := cache[provider]
+			if !cached {
+				st, detail := probe.ProbeAuth(ctx)
+				v = authVerdict{status: st, detail: detail}
+				cache[provider] = v
+			}
+			switch v.status {
+			case AuthOK:
+				status, reason, message = ConditionTrue, "ProbeOK", v.detail
+			case AuthFailed:
+				status, reason, message = ConditionFalse, "ProbeFailed", v.detail
+			default:
+				status, reason, message = ConditionUnknown, "ProbeInconclusive", v.detail
+			}
+		}
+	}
+
+	// With no provider verdict, the per-agent credential-file probe's
+	// positive answer still beats "unknown".
+	if status == ConditionUnknown && obs.AuthKnown && obs.AuthAvailable {
+		status, reason = ConditionTrue, "CredentialPresent"
+		message = "per-agent credential probe reports a live credential for backend " + obs.Backend
+	}
+
+	r.mu.Lock()
+	rec := r.recordLocked(name)
+	prev, _ := FindCondition(rec.Conditions, ConditionAuthenticated)
+	rec.Conditions = setCondition(rec.Conditions, Condition{
+		Type: ConditionAuthenticated, Status: status, Reason: reason, Message: message,
+	}, now)
+	r.mu.Unlock()
+
+	if status == ConditionFalse && prev.Status != ConditionFalse {
+		// Credential re-seed is an operator action (RFC): alert loudly, never
+		// restart into the dead credential.
+		r.logger.Error("watchdog: agent credential failure", "agent", name, "backend", obs.Backend, "reason", reason, "detail", message)
+		if r.alerter != nil {
+			r.alerter.AddSystemAlert(authAlertID(name), severityError,
+				fmt.Sprintf("Agent %q needs re-authentication (%s): %s", name, reason, message))
+		}
+	}
+	if status == ConditionTrue && prev.Status == ConditionFalse && r.alerter != nil {
+		r.alerter.ClearSystemAlert(authAlertID(name))
+	}
+}
+
+// reconcileReadiness updates the Producing condition from production
+// evidence. A readiness failure alone NEVER pauses or restarts (design
+// decision on RFC open question 3): it publishes Producing=False and a
+// warning alert, degrading the agent's standing rather than its life.
+func (r *Reconciler) reconcileReadiness(name string, now time.Time) {
+	last, ok := r.fleet.LastProduction(name)
+	status := ConditionUnknown
+	reason := "NoEvidence"
+	message := "no production evidence source is readable for this agent"
+	if ok {
+		age := now.Sub(last)
+		if age >= r.settings.NoProductionFor {
+			status = ConditionFalse
+			reason = "NoRecentProduction"
+			message = fmt.Sprintf("no production evidence for %v (threshold %v)", age.Round(time.Minute), r.settings.NoProductionFor)
+		} else {
+			status = ConditionTrue
+			reason = "RecentProduction"
+			message = fmt.Sprintf("last production evidence %v ago", age.Round(time.Minute))
+		}
+	}
+
+	r.mu.Lock()
+	rec := r.recordLocked(name)
+	prev, _ := FindCondition(rec.Conditions, ConditionProducing)
+	rec.Conditions = setCondition(rec.Conditions, Condition{
+		Type: ConditionProducing, Status: status, Reason: reason, Message: message,
+	}, now)
+	r.mu.Unlock()
+
+	if status == ConditionFalse && prev.Status != ConditionFalse {
+		r.logger.Warn("watchdog: agent not producing", "agent", name, "detail", message)
+		if r.alerter != nil {
+			r.alerter.AddSystemAlert(producingAlertID(name), severityWarning,
+				fmt.Sprintf("Agent %q is alive but not producing: %s", name, message))
+		}
+	}
+	if status == ConditionTrue && prev.Status == ConditionFalse && r.alerter != nil {
+		r.alerter.ClearSystemAlert(producingAlertID(name))
+	}
+}
+
+// publish pushes the agent's condition set to the fleet for the dashboard.
+func (r *Reconciler) publish(name string) {
+	r.fleet.SetConditions(name, r.Conditions(name))
+}
+
+func crashLoopAlertID(name string) string { return alertPrefix + "crashloop-" + name }
+func wedgeAlertID(name string) string     { return alertPrefix + "wedged-restart-" + name }
+func authAlertID(name string) string      { return alertPrefix + "auth-" + name }
+func producingAlertID(name string) string { return alertPrefix + "producing-" + name }

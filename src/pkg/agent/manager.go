@@ -30,6 +30,7 @@ import (
 	"github.com/kubestellar/hive/pkg/pushbroker"
 	"github.com/kubestellar/hive/pkg/sandbox"
 	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/kubestellar/hive/pkg/watchdog"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -288,6 +289,12 @@ type AgentProcess struct {
 	tokenRestartGaveUp bool
 	NeedsLogin         bool // true when pane shows a login prompt
 	QuotaExhausted     bool // true when pane shows provider/monthly quota exhaustion
+	// WatchdogConditions is the k8s-style observed-health condition set the
+	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
+	// Authenticated / Producing with lastTransitionTime + reason. Written by
+	// the reconciler via SetConditions, read by snapshot() for the dashboard.
+	// Guarded by paneMu, like the poller-written observation fields beside it.
+	WatchdogConditions []watchdog.Condition
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -5795,40 +5802,43 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	needsLogin := a.NeedsLogin
 	quotaExhausted := a.QuotaExhausted
 	lastPaneChange := a.LastPaneChange
+	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
+	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
 	return AgentProcess{
-		Name:            a.Name,
-		ID:              a.ID,
-		Config:          a.Config,
-		State:           a.State,
-		PID:             a.PID,
-		UID:             a.UID,
-		StartedAt:       a.StartedAt,
-		LastKick:        a.LastKick,
-		Paused:          a.Paused,
-		PausedAt:        a.PausedAt,
-		PausedReason:    a.PausedReason,
-		PausedTrigger:   a.PausedTrigger,
-		PausedBy:        a.PausedBy,
-		PinnedCLI:       a.PinnedCLI,
-		PinnedModel:     a.PinnedModel,
-		ModelOverride:   a.ModelOverride,
-		BackendOverride: a.BackendOverride,
-		RestartCount:    a.RestartCount,
-		KickHistory:     history,
-		LastKickMessage: a.LastKickMessage,
-		NeedsLogin:      needsLogin,
-		QuotaExhausted:  quotaExhausted,
-		LastPaneChange:  lastPaneChange,
-		StallNudges:     a.StallNudges,
-		ActionNudges:    a.ActionNudges,
-		TransientNudges: a.TransientNudges,
-		HasLaunched:     a.HasLaunched,
-		LaunchedMode:    a.LaunchedMode,
-		tmuxSession:     a.tmuxSession,
-		tmuxSocket:      a.tmuxSocket,
-		OutputBuffer:    a.OutputBuffer,
-		lastPaneCapture: pane,
+		Name:               a.Name,
+		ID:                 a.ID,
+		Config:             a.Config,
+		State:              a.State,
+		PID:                a.PID,
+		UID:                a.UID,
+		StartedAt:          a.StartedAt,
+		LastKick:           a.LastKick,
+		Paused:             a.Paused,
+		PausedAt:           a.PausedAt,
+		PausedReason:       a.PausedReason,
+		PausedTrigger:      a.PausedTrigger,
+		PausedBy:           a.PausedBy,
+		PinnedCLI:          a.PinnedCLI,
+		PinnedModel:        a.PinnedModel,
+		ModelOverride:      a.ModelOverride,
+		BackendOverride:    a.BackendOverride,
+		RestartCount:       a.RestartCount,
+		KickHistory:        history,
+		LastKickMessage:    a.LastKickMessage,
+		NeedsLogin:         needsLogin,
+		QuotaExhausted:     quotaExhausted,
+		LastPaneChange:     lastPaneChange,
+		WatchdogConditions: conds,
+		StallNudges:        a.StallNudges,
+		ActionNudges:       a.ActionNudges,
+		TransientNudges:    a.TransientNudges,
+		HasLaunched:        a.HasLaunched,
+		LaunchedMode:       a.LaunchedMode,
+		tmuxSession:        a.tmuxSession,
+		tmuxSocket:         a.tmuxSocket,
+		OutputBuffer:       a.OutputBuffer,
+		lastPaneCapture:    pane,
 	}
 }
 

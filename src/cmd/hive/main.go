@@ -80,6 +80,7 @@ import (
 	"github.com/kubestellar/hive/pkg/timeline"
 	"github.com/kubestellar/hive/pkg/tokens"
 	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/kubestellar/hive/pkg/watchdog"
 	"github.com/kubestellar/hive/pkg/trajectory"
 	"github.com/kubestellar/hive/pkg/watsonx"
 	"github.com/kubestellar/hive/pkg/worksource"
@@ -2443,6 +2444,28 @@ func main() {
 			"providers", len(cfg.Governor.Rotation.Providers))
 	}
 
+	// Agent self-healing watchdog (RFC #4665): liveness/readiness
+	// reconciliation on the governor tick. Config problems fall back to the
+	// RFC defaults loudly — a typo must not disable self-healing silently.
+	wdSettings, wdCfgErrs := watchdog.SettingsFrom(cfg.Governor.Watchdog)
+	for _, e := range wdCfgErrs {
+		logger.Warn("watchdog config problem", "error", e)
+	}
+	var wd *watchdog.Reconciler
+	if wdSettings.Enabled {
+		wd = watchdog.New(wdSettings, agent.WatchdogFleet{M: agentMgr}, dashSrv, logger,
+			watchdog.WithAuthProbes(watchdogAuthProbes(cfg)))
+		if saved != nil && len(saved.Watchdog) > 0 {
+			wd.Restore(saved.Watchdog)
+		}
+		logger.Info("agent watchdog enabled (RFC #4665)",
+			"probe_interval", wdSettings.ProbeInterval,
+			"crash_loop_after", wdSettings.CrashLoopAfter,
+			"auth_probe", wdSettings.AuthProbe)
+	} else {
+		logger.Info("agent watchdog disabled by config")
+	}
+
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
 		Config:           cfg,
 		AgentMgr:         agentMgr,
@@ -2476,7 +2499,7 @@ func main() {
 			return getClaimLedger(logger).Lookup(repo, number)
 		},
 		PersistFunc: func() {
-			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv, wd)
 		},
 		ReInitFunc: func() {
 			initAgentConfigDrivenSystems(cfg)
@@ -4662,8 +4685,11 @@ func main() {
 	logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
 	runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
+	if wd != nil {
+		wd.Tick(ctx)
+	}
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
-	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv, wd)
 
 	agentTickCh := func() <-chan time.Time {
 		if agentTicker != nil {
@@ -4676,7 +4702,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down, persisting state")
-			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv, wd)
 			return
 		case <-ticker.C:
 			restarted := agentMgr.CheckAndRestartCrashedAgents(ctx)
@@ -4704,6 +4730,13 @@ func main() {
 			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
 			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
+			// Watchdog sweep (RFC #4665): synchronous but bounded — every
+			// probe carries a deadline and restarts run detached under a hard
+			// timeout, so a wedged agent can never stall this tick. Tick
+			// self-gates to watchdog.probe_interval_s.
+			if wd != nil {
+				wd.Tick(ctx)
+			}
 			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
@@ -4723,7 +4756,7 @@ func main() {
 					logger.Info("retro lane filed advisory beads", "findings", n)
 				}
 			}
-			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv, wd)
 			if cfg.Governor.EvalIntervalS != lastEvalInterval && cfg.Governor.EvalIntervalS > 0 {
 				logger.Info("eval interval changed, resetting ticker",
 					"from", lastEvalInterval, "to", cfg.Governor.EvalIntervalS)
@@ -6575,7 +6608,26 @@ func randomName() string {
 	return adj + "-" + noun
 }
 
-func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, tc *tokens.Collector, path string, logger *slog.Logger, dashSrv *dashboard.Server) {
+// watchdogAuthProbes builds the per-provider credential probes for the
+// watchdog by adapting the rotation package's provider probers (#4608) —
+// the same machinery the #4645 probe rewrite targets, so that rewrite reaches
+// the watchdog automatically.
+func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
+	threshold := cfg.Governor.Rotation.EffectiveThreshold()
+	probers := []rotation.Prober{
+		rotation.ClaudeProber{ThresholdPct: threshold},
+		rotation.CodexProber{ThresholdPct: threshold},
+		rotation.AgyProber{ThresholdPct: threshold},
+		rotation.DeepSeekProber{},
+	}
+	out := make(map[string]watchdog.AuthProbe, len(probers))
+	for _, p := range probers {
+		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: p}
+	}
+	return out
+}
+
+func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, tc *tokens.Collector, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
@@ -6667,6 +6719,14 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	// Only written when engaged — a never-thrown breaker adds nothing.
 	if engaged, breakerPaused := agentMgr.BreakerState(); engaged {
 		state.Breaker = &snapshot.BreakerState{Engaged: true, Paused: breakerPaused}
+	}
+
+	// Persist the watchdog's backoff/crash-loop/condition state (RFC #4665
+	// open question 2: it rides the existing state file).
+	if wd != nil {
+		if wdState := wd.Snapshot(); len(wdState) > 0 {
+			state.Watchdog = wdState
+		}
 	}
 
 	if err := snapshot.SaveState(path, state, logger); err != nil {

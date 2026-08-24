@@ -1098,15 +1098,19 @@ type GovernorConfig struct {
 	//
 	// Valid values: "" | off | brief | full — the same set as the per-agent
 	// field, validated by ValidateExplainMode.
-	ExplainMode string              `yaml:"explain_mode,omitempty"`
-	Labels      LabelsConfig        `yaml:"labels"`
-	Sensing     SensingConfig       `yaml:"sensing"`
-	Health      HealthConfig        `yaml:"health"`
-	Budget      BudgetConfig        `yaml:"budget"`
-	Logging     LoggingConfig       `yaml:"logging"`
-	LiteLLM     LiteLLMConfig       `yaml:"litellm"`
-	VLLM        InferenceAuthConfig `yaml:"vllm"`
-	LLMD        InferenceAuthConfig `yaml:"llm-d"`
+	ExplainMode string        `yaml:"explain_mode,omitempty"`
+	Labels      LabelsConfig  `yaml:"labels"`
+	Sensing     SensingConfig `yaml:"sensing"`
+	// Watchdog configures the per-agent self-healing reconciler (RFC #4665).
+	// Zero value = enabled with the RFC defaults; see pkg/config/watchdog.go
+	// for why defaults resolve lazily instead of via applyDefaults.
+	Watchdog WatchdogConfig      `yaml:"watchdog,omitempty"`
+	Health   HealthConfig        `yaml:"health"`
+	Budget   BudgetConfig        `yaml:"budget"`
+	Logging  LoggingConfig       `yaml:"logging"`
+	LiteLLM  LiteLLMConfig       `yaml:"litellm"`
+	VLLM     InferenceAuthConfig `yaml:"vllm"`
+	LLMD     InferenceAuthConfig `yaml:"llm-d"`
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.

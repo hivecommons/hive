@@ -20,6 +20,7 @@ import (
 	"github.com/kubestellar/hive/pkg/hub"
 	"github.com/kubestellar/hive/pkg/openrouter"
 	"github.com/kubestellar/hive/pkg/planning"
+	"github.com/kubestellar/hive/pkg/watchdog"
 )
 
 //go:embed static
@@ -481,6 +482,10 @@ type FrontendAgent struct {
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
 	TransientNudges  int    `json:"transientNudges,omitempty"`
+	// Conditions is the watchdog reconciler's observed-truth condition set
+	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
+	// State config echo. Empty until the watchdog's first sweep.
+	Conditions []watchdog.Condition `json:"conditions,omitempty"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the
