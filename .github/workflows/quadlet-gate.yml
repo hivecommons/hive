@@ -89,7 +89,13 @@ jobs:
       # "manifest unknown" and failed this gate on every branch. The new index
       # still carries org.opencontainers.image.version=5.8.4 — same podman,
       # same generator, new digest.
-      PODMAN_IMAGE: quay.io/podman/stable@sha256:8923deffca4caa8338b5dd4f553a86736f2aab424a4743827fccce632fecd750
+      #
+      # Refreshed 2026-08-24: the same recurrence — quay.io garbage-collected
+      # the 2026-08-21 index (sha256:8923deff…), 404ing with "manifest unknown"
+      # on every branch again. The replacement index still carries
+      # org.opencontainers.image.version=5.8.4 — same podman, same generator,
+      # new digest (verified via the amd64 config blob's OCI version label).
+      PODMAN_IMAGE: quay.io/podman/stable@sha256:3b9f8367aa3e71b88914ea391f083fccc58c133d07b72f506e7104072ae4a6ed
       QUADLET_PATH: /usr/libexec/podman/quadlet
 
     steps:
