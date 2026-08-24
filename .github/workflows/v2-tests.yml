@@ -2,7 +2,15 @@ name: v2 Tests
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Hourly, at :30 — deliberately offset from coverage-hourly.yml's :00 run
+    # so the two scheduled nets alternate every half hour instead of firing
+    # together. This schedule is the post-merge safety net for the default
+    # branch (there is no push trigger; pull_request below is the real gate),
+    # and it is what keeps create-issue-on-failure armed. It ran every 15
+    # minutes until #4650: ~96 runs/day at ~3m15s each — ~5 runner-hours/day —
+    # almost all on an unchanged, already-gated SHA, while coverage-hourly
+    # re-ran the identical suite with the same floors every hour anyway.
+    - cron: '30 * * * *'
   workflow_dispatch:
   # Gate PRs, not just the cron. `go test ./pkg/...` runs nowhere else — v2-ci.yml
   # builds and vets but never runs the unit tests — so before this, a Go
@@ -295,7 +303,7 @@ jobs:
 
   # Per-package coverage-floor gate (#4112): parse-only, consumes the shard
   # artifacts — it runs no tests, so PRs run the suite exactly once. PR-only:
-  # on the 15-minute schedule the hourly coverage workflow remains the
+  # on the hourly schedule the coverage-hourly workflow remains the
   # monitoring + issue-filing authority.
   #
   # Scoring is computed from the coverage PROFILES, not from the `ok ...
