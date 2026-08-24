@@ -18,6 +18,29 @@ func tmuxAvailable() bool {
 	return err == nil
 }
 
+// forceSharedUID pins a test agent to the shared dev UID and the default tmux
+// socket, making the test hermetic on live hive hosts.
+//
+// NewManager loads /var/run/hive/uid-map.json whenever it exists. On a host
+// that runs (or ever ran) a real hive, a test agent whose name collides with a
+// deployed agent — "scanner" is one — silently inherits that agent's real UID
+// and per-UID tmux socket from the production map. Every tmux exec for it then
+// routes through `su-exec <user>` (absent outside the hive container image) and
+// targets a per-UID socket no test session lives on. CI runners have no
+// uid-map, so the collision only bites on hive-like hosts: the suite is green
+// in CI and red for anyone running it where a hive is installed.
+func forceSharedUID(t *testing.T, m *Manager, name string) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.agents[name]
+	if !ok {
+		t.Fatalf("forceSharedUID: agent %q not found", name)
+	}
+	a.UID = 0
+	a.tmuxSocket = ""
+}
+
 // cleanupAgent cancels the agent's poll goroutine and tears down its tmux
 // session so a launched agent leaves nothing running after the test.
 //
@@ -131,6 +154,7 @@ func TestStart_LaunchClaude(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
 		"scanner": {Backend: "claude", Model: "opus"},
 	}, discardLogger(), ProjectContext{ACMMLevel: 5})
+	forceSharedUID(t, m, "scanner")
 
 	if err := m.Start(context.Background(), "scanner"); err != nil {
 		t.Fatalf("Start: %v", err)
