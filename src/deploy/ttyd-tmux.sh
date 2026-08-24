@@ -112,7 +112,11 @@ TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
 # created before that change, or outside the manager. Saved and restored around
 # the attach so an agent CLI that manages its own status line is not permanently
 # altered.
-TTYD_STATUS_RIGHT="${HIVE_TTYD_STATUS_RIGHT:-#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,[live] }now %H:%M:%S }"
+#   * a pane whose application grabbed the mouse never enters copy-mode at all
+#     (the wheel rebind below forwards the wheel to the app), so the status line
+#     claimed a bare "[live]" no matter how far back the operator had scrolled
+#     inside the agent CLI's own buffer, and the position was nowhere (#4681).
+TTYD_STATUS_RIGHT="${HIVE_TTYD_STATUS_RIGHT:-#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,#{?mouse_any_flag,[live - this app handles its own scrolling#, so tmux has no line position] ,[live] }}now %H:%M:%S }"
 TTYD_STATUS_INTERVAL="${HIVE_TTYD_STATUS_INTERVAL:-2}"
 # tmux truncates status-right to status-right-length, DEFAULT 40 columns —
 # which cut the message above off mid-word. Raised to fit the longest

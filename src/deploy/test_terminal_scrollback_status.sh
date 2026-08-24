@@ -63,6 +63,21 @@ else
        "the manager and the attach path have drifted"
 fi
 
+# ...and so must the standalone local helper. It calls itself "kept in sync"
+# but nothing checked, and it had silently missed the entire #4399 change: no
+# status-right, no length, no wheel rebind. A terminal attached through it
+# showed no scroll position and no clock — the #4681 symptom, from a file whose
+# own comment claimed otherwise. Checked here so the claim cannot rot again.
+BIN_ATTACH="${ROOT}/bin/ttyd-tmux.sh"
+if [ ! -f "$BIN_ATTACH" ]; then
+  fail "bin/ttyd-tmux.sh exists" "the local helper moved; this check needs updating"
+elif grep -qF -- "$STATUS_FMT" "$BIN_ATTACH"; then
+  pass "bin/ttyd-tmux.sh applies the identical format on attach"
+else
+  fail "bin/ttyd-tmux.sh applies the identical format on attach" \
+       "the local helper has drifted from manager.go"
+fi
+
 WORK="$(mktemp -d)"
 SOCK="${WORK}/sock"
 cleanup() { tmux -S "$SOCK" kill-server 2>/dev/null; tmux -S "${WORK}/viewer-sock" kill-server 2>/dev/null; rm -rf "$WORK"; }
@@ -131,6 +146,70 @@ printf '%s' "$SCROLLED" | grep -qE "[0-9]+/[0-9]+ lines back" \
   && pass "the two states are visibly different" \
   || fail "the two states are visibly different" "both rendered: ${LIVE}"
 
+# --- a pane whose APPLICATION owns the wheel (#4681) --------------------------
+# The two states above are not exhaustive, and the gap is what #4681 reported.
+#
+# The wheel rebind only enters copy-mode when the running program has NOT
+# grabbed the mouse. Every agent CLI is a full-screen TUI that enables mouse
+# reporting, so `mouse_any_flag` is 1, the wheel goes to the APPLICATION, and
+# the pane never enters copy-mode. `pane_in_mode` stays 0 forever, so the
+# status line reported a bare "[live]" however far back the operator had
+# scrolled inside the agent's own buffer — and because the rebind also hides
+# tmux's native "HH:MM [pos/total]" marker, no position and no content
+# timestamp appeared anywhere on screen.
+#
+# A session that turns mouse reporting on is the reproduction: the escape is
+# what a TUI sends, not something tmux has to be told.
+tmux -S "$SOCK" new-session -d -s m -x 80 -y 10 \
+  'printf "\033[?1000h\033[?1006h"; i=0; while :; do i=$((i+1)); echo "line $i"; sleep 0.2; done' 2>/dev/null
+sleep 1
+MOUSE_FLAG="$(tmux -S "$SOCK" display-message -p -t m '#{mouse_any_flag}' 2>/dev/null)"
+[ "$MOUSE_FLAG" = "1" ] \
+  && pass "a pane running a mouse-reporting TUI sets mouse_any_flag (the agent-CLI case)" \
+  || fail "the repro pane grabs the mouse" "mouse_any_flag=${MOUSE_FLAG} — cannot test the #4681 state"
+
+# The wheel binding's own condition decides this; ask tmux which branch it takes
+# rather than restating the rule and testing the restatement.
+WHEEL_COND='#{||:#{pane_in_mode},#{mouse_any_flag}}'
+TAKES="$(tmux -S "$SOCK" display-message -p -t m "#{?${WHEEL_COND},app,tmux}" 2>/dev/null)"
+[ "$TAKES" = "app" ] \
+  && pass "the wheel is forwarded to the application, so copy-mode is unreachable there" \
+  || fail "the wheel goes to the app in this state" "branch=${TAKES}"
+
+APPSCROLL="$(tmux -S "$SOCK" display-message -p -t m "$STATUS_FMT" 2>/dev/null)"
+echo "     app-owns-scroll renders: '${APPSCROLL}'"
+printf '%s' "$APPSCROLL" | grep -qiE "scrollback" \
+  && fail "this state must not claim to be tmux scrollback" "got: ${APPSCROLL}" \
+  || pass "this state does not claim to be tmux scrollback"
+# The regression itself: a bare "[live]" asserts the viewport is at the bottom
+# of live output, which is false while the operator scrolls the app's buffer
+# and unfalsifiable from their side.
+[ "$APPSCROLL" != "$LIVE" ] \
+  && pass "it is distinguishable from a genuinely-live pane (not a bare '[live]')" \
+  || fail "it is distinguishable from a genuinely-live pane" \
+          "both rendered '${LIVE}' — #4681 has regressed"
+printf '%s' "$APPSCROLL" | grep -qi "scrolling" \
+  && pass "and says the application is the thing doing the scrolling" \
+  || fail "says who owns the scrolling" "got: ${APPSCROLL}"
+# tmux has no position to give here; saying so is the fix. Claiming a number
+# would be worse than admitting the absence.
+printf '%s' "$APPSCROLL" | grep -qE "[0-9]+/[0-9]+ lines back" \
+  && fail "it must NOT invent a tmux line position" "got: ${APPSCROLL}" \
+  || pass "it does not invent a line position tmux cannot know"
+printf '%s' "$APPSCROLL" | grep -qi "now" \
+  && pass "the labelled wall clock is still present" \
+  || fail "the labelled clock is present" "got: ${APPSCROLL}"
+# Unexpanded format text is the failure mode a nested conditional invites: the
+# prose comma inside the new branch must be escaped as '#,' or tmux truncates
+# the branch at it.
+printf '%s' "$APPSCROLL" | grep -q '#{' \
+  && fail "the nested conditional is well-formed" "unexpanded format left in: ${APPSCROLL}" \
+  || pass "the nested conditional is well-formed (the '#,' escape holds)"
+printf '%s' "$APPSCROLL" | grep -q "so tmux has no line position" \
+  && pass "the escaped comma did not truncate the branch" \
+  || fail "the escaped comma did not truncate the branch" "got: ${APPSCROLL}"
+tmux -S "$SOCK" kill-session -t m 2>/dev/null
+
 # --- the reported symptom, reproduced ----------------------------------------
 # This is the part that made the terminal look broken: a frozen pane, which
 # survives closing and reopening the browser.
@@ -197,15 +276,22 @@ fi
 # is unintelligible" from #4399. The wheel rebind enters copy-mode with -H so
 # the marker is hidden; the labelled status line above carries the position.
 if tmux -S "$SOCK" list-commands copy-mode 2>/dev/null | grep -qE '\[-[a-zA-Z]*H'; then
-  # Plain copy-mode (already entered above) shows the marker in the top-right
-  # of what the CLIENT draws.
+  # Plain copy-mode shows the marker in the top-right of what the CLIENT draws
+  # — but only once the pane is actually SCROLLED. At position 0 tmux renders a
+  # bare "0" instead of "[pos/total]", so a control that merely enters copy-mode
+  # measures the wrong thing and fails for a reason that has nothing to do with
+  # the -H flag under test. Scroll first, and let the client repaint.
+  tmux -S "$SOCK" send-keys -t t -X scroll-up 2>/dev/null
+  sleep 1
   VIS="$(tmux -S "$VSOCK" capture-pane -p -t viewer 2>/dev/null | head -1)"
   printf '%s' "$VIS" | grep -qE '\[[0-9]+/[0-9]+\]' \
     && pass "control: plain copy-mode draws the unlabelled [pos/total] marker" \
     || fail "control: plain copy-mode draws the marker" "top line: '${VIS}'"
-  # Re-enter through the rebind's command: the marker must be gone.
+  # Re-enter through the rebind's command and scroll the SAME way, so the two
+  # captures differ only by -H.
   tmux -S "$SOCK" send-keys -t t -X cancel 2>/dev/null
   tmux -S "$SOCK" copy-mode -eH -t t 2>/dev/null
+  tmux -S "$SOCK" send-keys -t t -X scroll-up 2>/dev/null
   sleep 1
   HID="$(tmux -S "$VSOCK" capture-pane -p -t viewer 2>/dev/null | head -1)"
   printf '%s' "$HID" | grep -qE '\[[0-9]+/[0-9]+\]' \
@@ -219,6 +305,10 @@ if tmux -S "$SOCK" list-commands copy-mode 2>/dev/null | grep -qE '\[-[a-zA-Z]*H
   grep -q "copy-mode -eH" "$ATTACH" \
     && pass "src/deploy/ttyd-tmux.sh applies the identical rebind on attach" \
     || fail "ttyd-tmux.sh carries the wheel rebind"
+  grep -q "copy-mode -eH" "$BIN_ATTACH" \
+    && pass "bin/ttyd-tmux.sh applies the identical rebind on attach" \
+    || fail "bin/ttyd-tmux.sh carries the wheel rebind" \
+            "the local helper hides the marker differently from the container"
 else
   echo "  SKIP: this tmux predates copy-mode -H (3.2) — marker-hiding assertions skipped"
 fi

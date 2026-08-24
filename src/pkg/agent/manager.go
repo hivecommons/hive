@@ -141,7 +141,34 @@ const (
 	// (`#{scroll_position}/#{history_size} lines back`) because the wheel
 	// rebind below hides tmux's own black-on-yellow marker — this is where
 	// that information now lives, with a label.
-	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,[live] }now %H:%M:%S "
+	//
+	// THE THIRD STATE (#4681). The two branches above are not exhaustive, and
+	// the gap swallowed the position indicator entirely for the panes that
+	// matter most. The wheel rebind below only enters copy-mode when the
+	// running program has NOT grabbed the mouse:
+	//
+	//	if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH'
+	//
+	// Every agent CLI is a full-screen TUI that turns mouse reporting ON, so
+	// `mouse_any_flag` is 1 and the wheel is forwarded to the APPLICATION. The
+	// pane therefore never enters copy-mode, `pane_in_mode` stays 0, and the
+	// status line reported a bare `[live]` however far back the operator had
+	// scrolled inside the agent's own buffer. Combined with the `-H` that hides
+	// tmux's native `HH:MM [pos/total]` marker, that left no position and no
+	// content timestamp anywhere on screen — #4681's "I never saw an indication
+	// of my scroll position or timestamp", and why it read as a regression:
+	// before `-H` the native marker was at least SOMETIMES there.
+	//
+	// tmux genuinely cannot report a position here — the scrollback being moved
+	// belongs to the application, not to the pane — so this says exactly that
+	// instead of claiming `[live]`. Naming the reason is the point: `[live]`
+	// asserts the viewport is at the bottom of live output, which is false and
+	// unfalsifiable from the operator's side.
+	//
+	// The `#,` is an ESCAPED COMMA. tmux splits `#{?cond,a,b}` on unescaped
+	// commas, so prose commas inside a branch must be written `#,` or the
+	// branch silently truncates at the comma.
+	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,#{?mouse_any_flag,[live - this app handles its own scrolling#, so tmux has no line position] ,[live] }}now %H:%M:%S "
 
 	// tmuxStatusRightLength bounds how many columns status-right may occupy.
 	// tmux's DEFAULT is 40, which silently truncated the message above to
