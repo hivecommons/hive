@@ -106,6 +106,12 @@ type Collector struct {
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
+	// A nil logger must not become a latent panic: loadSnapshot logs on the
+	// first successful restore, which only happens on hosts where the snapshot
+	// file exists — exactly the environments where a crash hurts most (#4664).
+	if logger == nil {
+		logger = slog.Default()
+	}
 	c := &Collector{
 		sessionsDir:  sessionsDir,
 		persistPath:  defaultPersistPath,

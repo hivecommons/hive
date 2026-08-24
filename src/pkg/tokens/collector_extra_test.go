@@ -22,6 +22,29 @@ func TestNewCollector(t *testing.T) {
 	}
 }
 
+// A nil logger must never panic — the failure mode is nasty because it only
+// fires on hosts where the snapshot file EXISTS (loadSnapshot logs on a
+// successful restore), i.e. live hive hosts but not clean CI runners (#4664).
+// This test recreates exactly that environment: nil logger + a real snapshot
+// at the persist path, then forces the lazy load via Summary.
+func TestNewCollector_NilLoggerSafeOnSnapshotLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token-summary.json")
+	if err := os.WriteFile(path, []byte(`{"session_count":3,"total_tokens":42}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewCollector("/tmp/nonexistent-sessions", nil)
+	if c.logger == nil {
+		t.Fatal("NewCollector must default a nil logger, got nil")
+	}
+	c.SetPersistPath(path)
+
+	summary := c.Summary() // triggers loadSnapshot's success-path logging
+	if summary == nil || summary.TotalTokens != 42 {
+		t.Errorf("Summary = %+v, want restored snapshot with TotalTokens=42", summary)
+	}
+}
+
 func TestCollector_Summary_Initially(t *testing.T) {
 	// Redirect the snapshot path away from the live /data location so the
 	// lazy initial load cannot pick up production state on a hive host (#4585).
