@@ -4,9 +4,13 @@
 
 Hive Federation lets independent Hive instances publish themselves in a registry so contributors can discover projects and connect a local ClankeR contributor relay to one or more hubs. The registry is a directory, not a control plane: every hive keeps its own credentials, queue, agents, contributor registry, and trust policy.
 
-## Current v2 implementation
+## Current implementation
 
-The v2 Go dashboard API implements the federation endpoints in `src/pkg/dashboard/api_contribute.go`:
+> This section was originally written while the source lived under the retired
+> `v2/` tree (v2 was retired in August 2026). The endpoints it describes are
+> live on the current `v4` branch, under `src/`.
+
+The Go dashboard API implements the federation endpoints in `src/pkg/dashboard/api_contribute.go`:
 
 - `GET /api/hives` — list registered hives.
 - `POST /api/hives/register` — add or update a hive entry.
@@ -14,11 +18,11 @@ The v2 Go dashboard API implements the federation endpoints in `src/pkg/dashboar
 - `DELETE /api/hives/:id` — remove a hive.
 - `POST /api/hives/onboard` — generate starter deployment/config text.
 
-Registry storage defaults to `/data/federation/registry.json` in v2 and can be overridden for tests with `HIVE_FEDERATION_REGISTRY_PATH`.
+Registry storage defaults to `/data/federation/registry.json` and can be overridden for tests with `HIVE_FEDERATION_REGISTRY_PATH`.
 
 ## Project onboarding
 
-A project maintainer installs/configures GitHub auth for their Hive, generates or writes v2 config, deploys the Hive, and registers it:
+A project maintainer installs/configures GitHub auth for their Hive, generates or writes the hive config (`hive.yaml`), deploys the Hive, and registers it:
 
 ```bash
 curl -X POST https://hive.kubestellar.io/api/hives/register \

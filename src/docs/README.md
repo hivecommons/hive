@@ -28,6 +28,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [`bd` beads CLI](https://github.com/kubestellar/hive/blob/v4/src/docs/beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [Backup and restore](https://github.com/kubestellar/hive/blob/v4/src/docs/backup-restore.md) — `hive-backup`, Kubernetes CronJob, spoke backup scope, and setting the backup encryption key from Governor Config (hosted flow). Host-level backup, restore, and `docker compose down -v` are given per runtime: Docker Compose, and Podman/Quadlet with the executed backup → wipe → restore cycle in both root modes, the rootless mapped-UID trap that makes a host-shell `tar` skip the GitHub App key, and the Docker→Podman migration (the two volume stores are never shared).
+- [Hub disaster recovery](https://github.com/kubestellar/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the hub-level runbook that goes beyond per-hive backup: hub backup and key escrow, spoke fleet recovery, Slack blast, and the full rebuild-from-zero procedure after a catastrophic loss.
 - [Deployment helper scripts](https://github.com/kubestellar/hive/blob/v4/src/docs/deployment-scripts.md) — the all-in-one LXC setup, Proxmox LXC, and blue-green Compose helpers. All are Docker-only; the page states each script's runtime scope and where a Podman operator should go instead.
 - [`bin/` pipeline script index](https://github.com/kubestellar/hive/blob/v4/bin/README.md) — map of the 45 deterministic pipeline and operational shell/Python scripts, grouped by function.
 - [Dashboard API reference](https://github.com/kubestellar/hive/blob/v4/src/docs/api-reference.md) — pragmatic route index for dashboard and hub endpoints.
@@ -37,6 +38,8 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 ## Contributors and access
 
+- [Getting started as a first-time contributor](https://github.com/kubestellar/hive/blob/v4/docs/getting-started-contributing.md) — the end-to-end path for a first code or documentation contribution, tying the reference docs together and answering the Hive-specific questions they don't.
+- [Local development](https://github.com/kubestellar/hive/blob/v4/docs/development.md) — the local workflow for contributing to the Go codebase on `v4`: prerequisites, build, and test loop.
 - [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, moving a relay to another machine, and role requests.
 - [Contributor trust tiers and delegated agent roles](https://github.com/kubestellar/hive/blob/v4/src/docs/contributor-trust-and-roles.md) — newcomer/contributor/trusted/merger/advisor semantics, **Acting as**, grants, and delegatable roles.
 - [Credly badges](https://github.com/kubestellar/hive/blob/v4/src/docs/credly-badges.md) — planned integration design; currently a placeholder mapping only.
@@ -72,11 +75,13 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [CLI backend setup](https://github.com/kubestellar/hive/blob/v4/docs/backend-setup.md) — setup notes for Claude, Copilot, Goose, Bob, Pi, Codex, and Aider.
 - [Inference backends](https://github.com/kubestellar/hive/blob/v4/docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
 - [apiproxy](https://github.com/kubestellar/hive/blob/v4/src/docs/apiproxy.md) — Anthropic-compatible proxy logging and deployment notes.
+- [Outreach anti-spam ruleset](https://github.com/kubestellar/hive/blob/v4/docs/outreach-antispam.md) — the deduplication and anti-spam rules the outreach agent operates under across awesome lists, project issues, directories, and community threads.
 - [v1 to v2 migration](https://github.com/kubestellar/hive/blob/v4/docs/migration-v1-v2.md) — **historical.** Both ends of this migration are retired; v2 was retired in August 2026. Kept for operators still on v1, who should read it alongside [v2 → v4 migration](migration-v2-v4.md) above. New deployments do not need it.
 
 ## Architecture and design
 
 - [Architecture](architecture.md) — process model, governor loop, guardrails, hub/spoke, and walkthrough.
+- [Hive federation design](https://github.com/kubestellar/hive/blob/v4/docs/federation-design.md) — the multi-hive registry: live `/api/hives` endpoints, project onboarding, contributor flow across hubs, and what remains future design work.
 - [Public roadmap](roadmap.md) — the v4 direction as Now / Next / Later, with the tracking issue behind each item. Directional rather than a promise, maintained by pull request; check the date in its header before relying on the ordering.
 - [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.
 - [CNCF reference architecture](https://github.com/kubestellar/hive/blob/v4/src/docs/cncf-reference-architecture.md) — CNCF submission/reference template.
