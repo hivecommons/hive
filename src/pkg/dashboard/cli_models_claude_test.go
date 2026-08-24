@@ -120,7 +120,7 @@ func TestClaudeAPICredential_EnvKeyPrecedence(t *testing.T) {
 	// A valid OAuth file exists, but ANTHROPIC_API_KEY must win with x-api-key.
 	writeClaudeCredentials(t, "oauth-token", futureExpiryMs())
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api-key")
-	header, value, ok := claudeAPICredential()
+	header, value, ok := claudeAPICredential(nil)
 	if !ok || header != "x-api-key" || value != "sk-ant-api-key" {
 		t.Fatalf("env key must win: got %q=%q ok=%v", header, value, ok)
 	}
@@ -129,7 +129,7 @@ func TestClaudeAPICredential_EnvKeyPrecedence(t *testing.T) {
 func TestClaudeAPICredential_OAuthBearerFromHome(t *testing.T) {
 	writeClaudeCredentials(t, "oauth-token", futureExpiryMs())
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	header, value, ok := claudeAPICredential()
+	header, value, ok := claudeAPICredential(nil)
 	if !ok || header != "Authorization" || value != "Bearer oauth-token" {
 		t.Fatalf("expected bearer from $HOME credentials: got %q=%q ok=%v", header, value, ok)
 	}
@@ -137,7 +137,7 @@ func TestClaudeAPICredential_OAuthBearerFromHome(t *testing.T) {
 
 func TestClaudeAPICredential_NoneAvailable(t *testing.T) {
 	withoutClaudeCredentials(t)
-	if _, _, ok := claudeAPICredential(); ok {
+	if _, _, ok := claudeAPICredential(nil); ok {
 		t.Fatal("no env key and no file must yield ok=false")
 	}
 }

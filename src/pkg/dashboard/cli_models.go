@@ -947,12 +947,29 @@ var anthropicModelsEndpoint = anthropicModelsURL
 // returns fallback=true with an empty list so the caller substitutes the
 // static list. The stored token is NEVER refreshed here (see file header).
 func (s *Server) discoverClaudeModels() cliModelResult {
-	header, value, ok := claudeAPICredential()
+	candidates := s.agentClaudeCredentialPaths()
+	header, value, ok := claudeAPICredential(candidates)
 	if !ok {
 		// No API key and no fresh OAuth token. Skip the HTTP call entirely —
 		// on copilot-only spokes the credentials file can sit expired for
 		// weeks, and refreshing it is forbidden (it would rotate the token
 		// out from under the claude CLI's own login).
+		//
+		// #4699: this return used to be SILENT while the credential-found-
+		// but-call-failed path below logged, so from outside the process the
+		// two causes of an all-"unverified" dropdown were indistinguishable —
+		// and the silent one is the likelier. Naming the paths that were
+		// actually stat'ed is the whole diagnostic: it distinguishes "no
+		// credential anywhere" from "looked in the wrong home". Paths only —
+		// never the token.
+		// Guarded: unlike the failure path below, this branch is the COMMON
+		// one, so a manager-less embedding with no logger must not start
+		// panicking on it.
+		if s.logger != nil {
+			s.logger.Info("claude model discovery: no usable credential, using the static alias list",
+				"paths_tried", strings.Join(claudeCredentialCandidatePaths(candidates), ", "),
+				"anthropic_api_key_set", os.Getenv("ANTHROPIC_API_KEY") != "")
+		}
 		return cliModelResult{fallback: true}
 	}
 	models, err := fetchClaudeModels(anthropicModelsEndpoint, header, value)
@@ -971,11 +988,13 @@ func (s *Server) discoverClaudeModels() cliModelResult {
 // the freshest non-expired OAuth access token from the Claude CLI credentials
 // file is used as a bearer. ok=false means no usable credential. Secret —
 // never log the value.
-func claudeAPICredential() (header, value string, ok bool) {
+// agentPaths are per-UID agent credential locations resolved by the agent
+// manager; nil is valid and reduces this to the pre-#4699 shared-path probe.
+func claudeAPICredential(agentPaths []string) (header, value string, ok bool) {
 	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
 		return "x-api-key", k, true
 	}
-	for _, path := range claudeCredentialCandidatePaths() {
+	for _, path := range claudeCredentialCandidatePaths(agentPaths) {
 		if tok := readFreshClaudeToken(path); tok != "" {
 			return "Authorization", "Bearer " + tok, true
 		}
@@ -983,20 +1002,58 @@ func claudeAPICredential() (header, value string, ok bool) {
 	return "", "", false
 }
 
-// claudeCredentialCandidatePaths returns the credentials-file locations to
-// try, in order: the hosted-pod shared home (the same /data/home the agent
-// manager uses for agent homes), then $HOME/.claude/.credentials.json for
-// non-hosted spokes. Computed per call — never cached — because the claude
-// CLI rewrites the file whenever it runs and the probe must see the freshest
-// token.
-func claudeCredentialCandidatePaths() []string {
-	paths := []string{claudePodCredentialsPath}
+// agentClaudeCredentialPaths asks the agent manager where the fleet's claude
+// credentials actually live, so model discovery resolves them exactly the way
+// the auth probe does (#4699). Returns nil when there is no manager — tests and
+// any manager-less embedding then keep the previous shared-path-only behavior.
+func (s *Server) agentClaudeCredentialPaths() []string {
+	if s == nil || s.deps == nil || s.deps.AgentMgr == nil {
+		return nil
+	}
+	return s.deps.AgentMgr.ClaudeCredentialCandidatePaths()
+}
+
+// claudeCredentialCandidatePaths returns the credentials-file locations to try.
+//
+// agentPaths come first (#4699). They are the PER-UID homes the agents' own
+// CLIs write to, and on a per-UID fleet they are the only place a token exists:
+// this probe previously stat'ed just the two shared locations below, so it
+// reported "no credential" — an all-"unverified" model dropdown — on hives
+// where pkg/agent's probe simultaneously reported the agent logged in, because
+// only that one had been taught about per-UID homes.
+//
+// Then the hosted-pod shared home (the same /data/home the agent manager uses),
+// then $HOME/.claude/.credentials.json for non-hosted spokes. Note that $HOME
+// here is the DASHBOARD process's home, which is why it cannot stand in for an
+// agent's.
+//
+// Computed per call — never cached — because the claude CLI rewrites the file
+// whenever it runs and the probe must see the freshest token.
+func claudeCredentialCandidatePaths(agentPaths []string) []string {
+	paths := make([]string, 0, len(agentPaths)+2)
+	for _, p := range agentPaths {
+		if p != "" && !containsString(paths, p) {
+			paths = append(paths, p)
+		}
+	}
+	if !containsString(paths, claudePodCredentialsPath) {
+		paths = append(paths, claudePodCredentialsPath)
+	}
 	if home := os.Getenv("HOME"); home != "" {
-		if p := filepath.Join(home, ".claude", ".credentials.json"); p != claudePodCredentialsPath {
+		if p := filepath.Join(home, ".claude", ".credentials.json"); !containsString(paths, p) {
 			paths = append(paths, p)
 		}
 	}
 	return paths
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // readFreshClaudeToken reads and parses one credentials file and returns its
