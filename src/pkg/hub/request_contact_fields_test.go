@@ -110,6 +110,41 @@ func TestRequestProvisionPersistsContactFields(t *testing.T) {
 	}
 }
 
+func TestRequestProvisionPersistsFriendlyUserID(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	const user = "ibmid:650001ABCD"
+	if err := saveSaaSUser(&SaaSUser{
+		GitHubUsername:    user,
+		LinkedGitHubLogin: "jane-gh",
+		DisplayName:       "Jane Doe",
+		Email:             "jane@example.com",
+	}); err != nil {
+		t.Fatalf("saveSaaSUser: %v", err)
+	}
+	authAsForgeTester(t, "ghp_contact_userid", user)
+
+	w := postProvisionRequest(t, srv, "ghp_contact_userid",
+		helperContactRequestBody(t, "Jane Doe", "U01ABCDEF23"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body %s)", w.Code, w.Body.String())
+	}
+	pr := loadProvisionRequest(user)
+	if pr == nil {
+		t.Fatal("request was not persisted")
+	}
+	if pr.UserID != "jane-gh" {
+		t.Errorf("user_id = %q, want linked GitHub login %q", pr.UserID, "jane-gh")
+	}
+	if pr.UserIDSource != "github" {
+		t.Errorf("user_id_source = %q, want github", pr.UserIDSource)
+	}
+	if pr.Username != user {
+		t.Errorf("username = %q, want native subject %q", pr.Username, user)
+	}
+}
+
 // TestRequestProvisionCapsContactFields pins the length bounds to the SAME
 // constants the admin contact editor uses. Truncation, not rejection, matches
 // handleAdminUpdateUser's existing treatment of these two fields.

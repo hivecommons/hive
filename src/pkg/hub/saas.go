@@ -7463,6 +7463,14 @@ const maxProvisionRequestBodyBytes = 4 * 1024
 
 type ProvisionRequest struct {
 	Username string `json:"username"`
+	// UserID is the human-facing identifier admins should use when reviewing
+	// the request. Username remains the stable auth key/native provider subject
+	// (for example "ibmid:695000VVZ9"); UserID captures the meaningful login or
+	// identity available at request time so the review queue does not headline
+	// opaque SSO subjects. Empty on older records; enrichProvisionRequests fills
+	// it from the user record when possible, and the UI falls back to Username.
+	UserID       string `json:"user_id,omitempty"`
+	UserIDSource string `json:"user_id_source,omitempty"`
 	// GitHubHost is the GitHub instance the org lives on — empty means public
 	// github.com, otherwise a GitHub Enterprise host (github.ibm.com,
 	// github.cisco.com, …). Captured so an admin can see which instance a
@@ -7598,6 +7606,56 @@ func roleForUserOnHive(username, hiveID string, users []SaaSUser) string {
 	return ""
 }
 
+// provisionRequestUserIdentity chooses the operator-facing identifier for a
+// request, plus its source so the UI only links identifiers known to be GitHub
+// logins.
+// The raw request Username is the auth key and can be an opaque provider subject
+// ("ibmid:…"). Prefer a linked GitHub/GHE login when the user has one, then a
+// recognizable GitHub login, then email/name claims, and fall back to the auth
+// key only when no friendlier identity exists.
+func provisionRequestUserIdentity(username string, u *SaaSUser, requestFullName string) (id, source string) {
+	if u != nil {
+		if id := strings.TrimSpace(u.LinkedGitHubLogin); id != "" {
+			return id, "github"
+		}
+		if provider, subject := splitIdentityKey(strings.TrimSpace(u.GitHubUsername)); provider == "" || normalizeIdentityProvider(provider) == legacyProvider {
+			if subject != "" {
+				return subject, "github"
+			}
+		}
+		if id := strings.TrimSpace(u.Email); id != "" {
+			return id, "email"
+		}
+		if id := strings.TrimSpace(u.DisplayName); id != "" {
+			return id, "name"
+		}
+		if id := strings.TrimSpace(u.FullName); id != "" {
+			return id, "name"
+		}
+	}
+	if id := strings.TrimSpace(requestFullName); id != "" {
+		return id, "name"
+	}
+	if provider, subject := splitIdentityKey(strings.TrimSpace(username)); normalizeIdentityProvider(provider) == legacyProvider && subject != "" {
+		return subject, "github"
+	}
+	return strings.TrimSpace(username), "native"
+}
+
+func provisionRequestUserID(username string, u *SaaSUser, requestFullName string) string {
+	id, _ := provisionRequestUserIdentity(username, u, requestFullName)
+	return id
+}
+
+func provisionRequestUserFromRoster(username string, users []SaaSUser) *SaaSUser {
+	for i := range users {
+		if strings.EqualFold(users[i].GitHubUsername, username) {
+			return &users[i]
+		}
+	}
+	return nil
+}
+
 // enrichProvisionRequests fills in the derived AssignedRole / OtherHives fields
 // on every request in place.
 //
@@ -7614,6 +7672,13 @@ func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
 	}
 	users := listAllSaaSUsers()
 	for i := range requests {
+		if requests[i].UserID == "" {
+			requests[i].UserID, requests[i].UserIDSource = provisionRequestUserIdentity(requests[i].Username, provisionRequestUserFromRoster(requests[i].Username, users), requests[i].FullName)
+		} else if requests[i].UserIDSource == "" {
+			if requests[i].UserID == requests[i].Username {
+				requests[i].UserIDSource = "native"
+			}
+		}
 		requests[i].AssignedRole = roleForUserOnHive(requests[i].Username, requests[i].AssignedHive, users)
 		requests[i].OtherHives = hivesForUser(requests[i].Username, requests[i].AssignedHive, users)
 	}
@@ -7890,19 +7955,22 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	userID, userIDSource := provisionRequestUserIdentity(username, loadSaaSUser(username), body.FullName)
 	pr := &ProvisionRequest{
-		Username:    username,
-		GitHubHost:  body.GitHubHost,
-		Org:         body.Org,
-		Repos:       body.Repos,
-		PrimaryRepo: primaryRepo,
-		ACMMLevel:   acmm,
-		AuthMethod:  body.AuthMethod,
-		FullName:    body.FullName,
-		SlackID:     body.SlackID,
-		Country:     body.Country,
-		RequestedAt: time.Now().UTC().Format(time.RFC3339),
-		Status:      provisionStatusPending,
+		Username:     username,
+		UserID:       userID,
+		UserIDSource: userIDSource,
+		GitHubHost:   body.GitHubHost,
+		Org:          body.Org,
+		Repos:        body.Repos,
+		PrimaryRepo:  primaryRepo,
+		ACMMLevel:    acmm,
+		AuthMethod:   body.AuthMethod,
+		FullName:     body.FullName,
+		SlackID:      body.SlackID,
+		Country:      body.Country,
+		RequestedAt:  time.Now().UTC().Format(time.RFC3339),
+		Status:       provisionStatusPending,
 	}
 	if err := saveProvisionRequest(pr); err != nil {
 		http.Error(w, `{"error":"failed to save provision request"}`, http.StatusInternalServerError)
@@ -17581,10 +17649,43 @@ const dashboardHTML = `<!DOCTYPE html>
     // github.ibm.com means GitHub Enterprise — hardcoding github.com would send
     // an admin to a 404 (or worse, an unrelated public repo of the same name).
     // Requests with no repo recorded fall back to plain escaped text.
-    /* provisionRequesterLabel renders the requester's real name and Slack ID
-       beside their GitHub login on the review card. Mapping a login to a person
-       is the reason the wizard asks for a name at all, and this is where the
-       operator deciding the request needs it.
+    /* provisionRequesterPrimary returns the identifier admins should scan first
+       on provision-request rows. The durable request key (username) may be an
+       opaque native provider subject such as "ibmid:695000VVZ9"; user_id is the
+       GitHub/GHE login or best human-readable identity captured/enriched by the
+       server. Older records without user_id fall back to username. */
+    function provisionRequesterPrimary(pr) {
+      if (!pr) return '';
+      var id = String(pr.user_id || '').trim();
+      return id || String(pr.username || '').trim();
+    }
+
+    function provisionRequesterNativeSubject(pr) {
+      if (!pr) return '';
+      var native = String(pr.username || '').trim();
+      var primary = provisionRequesterPrimary(pr);
+      return native && primary && native !== primary ? native : '';
+    }
+
+    function provisionNativeSubjectChip(pr) {
+      var native = provisionRequesterNativeSubject(pr);
+      if (!native) return '';
+      return '<span title="Native provider subject" style="font-size:0.68rem;padding:1px 6px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-family:ui-monospace,monospace">' +
+        esc(native) + '</span>';
+    }
+
+    function provisionRequesterAvatar(pr, px, extraStyle) {
+      var primary = provisionRequesterPrimary(pr);
+      if (pr && pr.user_id_source === 'github') {
+        return linkedAvatar(primary, px, primary, extraStyle);
+      }
+      return userAvatar({display_name: primary, github_username: String((pr && pr.username) || '')}, px, extraStyle);
+    }
+
+    /* provisionRequesterLabel renders the requester's real name, Slack ID, and
+       native provider subject beside the primary user ID on the review card.
+       Mapping a login to a person is the reason the wizard asks for a name at
+       all, and this is where the operator deciding the request needs it.
 
        Both are free text a user typed. esc() everywhere, and the whole label is
        built as a text node's escaped HTML rather than interpolated into an
@@ -17595,10 +17696,14 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!pr) return '';
       var name = (pr.full_name || '').trim();
       var slack = (pr.slack_id || '').trim();
-      if (!name && !slack) return '';
+      var native = provisionRequesterNativeSubject(pr);
+      if (!name && !slack && !native) return '';
+      var primary = provisionRequesterPrimary(pr);
       var bits = [];
-      if (name) bits.push(esc(name));
+      if (name && name !== primary) bits.push(esc(name));
       if (slack) bits.push('slack: ' + esc(slack));
+      if (native) bits.push(provisionNativeSubjectChip(pr));
+      if (!bits.length) return '';
       return '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' +
         bits.join(' &middot; ') + '</span>';
     }
@@ -17641,19 +17746,18 @@ const dashboardHTML = `<!DOCTYPE html>
       var rows = decided.map(function(pr) {
         var approved = pr.status === 'approved';
         var color = approved ? 'var(--green)' : 'var(--red)';
-        var uname = pr.username || '';
-        // Link the requester to their GitHub profile. Always github.com: a
-        // profile link is about the person, and the account that signed in to
-        // the hub is a github.com account even when the ORG they asked for
-        // lives on an Enterprise host.
+        var primary = provisionRequesterPrimary(pr);
+        // Link the requester avatar only when the server says the primary user
+        // ID is a GitHub login. Email/name fallbacks get an initials avatar
+        // instead, avoiding bogus github.com links for OIDC subjects.
         //
         // The AVATAR carries that link now. The username used to be a second
         // anchor to the same profile; two controls for one destination is noise,
         // so the name is plain text and the face is the affordance.
         var userCell =
-          linkedAvatar(uname, PANEL_ACCESS_AVATAR_PX, uname, 'margin-right:6px') +
-          (uname
-            ? '<span>' + esc(uname) + '</span>'
+          provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px') +
+          (primary
+            ? '<span>' + esc(primary) + '</span>' + provisionRequesterLabel(pr)
             : '<span style="color:var(--muted)">—</span>');
         // Repo link, built by the shared provisionRepoLabel(): github_host is
         // empty for public github.com and otherwise a GitHub Enterprise host
@@ -17740,12 +17844,13 @@ const dashboardHTML = `<!DOCTYPE html>
       _provisionRequestsByUser = {};
       pending.forEach(function(pr) { _provisionRequestsByUser[pr.username] = pr; });
       var rows = pending.map(function(pr) {
-        var avatar = linkedAvatar(pr.username, TABLE_AVATAR_PX, pr.username, 'margin-right:8px');
+        var primary = provisionRequesterPrimary(pr);
+        var avatar = provisionRequesterAvatar(pr, TABLE_AVATAR_PX, 'margin-right:8px');
         return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">' +
           '<div style="display:flex;align-items:center;gap:8px">' +
           avatar +
           '<div>' +
-          '<span style="font-size:0.85rem;font-weight:600">' + esc(pr.username) + '</span>' +
+          '<span style="font-size:0.85rem;font-weight:600">' + esc(primary || pr.username) + '</span>' +
           // Who the requester actually IS. Mapping a login to a person is the
           // reason the wizard asks for a name, and this review card is where an
           // operator needs it. esc() only — free text, never markup.

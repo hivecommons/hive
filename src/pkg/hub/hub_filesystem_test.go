@@ -350,13 +350,15 @@ func TestProvisionRequestCRUD(t *testing.T) {
 	defer cleanup()
 
 	pr := &ProvisionRequest{
-		Username:    "prov-user",
-		Org:         "myorg",
-		Repos:       "repo1",
-		PrimaryRepo: "repo1",
-		ACMMLevel:   2,
-		RequestedAt: "2024-01-01T00:00:00Z",
-		Status:      provisionStatusPending,
+		Username:     "prov-user",
+		UserID:       "prov-login",
+		UserIDSource: "github",
+		Org:          "myorg",
+		Repos:        "repo1",
+		PrimaryRepo:  "repo1",
+		ACMMLevel:    2,
+		RequestedAt:  "2024-01-01T00:00:00Z",
+		Status:       provisionStatusPending,
 	}
 	if err := saveProvisionRequest(pr); err != nil {
 		t.Fatalf("saveProvisionRequest: %v", err)
@@ -368,6 +370,12 @@ func TestProvisionRequestCRUD(t *testing.T) {
 	}
 	if loaded.Org != "myorg" {
 		t.Errorf("org = %q", loaded.Org)
+	}
+	if loaded.UserID != "prov-login" {
+		t.Errorf("user_id = %q, want %q", loaded.UserID, "prov-login")
+	}
+	if loaded.UserIDSource != "github" {
+		t.Errorf("user_id_source = %q, want %q", loaded.UserIDSource, "github")
 	}
 
 	// List

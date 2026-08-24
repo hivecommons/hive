@@ -23,8 +23,8 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		{"inline per-hive faces", "return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX,"},
 		{"status-dot hover panel rows", "linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,"},
 		{"per-hive pending request rows", "var avatar = linkedAvatar(pr.username, LIST_AVATAR_PX, pr.username, 'margin-right:6px');"},
-		{"past requests table", "linkedAvatar(uname, PANEL_ACCESS_AVATAR_PX, uname, 'margin-right:6px')"},
-		{"pending provision cards", "var avatar = linkedAvatar(pr.username, TABLE_AVATAR_PX, pr.username, 'margin-right:8px');"},
+		{"past requests table", "provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px')"},
+		{"pending provision cards", "var avatar = provisionRequesterAvatar(pr, TABLE_AVATAR_PX, 'margin-right:8px');"},
 		// The admin users table routes GitHub users through linkedAvatar and OIDC
 		// users through userAvatar (stored provider avatar / initials from the
 		// real display name — provider:sub is not a github.com login).
