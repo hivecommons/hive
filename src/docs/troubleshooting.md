@@ -236,8 +236,10 @@ agents:
 
 `brief` adds one `EXPLAIN:` line before each tool call. `full` adds a closing
 block covering the goal as understood, the approach chosen, and the
-alternatives rejected. `HIVE_EXPLAIN_MODE` sets a hive-wide default for agents
-that leave the field unset.
+alternatives rejected. To turn it on for every agent at once, set the hive-wide
+default in Settings → Governor → General (`governor.explain_mode` in
+`hive.yaml`); `HIVE_EXPLAIN_MODE` on the deployment is the fallback when that is
+unset. Either applies only to agents that leave the field unset.
 
 The explanation lands in the agent's ordinary log behind an `EXPLAIN:` prefix,
 so it is a read-time choice rather than a second stream:

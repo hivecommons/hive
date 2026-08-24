@@ -698,11 +698,15 @@ var ValidExplainModes = map[string]bool{
 	ExplainModeFull:  true,
 }
 
-// ExplainModeEnvVar is the hive-wide default for agents that leave
-// explain_mode unset. It is an env knob rather than a YAML block so an operator
-// debugging a misbehaving fleet can turn explanation on for every agent at once
-// without editing (and later having to unedit) each agent's config — the same
-// shape as HIVE_TMUX_HISTORY_LIMIT and HIVE_TMUX_PANE_WIDTH.
+// ExplainModeEnvVar is the deployment environment variable holding the
+// hive-wide default for agents that leave explain_mode unset. It lets an
+// operator debugging a misbehaving fleet turn explanation on for every agent at
+// once without editing (and later having to unedit) each agent's config — the
+// same shape as HIVE_TMUX_HISTORY_LIMIT and HIVE_TMUX_PANE_WIDTH.
+//
+// It remains supported, but it is no longer the ONLY place the default lives:
+// see GovernorConfig.ExplainMode. Hive also injects the RESOLVED mode into
+// every agent process under this same name.
 const ExplainModeEnvVar = "HIVE_EXPLAIN_MODE"
 
 // ExplainLinePrefix marks a line the agent emitted as debugging explanation
@@ -716,6 +720,67 @@ const ExplainLinePrefix = "EXPLAIN:"
 
 // ValidateExplainMode reports whether v is an accepted explain_mode value.
 func ValidateExplainMode(v string) bool { return ValidExplainModes[v] }
+
+// Explain-mode default sources reported by ExplainModeDefaultSource. Both are
+// safe to show in the dashboard and to log.
+const (
+	// ExplainModeSourceConfig means governor.explain_mode set the default.
+	ExplainModeSourceConfig = "config"
+	// ExplainModeSourceEnv means the ExplainModeEnvVar environment variable
+	// set the default because governor.explain_mode is unset.
+	ExplainModeSourceEnv = "env:" + ExplainModeEnvVar
+)
+
+// ResolveExplainModeDefault returns the hive-wide default explain mode applied
+// to agents that leave explain_mode unset.
+//
+// Governor config wins over the environment, with the env var kept as the
+// fallback for hives that already set it — the same precedence, and for the
+// same reason, as the backup encryption key (see BackupConfig.ResolveKey).
+// HIVE_EXPLAIN_MODE is set on the DEPLOYMENT, and a hosted spoke owner has no
+// deployment-env access, so a knob that lives only in the environment is
+// unreachable for exactly the operators who go looking for it and find nothing
+// (#4712). Putting it in governor config puts it in the dashboard's Settings →
+// Governor form, next to the other hive-wide agent defaults.
+//
+// An unrecognized value in either place resolves to off, matching
+// resolveExplainMode's rule that a typo degrades to today's behaviour rather
+// than to a mode nobody asked for.
+func (g GovernorConfig) ResolveExplainModeDefault() string {
+	mode, _ := g.resolveExplainModeDefault()
+	return mode
+}
+
+// ExplainModeDefaultSource reports WHERE the hive-wide default came from —
+// ExplainModeSourceConfig, ExplainModeSourceEnv, or "" when neither sets one
+// (so agents fall through to off). The dashboard shows this so an operator can
+// tell a default they set from one the deployment set for them, which is the
+// question that produced #4712 in the first place.
+func (g GovernorConfig) ExplainModeDefaultSource() string {
+	_, source := g.resolveExplainModeDefault()
+	return source
+}
+
+func (g GovernorConfig) resolveExplainModeDefault() (mode, source string) {
+	if v := strings.TrimSpace(g.ExplainMode); v != "" {
+		return normalizeExplainMode(v), ExplainModeSourceConfig
+	}
+	if v := strings.TrimSpace(os.Getenv(ExplainModeEnvVar)); v != "" {
+		return normalizeExplainMode(v), ExplainModeSourceEnv
+	}
+	return ExplainModeOff, ""
+}
+
+// normalizeExplainMode maps any value to one the kick path can act on,
+// collapsing typos and unknown modes to off.
+func normalizeExplainMode(v string) string {
+	switch v {
+	case ExplainModeBrief, ExplainModeFull:
+		return v
+	default:
+		return ExplainModeOff
+	}
+}
 
 // ValidCavemanModes are the accepted caveman_mode values. "" means "caveman
 // disabled"; it is valid on an agent but is not a mode in itself.
@@ -1025,14 +1090,23 @@ func (a *AgentConfig) EnabledExplicitlySet() bool {
 type GovernorConfig struct {
 	Modes         map[string]ModeConfig `yaml:"modes"`
 	EvalIntervalS int                   `yaml:"eval_interval_s"`
-	Labels        LabelsConfig          `yaml:"labels"`
-	Sensing       SensingConfig         `yaml:"sensing"`
-	Health        HealthConfig          `yaml:"health"`
-	Budget        BudgetConfig          `yaml:"budget"`
-	Logging       LoggingConfig         `yaml:"logging"`
-	LiteLLM       LiteLLMConfig         `yaml:"litellm"`
-	VLLM          InferenceAuthConfig   `yaml:"vllm"`
-	LLMD          InferenceAuthConfig   `yaml:"llm-d"`
+	// ExplainMode is the hive-wide default explain mode for agents that leave
+	// their own explain_mode unset. "" means "no hive default configured", in
+	// which case ExplainModeEnvVar is consulted and then off — see
+	// ResolveExplainModeDefault for the full precedence and why the setting
+	// lives here and not only in the environment (#4712).
+	//
+	// Valid values: "" | off | brief | full — the same set as the per-agent
+	// field, validated by ValidateExplainMode.
+	ExplainMode string              `yaml:"explain_mode,omitempty"`
+	Labels      LabelsConfig        `yaml:"labels"`
+	Sensing     SensingConfig       `yaml:"sensing"`
+	Health      HealthConfig        `yaml:"health"`
+	Budget      BudgetConfig        `yaml:"budget"`
+	Logging     LoggingConfig       `yaml:"logging"`
+	LiteLLM     LiteLLMConfig       `yaml:"litellm"`
+	VLLM        InferenceAuthConfig `yaml:"vllm"`
+	LLMD        InferenceAuthConfig `yaml:"llm-d"`
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.
@@ -4469,6 +4543,13 @@ func (c *Config) validate() error {
 				return fmt.Errorf("governor mode %s cadence for %s: %w", modeName, agentName, err)
 			}
 		}
+	}
+	// The hive-wide default goes through the SAME gate as the per-agent field.
+	// Without this a bad value here is silently normalized to off by
+	// ResolveExplainModeDefault, so an operator who typed "verbose" in the
+	// dashboard would see explanation stay off with nothing saying why.
+	if !ValidateExplainMode(strings.TrimSpace(c.Governor.ExplainMode)) {
+		return fmt.Errorf("governor: invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", c.Governor.ExplainMode, ExplainModeEnvVar)
 	}
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config

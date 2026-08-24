@@ -217,7 +217,7 @@ Rounding out the schema — fields you will rarely touch:
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
 | `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
-| `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit `HIVE_EXPLAIN_MODE` |
+| `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit the hive default |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style) | none |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
@@ -261,21 +261,35 @@ Explanation lands in the agent's ordinary log, tagged with the `EXPLAIN:` prefix
 
 ### Fleet-wide default
 
-Set `HIVE_EXPLAIN_MODE` on the hive to turn explanation on everywhere without editing each agent:
+To turn explanation on everywhere without editing each agent, set the hive-wide default. It lives in governor config, so it is settable from the dashboard:
 
+**Dashboard** — Settings → Governor → General → **Default explain mode**. The field also reports which mode is in force right now and where it came from, and takes effect on the next kick; no restart.
+
+**`hive.yaml`**
+
+```yaml
+governor:
+  explain_mode: brief   # off | brief | full — omit for "no hive default"
 ```
-HIVE_EXPLAIN_MODE=brief
-```
+
+**Environment** — `HIVE_EXPLAIN_MODE=brief` on the deployment still works, as the fallback consulted when `governor.explain_mode` is unset. Prefer the config field: the env var is set on the deployment, which a hosted hive's owner has no access to.
+
+| `governor.explain_mode` | `HIVE_EXPLAIN_MODE` | Hive default |
+| --- | --- | --- |
+| unset | unset | `off` |
+| unset | `full` | `full` |
+| `brief` | `full` | `brief` — config wins |
+| `off` | `full` | `off` — an explicit `off` in config is a choice, not "unset" |
 
 The per-agent field is a tri-state, and the difference matters:
 
-| `explain_mode` | With `HIVE_EXPLAIN_MODE=full` | Meaning |
+| `explain_mode` | With a hive default of `full` | Meaning |
 | --- | --- | --- |
 | unset | `full` | Inherit the hive default. |
 | `off` | `off` | Explicit opt-out; a fleet-wide default does not override it. |
 | `brief` | `brief` | Explicit per-agent choice wins. |
 
-An unrecognized value in either place resolves to `off`, so a typo degrades to the previous behaviour rather than to a mode nobody asked for. Hive injects the *resolved* mode into each agent process as `HIVE_EXPLAIN_MODE`, so an agent's own skills and scripts can branch on it without re-deriving the precedence rules.
+An unrecognized value in any of these places resolves to `off`, so a typo degrades to the previous behaviour rather than to a mode nobody asked for. Hive injects the *resolved* mode into each agent process as `HIVE_EXPLAIN_MODE`, so an agent's own skills and scripts can branch on it without re-deriving the precedence rules.
 
 Leave it off outside of debugging: the explanation is extra output tokens on every kick.
 

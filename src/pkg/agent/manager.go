@@ -405,6 +405,18 @@ type Manager struct {
 	// spoke. An atomic read is lock-free and safe from any lock context.
 	bobAPIKeyResolver atomic.Pointer[func() string]
 
+	// explainModeDefaultResolver returns the hive-wide default explain mode
+	// (governor.explain_mode, falling back to HIVE_EXPLAIN_MODE) at KICK and
+	// LAUNCH time rather than at boot, so an operator who turns explanation on
+	// from the dashboard while debugging sees it on the next kick instead of
+	// after a restart. Returns "" when no resolver was injected (tests / bare
+	// setups), which leaves resolveExplainMode on its env-only path.
+	//
+	// Same atomic.Pointer discipline and same deadlock reasoning as
+	// bobAPIKeyResolver above: it is read from deliverKickLocked and
+	// agentEnvPairs, both of which already hold m.mu.
+	explainModeDefaultResolver atomic.Pointer[func() string]
+
 	// bobKeySourceResolver reports WHERE the key was found ("file:<path>" or
 	// "env:<NAME>"), never the value. The launch path needs the PATH so it can
 	// verify the file is readable by the AGENT UID — the hive process can read
@@ -686,6 +698,30 @@ func (m *Manager) SetBobAPIKeyResolver(fn func() string) {
 // Safe to call while holding m.mu.
 func (m *Manager) bobAPIKey() string {
 	fnp := m.bobAPIKeyResolver.Load()
+	if fnp == nil || *fnp == nil {
+		return ""
+	}
+	return (*fnp)()
+}
+
+// SetExplainModeDefaultResolver injects the resolver for the hive-wide default
+// explain mode. Called from main.go with a closure over the live config, so a
+// default changed from the dashboard applies to the next kick without a
+// restart. A nil fn clears it, restoring the env-only fallback.
+func (m *Manager) SetExplainModeDefaultResolver(fn func() string) {
+	// Atomic store — no m.mu — so explainModeDefault can be read lock-free from
+	// the kick and launch paths (see explainModeDefaultResolver docs).
+	if fn == nil {
+		m.explainModeDefaultResolver.Store(nil)
+		return
+	}
+	m.explainModeDefaultResolver.Store(&fn)
+}
+
+// explainModeDefault returns the hive-wide default explain mode, or "" when no
+// resolver was injected. Safe to call while holding m.mu.
+func (m *Manager) explainModeDefault() string {
+	fnp := m.explainModeDefaultResolver.Load()
 	if fnp == nil || *fnp == nil {
 		return ""
 	}
@@ -4451,7 +4487,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// with commercial CLI backends that do not need it.
 	message = kickMessageWithSuffixes(message,
 		IsInferenceBackend(effectiveBackend(agent)),
-		resolveExplainMode(agent.Config))
+		resolveExplainMode(agent.Config, m.explainModeDefault()))
 
 	// Send message in chunks (400 rune max per chunk, rune-safe)
 	runes := []rune(message)
@@ -5129,16 +5165,25 @@ func explainKickSuffix(mode string) string {
 	}
 }
 
-// resolveExplainMode returns the explain mode in force for an agent.
+// resolveExplainMode returns the explain mode in force for an agent, given the
+// hive-wide default already resolved by the caller (see Manager.explainModeDefault).
 //
 // Precedence, and the tri-state is the point: an explicit per-agent value —
 // INCLUDING "off" — always wins, so an operator who turned explanation on
-// fleet-wide via HIVE_EXPLAIN_MODE does not force it onto an agent that opted
-// out. Only an unset agent inherits the hive default. An invalid value in
-// either place resolves to off, so a typo degrades to today's behavior rather
-// than to an unexpected mode.
-func resolveExplainMode(cfg config.AgentConfig) string {
+// fleet-wide does not force it onto an agent that opted out. Only an unset
+// agent inherits the hive default. An invalid value in either place resolves to
+// off, so a typo degrades to today's behavior rather than to an unexpected mode.
+//
+// hiveDefault is "" only when no resolver was injected (tests, bare setups);
+// the env var is read here so that path keeps behaving as it did before the
+// governor.explain_mode setting existed (#4712). When a resolver IS wired,
+// config.GovernorConfig.ResolveExplainModeDefault has already applied the
+// config-over-env precedence and never returns "".
+func resolveExplainMode(cfg config.AgentConfig, hiveDefault string) string {
 	mode := cfg.ExplainMode
+	if mode == "" {
+		mode = strings.TrimSpace(hiveDefault)
+	}
 	if mode == "" {
 		mode = strings.TrimSpace(os.Getenv(config.ExplainModeEnvVar))
 	}
@@ -7959,7 +8004,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// (including inheritance from the hive-wide default and the off fallback for
 	// an invalid value). Always exported, off included, so a script can branch on
 	// it without having to re-derive the precedence rules itself.
-	vars = append(vars, agentEnvPair{config.ExplainModeEnvVar, resolveExplainMode(agent.Config), false})
+	vars = append(vars, agentEnvPair{config.ExplainModeEnvVar, resolveExplainMode(agent.Config, m.explainModeDefault()), false})
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {

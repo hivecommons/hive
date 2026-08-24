@@ -94,7 +94,10 @@ func TestResolveExplainMode_Precedence(t *testing.T) {
 				// an operator's own HIVE_EXPLAIN_MODE in the test environment.
 				t.Setenv(config.ExplainModeEnvVar, "")
 			}
-			got := resolveExplainMode(config.AgentConfig{ExplainMode: tt.agentMode})
+			// hiveDefault "" is the no-resolver path (tests / bare setups):
+			// resolveExplainMode still reads the env var itself, so these cases
+			// pin the pre-#4712 behavior.
+			got := resolveExplainMode(config.AgentConfig{ExplainMode: tt.agentMode}, "")
 			if got != tt.want {
 				t.Errorf("resolveExplainMode(agent=%q, env=%q) = %q, want %q",
 					tt.agentMode, tt.hiveEnv, got, tt.want)
@@ -323,5 +326,104 @@ func TestStripExplainLines_NoExplanationIsUnchanged(t *testing.T) {
 	}
 	if strings.Contains(pane, config.ExplainLinePrefix) {
 		t.Fatal("fixture accidentally contains the explain prefix — test is not proving the fast path")
+	}
+}
+
+// #4712: the hive-wide default used to live ONLY in HIVE_EXPLAIN_MODE, which is
+// set on the deployment. A hosted spoke owner has no deployment-env access, so
+// they went looking for the setting and found nothing. governor.explain_mode
+// puts it in config (and therefore in the dashboard form); these tests pin the
+// precedence between the two and the per-agent opt-out that must survive both.
+func TestResolveExplainMode_GovernorDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		agentMode   string
+		hiveDefault string
+		env         string
+		want        string
+	}{
+		{
+			name:        "governor default applies to an unset agent",
+			hiveDefault: config.ExplainModeBrief,
+			want:        config.ExplainModeBrief,
+		},
+		{
+			// The whole point of the tri-state: an agent that opted out stays
+			// out even when the operator turns explanation on hive-wide.
+			name:        "explicit per-agent off beats the governor default",
+			agentMode:   config.ExplainModeOff,
+			hiveDefault: config.ExplainModeFull,
+			want:        config.ExplainModeOff,
+		},
+		{
+			name:        "per-agent value beats the governor default",
+			agentMode:   config.ExplainModeBrief,
+			hiveDefault: config.ExplainModeFull,
+			want:        config.ExplainModeBrief,
+		},
+		{
+			// Config wins over the environment — the resolver has already
+			// applied that precedence, so what arrives here is final.
+			name:        "governor default beats the env var",
+			hiveDefault: config.ExplainModeFull,
+			env:         config.ExplainModeBrief,
+			want:        config.ExplainModeFull,
+		},
+		{
+			// No resolver wired / no governor default set: the env var is still
+			// honoured, so hives that already set it keep working.
+			name: "env var still applies when no governor default is set",
+			env:  config.ExplainModeBrief,
+			want: config.ExplainModeBrief,
+		},
+		{
+			name:        "unknown governor default degrades to off",
+			hiveDefault: "verbose",
+			want:        config.ExplainModeOff,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(config.ExplainModeEnvVar, tt.env)
+			got := resolveExplainMode(config.AgentConfig{ExplainMode: tt.agentMode}, tt.hiveDefault)
+			if got != tt.want {
+				t.Errorf("resolveExplainMode(agent=%q, hiveDefault=%q, env=%q) = %q, want %q",
+					tt.agentMode, tt.hiveDefault, tt.env, got, tt.want)
+			}
+		})
+	}
+}
+
+// The resolver is injected, so a Manager without one (tests, bare setups) must
+// keep resolving rather than panicking or reporting a mode.
+func TestManagerExplainModeDefault_UninjectedIsEmpty(t *testing.T) {
+	m := &Manager{}
+	if got := m.explainModeDefault(); got != "" {
+		t.Errorf("explainModeDefault() with no resolver = %q, want empty", got)
+	}
+	m.SetExplainModeDefaultResolver(func() string { return config.ExplainModeFull })
+	if got := m.explainModeDefault(); got != config.ExplainModeFull {
+		t.Errorf("explainModeDefault() = %q, want %q", got, config.ExplainModeFull)
+	}
+	// A nil fn clears it: the env-only fallback must be restorable.
+	m.SetExplainModeDefaultResolver(nil)
+	if got := m.explainModeDefault(); got != "" {
+		t.Errorf("explainModeDefault() after clear = %q, want empty", got)
+	}
+}
+
+// The resolver is read on every kick, not cached at boot, so an operator who
+// turns explanation on from the dashboard sees it on the next kick.
+func TestManagerExplainModeDefault_ReadsLiveValue(t *testing.T) {
+	m := &Manager{}
+	current := config.ExplainModeOff
+	m.SetExplainModeDefaultResolver(func() string { return current })
+	if got := m.explainModeDefault(); got != config.ExplainModeOff {
+		t.Fatalf("explainModeDefault() = %q, want %q", got, config.ExplainModeOff)
+	}
+	current = config.ExplainModeBrief
+	if got := m.explainModeDefault(); got != config.ExplainModeBrief {
+		t.Errorf("explainModeDefault() after config change = %q, want %q", got, config.ExplainModeBrief)
 	}
 }

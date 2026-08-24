@@ -15198,6 +15198,17 @@ function burnAreaChart() {
       { value: 'brief', label: 'brief — one line per tool call' },
       { value: 'full', label: 'full — brief + end-of-turn rationale' },
     ];
+    // The HIVE-WIDE default (#4712), on the Governor tab. Deliberately a
+    // separate list from EXPLAIN_MODES above: here '' is not "inherit", it is
+    // "no hive default set", which falls through to the HIVE_EXPLAIN_MODE
+    // deployment env var and then to off. Labelling both as "(hive default)"
+    // would make the two selects look like the same control.
+    const HIVE_EXPLAIN_MODES = [
+      { value: '', label: '(not set — use HIVE_EXPLAIN_MODE, else off)' },
+      { value: 'off', label: 'off — never explain' },
+      { value: 'brief', label: 'brief — one line per tool call' },
+      { value: 'full', label: 'full — brief + end-of-turn rationale' },
+    ];
     const MAX_AGENT_REPLICAS = 5;
 
     function openConfigDialog(type, agentName, initialTabOverride) {
@@ -17746,7 +17757,7 @@ function burnAreaChart() {
           </select>
         </div>
         <div class="config-field">
-          <label>Explain Mode <span class="config-info">i<span class="config-tooltip">Ask this agent to say WHY it made each tool call, for debugging. Reasoning is emitted on EXPLAIN: lines alongside the work — the agent still acts, it does not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. View the reasoning on its own with "?explain=only" on the agent's full log. "(hive default)" follows the HIVE_EXPLAIN_MODE setting; "off" opts this agent out even when the hive default is on.</span></span></label>
+          <label>Explain Mode <span class="config-info">i<span class="config-tooltip">Ask this agent to say WHY it made each tool call, for debugging. Reasoning is emitted on EXPLAIN: lines alongside the work — the agent still acts, it does not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. View the reasoning on its own with "?explain=only" on the agent's full log. "(hive default)" follows the hive-wide Default explain mode in Settings &rarr; Governor &rarr; General (or the HIVE_EXPLAIN_MODE environment variable when that is unset); "off" opts this agent out even when the hive default is on.</span></span></label>
           <select id="cfg-explain-mode" data-change-action="markDirty" data-arg0="general" data-arg1="explainMode" data-arg-types="s,s,v">
             ${EXPLAIN_MODES.map(m => `<option value="${m.value}" ${(g.explainMode || '') === m.value ? 'selected' : ''}>${m.label}</option>`).join('')}
           </select>
@@ -18773,6 +18784,26 @@ function burnAreaChart() {
       });
     }
 
+    // The explain-mode default is three values, not one (#4712): what is
+    // CONFIGURED ('' = nothing set), what is actually IN FORCE, and WHERE that
+    // came from. The last two matter because a hosted owner cannot read the
+    // deployment's HIVE_EXPLAIN_MODE, so a default they did not set has to be
+    // visible in the form or they are back to hunting for it.
+    //
+    // Split out of renderGovGeneral so saving can refresh this ONE line rather
+    // than repainting the tab, which would discard a half-typed Hive ID or eval
+    // interval sitting unsaved beside it.
+    function explainDefaultNoteHtml(genAdv) {
+      genAdv = genAdv || {};
+      const effective = genAdv.explain_mode_effective || 'off';
+      const source = genAdv.explain_mode_source || '';
+      let note;
+      if (source === 'config') note = 'Set here.';
+      else if (source) note = 'Inherited from the ' + source.replace(/^env:/, '') + ' deployment environment variable — set a value above to override it.';
+      else note = 'No hive default set, so agents that leave Explain Mode unset do not explain.';
+      return 'In force now: <strong style="color:var(--text)">' + esc(effective) + '</strong>. ' + esc(note) + ' Applies from the next kick &mdash; no restart needed.';
+    }
+
     // ── Governor Tab Renderers ──
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
@@ -18781,6 +18812,7 @@ function burnAreaChart() {
       const genAdv = (_configState.data || {}).general_advanced || {};
       const attribOn = genAdv.attribution_trailer !== undefined ? genAdv.attribution_trailer !== false : attrib.attributionTrailer !== false; // default on
       const evalInterval = genAdv.eval_interval_s || 0;
+      const explainMode = genAdv.explain_mode || '';
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
       const trajReady = traj.reviewerReady === true;
@@ -18817,6 +18849,13 @@ function burnAreaChart() {
           <label>Eval interval (seconds) <span class="config-info">i<span class="config-tooltip">How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 60. Lower = more responsive, more API calls.</span></span></label>
           <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="60" data-change-action="gh70" style="width:140px">
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Changes take effect on next restart.</span>
+        </div>
+        <div class="config-field" style="margin-top:14px">
+          <label>Default explain mode <span class="config-info">i<span class="config-tooltip">Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.</span></span></label>
+          <select data-change-action="gh75" style="width:320px">
+            ${HIVE_EXPLAIN_MODES.map(m => `<option value="${m.value}" ${explainMode === m.value ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}
+          </select>
+          <span id="gov-explain-default-note" style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">${explainDefaultNoteHtml(genAdv)}</span>
         </div>
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleAttributionTrailer" data-arg-types="t"></div>
@@ -18864,8 +18903,14 @@ function burnAreaChart() {
         </div>`;
     }
 
-    async function saveGovGeneralAdvanced(field, value) {
+    // opts.note replaces the default "next restart" wording for a field that
+    // does NOT need one — the explain-mode default is re-read on every kick, and
+    // telling an operator to restart for it would be wrong. opts.refresh is a
+    // callback that repaints whatever derived read-out the field owns, given the
+    // server's response.
+    async function saveGovGeneralAdvanced(field, value, opts) {
       if (value === null) return; // empty input — leave the setting untouched
+      opts = opts || {};
       try {
         const body = {}; body[field] = value;
         const res = await fetch('/api/config/governor/general-advanced', {
@@ -18876,7 +18921,8 @@ function burnAreaChart() {
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
         _configState.data.general_advanced = data;
-        showToast('Governor settings updated — effective on next restart');
+        if (opts.refresh) opts.refresh(data);
+        showToast(opts.note || 'Governor settings updated — effective on next restart');
       } catch (err) {
         showToast('Failed to update governor settings: ' + err.message, 'error');
       }
@@ -22568,6 +22614,9 @@ function burnAreaChart() {
     }
     const HIVE_GEN_HANDLERS = {
       gh70: function (event, A) { saveGovGeneralAdvanced('eval_interval_s', this.value === '' ? null : parseInt(this.value,10)); },
+      // '' is a real value for the hive-wide explain default (it clears it), so
+      // this must NOT map empty to null the way gh70 does.
+      gh75: function (event, A) { saveGovGeneralAdvanced('explain_mode', this.value, { note: 'Default explain mode updated — applies from the next kick', refresh: function (data) { const n = document.getElementById('gov-explain-default-note'); if (n) n.innerHTML = explainDefaultNoteHtml(data); } }); },
       gh71: function (event, A) { markDirty('auto-merge','max_merges',Number(this.value)||0); },
       gh72: function (event, A) { markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },

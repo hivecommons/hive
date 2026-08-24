@@ -1529,6 +1529,14 @@ func main() {
 	agentMgr.SetBobAPIKeyResolver(func() string {
 		return cfg.Governor.Bob.ResolveAPIKey()
 	})
+	// Hive-wide default explain mode, resolved per kick/launch off the live cfg
+	// pointer for the same reason as the bob key above: an operator debugging a
+	// misbehaving fleet turns explanation on from Settings → Governor and needs
+	// it on the NEXT kick, not after a restart. Governor config wins over
+	// HIVE_EXPLAIN_MODE; the env var stays as the fallback (#4712).
+	agentMgr.SetExplainModeDefaultResolver(func() string {
+		return cfg.Governor.ResolveExplainModeDefault()
+	})
 	// The launch path also needs to know WHICH FILE the key came from, so it can
 	// check that file is readable by the agent UID rather than only by the hive
 	// process. Returns a loggable source string, never the key value.
