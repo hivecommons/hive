@@ -7274,6 +7274,49 @@
       </div>`;
     }
 
+    // ── Budget window PHASE (#4686) ─────────────────────────────────────────
+    // "37h until reset" says how long is left but never says WHEN — and an
+    // operator who configured "1B tokens every 2 days" is asking exactly that:
+    // which 2-day window am I in, and when does the next one start? A countdown
+    // cannot be lined up against a calendar, so the absolute bounds are stated
+    // and the countdown kept as the at-a-glance number.
+    //
+    // WINDOW_STARTS_AT / WINDOW_ENDS_AT are RFC3339 from the live status and
+    // are both optional — they are empty until a limit is set and a window has
+    // opened. Every caller must survive that, so these degrade to the bare
+    // countdown rather than rendering "Invalid Date".
+    function budgetWindowBounds(budget) {
+      const parse = (s) => {
+        if (!s) return null;
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+      };
+      return { start: parse(budget && budget.WINDOW_STARTS_AT), end: parse(budget && budget.WINDOW_ENDS_AT) };
+    }
+
+    // fmtWindowStamp keeps the inline label short — a full toLocaleString() on
+    // both ends does not fit the budget bar. The tooltip carries the full,
+    // unambiguous timestamps.
+    function fmtWindowStamp(d) {
+      return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function budgetWindowPhaseText(budget, hoursLeft) {
+      const { start, end } = budgetWindowBounds(budget);
+      if (!start && !end) return `${hoursLeft}h until reset`;
+      if (start && end) return `Window ${fmtWindowStamp(start)} → ${fmtWindowStamp(end)} · ${hoursLeft}h left`;
+      return `Resets ${fmtWindowStamp(end || start)} · ${hoursLeft}h left`;
+    }
+
+    function budgetWindowPhaseTitle(budget) {
+      const { start, end } = budgetWindowBounds(budget);
+      if (!start && !end) return 'The budget window has not opened yet — it opens when a token limit is set and the governor first evaluates.';
+      const parts = [];
+      if (start) parts.push(`This window opened ${start.toLocaleString()}`);
+      if (end) parts.push(`spend resets to 0 at ${end.toLocaleString()}`);
+      return parts.join('; ') + '. Window length is governor.budget.period_days.';
+    }
+
     function renderBudgetBar(budget) {
       if (!budget || !budget.BUDGET_WEEKLY) return '';
       const PCT_SAFE = 50;
@@ -7314,7 +7357,7 @@
       return `<div class="budget-bar">
         <div class="budget-bar-label">
           <span>Used: ${fmtTokens(used)} / ${fmtTokens(weekly)} (${pctUsed}%)${ignoreCheck}</span>
-          <span>${hoursLeft}h until reset</span>
+          <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
         </div>
         <div class="budget-bar-track"><div class="budget-bar-fill ${usedFillCls}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:0.68rem;color:var(--muted);margin-top:4px">
@@ -8489,6 +8532,47 @@ function burnAreaChart() {
       return rows.slice().sort((a, b) => costCmp(a, b, s.key, s.dir, fallback));
     }
 
+    // costTokenBudgetHtml renders the TOKEN budget inside the Cost panel (#4686).
+    //
+    // The budget bar and the per-window history already existed, but only under
+    // Governor. An operator asking "how close is this hive to my token budget?"
+    // opens 💵 Cost — and found all-time dollar estimates and cumulative token
+    // tables, none of which answer it. Worse, the answer is denominated in the
+    // wrong unit: a hive with a token budget does not regulate on dollars and
+    // does not know the true price, so the dollar figures are explicitly not
+    // what the limit is enforced against.
+    //
+    // This reuses the same /api/budget/history payload the Governor chart reads
+    // (fetched globally on an interval, so it is populated regardless of which
+    // section is open) rather than adding a second source of truth.
+    function costTokenBudgetHtml() {
+      // _lastBudget is the same object renderBudgetBar reads, refreshed on every
+      // status poll — so the Cost panel cannot disagree with the Governor bar.
+      const budget = window._lastBudget || null;
+      const limit = budget && budget.BUDGET_WEEKLY;
+      if (!limit) {
+        return `<div class="cost-subtitle" style="margin-top:10px">No token budget configured — set <b>Total Tokens</b> and <b>Period Days</b> under Settings → Governor to track spend against a limit. The figures above are dollar ESTIMATES and are not what any limit is enforced against.</div>`;
+      }
+      const used = budget.BUDGET_USED || 0;
+      const pctUsed = budget.BUDGET_PCT_USED || 0;
+      const hoursLeft = budget.HOURS_REMAINING || 0;
+      const exhausted = !!budget.BUDGET_EXHAUSTED;
+      const PCT_BUDGET_WARN = 90;
+      const fill = exhausted ? 'danger' : pctUsed >= PCT_BUDGET_WARN ? 'warning' : 'safe';
+      return `<div class="cost-token-budget" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div class="cost-subtitle" style="margin-bottom:6px"><b>Token budget</b> — this is the limit the governor actually enforces (tokens, not dollars). Spend resets to 0 at the end of each window.</div>
+        <div class="budget-bar">
+          <div class="budget-bar-label">
+            <span>Used this window: ${fmtTokens(used)} / ${fmtTokens(limit)} (${pctUsed}%)</span>
+            <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
+          </div>
+          <div class="budget-bar-track"><div class="budget-bar-fill ${fill}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
+          ${exhausted ? '<div style="font-size:0.68rem;margin-top:3px;color:var(--red)">Budget exhausted — agent kicks are suspended until the window resets.</div>' : ''}
+          ${budgetHistoryChart()}
+        </div>
+      </div>`;
+    }
+
     function renderCost(cost) {
       const el = document.getElementById('cost-panel');
       if (!el) return;
@@ -8687,6 +8771,7 @@ function burnAreaChart() {
           ${sandboxTable}
           ${sessionTable}
           ${unpricedNote}
+          ${costTokenBudgetHtml()}
           <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
         </div>
       </div>`;
