@@ -31,7 +31,8 @@
 #     that and /usr is read-only. Missing prerequisites are DETECTED and
 #     REPORTED by the existing preflights; the host is never modified to suit
 #     us.
-#   * It CLONES NOTHING. hive-setup.sh clones v2 into /opt/hive. This runs from
+#   * It CLONES NOTHING. hive-setup.sh clones the hive repo (default v4) into
+#     /opt/hive. This runs from
 #     the checkout it lives in.
 #   * It GENERATES NO DEPLOYMENT DESCRIPTION. The four Quadlet units in
 #     src/deploy/quadlet/ are the source of truth (#4404) and are installed
