@@ -161,6 +161,7 @@ func (s *Store) ReadNewFindings() ([]Finding, error) {
 func BuildDigest(findings []Finding, mode string) *Digest {
 	byAgent := make(map[string][]Finding)
 	for _, f := range findings {
+		f = capCoverageGapSeverity(f)
 		byAgent[f.Agent] = append(byAgent[f.Agent], f)
 	}
 	// Collapse restatements of the same finding (#2364). TotalCount must be
@@ -177,6 +178,19 @@ func BuildDigest(findings []Finding, mode string) *Digest {
 		ByAgent:     byAgent,
 		TotalCount:  total,
 	}
+}
+
+// capCoverageGapSeverity enforces the quality-policy rule that a coverage-gap
+// finding is never critical (#4734). The policy text alone is advisory — a
+// non-compliant quality agent filed a critical coverage-gap on a live hive
+// digest despite the rule — so the digest render caps it mechanically. The
+// policy's priority ladder tops out at high (missing both unit and e2e
+// coverage), which is what an over-severe finding is demoted to.
+func capCoverageGapSeverity(f Finding) Finding {
+	if f.Type == "coverage-gap" && f.Severity == "critical" {
+		f.Severity = "high"
+	}
+	return f
 }
 
 // isAdvisoryBeadType returns true for bead types that represent actionable
@@ -559,6 +573,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 			if d := b.Meta("detail"); d != "" && f.Detail == "" {
 				f.Detail = d
 			}
+			f = capCoverageGapSeverity(f)
 			byAgent[agentName] = append(byAgent[agentName], f)
 			total++
 		}
