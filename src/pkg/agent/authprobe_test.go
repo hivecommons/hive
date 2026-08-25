@@ -579,7 +579,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 		name:  "dir",
 		mode:  0o700 | os.ModeDir,
 		isDir: true,
-		sys:   &syscall.Stat_t{Uid: DevUID, Gid: NodeGID},
+		sys:   &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
 	}, logger)
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -596,7 +596,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	fixEntry(file, fakeFileInfo{
 		name: "file",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: DevUID, Gid: NodeGID},
+		sys:  &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
 	}, logger)
 	info, err = os.Stat(file)
 	if err != nil {
@@ -610,7 +610,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	fixEntry(file, fakeFileInfo{
 		name: "other-owner",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: uint32(DevUID + 100), Gid: NodeGID},
+		sys:  &syscall.Stat_t{Uid: uint32(DevUID + 100), Gid: uint32(NodeGID)},
 	}, logger)
 	fixEntry(file, fakeFileInfo{
 		name: "root-owned",

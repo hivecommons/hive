@@ -49,11 +49,15 @@ type KickRecord struct {
 	Snippet   string    `json:"snippet"`
 }
 
+// paneCaptureSleep is a pacing var, not a const, for the same reason as the
+// pacing block near deliverStartupKick: the pkg/agent TestMain shrinks it so
+// the suite fits the default `go test` timeout. Production value unchanged.
+var paneCaptureSleep = 500 * time.Millisecond
+
 const (
 	outputBufferCapacity = 500
 	kickHistoryCapacity  = 50
 	tmuxCaptureLines     = 2000
-	paneCaptureSleep     = 500 * time.Millisecond
 	proxyListenPort      = 18443
 	proxyCACertPath      = "/data/proxy-ca.pem"
 
@@ -3119,20 +3123,25 @@ const codexUpdatePromptLabel = "codex update prompt"
 // Originally this handled only Copilot's folder-trust dialog. It covers codex's
 // trust and update menus too, because those block startup exactly the same way
 // and the update menu's default answer is actively destructive.
+// Trust-prompt watcher pacing. Vars, not consts, so the pkg/agent TestMain can
+// shrink them (see the pacing block near deliverStartupKick). Production
+// values unchanged; shared by both watchForTrustPrompt variants.
+var (
+	trustPollInterval = 2 * time.Second
+	trustMaxWait      = 120 * time.Second
+	trustCooldown     = 3 * time.Second
+	// trustReanswerAfter is how long a prompt must have been answered before
+	// the same prompt may be answered again. Short enough that a CLI which
+	// restarts inside the pane (crash loop, /login relaunch) is unwedged on
+	// its next appearance; long enough that the menu still rendering for a
+	// beat after the keystroke is never double-typed (the original failure:
+	// a second poll matched the fading menu and typed the option again — by
+	// then the CLI was at its input prompt, so the digit was submitted as a
+	// user message and answered, burning tokens).
+	trustReanswerAfter = 60 * time.Second
+)
+
 func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.Context) {
-	const (
-		trustPollInterval = 2 * time.Second
-		trustCooldown     = 3 * time.Second
-		// trustReanswerAfter is how long a prompt must have been answered before
-		// the same prompt may be answered again. Short enough that a CLI which
-		// restarts inside the pane (crash loop, /login relaunch) is unwedged on
-		// its next appearance; long enough that the menu still rendering for a
-		// beat after the keystroke is never double-typed (the original failure:
-		// a second poll matched the fading menu and typed the option again — by
-		// then the CLI was at its input prompt, so the digit was submitted as a
-		// user message and answered, burning tokens).
-		trustReanswerAfter = 60 * time.Second
-	)
 	// No deadline: the watcher runs for the agent's whole lifetime (ctx is the
 	// per-launch context). The old 120s window assumed the trust prompt only
 	// appears at startup, but Copilot ≥1.0.78 can render it later than that on
@@ -3174,11 +3183,6 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 // watchForTrustPrompt monitors a tmux session for Copilot's "Confirm folder trust"
 // prompt and auto-selects "Yes, and remember for future sessions" (option 2).
 func (m *Manager) watchForTrustPrompt(session string, ctx context.Context) {
-	const (
-		trustPollInterval = 2 * time.Second
-		trustMaxWait      = 120 * time.Second
-		trustCooldown     = 3 * time.Second
-	)
 	deadline := time.After(trustMaxWait)
 	ticker := time.NewTicker(trustPollInterval)
 	defer ticker.Stop()
@@ -5410,11 +5414,28 @@ func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
 }
 
 const (
+	enterCount = 3
+	chunkSize  = 400
+	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
+	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
+	// crash. It matches the production cliReadyTimeout (60s) so a still-booting
+	// CLI is never restarted underneath itself, which would spawn a second
+	// concurrent CLI.
+	cliBootGraceSeconds = 60
+)
+
+// Pacing seams (#4717/#4693/#4688). These are package VARS, not consts, so the
+// pkg/agent TestMain can shrink them for the whole suite: they accumulate to
+// well over the default 10m `go test` timeout when 440 tests pay production
+// pacing (1-3s sleeps, 60-120s poll deadlines) against stub CLIs that render
+// instantly. Production values are unchanged — nothing outside TestMain may
+// mutate them. Relationships the values encode (bobInputHandlerSettleDelay
+// distinct from every tmux-pacing delay, and far below inputPromptTimeout) are
+// pinned by TestBobSettleDelay_* and must be preserved by any test override.
+var (
 	clearBeforeKickDelay    = 2 * time.Second
-	enterCount              = 3
 	enterDelay              = 300 * time.Millisecond
 	textToEnterDelay        = 1 * time.Second
-	chunkSize               = 400
 	chunkDelay              = 1 * time.Second
 	staleCheckDelay         = 1 * time.Second
 	cliReadyPollInterval    = 2 * time.Second
@@ -5439,11 +5460,11 @@ const (
 	// costs one agent a few seconds once per launch while under-waiting
 	// silently loses the bootstrap prompt entirely.
 	bobInputHandlerSettleDelay = 3 * time.Second
-	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
-	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
-	// crash. It matches cliReadyTimeout (60s) so a still-booting CLI is never
-	// restarted underneath itself, which would spawn a second concurrent CLI.
-	cliBootGraceSeconds = 60
+	// sessionReadyDelay is how long a freshly created tmux session's shell is
+	// given to initialize before the launch command is typed into it. Without
+	// it, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the shell isn't
+	// ready to process command substitution yet.
+	sessionReadyDelay = 2 * time.Second
 )
 
 func (m *Manager) SeedLastKick(name string, t time.Time) {
@@ -6419,7 +6440,10 @@ func paneShowsLoginPrompt(lines []string) bool {
 	return false
 }
 
-const (
+// Diagnostic pacing. Vars, not consts, so the pkg/agent TestMain can shrink
+// them (see the pacing block near deliverStartupKick). Production values
+// unchanged.
+var (
 	diagnosticTimeoutSec = 20
 	diagnosticPollSec    = 2
 )
@@ -8432,7 +8456,6 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// Without this, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the
 	// shell isn't ready to process command substitution yet.
 	// Released the lock before sleeping so other manager operations aren't blocked.
-	const sessionReadyDelay = 2 * time.Second
 	time.Sleep(sessionReadyDelay)
 
 	m.mu.Lock()

@@ -29,6 +29,11 @@ func testEnvPairs(ap *AgentProcess) []agentEnvPair {
 	return m.agentEnvPairs(ap)
 }
 
+// productionWatchedHomeDirs is the production default of WatchedHomeDirs,
+// snapshotted by TestMain before it redirects the walk roots into the
+// hermetic temp tree. Pin tests on the production config read this.
+var productionWatchedHomeDirs []string
+
 func TestMain(m *testing.M) {
 	defaultTmuxSocket = fmt.Sprintf("ht%d", os.Getpid())
 
@@ -75,6 +80,61 @@ func TestMain(m *testing.M) {
 	os.Setenv("PATH", dir+":"+originalPath)
 	os.Unsetenv("TMUX")
 	os.Setenv("TMUX_TMPDIR", tmuxDir)
+
+	// Hermeticity seams (#4693/#4685): never read or touch host state.
+	//
+	// NewManager loads UIDMapPath whenever it exists; on a host running a live
+	// hive the production /var/run/hive/uid-map.json maps real agents, so test
+	// agents silently inherit real UIDs and per-UID tmux sockets (su-exec
+	// routing, live-socket targeting, UID-collision assertion failures). Point
+	// it into the test temp tree, where it never exists unless a test creates
+	// it.
+	UIDMapPath = filepath.Join(dir, "uid-map.json")
+	// fixPermissions/ensureWatchedDirs walk (and chown/chmod!) the production
+	// /data trees when they exist. Point every walk root into the temp tree so
+	// no test can touch live agent data or spend minutes walking real dirs.
+	permRoot := filepath.Join(dir, "perm")
+	// Snapshot the production list first: TestWatchedHomeDirsIncludesBob pins
+	// the production default (bob's /data/home/.bob entry), not the override.
+	productionWatchedHomeDirs = append([]string(nil), WatchedHomeDirs...)
+	WatchedHomeDirs = []string{filepath.Join(permRoot, "home", ".claude")}
+	SharedRepoParent = filepath.Join(permRoot, "home")
+	GooseLogsDir = filepath.Join(permRoot, "home", ".local", "state", "goose", "logs", "cli")
+	ModeFileGlob = filepath.Join(permRoot, ".hive-mode-*")
+	CapsFileGlob = filepath.Join(permRoot, ".hive-caps-*")
+
+	// Pacing shrink (#4717/#4688): the suite's 440 tests pay production pacing
+	// (1-3s sleeps, 60-120s poll deadlines) against stub CLIs that render
+	// instantly, which accumulates past the default 10m `go test` timeout and
+	// past coverage-hourly's 600s budget. Shrink the seams package-wide;
+	// pacing-sensitive relationships (TestBobInputHandlerSettleDelay) are
+	// preserved: bobInputHandlerSettleDelay stays distinct from the tmux pacing
+	// delays and far below inputPromptTimeout. Timeout-class values stay in
+	// whole seconds so slow CI runners keep real headroom. Poll intervals that
+	// fork a tmux subprocess per tick (CLI-ready, input-prompt, trust watcher —
+	// the last runs for each launched agent's whole lifetime) are shrunk to
+	// ~100-250ms, NOT to single-digit milliseconds: a 20ms fork loop across the
+	// suite's live agents is a measurable subprocess storm that starves tmux
+	// rendering and flakes pane-content assertions.
+	clearBeforeKickDelay = 20 * time.Millisecond
+	enterDelay = 3 * time.Millisecond
+	textToEnterDelay = 10 * time.Millisecond
+	chunkDelay = 10 * time.Millisecond
+	staleCheckDelay = 10 * time.Millisecond
+	cliReadyPollInterval = 100 * time.Millisecond
+	cliReadyTimeout = 5 * time.Second
+	inputPromptPollInterval = 100 * time.Millisecond
+	inputPromptTimeout = 8 * time.Second
+	preLaunchShellClearDelay = 5 * time.Millisecond
+	bobInputHandlerSettleDelay = 30 * time.Millisecond
+	sessionReadyDelay = 20 * time.Millisecond
+	paneCaptureSleep = 10 * time.Millisecond
+	trustPollInterval = 250 * time.Millisecond
+	trustMaxWait = 5 * time.Second
+	trustCooldown = 30 * time.Millisecond
+	trustReanswerAfter = 600 * time.Millisecond
+	diagnosticTimeoutSec = 3
+	diagnosticPollSec = 1
 
 	code := m.Run()
 

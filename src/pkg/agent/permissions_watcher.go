@@ -13,13 +13,20 @@ import (
 const (
 	// PermissionFixInterval is how often the watcher scans for wrong ownership.
 	PermissionFixInterval = 10 * time.Second
+)
 
+// DevUID and NodeGID are package variables (not constants) so the test suite
+// can point the permission fixer at fixture trees owned by the test user
+// instead of the live /data agent identities (#4685, #4693).
+var (
 	// DevUID is the uid of the "dev" user that agents run as.
 	DevUID = 1001
 
 	// NodeGID is the gid of the "node" group shared by all agent users.
 	NodeGID = 1000
+)
 
+const (
 	// DirPerms is the minimum permission bits required on directories (u+rwx, g+rwx).
 	// Group access is essential because agents run as different users sharing the node group.
 	DirPerms = 0o770

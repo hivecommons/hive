@@ -547,7 +547,22 @@ func TestConfirmMenuOption_SelectsOption(t *testing.T) {
 		t.Fatal(err)
 	}
 	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
-	time.Sleep(500 * time.Millisecond)
+	// Wait until the shell has actually started and executed the printf: a
+	// fixed 500ms was a knife-edge against shell startup time (a zsh with user
+	// dotfiles takes >2s to first render on some hosts), and confirmMenuOption
+	// treats a pane without the title as "already dismissed" — masking the
+	// race as a wrong-answer failure four Down-keys later.
+	rendered := false
+	for i := 0; i < 100; i++ {
+		if selectedMenuOption(m.captureVisiblePaneForAgent(agent)) != "" {
+			rendered = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !rendered {
+		t.Fatalf("menu never rendered in the pane: %q", m.captureVisiblePaneForAgent(agent))
+	}
 	// want "accept" is on the selected ❯ line -> confirm immediately.
 	if !m.confirmMenuOption(agent, "Bypass Permissions mode", "accept", "Down") {
 		t.Error("should confirm the already-selected wanted option")
