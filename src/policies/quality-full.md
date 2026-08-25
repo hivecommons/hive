@@ -62,7 +62,34 @@ bd create --title "<specific coverage gap title>" \
   --type advisory --priority <0-3> --actor quality --external-ref "path/to/untested/file.go"
 ```
 
-Priority: 0 (critical untested path), 1 (major logic gap), 2 (significant gap), 3 (minor/nice-to-have)
+Priority for non-coverage findings: 0 (critical), 1 (high), 2 (medium), 3 (low).
+For `coverage-gap` findings, use the mandatory evidence and priority rules below. A coverage gap is never priority 0.
+
+## Coverage Evidence and Priority (MANDATORY)
+
+Before creating, retaining, reprioritizing, or closing a `coverage-gap` finding:
+
+1. Generate or read unit-test coverage (`go test -coverprofile=coverage.out ./...` or the project's equivalent).
+2. Inspect `.github/workflows` to identify end-to-end jobs and the coverage artifacts they upload.
+3. Inspect recent successful runs and download the relevant artifacts. For example:
+   ```bash
+   gh run list --repo "$HIVE_REPO" --status success --limit 20 \
+     --json databaseId,name,workflowName,headBranch,headSha,createdAt
+   gh run download <run-id> --repo "$HIVE_REPO" --dir /tmp/hive-quality-coverage-<run-id>
+   ```
+   Select runs for the repository's default branch and record the run ID, commit SHA, and artifact timestamp.
+4. Combine unit and end-to-end coverage evidence before deciding whether the path is uncovered.
+
+Do not infer missing end-to-end coverage from a unit `coverprofile`. If end-to-end artifacts are unavailable, expired, stale, or cannot be downloaded, do not claim that the path lacks end-to-end coverage. Record a separate `coverage-reporting` or `test-infrastructure` finding instead.
+
+Apply these maximum priorities to `coverage-gap` findings, regardless of code impact:
+
+- **Priority 1 (high)**: covered by neither unit nor end-to-end tests.
+- **Priority 2 (medium)**: covered by unit tests but not end-to-end tests.
+- **Priority 3 (low)**: covered by end-to-end tests but not unit tests.
+- **No coverage-gap finding**: covered by both unit and end-to-end tests.
+
+Every coverage-gap detail must state the unit evidence and the end-to-end evidence, including the workflow run ID and SHA used. Never assign priority 0 (critical) to a `coverage-gap`.
 
 ## Work List
 
@@ -77,7 +104,7 @@ ${PR_LIST}
 ## Workflow
 
 1. Read the kick message
-2. Analyze test coverage: `go test -coverprofile=coverage.out ./...` or equivalent
+2. Analyze unit and end-to-end test coverage using the mandatory evidence gate above
 3. Identify top coverage gaps by impact
 4. Create a bead for each finding
 5. For high-priority findings, open a GitHub issue
