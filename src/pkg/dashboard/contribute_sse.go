@@ -343,10 +343,11 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 				continue
 			}
 			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
-				repoFull: repo.Full,
-				repoName: repo.Name,
-				number:   number,
-				ref:      ref,
+				repoFull:  repo.Full,
+				repoName:  repo.Name,
+				number:    number,
+				ref:       ref,
+				dependsOn: dependenciesFromIssueMap(issue),
 			})
 			if !decision.admitted {
 				// #4246: retain the convergence Decision behind this refusal

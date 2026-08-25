@@ -93,11 +93,17 @@ const (
 type Subject struct {
 	Repo   string
 	Number int
+	// WorkKey is worksource.Ref.Key() for non-GitHub work. Repo/Number remain
+	// the source of truth for GitHub observers and existing struct literals.
+	WorkKey string
 }
 
-// Key is the canonical "owner/repo#number" form used across Hive's admission
-// paths (cooldown, hold, active-work, and claim exclusions all key on it).
+// Key is the canonical work-source identity used across Hive's admission paths.
+// GitHub subjects retain the historical "owner/repo#number" form.
 func (s Subject) Key() string {
+	if s.WorkKey != "" {
+		return s.WorkKey
+	}
 	return fmt.Sprintf("%s#%d", s.Repo, s.Number)
 }
 

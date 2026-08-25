@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,19 +30,37 @@ func issueNode(identifier, title string, priority int, state string, labels ...s
 		labelNodes = append(labelNodes, map[string]string{"name": l})
 	}
 	return map[string]interface{}{
-		"id":         "uuid-" + identifier,
-		"identifier": identifier,
-		"title":      title,
-		"url":        "https://linear.app/acme/issue/" + identifier,
-		"createdAt":  "2026-01-02T03:04:05Z",
-		"updatedAt":  "2026-01-03T03:04:05Z",
-		"priority":   priority,
-		"state":      map[string]string{"name": state},
-		"assignee":   nil,
-		"labels":     map[string]interface{}{"nodes": labelNodes},
-		"team":       map[string]string{"key": "X"},
-		"children":   map[string]interface{}{"nodes": []map[string]string{}},
+		"id":               "uuid-" + identifier,
+		"identifier":       identifier,
+		"title":            title,
+		"url":              "https://linear.app/acme/issue/" + identifier,
+		"createdAt":        "2026-01-02T03:04:05Z",
+		"updatedAt":        "2026-01-03T03:04:05Z",
+		"priority":         priority,
+		"state":            map[string]string{"name": state},
+		"assignee":         nil,
+		"labels":           map[string]interface{}{"nodes": labelNodes},
+		"team":             map[string]string{"key": "X"},
+		"children":         map[string]interface{}{"nodes": []map[string]string{}},
+		"inverseRelations": map[string]interface{}{"nodes": []map[string]interface{}{}},
 	}
+}
+
+func withBlocker(node map[string]interface{}, identifier, team, project, stateType string) map[string]interface{} {
+	blocker := map[string]interface{}{
+		"identifier": identifier,
+		"url":        "https://linear.app/acme/issue/" + identifier,
+		"state":      map[string]string{"type": stateType},
+		"team":       map[string]string{"key": team},
+	}
+	if project != "" {
+		blocker["project"] = map[string]string{"name": project}
+	}
+	node["inverseRelations"] = map[string]interface{}{"nodes": []map[string]interface{}{
+		{"type": "blocks", "issue": blocker},
+		{"type": "related", "issue": map[string]interface{}{"identifier": "IGNORED-1"}},
+	}}
+	return node
 }
 
 func withProject(node map[string]interface{}, name string) map[string]interface{} {
@@ -92,6 +111,9 @@ func serveGraphQL(t *testing.T, fn func(vars gqlVars) map[string]interface{}) *h
 		var req gqlReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request: %v", err)
+		}
+		if !strings.Contains(req.Query, "inverseRelations(first: 100)") || !strings.Contains(req.Query, "state { type }") {
+			t.Errorf("Linear query does not request dependency relations and blocker state: %s", req.Query)
 		}
 		if err := json.NewEncoder(w).Encode(fn(req.Variables)); err != nil {
 			t.Errorf("encode response: %v", err)
@@ -173,6 +195,39 @@ func TestLinearListIssuesMultiTeam(t *testing.T) {
 	}
 	if issues[1].ExternalID != "OPS-9" || issues[1].Repo != "acme/infra" {
 		t.Errorf("issue[1] = %+v", issues[1])
+	}
+}
+
+func TestLinearListIssuesCarriesIncomingBlockers(t *testing.T) {
+	srv := serveGraphQL(t, func(vars gqlVars) map[string]interface{} {
+		return gqlResponse(false, "",
+			withBlocker(issueNode("ENG-2", "Blocked", 2, "Todo"), "OPS-9", "OPS", "Infra", "started"),
+			withBlocker(issueNode("ENG-3", "Unblocked", 2, "Todo"), "ENG-1", "ENG", "", "completed"),
+		)
+	})
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:  "key",
+		BaseURL: srv.URL,
+		Teams: []worksource.LinearTeamConfig{
+			{Key: "ENG", Repo: "acme/app", States: []string{"Todo"}},
+			{Key: "OPS", Repo: "acme/ops", Projects: []worksource.LinearProjectConfig{{Name: "Infra", Repo: "acme/infra"}}},
+		},
+	}, nil)
+
+	issues, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 2 || len(issues[0].DependsOn) != 1 || len(issues[1].DependsOn) != 1 {
+		t.Fatalf("dependency edges not ingested: %+v", issues)
+	}
+	if got := issues[0].DependsOn[0]; got.Ref.Key() != "acme/infra!OPS-9" || got.Resolved {
+		t.Fatalf("open cross-team blocker = %+v, want acme/infra!OPS-9 unresolved", got)
+	}
+	if got := issues[1].DependsOn[0]; got.Ref.Key() != "acme/app!ENG-1" || !got.Resolved {
+		t.Fatalf("completed blocker = %+v, want acme/app!ENG-1 resolved", got)
 	}
 }
 

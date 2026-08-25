@@ -27,11 +27,18 @@ func ToGitHubIssues(issues []Issue) []github.Issue {
 				ageMinutes = 0
 			}
 		}
+		dependsOn := make([]github.IssueDependency, 0, len(ws.DependsOn))
+		for _, dep := range ws.DependsOn {
+			if key := dep.Ref.Key(); key != "" {
+				dependsOn = append(dependsOn, github.IssueDependency{Key: key, Resolved: dep.Resolved})
+			}
+		}
 		out[i] = github.Issue{
 			Repo:       ws.Repo,
 			Number:     ws.Number,
 			SourceType: ws.SourceType,
 			ExternalID: ws.ExternalID,
+			DependsOn:  dependsOn,
 			Title:      ws.Title,
 			Author:     ws.Author,
 			Labels:     ws.Labels,

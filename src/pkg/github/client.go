@@ -208,11 +208,22 @@ type Issue struct {
 	// leaves them empty, and an empty SourceType reads as "github". Consumers
 	// must build identity through worksource.Ref rather than reading these
 	// directly, so there is a single key implementation.
-	SourceType     string `json:"source_type,omitempty"`
-	ExternalID     string `json:"external_id,omitempty"`
-	ComplexityTier string `json:"complexity_tier,omitempty"`
-	ModelRec       string `json:"model_recommendation,omitempty"`
-	Lane           string `json:"lane,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
+	// DependsOn carries source-native dependency edges through the legacy
+	// GitHub-shaped scheduler envelope. Key is always worksource.Ref.Key().
+	DependsOn      []IssueDependency `json:"depends_on,omitempty"`
+	ComplexityTier string            `json:"complexity_tier,omitempty"`
+	ModelRec       string            `json:"model_recommendation,omitempty"`
+	Lane           string            `json:"lane,omitempty"`
+}
+
+// IssueDependency is the transport form of a source-aware work dependency.
+// It deliberately carries the canonical key rather than source fields so the
+// key format has one implementation in pkg/worksource.
+type IssueDependency struct {
+	Key      string `json:"key"`
+	Resolved bool   `json:"resolved"`
 }
 
 type PullRequest struct {

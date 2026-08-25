@@ -26,6 +26,10 @@ func TestToGitHubIssues(t *testing.T) {
 			CreatedAt:  created,
 			UpdatedAt:  updated,
 			URL:        "https://linear.app/eng/issue/ENG-123",
+			DependsOn: []Dependency{
+				{Ref: Ref{SourceType: "linear", Repo: "my-org/my-repo", ExternalID: "ENG-100"}},
+				{Ref: Ref{SourceType: "linear", Repo: "my-org/my-repo", ExternalID: "ENG-101"}, Resolved: true},
+			},
 		},
 	}
 	out := ToGitHubIssues(in)
@@ -48,6 +52,9 @@ func TestToGitHubIssues(t *testing.T) {
 	}
 	if !g.IsTracker || g.Priority != "high" || g.State != "Todo" {
 		t.Errorf("worksource fields not mapped: %+v", g)
+	}
+	if len(g.DependsOn) != 2 || g.DependsOn[0].Key != "my-org/my-repo!ENG-100" || g.DependsOn[0].Resolved || !g.DependsOn[1].Resolved {
+		t.Errorf("dependency edges not mapped through compatibility envelope: %+v", g.DependsOn)
 	}
 	wantAge := int(time.Since(created).Minutes())
 	if g.AgeMinutes < wantAge-1 || g.AgeMinutes > wantAge+1 {

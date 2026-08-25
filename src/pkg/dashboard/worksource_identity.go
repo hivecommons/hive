@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/worksource"
 )
 
@@ -28,6 +29,21 @@ func refFromIssueMap(repoFull string, issue map[string]any) worksource.Ref {
 		Number:     intFromAny(issue["number"]),
 		URL:        stringFromAny(issue["url"]),
 	}
+}
+
+func dependenciesFromIssueMap(issue map[string]any) []ghpkg.IssueDependency {
+	raw, _ := issue["depends_on"].([]any)
+	deps := make([]ghpkg.IssueDependency, 0, len(raw))
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		key := stringFromAny(m["key"])
+		resolved, _ := m["resolved"].(bool)
+		deps = append(deps, ghpkg.IssueDependency{Key: key, Resolved: resolved})
+	}
+	return deps
 }
 
 // intFromAny reads an integer that survived a JSON round-trip. encoding/json

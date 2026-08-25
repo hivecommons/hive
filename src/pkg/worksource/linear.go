@@ -111,6 +111,18 @@ const linearIssuesQuery = `query($teamKey: String!, $states: [String!], $cursor:
       project { name }
       cycle { name startsAt endsAt }
       children { nodes { id } }
+      inverseRelations(first: 100) {
+        nodes {
+          type
+          issue {
+            identifier
+            url
+            state { type }
+            team { key }
+            project { name }
+          }
+        }
+      }
     }
   }
 }`
@@ -148,6 +160,18 @@ const linearAssignedIssuesQuery = `query($teamKey: String!, $states: [String!], 
       project { name }
       cycle { name startsAt endsAt }
       children { nodes { id } }
+      inverseRelations(first: 100) {
+        nodes {
+          type
+          issue {
+            identifier
+            url
+            state { type }
+            team { key }
+            project { name }
+          }
+        }
+      }
     }
   }
 }`
@@ -168,6 +192,7 @@ type linearIssueNode struct {
 	Priority    int       `json:"priority"`
 	State       struct {
 		Name string `json:"name"`
+		Type string `json:"type"`
 	} `json:"state"`
 	Assignee *struct {
 		DisplayName string `json:"displayName"`
@@ -193,6 +218,26 @@ type linearIssueNode struct {
 			ID string `json:"id"`
 		} `json:"nodes"`
 	} `json:"children"`
+	InverseRelations struct {
+		Nodes []struct {
+			Type  string             `json:"type"`
+			Issue linearRelatedIssue `json:"issue"`
+		} `json:"nodes"`
+	} `json:"inverseRelations"`
+}
+
+type linearRelatedIssue struct {
+	Identifier string `json:"identifier"`
+	URL        string `json:"url"`
+	State      struct {
+		Type string `json:"type"`
+	} `json:"state"`
+	Team struct {
+		Key string `json:"key"`
+	} `json:"team"`
+	Project *struct {
+		Name string `json:"name"`
+	} `json:"project"`
 }
 
 type linearGraphQLResponse struct {
@@ -277,6 +322,7 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 				CreatedAt:  n.CreatedAt,
 				UpdatedAt:  n.UpdatedAt,
 				URL:        n.URL,
+				DependsOn:  s.linearDependencies(team, n),
 			}
 			if RefFromIssue(issue).Key() == "" {
 				if s.cfg.Logger != nil {
@@ -288,6 +334,52 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 		}
 	}
 	return out, nil
+}
+
+func (s *LinearSource) linearDependencies(fallback LinearTeamConfig, n linearIssueNode) []Dependency {
+	deps := make([]Dependency, 0, len(n.InverseRelations.Nodes))
+	for _, relation := range n.InverseRelations.Nodes {
+		if !strings.EqualFold(relation.Type, "blocks") {
+			continue
+		}
+		blocker := relation.Issue
+		ref := Ref{
+			SourceType: "linear",
+			Repo:       s.linearRelatedRepo(fallback, blocker),
+			ExternalID: blocker.Identifier,
+			URL:        blocker.URL,
+		}
+		if ref.Key() == "" {
+			continue
+		}
+		terminal := strings.EqualFold(blocker.State.Type, "completed") ||
+			strings.EqualFold(blocker.State.Type, "canceled")
+		deps = append(deps, Dependency{Ref: ref, Resolved: terminal})
+	}
+	return deps
+}
+
+func (s *LinearSource) linearRelatedRepo(fallback LinearTeamConfig, issue linearRelatedIssue) string {
+	for _, team := range s.cfg.Teams {
+		if !strings.EqualFold(team.Key, issue.Team.Key) {
+			continue
+		}
+		if issue.Project != nil {
+			for _, project := range team.Projects {
+				if strings.EqualFold(project.Name, issue.Project.Name) {
+					if project.Repo != "" {
+						return project.Repo
+					}
+					return team.Repo
+				}
+			}
+		}
+		return team.Repo
+	}
+	// Relations may cross into a Linear team that is not itself enumerated by
+	// this hive. Scope that diagnostic identity to the dependent's routed repo;
+	// the native identifier still keeps the blocker distinct.
+	return fallback.Repo
 }
 
 func linearProjectRepo(team LinearTeamConfig, n linearIssueNode) (string, bool) {

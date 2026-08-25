@@ -4764,10 +4764,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			// next eval cycle, which closes that hole regardless of what the
 			// relay managed to report.
 			decision := h.evaluateContributorNeutralAdmission(admissionSweep, contributorAdmissionCandidate{
-				repoFull: repo.Full,
-				repoName: repo.Name,
-				number:   number,
-				ref:      ref,
+				repoFull:  repo.Full,
+				repoName:  repo.Name,
+				number:    number,
+				ref:       ref,
+				dependsOn: dependenciesFromIssueMap(issue),
 			})
 			if !decision.admitted {
 				switch decision.reason {

@@ -52,8 +52,8 @@ type ConvergenceKickFinding struct {
 // input slice is never modified (admitted is a new slice). A hub with no
 // contribute hub or no bead ledger wired admits everything — identical to the
 // contributor path's behaviour in the same state. Non-GitHub-backed items skip
-// the GitHub-only bead observer and are admitted on its behalf, exactly as
-// evaluateContributorNeutralAdmission does (kubestellar/hive#4245 boundary).
+// the GitHub-only bead observer but evaluate source-native dependency edges
+// through the same pure convergence evaluator (kubestellar/hive#4730).
 func (s *Server) ConvergenceKickProjection(issues []ghpkg.Issue) (admitted []ghpkg.Issue, withheld []ConvergenceKickFinding) {
 	admitted, withheld, _ = s.ConvergenceKickProjectionDetailed(issues)
 	return admitted, withheld
@@ -78,11 +78,13 @@ func (s *Server) ConvergenceKickProjectionDetailed(issues []ghpkg.Issue) (admitt
 	coverage = hub.admissionCoverageFromSweep(sweep)
 	for _, issue := range issues {
 		candidate := kickAdmissionCandidate(issue)
-		if !candidate.isGitHubBacked() {
-			admitted = append(admitted, issue)
-			continue
+		var observation convergence.Observation
+		if candidate.isGitHubBacked() {
+			observation = hub.observeCandidateDependencies(sweep, candidate)
+		} else {
+			observation = observeExternalDependencies(candidate)
 		}
-		decision := convergence.Evaluate(hub.observeCandidateDependencies(sweep, candidate))
+		decision := convergence.Evaluate(observation)
 		if decision.Admitted {
 			admitted = append(admitted, issue)
 			continue
@@ -113,5 +115,6 @@ func kickAdmissionCandidate(issue ghpkg.Issue) contributorAdmissionCandidate {
 			Number:     issue.Number,
 			URL:        issue.URL,
 		},
+		dependsOn: issue.DependsOn,
 	}
 }

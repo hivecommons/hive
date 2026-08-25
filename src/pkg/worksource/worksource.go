@@ -47,6 +47,17 @@ type Issue struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// URL is the canonical web URL of the issue.
 	URL string `json:"url"`
+	// DependsOn contains source-native dependency edges. Ref is the blocker and
+	// Resolved reports whether the source considers that blocker terminal.
+	// GitHub enumeration leaves this empty; Linear populates it from incoming
+	// `blocks` relations.
+	DependsOn []Dependency `json:"depends_on,omitempty"`
+}
+
+// Dependency is one source-aware edge from an item to work that blocks it.
+type Dependency struct {
+	Ref      Ref  `json:"-"`
+	Resolved bool `json:"resolved"`
 }
 
 // WorkSource is the Step 01 abstraction: it enumerates actionable work items
