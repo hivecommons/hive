@@ -879,6 +879,41 @@ func TestBuildBudget_BurnRate(t *testing.T) {
 	}
 }
 
+// TestBuildBudget_HonorsConfiguredPeriod pins #4762: the governor already
+// honored period_days, but the dashboard independently added the seven-day
+// fallback to ResetAt and projected over 168 hours. A two-day budget therefore
+// rendered as a one-week period even though enforcement rolled after two days.
+func TestBuildBudget_HonorsConfiguredPeriod(t *testing.T) {
+	const periodDays = 2
+	cfg := config.GovernorConfig{Budget: config.BudgetConfig{PeriodDays: periodDays}}
+	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)
+	gov.SetBudgetLimit(10000)
+	resetAt := time.Now().Add(-12 * time.Hour)
+	gov.SetBudgetResetAt(resetAt)
+	gov.UpdateBudgetFromTotals(1200, nil, nil)
+
+	fb := buildBudget(gov, nil)
+	start, err := time.Parse(time.RFC3339, fb.WindowStartsAt)
+	if err != nil {
+		t.Fatalf("parse window start %q: %v", fb.WindowStartsAt, err)
+	}
+	end, err := time.Parse(time.RFC3339, fb.WindowEndsAt)
+	if err != nil {
+		t.Fatalf("parse window end %q: %v", fb.WindowEndsAt, err)
+	}
+	if got, want := end.Sub(start), periodDays*24*time.Hour; got != want {
+		t.Fatalf("dashboard budget period = %v, want configured %v", got, want)
+	}
+	if fb.WindowHoursRemaining < 35.9 || fb.WindowHoursRemaining > 36.1 {
+		t.Errorf("window hours remaining = %.2f, want about 36", fb.WindowHoursRemaining)
+	}
+	// 1,200 tokens in 12 hours projects to about 4,800 over 48 hours,
+	// not the old seven-day projection of about 16,800.
+	if fb.ProjectedWeekly < 4790 || fb.ProjectedWeekly > 4810 {
+		t.Errorf("period projection = %d, want about 4800", fb.ProjectedWeekly)
+	}
+}
+
 func TestBuildBudget_WithTokenCollectorSummary(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)

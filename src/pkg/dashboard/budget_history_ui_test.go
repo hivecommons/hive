@@ -55,9 +55,9 @@ func TestBudgetHistoryChartWiredIntoDashboard(t *testing.T) {
 	// the axes stay labeled — unlabeled graphs are what #4298 called
 	// "impossible to understand".
 	for _, snippet := range []string{
-		"dashed red line = the limit in force for that window",
-		"x-axis labels = when each window reset",
-		"no closed windows yet",
+		"dashed red line = the limit then in force",
+		"x-axis labels = reset times",
+		"no closed periods yet",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html budget history chart is missing %q", snippet)

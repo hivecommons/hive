@@ -47,6 +47,15 @@ func TestBudgetWindowPhaseIsStatedAbsolutely(t *testing.T) {
 	if strings.Contains(html, "<span>${hoursLeft}h until reset</span>") {
 		t.Error("the budget bar still shows only the bare countdown — a countdown cannot be compared against a calendar")
 	}
+	if !strings.Contains(html, "budget.WINDOW_HOURS_REMAINING") {
+		t.Error("the budget phase does not use wall-clock time until reset")
+	}
+	if strings.Contains(html, "const hoursLeft = budget.HOURS_REMAINING") {
+		t.Error("the budget phase uses allowance lifetime as time until reset")
+	}
+	if !strings.Contains(html, "Budget period ${fmtWindowStamp(start)}") {
+		t.Error("the reset interval is not labeled as a budget period")
+	}
 }
 
 // TestBudgetPhaseToleratesMissingBounds: WINDOW_STARTS_AT/ENDS_AT are optional
@@ -103,6 +112,52 @@ func TestCostPanelSaysDollarsAreNotTheLimit(t *testing.T) {
 	// report, and an empty panel reproduces it.
 	if !strings.Contains(html, "No token budget configured") {
 		t.Error("the Cost panel is silent when no token budget is set — the operator cannot tell configured-and-zero from unconfigured")
+	}
+	if !strings.Contains(html, "token tables above are all-time totals and will normally be larger") {
+		t.Error("the Cost panel does not explain why per-period budget tokens are lower than all-time token totals")
+	}
+}
+
+// TestCostPanelSeparatesRangesFromBudgetPeriods pins the terminology and
+// placement regressions in #4762. Cost-chart selections cover a display range;
+// only the inter-reset accounting interval is a budget period. Pricing caveats
+// belong with dollar estimates, before the token-budget subsection.
+func TestCostPanelSeparatesRangesFromBudgetPeriods(t *testing.T) {
+	html := indexHTML(t)
+
+	for _, want := range []string{
+		"spend in selected range",
+		"no spend recorded in this range",
+		"`${COST_RANGES[_costRange].label} range`",
+		"Budget history — tokens used vs. limit per reset period",
+		": cfg.windowMs;",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("Cost panel is missing clarified range/period copy %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"spend this ${cfg.label} window",
+		"`${COST_RANGES[_costRange].label} window`",
+		"no spend recorded in this window",
+	} {
+		if strings.Contains(html, stale) {
+			t.Errorf("Cost panel still overloads window terminology in %q", stale)
+		}
+	}
+
+	renderStart := strings.Index(html, "el.innerHTML = `<div class=\"cost-panel\">")
+	if renderStart < 0 {
+		t.Fatal("could not find Cost panel render template")
+	}
+	render := html[renderStart:]
+	disclaimer := strings.Index(render, "vLLM / self-hosted figures are estimated")
+	budget := strings.Index(render, "${costTokenBudgetHtml()}")
+	if disclaimer < 0 || budget < 0 {
+		t.Fatalf("could not find pricing disclaimer (%d) or token budget (%d)", disclaimer, budget)
+	}
+	if disclaimer > budget {
+		t.Error("pricing disclaimer is still below the token-budget section instead of beside dollar estimates")
 	}
 }
 

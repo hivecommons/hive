@@ -1318,6 +1318,8 @@ func buildHealth(ghClient *github.Client, ctx context.Context) map[string]any {
 
 func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) FrontendBudget {
 	budget := gov.GetBudget()
+	windowStart, windowEnd, hasWindow := gov.BudgetWindow()
+	now := time.Now()
 
 	var totalTokens int64
 	if tokenCollector != nil {
@@ -1326,12 +1328,20 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		}
 	}
 
-	// Compute hours elapsed since last budget reset
+	// Compute elapsed/remaining wall-clock time from the governor's effective
+	// budget period. BudgetWindow is the single source of truth for configured
+	// period_days; using the default duration here makes a two-day budget look
+	// like a seven-day one in the dashboard.
 	var hoursElapsed float64
-	if !budget.ResetAt.IsZero() {
-		hoursElapsed = time.Since(budget.ResetAt).Hours()
+	var windowHoursRemaining float64
+	if hasWindow {
+		hoursElapsed = now.Sub(windowStart).Hours()
 		if hoursElapsed < 0 {
 			hoursElapsed = 0
+		}
+		windowHoursRemaining = windowEnd.Sub(now).Hours()
+		if windowHoursRemaining < 0 {
+			windowHoursRemaining = 0
 		}
 	}
 
@@ -1344,9 +1354,10 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	}
 
 	fb := FrontendBudget{
-		WeeklyBudget: budget.WeeklyLimit,
-		Used:         used,
-		LastUpdated:  time.Now().UTC().Format(time.RFC3339),
+		WeeklyBudget:         budget.WeeklyLimit,
+		Used:                 used,
+		LastUpdated:          now.UTC().Format(time.RFC3339),
+		WindowHoursRemaining: windowHoursRemaining,
 	}
 
 	if budget.WeeklyLimit > 0 {
@@ -1362,8 +1373,11 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 			burnRate := float64(used) / hoursElapsed
 			fb.BurnRateHourly = burnRate
 			fb.BurnRateInstant = burnRate
-			const hoursPerWeek = 168.0
-			fb.ProjectedWeekly = int64(burnRate * hoursPerWeek)
+			periodHours := governor.BudgetWindowDuration.Hours()
+			if hasWindow {
+				periodHours = windowEnd.Sub(windowStart).Hours()
+			}
+			fb.ProjectedWeekly = int64(burnRate * periodHours)
 			fb.ProjectedPct = float64(fb.ProjectedWeekly) / float64(budget.WeeklyLimit) * pctMultiplier
 			if burnRate > 0 {
 				fb.HoursRemaining = float64(remaining) / burnRate
@@ -1372,10 +1386,9 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 		fb.HoursElapsed = hoursElapsed
 
 		fb.Exhausted = used >= budget.WeeklyLimit
-		if !budget.ResetAt.IsZero() {
-			fb.WindowEndsAt = budget.ResetAt.Add(governor.BudgetWindowDuration).UTC().Format(time.RFC3339)
-			// ResetAt is the START of the current window (#4298).
-			fb.WindowStartsAt = budget.ResetAt.UTC().Format(time.RFC3339)
+		if hasWindow {
+			fb.WindowEndsAt = windowEnd.UTC().Format(time.RFC3339)
+			fb.WindowStartsAt = windowStart.UTC().Format(time.RFC3339)
 		}
 	}
 

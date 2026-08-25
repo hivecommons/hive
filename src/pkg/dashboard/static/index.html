@@ -3396,13 +3396,12 @@
               <code>0</code> to switch an agent off in just that mode, which is a scalpel where pausing is a hammer.</li>
           <li><strong>Set a real budget.</strong> <em>Settings → Budget</em> → <strong>Total Tokens</strong> is the cap
               (<code>0</code> disables budget tracking entirely). The enforcement that actually bites is kick suppression: a soft
-              warning fires at 90% of the limit, and at 100% the governor <strong>stops kicking agents</strong> until the window rolls.
+              warning fires at the configured threshold (90% by default), and at 100% the governor <strong>stops kicking agents</strong> until the budget period resets.
               <strong>Per-Agent Exemptions</strong> lets chosen agents keep running through an exhausted budget.
-              <br><span style="color:var(--muted)">Three caveats before you lean on this. The budget is denominated in
+              <br><span style="color:var(--muted)">Two caveats before you lean on this. The budget is denominated in
               <strong>tokens, not dollars</strong>, so it will not line up one-to-one with a provider's billing page. The accounting
-              window is a fixed 7 days and the warning fires at a fixed 90% — the <em>Period (days)</em> and <em>Critical Percent</em>
-              fields are stored but do not currently change that behaviour, so treat the window as weekly regardless of what they say.
-              And the governor panel's <strong>ignore budget</strong> checkbox disables enforcement entirely, so check that it is
+              period and warning threshold come from the <em>Period (days)</em> and <em>Critical Percent</em> settings.
+              The governor panel's <strong>ignore budget</strong> checkbox disables enforcement entirely, so check that it is
               unticked.</span></li>
           <li><strong>Move work onto cheaper agents.</strong> Two independent dials on each agent card: the <strong>model</strong>
               picker (higher tiers such as Opus cost more per token than Sonnet or Haiku) and the <strong>method</strong> picker
@@ -3503,7 +3502,7 @@
         discounted rate, or self-hosted inference will all diverge from it — and models without an exact price entry fall back to a
         coarse tier estimate (shown with a <code>~</code>). It is the right tool for <em>attribution</em> — which agent, which model, which
         day — rather than for reconciling against an invoice. The per-agent figure is also derived from a cumulative counter, so it
-        can read blank for a window that spans a restart.</p>
+        can read blank for a range that spans a restart.</p>
         <p style="margin:0 0 8px">To see <em>what</em> an agent was asked to do, open that agent's <strong>Prior Prompts</strong> tab —
         each kick is recorded with its timestamp and the fully expanded prompt text, with a <em>Window</em> selector offering
         <strong>Last hour</strong>, <strong>Last day</strong>, and <strong>Last week</strong>. The <strong>📋 Audit Log</strong> is the
@@ -5537,7 +5536,7 @@
         // guess whether the panel failed to render.
         const allZero = max <= 0;
         const overlay = allZero
-          ? `<div class="cost-bars-note">no spend recorded in this window</div>`
+          ? `<div class="cost-bars-note">no spend recorded in this range</div>`
           : '';
         // Show first, middle, and last axis labels to avoid crowding.
         const first = buckets[0], mid = buckets[Math.floor(buckets.length / 2)], last = buckets[buckets.length - 1];
@@ -5545,22 +5544,20 @@
           <div class="cost-bars-axis"><span>${esc(costBucketAxisLabel(first))}</span><span>${esc(costBucketAxisLabel(mid))}</span><span>${esc(costBucketAxisLabel(last))}</span></div>`;
       }
 
-      const totalLabel = _costRange === 'custom'
-        ? 'spend in range'
-        : `spend this ${cfg.label} window`;
-      // Spend during the window. Agents are always running, so a bare $0.00 is
-      // misleading — when the window has no computable delta (too few snapshots,
+      const totalLabel = 'spend in selected range';
+      // Spend during the selected range. Agents are always running, so a bare
+      // $0.00 is misleading — when the range has no computable delta (too few snapshots,
       // or a price-table shift zeroed the cumulative delta), estimate it from the
-      // run-rate × window length and mark it approximate (~).
+      // run-rate × range length and mark it approximate (~).
       const rate = costRunRate(); // $ per ms, or null
-      const winMs = _costRange === 'custom'
+      const rangeMs = _costRange === 'custom'
         ? Math.max(_costCustom.end - _costCustom.start, 60e3)
-        : cfg.bucketMs;
+        : cfg.windowMs;
       let spendStr, approx = false;
       if (total > 0) {
         spendStr = fmtUSD(total);
       } else if (rate != null) {
-        spendStr = '~' + fmtUSD(rate * winMs); approx = true;
+        spendStr = '~' + fmtUSD(rate * rangeMs); approx = true;
       } else {
         spendStr = fmtUSD(0);
       }
@@ -5578,7 +5575,7 @@
         <div class="cost-trend-head">
           <div class="cost-range">${pills}</div>
           ${customControls}
-          <div class="cost-trend-total">${totalLabel}: <b>${spendStr}</b>${approx ? ' <span title="estimated from current run-rate — window had no computable delta">(est.)</span>' : ''}${rateStr}</div>
+          <div class="cost-trend-total">${totalLabel}: <b>${spendStr}</b>${approx ? ' <span title="estimated from current run-rate — selected range had no computable delta">(est.)</span>' : ''}${rateStr}</div>
         </div>
         ${body}
       </div>`;
@@ -5894,7 +5891,7 @@
     function agentSpendChip(name) {
       const usd = agentWindowSpend(name);
       if (usd == null) return '';
-      const lbl = _costRange === 'custom' ? 'custom range' : `${COST_RANGES[_costRange].label} window`;
+      const lbl = _costRange === 'custom' ? 'custom range' : `${COST_RANGES[_costRange].label} range`;
       return `<span class="agent-spend-chip" title="Estimated spend over the ${lbl} — follows the Cost section's timeframe selector (token × list price)">${fmtUSD(usd)}</span>`;
     }
     function agentSpendRow(name) {
@@ -7311,7 +7308,7 @@
       if (!wins.length) return '';
       const hasClosed = wins.some(w => !w.open);
       if (!hasClosed) {
-        return `<div style="font-size:0.66rem;color:var(--muted);margin-top:5px" title="One bar per budget window will appear here after the first window reset — see GET /api/budget/history">Budget history: no closed windows yet — the chart fills in after the first window reset.</div>`;
+        return `<div style="font-size:0.66rem;color:var(--muted);margin-top:5px" title="One bar per budget period will appear here after the first reset — see GET /api/budget/history">Budget history: no closed periods yet — the chart fills in after the first reset.</div>`;
       }
       const PCT_BUDGET_WARN = 90; // mirrors governor.BudgetWarnPct
       const BAR_SLOT = 30, BAR_W = 20, PAD_L = 40, PAD_R = 4, PAD_T = 6, PAD_B = 14;
@@ -7325,7 +7322,7 @@
         const x = PAD_L + i * BAR_SLOT + (BAR_SLOT - BAR_W) / 2;
         const yUsed = yPx(w.used);
         const fill = w.exhausted ? 'var(--red)' : w.pctUsed >= PCT_BUDGET_WARN ? 'var(--yellow)' : 'var(--green)';
-        const tip = `${w.open ? 'OPEN window' : 'window'} ${new Date(w.start).toLocaleString()} → ${new Date(w.end).toLocaleString()}\nused ${fmtTokens(w.used)} of ${fmtTokens(w.limit)} (${Math.round(w.pctUsed)}%)${w.exhausted ? '\nEXHAUSTED — agent kicks were suspended' : ''}`;
+        const tip = `${w.open ? 'OPEN budget period' : 'budget period'} ${new Date(w.start).toLocaleString()} → ${new Date(w.end).toLocaleString()}\nused ${fmtTokens(w.used)} of ${fmtTokens(w.limit)} (${Math.round(w.pctUsed)}%)${w.exhausted ? '\nEXHAUSTED — agent kicks were suspended' : ''}`;
         // Per-window limit marker: the limit in force FOR THAT window, so a
         // later limit change doesn't redraw history.
         const yLim = yPx(w.limit);
@@ -7336,7 +7333,7 @@
           `</g>`;
       }).join('');
       return `<div style="margin-top:6px">
-        <div style="font-size:0.66rem;color:var(--muted);margin-bottom:2px" title="One bar per budget window (from /api/budget/history). Bar height = tokens used; dashed red line = the limit in force for that window; x-axis labels = when each window reset. Red bar = window exhausted (kicks were suspended); the translucent bar is the still-open window.">Budget window history — used vs. limit per window, labeled by reset time</div>
+        <div style="font-size:0.66rem;color:var(--muted);margin-bottom:2px" title="One bar per budget period (from /api/budget/history). Bar height = tokens used during that period; dashed red line = the limit then in force; x-axis labels = reset times. Red bar = budget exhausted (kicks were suspended); the translucent bar is the current period.">Budget history — tokens used vs. limit per reset period</div>
         <div style="overflow-x:auto"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
           <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${PAD_T + plotH}" stroke="var(--border)" stroke-width="1"/>
           <line x1="${PAD_L}" y1="${PAD_T + plotH}" x2="${W - PAD_R}" y2="${PAD_T + plotH}" stroke="var(--border)" stroke-width="1"/>
@@ -7377,17 +7374,17 @@
     function budgetWindowPhaseText(budget, hoursLeft) {
       const { start, end } = budgetWindowBounds(budget);
       if (!start && !end) return `${hoursLeft}h until reset`;
-      if (start && end) return `Window ${fmtWindowStamp(start)} → ${fmtWindowStamp(end)} · ${hoursLeft}h left`;
+      if (start && end) return `Budget period ${fmtWindowStamp(start)} → ${fmtWindowStamp(end)} · ${hoursLeft}h until reset`;
       return `Resets ${fmtWindowStamp(end || start)} · ${hoursLeft}h left`;
     }
 
     function budgetWindowPhaseTitle(budget) {
       const { start, end } = budgetWindowBounds(budget);
-      if (!start && !end) return 'The budget window has not opened yet — it opens when a token limit is set and the governor first evaluates.';
+      if (!start && !end) return 'The budget period has not opened yet — it opens when a token limit is set and the governor first evaluates.';
       const parts = [];
-      if (start) parts.push(`This window opened ${start.toLocaleString()}`);
+      if (start) parts.push(`This budget period opened ${start.toLocaleString()}`);
       if (end) parts.push(`spend resets to 0 at ${end.toLocaleString()}`);
-      return parts.join('; ') + '. Window length is governor.budget.period_days.';
+      return parts.join('; ') + '. Period length is governor.budget.period_days.';
     }
 
     function renderBudgetBar(budget) {
@@ -7399,7 +7396,7 @@
       const pctUsed = budget.BUDGET_PCT_USED || 0;
       const projPct = budget.PROJECTED_PCT || 0;
       const burnRate = budget.BURN_RATE_HOURLY || 0;
-      const hoursLeft = budget.HOURS_REMAINING || 0;
+      const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
       const HOURS_PER_DAY = 24;
       const dailyRate = burnRate * HOURS_PER_DAY;
       const PCT_BUDGET_WARN = 90; // mirrors governor.BudgetWarnPct: soft-warning threshold
@@ -7414,7 +7411,7 @@
         const windowEnds = budget.WINDOW_ENDS_AT ? new Date(budget.WINDOW_ENDS_AT).toLocaleString() : 'the next window';
         govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span> <button data-action="resetBudgetWindow" title="Open a fresh budget window now: spend restarts at 0 and suspended kicks resume. Budget enforcement stays on — raise Total Tokens in Settings first if the limit itself was too small." style="margin-left:8px;padding:1px 8px;font-size:0.66rem;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--fg);cursor:pointer">reset window now</button>`;
       } else if (pctUsed >= PCT_BUDGET_WARN) {
-        govAction = `<span style="color:var(--yellow)">Budget warning — ${pctUsed}% of weekly limit used; kicks suspend at 100%</span>`;
+        govAction = `<span style="color:var(--yellow)">Budget warning — ${pctUsed}% of period limit used; kicks suspend at 100%</span>`;
       } else if (projPct > PCT_WARN) {
         govAction = '<span style="color:var(--red)">Governor downgrading models to stay within budget</span>';
       } else if (projPct > PCT_SAFE) {
@@ -8628,19 +8625,19 @@ function burnAreaChart() {
       }
       const used = budget.BUDGET_USED || 0;
       const pctUsed = budget.BUDGET_PCT_USED || 0;
-      const hoursLeft = budget.HOURS_REMAINING || 0;
+      const hoursLeft = Math.max(0, Math.ceil(budget.WINDOW_HOURS_REMAINING || 0));
       const exhausted = !!budget.BUDGET_EXHAUSTED;
       const PCT_BUDGET_WARN = 90;
       const fill = exhausted ? 'danger' : pctUsed >= PCT_BUDGET_WARN ? 'warning' : 'safe';
       return `<div class="cost-token-budget" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-        <div class="cost-subtitle" style="margin-bottom:6px"><b>Token budget</b> — this is the limit the governor actually enforces (tokens, not dollars). Spend resets to 0 at the end of each window.</div>
+        <div class="cost-subtitle" style="margin-bottom:6px"><b>Token budget</b> — this is the limit the governor actually enforces (tokens, not dollars). Used tokens and each history bar cover one reset period; the token tables above are all-time totals and will normally be larger.</div>
         <div class="budget-bar">
           <div class="budget-bar-label">
-            <span>Used this window: ${fmtTokens(used)} / ${fmtTokens(limit)} (${pctUsed}%)</span>
+            <span>Used this budget period: ${fmtTokens(used)} / ${fmtTokens(limit)} (${pctUsed}%)</span>
             <span title="${esc(budgetWindowPhaseTitle(budget))}">${budgetWindowPhaseText(budget, hoursLeft)}</span>
           </div>
           <div class="budget-bar-track"><div class="budget-bar-fill ${fill}" style="width:${Math.min(pctUsed, 100)}%"></div></div>
-          ${exhausted ? '<div style="font-size:0.68rem;margin-top:3px;color:var(--red)">Budget exhausted — agent kicks are suspended until the window resets.</div>' : ''}
+          ${exhausted ? '<div style="font-size:0.68rem;margin-top:3px;color:var(--red)">Budget exhausted — agent kicks are suspended until the period resets.</div>' : ''}
           ${budgetHistoryChart()}
         </div>
       </div>`;
@@ -8830,6 +8827,7 @@ function burnAreaChart() {
         </div>
         <div class="cost-body" id="cost-panel-body">
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
+          <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid">
             <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
             <div class="cost-stat"><div class="cval" title="${cost.merged_prs ? `${fmtUSD(est.total_usd)} ÷ ${cost.merged_prs} merged PRs` : 'no merged PRs yet'}">${cost.merged_prs ? fmtUSD(est.total_usd / cost.merged_prs) : '—'}</div><div class="clabel">cost / PR — all-time total ÷ merged PRs</div></div>
@@ -8845,7 +8843,6 @@ function burnAreaChart() {
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}
-          <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
         </div>
       </div>`;
       // Re-apply the persisted collapsed state so a poll re-render never resets it.

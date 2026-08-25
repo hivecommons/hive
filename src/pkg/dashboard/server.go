@@ -615,7 +615,11 @@ type FrontendBudget struct {
 	HoursRemaining  float64 `json:"HOURS_REMAINING"`
 	ProjectedWeekly int64   `json:"PROJECTED_WEEKLY"`
 	ProjectedPct    float64 `json:"PROJECTED_PCT"`
-	LastUpdated     string  `json:"LAST_UPDATED"`
+	// WindowHoursRemaining is wall-clock time until the current budget period
+	// resets. HoursRemaining above is instead how long the remaining token
+	// allowance would last at the observed burn rate.
+	WindowHoursRemaining float64 `json:"WINDOW_HOURS_REMAINING"`
+	LastUpdated          string  `json:"LAST_UPDATED"`
 	// Exhausted is true when the weekly limit is set and window spend has
 	// reached it — the governor is suppressing kicks for non-exempt agents.
 	Exhausted bool `json:"BUDGET_EXHAUSTED"`
