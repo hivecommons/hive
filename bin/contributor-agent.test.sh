@@ -192,6 +192,28 @@ done
 echo "contributor-agent hook override tests passed"
 echo "contributor-agent knowledge fetch tests passed"
 
+rm -f "${HOME_DIR}/CLAUDE.md"
+rm -rf "${HOME_DIR}/.bob"
+BOB_AGENT_MD="${HOME_DIR}/agent.md"
+env -i \
+  PATH="${PATH}" \
+  HOME="$HOME_DIR" \
+  HIVE_REGISTRATION_TOKEN="test-token" \
+  HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE=1 \
+  HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="$BOB_AGENT_MD" \
+  AGENT_BACKEND=bob \
+  bash "${ROOT_DIR}/bin/contributor-agent.sh"
+
+if [[ "$(readlink "${HOME_DIR}/.bob/AGENTS.md")" != "$BOB_AGENT_MD" ]]; then
+  echo "expected bob global AGENTS.md to link to the hive knowledge export" >&2
+  exit 1
+fi
+if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "$BOB_AGENT_MD" ]]; then
+  echo "expected bob's compatibility CLAUDE.md link to be retained" >&2
+  exit 1
+fi
+echo "contributor-agent bob knowledge link tests passed"
+
 codex_flags_output="$(
   env -i \
     PATH="${PATH}" \

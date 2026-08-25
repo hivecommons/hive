@@ -91,8 +91,9 @@ mode fixed for Goose in [#2393](https://github.com/kubestellar/hive/issues/2393)
 | `goose` | `AGENTS.md`, `.goosehints`, `.goose-instructions.md`, `CLAUDE.md` |
 | `codex` | `AGENTS.md`, `CLAUDE.md` |
 | `pi` | `AGENTS.md`, `CLAUDE.md` |
+| `bob` | `.bob/AGENTS.md`, `CLAUDE.md` (compatibility) |
 | `agy` | `CLAUDE.md` |
-| anything else (incl. `bob`) | `CLAUDE.md` only — the `*` fallback |
+| anything else | `CLAUDE.md` only — the `*` fallback |
 
 A backend that reads neither `CLAUDE.md` nor one of the names above falls into
 the `*` branch and runs with no hive knowledge at all. When adding a backend,

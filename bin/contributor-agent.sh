@@ -91,6 +91,65 @@ fetch_knowledge_export() {
   return 1
 }
 
+link_backend_knowledge() {
+  local backend="$1"
+  local agent_md="$2"
+
+  case "$backend" in
+    claude|litellm)
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    copilot)
+      mkdir -p "${HOME}/.copilot"
+      ln -sf "$agent_md" "${HOME}/copilot-instructions.md"
+      ln -sf "$agent_md" "${HOME}/COPILOT.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    goose)
+      # Goose reads AGENTS.md and .goosehints; .goose-instructions.md / CLAUDE.md
+      # are NOT names it looks for (unless CONTEXT_FILE_NAMES is overridden), so
+      # without these two the knowledge export downloaded above never reached the
+      # model. Keep the old names for backward-compat, but add the ones Goose
+      # actually reads. (kubestellar/hive#2393 item 1.)
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/.goosehints"
+      ln -sf "$agent_md" "${HOME}/.goose-instructions.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      mkdir -p "${HOME}/.config/goose"
+      # Write the config only if the contributor/derived image hasn't provided one,
+      # so a downstream can add Goose extensions (MCP servers) or other settings
+      # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
+      if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
+        cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
+GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
+GOOSE_MODEL: ${GOOSE_MODEL:-phi4}
+GOOSECFG
+        echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
+      else
+        echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
+      fi
+      ;;
+    codex|pi)
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    bob)
+      # Bobshell 1.0.6 defaults to AGENTS.md and documents ~/.bob/AGENTS.md as
+      # its global context file. It does not load ~/CLAUDE.md. Keep the latter
+      # compatibility link while also installing the export where Bob reads it.
+      mkdir -p "${HOME}/.bob"
+      ln -sf "$agent_md" "${HOME}/.bob/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    agy)
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    *)
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+  esac
+}
+
 # Task-delivery mode (kubestellar/hive#2538). "interactive" (default) launches
 # the CLI in a tmux pane and the relay types tasks into it; "headless" skips the
 # tmux/CLI launch entirely and the relay drives a one-shot CLI per task with no
@@ -170,6 +229,11 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   rm -f "$AGENT_MD"
   echo "knowledge_fetch=unavailable"
   exit 1
+fi
+
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE:-}" == "1" ]]; then
+  link_backend_knowledge "$AGENT_BACKEND" "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}"
+  exit 0
 fi
 
 codex_auth_file() {
@@ -383,56 +447,8 @@ KNOWLEDGE_REFRESH_SECS=600
   done
 ) &
 
-# Make agent.md visible to each CLI backend
-case "$AGENT_BACKEND" in
-  claude|litellm)
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  copilot)
-    mkdir -p "${HOME}/.copilot"
-    ln -sf "$AGENT_MD" "${HOME}/copilot-instructions.md"
-    ln -sf "$AGENT_MD" "${HOME}/COPILOT.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  goose)
-    # Goose reads AGENTS.md and .goosehints; .goose-instructions.md / CLAUDE.md
-    # are NOT names it looks for (unless CONTEXT_FILE_NAMES is overridden), so
-    # without these two the knowledge export downloaded above never reached the
-    # model. Keep the old names for backward-compat, but add the ones Goose
-    # actually reads. (kubestellar/hive#2393 item 1.)
-    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
-    ln -sf "$AGENT_MD" "${HOME}/.goosehints"
-    ln -sf "$AGENT_MD" "${HOME}/.goose-instructions.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    mkdir -p "${HOME}/.config/goose"
-    # Write the config only if the contributor/derived image hasn't provided one,
-    # so a downstream can add Goose extensions (MCP servers) or other settings
-    # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
-    if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
-      cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
-GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
-GOOSE_MODEL: ${GOOSE_MODEL:-phi4}
-GOOSECFG
-      echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
-    else
-      echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
-    fi
-    ;;
-  codex)
-    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  pi)
-    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  agy)
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  *)
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-esac
+# Make agent.md visible to the selected CLI backend.
+link_backend_knowledge "$AGENT_BACKEND" "$AGENT_MD"
 
 # Prepare a concrete workspace directory for the agent (kubestellar/hive#2545).
 # Previously the tmux session inherited the bare $HOME (/home/dev in the stock
