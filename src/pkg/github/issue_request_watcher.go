@@ -41,10 +41,11 @@ func issueRequestDir() string {
 // A var (not const) so tests can drive the real ticker loop quickly.
 var issueRequestPollInterval = 10 * time.Second
 
-// issueRetryBase and issueRetryMax bound the per-request retry backoff. Unlike
-// the PR watcher (retry every tick forever), a persistently failing issue
-// request backs off exponentially so a poisoned-but-parseable request cannot
-// hammer the forge every 10 seconds for the life of the pod.
+// issueRetryBase and issueRetryMax bound the per-request retry backoff: a
+// persistently failing issue request backs off exponentially so a
+// poisoned-but-parseable request cannot hammer the forge every 10 seconds for
+// the life of the pod. The PR-open and review watchers apply the same policy
+// via the shared retryTracker (request_retry.go).
 const (
 	issueRetryBase = 30 * time.Second
 	issueRetryMax  = 15 * time.Minute

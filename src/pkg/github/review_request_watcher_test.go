@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newReviewMockServer(t *testing.T, reviewed *int, lastEvent *string) *httptest.Server {
@@ -147,5 +148,92 @@ func TestReviewRequestWatcher_AuthzFailsClosed(t *testing.T) {
 	}
 	if _, err := os.Stat(reqPath + ".denied"); err != nil {
 		t.Errorf("denied review should be quarantined .denied")
+	}
+}
+
+// newReviewFailingMockServer fails the first `fails` review POSTs with a 500,
+// then succeeds.
+func newReviewFailingMockServer(t *testing.T, reviewed *int, fails *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/reviews") {
+			if *fails > 0 {
+				*fails--
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if reviewed != nil {
+				*reviewed++
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1,"state":"APPROVED"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+// Transient failure: retries are suppressed inside the backoff window and the
+// request succeeds after it elapses — never an every-tick retry loop.
+func TestReviewRequestWatcher_RetriesWithBackoff(t *testing.T) {
+	reviewed, fails := 0, 1
+	srv := newReviewFailingMockServer(t, &reviewed, &fails)
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+
+	reqPath, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 7, Event: "approve", Agent: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+	c.processReviewRequests(context.Background(), clock)
+	if reviewed != 0 {
+		t.Fatalf("first attempt should have failed")
+	}
+	if _, err := os.Stat(reqPath); err != nil {
+		t.Fatalf("request must survive a transient failure: %v", err)
+	}
+	c.processReviewRequests(context.Background(), clock)
+	if reviewed != 0 {
+		t.Fatalf("retry must be suppressed inside the backoff window")
+	}
+	now = now.Add(requestRetryBase + time.Second)
+	c.processReviewRequests(context.Background(), clock)
+	if reviewed != 1 {
+		t.Fatalf("expected review on post-backoff retry, got %d", reviewed)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("request should be consumed after eventual success")
+	}
+}
+
+// Give-up horizon: a review request still failing past requestRetryMaxAge is
+// quarantined as .failed and never retried again.
+func TestReviewRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
+	reviewed, fails := 0, 1000000
+	srv := newReviewFailingMockServer(t, &reviewed, &fails)
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+
+	reqPath, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 7, Event: "approve", Agent: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+	c.processReviewRequests(context.Background(), clock)
+	now = now.Add(requestRetryMaxAge + time.Hour)
+	c.processReviewRequests(context.Background(), clock)
+
+	if _, err := os.Stat(reqPath + ".failed"); err != nil {
+		t.Fatalf("expected .failed quarantine: %v", err)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("original request should be renamed away")
 	}
 }

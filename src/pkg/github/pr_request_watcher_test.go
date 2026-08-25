@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mock GitHub API for PR create + list. created counts POST /pulls calls.
@@ -258,5 +259,114 @@ func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
 				t.Errorf("hold label applied=%v, want %v (labels seen: %v)", gotHold, tc.wantHold, added)
 			}
 		})
+	}
+}
+
+// newPRFailingMockServer fails the first `fails` POST /pulls calls with a 500,
+// then behaves like newPRMockServer. The dedupe GET always returns empty.
+func newPRFailingMockServer(t *testing.T, created *int, fails *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls"):
+			if *fails > 0 {
+				*fails--
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if created != nil {
+				*created++
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":42,"html_url":"https://github.com/o/r/pull/42"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// Transient failure: the request survives with its error recorded, retries are
+// suppressed inside the backoff window (NOT re-attempted every tick — the
+// every-tick loop is what burned the org's secondary rate limit), and the
+// request succeeds once the backoff elapses.
+func TestPRRequestWatcher_RetriesWithBackoff(t *testing.T) {
+	created, fails := 0, 1
+	srv := newPRFailingMockServer(t, &created, &fails)
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/fix-1", Title: "[scanner] fix", Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+	c.processPRRequests(context.Background(), clock)
+	if created != 0 {
+		t.Fatalf("first attempt should have failed")
+	}
+	if _, err := os.Stat(reqPath); err != nil {
+		t.Fatalf("request must survive a transient failure: %v", err)
+	}
+	// Within backoff: skipped entirely.
+	c.processPRRequests(context.Background(), clock)
+	if created != 0 {
+		t.Fatalf("retry must be suppressed inside the backoff window")
+	}
+	// After backoff: retried and succeeds; request consumed.
+	now = now.Add(requestRetryBase + time.Second)
+	c.processPRRequests(context.Background(), clock)
+	if created != 1 {
+		t.Fatalf("expected creation on post-backoff retry, got %d", created)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("request should be consumed after eventual success")
+	}
+}
+
+// Give-up horizon: a request still failing past requestRetryMaxAge is
+// quarantined as .failed and never retried again.
+func TestPRRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
+	created, fails := 0, 1000000
+	srv := newPRFailingMockServer(t, &created, &fails)
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/never-lands", Title: "[scanner] never", Agent: "scanner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+	c.processPRRequests(context.Background(), clock) // first failure starts the horizon clock
+	now = now.Add(requestRetryMaxAge + time.Hour)
+	c.processPRRequests(context.Background(), clock) // exceeds horizon -> quarantine
+
+	if _, err := os.Stat(reqPath + ".failed"); err != nil {
+		t.Fatalf("expected .failed quarantine: %v", err)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("original request should be renamed away")
+	}
+	// And it is never attempted again even after more time passes.
+	before := created
+	now = now.Add(time.Hour)
+	c.processPRRequests(context.Background(), clock)
+	if created != before {
+		t.Errorf("quarantined request must not be retried")
 	}
 }

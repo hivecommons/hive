@@ -88,6 +88,11 @@ type Client struct {
 	// watcher (in-memory; reset on restart). Guarded by issueRetryMu.
 	issueRetryMu sync.Mutex
 	issueRetries map[string]*issueRetryState
+	// prRetries / reviewRetries apply the same per-request-file backoff +
+	// give-up policy to the PR-open and PR-review watchers (request_retry.go).
+	// Zero values are ready to use.
+	prRetries     retryTracker
+	reviewRetries retryTracker
 	// mergerAuthz gates the label-queued auto-merge sweep on WHO queued the
 	// merge: it reports whether a login holds at least config.RoleMerger (audit
 	// F3). nil fails closed — SweepQueuedAutoMerges merges nothing. Guarded

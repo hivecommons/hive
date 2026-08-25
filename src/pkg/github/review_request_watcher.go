@@ -140,6 +140,9 @@ func (c *Client) ProcessReviewRequestsOnce(ctx context.Context) {
 }
 
 func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn func() time.Time) {
+	if !c.reviewRetries.allows(path, nowFn()) {
+		return
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return // vanished between ReadDir and here
@@ -148,6 +151,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if err := json.Unmarshal(data, &req); err != nil {
 		c.writeReviewResult(path, ReviewResponse{OK: false, Error: "invalid JSON: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
+		c.reviewRetries.clear(path)
 		c.logger.Warn("review-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
@@ -168,6 +172,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if shapeErr != "" {
 		c.writeReviewResult(path, ReviewResponse{OK: false, Error: shapeErr, At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
+		c.reviewRetries.clear(path)
 		c.logger.Warn("review-request watcher: malformed request quarantined",
 			slog.String("path", path), slog.String("reason", shapeErr))
 		return
@@ -199,10 +204,21 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 	resp := ReviewResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	if err != nil {
+		// Retry with exponential backoff and quarantine at the give-up horizon
+		// (request_retry.go) — an every-tick retry loop on a poisoned request
+		// burns secondary-rate-limit budget for the whole App installation.
 		resp.OK = false
 		resp.Error = err.Error()
 		c.writeReviewResult(path, resp)
-		c.logger.Warn("review-request watcher: review failed, will retry",
+		if c.reviewRetries.noteFailure(path, nowFn()) {
+			_ = os.Rename(path, path+".failed")
+			c.reviewRetries.clear(path)
+			c.logger.Error("review-request watcher: request exceeded retry horizon, quarantined",
+				slog.String("path", path), slog.String("repo", req.Repo),
+				slog.Int("number", req.Number), slog.String("error", err.Error()))
+			return
+		}
+		c.logger.Warn("review-request watcher: review failed, will retry with backoff",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
 		return
 	}
@@ -216,6 +232,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		"state", state)
 	c.writeReviewResult(path, resp)
 	_ = os.Remove(path)
+	c.reviewRetries.clear(path)
 	c.logger.Info("review-request watcher: review submitted by App bot",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("state", state), slog.String("agent", req.Agent))
@@ -224,6 +241,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 func (c *Client) denyReviewRequest(path string, req ReviewRequest, reason string, nowFn func() time.Time) {
 	c.writeReviewResult(path, ReviewResponse{OK: false, Error: "authorization denied: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Rename(path, path+".denied")
+	c.reviewRetries.clear(path)
 	c.logger.Warn("review-request watcher: DENIED (policy)",
 		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
 		slog.Int("number", req.Number), slog.String("reason", reason))

@@ -164,6 +164,9 @@ func (c *Client) ProcessPRRequestsOnce(ctx context.Context) {
 }
 
 func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func() time.Time) {
+	if !c.prRetries.allows(path, nowFn()) {
+		return
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return // vanished between ReadDir and here — fine
@@ -174,6 +177,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		// retried every tick, and leave a result explaining why.
 		c.writePRResult(path, PRResponse{OK: false, Error: "invalid JSON: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
+		c.prRetries.clear(path)
 		c.logger.Warn("pr-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
@@ -208,12 +212,24 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, body)
 	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	if err != nil {
-		// Leave the request in place so the next tick retries (transient API
-		// errors, main not yet pushed, etc.), but record the last error.
+		// Leave the request in place so a later tick retries (transient API
+		// errors, main not yet pushed, etc.) — but with exponential backoff, and
+		// quarantine once the give-up horizon passes. Retrying every tick
+		// forever let ~10 poisoned requests generate thousands of junk create
+		// calls an hour, tripping the org-wide secondary rate limit
+		// (request_retry.go).
 		resp.OK = false
 		resp.Error = err.Error()
 		c.writePRResult(path, resp)
-		c.logger.Warn("pr-request watcher: open failed, will retry",
+		if c.prRetries.noteFailure(path, nowFn()) {
+			_ = os.Rename(path, path+".failed")
+			c.prRetries.clear(path)
+			c.logger.Error("pr-request watcher: request exceeded retry horizon, quarantined",
+				slog.String("path", path), slog.String("repo", req.Repo),
+				slog.String("head", req.Head), slog.String("error", err.Error()))
+			return
+		}
+		c.logger.Warn("pr-request watcher: open failed, will retry with backoff",
 			slog.String("repo", req.Repo), slog.String("head", req.Head), slog.String("error", err.Error()))
 		return
 	}
@@ -257,6 +273,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.
 	_ = os.Remove(path)
+	c.prRetries.clear(path)
 	c.logger.Info("pr-request watcher: PR opened by App bot",
 		slog.String("repo", req.Repo), slog.String("head", req.Head),
 		slog.Int("number", res.Number), slog.Bool("reused", res.AlreadyExisted),
@@ -270,6 +287,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 func (c *Client) denyPRRequest(path string, req PRRequest, reason string, nowFn func() time.Time) {
 	c.writePRResult(path, PRResponse{OK: false, Error: "authorization denied: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Rename(path, path+".denied")
+	c.prRetries.clear(path)
 	c.logger.Warn("pr-request watcher: DENIED (policy)",
 		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
 		slog.String("head", req.Head), slog.String("reason", reason))
