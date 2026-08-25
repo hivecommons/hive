@@ -200,6 +200,13 @@
     }
     .oc-nav-actions button:hover { background: var(--border); color: var(--text); }
     .oc-nav-actions .oc-nav-delete:hover { background: var(--oc-accent-light); color: var(--oc-accent); }
+    .oc-nav-item.disabled-agent { opacity: 0.58; cursor: default; }
+    .oc-nav-item.disabled-agent:hover { color: var(--muted); }
+    .oc-enable-agent {
+      border: 1px solid var(--border); border-radius: 4px; background: var(--panel);
+      color: var(--muted); cursor: pointer; font-size: 0.62rem; padding: 1px 5px;
+    }
+    .oc-enable-agent:hover { color: var(--green); border-color: var(--green); }
     .mode-badge { font-size: 0.7rem; margin-left: 2px; opacity: 0.8; }
     /* Active nav — amber accent bar (brand chrome), both modes.
        --oc-accent stays red for non-nav uses (delete affordances). */
@@ -4486,6 +4493,13 @@
     }
 
     function _sidebarRenderAgent(a) {
+      if (a.configDisabled === true) {
+        const label = a.displayName || a.name;
+        const ownerBits = [a.backendOwner && `backend: ${a.backendOwner}`, a.modelOwner && `model: ${a.modelOwner}`].filter(Boolean);
+        const title = `Configured but disabled${ownerBits.length ? ' — ' + ownerBits.join(', ') : ''}`;
+        const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
+        return `<div class="oc-nav-item disabled-agent" data-agent-nav="${esc(a.name)}" title="${esc(title)}"><span class="oc-agent-dot off"></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span><button class="oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" data-tab="General" title="Configure and enable ${esc(label)}">Enable…</button><span class="oc-nav-actions"><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></div>`;
+      }
       const isOnDemand = a.onDemand === true;
       // Manual/persisted pause wins over offByCadence — see the agent-detail
       // renderer for the incident this ordering prevents.
@@ -4759,7 +4773,7 @@
     function ocUpdateSidebarAgents() {
       const tree = document.getElementById('oc-agent-tree');
       if (!tree) return;
-      const agents = window._lastAgents || [];
+      const agents = _sidebarAgents();
       const agentMap = {};
       agents.forEach(a => { agentMap[a.name] = a; });
       const groups = _sidebarBuildGroups(agents);
@@ -4798,6 +4812,17 @@
         }
       });
       _sidebarAttachDragHandlers();
+    }
+
+    function _sidebarAgents() {
+      const runtime = [...(window._lastAgents || [])];
+      const runtimeNames = new Set(runtime.map(a => a.name));
+      for (const configured of (window._configuredAgents || [])) {
+        if (!configured.enabled && !runtimeNames.has(configured.name)) {
+          runtime.push({ ...configured, configDisabled: true });
+        }
+      }
+      return runtime;
     }
 
     applyLayout(getLayout());
@@ -12485,6 +12510,7 @@ function burnAreaChart() {
       window._healthData = data.health || {};
       window._tokensByAgent = (data.tokens || {}).byAgent || {};
       window._lastAgents = data.agents || [];
+      window._configuredAgents = data.configuredAgents || [];
       window._lastStatus = data;
       if (window._acmmOverride) {
         if (data.acmmLevel === window._acmmOverride.level) {
@@ -15145,6 +15171,7 @@ function burnAreaChart() {
         try {
           const payload = JSON.parse(e.data);
           window._lastAgents = payload.agents || [];
+          window._configuredAgents = payload.configuredAgents || window._configuredAgents || [];
           if (window._lastStatus) {
             window._lastStatus.agents = payload.agents || [];
           }
@@ -17692,6 +17719,11 @@ function burnAreaChart() {
           <label>Name <span style="color:var(--red)">*</span> <span class="config-info">i<span class="config-tooltip">The agent's internal name used as its ID, config file name, and tmux session. Lowercase, hyphens allowed.</span></span></label>
           <input type="text" id="cfg-create-name" value="" placeholder="e.g. docs-writer, sec-scanner" data-change-action="markDirty" data-arg0="_create" data-arg1="name" data-arg-types="s,s,v">
           <div style="font-size:0.65rem;color:var(--muted);margin-top:2px">Lowercase, hyphens allowed. Used as the agent ID.</div>
+        </div>`;
+      } else {
+        html += `<div class="config-toggle">
+          <div class="config-toggle-switch ${g.enabled ? 'on' : ''}" id="cfg-agent-enabled" data-action="toggleConfigSwitch" data-section="general" data-key="enabled"></div>
+          <span class="config-toggle-label">Enabled <span class="config-info">i<span class="config-tooltip">Disabled agents remain configured but do not run. Enable this agent and Save to start it.</span></span></span>
         </div>`;
       }
       html += `

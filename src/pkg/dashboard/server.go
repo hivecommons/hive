@@ -283,15 +283,16 @@ type StatusPayload struct {
 	// StatusInstance identifies the server process that produced the seq.
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
-	StatusInstance string           `json:"statusInstance"`
-	HiveID         string           `json:"hiveId"`
-	Agents         []FrontendAgent  `json:"agents"`
-	Governor       FrontendGovernor `json:"governor"`
-	Tokens         FrontendTokens   `json:"tokens"`
-	Repos          []FrontendRepo   `json:"repos"`
-	Beads          FrontendBeads    `json:"beads"`
-	Planning       FrontendPlanning `json:"planning"`
-	Health         map[string]any   `json:"health"`
+	StatusInstance   string                    `json:"statusInstance"`
+	HiveID           string                    `json:"hiveId"`
+	Agents           []FrontendAgent           `json:"agents"`
+	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
+	Governor         FrontendGovernor          `json:"governor"`
+	Tokens           FrontendTokens            `json:"tokens"`
+	Repos            []FrontendRepo            `json:"repos"`
+	Beads            FrontendBeads             `json:"beads"`
+	Planning         FrontendPlanning          `json:"planning"`
+	Health           map[string]any            `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -479,6 +480,21 @@ type FrontendAgent struct {
 	LastError        string `json:"lastError,omitempty"`
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
+}
+
+// FrontendConfiguredAgent is the secret-free config inventory used by the
+// dashboard to surface agents that have no runtime process (notably agents
+// configured with enabled: false). Runtime details remain in FrontendAgent.
+type FrontendConfiguredAgent struct {
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Description  string `json:"description,omitempty"`
+	SortOrder    int    `json:"sortOrder"`
+	Emoji        string `json:"emoji,omitempty"`
+	Color        string `json:"color,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	ModelOwner   string `json:"modelOwner,omitempty"`
+	BackendOwner string `json:"backendOwner,omitempty"`
 }
 
 type FrontendGovernor struct {

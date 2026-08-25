@@ -2528,17 +2528,13 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proc, err := s.deps.AgentMgr.GetStatus(name)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
-	}
 
 	cli := agentCfg.Backend
-	if proc.BackendOverride != "" {
+	if err == nil && proc.BackendOverride != "" {
 		cli = proc.BackendOverride
 	}
 	model := agentCfg.Model
-	if proc.ModelOverride != "" {
+	if err == nil && proc.ModelOverride != "" {
 		model = proc.ModelOverride
 	}
 
@@ -2594,7 +2590,12 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 		models[modeName] = ""
 	}
 
-	lastPrompt := proc.LastKickMessage
+	lastPrompt := ""
+	pinnedCLI := agentCfg.CLIPinned
+	if err == nil {
+		lastPrompt = proc.LastKickMessage
+		pinnedCLI = pinnedCLI || proc.PinnedCLI != ""
+	}
 
 	// Read restrictions from agent work dir files
 	restrictions := s.loadAgentRestrictions(name)
@@ -2615,11 +2616,14 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, map[string]interface{}{
 		"general": map[string]interface{}{
+			"enabled":          agentCfg.Enabled,
 			"launchCmd":        launchCmd,
 			"displayName":      displayName,
 			"description":      agentCfg.Description,
-			"cliPinned":        agentCfg.CLIPinned || proc.PinnedCLI != "",
+			"cliPinned":        pinnedCLI,
 			"cliPinValue":      cli,
+			"modelOwner":       agentCfg.ModelOwner,
+			"backendOwner":     agentCfg.BackendOwner,
 			"staleTimeout":     staleTimeout,
 			"restartStrategy":  restartStrategy,
 			"model":            model,

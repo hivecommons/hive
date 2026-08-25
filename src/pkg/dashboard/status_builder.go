@@ -204,9 +204,10 @@ func InferenceAuthError() (errMsg string, since time.Time) {
 // AgentStatusPayload is a lightweight payload containing only agent metadata,
 // broadcast on a fast cadence (every ~10s) independent of the full eval cycle.
 type AgentStatusPayload struct {
-	Timestamp string          `json:"timestamp"`
-	Agents    []FrontendAgent `json:"agents"`
-	GovMode   string          `json:"govMode"`
+	Timestamp        string                    `json:"timestamp"`
+	Agents           []FrontendAgent           `json:"agents"`
+	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
+	GovMode          string                    `json:"govMode"`
 }
 
 // BuildAgentOnlyStatus builds a lightweight agent-only status from in-memory
@@ -217,9 +218,10 @@ func BuildAgentOnlyStatus(
 	cfg *config.Config,
 ) *AgentStatusPayload {
 	return &AgentStatusPayload{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Agents:    buildAgents(agentStatuses, cfg, govState),
-		GovMode:   strings.ToLower(string(govState.Mode)),
+		Timestamp:        time.Now().UTC().Format(time.RFC3339),
+		Agents:           buildAgents(agentStatuses, cfg, govState),
+		ConfiguredAgents: buildConfiguredAgents(cfg),
+		GovMode:          strings.ToLower(string(govState.Mode)),
 	}
 }
 
@@ -246,6 +248,7 @@ func BuildFrontendStatus(
 		Timestamp:           time.Now().UTC().Format(time.RFC3339),
 		HiveID:              cfg.HiveID,
 		Agents:              buildAgents(agentStatuses, cfg, govState),
+		ConfiguredAgents:    buildConfiguredAgents(cfg),
 		Governor:            buildGovernor(govState, cfg),
 		Tokens:              buildTokens(tokenCollector),
 		Repos:               buildRepos(cfg, actionable),
@@ -266,6 +269,35 @@ func BuildFrontendStatus(
 		Security:            buildSecurity(cfg),
 	}
 	return payload
+}
+
+func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
+	if cfg == nil {
+		return []FrontendConfiguredAgent{}
+	}
+	names := make([]string, 0, len(cfg.Agents))
+	for name := range cfg.Agents {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		left, right := cfg.Agents[names[i]], cfg.Agents[names[j]]
+		if left.GetSortOrder() != right.GetSortOrder() {
+			return left.GetSortOrder() < right.GetSortOrder()
+		}
+		return names[i] < names[j]
+	})
+
+	agents := make([]FrontendConfiguredAgent, 0, len(names))
+	for _, name := range names {
+		agentCfg := cfg.Agents[name]
+		agents = append(agents, FrontendConfiguredAgent{
+			Name: name, DisplayName: agentCfg.DisplayName,
+			Description: agentCfg.Description, SortOrder: agentCfg.GetSortOrder(),
+			Emoji: agentCfg.Emoji, Color: agentCfg.Color, Enabled: agentCfg.Enabled,
+			ModelOwner: agentCfg.ModelOwner, BackendOwner: agentCfg.BackendOwner,
+		})
+	}
+	return agents
 }
 
 // buildSecurity summarizes operator-facing security posture from effective
