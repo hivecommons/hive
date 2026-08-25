@@ -83,7 +83,7 @@ jobs:
         id: cover
         continue-on-error: true
         run: |
-          go test ./pkg/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
+          go test ./pkg/... ./cmd/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
             2>&1 | tee race-run.log
           exit "${PIPESTATUS[0]}"
 
@@ -151,7 +151,24 @@ jobs:
             [ioscan]=96
             [sandbox]=98
             [pushbroker]=99
+
+            # ── ./cmd/... floors (#4701) ─────────────────────────────────────
+            # CI never ran ./cmd/... at all before #4701 — four cmd/bd tests
+            # were merged already-failing and stayed red undetected. cmd keys
+            # are prefixed ("cmd/<name>") so cmd/hivectl can never collide with
+            # pkg/hivectl's floor. Recorded just below what v4 measures after
+            # #4700/#4719 so the ratchet can turn as CLI tests land.
+            [cmd/bd]=58       # 60.4% after #4700's kb-CLI tests
+            [cmd/hive]=17     # 18.8% after #4719's merge-authz tests; bulk is main()/run-loop wiring
+            [cmd/apiproxy]=13 # 14.7%
           )
+
+          # Thin flag-parsing mains with no test files, wrapping packages the
+          # gate already floors (pkg/hivectl at 88, pkg/hubbackup at the 90
+          # default). Exempt from the NO TEST FILES hard failure by name so any
+          # NEW untested cmd package still fails the gate. Remove an entry the
+          # moment its package gains a test file.
+          UNTESTED_CMD_MAINS='cmd/hive-backup cmd/hivectl'
 
           # Capture the full `go test -cover` output ONCE, then classify every
           # line. The previous version piped through `grep '^ok'`, which silently
@@ -163,12 +180,24 @@ jobs:
           # Both were therefore incapable of failing the gate, so adding a
           # package with zero tests was the one guaranteed way to stay green.
           # They are now hard failures in their own right.
-          go test -cover ./pkg/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+          go test -cover ./pkg/... ./cmd/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+
+          # Floor-map key for a package import path: cmd packages are keyed
+          # with a "cmd/" prefix so cmd/hivectl can never resolve to
+          # pkg/hivectl's floor (#4701); everything else keeps the historical
+          # bare-basename key.
+          floor_key() {
+            case "$1" in
+              */cmd/*) echo "cmd/${1##*/}" ;;
+              *)       echo "${1##*/}" ;;
+            esac
+          }
 
           while IFS= read -r line; do
             case "$line" in
               ok*)
-                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                pkgpath=$(echo "$line" | awk '{print $2}')
+                pkg=$(floor_key "$pkgpath")
                 pct=$(echo "$line" | grep -o '[0-9]*\.[0-9]*%' | tr -d '%')
                 if [ -z "$pct" ]; then continue; fi
                 int_pct=$(echo "$pct" | cut -d. -f1)
@@ -179,17 +208,26 @@ jobs:
                 REPORT="${REPORT}${pkg}: ${pct}%\n"
                 ;;
               FAIL*)
-                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                pkgpath=$(echo "$line" | awk '{print $2}')
                 # Ignore the bare trailing "FAIL" summary line, which has no pkg.
-                if [ -n "$pkg" ] && [ "$pkg" != "FAIL" ]; then
+                if [ -n "$pkgpath" ] && [ "$pkgpath" != "FAIL" ]; then
+                  pkg=$(floor_key "$pkgpath")
                   BROKEN="${BROKEN}${pkg}: TESTS FAILING\n"
                   REPORT="${REPORT}${pkg}: FAIL\n"
                 fi
                 ;;
               \?*)
-                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
-                BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
-                REPORT="${REPORT}${pkg}: no tests\n"
+                pkgpath=$(echo "$line" | awk '{print $2}')
+                pkg=$(floor_key "$pkgpath")
+                case " $UNTESTED_CMD_MAINS " in
+                  *" $pkg "*)
+                    REPORT="${REPORT}${pkg}: no tests (exempt thin main)\n"
+                    ;;
+                  *)
+                    BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
+                    REPORT="${REPORT}${pkg}: no tests\n"
+                    ;;
+                esac
                 ;;
             esac
           done < cover-run.log

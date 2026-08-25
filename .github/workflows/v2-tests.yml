@@ -385,7 +385,21 @@ jobs:
             [ioscan]=96
             [sandbox]=98
             [pushbroker]=99
+
+            # ── ./cmd/... floors (#4701) ─────────────────────────────────────
+            # See coverage-hourly.yml for the rationale. cmd keys are prefixed
+            # ("cmd/<name>") so cmd/hivectl can never collide with
+            # pkg/hivectl's floor. Recorded just below what v4 measures after
+            # #4700/#4719 so the ratchet can turn as CLI tests land.
+            [cmd/bd]=58       # 60.4% after #4700's kb-CLI tests
+            [cmd/hive]=17     # 18.8% after #4719's merge-authz tests; bulk is main()/run-loop wiring
+            [cmd/apiproxy]=13 # 14.7%
           )
+
+          # Thin flag-parsing mains with no test files, wrapping packages the
+          # gate already floors. KEEP IN SYNC with coverage-hourly.yml. Any NEW
+          # untested cmd package still hard-fails.
+          UNTESTED_CMD_MAINS='cmd/hive-backup cmd/hivectl'
 
           # Merge every shard profile: per-block counts are summed, so the N
           # partial pkg/agent profiles combine into the package's true
@@ -423,16 +437,27 @@ jobs:
           echo "Total coverage (./pkg/...): ${TOTAL:-unavailable}"
 
           # Classify every package exactly once from the combined logs.
-          # Floors apply to ./pkg/... only, matching the historical gate
-          # (./cmd/... lines are ignored here; the shards themselves already
-          # fail on any cmd test failure).
+          # ./cmd/... is scored too (#4701): the shards have run cmd tests
+          # since the partition change, but coverage floors previously applied
+          # to ./pkg/... only, so a CLI package could lose all its tests
+          # without the gate noticing. The TOTAL line remains ./pkg/...-only
+          # for trend continuity.
           cat test-*.log > cover-run.log
           grep -E '^(ok|FAIL|\?)' cover-run.log \
-            | awk '$2 ~ /^github\.com\/kubestellar\/hive\/pkg\// {print $1, $2}' \
+            | awk '$2 ~ /^github\.com\/kubestellar\/hive\/(pkg|cmd)\// {print $1, $2}' \
             | LC_ALL=C sort -u > pkg-states.txt
 
+          # Floor-map key: cmd packages get a "cmd/" prefix so cmd/hivectl can
+          # never resolve to pkg/hivectl's floor; pkg keeps the bare basename.
+          floor_key() {
+            case "$1" in
+              */cmd/*) echo "cmd/${1##*/}" ;;
+              *)       echo "${1##*/}" ;;
+            esac
+          }
+
           while read -r state pkgpath; do
-            pkg=${pkgpath##*/}
+            pkg=$(floor_key "$pkgpath")
             case "$state" in
               ok)
                 # A package that also has a FAIL line anywhere is broken; the
@@ -452,8 +477,15 @@ jobs:
                 REPORT="${REPORT}${pkg}: FAIL\n"
                 ;;
               \?)
-                BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
-                REPORT="${REPORT}${pkg}: no tests\n"
+                case " $UNTESTED_CMD_MAINS " in
+                  *" $pkg "*)
+                    REPORT="${REPORT}${pkg}: no tests (exempt thin main)\n"
+                    ;;
+                  *)
+                    BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
+                    REPORT="${REPORT}${pkg}: no tests\n"
+                    ;;
+                esac
                 ;;
             esac
           done < pkg-states.txt
