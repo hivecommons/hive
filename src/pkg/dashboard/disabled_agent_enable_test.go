@@ -53,12 +53,52 @@ func TestDisabledAgentSidebarEnableWiring(t *testing.T) {
 		`window._configuredAgents = data.configuredAgents || [];`,
 		`if (!configured.enabled && !runtimeNames.has(configured.name))`,
 		`class="oc-nav-item disabled-agent"`,
-		`data-tab="General" title="Configure and enable`,
+		// Wiring, not prose: the button must open the agent config dialog on the
+		// General tab. The visible label deliberately leads with a gear so the
+		// row reads as configurable rather than as a one-click state toggle.
+		`data-tab="General" title="Configure `,
+		`>⚙ Enable…</button>`,
 		`id="cfg-agent-enabled"`,
 		`data-key="enabled"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing disabled-agent enable wiring %q", snippet)
 		}
+	}
+}
+
+// TestConfiguredAgentsCarryResolvedMode pins the field the sidebar needs to
+// show what a disabled agent WOULD do once enabled. A disabled agent has no
+// runtime entry, so if buildConfiguredAgents omits the mode the badge silently
+// renders nothing — dead markup that looks fine in review.
+//
+// Both branches matter: an explicit per-agent Mode must win, and an agent that
+// sets none must still report the ACMM level default rather than empty.
+func TestConfiguredAgentsCarryResolvedMode(t *testing.T) {
+	level := 3
+	cfg := &config.Config{
+		ACMMLevel: &level,
+		Agents: map[string]config.AgentConfig{
+			"explicit": {Enabled: false, Mode: "ADVISORY"},
+			"default":  {Enabled: false},
+		},
+	}
+
+	got := map[string]FrontendConfiguredAgent{}
+	for _, a := range buildConfiguredAgents(cfg) {
+		got[a.Name] = a
+	}
+
+	if got["explicit"].Mode != "ADVISORY" {
+		t.Errorf("explicit Mode override must win: got %q, want ADVISORY", got["explicit"].Mode)
+	}
+	if got["explicit"].ModeEmoji == "" {
+		t.Error("explicit agent must carry a mode emoji for the sidebar badge")
+	}
+	if got["default"].Mode == "" {
+		t.Error("agent with no Mode override must still report the ACMM level default, not empty")
+	}
+	if got["default"].ModeEmoji == "" {
+		t.Error("level-default agent must carry a mode emoji too")
 	}
 }

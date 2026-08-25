@@ -287,14 +287,28 @@ func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
 		return names[i] < names[j]
 	})
 
+	acmmLevel := 0
+	if cfg.ACMMLevel != nil {
+		acmmLevel = *cfg.ACMMLevel
+	}
+
 	agents := make([]FrontendConfiguredAgent, 0, len(names))
 	for _, name := range names {
 		agentCfg := cfg.Agents[name]
+		// Same resolution buildAgents uses: explicit per-agent Mode wins,
+		// otherwise the ACMM level default for this agent.
+		mode := agent.DefaultAgentMode(name, acmmLevel)
+		if modeStr := agentCfg.Mode; modeStr != "" {
+			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+				mode = parsed
+			}
+		}
 		agents = append(agents, FrontendConfiguredAgent{
 			Name: name, DisplayName: agentCfg.DisplayName,
 			Description: agentCfg.Description, SortOrder: agentCfg.GetSortOrder(),
 			Emoji: agentCfg.Emoji, Color: agentCfg.Color, Enabled: agentCfg.Enabled,
 			ModelOwner: agentCfg.ModelOwner, BackendOwner: agentCfg.BackendOwner,
+			Mode: mode.String(), ModeEmoji: mode.Emoji(),
 		})
 	}
 	return agents

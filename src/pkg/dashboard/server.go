@@ -495,6 +495,13 @@ type FrontendConfiguredAgent struct {
 	Enabled      bool   `json:"enabled"`
 	ModelOwner   string `json:"modelOwner,omitempty"`
 	BackendOwner string `json:"backendOwner,omitempty"`
+	// Mode/ModeEmoji are resolved the same way buildAgents resolves them for a
+	// running agent: the agent's own Mode override if set, else the ACMM level
+	// default. A disabled agent has no runtime entry, so without these the
+	// sidebar cannot say what the agent WOULD do once enabled — which is the
+	// one thing an operator wants to check before enabling it.
+	Mode      string `json:"mode,omitempty"`
+	ModeEmoji string `json:"modeEmoji,omitempty"`
 }
 
 type FrontendGovernor struct {

@@ -4546,7 +4546,15 @@
         const ownerBits = [a.backendOwner && `backend: ${a.backendOwner}`, a.modelOwner && `model: ${a.modelOwner}`].filter(Boolean);
         const title = `Configured but disabled${ownerBits.length ? ' — ' + ownerBits.join(', ') : ''}`;
         const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
-        return `<div class="oc-nav-item disabled-agent" data-agent-nav="${esc(a.name)}" title="${esc(title)}"><span class="oc-agent-dot off"></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span><button class="oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" data-tab="General" title="Configure and enable ${esc(label)}">Enable…</button><span class="oc-nav-actions"><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></div>`;
+        // Mode badge on the disabled row too: the mode an agent WOULD run in is
+        // exactly what you want to check before turning it on, and it is the one
+        // field the enable dialog cannot show you from the sidebar.
+        const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
+        // The gear matches the ⚙ on enabled rows on purpose. This button opens the
+        // SAME agent config dialog they do — enabling is one field inside it, not a
+        // one-click flip — and a bare "Enable…" read as a state toggle, so nobody
+        // discovered that a disabled agent is fully configurable before it runs.
+        return `<div class="oc-nav-item disabled-agent" data-agent-nav="${esc(a.name)}" title="${esc(title)}"><span class="oc-agent-dot off"></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${modeHtml}<button class="oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" data-tab="General" title="Configure ${esc(label)} — review its settings and enable it from the General tab">⚙ Enable…</button><span class="oc-nav-actions"><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></div>`;
       }
       const isOnDemand = a.onDemand === true;
       // Manual/persisted pause wins over offByCadence — see the agent-detail
