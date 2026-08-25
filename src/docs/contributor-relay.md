@@ -76,6 +76,28 @@ Important environment variables:
 | `HIVE_AGENT_SESSION` | `contributor` | tmux session name for interactive mode. |
 | `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. Set it to the **empty string** to omit the `-c approvals_reviewer=` key entirely — the escape hatch if a Codex release rejects that config key at startup. Doing so keeps the sandbox posture; it is not the same as the dangerous bypass. |
 
+### Where each backend reads its instructions
+
+The relay downloads the hive's knowledge export to a single `agent.md` and then
+symlinks it under whatever filename the chosen CLI actually looks for
+(`bin/contributor-agent.sh`). Getting this wrong is silent: the export is
+fetched and refreshed on schedule, but the model never sees it — the failure
+mode fixed for Goose in [#2393](https://github.com/kubestellar/hive/issues/2393).
+
+| Backend | Filenames linked in `$HOME` |
+| --- | --- |
+| `claude`, `litellm` | `CLAUDE.md` |
+| `copilot` | `copilot-instructions.md`, `COPILOT.md`, `CLAUDE.md` |
+| `goose` | `AGENTS.md`, `.goosehints`, `.goose-instructions.md`, `CLAUDE.md` |
+| `codex` | `AGENTS.md`, `CLAUDE.md` |
+| `pi` | `AGENTS.md`, `CLAUDE.md` |
+| `agy` | `CLAUDE.md` |
+| anything else (incl. `bob`) | `CLAUDE.md` only — the `*` fallback |
+
+A backend that reads neither `CLAUDE.md` nor one of the names above falls into
+the `*` branch and runs with no hive knowledge at all. When adding a backend,
+confirm the filename its CLI reads and give it an explicit case.
+
 For Codex, Hive also passes `--add-dir "$HIVE_WORKSPACE_DIR"`. The CLI itself
 starts in the stable, credential-free `HIVE_AGENT_CWD`, while assigned checkouts
 live below the separately bounded writable workspace. Automatic-review denial
