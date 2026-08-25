@@ -394,12 +394,13 @@ jobs:
             [cmd/bd]=58       # 60.4% after #4700's kb-CLI tests
             [cmd/hive]=17     # 18.8% after #4719's merge-authz tests; bulk is main()/run-loop wiring
             [cmd/apiproxy]=13 # 14.7%
+            [cmd/hive-backup]=68 # 71.1% after #4736's CLI entry-point tests
           )
 
           # Thin flag-parsing mains with no test files, wrapping packages the
           # gate already floors. KEEP IN SYNC with coverage-hourly.yml. Any NEW
           # untested cmd package still hard-fails.
-          UNTESTED_CMD_MAINS='cmd/hive-backup cmd/hivectl'
+          UNTESTED_CMD_MAINS='cmd/hivectl'
 
           # Merge every shard profile: per-block counts are summed, so the N
           # partial pkg/agent profiles combine into the package's true
