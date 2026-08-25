@@ -112,6 +112,15 @@ async function main() {
   assert.equal(seenRequests[0], callback,
     `query string must survive the proxy intact, backend saw ${seenRequests[0]}`);
 
+  // Scoping pin: the mount must cover ONLY the /gh-setup segment. A sibling
+  // path that merely shares the prefix must fall through to static (404 here,
+  // no SPA index in the test static dir) and must never reach the backend.
+  const stray = await get('/gh-setupx?installation_id=1');
+  assert.equal(stray.status, 404,
+    `paths outside /gh-setup must not be proxied, got ${stray.status}`);
+  assert.equal(seenRequests.length, 1,
+    `backend must not see requests outside /gh-setup, saw ${JSON.stringify(seenRequests)}`);
+
   console.log('gh_setup_proxy: all assertions passed');
 }
 
