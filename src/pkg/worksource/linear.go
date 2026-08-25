@@ -17,8 +17,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/github"
 )
 
 // defaultLinearBaseURL is Linear's single GraphQL endpoint.
@@ -32,9 +36,16 @@ var defaultLinearStates = []string{"Todo", "In Progress", "Backlog"}
 
 // LinearTeamConfig maps one Linear team to the GitHub repo its agents clone.
 type LinearTeamConfig struct {
-	Key    string   // e.g. "ENG"
-	Repo   string   // GitHub repo agents clone, e.g. "my-org/my-repo"
-	States []string // Linear state names to include, e.g. ["Todo","Backlog"]
+	Key      string                // e.g. "ENG"
+	Repo     string                // default GitHub repo agents clone, e.g. "my-org/my-repo"
+	States   []string              // Linear state names to include, e.g. ["Todo","Backlog"]
+	Projects []LinearProjectConfig // optional project filter/routing
+	Cycles   string                // "" or "current"
+}
+
+type LinearProjectConfig struct {
+	Name string
+	Repo string
 }
 
 // LinearConfig configures the Linear work source adapter.
@@ -54,6 +65,7 @@ type LinearConfig struct {
 	// RFC and older workspaces phrase it as assignment — either field
 	// pointing at the app user means "the hive owns this".
 	ViewerID string
+	Logger   *slog.Logger
 }
 
 // LinearSource is a read-only WorkSource backed by Linear's GraphQL API.
@@ -91,15 +103,21 @@ const linearIssuesQuery = `query($teamKey: String!, $states: [String!], $cursor:
       url
       createdAt
       updatedAt
+      description
       priority
       state { name }
       assignee { displayName }
+      labels { nodes { name } }
+      project { name }
+      cycle { name startsAt endsAt }
+      children { nodes { id } }
+    }
+  }
 }`
 
 // linearAssignedIssuesQuery is linearIssuesQuery narrowed to issues whose
 // assignee OR delegate is the given user id. A separate document rather than
-// a dynamically-built filter so both shapes stay readable and the unfiltered
-// path stays byte-identical to what #4178 shipped.
+// a dynamically-built filter so both shapes stay readable.
 const linearAssignedIssuesQuery = `query($teamKey: String!, $states: [String!], $viewerID: ID, $cursor: String) {
   issues(
     filter: {
@@ -121,11 +139,15 @@ const linearAssignedIssuesQuery = `query($teamKey: String!, $states: [String!], 
       url
       createdAt
       updatedAt
+      description
       priority
       state { name }
       assignee { displayName }
       labels { nodes { name } }
       team { key }
+      project { name }
+      cycle { name startsAt endsAt }
+      children { nodes { id } }
     }
   }
 }`
@@ -136,14 +158,15 @@ type linearGraphQLRequest struct {
 }
 
 type linearIssueNode struct {
-	ID         string    `json:"id"`
-	Identifier string    `json:"identifier"`
-	Title      string    `json:"title"`
-	URL        string    `json:"url"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-	Priority   int       `json:"priority"`
-	State      struct {
+	ID          string    `json:"id"`
+	Identifier  string    `json:"identifier"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	Description string    `json:"description"`
+	Priority    int       `json:"priority"`
+	State       struct {
 		Name string `json:"name"`
 	} `json:"state"`
 	Assignee *struct {
@@ -157,6 +180,19 @@ type linearIssueNode struct {
 	Team struct {
 		Key string `json:"key"`
 	} `json:"team"`
+	Project *struct {
+		Name string `json:"name"`
+	} `json:"project"`
+	Cycle *struct {
+		Name     string `json:"name"`
+		StartsAt string `json:"startsAt"`
+		EndsAt   string `json:"endsAt"`
+	} `json:"cycle"`
+	Children struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+	} `json:"children"`
 }
 
 type linearGraphQLResponse struct {
@@ -194,11 +230,6 @@ func linearPriorityString(p int) string {
 // ListIssues implements WorkSource. It enumerates actionable issues across
 // all configured teams, skipping any issue carrying a hold label.
 func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
-	hold := make(map[string]bool, len(s.cfg.HoldLabels))
-	for _, l := range s.cfg.HoldLabels {
-		hold[l] = true
-	}
-
 	var out []Issue
 	for _, team := range s.cfg.Teams {
 		states := team.States
@@ -211,9 +242,20 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 		}
 	node:
 		for _, n := range nodes {
+			if team.Cycles == "current" && !linearIssueInCurrentCycle(n, time.Now()) {
+				continue
+			}
+			repo := team.Repo
+			if len(team.Projects) > 0 {
+				projectRepo, ok := linearProjectRepo(team, n)
+				if !ok {
+					continue
+				}
+				repo = projectRepo
+			}
 			labels := make([]string, 0, len(n.Labels.Nodes))
 			for _, l := range n.Labels.Nodes {
-				if hold[l.Name] {
+				if github.HasHoldLabelWith([]string{l.Name}, s.cfg.HoldLabels) {
 					continue node
 				}
 				labels = append(labels, l.Name)
@@ -222,22 +264,76 @@ func (s *LinearSource) ListIssues(ctx context.Context) ([]Issue, error) {
 			if n.Assignee != nil && n.Assignee.DisplayName != "" {
 				assignees = []string{n.Assignee.DisplayName}
 			}
-			out = append(out, Issue{
+			issue := Issue{
 				SourceType: "linear",
-				Repo:       team.Repo,
+				Repo:       repo,
 				ExternalID: n.Identifier,
 				Title:      n.Title,
 				Labels:     labels,
 				Assignees:  assignees,
+				IsTracker:  github.IsTrackerIssue(n.Title, labels, n.Description) || len(n.Children.Nodes) > 0,
 				Priority:   linearPriorityString(n.Priority),
 				State:      n.State.Name,
 				CreatedAt:  n.CreatedAt,
 				UpdatedAt:  n.UpdatedAt,
 				URL:        n.URL,
-			})
+			}
+			if RefFromIssue(issue).Key() == "" {
+				if s.cfg.Logger != nil {
+					s.cfg.Logger.Warn("linear: skipping issue with empty work identity", "team", team.Key, "external_id", n.Identifier, "repo", repo)
+				}
+				continue
+			}
+			out = append(out, issue)
 		}
 	}
 	return out, nil
+}
+
+func linearProjectRepo(team LinearTeamConfig, n linearIssueNode) (string, bool) {
+	if n.Project == nil {
+		return "", false
+	}
+	for _, p := range team.Projects {
+		if strings.EqualFold(p.Name, n.Project.Name) {
+			if p.Repo != "" {
+				return p.Repo, true
+			}
+			return team.Repo, true
+		}
+	}
+	return "", false
+}
+
+func linearIssueInCurrentCycle(n linearIssueNode, now time.Time) bool {
+	if n.Cycle == nil {
+		return false
+	}
+	start, ok := parseLinearCycleTime(n.Cycle.StartsAt, false)
+	if !ok || now.Before(start) {
+		return false
+	}
+	end, ok := parseLinearCycleTime(n.Cycle.EndsAt, true)
+	if !ok {
+		return true
+	}
+	return now.Before(end)
+}
+
+func parseLinearCycleTime(raw string, endOfDay bool) (time.Time, bool) {
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+		return ts, true
+	}
+	if day, err := time.Parse("2006-01-02", raw); err == nil {
+		if endOfDay {
+			return day.Add(24 * time.Hour), true
+		}
+		return day, true
+	}
+	return time.Time{}, false
 }
 
 // fetchTeamIssues pages through the Linear issues query for one team.

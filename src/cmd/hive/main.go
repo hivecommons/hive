@@ -5146,6 +5146,23 @@ func issueRef(repo string, number int) string {
 	return fmt.Sprintf("%s#%d", repo, number)
 }
 
+func actionableIssueRef(issue github.Issue) string {
+	ref := worksource.Ref{
+		SourceType: issue.SourceType,
+		Repo:       issue.Repo,
+		ExternalID: issue.ExternalID,
+		Number:     issue.Number,
+		URL:        issue.URL,
+	}
+	if key := ref.Key(); key != "" {
+		return key
+	}
+	if issue.Repo != "" {
+		return issue.Repo
+	}
+	return issue.ExternalID
+}
+
 // githubRateLimitErrText is the substring GitHub's client surfaces on a rate or
 // abuse limit. Matching text is acceptable ONLY here: a rate limit is a reason
 // to skip classification entirely, never a reason to accuse anyone of anything,
@@ -5465,15 +5482,23 @@ func runEvalCycle(
 		}
 		ws, wsErr := worksource.FromConfig(cfg.Governor.WorkSource, ghClient, ghToken, cfg.Project.Org, logger)
 		if wsErr != nil {
-			logger.Warn("work_source config error, falling back to GitHub Issues", "error", wsErr)
+			logger.Error("work_source config error; failing closed for issues while preserving GitHub PR maintenance", "error", wsErr)
+			actionable.Issues = github.IssueResultFromItems([]github.Issue{})
 		} else if wsIssues, listErr := ws.ListIssues(ctx); listErr != nil {
-			logger.Warn("work_source enumeration failed, falling back to GitHub Issues", "source", ws.SourceType(), "error", listErr)
+			logger.Error("work_source enumeration failed; failing closed for issues while preserving GitHub PR maintenance", "source", ws.SourceType(), "error", listErr)
+			actionable.Issues = github.IssueResultFromItems([]github.Issue{})
 		} else {
-			// Replace the Issues portion of actionable with worksource results.
-			actionable.Issues = github.IssueResult{
-				Count: len(wsIssues),
-				Items: worksource.ToGitHubIssues(wsIssues),
+			// Replace the Issues portion of actionable with worksource results,
+			// applying the same label gates and SLA summary rules as GitHub.
+			items := github.FilterExemptIssues(worksource.ToGitHubIssues(wsIssues), cfg.Governor.Labels.Exempt)
+			filtered := items[:0]
+			for _, issue := range items {
+				if cfg.Project.IssueFilter.Admits(issue.Labels) {
+					filtered = append(filtered, issue)
+				}
 			}
+			items = filtered
+			actionable.Issues = github.IssueResultFromItems(items)
 		}
 	}
 
@@ -5837,7 +5862,7 @@ func runEvalCycle(
 				}
 				notifier.Send(
 					"SLA 2x breach",
-					fmt.Sprintf("%s#%d age %dm: %s\n%s", issue.Repo, issue.Number, issue.AgeMinutes, issue.Title, issue.URL),
+					fmt.Sprintf("%s age %dm: %s\n%s", actionableIssueRef(issue), issue.AgeMinutes, issue.Title, issue.URL),
 					notify.PriorityHigh,
 				)
 				sent++

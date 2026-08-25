@@ -1,11 +1,15 @@
 package worksource
 
-import "github.com/kubestellar/hive/pkg/github"
+import (
+	"time"
+
+	"github.com/kubestellar/hive/pkg/github"
+)
 
 // ToGitHubIssues converts a worksource Issue slice into the github.Issue shape
-// that the scheduler and governor consume. GitHub-native fields not present in
-// the worksource type (AgeMinutes, IsTracker, ComplexityTier, ModelRec, Lane)
-// are left at their zero values and will be populated downstream by classify.
+// that the scheduler and governor consume. Classification fields not present in
+// the worksource type (ComplexityTier, ModelRec, Lane) are left at their zero
+// values and will be populated downstream by classify.
 //
 // SourceType and ExternalID are carried across (kubestellar/hive#4245). They are
 // the item's ONLY identity when Number is 0, which is every Linear and Jira
@@ -14,7 +18,15 @@ import "github.com/kubestellar/hive/pkg/github"
 // stay byte-identical "repo#number".
 func ToGitHubIssues(issues []Issue) []github.Issue {
 	out := make([]github.Issue, len(issues))
+	now := time.Now()
 	for i, ws := range issues {
+		ageMinutes := 0
+		if !ws.CreatedAt.IsZero() {
+			ageMinutes = int(now.Sub(ws.CreatedAt).Minutes())
+			if ageMinutes < 0 {
+				ageMinutes = 0
+			}
+		}
 		out[i] = github.Issue{
 			Repo:       ws.Repo,
 			Number:     ws.Number,
@@ -24,9 +36,13 @@ func ToGitHubIssues(issues []Issue) []github.Issue {
 			Author:     ws.Author,
 			Labels:     ws.Labels,
 			Assignees:  ws.Assignees,
+			Priority:   ws.Priority,
+			State:      ws.State,
 			CreatedAt:  ws.CreatedAt,
 			UpdatedAt:  ws.UpdatedAt,
+			AgeMinutes: ageMinutes,
 			URL:        ws.URL,
+			IsTracker:  ws.IsTracker,
 		}
 	}
 	return out

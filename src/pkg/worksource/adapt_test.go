@@ -20,6 +20,9 @@ func TestToGitHubIssues(t *testing.T) {
 			Author:     "doc",
 			Labels:     []string{"bug", "urgent"},
 			Assignees:  []string{"marty"},
+			IsTracker:  true,
+			Priority:   "high",
+			State:      "Todo",
 			CreatedAt:  created,
 			UpdatedAt:  updated,
 			URL:        "https://linear.app/eng/issue/ENG-123",
@@ -43,9 +46,28 @@ func TestToGitHubIssues(t *testing.T) {
 	if !g.CreatedAt.Equal(created) || !g.UpdatedAt.Equal(updated) {
 		t.Errorf("timestamps not mapped: created=%v updated=%v", g.CreatedAt, g.UpdatedAt)
 	}
-	// GitHub-native fields must stay zero — populated downstream by classify.
-	if g.AgeMinutes != 0 || g.IsTracker || g.ComplexityTier != "" || g.ModelRec != "" || g.Lane != "" {
-		t.Errorf("github-native fields must be zero: %+v", g)
+	if !g.IsTracker || g.Priority != "high" || g.State != "Todo" {
+		t.Errorf("worksource fields not mapped: %+v", g)
+	}
+	wantAge := int(time.Since(created).Minutes())
+	if g.AgeMinutes < wantAge-1 || g.AgeMinutes > wantAge+1 {
+		t.Errorf("AgeMinutes = %d, want approximately %d", g.AgeMinutes, wantAge)
+	}
+	// Classification fields must stay zero — populated downstream by classify.
+	if g.ComplexityTier != "" || g.ModelRec != "" || g.Lane != "" {
+		t.Errorf("classification fields must be zero: %+v", g)
+	}
+}
+
+func TestToGitHubIssuesUnknownOrFutureAge(t *testing.T) {
+	out := ToGitHubIssues([]Issue{
+		{CreatedAt: time.Time{}},
+		{CreatedAt: time.Now().Add(time.Hour)},
+	})
+	for i, issue := range out {
+		if issue.AgeMinutes != 0 {
+			t.Errorf("issue %d AgeMinutes = %d, want 0", i, issue.AgeMinutes)
+		}
 	}
 }
 

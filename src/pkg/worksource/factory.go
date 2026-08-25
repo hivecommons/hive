@@ -29,9 +29,31 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 		}), nil
 	case "linear":
 		c := cfg.Linear
+		if c.APIKey == "" {
+			return nil, fmt.Errorf("work_source.linear.api_key is required")
+		}
+		if len(c.Teams) == 0 {
+			return nil, fmt.Errorf("work_source.linear.teams must contain at least one team")
+		}
 		teams := make([]LinearTeamConfig, len(c.Teams))
 		for i, t := range c.Teams {
-			teams[i] = LinearTeamConfig{Key: t.Key, Repo: t.Repo, States: t.States}
+			if t.Key == "" {
+				return nil, fmt.Errorf("work_source.linear.teams[%d].key is required", i)
+			}
+			if t.Repo == "" {
+				return nil, fmt.Errorf("work_source.linear.teams[%d].repo is required", i)
+			}
+			if t.Cycles != "" && t.Cycles != "current" {
+				return nil, fmt.Errorf("work_source.linear.teams[%d].cycles = %q (want empty or current)", i, t.Cycles)
+			}
+			projects := make([]LinearProjectConfig, len(t.Projects))
+			for j, p := range t.Projects {
+				if p.Name == "" {
+					return nil, fmt.Errorf("work_source.linear.teams[%d].projects[%d].name is required", i, j)
+				}
+				projects[j] = LinearProjectConfig{Name: p.Name, Repo: p.Repo}
+			}
+			teams[i] = LinearTeamConfig{Key: t.Key, Repo: t.Repo, States: t.States, Projects: projects, Cycles: t.Cycles}
 		}
 		viewerID := ""
 		if c.AssignedOnly {
@@ -48,6 +70,7 @@ func FromConfig(cfg config.WorkSourceConfig, ghClient *github.Client, ghToken, g
 			Teams:      teams,
 			HoldLabels: c.HoldLabels,
 			ViewerID:   viewerID,
+			Logger:     logger,
 		}, nil), nil
 	case "jira":
 		c := cfg.Jira

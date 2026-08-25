@@ -1245,9 +1245,16 @@ type LinearSourceConfig struct {
 
 // LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
 type LinearTeamSourceConfig struct {
-	Key    string   `yaml:"key" json:"key"`
-	Repo   string   `yaml:"repo" json:"repo"`
-	States []string `yaml:"states,omitempty" json:"states,omitempty"`
+	Key      string                      `yaml:"key" json:"key"`
+	Repo     string                      `yaml:"repo" json:"repo"`
+	States   []string                    `yaml:"states,omitempty" json:"states,omitempty"`
+	Projects []LinearProjectSourceConfig `yaml:"projects,omitempty" json:"projects,omitempty"`
+	Cycles   string                      `yaml:"cycles,omitempty" json:"cycles,omitempty"`
+}
+
+type LinearProjectSourceConfig struct {
+	Name string `yaml:"name" json:"name"`
+	Repo string `yaml:"repo,omitempty" json:"repo,omitempty"`
 }
 
 // JiraSourceConfig configures the Jira Cloud REST v3 work source.

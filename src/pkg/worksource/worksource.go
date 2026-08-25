@@ -33,6 +33,9 @@ type Issue struct {
 	Labels []string `json:"labels,omitempty"`
 	// Assignees are the logins/usernames currently assigned.
 	Assignees []string `json:"assignees,omitempty"`
+	// IsTracker marks coordination-only umbrella work whose children carry the
+	// real implementation tasks.
+	IsTracker bool `json:"is_tracker,omitempty"`
 	// Priority is a normalized priority string: "urgent", "high", "medium",
 	// "low", "none". Empty when the source does not provide priority.
 	Priority string `json:"priority,omitempty"`

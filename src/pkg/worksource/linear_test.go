@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/pkg/worksource"
 )
@@ -39,7 +40,28 @@ func issueNode(identifier, title string, priority int, state string, labels ...s
 		"assignee":   nil,
 		"labels":     map[string]interface{}{"nodes": labelNodes},
 		"team":       map[string]string{"key": "X"},
+		"children":   map[string]interface{}{"nodes": []map[string]string{}},
 	}
+}
+
+func withProject(node map[string]interface{}, name string) map[string]interface{} {
+	node["project"] = map[string]string{"name": name}
+	return node
+}
+
+func withCycle(node map[string]interface{}, startsAt, endsAt string) map[string]interface{} {
+	node["cycle"] = map[string]string{"name": "Cycle", "startsAt": startsAt, "endsAt": endsAt}
+	return node
+}
+
+func withDescription(node map[string]interface{}, desc string) map[string]interface{} {
+	node["description"] = desc
+	return node
+}
+
+func withChild(node map[string]interface{}) map[string]interface{} {
+	node["children"] = map[string]interface{}{"nodes": []map[string]string{{"id": "child-1"}}}
+	return node
 }
 
 func gqlResponse(hasNext bool, cursor string, nodes ...map[string]interface{}) map[string]interface{} {
@@ -242,6 +264,127 @@ func TestLinearHoldLabelFiltering(t *testing.T) {
 	}
 	if len(issues) != 1 || issues[0].ExternalID != "ENG-1" {
 		t.Fatalf("expected only ENG-1, got %+v", issues)
+	}
+}
+
+func TestLinearHoldLabelFilteringUsesGitHubDefaultsAndCaseInsensitiveSubstring(t *testing.T) {
+	srv := serveGraphQL(t, func(vars gqlVars) map[string]interface{} {
+		return gqlResponse(false, "",
+			issueNode("ENG-1", "Free", 2, "Todo", "bug"),
+			issueNode("ENG-2", "Default hold", 2, "Todo", "Hold"),
+			issueNode("ENG-3", "Configured hold", 2, "Todo", "Needs-Blocked-Review"),
+		)
+	})
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:     "key",
+		BaseURL:    srv.URL,
+		HoldLabels: []string{"blocked"},
+		Teams:      []worksource.LinearTeamConfig{{Key: "ENG", Repo: "acme/app", States: []string{"Todo"}}},
+	}, nil)
+
+	issues, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ExternalID != "ENG-1" {
+		t.Fatalf("expected only ENG-1, got %+v", issues)
+	}
+}
+
+func TestLinearProjectFilterAndRouting(t *testing.T) {
+	srv := serveGraphQL(t, func(vars gqlVars) map[string]interface{} {
+		return gqlResponse(false, "",
+			withProject(issueNode("ENG-1", "Platform", 2, "Todo"), "Platform"),
+			withProject(issueNode("ENG-2", "Mobile", 2, "Todo"), "Mobile"),
+			withProject(issueNode("ENG-3", "Unmapped", 2, "Todo"), "Future"),
+			issueNode("ENG-4", "No project", 2, "Todo"),
+		)
+	})
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:  "key",
+		BaseURL: srv.URL,
+		Teams: []worksource.LinearTeamConfig{{
+			Key:    "ENG",
+			Repo:   "acme/default",
+			States: []string{"Todo"},
+			Projects: []worksource.LinearProjectConfig{
+				{Name: "Platform", Repo: "acme/platform"},
+				{Name: "Mobile"},
+			},
+		}},
+	}, nil)
+
+	issues, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("expected 2 mapped project issues, got %+v", issues)
+	}
+	if issues[0].ExternalID != "ENG-1" || issues[0].Repo != "acme/platform" {
+		t.Fatalf("platform issue = %+v", issues[0])
+	}
+	if issues[1].ExternalID != "ENG-2" || issues[1].Repo != "acme/default" {
+		t.Fatalf("mobile fallback issue = %+v", issues[1])
+	}
+}
+
+func TestLinearCurrentCycleFilter(t *testing.T) {
+	now := time.Now().UTC()
+	srv := serveGraphQL(t, func(vars gqlVars) map[string]interface{} {
+		return gqlResponse(false, "",
+			withCycle(issueNode("ENG-1", "Current", 2, "Todo"), now.Add(-time.Hour).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)),
+			withCycle(issueNode("ENG-2", "Past", 2, "Todo"), now.Add(-2*time.Hour).Format(time.RFC3339), now.Add(-time.Hour).Format(time.RFC3339)),
+			issueNode("ENG-3", "No cycle", 2, "Todo"),
+		)
+	})
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:  "key",
+		BaseURL: srv.URL,
+		Teams:   []worksource.LinearTeamConfig{{Key: "ENG", Repo: "acme/app", States: []string{"Todo"}, Cycles: "current"}},
+	}, nil)
+
+	issues, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ExternalID != "ENG-1" {
+		t.Fatalf("expected only current cycle issue, got %+v", issues)
+	}
+}
+
+func TestLinearTrackerDetectionFromDescriptionAndChildren(t *testing.T) {
+	desc := "- [ ] #1\n- [ ] #2\n- [ ] #3\n"
+	srv := serveGraphQL(t, func(vars gqlVars) map[string]interface{} {
+		return gqlResponse(false, "",
+			withDescription(issueNode("ENG-1", "Umbrella", 2, "Todo"), desc),
+			withChild(issueNode("ENG-2", "Parent", 2, "Todo")),
+			issueNode("ENG-3", "Leaf", 2, "Todo"),
+		)
+	})
+	defer srv.Close()
+
+	src := worksource.NewLinearSource(worksource.LinearConfig{
+		APIKey:  "key",
+		BaseURL: srv.URL,
+		Teams:   []worksource.LinearTeamConfig{{Key: "ENG", Repo: "acme/app", States: []string{"Todo"}}},
+	}, nil)
+
+	issues, err := src.ListIssues(context.Background())
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 3 {
+		t.Fatalf("expected 3 issues, got %+v", issues)
+	}
+	if !issues[0].IsTracker || !issues[1].IsTracker || issues[2].IsTracker {
+		t.Fatalf("tracker flags = %+v", issues)
 	}
 }
 

@@ -175,6 +175,8 @@ type Issue struct {
 	Author    string    `json:"author"`
 	Labels    []string  `json:"labels"`
 	Assignees []string  `json:"assignees"`
+	Priority  string    `json:"priority,omitempty"`
+	State     string    `json:"state,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is GitHub's last-activity timestamp for the issue (new commits
 	// referencing it, comments, label/assignee changes, …). It is the
@@ -309,6 +311,17 @@ type IssueResult struct {
 	Count         int     `json:"count"`
 	Items         []Issue `json:"items"`
 	SLAViolations int     `json:"sla_violations"`
+}
+
+// IssueResultFromItems builds the queue summary consumed by the governor.
+func IssueResultFromItems(items []Issue) IssueResult {
+	result := IssueResult{Count: len(items), Items: items}
+	for _, issue := range items {
+		if issue.AgeMinutes > slaThresholdMinutes {
+			result.SLAViolations++
+		}
+	}
+	return result
 }
 
 type PRResult struct {
@@ -483,13 +496,6 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		return allIssues[i].AgeMinutes > allIssues[j].AgeMinutes
 	})
 
-	slaViolations := 0
-	for _, issue := range allIssues {
-		if issue.AgeMinutes > slaThresholdMinutes {
-			slaViolations++
-		}
-	}
-
 	holdIssueCount := 0
 	holdPRCount := 0
 	for _, h := range holdItems {
@@ -500,11 +506,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		}
 	}
 
-	result.Issues = IssueResult{
-		Count:         len(allIssues),
-		Items:         allIssues,
-		SLAViolations: slaViolations,
-	}
+	result.Issues = IssueResultFromItems(allIssues)
 	result.PRs = PRResult{
 		Count:       len(allPRs),
 		Items:       allPRs,
@@ -1032,17 +1034,26 @@ func safeGetLogin(u *gh.User) string {
 	return u.GetLogin()
 }
 
-func isHeld(labels []string) bool {
+func HasHoldLabel(labels []string) bool {
+	return HasHoldLabelWith(labels, nil)
+}
+
+func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
+	holdLabels := append([]string{}, HoldLabels...)
+	holdLabels = append(holdLabels, extraHoldLabels...)
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		for _, sub := range HoldLabels {
-			if strings.Contains(lower, sub) {
+		for _, sub := range holdLabels {
+			sub = strings.ToLower(strings.TrimSpace(sub))
+			if sub != "" && strings.Contains(lower, sub) {
 				return true
 			}
 		}
 	}
 	return false
 }
+
+func isHeld(labels []string) bool { return HasHoldLabel(labels) }
 
 // SetExemptLabels is nil-receiver safe for the same reason as SetRepos.
 func (c *Client) SetExemptLabels(labels []string) {
@@ -1102,19 +1113,37 @@ func (c *Client) AutoMergeLabel() string {
 }
 
 func (c *Client) isExempt(labels []string) bool {
+	return HasExemptLabel(labels, c.exemptLabels)
+}
+
+func HasExemptLabel(labels, exemptLabels []string) bool {
 	for _, label := range labels {
 		for _, perm := range PermanentExemptLabels {
 			if strings.EqualFold(label, perm) || strings.HasPrefix(label, perm) {
 				return true
 			}
 		}
-		for _, exempt := range c.exemptLabels {
+		for _, exempt := range exemptLabels {
 			if strings.EqualFold(label, exempt) || strings.HasPrefix(label, exempt) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func FilterExemptIssues(items []Issue, exemptLabels []string) []Issue {
+	if len(items) == 0 {
+		return []Issue{}
+	}
+	out := make([]Issue, 0, len(items))
+	for _, issue := range items {
+		if HasExemptLabel(issue.Labels, exemptLabels) {
+			continue
+		}
+		out = append(out, issue)
+	}
+	return out
 }
 
 // trackerTaskListRe matches a Markdown task-list item whose subject is an issue
@@ -1146,7 +1175,7 @@ const trackerTaskListMin = 3
 // The callout text itself is NOT matched — free-text matching is brittle in the
 // direction that hurts. The task list is enough, and it is what GitHub itself
 // treats as the tracking signal.
-func isTracker(title string, labels []string, body string) bool {
+func IsTrackerIssue(title string, labels []string, body string) bool {
 	if strings.HasPrefix(title, "[Tracker]") {
 		return true
 	}
@@ -1161,6 +1190,10 @@ func isTracker(title string, labels []string, body string) bool {
 		return true
 	}
 	return false
+}
+
+func isTracker(title string, labels []string, body string) bool {
+	return IsTrackerIssue(title, labels, body)
 }
 
 type RateLimitInfo struct {

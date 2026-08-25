@@ -82,6 +82,10 @@ services:
       - NTFY_TOPIC=${NTFY_TOPIC:-}
       - HIVE_LEVEL=${HIVE_LEVEL:-}
       - HIVE_REPO=${HIVE_REPO:-}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - LINEAR_CLIENT_ID=${LINEAR_CLIENT_ID:-}
+      - LINEAR_CLIENT_SECRET=${LINEAR_CLIENT_SECRET:-}
+      - LINEAR_WEBHOOK_SECRET=${LINEAR_WEBHOOK_SECRET:-}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     # BOTH LISTENERS, not just the Go API (#4476). 3002 is the Go API; 3001 is

@@ -24,6 +24,10 @@ func TestFromConfig_SourceTypes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		cfg := config.WorkSourceConfig{Type: tc.cfgType}
+		if tc.cfgType == "linear" {
+			cfg.Linear.APIKey = "key"
+			cfg.Linear.Teams = []config.LinearTeamSourceConfig{{Key: "ENG", Repo: "my-org/repo"}}
+		}
 		ws, err := FromConfig(cfg, nil, "tok", "my-org", logger)
 		if err != nil {
 			t.Fatalf("FromConfig(%q): %v", tc.cfgType, err)

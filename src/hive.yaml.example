@@ -197,6 +197,23 @@ governor:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
 
+  # Optional: read actionable work from Linear instead of GitHub Issues.
+  # Secrets should come from env interpolation, not literal values.
+  # work_source:
+  #   type: linear
+  #   linear:
+  #     api_key: ${LINEAR_API_KEY}
+  #     hold_labels: [hold]              # additive; GitHub's hold defaults still apply
+  #     teams:
+  #       - key: ENG
+  #         repo: your-org/default-repo
+  #         states: [Todo, In Progress]
+  #         cycles: current              # optional; only issues in the active cycle
+  #         projects:                    # optional; when present, only these projects enumerate
+  #           - name: Platform
+  #             repo: your-org/platform
+  #           - name: Mobile             # no repo => team.repo fallback
+
   modes:
     surge:
       threshold: 20                       # Queue depth >= 20 triggers SURGE

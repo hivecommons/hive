@@ -17,6 +17,8 @@ import (
 func TestFromConfig_LinearAssignedOnly(t *testing.T) {
 	logger := slog.Default()
 	cfg := config.WorkSourceConfig{Type: "linear"}
+	cfg.Linear.APIKey = "key"
+	cfg.Linear.Teams = []config.LinearTeamSourceConfig{{Key: "ENG", Repo: "acme/app"}}
 	cfg.Linear.AssignedOnly = true
 
 	t.Setenv(linearagent.StoreEnvVar, filepath.Join(t.TempDir(), "missing.json"))
@@ -55,5 +57,41 @@ func TestFromConfig_LinearAssignedOnly(t *testing.T) {
 	t.Setenv(linearagent.StoreEnvVar, badPath)
 	if _, err := FromConfig(cfg, nil, "", "", logger); err == nil {
 		t.Error("corrupt store did not fail closed")
+	}
+}
+
+func TestFromConfig_LinearValidation(t *testing.T) {
+	logger := slog.Default()
+	base := config.WorkSourceConfig{Type: "linear"}
+	base.Linear.APIKey = "key"
+	base.Linear.Teams = []config.LinearTeamSourceConfig{{Key: "ENG", Repo: "acme/app"}}
+	if _, err := FromConfig(base, nil, "", "", logger); err != nil {
+		t.Fatalf("valid linear config: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		mut  func(*config.WorkSourceConfig)
+		want string
+	}{
+		{"missing api key", func(c *config.WorkSourceConfig) { c.Linear.APIKey = "" }, "api_key"},
+		{"missing teams", func(c *config.WorkSourceConfig) { c.Linear.Teams = nil }, "teams"},
+		{"missing team key", func(c *config.WorkSourceConfig) { c.Linear.Teams[0].Key = "" }, "key"},
+		{"missing team repo", func(c *config.WorkSourceConfig) { c.Linear.Teams[0].Repo = "" }, "repo"},
+		{"unknown cycles", func(c *config.WorkSourceConfig) { c.Linear.Teams[0].Cycles = "next" }, "cycles"},
+		{"missing project name", func(c *config.WorkSourceConfig) {
+			c.Linear.Teams[0].Projects = []config.LinearProjectSourceConfig{{Repo: "acme/app"}}
+		}, "projects"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			cfg.Linear.Teams = append([]config.LinearTeamSourceConfig(nil), base.Linear.Teams...)
+			tc.mut(&cfg)
+			_, err := FromConfig(cfg, nil, "", "", logger)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want containing %q", err, tc.want)
+			}
+		})
 	}
 }

@@ -31,7 +31,7 @@ func TestWorkSourceConfig_YAMLRoundTrip(t *testing.T) {
 			Linear: LinearSourceConfig{
 				APIKey: "lin_key",
 				Teams: []LinearTeamSourceConfig{
-					{Key: "ENG", Repo: "my-org/my-repo", States: []string{"Todo", "Backlog"}},
+					{Key: "ENG", Repo: "my-org/my-repo", States: []string{"Todo", "Backlog"}, Cycles: "current", Projects: []LinearProjectSourceConfig{{Name: "Platform", Repo: "my-org/platform"}}},
 				},
 				HoldLabels: []string{"hold", "blocked"},
 			},
@@ -103,6 +103,10 @@ work_source:
       - key: ENG
         repo: my-org/my-repo
         states: [Todo]
+        cycles: current
+        projects:
+          - name: Platform
+            repo: my-org/platform
     hold_labels: [hold]
 `
 	var g GovernorConfig
@@ -117,5 +121,8 @@ work_source:
 	}
 	if len(g.WorkSource.Linear.Teams) != 1 || g.WorkSource.Linear.Teams[0].Repo != "my-org/my-repo" {
 		t.Errorf("Teams = %+v", g.WorkSource.Linear.Teams)
+	}
+	if g.WorkSource.Linear.Teams[0].Cycles != "current" || len(g.WorkSource.Linear.Teams[0].Projects) != 1 {
+		t.Errorf("team scoping fields = %+v", g.WorkSource.Linear.Teams[0])
 	}
 }
