@@ -28,7 +28,7 @@ Examples in the current packs:
 - `guide-issues.md` is the L4 guide policy: documentation issues are allowed, PRs are not.
 - `scanner-issues.md` is the L4 scanner policy: issue filing only.
 - `supervisor-nogithub.md` is the supervisor policy from L2 through L6; it keeps orchestration separate from GitHub mutation.
-- `brainstorm-advisory.md` is the only brainstorm template referenced by v2 HEAD, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation, so operators should not create or rely on that filename unless they also set `kick_template` to it.
+- `brainstorm-advisory.md` is the only brainstorm template referenced by v4, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation from the retired v2 line, so operators should not create or rely on that filename unless they also set `kick_template` to it.
 
 ## Customizing prompts
 
@@ -51,7 +51,7 @@ Use `explain_mode` instead — a per-agent option that has the agent emit `EXPLA
 
 Kick templates reference variables as `${NAME}`. The scheduler replaces the built-in variables below on every scheduled kick; an unknown `${NAME}` is left literal. Operator-defined variables from the top-level `variables:` config block are resolved by the same engine, but built-ins win on name conflicts.
 
-The complete built-in scheduler set in v2 HEAD is:
+The complete built-in scheduler set in v4 is:
 
 | Variable | Runtime value | Notes |
 | --- | --- | --- |
