@@ -306,7 +306,12 @@ func TestStartTaskStatusPushExtended(t *testing.T) {
 			close(done)
 		}()
 
-		time.Sleep(50 * time.Millisecond)
+		// Wait until at least one push lands before cancelling: a fixed
+		// sleep races with the ticker under load and made this test flaky.
+		deadline := time.Now().Add(5 * time.Second)
+		for callCount.Load() == 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
 		cancel()
 
 		select {
