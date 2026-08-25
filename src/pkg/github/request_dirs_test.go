@@ -3,6 +3,7 @@ package github
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +103,51 @@ func TestEnsureRequestDirReportsFailure(t *testing.T) {
 
 	if ensureRequestDir(quietLogger(), "pr", filepath.Join(parent, "nope")) {
 		t.Error("ensureRequestDir reported success for an uncreatable directory")
+	}
+}
+
+// TestRequestWatchersStayGatedInMain pins the refusal half of the contract at
+// the source level, the layer no behavioural test in this package can see
+// (shape follows f3_trusted_merger_source_test.go, and for the same reason: a
+// sync merge resolving a conflict in favour of an older main.go could ungate
+// the watchers while every test here stays green).
+//
+// PrepareRequestDirs only makes the queues EXIST. Acting on a queued request —
+// opening a PR or issue on GitHub — must remain gated on a usable App: with no
+// App there is no bot identity to author as, and requests must accumulate on
+// disk, never open under a wrong identity.
+func TestRequestWatchersStayGatedInMain(t *testing.T) {
+	raw, err := os.ReadFile("../../cmd/hive/main.go")
+	if err != nil {
+		t.Fatalf("reading cmd/hive/main.go: %v", err)
+	}
+	src := string(raw)
+
+	gate := "if ghClient != nil && cfg.GitHub.HasUsableApp() {"
+	gateIdx := strings.Index(src, gate)
+	if gateIdx < 0 {
+		t.Fatalf("cmd/hive/main.go lost the usable-App gate %q — the request watchers "+
+			"must never start without an App identity to author as", gate)
+	}
+
+	prepIdx := strings.Index(src, "github.PrepareRequestDirs(")
+	if prepIdx < 0 {
+		t.Error("cmd/hive/main.go no longer calls github.PrepareRequestDirs — queues " +
+			"stop existing on App-less boots and agent findings are discarded again (#4713)")
+	} else if prepIdx > gateIdx {
+		t.Error("github.PrepareRequestDirs must be called BEFORE (outside) the usable-App " +
+			"gate — inside it, queues stop existing on App-less boots (#4713)")
+	}
+
+	for _, call := range []string{"ghClient.StartPRRequestWatcher(", "ghClient.StartIssueRequestWatcher("} {
+		idx := strings.Index(src, call)
+		if idx < 0 {
+			t.Errorf("cmd/hive/main.go no longer starts %s — queued requests would accumulate forever", call)
+			continue
+		}
+		if idx < gateIdx {
+			t.Errorf("%s appears before the usable-App gate — a watcher started without a "+
+				"usable App could act on GitHub without the bot identity", call)
+		}
 	}
 }
