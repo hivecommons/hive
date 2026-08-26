@@ -20,7 +20,9 @@ Channels are **retags, not rebuilds**. The `docker.yml` workflow adds `stable`, 
 
 Only builds of branch `v4` publish channels — a feature-branch build can never move a production channel.
 
-Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. Moving tags (`v4-latest` and the three channels) advance when that build is newer than or equal to the generation currently published; an older workflow that runs out of queue order publishes only its immutable tag. This avoids both failure modes of a HEAD-only guard: a merge burst cannot starve all tags, and an old queued build cannot move a channel backwards. Registry inspection failures fail the publish job instead of producing a silent green skip.
+Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. If that exact short-SHA tag already exists, a re-run leaves it untouched. Moving tags (`v4-latest` and the three channels) advance only when that build is newer than the generation currently published; an older workflow that runs out of queue order publishes only any missing immutable tag. This avoids both failure modes of a HEAD-only guard: a merge burst cannot starve all tags, and an old queued build cannot move a channel backwards. Registry inspection failures fail the publish job instead of producing a silent green skip.
+
+Short-SHA tags are retained as a bounded rollback/debug window, not forever. The scheduled GHCR pruning workflow deletes only old package versions whose complete tag set is one or more 7-hex short-SHA tags, after 90 days. Versions still carrying any moving tag (`v4-latest`, `latest`, `stable`, `candidate`, `edge`, or future channel names) are never deleted by that cleanup.
 
 ## Switching a hive to a channel
 

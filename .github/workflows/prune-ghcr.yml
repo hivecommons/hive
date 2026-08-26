@@ -116,3 +116,56 @@ jobs:
               done
           done
           [ "$DRY_RUN" = "true" ] && echo "(dry-run: nothing deleted above)" || true
+
+  # The docker workflow publishes an immutable short-SHA tag for every
+  # successful long-lived-branch build so merge bursts cannot leave completed
+  # commits without an addressable image. Keep that history bounded: once all
+  # moving tags have advanced away from an old build, the remaining pure
+  # 7-hex-SHA version is only a rollback/debug affordance and is pruned after
+  # the retention window below. Versions that still carry any non-SHA tag
+  # (v4-latest, stable, candidate, edge, latest, or future channel names) are
+  # never deleted by this job.
+  prune-old-sha-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old pure short-SHA image tags
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
+          RETENTION_DAYS: "90"
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d "$RETENTION_DAYS days ago" +%s)
+          for image in hive hive-hub hive-contributor; do
+            echo "=== image: $image (pure short-SHA tags older than ${RETENTION_DAYS}d) ==="
+            gh api --paginate \
+              "/orgs/kubestellar/packages/container/$image/versions" \
+              --jq '.[] | {id: .id, created_at: .created_at, tags: .metadata.container.tags}' \
+            | jq -c '.' | while read -r row; do
+                id=$(echo "$row" | jq -r '.id')
+                created_at=$(echo "$row" | jq -r '.created_at')
+                mapfile -t tags < <(echo "$row" | jq -r '.tags[]?')
+                [ "${#tags[@]}" -gt 0 ] || continue
+
+                all_short_sha=true
+                for t in "${tags[@]}"; do
+                  if ! [[ $t =~ ^[0-9a-f]{7}$ ]]; then
+                    all_short_sha=false
+                    break
+                  fi
+                done
+                [ "$all_short_sha" = true ] || continue
+
+                created_epoch=$(date -u -d "$created_at" +%s)
+                [ "$created_epoch" -lt "$cutoff" ] || continue
+
+                joined=$(printf '%s,' "${tags[@]}")
+                echo "old pure-SHA version $id created=$created_at tags=[${joined%,}]"
+                if [ "$DRY_RUN" != "true" ]; then
+                  gh api -X DELETE \
+                    "/orgs/kubestellar/packages/container/$image/versions/$id" \
+                    && echo "  deleted $id" || echo "  FAILED $id"
+                fi
+              done
+          done
+          [ "$DRY_RUN" = "true" ] && echo "(dry-run: nothing deleted above)" || true

@@ -47,35 +47,63 @@ if [[ $branch == "$release_branch" ]]; then
   moving_refs+=("$image:stable" "$image:candidate" "$image:edge")
 fi
 
+inspect_status=
+inspect_generation=
+read_generation() {
+  local ref=$1 inspect value
+  if inspect=$(docker buildx imagetools inspect \
+      --format '{{json (index .Image "linux/amd64")}}' "$ref" 2>&1); then
+    value=$(jq -r --arg label "$run_label" '.config.Labels[$label] // "0"' <<<"$inspect")
+    if [[ ! $value =~ ^[0-9]+$ ]]; then
+      echo "::error::tag $ref has invalid $run_label label: $value" >&2
+      exit 1
+    fi
+    inspect_status=found
+    inspect_generation=$value
+  elif grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$inspect"; then
+    inspect_status=missing
+    inspect_generation=0
+  else
+    echo "::error::could not inspect tag $ref; refusing a potentially regressive publish" >&2
+    echo "$inspect" >&2
+    exit 1
+  fi
+}
+
 # Read the amd64 config label from every moving tag this invocation would
 # update. All platforms are built with the same run-number label. Evaluate
 # each tag independently so a newer global :latest from another branch cannot
 # prevent this branch's own -latest tag from advancing after out-of-order runs.
 # A registry transport/auth failure is red, not a green skip.
-tag_args=(-t "$image:$git_short")
+tag_args=()
+sha_ref="$image:$git_short"
+read_generation "$sha_ref"
+if [[ $inspect_status == missing ]]; then
+  tag_args+=(-t "$sha_ref")
+  echo "Publishing immutable build tag $sha_ref at run $run_number."
+else
+  echo "Immutable build tag $sha_ref already exists (generation: $inspect_generation); leaving it unchanged."
+fi
 for ref in "${moving_refs[@]}"; do
-  if inspect=$(docker buildx imagetools inspect \
-      --format '{{json (index .Image "linux/amd64")}}' "$ref" 2>&1); then
-    value=$(jq -r --arg label "$run_label" '.config.Labels[$label] // "0"' <<<"$inspect")
-    if [[ ! $value =~ ^[0-9]+$ ]]; then
-      echo "::error::moving tag $ref has invalid $run_label label: $value" >&2
-      exit 1
-    fi
-  elif grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest' <<<"$inspect"; then
+  read_generation "$ref"
+  value=$inspect_generation
+  if [[ $inspect_status == missing ]]; then
     echo "Moving tag $ref does not exist yet; treating it as generation 0."
-    value=0
-  else
-    echo "::error::could not inspect moving tag $ref; refusing a potentially regressive publish" >&2
-    echo "$inspect" >&2
-    exit 1
   fi
-  if (( run_number >= value )); then
+  if (( run_number > value )); then
     tag_args+=(-t "$ref")
     echo "Advancing $ref at run $run_number (published generation: $value)."
+  elif (( run_number == value )); then
+    echo "Moving tag $ref is already at run $run_number; leaving it unchanged."
   else
     echo "::warning::run $run_number is older than $ref generation $value; leaving that moving tag unchanged"
   fi
 done
+
+if (( ${#tag_args[@]} == 0 )); then
+  echo "No tags need publishing."
+  exit 0
+fi
 
 source_args=()
 for file in "${digest_files[@]}"; do
