@@ -30,7 +30,6 @@ type PersistedState struct {
 	// current budget window (see governor.BudgetInfo.WindowBaseline).
 	BudgetWindowBaseline int64            `json:"budget_window_baseline,omitempty"`
 	KickHistory          []GovKickEntry   `json:"kick_history,omitempty"`
-	IssueCosts           map[string]int64 `json:"issue_costs,omitempty"`
 	LastEval             time.Time        `json:"last_eval,omitempty"`
 	ACMMLevel            *int             `json:"acmm_level,omitempty"`
 	ConfigOverrides      *ConfigOverrides `json:"config_overrides,omitempty"`

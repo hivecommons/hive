@@ -14,6 +14,7 @@ import (
 	"github.com/kubestellar/hive/pkg/config"
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/kubestellar/hive/pkg/hooks"
 	"github.com/kubestellar/hive/pkg/knowledge"
 	"github.com/kubestellar/hive/pkg/rotation"
 	"github.com/kubestellar/hive/pkg/scheduler"
@@ -96,6 +97,7 @@ type Dependencies struct {
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
+	HookFire     func(context.Context, hooks.Payload)
 }
 
 type NousState struct {

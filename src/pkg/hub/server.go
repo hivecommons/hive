@@ -912,12 +912,13 @@ type HubServer struct {
 	// durable JSON file on first use so the state survives the hub's own
 	// frequent auto-rolls; guarded by its own mutex because it is consulted on
 	// every heartbeat and every upgrade-poll cycle, never under s.mu.
-	upgradePause       UpgradePauseState
-	upgradePauseLoaded bool
-	upgradePauseMu     sync.Mutex // guards upgradePause + upgradePauseLoaded
-	httpServer         *http.Server
-	httpMu             sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters           map[string]ClusterConfig
+	upgradePause         UpgradePauseState
+	upgradePauseLoaded   bool
+	upgradePauseMu       sync.Mutex // guards upgradePause + upgradePauseLoaded
+	upgradePauseObserver func(UpgradePauseEvent)
+	httpServer           *http.Server
+	httpMu               sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters             map[string]ClusterConfig
 
 	// vanityHostServable overrides how the retroactive vanity-URL repair makes a
 	// vanity host servable (see makeVanityHostServable). nil in production, where

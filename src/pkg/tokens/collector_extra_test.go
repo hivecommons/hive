@@ -53,17 +53,6 @@ func TestCollector_Summary_Initially(t *testing.T) {
 	}
 }
 
-func TestCollector_IssueCosts(t *testing.T) {
-	c := NewCollector("/tmp/test-sessions", testLogger())
-	costs := c.IssueCosts()
-	if costs == nil {
-		t.Fatal("expected non-nil costs map")
-	}
-	if len(costs) != 0 {
-		t.Errorf("expected empty costs map, got %d entries", len(costs))
-	}
-}
-
 func TestCollectFromDir_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	agg, err := CollectFromDir(dir, DefaultAgentDetector)
@@ -240,28 +229,6 @@ func TestCollector_Start(t *testing.T) {
 	summary := c.Summary()
 	if summary == nil {
 		t.Fatal("expected non-nil summary after Start")
-	}
-}
-
-func TestCollector_IssueCosts_WithData(t *testing.T) {
-	c := NewCollector("/tmp/nonexistent", testLogger())
-	c.mu.Lock()
-	c.issueCosts["repo1#1"] = 500
-	c.issueCosts["repo1#2"] = 1000
-	c.mu.Unlock()
-
-	costs := c.IssueCosts()
-	if costs["repo1#1"] != 500 {
-		t.Errorf("issue cost = %d", costs["repo1#1"])
-	}
-	if costs["repo1#2"] != 1000 {
-		t.Errorf("issue cost = %d", costs["repo1#2"])
-	}
-	// Verify it's a copy
-	costs["repo1#1"] = 999
-	original := c.IssueCosts()
-	if original["repo1#1"] != 500 {
-		t.Error("IssueCosts should return a copy")
 	}
 }
 

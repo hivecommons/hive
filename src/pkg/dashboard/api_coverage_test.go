@@ -770,15 +770,6 @@ func TestHandleTokens_NoCollector(t *testing.T) {
 	}
 }
 
-func TestHandleIssueCosts_NoCollector(t *testing.T) {
-	s, deps := apiServer(t)
-	deps.Tokens = nil
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d", rec.Code)
-	}
-}
-
 func TestHandleBudgetIgnoreGet(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doGet(s, "/api/budget-ignore")
@@ -2322,19 +2313,6 @@ func TestHandleTokens_EmptySummary(t *testing.T) {
 	}
 }
 
-// ---- handleIssueCosts with collector ----
-
-func TestHandleIssueCosts_WithCollector(t *testing.T) {
-	s, deps := apiServer(t)
-	tmpDir := t.TempDir()
-	collector := tokens.NewCollector(tmpDir, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
-	deps.Tokens = collector
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d", rec.Code)
-	}
-}
-
 // ---- handleKnowledgeSubsAdd with all fields ----
 
 func TestHandleKnowledgeSubsAdd_AllFields(t *testing.T) {
@@ -3617,14 +3595,6 @@ func TestHandlePin_EmptyValueFallback(t *testing.T) {
 	// Scanner exists in config but may not have a running process — GetStatus may fail
 	if rec.Code == http.StatusNotFound {
 		t.Error("should not be 404 for configured agent")
-	}
-}
-
-func TestHandleIssueCosts_NilTokens(t *testing.T) {
-	s, _ := apiServer(t)
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d", rec.Code)
 	}
 }
 

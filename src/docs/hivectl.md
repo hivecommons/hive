@@ -131,7 +131,6 @@ hivectl governor agent-remove ux-discovery --yes
 
 ```bash
 hivectl observe tokens -o json
-hivectl observe costs
 hivectl observe audit
 hivectl observe history
 hivectl observe timeline

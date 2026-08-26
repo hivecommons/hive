@@ -285,14 +285,6 @@ func TestHandleTokens_NilCollector(t *testing.T) {
 	}
 }
 
-func TestHandleIssueCosts_NilCollector(t *testing.T) {
-	s, _ := apiServer(t)
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-}
-
 func TestHandleModelAdvisor(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doGet(s, "/api/model-advisor")

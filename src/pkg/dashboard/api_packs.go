@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/hooks"
 )
 
 func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +478,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	defer s.levelMu.Unlock()
 
 	level := body.Level
+	prevLevel := detectACMMLevel(s.deps.Config)
 	s.deps.Config.ACMMLevel = &level
 	// Clear per-agent mode from the persisted config so the fsnotify watcher
 	// does not re-apply stale pack modes when it reloads the file. Without
@@ -565,6 +568,14 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		packUpdated = packResult.Updated
 	}
 	s.auditFromRequest(r, "set_acmm_level", auditDetail("level", strconv.Itoa(body.Level)), "")
+	if s.deps != nil && s.deps.HookFire != nil && prevLevel != level {
+		s.deps.HookFire(context.Background(), hooks.Payload{
+			Transition: hooks.TransitionACMMLevelChange,
+			From:       strconv.Itoa(prevLevel),
+			To:         strconv.Itoa(level),
+			Actor:      requestUser(r),
+		})
+	}
 	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
 	jsonResponse(w, map[string]interface{}{
 		"ok":               true,

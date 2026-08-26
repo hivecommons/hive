@@ -221,7 +221,7 @@ func TestCovBR_BudgetIgnoreSet(t *testing.T) {
 	}
 }
 
-// ---- handleTokens / handleTokenAccess / handleModelAdvisor / handleIssueCosts ----
+// ---- handleTokens / handleTokenAccess / handleModelAdvisor ----
 
 func TestCovBR_TokensAndAdvisor(t *testing.T) {
 	s := covApiServer(t)
@@ -233,9 +233,6 @@ func TestCovBR_TokensAndAdvisor(t *testing.T) {
 	}
 	if rec := doGet(s, "/api/model-advisor"); rec.Code != http.StatusOK {
 		t.Fatalf("model-advisor: %d", rec.Code)
-	}
-	if rec := doGet(s, "/api/issue-costs"); rec.Code != http.StatusOK {
-		t.Fatalf("issue-costs: %d", rec.Code)
 	}
 	if rec := doGet(s, "/api/budget-ignore"); rec.Code != http.StatusOK {
 		t.Fatalf("budget-ignore get: %d", rec.Code)

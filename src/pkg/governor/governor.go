@@ -224,6 +224,10 @@ type Governor struct {
 	// re-inversion is reported again.
 	lastLadderWarn ladderSnapshot
 
+	// modeChangeObserver is notified after a committed mode change, outside
+	// g.mu. See SetModeChangeObserver.
+	modeChangeObserver ModeChangeObserver
+
 	// resumeKicks records the last crash-recovery resume kick granted per
 	// agent (see AllowResumeKick). In-memory only: after a process restart
 	// the startup path re-kicks every eligible agent anyway, so persisting
@@ -302,7 +306,37 @@ func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
 	g.updateCadences()
 }
 
+// ModeChangeObserver is notified after a mode change has been committed to the
+// governor's state. It is the emission point for the RFC #4001
+// governor_mode_change transition.
+//
+// It is invoked AFTER Evaluate releases g.mu, never inside it. Calling an
+// observer under the lock would re-enter the governor from any implementation
+// that reads governor state, and hive has already been bitten by exactly that
+// class of startup deadlock; it would also put third-party work on a critical
+// path holding a hot mutex.
+type ModeChangeObserver func(change ModeChange)
+
+// SetModeChangeObserver installs the post-commit mode-change observer. Safe to
+// leave unset: a nil observer makes the notification a no-op, which is what
+// tests and any non-hook embedding get.
+func (g *Governor) SetModeChangeObserver(obs ModeChangeObserver) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.modeChangeObserver = obs
+}
+
 func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int) []string {
+	// pendingModeChange is captured under the lock and dispatched after it is
+	// released, so the observer never runs with g.mu held.
+	var pendingModeChange *ModeChange
+	var observer ModeChangeObserver
+	defer func() {
+		if pendingModeChange != nil && observer != nil {
+			observer(*pendingModeChange)
+		}
+	}()
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -336,6 +370,11 @@ func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int)
 		}
 		g.appendModeHistory(change)
 		g.state.Mode = newMode
+		// Hand the committed change to the deferred dispatcher above, which
+		// runs it only after g.mu is released.
+		committed := change
+		pendingModeChange = &committed
+		observer = g.modeChangeObserver
 	}
 
 	g.updateCadences()

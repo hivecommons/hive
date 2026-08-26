@@ -98,3 +98,42 @@ func TestSeedPauseState_ReplaysActor(t *testing.T) {
 		t.Errorf("PausedAt = %v, want %v", status.PausedAt, pausedAt)
 	}
 }
+
+func TestPauseByCauseEmitsPostPersistenceEvent(t *testing.T) {
+	m := provenanceTestManager(t)
+	persisted := make(chan bool, 1)
+	observed := make(chan PauseTransitionEvent, 1)
+	m.SetPersistPauseCallback(func(name string, paused bool) {
+		if name == "scanner" {
+			persisted <- paused
+		}
+	})
+	m.SetPauseTransitionObserver(func(event PauseTransitionEvent) {
+		observed <- event
+	})
+
+	cause := PauseCausation{Depth: 1, HookName: "pause-on-red", OriginTransition: "escalation_red"}
+	if err := m.PauseByCause("scanner", "hook:pause-on-red", "red CI", "hook:pause-on-red", cause); err != nil {
+		t.Fatalf("PauseByCause: %v", err)
+	}
+	select {
+	case paused := <-persisted:
+		if !paused {
+			t.Fatal("persist callback saw resume, want pause")
+		}
+	default:
+		t.Fatal("pause observer fired before or without persistence")
+	}
+
+	select {
+	case event := <-observed:
+		if !event.Paused || event.Agent != "scanner" || event.Trigger != "hook:pause-on-red" {
+			t.Fatalf("unexpected event: %+v", event)
+		}
+		if event.Causation != cause {
+			t.Fatalf("causation not preserved: got %+v want %+v", event.Causation, cause)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pause transition observer did not fire")
+	}
+}

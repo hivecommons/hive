@@ -65,6 +65,28 @@ type UpgradePauseState struct {
 	Spokes UpgradePauseSwitch `json:"spokes"`
 }
 
+type UpgradePauseEvent struct {
+	Target string
+	Paused bool
+	By     string
+	At     string
+}
+
+func (s *HubServer) SetUpgradePauseObserver(fn func(UpgradePauseEvent)) {
+	s.upgradePauseMu.Lock()
+	defer s.upgradePauseMu.Unlock()
+	s.upgradePauseObserver = fn
+}
+
+func (s *HubServer) emitUpgradePause(event UpgradePauseEvent) {
+	s.upgradePauseMu.Lock()
+	fn := s.upgradePauseObserver
+	s.upgradePauseMu.Unlock()
+	if fn != nil {
+		go fn(event)
+	}
+}
+
 // ensureUpgradePauseLoadedLocked loads the persisted state exactly once per
 // process. Callers must hold s.upgradePauseMu. A missing file means "nothing
 // paused" — the safe default and the pre-feature behaviour. An unreadable or
@@ -184,6 +206,11 @@ func (s *HubServer) handleSetUpgradePause(w http.ResponseWriter, r *http.Request
 	}
 	s.logger.Info("audit: upgrade pause toggled",
 		"target", body.Target, "paused", body.Paused, "by", username)
+	sw := state.Spokes
+	if body.Target == upgradePauseTargetHub {
+		sw = state.Hub
+	}
+	s.emitUpgradePause(UpgradePauseEvent{Target: body.Target, Paused: body.Paused, By: username, At: sw.At})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": state})
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // inferenceSessionFilePrefix is prepended to per-agent inference usage files
@@ -33,6 +34,8 @@ const inferenceFilePerm = 0o644
 type InferenceSink struct {
 	dir    string
 	logger *slog.Logger
+	// now is a clock seam for tests; production uses time.Now.
+	now func() time.Time
 
 	mu     sync.Mutex
 	totals map[string]*inferenceAgentTotals
@@ -42,6 +45,12 @@ type inferenceAgentTotals struct {
 	Model        string
 	InputTokens  int64
 	OutputTokens int64
+	// FirstSeen/LastSeen bracket the agent's recorded activity as RFC 3339
+	// strings, written into the usage file's entry timestamps so the
+	// Collector's FirstActive/LastActive come out nonzero for inference
+	// sessions. FirstSeen survives restarts via restoreFromDisk.
+	FirstSeen string
+	LastSeen  string
 }
 
 // NewInferenceSink returns a sink that writes per-agent usage files into dir.
@@ -58,6 +67,7 @@ func NewInferenceSink(dir string, logger *slog.Logger) *InferenceSink {
 	s := &InferenceSink{
 		dir:    dir,
 		logger: logger,
+		now:    time.Now,
 		totals: make(map[string]*inferenceAgentTotals),
 	}
 	s.restoreFromDisk()
@@ -111,6 +121,14 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 		if e.Model != "" {
 			t.Model = e.Model
 		}
+		if ms := parseTimestampToUnixMilli(e.Timestamp); ms > 0 {
+			if t.FirstSeen == "" || ms < parseTimestampToUnixMilli(t.FirstSeen) {
+				t.FirstSeen = e.Timestamp
+			}
+			if t.LastSeen == "" || ms > parseTimestampToUnixMilli(t.LastSeen) {
+				t.LastSeen = e.Timestamp
+			}
+		}
 		if e.InputTokens > 0 || e.OutputTokens > 0 {
 			t.InputTokens += e.InputTokens
 			t.OutputTokens += e.OutputTokens
@@ -145,6 +163,15 @@ func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens in
 	if model != "" {
 		t.Model = model
 	}
+	nowFn := s.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	stamp := nowFn().UTC().Format(time.RFC3339)
+	if t.FirstSeen == "" {
+		t.FirstSeen = stamp
+	}
+	t.LastSeen = stamp
 	if inputTokens > 0 {
 		t.InputTokens += inputTokens
 	}
@@ -171,13 +198,14 @@ func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) er
 	}
 
 	entries := []SessionEntry{
-		{Role: "user", Agent: agent, Message: agent, Model: t.Model},
+		{Role: "user", Agent: agent, Message: agent, Model: t.Model, Timestamp: t.FirstSeen},
 		{
 			Role:         "assistant",
 			Agent:        agent,
 			Model:        t.Model,
 			InputTokens:  t.InputTokens,
 			OutputTokens: t.OutputTokens,
+			Timestamp:    t.LastSeen,
 		},
 	}
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -563,6 +564,16 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if !mergeResult.GetMerged() {
 		return AutoMergeSweepEvent{}, "merge-not-applied", nil
 	}
+	// Audit the merge like MergePR does (pullrequest.go): the activity
+	// collector counts pr_merged entries from this trail, and the /fleet L6
+	// health verdict is judged on them. When the fleet's merges moved to this
+	// sweep, the unaudited path made merging hives read as "no merge in Nd"
+	// red on /fleet (observed live on kubestellar/console, 2026-08-26).
+	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
+		"repo", owner+"/"+repo,
+		"number", strconv.Itoa(number),
+		"method", "squash",
+		"sha", mergeResult.GetSHA())
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
@@ -692,6 +703,13 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if !mergeResult.GetMerged() {
 		return AutoMergeSweepEvent{}, "merge-not-applied", nil
 	}
+	// Same audit obligation as the self-authored path above: pr_merged on
+	// the trail is what makes this merge count as hive output.
+	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
+		"repo", owner+"/"+repo,
+		"number", strconv.Itoa(number),
+		"method", "squash",
+		"sha", mergeResult.GetSHA())
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
