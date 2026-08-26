@@ -1822,7 +1822,7 @@ func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
 // Messages API requests and translates+forwards them to the configured
 // inference backend. Agents use ANTHROPIC_BASE_URL=http://127.0.0.1:18444
 // to reach this server instead of api.anthropic.com.
-func (p *GitHubProxy) StartInferenceTranslator() error {
+func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -1988,9 +1988,15 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 		w.Write(translated)
 	})
 
+	return mux
+}
+
+// StartInferenceTranslator runs the Anthropic-compatible inference translator
+// on the fixed local port used by agents.
+func (p *GitHubProxy) StartInferenceTranslator() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort)
 	p.logger.Info("inference translation server starting", "addr", addr)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{Addr: addr, Handler: p.inferenceTranslatorHandler()}
 	return server.ListenAndServe()
 }
 

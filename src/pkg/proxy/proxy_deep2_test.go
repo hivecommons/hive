@@ -110,77 +110,10 @@ func TestStartInferenceTranslatorIntegration(t *testing.T) {
 	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test-model"}
 	p.inference.Set("test-agent", route)
 
-	// Start the translator on a free port
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
 
-	// Build the mux manually (mirrors StartInferenceTranslator)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("x-api-key")
-		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
-
-		rt := p.inference.Get(agentName)
-		if rt == nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if r.Body != nil {
-			r.Body.Close()
-		}
-		if err != nil {
-			http.Error(w, `{"type":"error"}`, http.StatusBadRequest)
-			return
-		}
-
-		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model, 0, "")
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
-			return
-		}
-
-		upstreamURL := strings.TrimRight(rt.Endpoint, "/") + "/v1/chat/completions"
-		upstreamReq, _ := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(openaiBody)))
-		upstreamReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(upstreamReq)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
-
-		if isStreaming {
-			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.WriteHeader(http.StatusOK)
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-			translateOpenAISSEToAnthropic(resp.Body, w, rt.Model)
-			return
-		}
-
-		respBody, _ := io.ReadAll(resp.Body)
-		translated, _ := translateOpenAIResponseToAnthropic(respBody, rt.Model)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(translated)
-	})
-
-	server := &http.Server{Handler: mux}
-	go server.Serve(ln)
-	defer server.Close()
-
-	baseURL := "http://" + ln.Addr().String()
+	baseURL := translator.URL
 
 	// Test non-streaming
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`

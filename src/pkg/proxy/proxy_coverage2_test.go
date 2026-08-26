@@ -656,26 +656,16 @@ func TestStartInferenceTranslator_HandlerBranches(t *testing.T) {
 	p := newInferenceTestProxy()
 	p.SetTokenSink(tokens.NewInferenceSink("", slog.Default()))
 
-	// Build the same handler StartInferenceTranslator installs by starting it
-	// on the fixed port in the background and connecting to it. We bind the
-	// real port; if it is busy, skip.
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort))
-	if err != nil {
-		t.Skipf("translator port busy: %v", err)
-	}
-	ln.Close()
-
+	// Drive the real handler without binding the fixed production port.
 	// Mock upstream vLLM.
 	upstream := startMockVLLM(t)
 	defer upstream.Close()
 
-	// Start the translator; it will ListenAndServe on the fixed port.
-	errCh := make(chan error, 1)
-	go func() { errCh <- p.StartInferenceTranslator() }()
-	base := fmt.Sprintf("http://127.0.0.1:%d", InferenceTranslatePort)
-	waitForServer(t, base)
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
+	base := translator.URL
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := translator.Client()
 
 	// (1) No route for agent → 502.
 	req1, _ := http.NewRequest("POST", base+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))

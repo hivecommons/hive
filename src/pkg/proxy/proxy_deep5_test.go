@@ -21,10 +21,10 @@ import (
 func TestExtractSNISessionIDTruncatesCipherSuites(t *testing.T) {
 	// Session ID so large that there's no room for cipher suites length
 	chBody := make([]byte, 0, 40)
-	chBody = append(chBody, 0x03, 0x03) // version
+	chBody = append(chBody, 0x03, 0x03)          // version
 	chBody = append(chBody, make([]byte, 32)...) // random
-	chBody = append(chBody, 2)  // session ID length = 2
-	chBody = append(chBody, 0xAA) // only 1 byte of session ID (truncated)
+	chBody = append(chBody, 2)                   // session ID length = 2
+	chBody = append(chBody, 0xAA)                // only 1 byte of session ID (truncated)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -44,10 +44,10 @@ func TestExtractSNISessionIDTruncatesCipherSuites(t *testing.T) {
 func TestExtractSNITruncatedCipherSuites(t *testing.T) {
 	// Build a ClientHello where cipher suites length points past the data
 	chBody := make([]byte, 0, 128)
-	chBody = append(chBody, 0x03, 0x03) // version
+	chBody = append(chBody, 0x03, 0x03)          // version
 	chBody = append(chBody, make([]byte, 32)...) // random
-	chBody = append(chBody, 0) // session ID len = 0
-	chBody = append(chBody, 0x00, 0xFF) // cipher suites length = 255 (way past data)
+	chBody = append(chBody, 0)                   // session ID len = 0
+	chBody = append(chBody, 0x00, 0xFF)          // cipher suites length = 255 (way past data)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -69,9 +69,9 @@ func TestExtractSNITruncatedCompression(t *testing.T) {
 	chBody := make([]byte, 0, 128)
 	chBody = append(chBody, 0x03, 0x03)
 	chBody = append(chBody, make([]byte, 32)...)
-	chBody = append(chBody, 0) // session ID
+	chBody = append(chBody, 0)                      // session ID
 	chBody = append(chBody, 0x00, 0x02, 0x00, 0x2f) // cipher suites (2 bytes)
-	chBody = append(chBody, 0xFF) // compression methods length = 255 (past data)
+	chBody = append(chBody, 0xFF)                   // compression methods length = 255 (past data)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -93,10 +93,10 @@ func TestExtractSNITruncatedExtensionsLen(t *testing.T) {
 	chBody := make([]byte, 0, 128)
 	chBody = append(chBody, 0x03, 0x03)
 	chBody = append(chBody, make([]byte, 32)...)
-	chBody = append(chBody, 0) // session ID
+	chBody = append(chBody, 0)                      // session ID
 	chBody = append(chBody, 0x00, 0x02, 0x00, 0x2f) // cipher suites
-	chBody = append(chBody, 0x01, 0x00) // compression
-	chBody = append(chBody, 0x00) // only 1 byte of extensions length (need 2)
+	chBody = append(chBody, 0x01, 0x00)             // compression
+	chBody = append(chBody, 0x00)                   // only 1 byte of extensions length (need 2)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -252,7 +252,7 @@ func TestExtractSNITruncatedName(t *testing.T) {
 func TestExtractSNITruncatedSessionID(t *testing.T) {
 	// After random (34 bytes), session ID length byte goes past data
 	chBody := make([]byte, 0, 35)
-	chBody = append(chBody, 0x03, 0x03)     // version
+	chBody = append(chBody, 0x03, 0x03)          // version
 	chBody = append(chBody, make([]byte, 32)...) // random
 	// No session ID length byte — end of data
 
@@ -508,13 +508,6 @@ func TestStartInferenceTranslatorTranslationError(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	// Check if port is free
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort))
-	if err != nil {
-		t.Skipf("port %d not available: %v", InferenceTranslatePort, err)
-	}
-	ln.Close()
-
 	caCert, caX509, _ := generateCA()
 	p := &GitHubProxy{
 		caCert:     caCert,
@@ -526,10 +519,9 @@ func TestStartInferenceTranslatorTranslationError(t *testing.T) {
 	}
 	p.inference.Set("agent-bad-resp", &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test"})
 
-	go p.StartInferenceTranslator()
-	time.Sleep(200 * time.Millisecond)
-
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", InferenceTranslatePort)
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
+	baseURL := translator.URL
 
 	// Send request that will get an invalid JSON response from backend
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`

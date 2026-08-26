@@ -1191,57 +1191,7 @@ func TestStartInferenceTranslator(t *testing.T) {
 	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test-model"}
 	p.inference.Set("test-agent", route)
 
-	// Create a handler that mirrors StartInferenceTranslator's logic but without blocking
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("x-api-key")
-		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
-
-		rt := p.inference.Get(agentName)
-		if rt == nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if r.Body != nil {
-			r.Body.Close()
-		}
-		if err != nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read request"}}`, http.StatusBadRequest)
-			return
-		}
-
-		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model, 0, "")
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
-			return
-		}
-
-		upstreamURL := strings.TrimRight(rt.Endpoint, "/") + "/v1/chat/completions"
-		upstreamReq, _ := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
-		upstreamReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(upstreamReq)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error"}`), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		respBody, _ := io.ReadAll(resp.Body)
-		translated, err := translateOpenAIResponseToAnthropic(respBody, rt.Model)
-		if err != nil {
-			http.Error(w, `{"type":"error"}`, http.StatusBadGateway)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(translated)
-	})
-
-	ts := httptest.NewServer(mux)
+	ts := httptest.NewServer(p.inferenceTranslatorHandler())
 	defer ts.Close()
 
 	// Test: no route for agent
