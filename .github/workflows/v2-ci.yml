@@ -13,7 +13,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml']
+    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml']
   pull_request:
     branches: [v2, v4]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
@@ -26,7 +26,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml']
+    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml']
 
 permissions:
   contents: read
@@ -99,6 +99,13 @@ jobs:
       # quietly shipping a build that trusts whatever npm/Docker Hub serves.
       - name: Supply-chain pin guard
         run: bash deploy/test_supply_chain_pins.sh
+
+      # #4804: HEAD-only tagging made every completed build in a merge burst
+      # exit green without publishing anything. Exercise the real publisher
+      # against a fake registry and pin both halves of the replacement policy:
+      # immutable SHA tags are unconditional, while moving tags are monotonic.
+      - name: Docker release-tag publication policy (#4804)
+        run: bash scripts/test-publish-image-tags.sh
 
       # #4206: the standalone stack's image references live in exactly one
       # place, src/deploy/standalone-images.sh, so the Docker Compose assets
