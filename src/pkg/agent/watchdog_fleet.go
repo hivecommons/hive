@@ -23,6 +23,12 @@ import (
 // WatchdogFleet implements watchdog.Fleet over a Manager.
 type WatchdogFleet struct {
 	M *Manager
+	// Queued reports the hive's actionable work depth. Nil means the queue
+	// cannot be read from here, which the reconciler reports as Unknown
+	// rather than assuming an empty queue (silencing real faults) or a full
+	// one (manufacturing them). Injected because queue depth lives in the
+	// governor, which pkg/agent does not import.
+	Queued func() (int, bool)
 }
 
 // AgentNames lists agents the watchdog should reconcile: agents the manager
@@ -94,6 +100,16 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 	running := agent.State == StateRunning
 	authAvailable, authKnown := f.M.AgentAuthState(name, agent.UID, backend, running, needsLogin)
 
+	// StartedAt dates the current launch so the reconciler can suppress dead
+	// verdicts during boot. Copied by value: the field is a pointer the
+	// manager mutates on relaunch.
+	var startedAt time.Time
+	f.M.mu.RLock()
+	if agent.StartedAt != nil {
+		startedAt = *agent.StartedAt
+	}
+	f.M.mu.RUnlock()
+
 	return watchdog.Observation{
 		Backend:          backend,
 		SessionExists:    sessionExists,
@@ -101,9 +117,44 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 		HasCLIMarker:     paneHasCLIMarker(pane),
 		ShowsLoginPrompt: needsLogin || paneShowsLoginPrompt(strings.Split(pane, "\n")),
 		LastChange:       lastChange,
+		StartedAt:        startedAt,
 		AuthAvailable:    authAvailable,
 		AuthKnown:        authKnown,
 	}, nil
+}
+
+// QueuedWork reports the hive's actionable work depth for the readiness gate.
+// Advisory-tier agents are reported as having no queue: they cannot drain
+// issues or PRs by design, so counting the backlog against them would turn a
+// healthy advisory stream into "idle with work queued" — the same carve-out
+// the hub makes for write-incapable agents (agent_inactivity.go).
+func (f WatchdogFleet) QueuedWork(name string) (int, bool) {
+	if f.Queued == nil {
+		return 0, false
+	}
+	f.M.mu.RLock()
+	agent, ok := f.M.agents[name]
+	advisory := ok && agentIsAdvisoryOnly(agent)
+	f.M.mu.RUnlock()
+	if !ok {
+		return 0, false
+	}
+	if advisory {
+		return 0, true
+	}
+	return f.Queued()
+}
+
+// agentIsAdvisoryOnly reports whether an agent is barred from opening issues
+// or PRs, and therefore cannot drain the queue no matter how deep it gets.
+// Both the explicit mode and the tools-derived mode are checked, because an
+// agent can reach the advisory tier either way.
+func agentIsAdvisoryOnly(agent *AgentProcess) bool {
+	const advisoryMode = "ADVISORY"
+	if strings.EqualFold(strings.TrimSpace(agent.Config.Mode), advisoryMode) {
+		return true
+	}
+	return agent.Config.Tools.EffectiveMode() == advisoryMode
 }
 
 // IsPaused reports the operator/escalation pause state.

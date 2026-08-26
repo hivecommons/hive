@@ -28,6 +28,35 @@ func TestClassifyStateMachine(t *testing.T) {
 			want: ClassNoSession,
 		},
 		{
+			// An undated agent gets NO grace rather than an unbounded one:
+			// a missing StartedAt must not become a permanent shield.
+			name: "no tmux session with no launch timestamp is still dead",
+			obs:  Observation{Backend: "claude", SessionExists: false},
+			want: ClassNoSession,
+		},
+		{
+			name: "no tmux session inside boot grace is unknown, not dead",
+			obs: Observation{Backend: "claude", SessionExists: false,
+				StartedAt: fresh(10 * time.Second)},
+			want: ClassUnknown,
+		},
+		{
+			name: "bare shell inside boot grace is unknown, not dead",
+			obs: Observation{Backend: "claude", SessionExists: true,
+				Pane: "agent@spoke:~$", LastChange: fresh(time.Hour),
+				StartedAt: fresh(5 * time.Second)},
+			want: ClassUnknown,
+		},
+		{
+			// Positive control for the two above: the SAME bare shell, launched
+			// long ago, is dead. Boot grace must be a window, not an off switch.
+			name: "bare shell past boot grace is dead",
+			obs: Observation{Backend: "claude", SessionExists: true,
+				Pane: "agent@spoke:~$", LastChange: fresh(time.Hour),
+				StartedAt: fresh(2 * time.Hour)},
+			want: ClassShellPrompt,
+		},
+		{
 			name: "poller login flag wins over ready marker",
 			obs: Observation{Backend: "claude", SessionExists: true,
 				Pane: "❯", HasCLIMarker: true, ShowsLoginPrompt: true, LastChange: fresh(time.Minute)},

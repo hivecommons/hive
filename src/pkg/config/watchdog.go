@@ -11,9 +11,19 @@ package config
 // WatchdogConfig configures the per-agent liveness/readiness reconciler.
 // All duration fields accept Go duration strings ("10m", "1h30m").
 type WatchdogConfig struct {
-	// Enabled turns the watchdog on. Absent (nil) means enabled — the RFC
-	// default — because a watchdog that ships dark heals nobody; an explicit
-	// `enabled: false` opts a hive out.
+	// Mode is how much authority the watchdog has: "off", "observe", or
+	// "heal". Absent means "observe" — it classifies agents, publishes
+	// conditions and raises alerts, but takes no restart or pause action, so
+	// an operator can read what it WOULD have done on their own fleet before
+	// granting it the ability to do it. An unrecognized value falls back to
+	// observe and says so; a typo never grants authority.
+	Mode string `yaml:"mode,omitempty"`
+	// Enabled is the pre-mode switch, kept working so existing configs do not
+	// break: `false` maps to mode "off", and true/absent maps to "observe"
+	// (not "heal" — a config written before modes existed never consented to
+	// fleet-wide restarts). An explicit Mode always wins over this.
+	//
+	// Deprecated: set Mode instead.
 	Enabled *bool `yaml:"enabled,omitempty"`
 	// ProbeIntervalS is the minimum seconds between watchdog sweeps. The
 	// watchdog rides the governor eval tick and self-gates to this interval,

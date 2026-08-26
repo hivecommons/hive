@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,11 @@ type fakeFleet struct {
 	pauses       []string
 	pauseReasons []string
 	conds        map[string][]Condition
+	// queued is the actionable-work depth reported to the readiness gate.
+	// Tests that care about Producing=False must set it: the default of zero
+	// means "nothing queued", under which an idle agent is CORRECT.
+	queued       int
+	queueUnknown bool
 }
 
 func newFakeFleet(agents ...string) *fakeFleet {
@@ -125,6 +131,21 @@ func (f *fakeFleet) LastProduction(name string) (time.Time, bool) {
 	return t, ok
 }
 
+func (f *fakeFleet) QueuedWork(name string) (int, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.queueUnknown {
+		return 0, false
+	}
+	return f.queued, true
+}
+
+func (f *fakeFleet) setQueued(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queued = n
+}
+
 func (f *fakeFleet) SetConditions(name string, conds []Condition) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -159,15 +180,46 @@ func (f *fakeFleet) waitRestart(t *testing.T) {
 	}
 }
 
-// fakeAlerter records dashboard system alerts.
+// auditEntry is one recorded durable audit write.
+type auditEntry struct {
+	user, action, detail, agent string
+}
+
+// fakeAlerter records dashboard system alerts and audit-log writes.
 type fakeAlerter struct {
 	mu      sync.Mutex
 	alerts  map[string]string
 	cleared []string
+	audits  []auditEntry
 }
 
 func newFakeAlerter() *fakeAlerter {
 	return &fakeAlerter{alerts: make(map[string]string)}
+}
+
+func (a *fakeAlerter) AuditLog(user, action, detail, agent string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.audits = append(a.audits, auditEntry{user, action, detail, agent})
+}
+
+// auditsFor returns every audit entry with the given action.
+func (a *fakeAlerter) auditsFor(action string) []auditEntry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []auditEntry
+	for _, e := range a.audits {
+		if e.action == action {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (a *fakeAlerter) auditCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.audits)
 }
 
 func (a *fakeAlerter) AddSystemAlert(id, severity, message string) {
@@ -217,12 +269,20 @@ func testLogger() *slog.Logger {
 }
 
 // fastSettings shrinks the RFC ladder for tests while keeping its shape.
+// Mode is heal: these tests assert the ACTIONS the reconciler takes, and
+// observe mode has its own tests that use heal as their positive control.
 func fastSettings() Settings {
 	s := DefaultSettings()
+	s.Mode = ModeHeal
 	s.ProbeInterval = 0 // every Tick sweeps; interval gating has its own test
 	s.RestartTimeout = 50 * time.Millisecond
 	return s
 }
+
+// launchedLongAgo is a StartedAt comfortably past DefaultBootGrace relative to
+// the fake clock, so fixtures are classified on their pane rather than being
+// suppressed as still-booting.
+var launchedLongAgo = time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 
 func deadObs() Observation {
 	return Observation{
@@ -230,6 +290,7 @@ func deadObs() Observation {
 		SessionExists: true,
 		Pane:          "agent@spoke:~$",
 		LastChange:    time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC), // an hour stale
+		StartedAt:     launchedLongAgo,
 	}
 }
 
@@ -240,6 +301,7 @@ func readyObs() Observation {
 		Pane:          "❯",
 		HasCLIMarker:  true,
 		LastChange:    time.Date(2026, 8, 23, 11, 59, 0, 0, time.UTC),
+		StartedAt:     launchedLongAgo,
 	}
 }
 
@@ -602,6 +664,9 @@ func TestReadinessConditions(t *testing.T) {
 		fleet.setObs("a1", readyObs())
 		fleet.mu.Lock()
 		fleet.production["a1"] = clock.Now().Add(-7 * time.Hour)
+		// Silence is only a fault when there is work waiting; without this the
+		// agent is correctly idle. See the empty-queue subtest below.
+		fleet.queued = 3
 		fleet.mu.Unlock()
 		alerter := newFakeAlerter()
 		r := newTestReconciler(t, fastSettings(), fleet, alerter, clock)
@@ -629,6 +694,353 @@ func TestReadinessConditions(t *testing.T) {
 			t.Fatal("recovery must clear the producing alert")
 		}
 	})
+}
+
+// TestProducingRequiresQueuedWork asserts the noise gate: an agent producing
+// nothing is only a fault when there is work waiting for it. The queued case
+// is the positive control — it proves the silence itself IS detected, so the
+// empty-queue case passes because of the gate rather than because nothing was
+// ever observed.
+func TestProducingRequiresQueuedWork(t *testing.T) {
+	clock := newFakeClock()
+	stale := clock.Now().Add(-7 * time.Hour)
+
+	newFleet := func() *fakeFleet {
+		f := newFakeFleet("a1")
+		f.setObs("a1", readyObs())
+		f.mu.Lock()
+		f.production["a1"] = stale
+		f.mu.Unlock()
+		return f
+	}
+
+	t.Run("empty queue: idle is correct, not unhealthy", func(t *testing.T) {
+		fleet := newFleet()
+		fleet.setQueued(0)
+		alerter := newFakeAlerter()
+		r := newTestReconciler(t, fastSettings(), fleet, alerter, clock)
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status == ConditionFalse {
+			t.Fatalf("an idle agent with an empty queue must not be a fault, got %+v", p)
+		}
+		if p.Reason != "IdleNoWorkQueued" {
+			t.Fatalf("Producing reason = %q, want IdleNoWorkQueued", p.Reason)
+		}
+		if alerter.has(producingAlertID("a1")) {
+			t.Fatal("an empty queue must not raise a not-producing alert — this is the facet-noise rule")
+		}
+	})
+
+	t.Run("positive control: same silence WITH queued work is a fault", func(t *testing.T) {
+		fleet := newFleet()
+		fleet.setQueued(1) // exactly minQueuedForNotProducing
+		alerter := newFakeAlerter()
+		r := newTestReconciler(t, fastSettings(), fleet, alerter, clock)
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionFalse || p.Reason != "NoRecentProduction" {
+			t.Fatalf("Producing = %+v, want False/NoRecentProduction when work is queued", p)
+		}
+		if !alerter.has(producingAlertID("a1")) {
+			t.Fatal("silence with work queued must alert")
+		}
+	})
+
+	t.Run("unreadable queue is Unknown, never a fault", func(t *testing.T) {
+		fleet := newFleet()
+		fleet.mu.Lock()
+		fleet.queueUnknown = true
+		fleet.mu.Unlock()
+		r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), clock)
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionUnknown || p.Reason != "QueueUnknown" {
+			t.Fatalf("Producing = %+v, want Unknown/QueueUnknown — an unreadable queue is not evidence of a fault", p)
+		}
+	})
+}
+
+// TestObserveModeTakesNoAction asserts observe mode is genuinely inert. The
+// heal subtest is the positive control on the SAME input: it proves the input
+// is one the reconciler demonstrably acts on, so observe passing cannot mean
+// "nothing would have happened anyway".
+func TestObserveModeTakesNoAction(t *testing.T) {
+	t.Run("observe: classifies and records, restarts nothing", func(t *testing.T) {
+		fleet := newFakeFleet("a1")
+		fleet.setObs("a1", deadObs())
+		alerter := newFakeAlerter()
+		s := fastSettings()
+		s.Mode = ModeObserve
+		r := newTestReconciler(t, s, fleet, alerter, newFakeClock())
+
+		r.Tick(context.Background())
+
+		if fleet.restartCount() != 0 {
+			t.Fatalf("observe mode must not restart, got %d", fleet.restartCount())
+		}
+		if fleet.pauseCount() != 0 {
+			t.Fatalf("observe mode must not pause, got %d", fleet.pauseCount())
+		}
+		// Conditions still published: that is the evidence observe exists for.
+		ready, _ := FindCondition(r.Conditions("a1"), ConditionReady)
+		if ready.Status != ConditionFalse {
+			t.Fatalf("observe mode must still publish observed truth, got %+v", ready)
+		}
+		// The record stays pristine, so promoting to heal starts from a clean
+		// ladder rather than one already part-way up.
+		r.mu.Lock()
+		failures := r.agents["a1"].Failures
+		looping := r.agents["a1"].CrashLooping
+		r.mu.Unlock()
+		if failures != 0 || looping {
+			t.Fatalf("observe mode must not advance the ladder (failures=%d looping=%v)", failures, looping)
+		}
+		// And it is recorded, marked not-taken in the ACTION itself.
+		entries := alerter.auditsFor(auditActionRestart + observedSuffix)
+		if len(entries) != 1 {
+			t.Fatalf("observe mode must record what it would have done, got %d entries", len(entries))
+		}
+		if alerter.auditsFor(auditActionRestart) != nil {
+			t.Fatal("an unsuffixed restart action must never be written in observe mode")
+		}
+	})
+
+	t.Run("positive control: heal acts on the same input", func(t *testing.T) {
+		fleet := newFakeFleet("a1")
+		fleet.setObs("a1", deadObs())
+		alerter := newFakeAlerter()
+		r := newTestReconciler(t, fastSettings(), fleet, alerter, newFakeClock())
+
+		r.Tick(context.Background())
+		fleet.waitRestart(t)
+
+		if fleet.restartCount() != 1 {
+			t.Fatalf("heal must restart this input, got %d", fleet.restartCount())
+		}
+		entries := alerter.auditsFor(auditActionRestart)
+		if len(entries) != 1 {
+			t.Fatalf("heal must record the restart it took, got %d", len(entries))
+		}
+		if entries[0].user != auditUser {
+			t.Fatalf("audit user = %q, want %q", entries[0].user, auditUser)
+		}
+		if entries[0].agent != "a1" {
+			t.Fatalf("audit entry must carry the agent, got %q", entries[0].agent)
+		}
+		if !strings.Contains(entries[0].detail, string(ClassShellPrompt)) {
+			t.Fatalf("audit detail must carry the WHY, got %q", entries[0].detail)
+		}
+	})
+}
+
+// TestObserveModeRecordsCrashLoopWithoutPausing covers the terminal decision:
+// the entry an operator reads to decide whether to enable heal.
+func TestObserveModeRecordsCrashLoopWithoutPausing(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", deadObs())
+	clock := newFakeClock()
+	alerter := newFakeAlerter()
+	s := fastSettings()
+	s.Mode = ModeObserve
+	s.CrashLoopAfter = 2
+	r := newTestReconciler(t, s, fleet, alerter, clock)
+
+	// Seed a record already at the cap, as a heal-mode run would have left it.
+	r.mu.Lock()
+	r.recordLocked("a1").Failures = 2
+	r.mu.Unlock()
+
+	r.Tick(context.Background())
+
+	if fleet.pauseCount() != 0 {
+		t.Fatal("observe mode must never pause")
+	}
+	r.mu.Lock()
+	looping := r.agents["a1"].CrashLooping
+	r.mu.Unlock()
+	if looping {
+		t.Fatal("observe mode must not latch CrashLooping — latching would suppress the evidence observe exists to produce")
+	}
+	entries := alerter.auditsFor(auditActionPause + observedSuffix)
+	if len(entries) != 1 {
+		t.Fatalf("observe mode must record the would-be pause, got %d", len(entries))
+	}
+	if alerter.auditsFor(auditActionPause) != nil {
+		t.Fatal("an unsuffixed pause action must never be written in observe mode")
+	}
+}
+
+// TestAuditRecordsActionsNotSweeps asserts the ring is spent on decisions
+// rather than observations: a healthy agent swept repeatedly writes nothing.
+func TestAuditRecordsActionsNotSweeps(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", readyObs())
+	clock := newFakeClock()
+	alerter := newFakeAlerter()
+	r := newTestReconciler(t, fastSettings(), fleet, alerter, clock)
+
+	for i := 0; i < 10; i++ {
+		r.Tick(context.Background())
+		clock.Advance(time.Minute)
+	}
+	if n := alerter.auditCount(); n != 0 {
+		t.Fatalf("sweeps and probes must not write audit entries, got %d — a 500-entry ring would evict real actions within minutes", n)
+	}
+
+	// Positive control: the same reconciler DOES record a real action.
+	fleet.setObs("a1", deadObs())
+	r.Tick(context.Background())
+	fleet.waitRestart(t)
+	if alerter.auditCount() == 0 {
+		t.Fatal("a real action must be recorded (positive control)")
+	}
+}
+
+// TestCrashLoopPauseIsAudited covers the terminal state an operator must be
+// able to reconstruct, including the explicit give-up entry.
+func TestCrashLoopPauseIsAudited(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", deadObs())
+	clock := newFakeClock()
+	alerter := newFakeAlerter()
+	s := fastSettings()
+	s.CrashLoopAfter = 2
+	s.Backoff = []time.Duration{time.Millisecond}
+	r := newTestReconciler(t, s, fleet, alerter, clock)
+
+	for i := 0; i < 2; i++ {
+		r.Tick(context.Background())
+		fleet.waitRestart(t)
+		clock.Advance(time.Second)
+	}
+	r.Tick(context.Background())
+
+	pauses := alerter.auditsFor(auditActionPause)
+	if len(pauses) != 1 {
+		t.Fatalf("the crash-loop pause must be audited exactly once, got %d", len(pauses))
+	}
+	if !strings.Contains(pauses[0].detail, "failures=2") {
+		t.Fatalf("pause detail must carry the failure count, got %q", pauses[0].detail)
+	}
+	if len(alerter.auditsFor(auditActionGiveUp)) != 1 {
+		t.Fatal("the give-up must be recorded as its own entry, not inferred from the pause")
+	}
+}
+
+// TestAuditDetailLeaksNoPaneContent guards the durable, operator-readable log
+// against carrying the pane — which is exactly where login screens, tokens and
+// credential material render.
+func TestAuditDetailLeaksNoPaneContent(t *testing.T) {
+	const secret = "sk-ant-SUPERSECRET-TOKEN"
+	fleet := newFakeFleet("a1")
+	obs := deadObs()
+	obs.Pane = "agent@spoke:~$ export ANTHROPIC_API_KEY=" + secret
+	fleet.setObs("a1", obs)
+	alerter := newFakeAlerter()
+	r := newTestReconciler(t, fastSettings(), fleet, alerter, newFakeClock())
+
+	r.Tick(context.Background())
+	fleet.waitRestart(t)
+
+	if alerter.auditCount() == 0 {
+		t.Fatal("precondition: an action must have been audited")
+	}
+	alerter.mu.Lock()
+	defer alerter.mu.Unlock()
+	for _, e := range alerter.audits {
+		if strings.Contains(e.detail, secret) || strings.Contains(e.detail, obs.Pane) {
+			t.Fatalf("audit detail leaked pane content: %q", e.detail)
+		}
+	}
+}
+
+// TestBootGraceSuppressesDeadVerdicts asserts a just-launched agent is never
+// restarted underneath itself — the race that spawns a second concurrent CLI.
+// The past-grace case is the positive control.
+func TestBootGraceSuppressesDeadVerdicts(t *testing.T) {
+	clock := newFakeClock()
+
+	t.Run("no session inside boot grace is Unknown, not dead", func(t *testing.T) {
+		fleet := newFakeFleet("a1")
+		fleet.setObs("a1", Observation{
+			Backend:       "claude",
+			SessionExists: false,
+			StartedAt:     clock.Now().Add(-10 * time.Second), // well inside 60s
+		})
+		r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), clock)
+		r.Tick(context.Background())
+
+		if fleet.restartCount() != 0 {
+			t.Fatal("a booting agent must never be restarted underneath itself")
+		}
+		ready, _ := FindCondition(r.Conditions("a1"), ConditionReady)
+		if ready.Status != ConditionUnknown {
+			t.Fatalf("Ready = %+v, want Unknown inside boot grace", ready)
+		}
+	})
+
+	t.Run("positive control: no session past boot grace IS dead", func(t *testing.T) {
+		fleet := newFakeFleet("a1")
+		fleet.setObs("a1", Observation{
+			Backend:       "claude",
+			SessionExists: false,
+			StartedAt:     clock.Now().Add(-10 * time.Minute),
+		})
+		r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), clock)
+		r.Tick(context.Background())
+		fleet.waitRestart(t)
+
+		if fleet.restartCount() != 1 {
+			t.Fatalf("a dead session past grace must be restarted, got %d", fleet.restartCount())
+		}
+	})
+}
+
+// TestDeadSessionRestartsOncePerBackoffNotPerTick is the invariant the
+// ownership transfer exists for: the watchdog owns dead-session recovery, so
+// it must throttle. Sweeping every tick for an hour must produce the backoff
+// ladder's worth of restarts, not one per tick.
+func TestDeadSessionRestartsOncePerBackoffNotPerTick(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", Observation{
+		Backend:       "claude",
+		SessionExists: false,
+		StartedAt:     launchedLongAgo,
+	})
+	clock := newFakeClock()
+	s := fastSettings()
+	s.CrashLoopAfter = 1000 // not the subject here; keep the ladder running
+	r := newTestReconciler(t, s, fleet, newFakeAlerter(), clock)
+
+	// 30 sweeps at 10s intervals = 5 minutes of wall clock. The ladder
+	// (1m, 2m, 4m, ...) permits 3 restarts in that window, never 30.
+	const (
+		sweeps       = 30
+		sweepGap     = 10 * time.Second
+		wantRestarts = 3
+	)
+	for i := 0; i < sweeps; i++ {
+		r.Tick(context.Background())
+		clock.Advance(sweepGap)
+	}
+	// Detached restarts settle asynchronously, so wait for the ladder's count
+	// rather than sampling immediately.
+	waitFor(t, func() bool { return fleet.restartCount() >= wantRestarts },
+		fmt.Sprintf("want %d restarts across %d sweeps (the backoff ladder)", wantRestarts, sweeps))
+	if got := fleet.restartCount(); got != wantRestarts {
+		t.Fatalf("want exactly %d restarts across %d sweeps (the backoff ladder), got %d — one per tick would be %d",
+			wantRestarts, sweeps, got, sweeps)
+	}
+
+	// Positive control: it IS restarting — the assertion above must not pass
+	// by nothing ever happening.
+	if fleet.restartCount() == 0 {
+		t.Fatal("dead-session recovery must actually restart the agent")
+	}
 }
 
 func TestPausedAgentIsObservedButNeverActedOn(t *testing.T) {
@@ -677,7 +1089,7 @@ func TestDisabledReconcilerDoesNothing(t *testing.T) {
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	s := fastSettings()
-	s.Enabled = false
+	s.Mode = ModeOff
 	r := newTestReconciler(t, s, fleet, newFakeAlerter(), newFakeClock())
 	if r.Enabled() {
 		t.Fatal("Enabled() must report the setting")
@@ -718,6 +1130,49 @@ func TestRestartFailureIsCountedNotHidden(t *testing.T) {
 	r.mu.Unlock()
 	if failures != 1 {
 		t.Fatalf("failed restart must still count toward the crash loop, got %d", failures)
+	}
+}
+
+// TestTakeRestartedReportsSuccessesOnce asserts the resume-kick handoff: an
+// agent the watchdog revived is reported exactly once, and a FAILED restart is
+// never reported (resume-kicking an agent that did not come back would kick
+// into a dead session).
+func TestTakeRestartedReportsSuccessesOnce(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", deadObs())
+	r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), newFakeClock())
+
+	r.Tick(context.Background())
+	fleet.waitRestart(t)
+
+	// The restart goroutine records the success just after Restart returns, so
+	// drain until it lands rather than sampling once.
+	var got []string
+	waitFor(t, func() bool {
+		got = append(got, r.TakeRestarted()...)
+		return len(got) == 1
+	}, "a completed restart must be reported for the resume kick")
+
+	if got[0] != "a1" {
+		t.Fatalf("TakeRestarted = %v, want [a1]", got)
+	}
+	if again := r.TakeRestarted(); len(again) != 0 {
+		t.Fatalf("TakeRestarted must drain; second call returned %v", again)
+	}
+}
+
+func TestTakeRestartedSkipsFailedRestarts(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", deadObs())
+	fleet.mu.Lock()
+	fleet.restartErr = fmt.Errorf("tmux exploded")
+	fleet.mu.Unlock()
+	r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), newFakeClock())
+
+	r.Tick(context.Background())
+	fleet.waitRestart(t)
+	if got := r.TakeRestarted(); len(got) != 0 {
+		t.Fatalf("a failed restart must not be resume-kicked, got %v", got)
 	}
 }
 

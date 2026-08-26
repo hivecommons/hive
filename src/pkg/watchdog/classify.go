@@ -60,6 +60,13 @@ type Observation struct {
 	ShowsLoginPrompt bool
 	// LastChange is when the pane content last changed, per the pane poller.
 	LastChange time.Time
+	// StartedAt is when this agent's current launch began; zero when the
+	// manager has no launch timestamp. A CLI legitimately has no tmux session
+	// and no pane for the first seconds of its launch, so every dead verdict
+	// is suppressed inside BootGrace of this — restarting a still-booting
+	// agent spawns a second concurrent CLI, the race cliBootGraceSeconds was
+	// added for on the manager side.
+	StartedAt time.Time
 	// AuthAvailable/AuthKnown carry the manager's owner-aware per-agent
 	// credential-file verdict (AgentAuthState, #4619/#4641): AuthKnown=false
 	// means the probe could not determine an answer and the reconciler must
@@ -159,13 +166,28 @@ type Classification struct {
 // Auth outranks overlay deliberately: a login picker is both, and a restart
 // cannot mint a credential.
 func Classify(obs Observation, now time.Time, s Settings) Classification {
+	// Boot grace outranks every dead verdict. A launching agent legitimately
+	// has no tmux session, no pane, and no CLI marker for the first seconds of
+	// its life; without this, the watchdog would restart it underneath itself
+	// and spawn a second concurrent CLI. An agent with no StartedAt cannot be
+	// dated, so it gets no grace rather than an unbounded one.
+	booting := !obs.StartedAt.IsZero() && now.Sub(obs.StartedAt) < s.BootGrace
+
 	if !obs.SessionExists {
+		if booting {
+			return Classification{ClassUnknown, "tmux session missing inside boot grace"}
+		}
 		return Classification{ClassNoSession, "tmux session missing"}
 	}
 	if obs.ShowsLoginPrompt || paneMatchesAny(obs.Pane, authScreenPatterns) {
 		return Classification{ClassAuthRequired, "pane shows a login/credential screen"}
 	}
 	stale := func(after time.Duration) bool {
+		// A still-booting agent is never stale: its pane has not had time to
+		// paint, so an unchanged pane is expected rather than evidence of death.
+		if booting {
+			return false
+		}
 		// A zero LastChange means the pane poller has never seen a change;
 		// treat as "no evidence of freshness" only once the grace elapses
 		// from... nothing — we cannot date it, so it is NOT stale. Honest

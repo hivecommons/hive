@@ -33,6 +33,14 @@ type Fleet interface {
 	// evidence source is readable — reported as Producing=Unknown, never
 	// silently as healthy or as failed.
 	LastProduction(name string) (time.Time, bool)
+	// QueuedWork reports how much actionable work is waiting for this agent,
+	// and whether the count is known at all. An agent producing nothing while
+	// nothing is queued is CORRECT, not unhealthy, so Producing=False requires
+	// queued work — the hub's rule at agent_inactivity.go. known=false means
+	// the queue could not be read, which is reported as Unknown rather than
+	// assumed empty (which would silence a real fault) or assumed full (which
+	// would manufacture one).
+	QueuedWork(name string) (count int, known bool)
 	// SetConditions publishes the agent's observed conditions so the
 	// dashboard renders truth instead of the state echo.
 	SetConditions(name string, conds []Condition)
@@ -58,11 +66,67 @@ type AuthProbe interface {
 	ProbeAuth(ctx context.Context) (AuthStatus, string)
 }
 
-// Alerter is the escalation surface: the dashboard's system-alert banner.
-// The journal side of every escalation goes through the logger.
+// Alerter is the escalation surface: the dashboard's system-alert banner plus
+// the durable audit log. Alerts are the transient "look at this now" channel;
+// the audit log is the durable record an operator reconstructs a decision from
+// weeks later, which a banner and a log line cannot do.
 type Alerter interface {
 	AddSystemAlert(id, severity, message string)
 	ClearSystemAlert(id string)
+	// AuditLog appends a durable entry (dashboard.Server.AuditLog):
+	// /data/audit.jsonl, 90-day retention, with a per-agent field.
+	AuditLog(user, action, detail, agent string)
+}
+
+// auditUser is the actor recorded for every watchdog-initiated audit entry.
+//
+// It is deliberately NOT added to dashboard.auditPseudoUsers. That map does
+// not gate what is written to the log — it gates the lastAction map, the
+// "did a REAL person do something" signal the heartbeat reports hub-ward.
+// The watchdog is a real actor whose restarts and pauses must be auditable,
+// but it is not a person, and its actions must never be mistaken for human
+// engagement. Writing under a name absent from that map achieves exactly
+// that: the entry is recorded, and it does not count as user activity.
+const auditUser = "watchdog"
+
+// Audit action values. Actions the watchdog TAKES are named plainly; actions
+// it only WOULD have taken in observe mode carry the "-observed" suffix, so
+// the distinction lives in the action field itself and survives any reader
+// that does not parse detail text. A reader must never mistake "would have
+// paused" for "paused".
+const (
+	auditActionRestart      = "watchdog-restart"
+	auditActionPause        = "watchdog-crashloop-pause"
+	auditActionHealthyReset = "watchdog-healthy-reset"
+	auditActionGiveUp       = "watchdog-giveup"
+	// observedSuffix marks an action the watchdog declined to take because it
+	// is running in observe mode.
+	observedSuffix = "-observed"
+)
+
+// auditAction returns the action name for a decision, marking it not-taken
+// when the watchdog is only observing.
+func (r *Reconciler) auditAction(base string) string {
+	if r.settings.MayAct() {
+		return base
+	}
+	return base + observedSuffix
+}
+
+// audit writes one durable audit entry, if an audit surface exists. Only
+// ACTIONS and transitions are recorded — never per-sweep observations: the
+// in-memory ring is 500 entries, so sweep noise would evict the restarts and
+// pauses that matter within minutes.
+//
+// detail carries the decision's reasoning (pane class, failure count, backoff
+// step) and never pane content, tokens, or credential material: the pane is
+// where login screens and secrets render, and the audit log is long-lived and
+// operator-readable.
+func (r *Reconciler) audit(action, detail, agent string) {
+	if r.alerter == nil {
+		return
+	}
+	r.alerter.AuditLog(auditUser, action, detail, agent)
 }
 
 // Alert/trigger identity strings. Named so the dashboard, audit log, and
@@ -75,6 +139,13 @@ const (
 
 	severityError   = "error"
 	severityWarning = "warning"
+
+	// minQueuedForNotProducing is how much actionable work must be waiting
+	// before an agent producing nothing is called a fault. Deliberately equal
+	// to the hub's inactiveAgentMinQueued (agent_inactivity.go): a hive with
+	// an empty queue is SUPPOSED to have idle agents, and one waiting item is
+	// enough to make "and nothing is happening" wrong.
+	minQueuedForNotProducing = 1
 )
 
 // agentRecord is the reconciler's per-agent memory. Guarded by Reconciler.mu.
@@ -133,6 +204,27 @@ type Reconciler struct {
 	mu       sync.Mutex
 	agents   map[string]*agentRecord
 	lastTick time.Time
+	// restarted accumulates agents whose restart COMPLETED since the last
+	// TakeRestarted call, so the eval loop can resume-kick them exactly as it
+	// resume-kicks the manager's crash-recovery restarts. Without this, an
+	// agent the watchdog revived would sit idle until its next cadence slot —
+	// the work it was interrupted mid-task would not resume.
+	restarted []string
+}
+
+// TakeRestarted returns and clears the agents the watchdog has successfully
+// restarted since the previous call. The caller feeds them to the same
+// governor-gated resume-kick path that crash-recovery restarts use, so a
+// watchdog restart and a crash-loop restart are indistinguishable downstream.
+func (r *Reconciler) TakeRestarted() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.restarted) == 0 {
+		return nil
+	}
+	out := r.restarted
+	r.restarted = nil
+	return out
 }
 
 // Option customizes a Reconciler.
@@ -187,8 +279,11 @@ func DefaultBackendProvider(backend string) string {
 	return ""
 }
 
-// Enabled reports whether the reconciler will act on Tick.
-func (r *Reconciler) Enabled() bool { return r.settings.Enabled }
+// Enabled reports whether the reconciler runs at all (observe still runs).
+func (r *Reconciler) Enabled() bool { return r.settings.Enabled() }
+
+// Mode reports the reconciler's current authority level.
+func (r *Reconciler) Mode() Mode { return r.settings.Mode }
 
 // Conditions returns a copy of the agent's current condition set.
 func (r *Reconciler) Conditions(name string) []Condition {
@@ -267,7 +362,7 @@ func (r *Reconciler) recordLocked(name string) *agentRecord {
 // stuck agent (the RFC's control-plane guard). Calls inside ProbeInterval of
 // the previous sweep are no-ops.
 func (r *Reconciler) Tick(ctx context.Context) {
-	if !r.settings.Enabled {
+	if !r.settings.Enabled() {
 		return
 	}
 	now := r.now()
@@ -365,6 +460,9 @@ func (r *Reconciler) updateHealthyWindowLocked(name string, rec *agentRecord, cl
 	if now.Sub(rec.HealthySince) >= r.settings.HealthyReset && (rec.Failures > 0 || rec.CrashLooping) {
 		r.logger.Info("watchdog: healthy window elapsed, failure counter reset",
 			"agent", name, "failures_were", rec.Failures)
+		r.audit(auditActionHealthyReset,
+			fmt.Sprintf("continuously ready for %v; failure counter cleared (was %d, crash_looping=%v)",
+				r.settings.HealthyReset, rec.Failures, rec.CrashLooping), name)
 		rec.Failures = 0
 		rec.CrashLooping = false
 		rec.BackoffUntil = time.Time{}
@@ -400,15 +498,37 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 	if rec.CrashLooping {
 		return nil
 	}
+	acting := r.settings.MayAct()
+
 	if rec.Failures >= r.settings.CrashLoopAfter {
-		rec.CrashLooping = true
 		reason := fmt.Sprintf("crash loop: %d consecutive failed restarts (last: %s — %s)", rec.Failures, cls.Class, cls.Reason)
+		detail := fmt.Sprintf("class=%s failures=%d cap=%d reason=%s",
+			cls.Class, rec.Failures, r.settings.CrashLoopAfter, cls.Reason)
+
+		if !acting {
+			// Observe mode: report the terminal decision, take none of it. The
+			// CrashLooping latch is deliberately NOT set — latching would
+			// suppress this evidence on every later sweep, and observe mode
+			// exists to keep producing it.
+			r.logger.Warn("watchdog: would escalate to pause (observe mode; no action taken)",
+				"agent", name, "failures", rec.Failures, "class", string(cls.Class), "mode", string(r.settings.Mode))
+			r.audit(r.auditAction(auditActionPause), "would pause: "+detail, name)
+			return nil
+		}
+
+		rec.CrashLooping = true
 		r.logger.Error("watchdog: crash loop, escalating to pause",
 			"agent", name, "failures", rec.Failures, "class", string(cls.Class))
 		if r.alerter != nil {
 			r.alerter.AddSystemAlert(crashLoopAlertID(name), severityError,
 				fmt.Sprintf("Agent %q is crash-looping (%d failed restarts) and has been paused by the watchdog. Investigate, then resume it from the dashboard.", name, rec.Failures))
 		}
+		r.audit(auditActionPause, "paused: "+detail, name)
+		// The give-up is the terminal state an operator must be able to
+		// reconstruct, so it is recorded as its own entry rather than being
+		// inferred from the pause.
+		r.audit(auditActionGiveUp,
+			fmt.Sprintf("no further restarts will be attempted; %s", detail), name)
 		return func() {
 			if err := r.fleet.Pause(name, CrashLoopTrigger, reason); err != nil {
 				r.logger.Error("watchdog: crash-loop pause failed", "agent", name, "error", err)
@@ -418,15 +538,31 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 	if now.Before(rec.BackoffUntil) {
 		return nil
 	}
+
+	if !acting {
+		// Observe mode: no counter advance, no backoff arming, no restart —
+		// the record stays pristine so promoting to heal starts from a clean
+		// ladder rather than one already part-way up.
+		r.logger.Warn("watchdog: would restart dead agent (observe mode; no action taken)",
+			"agent", name, "class", string(cls.Class), "reason", cls.Reason, "mode", string(r.settings.Mode))
+		r.audit(r.auditAction(auditActionRestart),
+			fmt.Sprintf("would restart: class=%s reason=%s", cls.Class, cls.Reason), name)
+		return nil
+	}
+
 	rec.Failures++
 	rec.BackoffUntil = now.Add(r.settings.backoffFor(rec.Failures))
 	rec.restartInFlight = true
 	rec.restartStartedAt = now
 	rec.wedgeAlerted = false
 	failures := rec.Failures
+	backoff := r.settings.backoffFor(failures)
 	r.logger.Warn("watchdog: restarting dead agent",
 		"agent", name, "class", string(cls.Class), "reason", cls.Reason,
 		"failure", failures, "next_backoff", r.settings.backoffFor(failures+1))
+	r.audit(auditActionRestart,
+		fmt.Sprintf("class=%s reason=%s failure=%d/%d backoff=%v",
+			cls.Class, cls.Reason, failures, r.settings.CrashLoopAfter, backoff), name)
 	return func() { r.restartDetached(name) }
 }
 
@@ -443,6 +579,9 @@ func (r *Reconciler) restartDetached(name string) {
 		r.mu.Lock()
 		rec := r.recordLocked(name)
 		rec.restartInFlight = false
+		if err == nil {
+			r.restarted = append(r.restarted, name)
+		}
 		r.mu.Unlock()
 		if r.alerter != nil {
 			r.alerter.ClearSystemAlert(wedgeAlertID(name))
@@ -534,14 +673,35 @@ func (r *Reconciler) reconcileReadiness(name string, now time.Time) {
 	message := "no production evidence source is readable for this agent"
 	if ok {
 		age := now.Sub(last)
-		if age >= r.settings.NoProductionFor {
-			status = ConditionFalse
-			reason = "NoRecentProduction"
-			message = fmt.Sprintf("no production evidence for %v (threshold %v)", age.Round(time.Minute), r.settings.NoProductionFor)
-		} else {
+		switch {
+		case age < r.settings.NoProductionFor:
 			status = ConditionTrue
 			reason = "RecentProduction"
 			message = fmt.Sprintf("last production evidence %v ago", age.Round(time.Minute))
+		default:
+			// Silence is only a fault when there is work to be silent about.
+			// An agent with an empty queue producing nothing is behaving
+			// correctly, and reporting it would light this condition on every
+			// healthy quiet hive — the failure mode the hub's inactivity rule
+			// exists to prevent (agent_inactivity.go: a facet which lights up
+			// constantly gets ignored). Same threshold as the hub's
+			// inactiveAgentMinQueued: one waiting item is enough to make "and
+			// nothing is happening" wrong.
+			queued, queueKnown := r.fleet.QueuedWork(name)
+			switch {
+			case !queueKnown:
+				status = ConditionUnknown
+				reason = "QueueUnknown"
+				message = fmt.Sprintf("no production for %v, but the work queue could not be read — not called a fault without knowing there was work to do", age.Round(time.Minute))
+			case queued < minQueuedForNotProducing:
+				status = ConditionTrue
+				reason = "IdleNoWorkQueued"
+				message = fmt.Sprintf("no production for %v, and nothing is queued — an agent with no work to do is correct, not unhealthy", age.Round(time.Minute))
+			default:
+				status = ConditionFalse
+				reason = "NoRecentProduction"
+				message = fmt.Sprintf("no production evidence for %v (threshold %v) while %d item(s) are queued", age.Round(time.Minute), r.settings.NoProductionFor, queued)
+			}
 		}
 	}
 

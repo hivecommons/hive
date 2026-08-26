@@ -13,8 +13,11 @@ func TestSettingsFromZeroValueIsRFCDefaults(t *testing.T) {
 		t.Fatalf("zero config must resolve without errors, got %v", errs)
 	}
 	want := DefaultSettings()
-	if !s.Enabled || !s.AuthProbe {
-		t.Fatal("watchdog and auth probe default on per the RFC")
+	if s.Mode != DefaultMode || !s.AuthProbe {
+		t.Fatalf("zero config must default to mode %q with auth probe on, got mode %q authProbe=%v", DefaultMode, s.Mode, s.AuthProbe)
+	}
+	if s.MayAct() {
+		t.Fatal("the default mode must NOT be allowed to act — observe is the default so an operator sees what it would do first")
 	}
 	if s.ProbeInterval != want.ProbeInterval ||
 		s.StuckOverlayAfter != want.StuckOverlayAfter ||
@@ -51,8 +54,8 @@ func TestSettingsFromExplicitValues(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("valid config must not error: %v", errs)
 	}
-	if s.Enabled || s.AuthProbe {
-		t.Fatal("explicit false must win")
+	if s.Enabled() || s.Mode != ModeOff || s.AuthProbe {
+		t.Fatal("explicit enabled:false must map to mode off, and auth_probe:false must win")
 	}
 	if s.ProbeInterval != time.Minute || s.StuckOverlayAfter != 3*time.Minute ||
 		s.ShellPromptAfter != 90*time.Second || s.CrashLoopAfter != 2 ||
@@ -94,8 +97,70 @@ func TestSettingsFromInvalidValuesFallBackLoudly(t *testing.T) {
 	if len(s.Backoff) != len(want.Backoff) {
 		t.Fatalf("one bad backoff entry must restore the whole default ladder: %v", s.Backoff)
 	}
-	if !s.Enabled {
+	if !s.Enabled() {
 		t.Fatal("config errors must never disable the watchdog silently")
+	}
+}
+
+// TestModeResolution covers the authority ladder: an explicit mode wins, the
+// legacy enabled flag maps forward without ever granting heal, and an
+// unrecognized value falls back to the default rather than up.
+func TestModeResolution(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name    string
+		cfg     config.WatchdogConfig
+		want    Mode
+		wantErr bool
+	}{
+		{"absent defaults to observe", config.WatchdogConfig{}, ModeObserve, false},
+		{"explicit heal", config.WatchdogConfig{Mode: "heal"}, ModeHeal, false},
+		{"explicit off", config.WatchdogConfig{Mode: "off"}, ModeOff, false},
+		{"case and space insensitive", config.WatchdogConfig{Mode: "  HEAL "}, ModeHeal, false},
+		{"legacy enabled:true maps to observe, never heal", config.WatchdogConfig{Enabled: &on}, ModeObserve, false},
+		{"legacy enabled:false maps to off", config.WatchdogConfig{Enabled: &off}, ModeOff, false},
+		{"explicit mode beats legacy enabled", config.WatchdogConfig{Mode: "heal", Enabled: &off}, ModeHeal, false},
+		{"typo falls back to default, not up", config.WatchdogConfig{Mode: "healll"}, ModeObserve, true},
+		{"a typo must not silently grant authority", config.WatchdogConfig{Mode: "HEAL!"}, ModeObserve, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, errs := SettingsFrom(tc.cfg)
+			if s.Mode != tc.want {
+				t.Fatalf("mode = %q, want %q", s.Mode, tc.want)
+			}
+			if gotErr := len(errs) > 0; gotErr != tc.wantErr {
+				t.Fatalf("errs = %v, wantErr = %v", errs, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestKillSwitchDowngradesHealToObserve asserts the fleet-wide switch can only
+// ever REDUCE authority: it downgrades heal, and it never promotes off.
+func TestKillSwitchDowngradesHealToObserve(t *testing.T) {
+	t.Setenv(watchdogPauseEnv, "true")
+
+	s, errs := SettingsFrom(config.WatchdogConfig{Mode: "heal"})
+	if s.Mode != ModeObserve {
+		t.Fatalf("kill switch must downgrade heal to observe, got %q", s.Mode)
+	}
+	if s.MayAct() {
+		t.Fatal("a paused watchdog must not be allowed to act")
+	}
+	if len(errs) == 0 {
+		t.Fatal("the downgrade must be reported, not silent")
+	}
+
+	// It never promotes: off stays off.
+	if s2, _ := SettingsFrom(config.WatchdogConfig{Mode: "off"}); s2.Mode != ModeOff {
+		t.Fatalf("kill switch must never turn a watchdog on, got %q", s2.Mode)
+	}
+
+	// Positive control: without the switch, heal is heal.
+	t.Setenv(watchdogPauseEnv, "")
+	if s3, _ := SettingsFrom(config.WatchdogConfig{Mode: "heal"}); s3.Mode != ModeHeal {
+		t.Fatalf("without the kill switch heal must survive, got %q", s3.Mode)
 	}
 }
 

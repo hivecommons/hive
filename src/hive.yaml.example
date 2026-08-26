@@ -200,7 +200,15 @@ governor:
   # and publishes Ready/Authenticated/Producing conditions per agent. The whole
   # block is optional — omitted fields use the defaults shown.
   # watchdog:
-  #   enabled: true
+  #   # mode: how much authority the watchdog has.
+  #   #   observe (default) — classify, publish conditions, raise alerts and
+  #   #                       record what it WOULD have done. Takes no action.
+  #   #   heal            — additionally restart dead agents and pause crash loops.
+  #   #   off             — do not run at all.
+  #   # Start in observe, read the audit log, then promote to heal.
+  #   # HIVE_WATCHDOG_PAUSE=true on the deployment downgrades heal to observe
+  #   # fleet-wide without editing any hive's config.
+  #   mode: observe
   #   probe_interval_s: 300               # Minimum seconds between sweeps
   #   liveness:
   #     stuck_overlay_after: 10m          # Unanswered modal older than this -> restart
@@ -211,6 +219,8 @@ governor:
   #     healthy_reset: 30m                # Continuous-ready window that clears the counter
   #   readiness:
   #     no_production_for: 6h             # Zero production evidence -> Producing=False + warning
+  #                                       # (only when work is actually queued; an
+  #                                       #  idle agent with an empty queue is correct)
   #   auth_probe: true                    # Per-provider credential probes (rotation machinery)
 
   labels:

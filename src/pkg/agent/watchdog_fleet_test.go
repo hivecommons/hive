@@ -216,6 +216,112 @@ func TestWatchdogAgentNamesExcludesQuietByDesign(t *testing.T) {
 	}
 }
 
+// TestDeadSessionRecoveryOwnershipTransfer asserts the handover is real in
+// both directions: with the watchdog owning recovery the manager's crash loop
+// stops restarting missing-session agents, and with ownership back it restarts
+// them again. The owned-by-crash-loop case is the positive control — without
+// it, the first assertion could pass because the fixture never looked crashed.
+func TestDeadSessionRecoveryOwnershipTransfer(t *testing.T) {
+	newCrashedManager := func(t *testing.T) *Manager {
+		t.Helper()
+		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+		// The session is gone: the crash loop's missing-session branch.
+		orig := tmuxSessionExists
+		tmuxSessionExists = func(_ *Manager, _ *AgentProcess) bool { return false }
+		t.Cleanup(func() { tmuxSessionExists = orig })
+		started := time.Now().Add(-time.Hour)
+		m.agents["a1"].StartedAt = &started
+		return m
+	}
+
+	t.Run("positive control: crash loop owns it by default", func(t *testing.T) {
+		m := newCrashedManager(t)
+		restarted := m.CheckAndRestartCrashedAgents(context.Background())
+		if len(restarted) != 1 || restarted[0] != "a1" {
+			t.Fatalf("restarted = %v, want [a1] — the crash loop owns dead sessions by default", restarted)
+		}
+	})
+
+	t.Run("watchdog owning recovery stops the crash loop restarting it", func(t *testing.T) {
+		m := newCrashedManager(t)
+		m.SetDeadSessionRecoveryOwner(true)
+		restarted := m.CheckAndRestartCrashedAgents(context.Background())
+		if len(restarted) != 0 {
+			t.Fatalf("restarted = %v, want none: two owners means the watchdog's ladder throttles nothing", restarted)
+		}
+	})
+
+	t.Run("ownership is reversible", func(t *testing.T) {
+		m := newCrashedManager(t)
+		m.SetDeadSessionRecoveryOwner(true)
+		if n := len(m.CheckAndRestartCrashedAgents(context.Background())); n != 0 {
+			t.Fatalf("precondition: watchdog-owned must not restart, got %d", n)
+		}
+		m.SetDeadSessionRecoveryOwner(false)
+		if n := len(m.CheckAndRestartCrashedAgents(context.Background())); n != 1 {
+			t.Fatalf("handing ownership back must restore crash-loop recovery, got %d", n)
+		}
+	})
+}
+
+// TestWatchdogQueuedWork covers the readiness noise gate's inputs: an absent
+// queue source is Unknown (never assumed empty), and an advisory-tier agent
+// reports an empty queue because it cannot drain one by design.
+func TestWatchdogQueuedWork(t *testing.T) {
+	t.Run("no queue source is unknown, not empty", func(t *testing.T) {
+		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+		if _, known := (WatchdogFleet{M: m}).QueuedWork("a1"); known {
+			t.Fatal("an absent queue source must report unknown, never a confident zero")
+		}
+	})
+
+	t.Run("queue source is consulted", func(t *testing.T) {
+		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 7, true }}
+		n, known := fleet.QueuedWork("a1")
+		if !known || n != 7 {
+			t.Fatalf("QueuedWork = (%d, %v), want (7, true)", n, known)
+		}
+	})
+
+	t.Run("advisory agents cannot drain the queue", func(t *testing.T) {
+		m, _ := newWatchdogTestManager(t, map[string]string{"advisor": "claude"})
+		cfg := m.agents["advisor"].Config
+		cfg.Mode = "ADVISORY"
+		m.agents["advisor"].Config = cfg
+
+		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 42, true }}
+		n, known := fleet.QueuedWork("advisor")
+		if !known || n != 0 {
+			t.Fatalf("QueuedWork = (%d, %v), want (0, true): a backlog an advisory agent cannot touch is not its fault", n, known)
+		}
+	})
+
+	t.Run("unknown agent is unknown", func(t *testing.T) {
+		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+		fleet := WatchdogFleet{M: m, Queued: func() (int, bool) { return 7, true }}
+		if _, known := fleet.QueuedWork("ghost"); known {
+			t.Fatal("an unknown agent must not report a confident queue depth")
+		}
+	})
+}
+
+// TestWatchdogObserveCarriesStartedAt asserts the launch timestamp reaches the
+// classifier, which is what lets boot grace suppress dead verdicts.
+func TestWatchdogObserveCarriesStartedAt(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
+	started := time.Date(2026, 8, 23, 11, 30, 0, 0, time.UTC)
+	m.agents["a1"].StartedAt = &started
+
+	obs, err := WatchdogFleet{M: m}.Observe("a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !obs.StartedAt.Equal(started) {
+		t.Fatalf("StartedAt = %v, want %v — without it boot grace cannot apply", obs.StartedAt, started)
+	}
+}
+
 func TestWatchdogFleetPauseRestartDelegation(t *testing.T) {
 	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
 	fleet := WatchdogFleet{M: m}

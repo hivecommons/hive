@@ -2452,18 +2452,38 @@ func main() {
 		logger.Warn("watchdog config problem", "error", e)
 	}
 	var wd *watchdog.Reconciler
-	if wdSettings.Enabled {
-		wd = watchdog.New(wdSettings, agent.WatchdogFleet{M: agentMgr}, dashSrv, logger,
+	if wdSettings.Enabled() {
+		wdFleet := agent.WatchdogFleet{
+			M: agentMgr,
+			// Queue depth for the readiness gate: an agent producing nothing
+			// while nothing is queued is correct, not unhealthy. Read live
+			// from the governor so it reflects the current sweep.
+			Queued: func() (int, bool) {
+				st := gov.GetState()
+				return st.QueueIssues + st.QueuePRs, true
+			},
+		}
+		wd = watchdog.New(wdSettings, wdFleet, dashSrv, logger,
 			watchdog.WithAuthProbes(watchdogAuthProbes(cfg)))
 		if saved != nil && len(saved.Watchdog) > 0 {
 			wd.Restore(saved.Watchdog)
 		}
+		// Dead-session recovery moves under the watchdog's bounded ladder ONLY
+		// when the watchdog may actually act. In observe mode the manager's
+		// crash loop keeps its existing job, so there is never a window in
+		// which neither component restarts a dead agent.
+		agentMgr.SetDeadSessionRecoveryOwner(wdSettings.MayAct())
 		logger.Info("agent watchdog enabled (RFC #4665)",
+			"mode", string(wdSettings.Mode),
 			"probe_interval", wdSettings.ProbeInterval,
 			"crash_loop_after", wdSettings.CrashLoopAfter,
-			"auth_probe", wdSettings.AuthProbe)
+			"auth_probe", wdSettings.AuthProbe,
+			"dead_session_recovery", map[bool]string{true: "watchdog", false: "crash-loop"}[wdSettings.MayAct()])
+		if wdSettings.Mode == watchdog.ModeObserve {
+			logger.Info("agent watchdog is in OBSERVE mode: it will classify agents, publish conditions and record what it WOULD have done, but will not restart or pause anything. Set governor.watchdog.mode: heal to enable healing.")
+		}
 	} else {
-		logger.Info("agent watchdog disabled by config")
+		logger.Info("agent watchdog disabled by config", "mode", string(wdSettings.Mode))
 	}
 
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
@@ -4728,15 +4748,26 @@ func main() {
 					}
 				}
 			}
-			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
-			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 			// Watchdog sweep (RFC #4665): synchronous but bounded — every
 			// probe carries a deadline and restarts run detached under a hard
 			// timeout, so a wedged agent can never stall this tick. Tick
 			// self-gates to watchdog.probe_interval_s.
+			//
+			// It runs BEFORE runEvalCycle so agents it revived join this
+			// cycle's resume-kick list rather than waiting a full eval
+			// interval. Restarts are detached, so a given sweep's completions
+			// are usually collected on the next pass — TakeRestarted drains
+			// whatever has finished, and the governor gate gets the final say
+			// either way.
 			if wd != nil {
 				wd.Tick(ctx)
+				for _, name := range wd.TakeRestarted() {
+					dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)
+					restarted = append(restarted, name)
+				}
 			}
+			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
+			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().

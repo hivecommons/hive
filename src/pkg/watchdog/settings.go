@@ -2,6 +2,8 @@ package watchdog
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
@@ -29,6 +31,14 @@ const (
 	// restart/kick path (failure mode 4 of the RFC) can never block the
 	// reconciler.
 	DefaultRestartTimeout = 90 * time.Second
+	// DefaultBootGrace is how long after an agent's launch every dead verdict
+	// is suppressed. It deliberately matches the agent manager's
+	// cliBootGraceSeconds (60s), which matches the production cliReadyTimeout:
+	// a CLI that is still booting has no session, no pane and no ready marker,
+	// and restarting it underneath itself spawns a second concurrent CLI.
+	// Kept numerically equal to that constant rather than importing it,
+	// because pkg/agent imports pkg/watchdog and the reverse would cycle.
+	DefaultBootGrace = 60 * time.Second
 )
 
 // defaultBackoff is the RFC restart ladder; the last entry is the cap.
@@ -42,12 +52,84 @@ func defaultBackoff() []time.Duration {
 	}
 }
 
+// watchdogPauseEnv is the fleet-wide watchdog kill switch. Set it to a truthy
+// value (1/true/yes/on) on the deployment and every hive that reads it drops
+// from heal to observe on its next config resolve — conditions and alerts keep
+// flowing, restarts and pauses stop.
+//
+// This mirrors the spoke-upgrade kill switch (hub: spokeUpgradesPaused) in
+// purpose: an operator watching something go wrong across the fleet must be
+// able to stop the automated actor without editing 55 per-hive configs or
+// waiting for a redeploy. It is deliberately an ENV var rather than hub state
+// because the watchdog runs spoke-side, where the hub's persisted pause file
+// and settings store do not exist; a hive that cannot reach the hub must still
+// honor the switch.
+//
+// It can only ever REDUCE authority: it never turns a watchdog ON, and it
+// never promotes observe to heal.
+const watchdogPauseEnv = "HIVE_WATCHDOG_PAUSE"
+
+// WatchdogActionPaused reports whether the fleet-wide kill switch is engaged.
+// Read at every config resolve rather than cached at boot, so engaging it
+// takes effect without a restart.
+func WatchdogActionPaused() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(watchdogPauseEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// Mode is how much authority the reconciler has over the fleet.
+type Mode string
+
+const (
+	// ModeOff — the reconciler does not run at all.
+	ModeOff Mode = "off"
+	// ModeObserve — classify, publish conditions, emit alerts, and log what a
+	// restart/pause WOULD have done, but take no action. The default.
+	ModeObserve Mode = "observe"
+	// ModeHeal — full reconciliation: restart with backoff, escalate to pause.
+	ModeHeal Mode = "heal"
+)
+
+// DefaultMode is observe, deliberately.
+//
+// This reconciler restarts agents on a 55-hive production fleet. Shipping it
+// straight into heal would turn fleet-wide healing on the moment the image
+// rolls, with probe_interval_s as the only throttle — the shape of the
+// image-pull storm that put a wave size on spoke upgrades. Observe mode gives
+// the operator the one thing a test fleet cannot: evidence of what this
+// watchdog would have done to THEIR agents, gathered on their own fleet,
+// before it is allowed to do it. Promotion to heal is then a decision made on
+// data rather than on trust — the same progression the ACMM applies to agents,
+// applied to the tooling that supervises them.
+const DefaultMode = ModeObserve
+
+// ParseMode resolves a configured mode string. Unrecognized values fall back
+// to the default and report a problem, never to a MORE powerful mode: a typo
+// must not silently grant the watchdog authority to restart agents.
+func ParseMode(raw string) (Mode, bool) {
+	switch Mode(strings.ToLower(strings.TrimSpace(raw))) {
+	case ModeOff:
+		return ModeOff, true
+	case ModeObserve:
+		return ModeObserve, true
+	case ModeHeal:
+		return ModeHeal, true
+	}
+	return DefaultMode, false
+}
+
 // Settings is the fully resolved, validated form of config.WatchdogConfig.
 type Settings struct {
-	Enabled           bool
+	// Mode is the authority level. Enabled is derived from it: a reconciler in
+	// ModeOff does not run.
+	Mode              Mode
 	ProbeInterval     time.Duration
 	StuckOverlayAfter time.Duration
 	ShellPromptAfter  time.Duration
+	BootGrace         time.Duration
 	Backoff           []time.Duration
 	CrashLoopAfter    int
 	HealthyReset      time.Duration
@@ -56,13 +138,22 @@ type Settings struct {
 	RestartTimeout    time.Duration
 }
 
+// Enabled reports whether the reconciler runs at all. Observe still runs — it
+// is the evidence-gathering mode, not an off switch.
+func (s Settings) Enabled() bool { return s.Mode != ModeOff }
+
+// MayAct reports whether the reconciler may take fleet-changing action
+// (restart, pause). Observe classifies and alerts but never acts.
+func (s Settings) MayAct() bool { return s.Mode == ModeHeal }
+
 // DefaultSettings returns the RFC #4665 defaults.
 func DefaultSettings() Settings {
 	return Settings{
-		Enabled:           true,
+		Mode:              DefaultMode,
 		ProbeInterval:     DefaultProbeInterval,
 		StuckOverlayAfter: DefaultStuckOverlayAfter,
 		ShellPromptAfter:  DefaultShellPromptAfter,
+		BootGrace:         DefaultBootGrace,
 		Backoff:           defaultBackoff(),
 		CrashLoopAfter:    DefaultCrashLoopAfter,
 		HealthyReset:      DefaultHealthyReset,
@@ -80,7 +171,32 @@ func SettingsFrom(cfg config.WatchdogConfig) (Settings, []error) {
 	s := DefaultSettings()
 	var errs []error
 
-	s.Enabled = cfg.WatchdogEnabled()
+	// Mode resolution, most explicit first:
+	//   1. an explicit `mode:` wins outright;
+	//   2. otherwise the legacy `enabled:` maps forward — false means off,
+	//      true/absent means observe (NOT heal: an existing config that never
+	//      mentioned a mode never consented to fleet-wide restarts);
+	//   3. otherwise the default, observe.
+	if raw := strings.TrimSpace(cfg.Mode); raw != "" {
+		mode, ok := ParseMode(raw)
+		if !ok {
+			errs = append(errs, fmt.Errorf("watchdog.mode: unrecognized value %q, using default %q (valid: off, observe, heal)", raw, DefaultMode))
+		}
+		s.Mode = mode
+	} else if !cfg.WatchdogEnabled() {
+		s.Mode = ModeOff
+	} else {
+		s.Mode = DefaultMode
+	}
+
+	// The fleet-wide kill switch outranks every per-hive config, so an
+	// operator can stop all watchdog action without editing 55 hive.yamls or
+	// waiting for a redeploy. It can only ever REDUCE authority.
+	if WatchdogActionPaused() && s.Mode == ModeHeal {
+		errs = append(errs, fmt.Errorf("watchdog.mode: heal downgraded to observe by the %s kill switch", watchdogPauseEnv))
+		s.Mode = ModeObserve
+	}
+
 	s.AuthProbe = cfg.AuthProbeEnabled()
 
 	if cfg.ProbeIntervalS < 0 {

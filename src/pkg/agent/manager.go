@@ -511,12 +511,17 @@ type Manager struct {
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
-	sandboxConfig        config.AgentSandboxConfig
-	sandboxLauncher      sandbox.Launcher
-	sandboxRunner        sandboxCommandRunner
-	sandboxPushMinter    pushbroker.TokenMinter
-	sandboxPRClient      PRCreator
-	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	// deadSessionRecoveryOwnedElsewhere is set when the watchdog reconciler
+	// owns restarting missing-session / bare-pane agents (RFC #4665), so this
+	// manager's crash loop observes those two conditions without restarting
+	// them. Guarded by m.mu, like the agent map it gates work over.
+	deadSessionRecoveryOwnedElsewhere bool
+	sandboxConfig                     config.AgentSandboxConfig
+	sandboxLauncher                   sandbox.Launcher
+	sandboxRunner                     sandboxCommandRunner
+	sandboxPushMinter                 pushbroker.TokenMinter
+	sandboxPRClient                   PRCreator
+	sandboxAuditCallback              atomic.Pointer[func(agent, action, detail string)]
 
 	paneCapture          func(agent *AgentProcess) string
 	visiblePaneCapture   func(agent *AgentProcess) string
@@ -4159,10 +4164,45 @@ type inferencePaneCheck struct {
 	pane string
 }
 
+// deadSessionRecoveryOwner renders the owner for the log line, so an operator
+// reading "agent tmux session missing" can tell at a glance whether this loop
+// is about to restart it or whether the watchdog's bounded ladder has it.
+func deadSessionRecoveryOwner(ownedElsewhere bool) string {
+	if ownedElsewhere {
+		return "watchdog"
+	}
+	return "crash-loop"
+}
+
+// SetDeadSessionRecoveryOwner declares whether some other component owns
+// restarting agents whose tmux session is missing or whose pane has gone bare
+// (RFC #4665). When owned elsewhere, CheckAndRestartCrashedAgents observes and
+// logs those two conditions but does not restart them.
+//
+// The transfer exists because this loop restarts on every eval tick with no
+// backoff and no cap, while the watchdog counts the same failures toward a
+// bounded ladder and a crash-loop pause. Both running meant the ladder
+// throttled nothing: the manager re-restarted an unfixable agent at tick rate
+// while the watchdog merely counted. One owner, one bounded ladder.
+//
+// Only those two conditions move. Consent-screen dismissal and the inference
+// stall nudge are NOT restarts, are not conditions the watchdog classifies,
+// and keep running here unconditionally — including for agents whose restart
+// this loop no longer performs.
+func (m *Manager) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deadSessionRecoveryOwnedElsewhere = ownedElsewhere
+}
+
 // CheckAndRestartCrashedAgents checks all running agents for crashed CLI
 // processes (bare shell prompt with no child process) and restarts them.
 // Returns the names of agents that were successfully restarted so the
 // caller can send them a kick with their prompt template.
+//
+// When SetDeadSessionRecoveryOwner(true) has been called, the restart half is
+// the watchdog's; this loop still observes and logs, and still performs the
+// consent/stall work that is nobody else's.
 func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	m.mu.RLock()
 	var crashed []string
@@ -4191,8 +4231,13 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"session", agent.tmuxSession,
 				"restart_count", agent.RestartCount,
 				"uptime_seconds", int(uptimeSeconds),
+				"recovery_owner", deadSessionRecoveryOwner(m.deadSessionRecoveryOwnedElsewhere),
 			)
-			crashed = append(crashed, name)
+			if !m.deadSessionRecoveryOwnedElsewhere {
+				crashed = append(crashed, name)
+			}
+			// Either way there is no session to capture a pane from, so the
+			// consent/stall checks below cannot run for this agent.
 			continue
 		}
 		pane := m.captureVisiblePaneForAgent(agent)
@@ -4221,9 +4266,15 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"session", agent.tmuxSession,
 				"restart_count", agent.RestartCount,
 				"uptime_seconds", int(uptimeSeconds),
+				"recovery_owner", deadSessionRecoveryOwner(m.deadSessionRecoveryOwnedElsewhere),
 			)
-			crashed = append(crashed, name)
-			continue
+			if !m.deadSessionRecoveryOwnedElsewhere {
+				crashed = append(crashed, name)
+				continue
+			}
+			// Recovery is the watchdog's, but a bare pane is still a live
+			// session: fall through so the consent/stall checks below — which
+			// are nobody else's job — still run for this agent.
 		}
 		// An inference agent parked on a consent screen has a live CLI, so
 		// it is not "crashed" — but it is stuck. Restarting would loop back
