@@ -547,6 +547,8 @@ func TestWedgedRestartNeverBlocksTickAndNeverStacks(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Tick blocked on a wedged restart — the control-plane guard failed")
 	}
+	waitFor(t, func() bool { return fleet.restartCount() == 1 },
+		"wedged restart goroutine must enter Fleet.Restart")
 
 	// Past the hard timeout the wedge is alerted; no restart stacks on it.
 	clock.Advance(s.RestartTimeout + time.Second)
@@ -1105,7 +1107,22 @@ func TestDeadSessionRestartsOncePerBackoffNotPerTick(t *testing.T) {
 		wantRestarts = 3
 	)
 	for i := 0; i < sweeps; i++ {
+		r.mu.Lock()
+		failuresBefore := 0
+		if rec := r.agents["a1"]; rec != nil {
+			failuresBefore = rec.Failures
+		}
+		r.mu.Unlock()
 		r.Tick(context.Background())
+		r.mu.Lock()
+		failuresAfter := r.agents["a1"].Failures
+		r.mu.Unlock()
+		if failuresAfter > failuresBefore {
+			// Tick records the attempt synchronously, then runs Restart in a
+			// detached goroutine. Let that attempt settle before advancing the
+			// fake clock so scheduler timing cannot collapse the backoff ladder.
+			fleet.waitRestart(t, r)
+		}
 		clock.Advance(sweepGap)
 	}
 	// Detached restarts settle asynchronously, so wait for the ladder's count
