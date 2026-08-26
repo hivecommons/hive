@@ -3,21 +3,20 @@ package config
 import "testing"
 
 // The optional Visual Hive Apps (issue #4030) are registered as identities
-// ahead of the feature that uses them. These tests pin the two properties that
-// are silent when broken: an unregistered App must not resolve to anything, and
-// the registered one must resolve to exactly its own forge and slug.
+// ahead of the feature that uses them. These tests pin the properties that are
+// silent when broken: an unset app_id must resolve to nothing, each registered
+// App must resolve to exactly its own forge and slug, the Visual Hive Apps must
+// stay distinct from the Hive Apps, and a third-party App must still get no
+// claim at all.
 
-// TestVizHivePublicAppIsNotResolvableWhileUnregistered is the important one.
+// TestUnsetAppIDResolvesToNothing is the important one.
 //
-// VizHivePublicAppID is 0 until someone registers kubestellar-viz-hive on
-// github.com — and 0 is also what an UNSET config carries. If a future edit
-// adds `case VizHivePublicAppID` to either lookup while the constant is still
-// 0, every hive with no app_id would be described as a registered Visual Hive
-// App, which is a confident wrong answer rather than a missing one.
-func TestVizHivePublicAppIsNotResolvableWhileUnregistered(t *testing.T) {
-	if VizHivePublicAppID != 0 {
-		t.Skip("kubestellar-viz-hive has been registered; this guard no longer applies")
-	}
+// Zero is what an UNSET config carries. Both Visual Hive Apps are now
+// registered with real IDs, but this must keep holding: if a future edit ever
+// reintroduces a zero-valued App constant, `case <thatConstant>` would claim
+// every app-id-less hive as a registered App — a confident wrong answer where
+// the file's contract demands no answer at all.
+func TestUnsetAppIDResolvesToNothing(t *testing.T) {
 	if got := forgeOfAppID(0); got != "" {
 		t.Errorf("forgeOfAppID(0) = %q, want \"\" — an unset app_id must resolve to no forge", got)
 	}
@@ -27,20 +26,47 @@ func TestVizHivePublicAppIsNotResolvableWhileUnregistered(t *testing.T) {
 	if IsVizHiveAppID(0) {
 		t.Error("IsVizHiveAppID(0) = true — an unset app_id is not a registered App")
 	}
+	// The guard above is only meaningful while no App constant is itself 0.
+	for _, tc := range []struct {
+		name string
+		id   int64
+	}{
+		{"VizHivePublicAppID", VizHivePublicAppID},
+		{"VizHiveEnterpriseAppID", VizHiveEnterpriseAppID},
+		{"PublicGitHubAppID", PublicGitHubAppID},
+		{"EnterpriseGitHubAppID", EnterpriseGitHubAppID},
+	} {
+		if tc.id == 0 {
+			t.Errorf("%s is 0 — a zero App constant collides with unset config; "+
+				"remove its switch case until it has a real ID", tc.name)
+		}
+	}
 }
 
-// TestVizHiveEnterpriseAppResolves is the positive control for the test above:
-// the App that IS registered resolves to its forge and its one slug. Without
-// this, the zero-guard test could pass simply because nothing resolves at all.
-func TestVizHiveEnterpriseAppResolves(t *testing.T) {
-	if got, want := forgeOfAppID(VizHiveEnterpriseAppID), "github.ibm.com"; got != want {
-		t.Errorf("forgeOfAppID(%d) = %q, want %q", VizHiveEnterpriseAppID, got, want)
-	}
-	if got, want := slugOfAppID(VizHiveEnterpriseAppID), VizHiveEnterpriseAppSlug; got != want {
-		t.Errorf("slugOfAppID(%d) = %q, want %q", VizHiveEnterpriseAppID, got, want)
-	}
-	if !IsVizHiveAppID(VizHiveEnterpriseAppID) {
-		t.Errorf("IsVizHiveAppID(%d) = false, want true", VizHiveEnterpriseAppID)
+// TestVizHiveAppsResolve is the positive control: both registered Apps resolve
+// to their forge and their one slug. Without this, the zero test above could
+// pass simply because nothing resolves at all.
+func TestVizHiveAppsResolve(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		id    int64
+		forge string
+		slug  string
+	}{
+		{"public", VizHivePublicAppID, "github.com", VizHivePublicAppSlug},
+		{"ghe", VizHiveEnterpriseAppID, "github.ibm.com", VizHiveEnterpriseAppSlug},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := forgeOfAppID(tc.id); got != tc.forge {
+				t.Errorf("forgeOfAppID(%d) = %q, want %q", tc.id, got, tc.forge)
+			}
+			if got := slugOfAppID(tc.id); got != tc.slug {
+				t.Errorf("slugOfAppID(%d) = %q, want %q", tc.id, got, tc.slug)
+			}
+			if !IsVizHiveAppID(tc.id) {
+				t.Errorf("IsVizHiveAppID(%d) = false, want true", tc.id)
+			}
+		})
 	}
 }
 
@@ -54,6 +80,18 @@ func TestVizHiveAppsAreDistinctFromHiveApps(t *testing.T) {
 	}
 	if VizHiveEnterpriseAppID == PublicGitHubAppID {
 		t.Fatal("viz-hive GHE App ID collides with the public Hive App")
+	}
+	if VizHivePublicAppID == PublicGitHubAppID {
+		t.Fatal("viz-hive public App ID collides with the public Hive App — they must be separate Apps")
+	}
+	if VizHivePublicAppID == EnterpriseGitHubAppID {
+		t.Fatal("viz-hive public App ID collides with the Hive GHE App")
+	}
+	if VizHivePublicAppID == VizHiveEnterpriseAppID {
+		t.Fatal("the two viz-hive App IDs collide")
+	}
+	if VizHivePublicAppSlug == DefaultGitHubAppSlug {
+		t.Fatal("viz-hive public slug collides with the Hive slug")
 	}
 	if VizHiveEnterpriseAppSlug == EnterpriseGitHubAppSlug {
 		t.Fatal("viz-hive GHE slug collides with the Hive GHE slug")

@@ -268,18 +268,8 @@ const (
 	// kubestellar-viz-hive GitHub App — the github.com twin of the GHE App
 	// below, same optional Visual Hive role.
 	//
-	// It is 0 because the App HAS NOT BEEN REGISTERED YET. Zero is the honest
-	// value, and it is load-bearing rather than a TODO: forgeOfAppID and
-	// slugOfAppID both key on these constants, and a guessed ID would make
-	// them return a confident wrong answer for whatever App really holds that
-	// number. The same reasoning the file already applies to
-	// daviddiaz0317-visual-hive — an unrecognised App gets "" and no claim,
-	// never an invented one.
-	//
-	// Both lookups below therefore skip a zero ID: until someone registers the
-	// App on github.com and fills this in, a public Visual Hive App simply
-	// does not resolve, which is correct.
-	VizHivePublicAppID int64 = 0
+	// Registered on github.com under the kubestellar org, 2026-08-26.
+	VizHivePublicAppID int64 = 4729416
 	// VizHivePublicAppSlug is the slug that App will carry once registered.
 	// Recorded now so the name is fixed and consistent with its GHE twin;
 	// unused while VizHivePublicAppID is 0.
@@ -331,11 +321,10 @@ func forgeOfAppID(appID int64) string {
 	switch appID {
 	case PublicGitHubAppID:
 		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
-	// NOTE: kubestellar-viz-hive (public github.com) is intentionally ABSENT
-	// from this switch. VizHivePublicAppID is 0 until the App is registered,
-	// and 0 is also what an UNSET config carries — a `case VizHivePublicAppID`
-	// would therefore claim every app-id-less hive as a registered Visual Hive
-	// App. Add the case in the same commit that fills in the real ID.
+	case VizHivePublicAppID:
+		// The optional Visual Hive App on public github.com — same forge as
+		// the Hive App above, a separate App with its own narrower permissions.
+		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
 	case EnterpriseGitHubAppID, VizHiveEnterpriseAppID:
 		// Both Hive and the optional Visual Hive App are registered on the
 		// same GHE instance, so both map to the same forge host. The mapping
@@ -378,8 +367,8 @@ func slugOfAppID(appID int64) string {
 		return EnterpriseGitHubAppSlug
 	case VizHiveEnterpriseAppID:
 		return VizHiveEnterpriseAppSlug
-		// kubestellar-viz-hive (public) is absent for the same reason as in
-		// forgeOfAppID — see the note there.
+	case VizHivePublicAppID:
+		return VizHivePublicAppSlug
 	}
 	return ""
 }
@@ -396,8 +385,7 @@ func slugOfAppID(appID int64) string {
 // tracked by a separate state. See the fail-closed note on the constants above.
 func IsVizHiveAppID(appID int64) bool {
 	if appID == 0 {
-		// Unset config, not a registered App. Checked before the comparison
-		// because VizHivePublicAppID is itself 0 until registration.
+		// An unset config carries 0; it is not a registered App.
 		return false
 	}
 	return appID == VizHivePublicAppID || appID == VizHiveEnterpriseAppID
