@@ -311,6 +311,7 @@ run_label_wrapper() {
     HIVE_ACMM_LEVEL=5 \
     HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
     HIVE_CONTRIBUTOR_MODE="false" \
+    PATH="${WORK}:/usr/bin:/bin" \
     bash "$WRAPPER" "$@" 2>&1
   )"
   rc=$?
@@ -343,12 +344,10 @@ result="$(run_label_wrapper issue create --repo owner/repo --title t --body b)"
 # dd's mediated issue path: authorized `issue create` never reaches raw gh —
 # it is redirected to the hive-open-issue relay (App authorship + cross-path
 # duplicate guard), which receives any injected labels directly, so the
-# label-retry contract does not apply. With no hive-open-issue on PATH the
-# wrapper must fail closed without invoking gh.
-if command -v hive-open-issue >/dev/null 2>&1; then
-  echo "  SKIP: issue create is relayed to hive-open-issue on this host"
-  PASS=$((PASS + 1))
-elif [[ "$result" == exit=1* && "$result" != *"issue create"* ]]; then
+# label-retry contract does not apply. run_label_wrapper pins PATH so the
+# relay is deterministically absent: the wrapper must fail closed without
+# invoking gh.
+if [[ "$result" == exit=1* && "$result" != *"issue create"* ]]; then
   echo "  PASS: issue create is held for the hive-open-issue relay, never raw gh"
   PASS=$((PASS + 1))
 else
