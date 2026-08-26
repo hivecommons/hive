@@ -361,6 +361,6 @@ agents:
   kick_template: operations-full.md
   include_repos: true
   stale_timeout: 28800
-  lane_keywords: [healthz, readyz, readiness, slo, sli, runbook, incident-response, rollback, alerting]
+  lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
   interactions: Opens issues and PRs for operational-practice improvements; never merges its own PRs.
   knowledge_use: Reads reliability goals and operational conventions from the knowledge base.

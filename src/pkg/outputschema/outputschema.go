@@ -150,7 +150,7 @@ func validateReport(report AgentReport) []Violation {
 	violations = append(violations, requireBounded("lane", report.Lane, MaxLaneLength)...)
 	violations = append(violations, requireBounded("kind", string(report.Kind), MaxKindLength)...)
 	if report.Kind != "" && !validKind(report.Kind) {
-		violations = append(violations, Violation{Field: "kind", Message: "must be one of findings, fix, review, advisory, summary"})
+		violations = append(violations, Violation{Field: "kind", Message: "must be one of findings, fix, review, advisory, summary, instrument"})
 	}
 	if report.Findings == nil {
 		violations = append(violations, Violation{Field: "findings", Message: "is required; use [] when there are no findings"})

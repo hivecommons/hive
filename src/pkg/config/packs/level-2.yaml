@@ -178,6 +178,6 @@ agents:
     kick_template: operations-advisory.md
     include_repos: true
     stale_timeout: 28800
-    lane_keywords: [healthz, readyz, readiness, slo, sli, runbook, incident-response, rollback, alerting]
+    lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
     interactions: Reports operational-practice gaps without changing repositories.
     knowledge_use: Reads reliability goals and operational conventions from the knowledge base.

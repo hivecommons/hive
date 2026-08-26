@@ -48,7 +48,7 @@ func TestValidate(t *testing.T) {
 		{
 			name:    "bad enum values",
 			raw:     `{"lane":"scanner","kind":"other","findings":[{"title":"x","severity":"severe","summary":"y"}],"prs_opened":[],"beads_filed":[{"id":"b","type":"unknown","title":"t"}],"summary":"bad enums"}`,
-			wantErr: []string{"kind", "findings[0].severity", "beads_filed[0].type"},
+			wantErr: []string{"kind: must be one of findings, fix, review, advisory, summary, instrument", "findings[0].severity", "beads_filed[0].type"},
 		},
 		{
 			name:    "bounded lengths",

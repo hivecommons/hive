@@ -4358,7 +4358,7 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 		},
 		"operations": {
 			Emoji: "🚨", Color: "#d35400", Aliases: []string{"op"},
-			LaneKeywords:   []string{"healthz", "readyz", "readiness", "slo", "sli", "runbook", "incident-response", "rollback", "alerting"},
+			LaneKeywords:   []string{"healthz", "readyz", "readiness", "slo-", "sli-", "service-level-objective", "service-level-indicator", "error-budget", "runbook", "incident-response", "rollback", "alerting"},
 			DetectKeywords: []string{"operations", "operability", "healthz", "runbook"},
 			BeadRole:       "worker", SortOrder: 66, IncludeRepos: true,
 		},

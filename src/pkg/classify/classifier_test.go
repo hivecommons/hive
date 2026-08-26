@@ -216,6 +216,11 @@ func TestClassify_OperabilityLanes(t *testing.T) {
 	}{
 		{"Add an OpenTelemetry collector configuration", Lane("telemetry")},
 		{"Create a readiness runbook and rollback procedure", Lane("operations")},
+		{"Define an SLO for API availability", Lane("scanner")},
+		{"Add a service-level-objective for API availability", Lane("operations")},
+		{"Fix the slow login redirect", Lane("scanner")},
+		{"Fix the sliding window rate limiter", Lane("scanner")},
+		{"Fix an array slice panic", Lane("scanner")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.title, func(t *testing.T) {
