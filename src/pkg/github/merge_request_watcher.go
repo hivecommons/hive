@@ -35,7 +35,7 @@ func mergeRequestDir() string {
 // Merges are more latency-sensitive than opens (an eligible PR should land
 // quickly), but a tight loop risks GitHub secondary-rate-limits when a batch is
 // pending, so keep it modest.
-const mergeRequestPollInterval = 10 * time.Second
+var mergeRequestPollInterval = 10 * time.Second
 
 // mergeRequestMaxAttempts bounds retries on a transient merge failure before the
 // request is quarantined. A PR that is genuinely un-mergeable (failing required

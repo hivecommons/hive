@@ -34,7 +34,7 @@ func prRequestDir() string {
 // prRequestPollInterval is how often the watcher scans PRRequestDir. PR opens
 // are not latency-critical (the agent has already pushed and moved on), so a
 // modest interval keeps the API/log noise low.
-const prRequestPollInterval = 10 * time.Second
+var prRequestPollInterval = 10 * time.Second
 
 // PRRequest is the JSON an agent writes to PRRequestDir to ask the hive to open
 // a PR on its behalf. Repo may be "owner/repo" or a bare repo name; Base

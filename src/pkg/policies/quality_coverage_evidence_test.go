@@ -19,12 +19,18 @@ func TestQualityPoliciesRequireCombinedCoverageEvidence(t *testing.T) {
 	}
 	required := [][]byte{
 		[]byte("## Coverage Evidence and Priority (MANDATORY)"),
+		[]byte("Do not assume a particular language, CI provider, branch, workflow, artifact name, or coverage format"),
+		[]byte("mechanism the repository actually uses"),
+		[]byte("combine their raw data at statement/line granularity"),
+		[]byte("go tool covdata merge"),
+		[]byte("same code revision with compatible build metadata"),
+		[]byte("Do not infer missing end-to-end coverage from a unit `coverprofile`"),
+		[]byte("suite and command or job, code revision, and run URL/ID or artifact timestamp"),
+		[]byte("Never assign priority 0 (critical) to a `coverage-gap`"),
+	}
+	forbidden := [][]byte{
 		[]byte("gh run list"),
 		[]byte("gh run download"),
-		[]byte("Combine unit and end-to-end coverage evidence"),
-		[]byte("Do not infer missing end-to-end coverage from a unit `coverprofile`"),
-		[]byte("including the workflow run ID and SHA used"),
-		[]byte("Never assign priority 0 (critical) to a `coverage-gap`"),
 	}
 
 	for _, name := range policyNames {
@@ -46,6 +52,11 @@ func TestQualityPoliciesRequireCombinedCoverageEvidence(t *testing.T) {
 			for _, marker := range required {
 				if !bytes.Contains(embedded, marker) {
 					t.Errorf("policy is missing coverage guardrail %q", marker)
+				}
+			}
+			for _, marker := range forbidden {
+				if bytes.Contains(embedded, marker) {
+					t.Errorf("policy assumes GitHub Actions coverage discovery %q", marker)
 				}
 			}
 		})
