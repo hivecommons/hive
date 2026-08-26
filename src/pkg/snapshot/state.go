@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/watchdog"
 )
 
 const maxStateAge = 7 * 24 * time.Hour
@@ -34,6 +35,11 @@ type PersistedState struct {
 	ACMMLevel            *int             `json:"acmm_level,omitempty"`
 	ConfigOverrides      *ConfigOverrides `json:"config_overrides,omitempty"`
 	Breaker              *BreakerState    `json:"breaker,omitempty"`
+	// Watchdog persists the RFC #4665 reconciler's per-agent backoff /
+	// crash-loop / condition state, so a pod restart neither forgets an
+	// escalated crash loop nor replays a backoff ladder from the top
+	// (RFC open question 2: the state rides the existing state file).
+	Watchdog map[string]watchdog.PersistedAgent `json:"watchdog,omitempty"`
 }
 
 // BreakerState persists the fleet breaker so an engaged kill-switch survives

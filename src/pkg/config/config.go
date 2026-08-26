@@ -1098,15 +1098,19 @@ type GovernorConfig struct {
 	//
 	// Valid values: "" | off | brief | full — the same set as the per-agent
 	// field, validated by ValidateExplainMode.
-	ExplainMode string              `yaml:"explain_mode,omitempty"`
-	Labels      LabelsConfig        `yaml:"labels"`
-	Sensing     SensingConfig       `yaml:"sensing"`
-	Health      HealthConfig        `yaml:"health"`
-	Budget      BudgetConfig        `yaml:"budget"`
-	Logging     LoggingConfig       `yaml:"logging"`
-	LiteLLM     LiteLLMConfig       `yaml:"litellm"`
-	VLLM        InferenceAuthConfig `yaml:"vllm"`
-	LLMD        InferenceAuthConfig `yaml:"llm-d"`
+	ExplainMode string        `yaml:"explain_mode,omitempty"`
+	Labels      LabelsConfig  `yaml:"labels"`
+	Sensing     SensingConfig `yaml:"sensing"`
+	// Watchdog configures the per-agent self-healing reconciler (RFC #4665).
+	// Zero value = enabled with the RFC defaults; see pkg/config/watchdog.go
+	// for why defaults resolve lazily instead of via applyDefaults.
+	Watchdog WatchdogConfig      `yaml:"watchdog,omitempty"`
+	Health   HealthConfig        `yaml:"health"`
+	Budget   BudgetConfig        `yaml:"budget"`
+	Logging  LoggingConfig       `yaml:"logging"`
+	LiteLLM  LiteLLMConfig       `yaml:"litellm"`
+	VLLM     InferenceAuthConfig `yaml:"vllm"`
+	LLMD     InferenceAuthConfig `yaml:"llm-d"`
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.
@@ -1437,11 +1441,60 @@ type AdvisoryConfig struct {
 	// close enough to the finding's title. *bool so absent is distinct from an
 	// explicit false; default true.
 	PRAutoClose *bool `yaml:"pr_autoclose,omitempty" json:"pr_autoclose,omitempty"`
+	// UpdateIntervalS throttles how often, in seconds, the digest comment on
+	// the pinned advisory issue is refreshed (#4820). 0 (or absent) means
+	// UNSET and keeps today's behavior: a post attempt every governor eval
+	// cycle (~60s at the default cadence). Operators raise it to reduce
+	// GitHub API writes and notification churn on watched repos.
+	//
+	// The raw value is stored as written so hive.yaml round-trips byte-for-
+	// byte; consumers resolve it through UpdateInterval, which clamps into
+	// [MinAdvisoryUpdateIntervalS, MaxAdvisoryUpdateIntervalS]. The max
+	// exists for the hub's wedged-digest alarm: its staleness threshold
+	// (90 min) must stay comfortably above every healthy configured cadence
+	// so a user-lengthened interval never false-alarms as a wedge — pinned by
+	// TestAdvisoryStaleThresholdCoversMaxUpdateInterval in pkg/hub.
+	UpdateIntervalS int `yaml:"update_interval_s,omitempty" json:"update_interval_s,omitempty"`
 }
 
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
 func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 	return a.PRAutoClose == nil || *a.PRAutoClose
+}
+
+// Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard
+// PUT validates against them and pkg/hub pins the invariant that its
+// advisory-staleness threshold exceeds the maximum allowed posting cadence
+// (so a healthy slow digest never reads as wedged).
+const (
+	// MinAdvisoryUpdateIntervalS floors a configured interval at 30s: below
+	// the ~60s eval cycle the throttle is meaningless, and a typo like 3
+	// would silently disable the setting.
+	MinAdvisoryUpdateIntervalS = 30
+	// MaxAdvisoryUpdateIntervalS caps the interval at one hour. The hub flags
+	// a digest as wedged when its last successful post is older than 90
+	// minutes; capping the healthy cadence at 60 minutes keeps every allowed
+	// interval comfortably inside that threshold.
+	MaxAdvisoryUpdateIntervalS = 3600
+)
+
+// UpdateInterval resolves UpdateIntervalS to the effective posting throttle.
+// 0 means no throttle — post every eval cycle, exactly the pre-#4820 behavior
+// — and a set value is clamped into [MinAdvisoryUpdateIntervalS,
+// MaxAdvisoryUpdateIntervalS]. Negative values are treated as unset rather
+// than clamped up, so garbage cannot silently slow a hive down.
+func (a AdvisoryConfig) UpdateInterval() time.Duration {
+	if a.UpdateIntervalS <= 0 {
+		return 0
+	}
+	s := a.UpdateIntervalS
+	if s < MinAdvisoryUpdateIntervalS {
+		s = MinAdvisoryUpdateIntervalS
+	}
+	if s > MaxAdvisoryUpdateIntervalS {
+		s = MaxAdvisoryUpdateIntervalS
+	}
+	return time.Duration(s) * time.Second
 }
 
 // Default governor mode thresholds, in queue items (actionable issues + open

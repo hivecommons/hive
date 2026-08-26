@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -140,6 +141,15 @@ const (
 	// one audit pulse per ~50 minutes, enough to show the loop is alive without
 	// flooding the dashboard audit log.
 	advisoryDigestAuditInterval = 50
+	// advisoryDigestWriteThroughInterval bounds how many consecutive
+	// unchanged-digest cycles may be skipped before a real write is forced
+	// (#4818). A skipped cycle proves a PRIOR successful write, not current
+	// write permission, so without a periodic write-through a 403 regression
+	// (App loses issues:write, repo dropped from the installation) would stay
+	// invisible for as long as the digest stayed quiet. At ~one cycle a minute
+	// this forces roughly one real write per hour — enough to keep the
+	// App-banner logic honest while still eliminating ~98% of the no-op edits.
+	advisoryDigestWriteThroughInterval = 60
 )
 
 // PostAdvisoryDigest updates the existing digest comment on the advisory issue,
@@ -160,6 +170,36 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	// mention and neither pass weakens the other.
 	digest = advisory.NeutralizeMentions(digest)
 	digest = truncateDigest(logscrub.ScrubString(digest))
+
+	// Skip-if-unchanged guard (#4818): the digest is re-rendered ~once a
+	// minute, and at steady state the body is byte-identical cycle after
+	// cycle — rewriting the pinned comment anyway burned ~1,440 no-op GitHub
+	// writes/day. Hash the FINAL body (post-scrub, post-truncation — exactly
+	// the bytes that would go over the wire) and skip the whole forge
+	// round-trip when it matches the last body this process successfully
+	// wrote. Returning nil is deliberate: an unchanged skip is a HEALTHY
+	// cycle, so the caller's success path still advances the
+	// advisory-staleness freshness record (RecordAdvisoryPost). Three cases
+	// always write: the first post after process start (no hash yet), a
+	// changed body, and the periodic write-through that re-proves write
+	// permission (see advisoryDigestWriteThroughInterval).
+	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
+	digestHash := fmt.Sprintf("%x", sha256.Sum256([]byte(digest)))
+	c.advisoryMu.Lock()
+	if c.advisoryDigestSkips == nil {
+		c.advisoryDigestSkips = make(map[string]int)
+	}
+	if c.advisoryDigestHashes[key] == digestHash &&
+		c.advisoryDigestSkips[key] < advisoryDigestWriteThroughInterval-1 {
+		c.advisoryDigestSkips[key]++
+		skips := c.advisoryDigestSkips[key]
+		c.advisoryMu.Unlock()
+		c.logger.Debug("advisory digest unchanged — skipping forge write",
+			slog.String("repo", repo), slog.Int("issue", issueNum),
+			slog.Int("consecutive_skips", skips))
+		return nil
+	}
+	c.advisoryMu.Unlock()
 
 	commentID, err := c.findDigestComment(ctx, owner, repoName, issueNum)
 	if err != nil {
@@ -193,7 +233,15 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	if c.advisoryDigestPosts == nil {
 		c.advisoryDigestPosts = make(map[string]int)
 	}
-	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
+	if c.advisoryDigestHashes == nil {
+		c.advisoryDigestHashes = make(map[string]string)
+	}
+	// Record the hash only after a SUCCESSFUL write (errors returned above),
+	// so a failed edit keeps being retried every cycle rather than skipped as
+	// "already posted". Reset the skip streak: the write-through clock starts
+	// over from any real write.
+	c.advisoryDigestHashes[key] = digestHash
+	c.advisoryDigestSkips[key] = 0
 	c.advisoryDigestPosts[key]++
 	count := c.advisoryDigestPosts[key]
 	c.advisoryMu.Unlock()

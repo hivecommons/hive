@@ -30,6 +30,7 @@ import (
 	"github.com/kubestellar/hive/pkg/pushbroker"
 	"github.com/kubestellar/hive/pkg/sandbox"
 	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/kubestellar/hive/pkg/watchdog"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -288,6 +289,12 @@ type AgentProcess struct {
 	tokenRestartGaveUp bool
 	NeedsLogin         bool // true when pane shows a login prompt
 	QuotaExhausted     bool // true when pane shows provider/monthly quota exhaustion
+	// WatchdogConditions is the k8s-style observed-health condition set the
+	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
+	// Authenticated / Producing with lastTransitionTime + reason. Written by
+	// the reconciler via SetConditions, read by snapshot() for the dashboard.
+	// Guarded by paneMu, like the poller-written observation fields beside it.
+	WatchdogConditions []watchdog.Condition
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -504,12 +511,17 @@ type Manager struct {
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
-	sandboxConfig        config.AgentSandboxConfig
-	sandboxLauncher      sandbox.Launcher
-	sandboxRunner        sandboxCommandRunner
-	sandboxPushMinter    pushbroker.TokenMinter
-	sandboxPRClient      PRCreator
-	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	// deadSessionRecoveryOwnedElsewhere is set when the watchdog reconciler
+	// owns restarting missing-session / bare-pane agents (RFC #4665), so this
+	// manager's crash loop observes those two conditions without restarting
+	// them. Guarded by m.mu, like the agent map it gates work over.
+	deadSessionRecoveryOwnedElsewhere bool
+	sandboxConfig                     config.AgentSandboxConfig
+	sandboxLauncher                   sandbox.Launcher
+	sandboxRunner                     sandboxCommandRunner
+	sandboxPushMinter                 pushbroker.TokenMinter
+	sandboxPRClient                   PRCreator
+	sandboxAuditCallback              atomic.Pointer[func(agent, action, detail string)]
 
 	paneCapture          func(agent *AgentProcess) string
 	visiblePaneCapture   func(agent *AgentProcess) string
@@ -4152,10 +4164,45 @@ type inferencePaneCheck struct {
 	pane string
 }
 
+// deadSessionRecoveryOwner renders the owner for the log line, so an operator
+// reading "agent tmux session missing" can tell at a glance whether this loop
+// is about to restart it or whether the watchdog's bounded ladder has it.
+func deadSessionRecoveryOwner(ownedElsewhere bool) string {
+	if ownedElsewhere {
+		return "watchdog"
+	}
+	return "crash-loop"
+}
+
+// SetDeadSessionRecoveryOwner declares whether some other component owns
+// restarting agents whose tmux session is missing or whose pane has gone bare
+// (RFC #4665). When owned elsewhere, CheckAndRestartCrashedAgents observes and
+// logs those two conditions but does not restart them.
+//
+// The transfer exists because this loop restarts on every eval tick with no
+// backoff and no cap, while the watchdog counts the same failures toward a
+// bounded ladder and a crash-loop pause. Both running meant the ladder
+// throttled nothing: the manager re-restarted an unfixable agent at tick rate
+// while the watchdog merely counted. One owner, one bounded ladder.
+//
+// Only those two conditions move. Consent-screen dismissal and the inference
+// stall nudge are NOT restarts, are not conditions the watchdog classifies,
+// and keep running here unconditionally — including for agents whose restart
+// this loop no longer performs.
+func (m *Manager) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deadSessionRecoveryOwnedElsewhere = ownedElsewhere
+}
+
 // CheckAndRestartCrashedAgents checks all running agents for crashed CLI
 // processes (bare shell prompt with no child process) and restarts them.
 // Returns the names of agents that were successfully restarted so the
 // caller can send them a kick with their prompt template.
+//
+// When SetDeadSessionRecoveryOwner(true) has been called, the restart half is
+// the watchdog's; this loop still observes and logs, and still performs the
+// consent/stall work that is nobody else's.
 func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	m.mu.RLock()
 	var crashed []string
@@ -4184,8 +4231,13 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"session", agent.tmuxSession,
 				"restart_count", agent.RestartCount,
 				"uptime_seconds", int(uptimeSeconds),
+				"recovery_owner", deadSessionRecoveryOwner(m.deadSessionRecoveryOwnedElsewhere),
 			)
-			crashed = append(crashed, name)
+			if !m.deadSessionRecoveryOwnedElsewhere {
+				crashed = append(crashed, name)
+			}
+			// Either way there is no session to capture a pane from, so the
+			// consent/stall checks below cannot run for this agent.
 			continue
 		}
 		pane := m.captureVisiblePaneForAgent(agent)
@@ -4214,9 +4266,15 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"session", agent.tmuxSession,
 				"restart_count", agent.RestartCount,
 				"uptime_seconds", int(uptimeSeconds),
+				"recovery_owner", deadSessionRecoveryOwner(m.deadSessionRecoveryOwnedElsewhere),
 			)
-			crashed = append(crashed, name)
-			continue
+			if !m.deadSessionRecoveryOwnedElsewhere {
+				crashed = append(crashed, name)
+				continue
+			}
+			// Recovery is the watchdog's, but a bare pane is still a live
+			// session: fall through so the consent/stall checks below — which
+			// are nobody else's job — still run for this agent.
 		}
 		// An inference agent parked on a consent screen has a live CLI, so
 		// it is not "crashed" — but it is stuck. Restarting would loop back
@@ -5795,40 +5853,43 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	needsLogin := a.NeedsLogin
 	quotaExhausted := a.QuotaExhausted
 	lastPaneChange := a.LastPaneChange
+	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
+	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
 	return AgentProcess{
-		Name:            a.Name,
-		ID:              a.ID,
-		Config:          a.Config,
-		State:           a.State,
-		PID:             a.PID,
-		UID:             a.UID,
-		StartedAt:       a.StartedAt,
-		LastKick:        a.LastKick,
-		Paused:          a.Paused,
-		PausedAt:        a.PausedAt,
-		PausedReason:    a.PausedReason,
-		PausedTrigger:   a.PausedTrigger,
-		PausedBy:        a.PausedBy,
-		PinnedCLI:       a.PinnedCLI,
-		PinnedModel:     a.PinnedModel,
-		ModelOverride:   a.ModelOverride,
-		BackendOverride: a.BackendOverride,
-		RestartCount:    a.RestartCount,
-		KickHistory:     history,
-		LastKickMessage: a.LastKickMessage,
-		NeedsLogin:      needsLogin,
-		QuotaExhausted:  quotaExhausted,
-		LastPaneChange:  lastPaneChange,
-		StallNudges:     a.StallNudges,
-		ActionNudges:    a.ActionNudges,
-		TransientNudges: a.TransientNudges,
-		HasLaunched:     a.HasLaunched,
-		LaunchedMode:    a.LaunchedMode,
-		tmuxSession:     a.tmuxSession,
-		tmuxSocket:      a.tmuxSocket,
-		OutputBuffer:    a.OutputBuffer,
-		lastPaneCapture: pane,
+		Name:               a.Name,
+		ID:                 a.ID,
+		Config:             a.Config,
+		State:              a.State,
+		PID:                a.PID,
+		UID:                a.UID,
+		StartedAt:          a.StartedAt,
+		LastKick:           a.LastKick,
+		Paused:             a.Paused,
+		PausedAt:           a.PausedAt,
+		PausedReason:       a.PausedReason,
+		PausedTrigger:      a.PausedTrigger,
+		PausedBy:           a.PausedBy,
+		PinnedCLI:          a.PinnedCLI,
+		PinnedModel:        a.PinnedModel,
+		ModelOverride:      a.ModelOverride,
+		BackendOverride:    a.BackendOverride,
+		RestartCount:       a.RestartCount,
+		KickHistory:        history,
+		LastKickMessage:    a.LastKickMessage,
+		NeedsLogin:         needsLogin,
+		QuotaExhausted:     quotaExhausted,
+		LastPaneChange:     lastPaneChange,
+		WatchdogConditions: conds,
+		StallNudges:        a.StallNudges,
+		ActionNudges:       a.ActionNudges,
+		TransientNudges:    a.TransientNudges,
+		HasLaunched:        a.HasLaunched,
+		LaunchedMode:       a.LaunchedMode,
+		tmuxSession:        a.tmuxSession,
+		tmuxSocket:         a.tmuxSocket,
+		OutputBuffer:       a.OutputBuffer,
+		lastPaneCapture:    pane,
 	}
 }
 

@@ -9,11 +9,18 @@ import (
 // successful update before the hub flags it as stale. Advisory digests are
 // posted once per governor eval cycle; even a low-ACMM hive (which evaluates
 // infrequently by design — on the order of every ~10 min) posts far more often
-// than this. 90 minutes is therefore comfortably longer than any realistic
-// posting interval, so the pill only lights up on a digest path that has
-// GENUINELY wedged (a working App that has quietly stopped posting), never on a
-// hive that is merely slow. Kept a named constant with this reasoning so the
-// threshold is not a bare magic number.
+// than this. Operators may also slow the posting cadence deliberately via
+// governor.advisory.update_interval_s (#4820), whose maximum
+// (config.MaxAdvisoryUpdateIntervalS = 1h) is capped specifically to stay
+// under this threshold — the effective baseline is therefore always
+// max(configured interval, default cadence), with 30 minutes of slack on top
+// of the slowest legal cadence (pinned by
+// TestAdvisoryStaleThresholdCoversMaxUpdateInterval). 90 minutes is therefore
+// comfortably longer than any realistic or configurable posting interval, so
+// the pill only lights up on a digest path that has GENUINELY wedged (a
+// working App that has quietly stopped posting), never on a hive that is
+// merely slow. Kept a named constant with this reasoning so the threshold is
+// not a bare magic number.
 const advisoryStaleThreshold = 90 * time.Minute
 
 // appCanWriteForAdvisory reports whether a hive's GitHub App is in a state that

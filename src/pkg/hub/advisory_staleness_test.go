@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // baseNow is a fixed reference time so age-based cases are deterministic.
@@ -33,6 +35,33 @@ func TestAdvisoryStale_FreshDigestNotStale(t *testing.T) {
 	e := advisoryModeEntry() // posted 5 min ago, well within threshold
 	if stale, reason := advisoryStale(e, advNow); stale {
 		t.Fatalf("a freshly-posted digest must not be stale, got reason %q", reason)
+	}
+}
+
+// TestAdvisoryStaleThresholdCoversMaxUpdateInterval pins the invariant that
+// makes governor.advisory.update_interval_s (#4820) safe: the hub's staleness
+// baseline is effectively max(configured interval, default cadence) because
+// the SLOWEST legal cadence stays at least 30 minutes under the alarm
+// threshold. If either side moves — the threshold shrinks or the config max
+// grows — a hive healthily posting at its configured maximum would false-alarm
+// as wedged, and this test fails first.
+func TestAdvisoryStaleThresholdCoversMaxUpdateInterval(t *testing.T) {
+	maxCadence := time.Duration(config.MaxAdvisoryUpdateIntervalS) * time.Second
+	if advisoryStaleThreshold < maxCadence+30*time.Minute {
+		t.Fatalf("advisoryStaleThreshold (%v) must exceed the max configurable advisory update interval (%v) by ≥30m of slack",
+			advisoryStaleThreshold, maxCadence)
+	}
+}
+
+// TestAdvisoryStale_HealthyLongCadenceNotWedged is the behavioral half of the
+// invariant above: a hive whose operator slowed the digest to the maximum
+// allowed hourly cadence, and which last posted a full such interval ago (plus
+// eval-cycle slack), must NOT light the wedged-digest pill.
+func TestAdvisoryStale_HealthyLongCadenceNotWedged(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(time.Duration(config.MaxAdvisoryUpdateIntervalS)*time.Second + 5*time.Minute)
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("a healthy max-interval cadence must not read as wedged, got reason %q", reason)
 	}
 }
 
