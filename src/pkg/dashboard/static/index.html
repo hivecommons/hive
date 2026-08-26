@@ -15140,7 +15140,17 @@ function burnAreaChart() {
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         const commitsBehindText = v.commitsBehind != null && v.commitsBehind > 0
           ? ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Stable v4 tip: ${escapeHtml(v.stableV4Short || '?')}">${escapeHtml(String(v.commitsBehind))} behind</span>`
-          : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase() ? ` <span class="git-behind" title="Could not compare this commit with stable v4 tip ${escapeHtml(v.stableV4Short || '?')}">? behind</span>` : '');
+          : (v.commitsBehind == null && v.stableV4Hash && String(v.short || '').toLowerCase() !== String(v.stableV4Short || '').toLowerCase()
+            // commitsBehind is null for two unrelated reasons (#4804). If the
+            // stable tip has no published image, that is a KNOWN state — there
+            // is nothing to upgrade to and the compare was never attempted —
+            // so say that in muted text instead of a yellow "? behind" that
+            // contradicts the ✓. Only a genuine compare failure keeps the "?".
+            // Strict === false so older servers without the field keep "?".
+            ? (v.stableV4ImageReady === false
+              ? ` <span style="color:var(--muted)" title="Stable v4 tip ${escapeHtml(v.stableV4Short || '?')} has no published image yet — nothing to upgrade to">tip not built yet</span>`
+              : ` <span class="git-behind" title="Could not compare this commit with stable v4 tip ${escapeHtml(v.stableV4Short || '?')}">? behind</span>`)
+            : '');
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
         } else if (_upgradeInProgress && v.hash === _upgradeTargetHash) {

@@ -656,9 +656,15 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		stableShort := shortSHADashboard(stableV4)
 		resp["stableV4Hash"] = stableV4
 		resp["stableV4Short"] = stableShort
+		// Distinguish "the tip has no image yet" (a known state: nothing to
+		// upgrade to, compare never attempted) from "the compare failed"
+		// (genuinely unknown). Without this the frontend renders a yellow
+		// "? behind" next to the green ✓ whenever the tip is unbuilt (#4804).
+		stableImageReady := ghcrTagExistsCached(stableShort)
+		resp["stableV4ImageReady"] = stableImageReady
 		if sameCommitDashboard(versionHash, stableV4) {
 			resp["commitsBehind"] = 0
-		} else if ghcrTagExistsCached(stableShort) {
+		} else if stableImageReady {
 			if count, ok := s.commitsBehindStableTip(versionHash, stableV4); ok {
 				resp["commitsBehind"] = count
 			}
