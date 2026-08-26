@@ -246,6 +246,53 @@ const (
 	// kubestellar-hive-ghe GitHub App. This is the value that was pushed onto
 	// seven public-GitHub hives on 2026-07-31.
 	EnterpriseGitHubAppID int64 = 5686
+
+	// VizHiveEnterpriseAppID is the numeric App ID of the github.ibm.com
+	// kubestellar-viz-hive-ghe GitHub App (issue #4030).
+	//
+	// This is a SECOND, OPTIONAL App on the SAME forge as
+	// EnterpriseGitHubAppID — not a replacement for it. It exists so the
+	// optional Visual Hive integration can dispatch its workflow and publish a
+	// setup-authorization commit status without widening the Hive App's
+	// permissions for every installation that does not use the feature.
+	//
+	// Registered here AHEAD of the feature, and deliberately inert: nothing
+	// resolves a key for it, nothing delivers one, and no code path
+	// authenticates as it. Its only effect today is that the two functions
+	// below stop returning "" for it, so a config that names it is described
+	// accurately instead of being reported as an unknown App. The Visual Hive
+	// feature itself lands separately.
+	VizHiveEnterpriseAppID int64 = 5945
+
+	// VizHivePublicAppID is the numeric App ID of the public github.com
+	// kubestellar-viz-hive GitHub App — the github.com twin of the GHE App
+	// below, same optional Visual Hive role.
+	//
+	// It is 0 because the App HAS NOT BEEN REGISTERED YET. Zero is the honest
+	// value, and it is load-bearing rather than a TODO: forgeOfAppID and
+	// slugOfAppID both key on these constants, and a guessed ID would make
+	// them return a confident wrong answer for whatever App really holds that
+	// number. The same reasoning the file already applies to
+	// daviddiaz0317-visual-hive — an unrecognised App gets "" and no claim,
+	// never an invented one.
+	//
+	// Both lookups below therefore skip a zero ID: until someone registers the
+	// App on github.com and fills this in, a public Visual Hive App simply
+	// does not resolve, which is correct.
+	VizHivePublicAppID int64 = 0
+	// VizHivePublicAppSlug is the slug that App will carry once registered.
+	// Recorded now so the name is fixed and consistent with its GHE twin;
+	// unused while VizHivePublicAppID is 0.
+	VizHivePublicAppSlug = "kubestellar-viz-hive"
+	// VizHiveEnterpriseAppSlug is that App's slug, and the ONLY slug it may
+	// carry — same one-App-one-slug rule asserted for the two Hive Apps.
+	//
+	// It contains "ghe", which matters: IdentitySetIssues' slugIsGHE check
+	// (below) keys on that substring, so a GHE App under a non-"ghe" slug
+	// would slip past the marker-based rules. Naming it *-ghe keeps it inside
+	// the existing guard rather than needing an exception.
+	VizHiveEnterpriseAppSlug = "kubestellar-viz-hive-ghe"
+
 	// EnterpriseGitHubAppSlug is the slug for that App, and the ONLY slug it
 	// may carry.
 	//
@@ -284,7 +331,17 @@ func forgeOfAppID(appID int64) string {
 	switch appID {
 	case PublicGitHubAppID:
 		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
-	case EnterpriseGitHubAppID:
+	// NOTE: kubestellar-viz-hive (public github.com) is intentionally ABSENT
+	// from this switch. VizHivePublicAppID is 0 until the App is registered,
+	// and 0 is also what an UNSET config carries — a `case VizHivePublicAppID`
+	// would therefore claim every app-id-less hive as a registered Visual Hive
+	// App. Add the case in the same commit that fills in the real ID.
+	case EnterpriseGitHubAppID, VizHiveEnterpriseAppID:
+		// Both Hive and the optional Visual Hive App are registered on the
+		// same GHE instance, so both map to the same forge host. The mapping
+		// answers "which forge registered this App", not "which App is the
+		// hive's" — two Apps sharing a forge is the expected shape here, not
+		// an ambiguity.
 		return EnterpriseGitHubBaseURL[len("https://"):] // "github.ibm.com"
 	}
 	return ""
@@ -319,8 +376,31 @@ func slugOfAppID(appID int64) string {
 		return DefaultGitHubAppSlug
 	case EnterpriseGitHubAppID:
 		return EnterpriseGitHubAppSlug
+	case VizHiveEnterpriseAppID:
+		return VizHiveEnterpriseAppSlug
+		// kubestellar-viz-hive (public) is absent for the same reason as in
+		// forgeOfAppID — see the note there.
 	}
 	return ""
+}
+
+// VizHiveAppIDs reports whether appID is one of the optional Visual Hive Apps.
+//
+// It exists so the Visual Hive feature can ask "is this the Visual Hive App?"
+// without any caller re-deriving the set from bare literals — the same reason
+// the Hive App IDs are named constants rather than repeated numbers.
+//
+// Callers must NOT use this to decide a hive is unhealthy. The Visual Hive App
+// is optional: its absence is a normal state for every hive that does not use
+// the feature, and the ordinary Hive App's health is a separate question
+// tracked by a separate state. See the fail-closed note on the constants above.
+func IsVizHiveAppID(appID int64) bool {
+	if appID == 0 {
+		// Unset config, not a registered App. Checked before the comparison
+		// because VizHivePublicAppID is itself 0 until registration.
+		return false
+	}
+	return appID == VizHivePublicAppID || appID == VizHiveEnterpriseAppID
 }
 
 // IdentitySetIssues reports inconsistencies within the GitHub identity set:
