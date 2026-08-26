@@ -58,7 +58,7 @@ func TestPRRequestWatcher_StartWiresAuthzAndHold(t *testing.T) {
 	t.Cleanup(func() { prRequestDirForTest = old })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	drainAfter(t, cancel)
 	authzCalled := false
 	c.StartPRRequestWatcher(ctx, func(agent string, uid int) error {
 		authzCalled = true
@@ -125,7 +125,7 @@ func TestMergeRequestWatcher_StartWiresAuthzAndDir(t *testing.T) {
 	t.Cleanup(func() { mergeRequestDirForTest = old })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	drainAfter(t, cancel)
 	authzCalled := false
 	c.StartMergeRequestWatcher(ctx, func(agent string, uid int, repo string, number int, expectSHA string) error {
 		authzCalled = true
@@ -202,7 +202,7 @@ func TestReviewRequestWatcher_StartLoop(t *testing.T) {
 	t.Cleanup(func() { reviewRequestPollInterval = oldInterval })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	drainAfter(t, cancel)
 	c.StartReviewRequestWatcher(ctx, func(agent string, uid int) error { return nil }, nil)
 
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
