@@ -248,6 +248,32 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `SLACK_WEBHOOK` | No | none | Slack incoming webhook for top-level script notifications. |
 | `DISCORD_WEBHOOK` | No | none | Discord webhook for top-level script notifications. |
 
+## Keeping this reference current
+
+The code is authoritative and this table is hand-maintained, so it drifts unless
+PRs update it. **If your change adds, renames, or removes an environment
+variable lookup, update this file in the same PR.**
+
+What counts as a change that needs an entry:
+
+- A new `os.Getenv` or `os.LookupEnv` call in `src/` — most live in
+  `src/pkg/hub`, `src/pkg/dashboard`, `src/pkg/agent`, and `src/pkg/config`.
+- A new variable referenced from a deployment manifest under `src/deploy/`, or
+  from a top-level helper script in `bin/`.
+- A change to an existing variable's default, or to whether it is required.
+
+What each column means:
+
+| Column | What to write |
+|---|---|
+| Variable | The exact name, in backticks. |
+| Required | `No` for anything with a working default. Spell out the condition when it is conditional (see `HIVE_GITHUB_TOKEN`). |
+| Default | The literal fallback value, or `none`. If the fallback is a lookup chain, describe the order — precedence is the part operators get wrong. |
+| Purpose | What it controls and which component reads it. Link to a deeper section when the variable has real setup steps. |
+
+Add the row to the section matching the component that reads the variable, and
+run the searches below to confirm nothing else was missed.
+
 ## Verification commands
 
 The table above was cross-checked with these mechanical searches from the repository root:
