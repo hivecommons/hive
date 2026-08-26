@@ -1963,7 +1963,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if agent.BackendOverride != "" {
 			backend = agent.BackendOverride
 		}
-		if backend == "" || IsInferenceBackend(backend) {
+		if backend == "" || m.routableBackend(backend) {
 			backend = "claude"
 		}
 		logFile, err := ensurePlukLogFile(plukRunDir, agent.tmuxSession)
@@ -2226,7 +2226,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	binary, err := backendBinary(backend)
+	binary, err := m.backendBinary(backend)
 	if err != nil {
 		agent.State = StateFailed
 		agent.LastError = err.Error()
@@ -2235,9 +2235,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// before this), so without a banner the pane is a silent bare shell —
 		// the operator attaches and sees a prompt, not a failure. Say which
 		// binary was attempted, that it is missing, and what to do.
-		m.announceLaunchFailureInPane(agent, fmt.Sprintf(
-			"backend %s did not launch: %v. The CLI for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend.",
-			backend, err))
+		m.announceLaunchFailureInPane(agent, m.backendLaunchFailureMessage(backend, err))
 		return nil
 	}
 
@@ -2307,7 +2305,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		model = agent.ModelOverride
 	}
 	modelIn := model
-	model = normalizeModelName(model, backend)
+	isInference := m.routableBackend(backend)
+	model = normalizeModelNameForBackend(model, backend, isInference)
 
 	bootstrapPrompt := agent.BootstrapOverride
 	if bootstrapPrompt != "" {
@@ -2321,9 +2320,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	agent.LaunchedMode = mode
 	agent.HasLaunched = true
 
-	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
-	// and route API traffic through the proxy to the self-hosted endpoint.
-	isInference := m.routableBackend(backend)
+	// Inference backends and configured gateway names use Claude Code as the CLI
+	// tool and route API traffic through the proxy to the selected endpoint.
 	if isInference {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
@@ -5827,9 +5825,9 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 
 // backendBinaryAliases names the backends whose binary is NOT simply the
 // backend name. Only genuine aliases belong here: every other CLI backend is
-// derived from config.CLIBackends by identity, and every model-gateway backend
-// from config.InferenceBackends. Keeping this map to aliases only is what makes
-// the accept-then-fail class of bug structurally impossible — see backendBinary.
+// derived from config.CLIBackends by identity, and every routable model-gateway
+// backend is resolved by Manager.backendBinaryName. Keeping this map to aliases
+// only is what makes the accept-then-fail class of bug structurally impossible.
 var backendBinaryAliases = map[string]string{
 	// pi was previously aliased to "goose", which made every pi-configured
 	// agent exec the goose CLI instead of pi (the backend launch command
@@ -5837,10 +5835,10 @@ var backendBinaryAliases = map[string]string{
 	// (config.CLIBackends includes "pi"), so identity mapping applies.
 }
 
-// backendBinaryName maps an agent backend to the NAME of the CLI binary that is
-// exec'd for it, without touching the filesystem. Split out from backendBinary
-// so the "every supported backend resolves" invariant can be tested without
-// requiring each CLI to be installed on the test machine.
+// backendBinaryName maps a config-independent agent backend to the NAME of the
+// CLI binary that is exec'd for it, without touching the filesystem. Split out
+// from backendBinary so the "every supported backend resolves" invariant can be
+// tested without requiring each CLI to be installed on the test machine.
 //
 // Both canonical lists are derived rather than written out here:
 //
@@ -5874,6 +5872,19 @@ func backendBinaryName(backend string) (string, error) {
 	return binary, nil
 }
 
+// backendBinaryName resolves both config-independent backends and live
+// configured gateway names. A gateway name validates via Manager.routableBackend,
+// so the launch path must use the same predicate and route it through claude.
+func (m *Manager) backendBinaryName(backend string) (string, error) {
+	if binary, err := backendBinaryName(backend); err == nil {
+		return binary, nil
+	}
+	if m != nil && m.routableBackend(backend) {
+		return "claude", nil
+	}
+	return "", fmt.Errorf("unknown backend: %s", backend)
+}
+
 // backendBinary resolves an agent backend to the absolute path of the CLI
 // binary that is actually exec'd for it.
 func backendBinary(backend string) (string, error) {
@@ -5888,6 +5899,32 @@ func backendBinary(backend string) (string, error) {
 	}
 
 	return path, nil
+}
+
+func (m *Manager) backendBinary(backend string) (string, error) {
+	binary, err := m.backendBinaryName(backend)
+	if err != nil {
+		return "", err
+	}
+
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return "", fmt.Errorf("backend %s binary %s not found in PATH: %w", backend, binary, err)
+	}
+
+	return path, nil
+}
+
+func (m *Manager) backendLaunchFailureMessage(backend string, err error) string {
+	binary, nameErr := m.backendBinaryName(backend)
+	if nameErr != nil {
+		return fmt.Sprintf(
+			"backend %s did not launch: %v. This backend is not a supported CLI, built-in inference backend, or configured model gateway; switch this agent to a supported backend or configure a matching model gateway.",
+			backend, err)
+	}
+	return fmt.Sprintf(
+		"backend %s did not launch: %v. The %s CLI required for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend.",
+		backend, err, binary)
 }
 
 // sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)
@@ -7162,13 +7199,14 @@ func (m *Manager) ensureWorldWritable(root string) {
 // already-stored bad id self-corrects on existing spokes without operator
 // action.
 //
-// Self-hosted inference backends (vllm, llm-d, litellm) are the outbound
-// gateway model id verbatim — the string must match an entitled model on the
-// gateway EXACTLY (prefixes like "Azure/", dots vs hyphens, case). Rewriting
-// it (e.g. "Azure/gpt-4" -> "Azure/gpt.4", "gpt-4o-2024-08-06" ->
-// "gpt-4o-2024-08.06") produces a model the team is not entitled to and the
-// gateway 403s ("team not allowed to access model") even for entitled models.
-// So never normalize inference model names — pass them through untouched.
+// Self-hosted inference backends (vllm, llm-d, litellm) and configured gateway
+// names are the outbound gateway model id verbatim — the string must match an
+// entitled model on the gateway EXACTLY (prefixes like "Azure/", dots vs
+// hyphens, case). Rewriting it (e.g. "Azure/gpt-4" -> "Azure/gpt.4",
+// "gpt-4o-2024-08-06" -> "gpt-4o-2024-08.06") produces a model the team is not
+// entitled to and the gateway 403s ("team not allowed to access model") even
+// for entitled models. So never normalize inference model names — pass them
+// through untouched.
 //
 // bob is likewise excluded. bobLaunchCmd passes no --model at all (bob
 // auto-selects), so this is defense-in-depth rather than the fix: the value is
@@ -7178,8 +7216,8 @@ func (m *Manager) ensureWorldWritable(root string) {
 // undefined (reading 'maxTokens')". Leaving it unrewritten keeps logs honest
 // about what was configured and stops the corrupted id from being handed to a
 // future bob consumer.
-func normalizeModelName(model, backend string) string {
-	if backend == "claude" || backend == bobBackend || IsInferenceBackend(backend) {
+func normalizeModelNameForBackend(model, backend string, inferenceRoutable bool) string {
+	if backend == "claude" || backend == bobBackend || inferenceRoutable {
 		return model
 	}
 	if backend == "copilot" {
@@ -7201,6 +7239,10 @@ func normalizeModelName(model, backend string) string {
 		return model[:idx] + "." + suffix
 	}
 	return model
+}
+
+func normalizeModelName(model, backend string) string {
+	return normalizeModelNameForBackend(model, backend, IsInferenceBackend(backend))
 }
 
 // ClearAllModeOverrides clears the per-agent Config.Mode for all agents so that
@@ -7961,7 +8003,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if m.project.GHHost != "" {
 		vars = append(vars, agentEnvPair{"GH_HOST", m.project.GHHost, false})
 	}
-	if IsInferenceBackend(backend) {
+	if m.routableBackend(backend) {
 		const inferenceTranslatePort = 18444
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)

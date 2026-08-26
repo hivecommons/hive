@@ -6,6 +6,37 @@ import (
 	"testing"
 )
 
+func TestOpenAIChatCompletionsURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "plain host gets v1",
+			endpoint: "http://vllm:8000",
+			want:     "http://vllm:8000/v1/chat/completions",
+		},
+		{
+			name:     "openrouter versioned endpoint is not double suffixed",
+			endpoint: "https://openrouter.ai/api/v1",
+			want:     "https://openrouter.ai/api/v1/chat/completions",
+		},
+		{
+			name:     "trailing slash before v1 is tolerated",
+			endpoint: "https://openrouter.ai/api/v1/",
+			want:     "https://openrouter.ai/api/v1/chat/completions",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := openAIChatCompletionsURL(tc.endpoint); got != tc.want {
+				t.Errorf("openAIChatCompletionsURL(%q) = %q, want %q", tc.endpoint, got, tc.want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // UpdateMaxContextLen — copy-on-write semantics and staleness guards
 // ---------------------------------------------------------------------------
