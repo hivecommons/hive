@@ -4350,6 +4350,18 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 			DetectKeywords: []string{"security", "sec-check", "vulnerability"},
 			BeadRole:       "worker", SortOrder: 60, IncludeRepos: true,
 		},
+		"telemetry": {
+			Emoji: "📡", Color: "#00a8cc", Aliases: []string{"tm"},
+			LaneKeywords:   []string{"observability", "opentelemetry", "prometheus", "grafana", "tracing", "metrics", "structured-logging", "servicemonitor", "podmonitor"},
+			DetectKeywords: []string{"telemetry", "observability", "opentelemetry", "prometheus"},
+			BeadRole:       "worker", SortOrder: 65, IncludeRepos: true,
+		},
+		"operations": {
+			Emoji: "🚨", Color: "#d35400", Aliases: []string{"op"},
+			LaneKeywords:   []string{"healthz", "readyz", "readiness", "slo", "sli", "runbook", "incident-response", "rollback", "alerting"},
+			DetectKeywords: []string{"operations", "operability", "healthz", "runbook"},
+			BeadRole:       "worker", SortOrder: 66, IncludeRepos: true,
+		},
 		"quality": {
 			Emoji: "🧪", Color: "#3498db", Aliases: []string{"te", "qa"},
 			LaneKeywords:   []string{"test-gap", "test-strategy", "test-coverage", "test-scaffold", "untested", "missing-tests"},

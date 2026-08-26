@@ -135,6 +135,16 @@ func TestValidateAgentGeneralInput(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid telemetry role",
+			body:    map[string]interface{}{"role": "telemetry"},
+			wantErr: false,
+		},
+		{
+			name:    "valid operations role",
+			body:    map[string]interface{}{"role": "operations"},
+			wantErr: false,
+		},
+		{
 			name:    "negative sortOrder",
 			body:    map[string]interface{}{"sortOrder": float64(-1)},
 			wantErr: true,
@@ -306,10 +316,10 @@ func TestValidateGovernorThresholds(t *testing.T) {
 
 func TestValidateGovernorHealth(t *testing.T) {
 	tests := []struct {
-		name               string
+		name                string
 		healthcheckInterval int
-		restartCooldown    int
-		wantErr            bool
+		restartCooldown     int
+		wantErr             bool
 	}{
 		{"valid", 120, 30, false},
 		{"zero values", 0, 0, false},

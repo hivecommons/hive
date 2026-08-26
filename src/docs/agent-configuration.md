@@ -22,7 +22,7 @@ That is a complete, valid agent. Defaults fill in the rest at load time:
 - `clear_on_kick: true` — the session context is cleared before each kick
 - `id` and `role` default to the agent's name (`scanner`)
 - `bead_role: worker`, `beads_dir: /data/beads/scanner`
-- Well-known names (`scanner`, `ci-maintainer`, `architect`, `supervisor`, `sec-check`, `quality`, `guide`, `strategist`, `outreach`) also get a default emoji, color, aliases, and lane keywords, so a bare `scanner:` entry already shows up in the dashboard as 🔍 with sensible triage keywords.
+- Well-known names (`scanner`, `ci-maintainer`, `architect`, `supervisor`, `sec-check`, `quality`, `guide`, `strategist`, `outreach`, `telemetry`, `operations`) also get a default emoji, color, aliases, and lane keywords, so a bare `scanner:` entry already shows up in the dashboard as 🔍 with sensible triage keywords.
 
 You almost never write a full roster by hand: applying an ACMM level (below) generates one for you, and the dashboard edits it live.
 
@@ -400,7 +400,7 @@ You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml`
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template` and `mode` are updated so the agent's *policy* matches the level. A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.
 
-The L5 roster is the canonical worked example — nine agents, eight on the governor timer plus one on demand:
+The L5 roster is the canonical worked example — eleven agents, eight on the governor timer, two opt-in agents paused in every governor mode, plus one on demand:
 
 | Agent | | Mode | Cadence (all governor modes) |
 |---|---|---|---|
@@ -412,9 +412,13 @@ The L5 roster is the canonical worked example — nine agents, eight on the gove
 | sec-check 🛡 | CVEs, vulnerabilities | ISSUES_AND_PRS | 4h |
 | architect 🏗 | RFCs, refactors | ISSUES_AND_PRS | 4h |
 | strategist 🧠 | cross-agent coordination | ISSUES_AND_PRS | 4h |
+| telemetry 📡 | managed-project instrumentation | ISSUES_AND_PRS | paused |
+| operations 🚨 | managed-project operational practice | ISSUES_AND_PRS | paused |
 | brainstorm 💡 | ideation | ADVISORY | on demand |
 
 At L5, every agent PR gets a `hold` label automatically. The system proposes; it does not merge autonomously.
+
+Telemetry and operations stay paused until an operator deliberately opts in. Their lane keywords are disjoint: telemetry owns instrumentation and observability terms, while operations owns health, SLO, runbook, incident, rollback, and alerting terms.
 
 ## Kick templates: what an agent is told to do
 

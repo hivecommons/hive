@@ -18,27 +18,30 @@ const (
 	AgentReportFilePrefix = "agent-report-"
 	AgentReportFileSuffix = ".json"
 
-	MaxLaneLength        = 64
-	MaxKindLength        = 64
-	MaxSummaryLength     = 2000
-	MaxFindings          = 100
-	MaxPRsOpened         = 50
-	MaxBeadsFiled        = 50
-	MaxTitleLength       = 200
-	MaxFindingBodyLength = 2000
-	MaxRepoLength        = 200
-	MaxURLLength         = 500
-	MaxBeadIDLength      = 120
+	MaxLaneLength         = 64
+	MaxKindLength         = 64
+	MaxSummaryLength      = 2000
+	MaxFindings           = 100
+	MaxPRsOpened          = 50
+	MaxBeadsFiled         = 50
+	MaxArtifacts          = 100
+	MaxTitleLength        = 200
+	MaxFindingBodyLength  = 2000
+	MaxRepoLength         = 200
+	MaxURLLength          = 500
+	MaxBeadIDLength       = 120
+	MaxArtifactPathLength = 500
 )
 
 type ReportKind string
 
 const (
-	KindFindings ReportKind = "findings"
-	KindFix      ReportKind = "fix"
-	KindReview   ReportKind = "review"
-	KindAdvisory ReportKind = "advisory"
-	KindSummary  ReportKind = "summary"
+	KindFindings   ReportKind = "findings"
+	KindFix        ReportKind = "fix"
+	KindReview     ReportKind = "review"
+	KindAdvisory   ReportKind = "advisory"
+	KindSummary    ReportKind = "summary"
+	KindInstrument ReportKind = "instrument"
 )
 
 type Severity string
@@ -66,7 +69,17 @@ type AgentReport struct {
 	Findings   []Finding   `json:"findings"`
 	PRsOpened  []PROpened  `json:"prs_opened"`
 	BeadsFiled []BeadFiled `json:"beads_filed"`
+	Artifacts  []Artifact  `json:"artifacts,omitempty"`
 	Summary    string      `json:"summary"`
+}
+
+// Artifact records a repository file produced or materially updated by an agent.
+// It lets artifact-producing lanes report their primary output independently of
+// the pull request that happens to carry it.
+type Artifact struct {
+	Repo        string `json:"repo"`
+	Path        string `json:"path"`
+	Description string `json:"description"`
 }
 
 type Finding struct {
@@ -154,6 +167,9 @@ func validateReport(report AgentReport) []Violation {
 	} else if len(report.BeadsFiled) > MaxBeadsFiled {
 		violations = append(violations, Violation{Field: "beads_filed", Message: fmt.Sprintf("must contain at most %d items", MaxBeadsFiled)})
 	}
+	if len(report.Artifacts) > MaxArtifacts {
+		violations = append(violations, Violation{Field: "artifacts", Message: fmt.Sprintf("must contain at most %d items", MaxArtifacts)})
+	}
 	violations = append(violations, requireBounded("summary", report.Summary, MaxSummaryLength)...)
 
 	for i, finding := range report.Findings {
@@ -187,6 +203,12 @@ func validateReport(report AgentReport) []Violation {
 		violations = append(violations, requireBounded(prefix+".title", bead.Title, MaxTitleLength)...)
 		violations = append(violations, optionalBounded(prefix+".url", bead.URL, MaxURLLength)...)
 	}
+	for i, artifact := range report.Artifacts {
+		prefix := fmt.Sprintf("artifacts[%d]", i)
+		violations = append(violations, requireBounded(prefix+".repo", artifact.Repo, MaxRepoLength)...)
+		violations = append(violations, requireBounded(prefix+".path", artifact.Path, MaxArtifactPathLength)...)
+		violations = append(violations, requireBounded(prefix+".description", artifact.Description, MaxFindingBodyLength)...)
+	}
 	return violations
 }
 
@@ -194,7 +216,7 @@ func CorrectivePrompt(err error) string {
 	if err == nil {
 		return ""
 	}
-	return fmt.Sprintf("Your previous structured agent report was invalid and could not be consumed by Hive. Return exactly one JSON object matching the AgentReport contract: required fields lane, kind, findings, prs_opened, beads_filed, summary. Use [] for empty arrays. Allowed kind values: findings, fix, review, advisory, summary. Fix these validation errors: %s. Hive will retry validation at most %d times.", err.Error(), MaxValidationRetries)
+	return fmt.Sprintf("Your previous structured agent report was invalid and could not be consumed by Hive. Return exactly one JSON object matching the AgentReport contract: required fields lane, kind, findings, prs_opened, beads_filed, summary; artifacts is optional. Use [] for empty arrays. Allowed kind values: findings, fix, review, advisory, summary, instrument. Fix these validation errors: %s. Hive will retry validation at most %d times.", err.Error(), MaxValidationRetries)
 }
 
 func AgentReportPath(agentName string) string {
@@ -237,7 +259,7 @@ func optionalBounded(field, value string, max int) []Violation {
 
 func validKind(kind ReportKind) bool {
 	switch kind {
-	case KindFindings, KindFix, KindReview, KindAdvisory, KindSummary:
+	case KindFindings, KindFix, KindReview, KindAdvisory, KindSummary, KindInstrument:
 		return true
 	default:
 		return false

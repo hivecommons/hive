@@ -809,6 +809,7 @@ func (g *Governor) validateAgentReportIfPresent(agentName string) (AgentReportRe
 			"findings", len(report.Findings),
 			"prs_opened", len(report.PRsOpened),
 			"beads_filed", len(report.BeadsFiled),
+			"artifacts", len(report.Artifacts),
 		)
 	}
 	return record, true
