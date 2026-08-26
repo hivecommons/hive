@@ -198,6 +198,7 @@ func (s *Store) Create(title string, beadType BeadType, priority Priority, actor
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.lockAndRefresh()()
 
 	now := flexTime{time.Now().UTC()}
 	metadata := make(map[string]interface{})
@@ -384,6 +385,7 @@ func (s *Store) appendArchiveEntry(b *Bead) bool {
 func (s *Store) Update(id string, fn func(b *Bead)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.lockAndRefresh()()
 
 	b, ok := s.beads[id]
 	if !ok {
@@ -750,19 +752,42 @@ func (s *Store) persist(_ *Bead) error {
 	}
 
 	path := filepath.Join(s.dir, beadsFileName)
-	tmpPath := path + ".tmp"
+	// A UNIQUE temp name per writer (#4742): the old fixed beads.json.tmp let
+	// two concurrent processes write the same temp file, so one rename won the
+	// race and the other failed with ENOENT — and whichever snapshot landed
+	// last silently dropped the other process's beads. The flock in
+	// lockAndRefresh serializes cooperating writers; the unique name keeps
+	// even a non-cooperating writer from corrupting an in-flight persist.
+	tmp, err := os.CreateTemp(s.dir, beadsFileName+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating tmp beads file: %w", err)
+	}
+	tmpPath := tmp.Name()
 	// 0660 (group-writable) so a bead file created by one node-group member can be
 	// rewritten by another (e.g. the architect agent and the dashboard both write
-	// the architect store). Matches the /data/home/* FilePerms model.
-	if err := os.WriteFile(tmpPath, data, 0660); err != nil {
+	// the architect store). Matches the /data/home/* FilePerms model. CreateTemp
+	// makes 0600, so widen explicitly.
+	_ = tmp.Chmod(0660)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("writing tmp beads: %w", err)
 	}
-	return os.Rename(tmpPath, path)
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing tmp beads: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) CloseAll(reason string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.lockAndRefresh()()
 
 	now := flexTime{time.Now().UTC()}
 	closed := 0
@@ -847,6 +872,7 @@ func newArchivedBead(b *Bead) ArchivedBead {
 func (s *Store) Archive(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.lockAndRefresh()()
 
 	b, ok := s.beads[id]
 	if !ok {
