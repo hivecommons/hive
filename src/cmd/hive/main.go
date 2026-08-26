@@ -5418,6 +5418,54 @@ func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, 
 	return ghClient != nil && hasPinnedIssue
 }
 
+// advisoryPostGate tracks, per repo, when the digest was last SUCCESSFULLY
+// posted, so governor.advisory.update_interval_s (#4820) can throttle the
+// GitHub round-trip. Package-level because runEvalCycle carries no state of
+// its own, and mutex-guarded because startup/restart call sites exist besides
+// the ticker. clampLogged makes the "interval clamped" warning a one-shot
+// instead of a per-cycle drone.
+var advisoryPostGate = struct {
+	mu          sync.Mutex
+	lastSuccess map[string]time.Time
+	clampLogged bool
+}{lastSuccess: map[string]time.Time{}}
+
+// advisoryPostDue reports whether the update-interval gate is open for a post
+// attempt to repo, logging (once) if the configured value was clamped. An
+// interval of 0 (unset knob) means the gate is ALWAYS open — the digest posts
+// every eval cycle, exactly the pre-#4820 cadence — and a repo with no
+// successful post since process start is open too, so the first post is never
+// delayed. The gate advances only on SUCCESS (recordAdvisoryPostSuccess,
+// mirroring how the #4818 skip-guard records its hash): a failed attempt is
+// retried on the very next cycle instead of waiting out the interval, keeping
+// error recovery — and the hub's staleness signal — as prompt as today.
+func advisoryPostDue(advCfg config.AdvisoryConfig, repo string, now time.Time, logger *slog.Logger) bool {
+	interval := advCfg.UpdateInterval()
+	advisoryPostGate.mu.Lock()
+	defer advisoryPostGate.mu.Unlock()
+	if raw := advCfg.UpdateIntervalS; raw > 0 && time.Duration(raw)*time.Second != interval && !advisoryPostGate.clampLogged {
+		advisoryPostGate.clampLogged = true
+		logger.Warn("advisory update_interval_s outside allowed bounds — clamped",
+			"configured_s", raw, "effective_s", int(interval.Seconds()),
+			"min_s", config.MinAdvisoryUpdateIntervalS, "max_s", config.MaxAdvisoryUpdateIntervalS)
+	}
+	if interval <= 0 {
+		return true
+	}
+	last, ok := advisoryPostGate.lastSuccess[repo]
+	return !ok || now.Sub(last) >= interval
+}
+
+// recordAdvisoryPostSuccess advances the update-interval gate for repo after a
+// successful digest write. Skip-if-unchanged cycles count too: pkg/github
+// returns nil for them by design so freshness advances (#4818/#4821), and an
+// unchanged digest is exactly the case the throttle exists to quiet.
+func recordAdvisoryPostSuccess(repo string, now time.Time) {
+	advisoryPostGate.mu.Lock()
+	defer advisoryPostGate.mu.Unlock()
+	advisoryPostGate.lastSuccess[repo] = now
+}
+
 // advisoryIssueMissingError is the error recorded (and reported to the hub) when
 // a hive has findings to publish but no advisory issue to publish them to. It is
 // deliberately an ERROR rather than a silent skip: the hub's staleness gate
@@ -6083,7 +6131,20 @@ func runEvalCycle(
 		// freshness: otherwise the pinned comment and AdvisoryLastPostedAt
 		// freeze after the last finding disappears, and the hub reports a stale
 		// advisory loop even though the agents are running cleanly.
-		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) {
+		//
+		// advisoryPostDue additionally paces the GitHub write to the
+		// operator's governor.advisory.update_interval_s (#4820); 0/unset
+		// keeps this exact per-cycle cadence. cfg is read live each cycle —
+		// the same pattern as the staleness/max-findings knobs above — so a
+		// dashboard edit applies from the next cycle without a restart. The
+		// digest itself and the dashboard state above still refresh every
+		// cycle; only the comment write is throttled. Note the #4821
+		// write-through counts consecutive unchanged post ATTEMPTS, so its
+		// forced full rewrite stretches with this interval (60 attempts ×
+		// interval) — acceptable, since it only heals out-of-band comment
+		// edits, and documented in the settings tooltip.
+		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) &&
+			advisoryPostDue(advCfg, primaryRepo, time.Now(), logger) {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))
@@ -6181,6 +6242,7 @@ func runEvalCycle(
 						// Record the fresh, successful digest post so the hub's
 						// advisory-staleness gate stays satisfied for this hive.
 						dashSrv.RecordAdvisoryPost(digest.TotalCount)
+						recordAdvisoryPostSuccess(primaryRepo, time.Now())
 						dashSrv.RecordAdvisoryOverflow(digest.OverflowCount)
 						// A successful write proves the app is installed AND has
 						// write access — clear BOTH the perm issue and the

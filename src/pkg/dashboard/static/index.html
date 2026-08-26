@@ -20369,6 +20369,7 @@ function burnAreaChart() {
       a = a || {};
       const maxFindings = a.max_findings === undefined ? 10 : a.max_findings;
       const stalenessDays = a.staleness_days === undefined ? 7 : a.staleness_days;
+      const updateIntervalS = a.update_interval_s === undefined ? 0 : a.update_interval_s;
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Controls the advisory digest posted to your repo: how much of it is shown, and when findings nobody re-reports are retired.</p>
 
@@ -20381,6 +20382,14 @@ function burnAreaChart() {
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${a.show_all ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="show_all"></div>
             <span class="config-toggle-label">Show all findings <span style="color:var(--muted);font-weight:400">— override the max and show everything</span></span>
+          </div>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">When it updates</div>
+          <div class="config-field">
+            <label>Update interval (s) <span class="config-info">i<span class="config-tooltip">How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.</span></span></label>
+            <input type="number" min="0" max="3600" step="1" value="${updateIntervalS}" data-change-action="gh76">
           </div>
         </div>
 
@@ -22939,6 +22948,7 @@ function burnAreaChart() {
       gh58: function (event, A) { markDirty('features','otelHeaders',{});showToast('OTel headers will be cleared on Save','info'); },
       gh59: function (event, A) { markDirty('advisory','max_findings',Number(this.value)); },
       gh60: function (event, A) { markDirty('advisory','staleness_days',Number(this.value)); },
+      gh76: function (event, A) { markDirty('advisory','update_interval_s',Number(this.value)||0); },
       gh61: function (event, A) { markWorkSourceDirty('type',this.value);renderConfigTab('Work Source'); },
       gh62: function (event, A) { markWorkSourceDirty('github_projects.project_number',Number(this.value)||0); },
       gh63: function (event, A) { markWorkSourceDirty('github_projects.states',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
