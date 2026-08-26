@@ -542,6 +542,96 @@ func TestPostAdvisoryDigest_UpdateExisting(t *testing.T) {
 	}
 }
 
+func TestPostAdvisoryDigest_SkipsUnchangedBody(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	var listCalls, editCalls int
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/10/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		listCalls++
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 555, "body": advisoryDigestPrefix + " — old"}})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/comments/555", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		editCalls++
+		json.NewEncoder(w).Encode(map[string]any{"id": 555})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	body := advisoryDigestPrefix + " — stable"
+	for cycle := 1; cycle <= 3; cycle++ {
+		if err := c.PostAdvisoryDigest(context.Background(), repo, 10, body); err != nil {
+			t.Fatalf("cycle %d: PostAdvisoryDigest: %v", cycle, err)
+		}
+		if editCalls != 1 {
+			t.Fatalf("cycle %d: edit calls = %d, want 1", cycle, editCalls)
+		}
+	}
+	if listCalls != 1 {
+		t.Fatalf("comment-list calls = %d, want 1", listCalls)
+	}
+}
+
+func TestPostAdvisoryDigest_ChangedBodyWritesOnce(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	var editCalls int
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/10/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 555, "body": advisoryDigestPrefix + " — old"}})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/comments/555", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		editCalls++
+		json.NewEncoder(w).Encode(map[string]any{"id": 555})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	for _, body := range []string{advisoryDigestPrefix + " — first", advisoryDigestPrefix + " — changed"} {
+		if err := c.PostAdvisoryDigest(context.Background(), repo, 10, body); err != nil {
+			t.Fatalf("PostAdvisoryDigest: %v", err)
+		}
+	}
+	if editCalls != 2 {
+		t.Fatalf("edit calls = %d, want 2 (one initial and one changed-body edit)", editCalls)
+	}
+}
+
+func TestPostAdvisoryDigest_PeriodicWriteThroughDetectsPermissionRegression(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	var editCalls int
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/10/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{{"id": 555, "body": advisoryDigestPrefix + " — old"}})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/comments/555", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		editCalls++
+		if editCalls == 2 {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]any{"message": "Resource not accessible by integration"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": 555})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	body := advisoryDigestPrefix + " — stable"
+	for cycle := 1; cycle <= advisoryDigestAuditInterval; cycle++ {
+		err := c.PostAdvisoryDigest(context.Background(), repo, 10, body)
+		if cycle < advisoryDigestAuditInterval && err != nil {
+			t.Fatalf("cycle %d: PostAdvisoryDigest: %v", cycle, err)
+		}
+		if cycle == advisoryDigestAuditInterval && err == nil {
+			t.Fatal("periodic write-through error = nil, want permission regression surfaced")
+		}
+	}
+	if editCalls != 2 {
+		t.Fatalf("edit calls = %d, want 2 (initial plus failed periodic write-through)", editCalls)
+	}
+}
+
 func TestPostAdvisoryDigest_UpdateError(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	mux := http.NewServeMux()

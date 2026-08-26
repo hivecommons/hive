@@ -6177,13 +6177,16 @@ func runEvalCycle(
 							}
 						}
 					} else {
-						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
-						// Record the fresh, successful digest post so the hub's
-						// advisory-staleness gate stays satisfied for this hive.
+						logger.Info("advisory digest cycle succeeded", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
+						// Record the fresh, successful digest cycle so the hub's
+						// advisory-staleness gate stays satisfied for this hive. A
+						// byte-identical body may have skipped the forge mutation;
+						// PostAdvisoryDigest returns nil for that healthy case and
+						// periodically writes through to re-check permission.
 						dashSrv.RecordAdvisoryPost(digest.TotalCount)
 						dashSrv.RecordAdvisoryOverflow(digest.OverflowCount)
-						// A successful write proves the app is installed AND has
-						// write access — clear BOTH the perm issue and the
+						// A successful cycle is backed by a prior or current App
+						// write, so clear BOTH the perm issue and the
 						// app-required banner flag. Previously only the perm
 						// issue was cleared, so githubAppRequired (set true at
 						// startup or on an early transient failure) stuck on

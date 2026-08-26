@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -134,16 +135,17 @@ const (
 	advisoryDigestPrefix    = "## 🐝 Advisory Digest"
 	githubCommentCharLimit  = 65536
 	truncationFooterPadding = 200
-	// advisoryDigestAuditInterval is how often (in digest posts) an
-	// advisory_commented audit entry is emitted, in addition to the very first
-	// post. The digest is refreshed ~once a minute; a value of 50 yields roughly
-	// one audit pulse per ~50 minutes, enough to show the loop is alive without
-	// flooding the dashboard audit log.
+	// advisoryDigestAuditInterval is both the unchanged-body write-through
+	// interval and the cadence for advisory_commented audit entries. The digest
+	// is refreshed ~once a minute; a value of 50 yields roughly one real write
+	// and audit pulse per ~50 minutes. The write-through ensures permission
+	// regressions still surface while suppressing redundant forge mutations.
 	advisoryDigestAuditInterval = 50
 )
 
 // PostAdvisoryDigest updates the existing digest comment on the advisory issue,
-// or creates one if none exists. This prevents duplicate comments on each eval cycle.
+// or creates one if none exists. An unchanged body returns nil without a forge
+// mutation, except for periodic write-through cycles that verify write access.
 func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum int, digest string) error {
 	if c == nil {
 		return ErrNoGitHubClient
@@ -160,6 +162,29 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	// mention and neither pass weakens the other.
 	digest = advisory.NeutralizeMentions(digest)
 	digest = truncateDigest(logscrub.ScrubString(digest))
+	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
+	digestHash := sha256.Sum256([]byte(digest))
+
+	// A body known to match the last successful write needs no forge mutation.
+	// Treat the skip as a successful cycle (nil return), so the caller refreshes
+	// AdvisoryLastPostedAt and clears stale App-required state just as it does
+	// after a write. Every interval-th cycle deliberately writes through to
+	// detect permission regressions. The first call after process start always
+	// writes because the hash cache is empty.
+	c.advisoryMu.Lock()
+	previousHash, known := c.advisoryDigestHashes[key]
+	count := c.advisoryDigestCycles[key]
+	unchanged := known && previousHash == digestHash
+	writeThrough := (count+1)%advisoryDigestAuditInterval == 0
+	if unchanged && !writeThrough {
+		if c.advisoryDigestCycles == nil {
+			c.advisoryDigestCycles = make(map[string]int)
+		}
+		c.advisoryDigestCycles[key] = count + 1
+		c.advisoryMu.Unlock()
+		return nil
+	}
+	c.advisoryMu.Unlock()
 
 	commentID, err := c.findDigestComment(ctx, owner, repoName, issueNum)
 	if err != nil {
@@ -185,17 +210,20 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 		author = comment.GetUser().GetLogin()
 	}
 
-	// Audit the FIRST post and every advisoryDigestAuditInterval-th one, not the
-	// ~once-a-minute refreshes in between: auditing every update would flood the
-	// audit log (1000s/day) and evict the discrete create→merge events. A
-	// periodic pulse still proves the advisory loop is alive on the dashboard.
+	// Audit the FIRST write and every advisoryDigestAuditInterval-th cycle, which
+	// is also a real write-through. Auditing every ~once-a-minute cycle would
+	// flood the audit log (1000s/day) and evict the discrete create→merge events.
+	// A periodic pulse still proves the advisory loop is alive on the dashboard.
 	c.advisoryMu.Lock()
-	if c.advisoryDigestPosts == nil {
-		c.advisoryDigestPosts = make(map[string]int)
+	if c.advisoryDigestCycles == nil {
+		c.advisoryDigestCycles = make(map[string]int)
 	}
-	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
-	c.advisoryDigestPosts[key]++
-	count := c.advisoryDigestPosts[key]
+	if c.advisoryDigestHashes == nil {
+		c.advisoryDigestHashes = make(map[string][32]byte)
+	}
+	c.advisoryDigestCycles[key]++
+	c.advisoryDigestHashes[key] = digestHash
+	count = c.advisoryDigestCycles[key]
 	c.advisoryMu.Unlock()
 
 	if count == 1 || count%advisoryDigestAuditInterval == 0 {
