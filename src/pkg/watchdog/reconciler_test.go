@@ -1253,6 +1253,24 @@ func TestSnapshotRestoreRoundtrip(t *testing.T) {
 	if fleet.restartCount() != 1 {
 		t.Fatal("restored backoff must gate restarts across a process restart")
 	}
+
+	// A reconciler that may NOT act does not inherit a ladder it has no
+	// authority to have built. Conditions still restore — they are
+	// observations, valid in every mode. (heal above is the positive control.)
+	observe := fastSettings()
+	observe.Mode = ModeObserve
+	r3 := newTestReconciler(t, observe, fleet, newFakeAlerter(), clock)
+	r3.Restore(snap)
+	r3.mu.Lock()
+	rec3 := r3.agents["a1"]
+	f3, looping3, back3, conds3 := rec3.Failures, rec3.CrashLooping, rec3.BackoffUntil, len(rec3.Conditions)
+	r3.mu.Unlock()
+	if f3 != 0 || looping3 || !back3.IsZero() {
+		t.Fatalf("observe must not inherit the restart ladder (failures=%d looping=%v backoff=%v)", f3, looping3, back3)
+	}
+	if conds3 == 0 {
+		t.Fatal("conditions are observations and must restore in every mode")
+	}
 }
 
 func TestConditionsReturnsACopy(t *testing.T) {

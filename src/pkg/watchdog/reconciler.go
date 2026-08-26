@@ -364,15 +364,24 @@ func (r *Reconciler) Snapshot() map[string]PersistedAgent {
 
 // Restore seeds per-agent state from a persisted snapshot, so a pod restart
 // neither forgets a crash-loop nor re-runs a backoff ladder from the top.
+//
+// The restart ladder is restored ONLY when this reconciler may act. A hive that
+// ran in heal, escalated an agent, then moved to observe would otherwise come
+// back latched into a crash-loop it has no authority to have caused and cannot
+// clear by restarting — and would resume mid-ladder if heal were re-enabled.
+// Conditions are always restored: they are observations, valid in every mode.
 func (r *Reconciler) Restore(saved map[string]PersistedAgent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	acting := r.settings.MayAct()
 	for name, p := range saved {
 		rec := r.recordLocked(name)
-		rec.Failures = p.Failures
-		rec.CrashLooping = p.CrashLooping
-		if p.BackoffUntil != nil {
-			rec.BackoffUntil = *p.BackoffUntil
+		if acting {
+			rec.Failures = p.Failures
+			rec.CrashLooping = p.CrashLooping
+			if p.BackoffUntil != nil {
+				rec.BackoffUntil = *p.BackoffUntil
+			}
 		}
 		if p.HealthySince != nil {
 			rec.HealthySince = *p.HealthySince
