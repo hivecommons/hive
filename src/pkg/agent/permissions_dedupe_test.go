@@ -116,7 +116,11 @@ func unfixableEntry(t *testing.T, dir string) (string, os.FileInfo) {
 	if os.Chown(probe, int(stat.Uid), NodeGID) == nil {
 		t.Skip("process can chown to NodeGID; unfixable-entry arm unreachable")
 	}
-	return path, fi
+	// Present the entry as owned by the managed DevUID (synthetic ownership,
+	// like fakeOwnerInfo elsewhere) so dd's permissionsWatcherManagesOwner
+	// guard admits it; the REAL file is still owned by the test user, so the
+	// chown to NodeGID genuinely fails, exercising the failure arm.
+	return path, fakeOwnerInfo{FileInfo: fi, sys: &syscall.Stat_t{Uid: uint32(DevUID), Gid: stat.Gid}}
 }
 
 // TestFixEntryUnfixableChownWarnsOnce is the core #4488 regression test: the

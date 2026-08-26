@@ -443,6 +443,10 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		// Dedicated hive-<agent> worktrees are not owned by the unprivileged
 		// dashboard process. Traversing them is safe, but chown attempts are not:
 		// they create unbounded EPERM log and filesystem churn on every tick.
+		// A previously failing path now owned by an agent identity is healthy
+		// again — drop its recorded failure so a later regression on the same
+		// path warns fresh instead of being deduped to DEBUG.
+		permWarnDedupe.clear(dedupeKey("chown", path))
 		return
 	}
 

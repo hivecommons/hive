@@ -68,7 +68,9 @@ func TestQualityRuntimeProbeUsesExactUnattendedCredentialFreeRuntime(t *testing.
 		if launcher != "su-exec" || len(args) < 2 || args[0] != "2006" || !containsString(args, "never") || !containsString(args, "read-only") {
 			return nil, nil, fmt.Errorf("unexpected launch: %s %v", launcher, args)
 		}
-		if environmentValue(environment, "HOME") != "/data/home" || environmentValue(environment, "CODEX_HOME") != "/data/home/.codex-quality" {
+		// v4's per-agent home isolation moved HOME off the shared /data/home;
+		// pin to the same helpers the probe itself must use.
+		if environmentValue(environment, "HOME") != AgentHome("quality", 2006, codexBackend) || environmentValue(environment, "CODEX_HOME") != codexHomePath("quality") {
 			return nil, nil, fmt.Errorf("wrong HOME binding")
 		}
 		for _, name := range append(ordinaryAgentControlPlaneCredentialNames(), "HIVE_AGENT_TOKEN_CACHE") {

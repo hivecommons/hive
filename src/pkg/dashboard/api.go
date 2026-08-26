@@ -109,6 +109,15 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/gh-user-auth/poll", s.handleGHUserAuthPoll)
 	s.mux.HandleFunc("POST /api/gh-user-auth/logout", s.handleGHUserAuthLogout)
 	s.mux.HandleFunc("GET /api/gh-user-auth/session", s.handleGHUserAuthSession)
+	s.mux.HandleFunc("POST /api/integrated/setup/plan", s.handleIntegratedSetupPlan)
+	s.mux.HandleFunc("POST /api/integrated/setup/apply", s.handleIntegratedSetupApply)
+	s.mux.HandleFunc("POST /api/integrated/preflight", s.handleIntegratedPreflight)
+	s.mux.HandleFunc("GET /api/integrated/status", s.handleIntegratedStatus)
+	s.mux.HandleFunc("GET /api/integrated/doctor", s.handleIntegratedDoctor)
+	s.mux.HandleFunc("POST /api/integrated/baseline/plan", s.handleIntegratedBaselinePlan)
+	s.mux.HandleFunc("POST /api/integrated/baseline/approve", s.handleIntegratedBaselineApprove)
+	s.mux.HandleFunc("POST /api/integrated/control/plan", s.handleIntegratedControlPlan)
+	s.mux.HandleFunc("POST /api/integrated/control/apply", s.handleIntegratedControlApply)
 
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
@@ -428,6 +437,7 @@ func (s *Server) refreshAfterMutation() {
 // guaranteed to reflect the mutation. Handlers whose UI patches the DOM
 // optimistically should return that floor to the frontend.
 func (s *Server) refreshAfterMutationSeq() uint64 {
+	s.syncGovernorSnapshot()
 	floor := s.noteStatusMutation()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		go s.deps.RefreshFunc()
@@ -454,6 +464,7 @@ func (s *Server) refreshAndPersistSeq() uint64 {
 }
 
 func (s *Server) refreshAndPersistSync() {
+	s.syncGovernorSnapshot()
 	s.noteStatusMutation()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		s.deps.RefreshFunc()
@@ -463,21 +474,38 @@ func (s *Server) refreshAndPersistSync() {
 	}
 }
 
-// saveConfig persists the in-memory config to disk, skipping the next
-// watcher reload to prevent the watcher from overwriting concurrent
-// in-memory mutations with a stale file read.
+// syncGovernorSnapshot retains legacy refresh/persist boundaries while routing
+// their publication through the coordinator's Manager-before-Governor order.
+func (s *Server) syncGovernorSnapshot() {
+	if s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	if s.deps.ConfigCoordinator == nil {
+		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
+	}
+	s.deps.ConfigCoordinator.PublishCurrent()
+}
+
+// saveConfig is retained for embedded callers. Production handlers stage
+// changes through the coordinator; this compatibility boundary still publishes
+// through the same coordinator (Manager before Governor, cloned snapshots) so
+// a mutated s.deps.Config always reaches the Governor atomically — the cloning
+// Governor no longer observes shared-map mutations. Merged with v4's watcher
+// skip and repo-count scaling (#3498).
 func (s *Server) saveConfig() error {
-	if s.deps == nil || s.deps.Config == nil || s.deps.Config.SourcePath == "" {
+	if s.deps == nil || s.deps.Config == nil {
 		return nil
 	}
-	if s.deps.SkipReloadFunc != nil {
+	if s.deps.ConfigCoordinator == nil {
+		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
+	}
+	if s.deps.SkipReloadFunc != nil && s.deps.Config.SourcePath != "" {
 		s.deps.SkipReloadFunc()
 	}
-	if err := s.deps.Config.Save(); err != nil {
+	if err := s.deps.ConfigCoordinator.Mutate(nil); err != nil {
 		return err
 	}
 	if s.deps.Governor != nil {
-		s.deps.Governor.UpdateConfig(s.deps.Config.Governor)
 		// The dashboard can add or remove repos, which moves every scaled
 		// default threshold (#3498). Without this, a repo change would not
 		// reach the governor until the next process restart.
@@ -486,7 +514,31 @@ func (s *Server) saveConfig() error {
 	return nil
 }
 
+func (s *Server) mutateConfig(mutate func(*config.Config) error) error {
+	if s.deps == nil || s.deps.Config == nil {
+		return fmt.Errorf("runtime config coordinator is not configured")
+	}
+	if s.deps.ConfigCoordinator == nil {
+		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
+	}
+	return s.deps.ConfigCoordinator.Mutate(mutate)
+}
+
+func (s *Server) configSnapshot() *config.Config {
+	if s.deps == nil {
+		return nil
+	}
+	if s.deps.ConfigCoordinator != nil {
+		return s.deps.ConfigCoordinator.Snapshot()
+	}
+	if s.deps.Config == nil {
+		return nil
+	}
+	return s.deps.Config.Clone()
+}
+
 func (s *Server) persistOnly() {
+	s.syncGovernorSnapshot()
 	if s.deps != nil && s.deps.PersistFunc != nil {
 		s.deps.PersistFunc()
 	}
@@ -3708,7 +3760,12 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	name := r.PathValue("name")
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3721,7 +3778,16 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	agentCfg.Tools = &body
-	s.deps.Config.Agents[name] = agentCfg
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist tool config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.auditFromRequest(r, "config_agent_tools", auditDetail("section", "tools"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})

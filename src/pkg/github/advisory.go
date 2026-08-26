@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
@@ -201,13 +202,22 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	}
 	c.advisoryMu.Unlock()
 
-	commentID, err := c.findDigestComment(ctx, owner, repoName, issueNum)
+	commentID, existingDigest, err := c.findDigestComment(ctx, owner, repoName, issueNum)
 	if err != nil {
 		c.logger.Warn("could not search for existing digest comment, creating new", slog.String("error", err.Error()))
 	}
 
 	var author string
 	if commentID > 0 {
+		// dd semantic guard: the dd digest header carries a "generated at"
+		// timestamp that changes every render, so the in-process body hash
+		// above never matches. Compare against the LIVE comment with the
+		// timestamp line stripped and skip the edit when only the timestamp
+		// moved — returning nil keeps this a healthy cycle for the caller's
+		// freshness record, same as the hash-guard skip.
+		if advisoryDigestsSemanticallyEqual(existingDigest, digest) {
+			return nil
+		}
 		edited, _, err := c.client.Issues.EditComment(ctx, owner, repoName, int64(commentID), &gh.IssueComment{
 			Body: gh.Ptr(digest),
 		})
@@ -321,15 +331,16 @@ func (c *Client) ensureAdvisoryLabel(ctx context.Context, owner, repo string, is
 	_, _, _ = c.client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, []string{advisoryLabelName})
 }
 
-func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issueNum int) (int, error) {
+func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issueNum int) (int, string, error) {
 	opts := &gh.IssueListCommentsOptions{
 		ListOptions: gh.ListOptions{PerPage: 50},
 	}
 	comments, _, err := c.client.Issues.ListComments(ctx, owner, repo, issueNum, opts)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	var botAuthored int64
+	var botAuthoredBody string
 	for _, comment := range comments {
 		if !strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
 			continue
@@ -338,12 +349,12 @@ func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issu
 			// Token (PAT) client: historical prefix-only match. The credential
 			// may legitimately be the human who authored the comment, and
 			// authorship cannot be verified without an extra /user round trip.
-			return int(comment.GetID()), nil
+			return int(comment.GetID()), comment.GetBody(), nil
 		}
 		login := comment.GetUser().GetLogin()
 		if c.appBotLogin != "" && login == c.appBotLogin {
 			// Exactly our own bot comment — the one credential-safe choice.
-			return int(comment.GetID()), nil
+			return int(comment.GetID()), comment.GetBody(), nil
 		}
 		if strings.HasSuffix(login, "[bot]") || comment.GetUser().GetType() == "Bot" {
 			// Bot-authored but not provably ours (bot login unknown, or a slug
@@ -352,6 +363,7 @@ func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issu
 			// a misconfigured slug would create a duplicate every cycle.
 			if botAuthored == 0 {
 				botAuthored = comment.GetID()
+				botAuthoredBody = comment.GetBody()
 			}
 			continue
 		}
@@ -369,7 +381,33 @@ func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issu
 			slog.Int64("comment_id", comment.GetID()),
 			slog.String("author", login))
 	}
-	return int(botAuthored), nil
+	return int(botAuthored), botAuthoredBody, nil
+}
+
+// advisoryDigestsSemanticallyEqual reports whether two digest bodies differ
+// only in the generated-at timestamp on the header line (dd digest format).
+func advisoryDigestsSemanticallyEqual(existing, next string) bool {
+	if existing == next {
+		return true
+	}
+	existingBody, existingOK := advisoryDigestBodyWithoutGeneratedAt(existing)
+	nextBody, nextOK := advisoryDigestBodyWithoutGeneratedAt(next)
+	return existingOK && nextOK && existingBody == nextBody
+}
+
+func advisoryDigestBodyWithoutGeneratedAt(digest string) (string, bool) {
+	lineEnd := strings.IndexByte(digest, '\n')
+	if lineEnd <= 0 {
+		return "", false
+	}
+	generatedAt, ok := strings.CutPrefix(digest[:lineEnd], advisoryDigestPrefix+" — ")
+	if !ok {
+		return "", false
+	}
+	if _, err := time.Parse("2006-01-02 15:04 MST", generatedAt); err != nil {
+		return "", false
+	}
+	return digest[lineEnd+1:], true
 }
 
 func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int, error) {

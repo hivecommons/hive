@@ -129,8 +129,13 @@ func TestConverseDoesNotSubstituteForAHigherTier(t *testing.T) {
 	if AllowedByModeCaps(agent.ModeIssuesPRsMerge, converseCaps, "PUT", "/repos/o/r/pulls/1/merge") {
 		t.Error("hard deny bypassed by a capability")
 	}
-	if !AllowedByModeCaps(agent.ModeIssuesPRsMerge, converseCaps, "POST", "/repos/o/r/issues") {
+	if !AllowedByModeCaps(agent.ModeIssuesPRsMerge, converseCaps, "POST", "/repos/o/r/issues/1/comments") {
 		t.Error("converse must not remove what the tier already granted")
+	}
+	// Direct issue creation stays hard-denied at every tier (hive-open-issue
+	// relay), and converse must not reopen it.
+	if AllowedByModeCaps(agent.ModeIssuesPRsMerge, converseCaps, "POST", "/repos/o/r/issues") {
+		t.Error("issue-create hard deny bypassed by a capability")
 	}
 	// An ISSUES_ONLY agent gains PR reviews from converse but still no pushes.
 	if !AllowedByModeCaps(agent.ModeIssuesOnly, converseCaps, "POST", "/repos/o/r/pulls/1/reviews") {

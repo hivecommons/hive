@@ -466,7 +466,9 @@ func TestGitHubGatingUnchangedByLinearGate(t *testing.T) {
 	}{
 		{agent.ModeAdvisory, "GET", "/repos/o/r/issues", true},
 		{agent.ModeAdvisory, "POST", "/repos/o/r/issues", false},
-		{agent.ModeIssuesOnly, "POST", "/repos/o/r/issues", true},
+		// Direct issue creation is hard-denied at EVERY tier — agents must go
+		// through the hive-open-issue relay for attribution and dedupe.
+		{agent.ModeIssuesOnly, "POST", "/repos/o/r/issues", false},
 		{agent.ModeIssuesOnly, "POST", "/repos/o/r/issues/1/comments", true},
 		{agent.ModeAdvisory, "POST", "/repos/o/r/issues/1/comments", false},
 		{agent.ModeIssuesOnly, "PATCH", "/repos/o/r/pulls/1", false},
