@@ -2226,7 +2226,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	binary, err := backendBinary(backend)
+	isInference := m.routableBackend(backend)
+	binary, err := m.backendBinary(backend)
 	if err != nil {
 		agent.State = StateFailed
 		agent.LastError = err.Error()
@@ -2235,9 +2236,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// before this), so without a banner the pane is a silent bare shell —
 		// the operator attaches and sees a prompt, not a failure. Say which
 		// binary was attempted, that it is missing, and what to do.
+		remedy := "The CLI for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend."
+		if isInference {
+			remedy = "Gateway backends run through the claude CLI — ensure claude is installed in the hive image or switch this agent to a different backend."
+		}
 		m.announceLaunchFailureInPane(agent, fmt.Sprintf(
-			"backend %s did not launch: %v. The CLI for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend.",
-			backend, err))
+			"backend %s did not launch: %v. %s", backend, err, remedy))
 		return nil
 	}
 
@@ -2323,7 +2327,6 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
 	// and route API traffic through the proxy to the self-hosted endpoint.
-	isInference := m.routableBackend(backend)
 	if isInference {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
@@ -5827,9 +5830,10 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 
 // backendBinaryAliases names the backends whose binary is NOT simply the
 // backend name. Only genuine aliases belong here: every other CLI backend is
-// derived from config.CLIBackends by identity, and every model-gateway backend
-// from config.InferenceBackends. Keeping this map to aliases only is what makes
-// the accept-then-fail class of bug structurally impossible — see backendBinary.
+// derived from config.CLIBackends by identity, built-in model-gateway backends
+// come from config.InferenceBackends, and configured gateway names are resolved
+// by Manager.backendBinaryName. Keeping this map to aliases only is what makes
+// the accept-then-fail class of bug structurally impossible.
 var backendBinaryAliases = map[string]string{
 	// pi was previously aliased to "goose", which made every pi-configured
 	// agent exec the goose CLI instead of pi (the backend launch command
@@ -5853,8 +5857,10 @@ var backendBinaryAliases = map[string]string{
 //
 // Deriving both means a backend added to either list can never again be
 // accepted by config.ValidateBackend and then rejected hours later at kick time
-// with "unknown backend". Previously only InferenceBackends was derived, so
-// codex and aider were valid config values that failed at launch.
+// with "unknown backend". Configured gateway names are resolved separately by
+// the Manager method below because their names come from live configuration.
+// Previously only InferenceBackends was derived, so codex and aider were valid
+// config values that failed at launch.
 func backendBinaryName(backend string) (string, error) {
 	binaries := make(map[string]string, len(config.CLIBackends)+len(config.InferenceBackends))
 	for _, b := range config.CLIBackends {
@@ -5874,10 +5880,38 @@ func backendBinaryName(backend string) (string, error) {
 	return binary, nil
 }
 
+// backendBinaryName resolves the launch binary using the manager's live
+// routing contract. Configured gateway names are dynamic, so they cannot be
+// represented in config.InferenceBackends; nevertheless they launch the same
+// claude CLI as built-in inference backends.
+func (m *Manager) backendBinaryName(backend string) (string, error) {
+	if m.routableBackend(backend) {
+		return "claude", nil
+	}
+	return backendBinaryName(backend)
+}
+
 // backendBinary resolves an agent backend to the absolute path of the CLI
 // binary that is actually exec'd for it.
 func backendBinary(backend string) (string, error) {
 	binary, err := backendBinaryName(backend)
+	if err != nil {
+		return "", err
+	}
+
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return "", fmt.Errorf("backend %s not found in PATH: %w", backend, err)
+	}
+
+	return path, nil
+}
+
+// backendBinary is the gateway-aware launch-path counterpart to the package
+// helper above. Keeping the filesystem lookup here makes launch dispatch agree
+// with validateBackendName for configured gateway names.
+func (m *Manager) backendBinary(backend string) (string, error) {
+	binary, err := m.backendBinaryName(backend)
 	if err != nil {
 		return "", err
 	}
