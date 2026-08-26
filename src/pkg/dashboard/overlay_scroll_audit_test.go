@@ -35,6 +35,8 @@ func TestOverlayScrollContainmentAudit(t *testing.T) {
 		".nous-config-dialog > .nous-config-body,",
 		".nous-config-overlay textarea,",
 		".nous-config-overlay pre,",
+		".nous-config-body [style*=\"overflow-y:auto\"],",
+		".nous-config-body [style*=\"overflow-y: auto\"],",
 		".welcome-body,",
 		".config-stats-list {",
 	}
@@ -86,15 +88,10 @@ func TestModalScrollLockObservesLateOverlays(t *testing.T) {
 			t.Errorf("index.html is missing %q — late-created overlays escape the shared body scroll-lock (#4805)", snippet)
 		}
 	}
-	// The acmm dialog must rely on the shared lock, not a second bespoke
-	// body.style.overflow mechanism that fights the class-based lock.
-	idx := strings.Index(html, "function acmmShowDialog(")
-	end := strings.Index(html, "function acmmCloseDialog(")
-	if idx < 0 || end < 0 || end < idx {
-		t.Fatal("cannot locate acmmShowDialog/acmmCloseDialog in index.html")
-	}
-	closeEnd := end + strings.Index(html[end:], "\n    }")
-	if strings.Contains(html[idx:closeEnd], "document.body.style.overflow") {
-		t.Error("acmm dialog manages body.style.overflow itself — a second scroll-lock mechanism alongside installModalScrollLock (#4805)")
+	// No dialog anywhere in the SPA may run a bespoke body.style.overflow
+	// lock alongside the shared class-based lock (salvaged from #4809's
+	// stronger whole-file pin; the acmm dialog was the last holdout).
+	if strings.Contains(html, "document.body.style.overflow") {
+		t.Error("a dialog manages body.style.overflow itself — a second scroll-lock mechanism alongside installModalScrollLock (#4805)")
 	}
 }
