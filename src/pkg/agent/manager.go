@@ -513,6 +513,8 @@ type Manager struct {
 
 	paneCapture          func(agent *AgentProcess) string
 	visiblePaneCapture   func(agent *AgentProcess) string
+	sessionAttached      func(agent *AgentProcess) bool
+	sendLiteralForAgent  func(agent *AgentProcess, text string)
 	sendKeysForAgent     func(agent *AgentProcess, keys ...string)
 	promptDismissSleep   func(time.Duration)
 	promptDismissTimeout time.Duration
@@ -3950,6 +3952,24 @@ func (m *Manager) captureVisiblePaneForAgent(agent *AgentProcess) string {
 	return string(out)
 }
 
+func (m *Manager) tmuxSessionHasAttachedClientForAgent(agent *AgentProcess) bool {
+	if m.sessionAttached != nil {
+		return m.sessionAttached(agent)
+	}
+	if agent == nil || agent.tmuxSession == "" {
+		return true
+	}
+	out, err := m.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession, "#{session_attached}").Output()
+	if err != nil {
+		return true
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return true
+	}
+	return n > 0
+}
+
 func (m *Manager) Stop(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4821,6 +4841,10 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 
 // tmuxSendLiteralForAgent sends text using the agent's tmux socket.
 func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
+	if m.sendLiteralForAgent != nil {
+		m.sendLiteralForAgent(agent, text)
+		return
+	}
 	_ = m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
 }
 
@@ -5391,6 +5415,18 @@ func paneShowsActiveWork(pane string) bool {
 	return strings.Contains(pane, cliWorkingMarker) || strings.Contains(pane, cliActiveCounterMarker)
 }
 
+func paneShowsEmptyInputPrompt(pane string) bool {
+	lines := strings.Split(pane, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		return line == cliInputPromptMarker
+	}
+	return false
+}
+
 // paneContentHash returns a short stable hash of pane content, used to detect
 // whether a pane has changed since a kick was delivered.
 func paneContentHash(pane string) string {
@@ -5527,7 +5563,7 @@ func (m *Manager) nudgeIfTransientAPIError(agent *AgentProcess, pane string) {
 		return
 	}
 	// Mid-response or mid-retry: leave it alone.
-	if paneShowsActiveWork(tail) || !strings.Contains(tail, cliInputPromptMarker) {
+	if paneShowsActiveWork(tail) || !paneShowsEmptyInputPrompt(tail) {
 		return
 	}
 	lines := strings.Split(tail, "\n")
@@ -5542,6 +5578,9 @@ func (m *Manager) nudgeIfTransientAPIError(agent *AgentProcess, pane string) {
 		if lineShowsUpstreamAuthorizationError(line) {
 			return
 		}
+	}
+	if m.tmuxSessionHasAttachedClientForAgent(agent) {
+		return
 	}
 
 	now := time.Now()
@@ -6207,16 +6246,16 @@ func paneShowsFatalNetworkError(lines []string) bool {
 var transientAPIErrorPatterns = []string{
 	// The shape reported in #4697, observed repeatedly on a claude-backend
 	// agent: the response is cut off mid-stream and the CLI returns to ❯.
-	"Connection lost mid-response",
-	"API Error: Connection error",
-	"API Error: Request timed out",
-	"API Error: 500",
-	"API Error: 502",
-	"API Error: 503",
-	// 529 is Anthropic's "overloaded" status.
-	"API Error: 529",
-	"Overloaded",
+	"connection lost mid-response",
+	"connection error",
+	"request timed out",
+	"overloaded_error",
 }
+
+// 500/502/503/529 are retryable upstream failures; match them as whole tokens
+// only, so unrelated request IDs or token counts under the same API-error chrome
+// do not trip the watchdog.
+var transientAPIErrorStatusRe = regexp.MustCompile(`\b(?:500|502|503|529)\b`)
 
 // paneShowsTransientAPIError reports whether any line carries a retryable API
 // failure. Pure over its input so the decision is table-testable without tmux;
@@ -6224,10 +6263,17 @@ var transientAPIErrorPatterns = []string{
 // error the agent already recovered from does not read as current.
 func paneShowsTransientAPIError(lines []string) bool {
 	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "api error:") {
+			continue
+		}
 		for _, pat := range transientAPIErrorPatterns {
-			if strings.Contains(line, pat) {
+			if strings.Contains(lower, pat) {
 				return true
 			}
+		}
+		if transientAPIErrorStatusRe.MatchString(line) {
+			return true
 		}
 	}
 	return false
