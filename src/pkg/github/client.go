@@ -135,6 +135,20 @@ type Client struct {
 	// advisoryMu.
 	advisoryMu          sync.Mutex
 	advisoryDigestPosts map[string]int
+	// advisoryDigestHashes holds, per "owner/repo#issue", the content hash of
+	// the last digest body SUCCESSFULLY written to the forge (#4818). When the
+	// next cycle renders a byte-identical body, PostAdvisoryDigest skips the
+	// EditComment call entirely — at steady state that saves ~1,440 no-op
+	// GitHub writes/day. Only successful writes record a hash, so a failed
+	// write keeps being retried. Guarded by advisoryMu.
+	advisoryDigestHashes map[string]string
+	// advisoryDigestSkips counts consecutive skipped-because-unchanged cycles
+	// per key since the last real write. Once it reaches
+	// advisoryDigestWriteThroughInterval-1 the next cycle writes through even
+	// if unchanged, so permission regressions (e.g. a 403 after the App loses
+	// issues:write) still surface within ~an hour instead of never. Guarded by
+	// advisoryMu.
+	advisoryDigestSkips map[string]int
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
