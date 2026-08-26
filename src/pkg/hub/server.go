@@ -842,6 +842,18 @@ type HubServer struct {
 	mu       sync.RWMutex
 	logger   *slog.Logger
 	saveCh   chan struct{}
+	// saveLoopStop / saveLoopDone make the debounced saveLoop goroutine
+	// joinable (#4774). A hub built by NewHubServer used to leak its saveLoop
+	// forever: in tests, the loop could wake up to registrySaveDelay after the
+	// test returned and recreate registry files inside a t.TempDir the test
+	// framework was already removing — "TempDir RemoveAll cleanup: directory
+	// not empty" flakes. StopSaveLoop closes saveLoopStop and blocks on
+	// saveLoopDone, so a test that stops the server KNOWS no further registry
+	// write can happen. Both are nil on bare &HubServer{} test literals, which
+	// never start the loop; StopSaveLoop is a no-op for them.
+	saveLoopStop     chan struct{}
+	saveLoopDone     chan struct{}
+	saveLoopStopOnce sync.Once
 
 	// authProviders is the enabled human-login provider set (GitHub OAuth plus any
 	// configured OIDC providers — Google/IBMid/Red Hat/Microsoft/custom). Built
@@ -1292,6 +1304,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		mux:          http.NewServeMux(),
 		logger:       logger,
 		saveCh:       make(chan struct{}, 1),
+		saveLoopStop: make(chan struct{}),
+		saveLoopDone: make(chan struct{}),
 		registryPath: registryPath,
 		hubGitHash:   gitHash,
 		hubGitBranch: gitBranch,
@@ -1507,6 +1521,9 @@ func (s *HubServer) Start(port int) error {
 }
 
 func (s *HubServer) Shutdown(timeout time.Duration) error {
+	// Join the registry save loop first, flushing any pending debounced write
+	// (#4774) — after this, no background registry I/O remains.
+	s.StopSaveLoop()
 	// Flush the reach history's final partial save interval (#3995) — the
 	// same durability courtesy the registry gets from its synchronous saves.
 	// Before the listener check: a server shut down before Start still owes
@@ -3775,24 +3792,55 @@ func (s *HubServer) requestSave() {
 }
 
 func (s *HubServer) saveLoop() {
-	for range s.saveCh {
-		time.Sleep(registrySaveDelay)
-		s.mu.RLock()
-		data, err := json.MarshalIndent(s.registry, "", "  ")
-		s.mu.RUnlock()
-		if err != nil {
-			s.logger.Warn("hub registry marshal failed", "error", err)
-			continue
+	defer close(s.saveLoopDone)
+	for {
+		select {
+		case <-s.saveLoopStop:
+			// A request already queued when stop wins the select must still be
+			// flushed — both channels can be ready at once and select picks
+			// randomly, so drain deterministically.
+			select {
+			case <-s.saveCh:
+				s.saveLoopFlush()
+			default:
+			}
+			return
+		case <-s.saveCh:
 		}
-		tmpPath := s.registryPath + ".tmp"
-		if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-			s.logger.Warn("hub registry save failed", "path", tmpPath, "error", err)
-			continue
+		// Debounce, but stay cancelable: a stop during the delay flushes the
+		// pending request synchronously instead of abandoning it, so shutdown
+		// keeps the durability the delayed write was promising.
+		select {
+		case <-s.saveLoopStop:
+			s.saveLoopFlush()
+			return
+		case <-time.After(registrySaveDelay):
 		}
-		if err := os.Rename(tmpPath, s.registryPath); err != nil {
-			s.logger.Warn("hub registry rename failed", "error", err)
-		}
+		s.saveLoopFlush()
 	}
+}
+
+// saveLoopFlush is one debounced write, with saveLoop's historical
+// warn-and-continue error handling (a failed periodic save is retried by the
+// next requestSave; it must not kill the loop).
+func (s *HubServer) saveLoopFlush() {
+	if err := s.saveRegistryNow(); err != nil {
+		s.logger.Warn("hub registry save failed", "path", s.regPath(), "error", err)
+	}
+}
+
+// StopSaveLoop stops the debounced registry-save goroutine and waits for it to
+// exit, flushing any pending save request first (#4774). After it returns, no
+// further registry write can come from this server — which is what a test
+// holding the registry in a t.TempDir needs before the framework removes it.
+// Safe to call multiple times, and a no-op on bare &HubServer{} literals that
+// never started the loop.
+func (s *HubServer) StopSaveLoop() {
+	if s.saveLoopStop == nil {
+		return
+	}
+	s.saveLoopStopOnce.Do(func() { close(s.saveLoopStop) })
+	<-s.saveLoopDone
 }
 
 func (s *HubServer) findContributeHive() *RegistryEntry {
