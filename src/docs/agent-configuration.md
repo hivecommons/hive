@@ -420,6 +420,36 @@ At L5, every agent PR gets a `hold` label automatically. The system proposes; it
 
 Telemetry and operations stay paused until an operator deliberately opts in. Their lane keywords are disjoint: telemetry owns instrumentation and observability terms, while operations owns health, SLO, runbook, incident, rollback, and alerting terms.
 
+Configure that opt-in under **Settings → Project Observability**. This tab is
+for the managed project's target stack; the **Features** tab separately controls
+Hive's own OpenTelemetry export. Selecting platforms persists them under
+`governor.project_observability`, and enabling an agent replaces its all-mode
+paused cadence with a conservative `24h` interval (which can then be tuned from
+the agent's Cadences tab).
+
+```yaml
+governor:
+  project_observability:
+    open_source: [opentelemetry, prometheus, grafana]
+    kube_native: [servicemonitor]
+    commercial: [honeycomb]
+    references:
+      honeycomb:
+        endpoint_env: OTEL_EXPORTER_OTLP_ENDPOINT
+        credential_secret: observability/honeycomb-key
+```
+
+Reference fields accept names only: an environment-variable name or a
+`secret-name/key` reference. Literal endpoints, tokens, and API keys are
+rejected. With no selected backend, the policies fail closed: agents may detect
+the existing stack and report recommendations, but may not add an exporter or
+new external data flow.
+
+After an initial telemetry advisory run, platforms mentioned in its findings are
+preselected as suggestions in the tab. They remain unsaved until an operator
+reviews them and clicks **Save**; after that, the persisted declaration governs
+future telemetry and operations work.
+
 ## Kick templates: what an agent is told to do
 
 `kick_template` names a Markdown file resolved from the hive's policies checkout (`/data/policies/examples/kubestellar/agents/`, or the directory your `policies:` config points at), falling back to the defaults embedded in the binary (`src/pkg/policies/defaults/`). It is the agent's **periodic work prompt**: on every kick, the template is loaded, variables like `${ISSUE_LIST}`, `${PR_LIST}`, `${AGENT_NAME}`, `${PROJECT_ORG}`, and `${KNOWLEDGE}` are substituted, and the result is dispatched to the agent's session.

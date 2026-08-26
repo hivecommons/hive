@@ -280,6 +280,7 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 		"PROJECT_AI_AUTHOR":     lit(s.cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":    lit(reposList),
 		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
+		"PROJECT_OBSERVABILITY": lit(s.cfg.Governor.ProjectObservability.PromptSection()),
 		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
 		"HIVE_ID":               lit(s.cfg.HiveID),
 		"AGENT_LIST":            lit(agentList),

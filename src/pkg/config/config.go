@@ -1168,6 +1168,11 @@ type GovernorConfig struct {
 	// hive retires it. See AdvisoryConfig.
 	Advisory AdvisoryConfig `yaml:"advisory,omitempty" json:"advisory,omitempty"`
 
+	// ProjectObservability configures what the telemetry and operations agents
+	// recommend for the MANAGED PROJECT. It is deliberately separate from
+	// Config.OTel/Tracing, which export Hive's own telemetry.
+	ProjectObservability ProjectObservabilityConfig `yaml:"project_observability,omitempty" json:"project_observability,omitempty"`
+
 	// WorkSource selects where hive reads work items (Step 01 of the loop).
 	// Absent or type="" defaults to GitHub Issues — backward-compatible for
 	// all existing hives.
@@ -1340,6 +1345,68 @@ type JiraSourceConfig struct {
 	JQL         string   `yaml:"jql,omitempty" json:"jql,omitempty"`
 	Repo        string   `yaml:"repo,omitempty" json:"repo,omitempty"`
 	HoldLabels  []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+}
+
+// ProjectObservabilityBackendRef names references an agent may place in managed
+// project configuration. Values are identifiers only: EndpointEnv is an
+// environment-variable NAME and CredentialSecret is a Kubernetes-style
+// "secret-name/key" reference, never a literal endpoint or credential.
+type ProjectObservabilityBackendRef struct {
+	EndpointEnv      string `yaml:"endpoint_env,omitempty" json:"endpoint_env,omitempty"`
+	CredentialSecret string `yaml:"credential_secret,omitempty" json:"credential_secret,omitempty"`
+}
+
+// ProjectObservabilityConfig is the operator-confirmed target stack for the
+// managed project's telemetry and operations agents. Empty means detect and
+// report only; it never authorizes an exporter to send data off-box.
+type ProjectObservabilityConfig struct {
+	OpenSource []string                                  `yaml:"open_source,omitempty" json:"open_source,omitempty"`
+	KubeNative []string                                  `yaml:"kube_native,omitempty" json:"kube_native,omitempty"`
+	Commercial []string                                  `yaml:"commercial,omitempty" json:"commercial,omitempty"`
+	References map[string]ProjectObservabilityBackendRef `yaml:"references,omitempty" json:"references,omitempty"`
+}
+
+// PromptSection renders the confirmed managed-project targets without exposing
+// any secret values. The result is injected only into the telemetry and
+// operations policy templates through ${PROJECT_OBSERVABILITY}.
+func (p ProjectObservabilityConfig) PromptSection() string {
+	var b strings.Builder
+	b.WriteString("MANAGED-PROJECT OBSERVABILITY TARGETS (operator-confirmed):\n")
+	writeFamily := func(label string, values []string) {
+		if len(values) == 0 {
+			b.WriteString("  " + label + ": (none configured)\n")
+			return
+		}
+		b.WriteString("  " + label + ": " + strings.Join(values, ", ") + "\n")
+	}
+	writeFamily("open source", p.OpenSource)
+	writeFamily("kube-native", p.KubeNative)
+	writeFamily("commercial", p.Commercial)
+	if len(p.OpenSource)+len(p.KubeNative)+len(p.Commercial) == 0 {
+		b.WriteString("  No backend is confirmed. Detect the existing stack and report recommendations only; do not add an exporter or external data flow.\n")
+	}
+	if len(p.References) > 0 {
+		b.WriteString("  safe references (names only):\n")
+		keys := make([]string, 0, len(p.References))
+		for name := range p.References {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+		for _, name := range keys {
+			ref := p.References[name]
+			parts := make([]string, 0, 2)
+			if ref.EndpointEnv != "" {
+				parts = append(parts, "endpoint env="+ref.EndpointEnv)
+			}
+			if ref.CredentialSecret != "" {
+				parts = append(parts, "credential secret="+ref.CredentialSecret)
+			}
+			if len(parts) > 0 {
+				b.WriteString("    " + name + ": " + strings.Join(parts, ", ") + "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // AdvisoryConfig controls the advisory digest's size and the lifecycle of the

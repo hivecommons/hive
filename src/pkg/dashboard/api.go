@@ -177,6 +177,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
 	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
+	s.mux.HandleFunc("GET /api/config/governor/project-observability", s.handleGovernorProjectObservabilityGet)
+	s.mux.HandleFunc("PUT /api/config/governor/project-observability", s.handleGovernorProjectObservabilityPut)
 	// Backup encryption key: presence-only status, set, and clear. The key
 	// value is never returned by any of these (#4129).
 	s.mux.HandleFunc("GET /api/config/governor/backup", s.handleBackupKeyStatus)
@@ -4326,17 +4328,18 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"compress":   cfg.Governor.Logging.Compress,
 			"level":      cfg.Governor.Logging.Level,
 		},
-		"litellm":     litellmSectionResponse(&cfg.Governor.LiteLLM),
-		"trajectory":  trajectorySectionResponse(&cfg.Governor),
-		"classifier":  classifierSectionResponse(),
-		"features":    featuresSectionResponse(cfg),
-		"review":      cfg.Review,
-		"auto_merge":  autoMergeSectionResponse(cfg),
-		"convergence": s.convergenceSectionResponse(cfg),
-		"advisory":    advisorySectionResponse(cfg),
-		"replan":      replanSectionResponse(cfg),
-		"work_source": workSourceSectionResponse(cfg),
-		"security":    securitySectionResponse(cfg),
+		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
+		"trajectory":            trajectorySectionResponse(&cfg.Governor),
+		"classifier":            classifierSectionResponse(),
+		"features":              featuresSectionResponse(cfg),
+		"review":                cfg.Review,
+		"auto_merge":            autoMergeSectionResponse(cfg),
+		"convergence":           s.convergenceSectionResponse(cfg),
+		"advisory":              advisorySectionResponse(cfg),
+		"project_observability": s.projectObservabilityResponse(cfg),
+		"replan":                replanSectionResponse(cfg),
+		"work_source":           workSourceSectionResponse(cfg),
+		"security":              securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
 			// Effective value (default ON when unset) — the UI renders the
 			// switch from this, so an untouched hive shows it on.

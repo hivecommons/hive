@@ -15401,7 +15401,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -16054,6 +16054,7 @@ function burnAreaChart() {
         case 'Security': return renderGovSecurity(d.security || {});
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
+        case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});
         case 'Hub': return renderGovHub(d.hub || {});
@@ -20213,7 +20214,7 @@ function burnAreaChart() {
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
       return `
         ${securityModelDatalistHtml()}
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Opt-in capabilities. Security-posture controls live in the Security tab; observability and quality-loop controls stay here.</p>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Opt-in capabilities. This tab configures Hive's own telemetry export. Use <b>Project Observability</b> to choose what telemetry and operations agents target in managed repositories.</p>
 
         <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">
           Input/Output Scanning (ioscan) moved to <b>Security → Input Defense</b> so its enablement, fail mode, canaries, and classifier settings have one canonical control surface.
@@ -20356,6 +20357,70 @@ function burnAreaChart() {
           </div>
           <div class="config-field"><label>Max replans per plan <span class="config-info">i<span class="config-tooltip">Caps replans per plan before the lane stops and escalates to a human. 0 means the default (5).</span></span></label><input type="number" min="0" step="1" value="${rp.max_replans || 0}" placeholder="5" data-change-action="markDirty" data-arg0="replan" data-arg1="max_replans" data-arg-types="s,s,N"></div>
         </div>`;
+    }
+
+    function projectObservabilityPlatformsChanged(el) {
+      const family = el.dataset.family;
+      const values = Array.from(el.selectedOptions).map(o => o.value);
+      const state = _configState.data.project_observability || (_configState.data.project_observability = {});
+      state[family] = values;
+      markDirty('project-observability', family, values);
+      renderConfigTab('Project Observability');
+    }
+
+    function projectObservabilityReferenceChanged(el) {
+      const state = _configState.data.project_observability || (_configState.data.project_observability = {});
+      const refs = Object.assign({}, state.references || {});
+      const platform = el.dataset.platform;
+      const key = el.dataset.refKey;
+      refs[platform] = Object.assign({}, refs[platform] || {});
+      refs[platform][key] = el.value.trim();
+      state.references = refs;
+      markDirty('project-observability', 'references', refs);
+    }
+
+    // renderGovProjectObservability configures the MANAGED PROJECT targets for
+    // telemetry/operations. It never accepts raw endpoints or credentials:
+    // only environment-variable names and secret-name/key references.
+    function renderGovProjectObservability(p) {
+      p = p || {};
+      const familyKeys = ['open_source', 'kube_native', 'commercial'];
+      const detected = p.detected || {};
+      const hasConfiguredTargets = familyKeys.some(key => Array.isArray(p[key]) && p[key].length);
+      const hasDetectedTargets = familyKeys.some(key => Array.isArray(detected[key]) && detected[key].length);
+      // A first telemetry advisory run discovers likely backends. Preselect its
+      // suggestions, but leave them dirty so only an operator's Save persists
+      // them as declared project state.
+      if (!hasConfiguredTargets && hasDetectedTargets && !p._detectedApplied) {
+        p._detectedApplied = true;
+        familyKeys.forEach(key => {
+          p[key] = Array.isArray(detected[key]) ? detected[key].slice() : [];
+          if (p[key].length) markDirty('project-observability', key, p[key]);
+        });
+      }
+      const supported = p.supported || {
+        open_source: ['prometheus','grafana','opentelemetry','loki','jaeger','tempo','mimir'],
+        kube_native: ['servicemonitor','podmonitor','opentelemetry-operator','grafana-alloy','kube-state-metrics'],
+        commercial: ['datadog','new-relic','dynatrace','honeycomb','splunk','grafana-cloud','google-analytics']
+      };
+      const refs = p.references || {};
+      const family = (key, label) => {
+        const selected = new Set(Array.isArray(p[key]) ? p[key] : []);
+        return `<div class="config-field"><label>${label}</label><select multiple size="${Math.min(7, (supported[key] || []).length)}" data-change-action="gh75" data-family="${key}">${(supported[key] || []).map(v => `<option value="${esc(v)}" ${selected.has(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>`;
+      };
+      const selectedPlatforms = [...new Set([...(p.open_source || []), ...(p.kube_native || []), ...(p.commercial || [])])].sort();
+      const refRows = selectedPlatforms.map(platform => {
+        const ref = refs[platform] || {};
+        return `<div style="border:1px solid var(--border);border-radius:7px;padding:9px;margin-top:8px"><div style="font-size:0.75rem;font-weight:600;margin-bottom:6px">${esc(platform)}</div><div class="config-field-row"><div class="config-field"><label>Endpoint environment variable</label><input type="text" value="${esc(ref.endpoint_env || '')}" placeholder="OTEL_EXPORTER_OTLP_ENDPOINT" data-change-action="gh76" data-platform="${esc(platform)}" data-ref-key="endpoint_env"></div><div class="config-field"><label>Credential secret reference</label><input type="text" value="${esc(ref.credential_secret || '')}" placeholder="observability-credentials/api-key" data-change-action="gh76" data-platform="${esc(platform)}" data-ref-key="credential_secret"></div></div></div>`;
+      }).join('');
+      return `
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Targets for the managed project's telemetry and operations agents. Hive's own OTLP export remains in <b>Features</b>.</p>
+        ${hasDetectedTargets ? '<div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">Telemetry findings supplied detected platform suggestions. Review the selections below; Save explicitly confirms and persists them.</div>' : ''}
+        <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">Select backends, then explicitly enable either agent. Enabling replaces its all-mode paused cadence with a conservative 24h cadence; tune individual modes later from the agent's Cadences tab.</div>
+        <div class="config-toggle"><div class="config-toggle-switch ${p.telemetry_enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="project-observability" data-key="telemetry_enabled"></div><span class="config-toggle-label">Enable telemetry agent</span></div>
+        <div class="config-toggle" style="margin-top:8px"><div class="config-toggle-switch ${p.operations_enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="project-observability" data-key="operations_enabled"></div><span class="config-toggle-label">Enable operations agent</span></div>
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Target platforms</div><div class="config-field-row">${family('open_source','Open source')}${family('kube_native','Kube-native')}</div>${family('commercial','Commercial')}</div>
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Safe references</div><p style="font-size:0.72rem;color:var(--muted)">Names only. Literal URLs, tokens, and API keys are rejected server-side.</p>${refRows || '<p style="font-size:0.72rem;color:var(--muted)">Select a platform to configure its references.</p>'}</div>`;
     }
 
     // renderGovAdvisory renders the advisory digest settings: how many findings
@@ -22879,6 +22944,8 @@ function burnAreaChart() {
       gh72: function (event, A) { markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh75: function (event, A) { projectObservabilityPlatformsChanged(this); },
+      gh76: function (event, A) { projectObservabilityReferenceChanged(this); },
       gh0: function (event, A) { document.getElementById('gh-setup-overlay').style.display='none'; },
       gh1: function (event, A) { openConfigDialog('governor',null,'Repos'); },
       gh2: function (event, A) { acmmSelectRepo(null); },
