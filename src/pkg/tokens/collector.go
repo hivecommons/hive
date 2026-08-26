@@ -21,6 +21,11 @@ type SessionEntry struct {
 	OutputTokens  int64  `json:"output_tokens,omitempty"`
 	Message       string `json:"message,omitempty"`
 	Role          string `json:"role,omitempty"`
+	// Timestamp is the per-entry event time as an ISO 8601 / RFC 3339 string
+	// (the same wire format the Claude and Copilot session files use). It is
+	// optional; entries without one simply don't contribute to the session's
+	// FirstActive/LastActive bracket.
+	Timestamp string `json:"timestamp,omitempty"`
 	// Agent, when set, pins the session to a specific agent instead of
 	// relying on keyword detection from the first user message. Inference
 	// (bare-mode) agents set this so the translator-written usage records
@@ -352,11 +357,25 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 
 	firstUserMsg := ""
 	explicitAgent := ""
-	var lastTimestamp int64
+	// FirstActive/LastActive are the min/max parseable entry timestamps, not
+	// the first/last line seen: flat-format files are append-mostly but not
+	// guaranteed ordered (atomic rewrites and merged records can interleave),
+	// so line position is not a reliable recency signal. Unparseable or absent
+	// timestamps contribute nothing, leaving 0 when no entry carries one.
+	var firstTimestamp, lastTimestamp int64
 	for scanner.Scan() {
 		var entry SessionEntry
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
+		}
+
+		if ts := parseTimestampToUnixMilli(entry.Timestamp); ts > 0 {
+			if ts > lastTimestamp {
+				lastTimestamp = ts
+			}
+			if firstTimestamp == 0 || ts < firstTimestamp {
+				firstTimestamp = ts
+			}
 		}
 
 		if entry.Agent != "" && explicitAgent == "" {
@@ -382,6 +401,7 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 	}
 
 	summary.TotalTokens = summary.InputTokens + summary.OutputTokens + summary.CacheRead + summary.CacheCreate
+	summary.FirstActive = firstTimestamp
 	summary.LastActive = lastTimestamp
 
 	if explicitAgent != "" {

@@ -3,6 +3,7 @@ package tokens
 import (
 	"log/slog"
 	"testing"
+	"time"
 )
 
 // TestInferenceSinkRecordsIntoCollectableFile verifies that usage recorded by
@@ -134,5 +135,68 @@ func TestParseSessionFileExplicitAgent(t *testing.T) {
 	}
 	if got := agg.ByAgent["kellyaa"]; got != 15 {
 		t.Fatalf("ByAgent[kellyaa] = %d, want 15 (explicit agent should win)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp stamping → nonzero First/LastActive for inference sessions (#4835)
+// ---------------------------------------------------------------------------
+
+func TestInferenceSinkStampsTimestampsForLastActive(t *testing.T) {
+	dir := t.TempDir()
+	sink := NewInferenceSink(dir, nil)
+
+	t0 := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	current := t0
+	sink.now = func() time.Time { return current }
+
+	sink.Record("llm-worker", "llama-3", 100, 40)
+	current = t0.Add(45 * time.Minute)
+	sink.Record("llm-worker", "llama-3", 50, 20)
+
+	agg, err := CollectFromDir(dir, nil)
+	if err != nil {
+		t.Fatalf("CollectFromDir: %v", err)
+	}
+	if len(agg.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(agg.Sessions))
+	}
+	sess := agg.Sessions[0]
+	if sess.FirstActive != t0.UnixMilli() {
+		t.Errorf("FirstActive = %d, want first Record time %d", sess.FirstActive, t0.UnixMilli())
+	}
+	if sess.LastActive != t0.Add(45*time.Minute).UnixMilli() {
+		t.Errorf("LastActive = %d, want latest Record time %d", sess.LastActive, t0.Add(45*time.Minute).UnixMilli())
+	}
+}
+
+func TestInferenceSinkFirstSeenSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 8, 26, 8, 0, 0, 0, time.UTC)
+
+	sink := NewInferenceSink(dir, nil)
+	sink.now = func() time.Time { return t0 }
+	sink.Record("llm-worker", "llama-3", 10, 5)
+
+	// Restart: a fresh sink restores FirstSeen from disk, so a later Record
+	// moves only LastSeen forward.
+	sink2 := NewInferenceSink(dir, nil)
+	t1 := t0.Add(2 * time.Hour)
+	sink2.now = func() time.Time { return t1 }
+	sink2.Record("llm-worker", "llama-3", 1, 1)
+
+	agg, err := CollectFromDir(dir, nil)
+	if err != nil {
+		t.Fatalf("CollectFromDir: %v", err)
+	}
+	if len(agg.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(agg.Sessions))
+	}
+	sess := agg.Sessions[0]
+	if sess.FirstActive != t0.UnixMilli() {
+		t.Errorf("FirstActive = %d, want pre-restart first Record %d", sess.FirstActive, t0.UnixMilli())
+	}
+	if sess.LastActive != t1.UnixMilli() {
+		t.Errorf("LastActive = %d, want post-restart Record %d", sess.LastActive, t1.UnixMilli())
 	}
 }
