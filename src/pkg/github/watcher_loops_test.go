@@ -68,14 +68,18 @@ func reviewServer(t *testing.T, hits *atomic.Int64) *httptest.Server {
 // helpers: their restores would otherwise write the package globals while a
 // live watcher goroutine is still reading them on each tick, which the race
 // detector correctly flags — the test would be the data race, not the code.
-func drainAfter(t *testing.T, cancel context.CancelFunc) {
+// Joining via the done channel Start*Watcher now returns replaces the previous
+// fixed 750ms sleep, which was a guess that CI load (and -race slowdown) could
+// and did outlast.
+func drainAfter(t *testing.T, cancel context.CancelFunc, done <-chan struct{}) {
 	t.Helper()
 	t.Cleanup(func() {
 		cancel()
-		// Comfortably more than the 15ms test tick even under -race, which
-		// slows every scan down, so the loop has observed cancellation and
-		// returned before anything it reads is restored.
-		time.Sleep(750 * time.Millisecond)
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("watcher goroutine did not exit after context cancellation")
+		}
 	})
 }
 
@@ -148,8 +152,8 @@ func TestStartMergeRequestWatcher_DispatchesQueuedRequest(t *testing.T) {
 	fastTick(t, func(d time.Duration) { mergeRequestPollInterval = d }, mergeRequestPollInterval)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartMergeRequestWatcher(ctx, func(string, int, string, int, string) error { return nil }, nil)
+	done := c.StartMergeRequestWatcher(ctx, func(string, int, string, int, string) error { return nil }, nil)
+	drainAfter(t, cancel, done)
 
 	if _, err := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 1, Agent: "a"}); err != nil {
 		t.Fatal(err)
@@ -168,11 +172,12 @@ func TestStartMergeRequestWatcher_StopsOnContextCancel(t *testing.T) {
 	fastTick(t, func(d time.Duration) { mergeRequestPollInterval = d }, mergeRequestPollInterval)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartMergeRequestWatcher(ctx, func(string, int, string, int, string) error { return nil }, nil)
+	done := c.StartMergeRequestWatcher(ctx, func(string, int, string, int, string) error { return nil }, nil)
+	drainAfter(t, cancel, done)
 	cancel()
-	// Give the loop time to observe cancellation before queueing work.
-	time.Sleep(80 * time.Millisecond)
+	// Join the loop: after done closes, no scan can run, so the work queued
+	// below deterministically stays unprocessed.
+	<-done
 
 	if _, err := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 2, Agent: "a"}); err != nil {
 		t.Fatal(err)
@@ -200,8 +205,8 @@ func TestStartMergeRequestWatcher_SurvivesMalformedRequest(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartMergeRequestWatcher(ctx, func(string, int, string, int, string) error { return nil }, nil)
+	done := c.StartMergeRequestWatcher(ctx, func(string, int, string, int, string) error { return nil }, nil)
+	drainAfter(t, cancel, done)
 
 	if _, err := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 3, Agent: "a"}); err != nil {
 		t.Fatal(err)
@@ -222,8 +227,8 @@ func TestStartPRRequestWatcher_DispatchesQueuedRequest(t *testing.T) {
 	fastTick(t, func(d time.Duration) { prRequestPollInterval = d }, prRequestPollInterval)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartPRRequestWatcher(ctx, func(string, int) error { return nil }, nil, nil)
+	done := c.StartPRRequestWatcher(ctx, func(string, int) error { return nil }, nil, nil)
+	drainAfter(t, cancel, done)
 
 	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "f", Base: "main", Title: "t", Agent: "a"}); err != nil {
 		t.Fatal(err)
@@ -242,10 +247,10 @@ func TestStartPRRequestWatcher_StopsOnContextCancel(t *testing.T) {
 	fastTick(t, func(d time.Duration) { prRequestPollInterval = d }, prRequestPollInterval)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartPRRequestWatcher(ctx, func(string, int) error { return nil }, nil, nil)
+	done := c.StartPRRequestWatcher(ctx, func(string, int) error { return nil }, nil, nil)
+	drainAfter(t, cancel, done)
 	cancel()
-	time.Sleep(80 * time.Millisecond)
+	<-done
 
 	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "g", Base: "main", Title: "t", Agent: "a"}); err != nil {
 		t.Fatal(err)
@@ -268,8 +273,8 @@ func TestStartReviewRequestWatcher_DispatchesQueuedRequest(t *testing.T) {
 	fastTick(t, func(d time.Duration) { reviewRequestPollInterval = d }, reviewRequestPollInterval)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartReviewRequestWatcher(ctx, func(string, int) error { return nil }, nil)
+	done := c.StartReviewRequestWatcher(ctx, func(string, int) error { return nil }, nil)
+	drainAfter(t, cancel, done)
 
 	if _, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 1, Event: "approve", Agent: "a"}); err != nil {
 		t.Fatal(err)
@@ -288,10 +293,10 @@ func TestStartReviewRequestWatcher_StopsOnContextCancel(t *testing.T) {
 	fastTick(t, func(d time.Duration) { reviewRequestPollInterval = d }, reviewRequestPollInterval)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	drainAfter(t, cancel)
-	c.StartReviewRequestWatcher(ctx, func(string, int) error { return nil }, nil)
+	done := c.StartReviewRequestWatcher(ctx, func(string, int) error { return nil }, nil)
+	drainAfter(t, cancel, done)
 	cancel()
-	time.Sleep(80 * time.Millisecond)
+	<-done
 
 	if _, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 2, Event: "approve", Agent: "a"}); err != nil {
 		t.Fatal(err)

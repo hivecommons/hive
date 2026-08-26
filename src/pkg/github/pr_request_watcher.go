@@ -96,9 +96,16 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 // hold-gated PRs were being opened unlabeled. A nil holdLabel means "never hold".
 //
 // nowFn is injectable for tests; pass nil for time.Now.
-func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func() bool, nowFn func() time.Time) {
+//
+// The returned channel closes when the watcher goroutine has exited (or
+// immediately when it never starts), so callers — tests above all — can JOIN
+// the loop after cancelling instead of sleeping and hoping: an unjoined
+// watcher outliving its test races the test's global-seam restores.
+func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func() bool, nowFn func() time.Time) <-chan struct{} {
+	done := make(chan struct{})
 	if c == nil {
-		return
+		close(done)
+		return done
 	}
 	c.prAuthz = authz
 	c.prHoldLabel = holdLabel
@@ -108,7 +115,8 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 	// Shared with PrepareRequestDirs, which creates this queue unconditionally
 	// at boot so requests can accumulate even before a watcher runs.
 	if !ensureRequestDir(c.logger, "pr", prRequestDir()) {
-		return
+		close(done)
+		return done
 	}
 	// Capture the poll interval BEFORE spawning: the goroutine's first read of
 	// the package-level interval races with a test's fastTick cleanup restoring
@@ -116,6 +124,7 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 	// sequenced with the caller, and the loop only ever needed it once anyway.
 	interval := prRequestPollInterval
 	go func() {
+		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -123,11 +132,19 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// A cancelled ctx can lose the select to an already-ready tick
+				// (select picks randomly among ready cases), letting the loop
+				// process one more scan after cancellation. Fail the tick
+				// closed so cancel means no further processing.
+				if ctx.Err() != nil {
+					return
+				}
 				c.processPRRequests(ctx, nowFn)
 			}
 		}
 	}()
 	c.logger.Info("pr-request watcher started", slog.String("dir", prRequestDir()))
+	return done
 }
 
 // processPRRequests handles one scan of the request dir. Exported-in-spirit for

@@ -144,9 +144,16 @@ func isRequiredCheckMergeBlocker(errMsg string) bool {
 // the per-agent ACMM merge-gate + forge-resistance AND the F4 target-binding
 // (pinned SHA + merge-eligible membership); a nil authz fails closed. nowFn is
 // injectable for tests; pass nil for time.Now.
-func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeRequestAuthorizer, nowFn func() time.Time) {
+//
+// The returned channel closes when the watcher goroutine has exited (or
+// immediately when it never starts), so callers — tests above all — can JOIN
+// the loop after cancelling instead of sleeping and hoping: an unjoined
+// watcher outliving its test races the test's global-seam restores.
+func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeRequestAuthorizer, nowFn func() time.Time) <-chan struct{} {
+	done := make(chan struct{})
 	if c == nil {
-		return
+		close(done)
+		return done
 	}
 	c.mergeAuthz = authz
 	if nowFn == nil {
@@ -155,7 +162,8 @@ func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeReques
 	if err := os.MkdirAll(mergeRequestDir(), 0o777); err != nil {
 		c.logger.Warn("merge-request watcher: cannot create request dir; disabled",
 			slog.String("dir", mergeRequestDir()), slog.String("error", err.Error()))
-		return
+		close(done)
+		return done
 	}
 	// Agents must be able to DROP request files here (hive-merge runs AS the
 	// agent). Force group-write + setgid so agent-written files inherit the node
@@ -171,6 +179,7 @@ func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeReques
 	// sequenced with the caller, and the loop only ever needed it once anyway.
 	interval := mergeRequestPollInterval
 	go func() {
+		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -178,11 +187,19 @@ func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeReques
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// A cancelled ctx can lose the select to an already-ready tick
+				// (select picks randomly among ready cases), letting the loop
+				// process one more scan after cancellation. Fail the tick
+				// closed so cancel means no further processing.
+				if ctx.Err() != nil {
+					return
+				}
 				c.processMergeRequests(ctx, nowFn)
 			}
 		}
 	}()
 	c.logger.Info("merge-request watcher started", slog.String("dir", mergeRequestDir()))
+	return done
 }
 
 func (c *Client) processMergeRequests(ctx context.Context, nowFn func() time.Time) {

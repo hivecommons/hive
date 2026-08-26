@@ -82,9 +82,16 @@ func reviewEventToAPI(event string) (apiEvent, state string, ok bool) {
 // files dropped in ReviewRequestDir. Same contract as StartPRRequestWatcher:
 // returns immediately, runs until ctx cancel, nil client is a no-op (requests
 // accumulate rather than silently dropping), nil authz fails closed.
-func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequestAuthorizer, nowFn func() time.Time) {
+//
+// The returned channel closes when the watcher goroutine has exited (or
+// immediately when it never starts), so callers — tests above all — can JOIN
+// the loop after cancelling instead of sleeping and hoping: an unjoined
+// watcher outliving its test races the test's global-seam restores.
+func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequestAuthorizer, nowFn func() time.Time) <-chan struct{} {
+	done := make(chan struct{})
 	if c == nil {
-		return
+		close(done)
+		return done
 	}
 	c.reviewAuthz = authz
 	if nowFn == nil {
@@ -93,7 +100,8 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 	if err := os.MkdirAll(reviewRequestDir(), 0o777); err != nil {
 		c.logger.Warn("review-request watcher: cannot create request dir; disabled",
 			slog.String("dir", reviewRequestDir()), slog.String("error", err.Error()))
-		return
+		close(done)
+		return done
 	}
 	// Agents (UID >= 2001, shared node group) must be able to DROP request files;
 	// MkdirAll is umask-masked, so force group-write + setgid (same as the PR
@@ -108,6 +116,7 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 	// sequenced with the caller, and the loop only ever needed it once anyway.
 	interval := reviewRequestPollInterval
 	go func() {
+		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -115,11 +124,19 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// A cancelled ctx can lose the select to an already-ready tick
+				// (select picks randomly among ready cases), letting the loop
+				// process one more scan after cancellation. Fail the tick
+				// closed so cancel means no further processing.
+				if ctx.Err() != nil {
+					return
+				}
 				c.processReviewRequests(ctx, nowFn)
 			}
 		}
 	}()
 	c.logger.Info("review-request watcher started", slog.String("dir", reviewRequestDir()))
+	return done
 }
 
 func (c *Client) processReviewRequests(ctx context.Context, nowFn func() time.Time) {
