@@ -1464,3 +1464,48 @@ func TestSweepQueuedAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
 		}
 	}
 }
+
+// The self-authored sweep path has the same audit obligation as the queued
+// one: without a pr_merged trail entry its merges are invisible to the
+// activity collector and the merge-judged /fleet verdict.
+func TestSweepSelfAuthoredAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	type auditRec struct{ action, detail, agent string }
+	var trail []auditRec
+	c.SetAttributionHooks(AttributionHooks{
+		Audit: func(action, detail, agent string) {
+			trail = append(trail, auditRec{action, detail, agent})
+		},
+	})
+
+	if _, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(merged) != 1 {
+		t.Fatalf("expected one merge, got %v", merged)
+	}
+	var got *auditRec
+	for i := range trail {
+		if trail[i].action == AuditActionPRMerged {
+			got = &trail[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("no %s entry on the attribution trail; trail=%#v", AuditActionPRMerged, trail)
+	}
+	if got.agent != AttributionAgentGovernor {
+		t.Errorf("pr_merged agent = %q, want %q", got.agent, AttributionAgentGovernor)
+	}
+	for _, want := range []string{"number=11", "method=squash"} {
+		if !strings.Contains(got.detail, want) {
+			t.Errorf("pr_merged detail missing %q: %q", want, got.detail)
+		}
+	}
+}
