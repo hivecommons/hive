@@ -513,7 +513,7 @@ Both polarities are enforced at **enumeration** — the point where GitHub issue
 - **[Architecture](architecture.md)** — process model, deterministic pipeline, governor loop, guardrails, and hub/spoke design.
 - **[Portable AgentDefinition format](../AGENT-DEFINITION.md)** — standalone YAML schema for agent imports, exports, and overlays.
 - **[Dashboard route and health checks](health-checks.md)** — listener probes and alert behavior for stuck sessions and restart loops.
-- **[Troubleshooting](../../docs/troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
+- **[Troubleshooting](troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
 - **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
 - **[Cross-cluster migration](cross-cluster-migration.md)** — the manual procedure for moving a hive (and its PVC state) between clusters.

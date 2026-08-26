@@ -288,7 +288,7 @@ Configure via the dashboard (Strategy Lab panel, ACMM level 4+) or the `/api/nou
 
 ## Further reading
 
-- [v2 docs index](docs/README.md) — all operator, contributor, and design docs.
+- [documentation index](docs/README.md) — all operator, contributor, and design docs.
 - [Cross-cluster migration](docs/cross-cluster-migration.md) — move a hive between clusters.
 - [Manual provisioning](docs/manual-provisioning.md) — hosted/spoke provisioning and hub access.
 - [Config layering](docs/config-layering.md) — ConfigMap vs PVC overlay precedence.
@@ -347,7 +347,7 @@ The `deploy/` directory contains pre-built configurations for common deployment 
 ## Additional references
 
 - [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
-- [Troubleshooting](docs/troubleshooting.md) — v2 container logs, config validation, agent sessions, dashboard auth, and GitHub credential checks.
+- [Troubleshooting](docs/troubleshooting.md) — container logs, config validation, agent sessions, dashboard auth, and GitHub credential checks.
 - [Config layering](docs/config-layering.md) — effective config provenance and precedence.
 - [Dashboard API reference](docs/api-reference.md) — generated route index.
 - [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.
