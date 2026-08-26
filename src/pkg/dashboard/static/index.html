@@ -6181,6 +6181,7 @@
           ${agentTokenRow(a.name, a.cadence)}
           ${agentSpendRow(a.name)}
           <div class="agent-field"><span class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability or rate limiting.">restarts</span><span class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts || 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? `<button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></span></div>
+          ${watchdogConditionsRow(a)}
           <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${(() => {
             const isClaude = a.cli === 'claude';
             const isCopilot = a.cli === 'copilot';
@@ -19764,7 +19765,83 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
           <span class="config-toggle-label">Model Lock <span class="config-info">i<span class="config-tooltip">When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.</span></span></span>
         </div>
-        ${renderEscalationSection(_configState.data.escalation)}`;
+        ${renderEscalationSection(_configState.data.escalation)}
+        ${renderWatchdogSection(h.watchdog)}`;
+    }
+
+    // Watchdog section on the Health tab (RFC #4665). It lives beside the
+    // escalation breaker deliberately: both answer the same operator question —
+    // what happens when an agent misbehaves, and when does the system stop
+    // trying? Splitting them across two tabs would split one question.
+    //
+    // The backoff ladder is rendered read-only: it is a derived progression,
+    // and letting an operator type an arbitrary one invites a 1-second cap.
+    function renderWatchdogSection(w) {
+      if (!w) return '';
+      const modes = [
+        ['observe', 'Observe', 'Watch and report only. Publishes conditions and records what it WOULD have done, but never restarts or pauses an agent.'],
+        ['heal', 'Heal', 'Full self-healing. Restarts dead agents with backoff, and pauses an agent that will not recover.'],
+        ['off', 'Off', 'The watchdog does not run at all.'],
+      ];
+      const mode = w.mode || 'observe';
+      const opts = modes.map(([v, label]) =>
+        `<option value="${esc(v)}"${v === mode ? ' selected' : ''}>${esc(label)}</option>`).join('');
+      const modeHelp = modes.map(([v, label, desc]) =>
+        `<div style="margin-bottom:3px${v === mode ? ';color:var(--text)' : ''}"><strong>${esc(label)}</strong> — ${esc(desc)}</div>`).join('');
+
+      // The kill switch is fleet-wide and outranks this hive's saved mode, so
+      // the banner must say the stored value is not the value in force.
+      const pausedBanner = w.paused ? `
+        <div style="border:1px solid var(--line);border-left:3px solid var(--accent);padding:8px 10px;margin-bottom:10px;font-size:0.75rem;color:var(--muted)">
+          <strong style="color:var(--text)">Fleet-wide pause active.</strong>
+          ${esc(w.pausedEnv || 'HIVE_WATCHDOG_PAUSE')} is set on this deployment, so healing is downgraded to observe no matter what is saved here.
+        </div>` : '';
+
+      const healBanner = mode === 'heal' && !w.paused ? `
+        <div style="border:1px solid var(--line);border-left:3px solid var(--accent);padding:8px 10px;margin-bottom:10px;font-size:0.75rem;color:var(--muted)">
+          <strong style="color:var(--text)">Healing is active.</strong>
+          This watchdog can restart agents and pause one that will not recover. Every action it takes is recorded in the Audit Log.
+        </div>` : '';
+
+      const observeBanner = mode === 'observe' && !w.paused ? `
+        <div style="border:1px solid var(--line);border-left:3px solid var(--accent);padding:8px 10px;margin-bottom:10px;font-size:0.75rem;color:var(--muted)">
+          <strong style="color:var(--text)">Observe only — no agent is being restarted or paused.</strong>
+          Conditions below and <code>watchdog-*-observed</code> entries in the Audit Log show what healing WOULD have done. Review those, then switch to Heal.
+        </div>` : '';
+
+      const ladder = (w.backoff || []).map(b => esc(b)).join(' → ') || '—';
+
+      return `
+        <h4 style="margin:18px 0 8px">Agent Watchdog</h4>
+        <p style="font-size:0.75rem;color:var(--muted);margin:0 0 10px">
+          Observes each agent's actual terminal rather than its configured state, and can restart agents that are running but dead.
+        </p>
+        ${pausedBanner}${healBanner}${observeBanner}
+        <div class="config-field-row">
+          <div class="config-field">
+            <label>Mode <span class="config-info">i<span class="config-tooltip">How much authority the watchdog has over your agents. Start in Observe, read the Audit Log, then move to Heal.</span></span></label>
+            <select data-change-action="markDirty" data-arg0="health" data-arg1="watchdogMode" data-arg-types="s,s,s">${opts}</select>
+          </div>
+          <div class="config-field">
+            <label>Probe interval (sec) <span class="config-info">i<span class="config-tooltip">Minimum seconds between watchdog sweeps. Each sweep captures one terminal per agent, so this is the main throttle on its cost.</span></span></label>
+            <input type="number" min="30" max="86400" value="${esc(String(w.probeIntervalS || 300))}" data-change-action="markDirty" data-arg0="health" data-arg1="watchdogProbeIntervalS" data-arg-types="s,s,N">
+          </div>
+        </div>
+        <div style="font-size:0.7rem;color:var(--muted);margin:-4px 0 12px;line-height:1.5">${modeHelp}</div>
+        <div class="config-field-row">
+          <div class="config-field">
+            <label>Give up after (failed restarts) <span class="config-info">i<span class="config-tooltip">How many consecutive failed restarts before the watchdog stops trying and pauses the agent for a human. Restarting forever is never the answer.</span></span></label>
+            <input type="number" min="1" max="50" value="${esc(String(w.crashLoopAfter || 5))}" data-change-action="markDirty" data-arg0="health" data-arg1="watchdogCrashLoopAfter" data-arg-types="s,s,N">
+          </div>
+          <div class="config-field">
+            <label>Healthy reset window <span class="config-info">i<span class="config-tooltip">How long an agent must stay continuously healthy before its failure count clears. One good check is not enough — that would let a flapping agent launder its record.</span></span></label>
+            <input type="text" placeholder="30m" value="${esc(w.healthyReset || '30m')}" data-change-action="markDirty" data-arg0="health" data-arg1="watchdogHealthyReset" data-arg-types="s,s,s">
+          </div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-bottom:6px">
+          Restart backoff ladder: <code style="font-family:var(--font-mono)">${ladder}</code>
+          <span style="opacity:0.8">— fixed progression; the last step is the cap.</span>
+        </div>`;
     }
 
     // Escalation breaker section on the Health tab. The config lives at the
@@ -19787,6 +19864,70 @@ function burnAreaChart() {
         <div class="config-field-row">
           <div class="config-field"><label>Red-attempt threshold <span class="config-info">i<span class="config-tooltip">${tip}</span></span></label><input type="number" min="0" placeholder="3" value="${e.threshold || ''}" data-change-action="markDirty" data-arg0="escalation" data-arg1="threshold" data-arg-types="s,s,N"></div>
         </div>`;
+    }
+
+    // watchdogConditionsRow renders the watchdog's OBSERVED truth for one agent
+    // (RFC #4665): Ready / Authenticated / Producing, each with the reason
+    // behind it. This is deliberately on the agent card rather than in the
+    // Health tab — the condition set belongs next to the agent it describes,
+    // while the watchdog's SETTINGS belong in Health.
+    //
+    // In observe mode the watchdog takes no action, so a False condition here
+    // describes something it did NOT fix. The row says so explicitly: a reader
+    // must never see "crash-looping" and conclude the agent was paused.
+    function watchdogConditionsRow(a) {
+      const conds = a.conditions || [];
+      if (!conds.length) return '';
+      const observing = a.watchdogMode === 'observe';
+
+      const chips = conds.map(c => {
+        const status = c.status || 'Unknown';
+        // Colour by status, not by condition type: True is good for all three.
+        const color = status === 'True' ? 'var(--ok, var(--accent))'
+          : status === 'False' ? 'var(--danger)'
+          : 'var(--muted)';
+        const mark = status === 'True' ? '✓' : status === 'False' ? '✕' : '?';
+        const tip = [c.type, status, c.reason, c.message].filter(Boolean).join(' — ');
+        return `<span style="color:${color};margin-right:8px;white-space:nowrap" title="${esc(tip)}">${mark} ${esc(c.type || '')}</span>`;
+      }).join('');
+
+      const notActedOn = observing && conds.some(c => c.status === 'False');
+      const note = notActedOn
+        ? `<div style="font-size:0.68rem;color:var(--muted);margin-top:2px">observe mode — reported only, no restart or pause was performed</div>`
+        : '';
+
+      const label = observing ? 'observed' : 'watchdog';
+      const labelTip = observing
+        ? 'What the watchdog observed. It is in observe mode, so it reported these and took no action.'
+        : 'What the watchdog observed. It is in heal mode, so it acts on these.';
+
+      return `<div class="agent-field"><span class="label" title="${esc(labelTip)}">${esc(label)}</span><span class="value">${chips}${note}</span></div>`;
+    }
+
+    // WATCHDOG_SAVE_KEYS maps the dirty keys the Watchdog section writes (it
+    // renders inside the Health tab, so its keys live in the health bag) to the
+    // field names /api/config/governor/watchdog expects.
+    const WATCHDOG_SAVE_KEYS = {
+      watchdogMode: 'mode',
+      watchdogProbeIntervalS: 'probeIntervalS',
+      watchdogCrashLoopAfter: 'crashLoopAfter',
+      watchdogHealthyReset: 'healthyReset',
+    };
+
+    function hasWatchdogKeys(values) {
+      return Object.keys(values || {}).some(k => k in WATCHDOG_SAVE_KEYS);
+    }
+
+    // splitWatchdogKeys separates one dirty health bag into the watchdog
+    // payload and whatever genuinely belongs to the health endpoint.
+    function splitWatchdogKeys(values) {
+      const watchdog = {};
+      const health = {};
+      for (const [k, v] of Object.entries(values || {})) {
+        if (k in WATCHDOG_SAVE_KEYS) watchdog[WATCHDOG_SAVE_KEYS[k]] = v;
+        else health[k] = v;
+      }
+      return { watchdog, health };
     }
 
     // toggleEscalationEnabled inverts the toggle into the stored Disabled flag:
@@ -21146,6 +21287,26 @@ function burnAreaChart() {
               body: JSON.stringify({ id: values.hiveId })
             });
             if (!idRes.ok) throw new Error(await saveErrorMessage(idRes));
+          } else if (_configState.type === 'governor' && section === 'health' && hasWatchdogKeys(values)) {
+            // The Watchdog controls render inside the Health tab, but they save
+            // to their own endpoint (governor.watchdog is its own config block).
+            // Split the dirty bag: watchdog keys go one way, the rest stay on
+            // the health endpoint, so editing both in one visit saves both.
+            const { watchdog, health } = splitWatchdogKeys(values);
+            const wdRes = await fetch('/api/config/governor/watchdog', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(watchdog)
+            });
+            if (!wdRes.ok) throw new Error(await saveErrorMessage(wdRes));
+            if (Object.keys(health).length > 0) {
+              const hRes = await fetch(`${base}/health`, {
+                method: 'PUT',
+                headers: _inceptionAuthHeaders(),
+                body: JSON.stringify(health)
+              });
+              if (!hRes.ok) throw new Error(await saveErrorMessage(hRes));
+            }
           } else if (_configState.type === 'governor' && section === 'escalation') {
             // Escalation is a top-level Config field, not under /governor.
             const escRes = await fetch('/api/config/escalation', {

@@ -52,7 +52,7 @@ func defaultBackoff() []time.Duration {
 	}
 }
 
-// watchdogPauseEnv is the fleet-wide watchdog kill switch. Set it to a truthy
+// WatchdogPauseEnv is the fleet-wide watchdog kill switch. Set it to a truthy
 // value (1/true/yes/on) on the deployment and every hive that reads it drops
 // from heal to observe on its next config resolve — conditions and alerts keep
 // flowing, restarts and pauses stop.
@@ -67,13 +67,13 @@ func defaultBackoff() []time.Duration {
 //
 // It can only ever REDUCE authority: it never turns a watchdog ON, and it
 // never promotes observe to heal.
-const watchdogPauseEnv = "HIVE_WATCHDOG_PAUSE"
+const WatchdogPauseEnv = "HIVE_WATCHDOG_PAUSE"
 
 // WatchdogActionPaused reports whether the fleet-wide kill switch is engaged.
 // Read at every config resolve rather than cached at boot, so engaging it
 // takes effect without a restart.
 func WatchdogActionPaused() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(watchdogPauseEnv))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(WatchdogPauseEnv))) {
 	case "1", "true", "yes", "on":
 		return true
 	}
@@ -193,7 +193,7 @@ func SettingsFrom(cfg config.WatchdogConfig) (Settings, []error) {
 	// operator can stop all watchdog action without editing 55 hive.yamls or
 	// waiting for a redeploy. It can only ever REDUCE authority.
 	if WatchdogActionPaused() && s.Mode == ModeHeal {
-		errs = append(errs, fmt.Errorf("watchdog.mode: heal downgraded to observe by the %s kill switch", watchdogPauseEnv))
+		errs = append(errs, fmt.Errorf("watchdog.mode: heal downgraded to observe by the %s kill switch", WatchdogPauseEnv))
 		s.Mode = ModeObserve
 	}
 

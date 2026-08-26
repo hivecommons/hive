@@ -139,7 +139,7 @@ func TestModeResolution(t *testing.T) {
 // TestKillSwitchDowngradesHealToObserve asserts the fleet-wide switch can only
 // ever REDUCE authority: it downgrades heal, and it never promotes off.
 func TestKillSwitchDowngradesHealToObserve(t *testing.T) {
-	t.Setenv(watchdogPauseEnv, "true")
+	t.Setenv(WatchdogPauseEnv, "true")
 
 	s, errs := SettingsFrom(config.WatchdogConfig{Mode: "heal"})
 	if s.Mode != ModeObserve {
@@ -158,7 +158,7 @@ func TestKillSwitchDowngradesHealToObserve(t *testing.T) {
 	}
 
 	// Positive control: without the switch, heal is heal.
-	t.Setenv(watchdogPauseEnv, "")
+	t.Setenv(WatchdogPauseEnv, "")
 	if s3, _ := SettingsFrom(config.WatchdogConfig{Mode: "heal"}); s3.Mode != ModeHeal {
 		t.Fatalf("without the kill switch heal must survive, got %q", s3.Mode)
 	}

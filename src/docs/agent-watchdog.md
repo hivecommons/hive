@@ -64,7 +64,7 @@ field with a logged warning — a config typo never silently disables healing.
 ```yaml
 governor:
   watchdog:
-    enabled: true
+    mode: observe          # observe (default) | heal | off
     probe_interval_s: 300
     liveness:
       stuck_overlay_after: 10m
@@ -78,8 +78,64 @@ governor:
     auth_probe: true
 ```
 
+`mode` is the authority level, and the default is deliberately `observe`:
+
+| mode | classifies, publishes conditions, alerts | restarts / pauses |
+|---|---|---|
+| `observe` (default) | yes | **no** |
+| `heal` | yes | yes |
+| `off` | no | no |
+
+This reconciler restarts agents across the fleet, so it does not ship with that
+authority. In `observe` it records what healing *would* have done — as audit
+entries suffixed `-observed` — on your own agents, so promotion to `heal` is a
+decision made on evidence rather than trust. Read the Audit Log, then switch.
+
+The pre-mode `enabled` flag still works: `false` maps to `off`, and `true` or
+absent maps to `observe` — never straight to `heal`, because a config written
+before modes existed never consented to fleet-wide restarts. An unrecognized
+`mode` falls back to `observe` and logs; a typo never grants authority.
+
+Settings are editable in the dashboard under **Settings → Governor → Health**,
+beside the escalation breaker, so nobody has to hand-edit `hive.yaml`. The
+backoff ladder is shown there read-only: it is a derived progression, and an
+arbitrary ladder invites a one-second cap.
+
+### Fleet-wide kill switch
+
+Set `HIVE_WATCHDOG_PAUSE=true` on the deployment to downgrade every hive that
+reads it from `heal` to `observe` — conditions and alerts keep flowing, but no
+agent is restarted or paused. It is read at every config resolve, so engaging
+it needs no restart, and it can only ever *reduce* authority: it never turns a
+watchdog on and never promotes `observe` to `heal`. This is the analogue of the
+hub's spoke-upgrade pause, for the case where an operator needs the automated
+actor to stop across the fleet without editing 55 configs.
+
 Backoff and crash-loop state persist in the hive state file (`watchdog` key),
 so a pod restart does not reset an escalated agent back into a restart storm.
+
+## Audit trail
+
+Every action the watchdog takes is written to the durable audit log
+(`/data/audit.jsonl`, 90-day retention) under the user `watchdog`, visible in
+the dashboard Audit Log:
+
+| action | when |
+|---|---|
+| `watchdog-restart` | a dead agent was restarted (detail carries the pane class, failure count and backoff step) |
+| `watchdog-crashloop-pause` | the give-up threshold was reached and the agent was paused |
+| `watchdog-giveup` | recorded alongside the pause: no further restarts will be attempted |
+| `watchdog-healthy-reset` | a continuously healthy agent's failure counter was cleared |
+
+In `observe` mode the same decisions are recorded with an `-observed` suffix
+(`watchdog-restart-observed`), so a reader can never mistake "would have
+paused" for "paused". Sweeps and probes write nothing — only actions and
+transitions — because the in-memory ring is small and per-sweep noise would
+evict the entries that matter. Entries carry the reasoning, never pane content.
+
+The `watchdog` user is deliberately not one of the audit log's pseudo-users:
+its actions must be auditable, but they must not count as *human* engagement in
+the activity signal the hub reports.
 
 ## Coordination with existing machinery
 
@@ -90,6 +146,17 @@ so a pod restart does not reset an escalated agent back into a restart storm.
   capped token-restart accounting from #4606.
 - Provider auth probes are the rotation package's probers (#4608), so probe
   improvements there (e.g. #4645) apply here unchanged.
+- Dead-session and bare-pane recovery is the watchdog's ONLY in `heal` mode:
+  the agent manager's crash loop stops restarting those two conditions so the
+  bounded ladder is the single throttle. In `observe` (and `off`) the manager
+  keeps that job, so there is never a window in which neither restarts a dead
+  agent. Consent-screen dismissal and the inference stall nudge are not
+  restarts and always stay with the manager.
+- `Producing=False` requires work to actually be queued. An agent with an empty
+  queue producing nothing is behaving correctly, and reporting it would light
+  the condition on every healthy quiet hive — the same rule the hub applies to
+  agent inactivity. Advisory-tier agents, which cannot drain a queue by design,
+  are never marked down for a backlog they may not touch.
 - The shared-`$HOME` 0600 permission clobber (RFC failure mode 3) was fixed
   at the source by the `umask 007` launch change (#4668) and is not
   re-implemented here.

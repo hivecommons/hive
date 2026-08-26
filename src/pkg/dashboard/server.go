@@ -486,6 +486,12 @@ type FrontendAgent struct {
 	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
 	// State config echo. Empty until the watchdog's first sweep.
 	Conditions []watchdog.Condition `json:"conditions,omitempty"`
+	// WatchdogMode is the authority the watchdog was running under when it
+	// published Conditions. The UI needs it to say whether a condition implied
+	// an action that was actually TAKEN: in observe mode a "crash-looping"
+	// verdict means the agent was NOT paused, and a reader must not conclude
+	// otherwise.
+	WatchdogMode string `json:"watchdogMode,omitempty"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the

@@ -66,3 +66,46 @@ func TestAgentPayloadCarriesWatchdogConditions(t *testing.T) {
 		t.Fatal("unswept agent must omit conditions, not fabricate them")
 	}
 }
+
+// TestAgentPayloadCarriesWatchdogMode asserts the authority the conditions were
+// gathered under rides with them. Without it the UI cannot tell an operator
+// whether a False condition was acted on, and "crash-looping" would read as
+// "paused" even when nothing was paused.
+func TestAgentPayloadCarriesWatchdogMode(t *testing.T) {
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {State: agent.StateRunning},
+	}
+	newCfg := func(mode string) *config.Config {
+		return &config.Config{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Enabled: true}},
+			Governor: config.GovernorConfig{
+				Modes:    map[string]config.ModeConfig{},
+				Watchdog: config.WatchdogConfig{Mode: mode},
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{"", string(watchdog.DefaultMode)}, // absent block resolves to the default
+		{"observe", "observe"},
+		{"heal", "heal"},
+	} {
+		payload := BuildAgentOnlyStatus(governor.State{Mode: "IDLE"}, statuses, newCfg(tc.mode))
+		if len(payload.Agents) != 1 {
+			t.Fatalf("want 1 agent, got %d", len(payload.Agents))
+		}
+		if got := payload.Agents[0].WatchdogMode; got != tc.want {
+			t.Errorf("watchdogMode for %q = %q, want %q", tc.mode, got, tc.want)
+		}
+	}
+
+	// A disabled watchdog reports no mode at all: there is no authority to
+	// describe, and an empty field renders no claim.
+	payload := BuildAgentOnlyStatus(governor.State{Mode: "IDLE"}, statuses, newCfg("off"))
+	if got := payload.Agents[0].WatchdogMode; got != "" {
+		t.Errorf("a disabled watchdog must report no mode, got %q", got)
+	}
+}
