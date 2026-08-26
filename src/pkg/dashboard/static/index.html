@@ -138,6 +138,8 @@
       background: var(--bg-soft); border-right: 1px solid var(--line);
       display: flex; flex-direction: column; padding: 0;
       z-index: 100; overflow-y: auto;
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
     }
     .oc-sidebar-resize {
       position: fixed; top: 0; bottom: 0; width: 5px;
@@ -944,7 +946,7 @@
     .gh-auth-modal .gh-verify-link:hover { background: color-mix(in srgb, var(--green) 85%, #fff); }
     .gh-auth-modal .gh-poll-status { color: var(--muted); font-size: 0.8rem; margin-top: 12px; }
     .gh-auth-modal .gh-cancel { margin-top: 12px; } /* ghost button (system recipe) */
-    .gh-setup-modal { padding: 32px; max-width: 560px; width: 92%; text-align: left; max-height: 85vh; overflow-y: auto; } /* modal panel recipe */
+    .gh-setup-modal { padding: 32px; max-width: 560px; width: 92%; text-align: left; max-height: 85vh; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; } /* modal panel recipe */
     .claude-auth-btn { background: #d97706; color: #fff; border: none; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
     .claude-auth-btn:hover { background: #f59e0b; }
     .claude-auth-status { font-size: 0.8rem; color: var(--muted); }
@@ -1647,7 +1649,7 @@
     @keyframes config-fade-in { from { opacity: 0; } to { opacity: 1; } }
     .hive-dialog-overlay { z-index: 20000; }
     .acmm-dialog-overlay { z-index: 10000; } /* JS toggles inline display flex/none */
-    .acmm-dialog { padding: 20px; max-width: 600px; width: 92%; max-height: 80vh; overflow-y: auto; }
+    .acmm-dialog { padding: 20px; max-width: 600px; width: 92%; max-height: 80vh; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     .hive-dialog { width: 460px; max-width: 92vw; padding: 24px; } /* modal panel recipe */
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: 12px; }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: 20px; }
@@ -1763,7 +1765,7 @@
     /* compact stat-row inputs — size step re-declared after the input recipe */
     /* .btn-sm / .btn-danger / .btn-add — ghost/danger/secondary buttons (system recipe) */
     .btn-sm:disabled { opacity: 0.3; cursor: default; }
-    .config-stats-list { max-height: 400px; overflow-y: auto; padding-right: 12px; }
+    .config-stats-list { max-height: 400px; overflow-y: auto; padding-right: 12px; overscroll-behavior: contain; overscroll-behavior-y: contain; }
 
     .config-info {
       display: inline-flex; align-items: center; justify-content: center;
@@ -1901,6 +1903,8 @@
       background: var(--bg); border: 1px solid var(--border);
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
       display: none; flex-direction: column; overflow: hidden;
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
     }
     .hive-chat-resize {
       height: 6px; cursor: ns-resize; background: transparent;
@@ -1920,6 +1924,8 @@
       flex: 1; overflow-y: auto; padding: 12px 14px;
       display: flex; flex-direction: column; gap: 10px;
       min-height: 100px;
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
     }
     .chat-msg {
       max-width: 88%; padding: 8px 12px; border-radius: 10px;
@@ -1934,7 +1940,7 @@
       border-top: 1px solid var(--border); background: var(--surface);
     }
     /* .hive-chat-input — shared input recipe (end of style block) */
-    .hive-chat-input { flex: 1; resize: none; min-height: 36px; max-height: 80px; }
+    .hive-chat-input { flex: 1; resize: none; min-height: 36px; max-height: 80px; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     .hive-chat-send {
       background: var(--purple); color: var(--bg); border: none; border-radius: 8px;
       padding: 0 14px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
@@ -1946,7 +1952,7 @@
     .chat-sources span { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; margin-right: 3px; }
     .chat-raw-details { margin-top: 6px; font-size: 0.7rem; }
     .chat-raw-details summary { cursor: pointer; color: var(--muted); font-size: 0.65rem; }
-    .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: 4px; max-height: 200px; overflow-y: auto; }
+    .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: 4px; max-height: 200px; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     @media (max-width: 500px) {
       .hive-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 72px; }
       /* Phone: the fixed FAB used to sit on top of in-flow controls at the
@@ -2003,6 +2009,14 @@
     .nous-config-dialog { width: 900px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; padding: 0; }
     .nous-config-dialog > h2 { flex-shrink: 0; padding: 24px 24px 0; }
     .nous-config-dialog > .nous-config-body { flex: 1; overflow-y: auto; padding: 16px 24px; }
+    .nous-config-body,
+    .nous-config-body textarea,
+    .nous-config-body pre,
+    .nous-config-body [style*="overflow-y:auto"],
+    .nous-config-body [style*="overflow-y: auto"] {
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
+    }
     .nous-config-dialog > .nous-config-footer { flex-shrink: 0; padding: 12px 24px; border-top: 1px solid var(--border); }
     .nous-config-dialog h2 { font-size: var(--fs-lg); margin: 0 0 16px 0; display: flex; align-items: center; gap: 8px; }
     .nous-config-section { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
@@ -2345,6 +2359,8 @@
       -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
       display: flex; align-items: center; justify-content: center;
       animation: config-fade-in 0.15s ease-out;
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
     }
     /* Glass panel — hub recipe linear-gradient(#17212deb,#0c1219eb) +
        border #ffffff1a, expressed in tokens so the light-mode remap
@@ -2513,7 +2529,7 @@
        button recipes (.config-overlay/.config-modal/.hive-dialog-btn);
        only the checklist internals are defined here. Tokens only. */
     .welcome-modal { max-width: 680px; width: 92%; max-height: 86vh; display: flex; flex-direction: column; }
-    .welcome-body { padding: 4px 24px 16px; overflow-y: auto; }
+    .welcome-body { padding: 4px 24px 16px; overflow-y: auto; overscroll-behavior: contain; overscroll-behavior-y: contain; }
     .welcome-progress { font-size: 0.72em; font-weight: 400; color: var(--muted); margin-left: 8px; white-space: nowrap; }
     .welcome-intro { font-size: var(--fs-base); color: var(--text); margin: 12px 0 16px; line-height: 1.55; }
     .welcome-step { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; background: color-mix(in srgb, var(--panel-strong) 40%, transparent); }
@@ -3882,11 +3898,19 @@
         return false;
       }
       function sync() { document.body.classList.toggle('modal-open', anyOverlayOpen()); }
-      var obs = new MutationObserver(sync);
-      function start() {
+      var obs = new MutationObserver(function() {
+        // Re-observing is harmless and subscribes overlays appended after
+        // startup (KB/ACMM) before their next display toggle.
+        observeOverlays();
+        sync();
+      });
+      function observeOverlays() {
         document.querySelectorAll(OVERLAY_SELECTOR).forEach(function(el) {
           obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
         });
+      }
+      function start() {
+        observeOverlays();
         // Catch overlays created later (e.g. acmm dialog appended on first open).
         obs.observe(document.body, { childList: true, subtree: false });
         sync();
@@ -14959,7 +14983,6 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
       }
       overlay.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
       overlay.innerHTML = '<div class="acmm-dialog">' +
         '<div class="row-between" style="margin-bottom:12px">' +
         '<h3 style="margin:0;font-size:1rem;font-weight:700;color:var(--text)">' + title + '</h3>' +
@@ -14970,7 +14993,6 @@ function burnAreaChart() {
     function acmmCloseDialog() {
       const overlay = document.getElementById('acmm-dialog-overlay');
       if (overlay) overlay.style.display = 'none';
-      document.body.style.overflow = '';
     }
 
     function acmmSelectRepo(repoName) {

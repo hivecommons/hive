@@ -139,6 +139,34 @@ func TestModalScrollContainment(t *testing.T) {
 	if !strings.Contains(html[idx:idx+end], "overscroll-behavior: contain;") {
 		t.Error(".config-body rule is missing overscroll-behavior: contain — modal body scroll chains to the page")
 	}
+	// Other bounded overlay surfaces must not hand their wheel delta to the
+	// dashboard when they reach an edge (#4805).
+	for _, selector := range []string{
+		".oc-sidebar {",
+		".gh-setup-modal {",
+		".acmm-dialog {",
+		".config-stats-list {",
+		".hive-chat-panel {",
+		".hive-chat-messages {",
+		".hive-chat-input {",
+		".chat-raw-details pre {",
+		".nous-config-body,",
+		".welcome-body {",
+		".gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {",
+	} {
+		idx := strings.Index(html, selector)
+		if idx < 0 {
+			t.Errorf("index.html has no %s rule", selector)
+			continue
+		}
+		end := strings.Index(html[idx:], "}")
+		if end < 0 || !strings.Contains(html[idx:idx+end], "overscroll-behavior: contain;") {
+			t.Errorf("%s rule is missing overscroll containment (#4805)", selector)
+		}
+	}
+	if !strings.Contains(html, `.nous-config-body [style*="overflow-y:auto"],`) {
+		t.Error("KB inline scrollers are missing containment coverage (#4805)")
+	}
 }
 
 // TestModalBodyScrollLockReused asserts the pre-existing single body scroll-lock
@@ -153,9 +181,13 @@ func TestModalBodyScrollLockReused(t *testing.T) {
 		"body.modal-open { overflow: hidden; }",
 		// The config overlay is one of the observed overlays.
 		"var OVERLAY_SELECTOR = '.config-overlay,",
+		"function observeOverlays() {",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q — the shared modal body scroll lock regressed", snippet)
 		}
+	}
+	if strings.Contains(html, "document.body.style.overflow") {
+		t.Error("a modal still manages body.style.overflow directly instead of using the shared modal-open lock")
 	}
 }
