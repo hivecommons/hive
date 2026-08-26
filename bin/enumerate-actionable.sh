@@ -5,7 +5,8 @@
 #
 # Exclusion rules (structural, not advisory):
 #   - Issues/PRs with any label containing "hold" (hold, on-hold, hold/review)
-#   - Issues with labels: do-not-merge, auto-qa-tuning-report, or starting with "LFX"
+#   - Issues/PRs with labels: blocked, do-not-merge, auto-qa-tuning-report, or
+#     starting with "LFX"
 #   - PRs that modify ADOPTERS.md / ADOPTERS.MD (checked via file list)
 #   - Draft PRs (isDraft=true)
 #   - External contributor issues missing a commit SHA in the body
@@ -134,7 +135,7 @@ while pos < len(raw):
         break
 
 HOLD_SUBSTRINGS = ['hold']
-EXCLUDED_LABELS = {'do-not-merge', 'auto-qa-tuning-report'}
+EXCLUDED_LABELS = {'blocked', 'do-not-merge', 'auto-qa-tuning-report'}
 EXCLUDED_PREFIXES = ('LFX',)
 
 def is_excluded(labels):
@@ -143,7 +144,7 @@ def is_excluded(labels):
         for h in HOLD_SUBSTRINGS:
             if h in ll:
                 return True
-        if l in EXCLUDED_LABELS:
+        if ll in EXCLUDED_LABELS:
             return True
         for p in EXCLUDED_PREFIXES:
             if l.startswith(p):
@@ -177,10 +178,12 @@ while pos < len(raw):
         break
 
 HOLD_SUBSTRINGS = ['hold']
+EXCLUDED_LABELS = {'blocked'}
 
 def has_hold(labels):
     for l in labels:
-        if any(h in l.lower() for h in HOLD_SUBSTRINGS):
+        ll = l.lower()
+        if any(h in ll for h in HOLD_SUBSTRINGS) or ll in EXCLUDED_LABELS:
             return True
     return False
 

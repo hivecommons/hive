@@ -342,11 +342,13 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 			if active[itemKey] {
 				continue
 			}
+			labels := stringSliceFromAny(issue["labels"])
 			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
 				repoFull:  repo.Full,
 				repoName:  repo.Name,
 				number:    number,
 				ref:       ref,
+				labels:    labels,
 				dependsOn: dependenciesFromIssueMap(issue),
 			})
 			if !decision.admitted {
@@ -368,7 +370,6 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
-			labels := stringSliceFromAny(issue["labels"])
 			assignees := stringSliceFromAny(issue["assignees"])
 
 			// Apply the SAME admission filters selectTask enforces so the queue

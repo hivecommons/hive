@@ -4752,6 +4752,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			if activeIssues[itemKey] {
 				continue
 			}
+			labels := stringSliceFromAny(issue["labels"])
 			// #3768: skip an issue that an open PR — from ANYONE, hive agent or
 			// human contributor — already claims to fix. The activeIssues guard
 			// above only covers tasks held by LIVE connections, and the
@@ -4768,6 +4769,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				repoName:  repo.Name,
 				number:    number,
 				ref:       ref,
+				labels:    labels,
 				dependsOn: dependenciesFromIssueMap(issue),
 			})
 			if !decision.admitted {
@@ -4776,6 +4778,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 					h.logger.Info("[contribute-ws] skip: issue already claimed by an open PR",
 						"repo", repo.Full, "number", number,
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor)
+				case contributorAdmissionReasonWorkflowBlocked:
+					h.logger.Info("[contribute-ws] skip: issue is blocked by workflow state",
+						"repo", repo.Full, "number", number)
 				// #3845: a declared dependency is not satisfied (or cannot be
 				// resolved), so this issue is not admissible work yet. Only THIS
 				// candidate is withheld — the scan continues and unrelated ready
@@ -4808,7 +4813,6 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
 			lane, _ := issue["lane"].(string)
-			labels := stringSliceFromAny(issue["labels"])
 			assignees := stringSliceFromAny(issue["assignees"])
 
 			// A tracker/umbrella issue is coordination-only: its children carry

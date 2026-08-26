@@ -9,7 +9,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | Script | Stage | Purpose |
 |---|---|---|
 | `run-pipeline.sh` | Orchestrator | Runs configured pre-kick stages in dependency order: enumerator, classifier, gate, and monitor. Supports `--agent` and `--stage` selectors. |
-| `enumerate-actionable.sh` | Enumerator | Builds `/var/run/hive-metrics/actionable.json` with actionable issues and PRs, excluding holds, drafts, selected labels, ADOPTERS-only PRs, and external issues missing a commit SHA. |
+| `enumerate-actionable.sh` | Enumerator | Builds `/var/run/hive-metrics/actionable.json` with actionable issues and PRs, excluding holds, blocked external-dependency work, drafts, selected labels, ADOPTERS-only PRs, and external issues missing a commit SHA. |
 | `issue-classifier.sh` | Classifier | Enriches `actionable.json` with deterministic metadata such as complexity tier, model recommendation, tracker status, cluster key, lane, and architecture-review flag. |
 | `architecture-detector.sh` | Classifier | Adds architecture signals to actionable issues from `hive-project.yaml` rules so the classifier can route them to the architect lane. |
 | `pr-cluster-detector.sh` | Classifier | Groups related actionable issues into clusters using component, reporter timing, label-combo, and failure-mode signals. |

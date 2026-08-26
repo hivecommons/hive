@@ -1,10 +1,36 @@
 package dashboard
 
 import (
+	"strings"
+
 	"github.com/kubestellar/hive/pkg/convergence"
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/worksource"
 )
+
+const blockedWorkflowLabel = "blocked"
+
+// hasBlockedWorkflowLabel reports whether a candidate carries the canonical
+// external-dependency overlay. A blocked item is not contributor work until
+// its dependency is cleared, so this gate is enforced in both ReadyQueue and
+// selectTask rather than relying only on the enumerator's refresh.
+func hasBlockedWorkflowLabel(labels []string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+func blockedWorkflowAdmissionDecision() contributorAdmissionDecision {
+	return contributorAdmissionDecision{
+		reason: contributorAdmissionReasonWorkflowBlocked,
+		convergence: convergence.Decision{
+			Reason: contributorAdmissionReasonWorkflowBlocked,
+		},
+	}
+}
 
 type contributorAdmissionCandidate struct {
 	repoFull string
@@ -25,6 +51,7 @@ type contributorAdmissionCandidate struct {
 	// external source remains authoritative and every sweep re-evaluates its
 	// current edge snapshot through the same convergence evaluator.
 	dependsOn []ghpkg.IssueDependency
+	labels    []string
 }
 
 // isGitHubBacked reports whether this candidate may be handed to the two
@@ -57,6 +84,9 @@ type contributorAdmissionDecision struct {
 
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
+	// contributorAdmissionReasonWorkflowBlocked: the canonical workflow state
+	// says the work is waiting on an external dependency or human input.
+	contributorAdmissionReasonWorkflowBlocked = "workflow_blocked"
 	// contributorAdmissionReasonDependencyBlocked: a declared dependency is
 	// established as NOT satisfied.
 	contributorAdmissionReasonDependencyBlocked = "dependency_blocked"
@@ -82,6 +112,10 @@ const (
 // it" signal. External work bypasses that GitHub-only observer and evaluates
 // the source-native dependency edges carried by its enumeration snapshot.
 func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributorAdmissionSweep, candidate contributorAdmissionCandidate) contributorAdmissionDecision {
+	if hasBlockedWorkflowLabel(candidate.labels) {
+		return blockedWorkflowAdmissionDecision()
+	}
+
 	// isGitHubBacked remains the hard boundary around BOTH legacy observers: the
 	// PR-claim ledger and bead identity lookup still see only real issue numbers.
 	// External work takes a parallel convergence path over the adapter-provided

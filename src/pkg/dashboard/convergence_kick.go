@@ -78,6 +78,13 @@ func (s *Server) ConvergenceKickProjectionDetailed(issues []ghpkg.Issue) (admitt
 	coverage = hub.admissionCoverageFromSweep(sweep)
 	for _, issue := range issues {
 		candidate := kickAdmissionCandidate(issue)
+		if hasBlockedWorkflowLabel(candidate.labels) {
+			decision := blockedWorkflowAdmissionDecision()
+			withheld = append(withheld, ConvergenceKickFinding{
+				Issue: issue, Decision: decision.convergence,
+			})
+			continue
+		}
 		var observation convergence.Observation
 		if candidate.isGitHubBacked() {
 			observation = hub.observeCandidateDependencies(sweep, candidate)
@@ -115,6 +122,7 @@ func kickAdmissionCandidate(issue ghpkg.Issue) contributorAdmissionCandidate {
 			Number:     issue.Number,
 			URL:        issue.URL,
 		},
+		labels:    issue.Labels,
 		dependsOn: issue.DependsOn,
 	}
 }
