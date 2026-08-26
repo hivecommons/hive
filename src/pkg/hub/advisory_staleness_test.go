@@ -223,9 +223,10 @@ func TestAppCanWriteForAdvisory_EmptyStateIsWritable(t *testing.T) {
 func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	posted := advNow.Format(time.RFC3339)
 	in := HeartbeatPayload{
-		HiveID:               "hosted-adv",
-		AdvisoryLastPostedAt: posted,
-		AdvisoryError:        "rate limit",
+		HiveID:                  "hosted-adv",
+		AdvisoryLastPostedAt:    posted,
+		AdvisoryError:           "rate limit",
+		AdvisoryUpdateIntervalS: 300,
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
@@ -241,6 +242,9 @@ func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	if out.AdvisoryError != "rate limit" {
 		t.Fatalf("advisory_error lost in round-trip: got %q", out.AdvisoryError)
 	}
+	if out.AdvisoryUpdateIntervalS != 300 {
+		t.Fatalf("advisory_update_interval_s lost in round-trip: got %d", out.AdvisoryUpdateIntervalS)
+	}
 
 	// Empty fields must be omitted so an old spoke's wire format is untouched.
 	empty, _ := json.Marshal(HeartbeatPayload{HiveID: "x"})
@@ -251,6 +255,9 @@ func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	}
 	if _, ok := m["advisory_error"]; ok {
 		t.Fatalf("advisory_error must be omitted when empty")
+	}
+	if _, ok := m["advisory_update_interval_s"]; ok {
+		t.Fatalf("advisory_update_interval_s must be omitted when zero — old spokes' wire format is untouched")
 	}
 }
 
