@@ -20369,6 +20369,7 @@ function burnAreaChart() {
       a = a || {};
       const maxFindings = a.max_findings === undefined ? 10 : a.max_findings;
       const stalenessDays = a.staleness_days === undefined ? 7 : a.staleness_days;
+      const updateInterval = a.update_interval_s === undefined ? 0 : a.update_interval_s;
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Controls the advisory digest posted to your repo: how much of it is shown, and when findings nobody re-reports are retired.</p>
 
@@ -20381,6 +20382,14 @@ function burnAreaChart() {
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${a.show_all ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="show_all"></div>
             <span class="config-toggle-label">Show all findings <span style="color:var(--muted);font-weight:400">— override the max and show everything</span></span>
+          </div>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">When it updates</div>
+          <div class="config-field">
+            <label>Update interval (s) <span class="config-info">i<span class="config-tooltip">How often the digest comment is checked and refreshed. 0 means the default (60 seconds). Longer values reduce API writes and notification churn; the effective cadence is also bounded by the governor eval interval.</span></span></label>
+            <input type="number" min="0" step="1" value="${updateInterval}" placeholder="60" data-change-action="gh75">
           </div>
         </div>
 
@@ -22879,6 +22888,7 @@ function burnAreaChart() {
       gh72: function (event, A) { markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh75: function (event, A) { markDirty('advisory','update_interval_s',Number(this.value)||0); },
       gh0: function (event, A) { document.getElementById('gh-setup-overlay').style.display='none'; },
       gh1: function (event, A) { openConfigDialog('governor',null,'Repos'); },
       gh2: function (event, A) { acmmSelectRepo(null); },

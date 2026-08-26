@@ -127,6 +127,10 @@ type RegistryEntry struct {
 	// "stale advisory" pill (advisoryStaleSummary) when this ages past
 	// advisoryStaleThreshold on a hive whose App can write.
 	AdvisoryLastPostedAt string `json:"advisoryLastPostedAt,omitempty"`
+	// AdvisoryUpdateIntervalS is the spoke's effective advisory digest cadence.
+	// It expands the stale threshold for operators who intentionally post less
+	// often. Zero from an old spoke resolves to the historical 60s default.
+	AdvisoryUpdateIntervalS int `json:"advisoryUpdateIntervalS,omitempty"`
 	// AdvisoryError is the log-safe error from the spoke's most recent failed
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
@@ -1684,10 +1688,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
 		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
 		// it as UNKNOWN rather than stale.
-		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
-		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
-		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
-		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
+		AdvisoryLastPostedAt:    sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryUpdateIntervalS: clampInt(payload.AdvisoryUpdateIntervalS, 0, 31_536_000),
+		AdvisoryFindingCount:    payload.AdvisoryFindingCount,
+		AdvisoryOverflowCount:   payload.AdvisoryOverflowCount,
+		AdvisoryError:           sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),

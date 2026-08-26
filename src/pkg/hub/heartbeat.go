@@ -613,6 +613,10 @@ type HeartbeatPayload struct {
 	// same rule the codebase already applies to StartedAt/GitHubAPIURL. Only a
 	// hive that HAS posted at least once, and then stopped, can trip staleness.
 	AdvisoryLastPostedAt string `json:"advisory_last_posted_at,omitempty"`
+	// AdvisoryUpdateIntervalS is the spoke's effective configured digest
+	// cadence. The hub uses it to avoid flagging a deliberately slow healthy
+	// digest as stale. Zero from an older spoke means the historical 60s default.
+	AdvisoryUpdateIntervalS int `json:"advisory_update_interval_s,omitempty"`
 	// AdvisoryError is the log-safe error string from the spoke's most recent
 	// FAILED advisory-post attempt (403 issues:write, rate limit, auth failure),
 	// or empty when the last attempt succeeded. It is the same string the spoke

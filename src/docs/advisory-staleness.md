@@ -10,6 +10,7 @@ never re-derives it.
 | Signal | Produced by | Notes |
 | --- | --- | --- |
 | `AdvisoryLastPostedAt` | spoke, `RecordAdvisoryPost` after a **successful** digest post | in spoke memory only; empty until the first success |
+| `AdvisoryUpdateIntervalS` | spoke, effective digest update cadence | expands the age threshold for an intentionally slow cadence; absent on older spokes means the 60s default |
 | `AdvisoryError` | spoke, `RecordAdvisoryError` on a failed post **attempt** | cleared by the next success |
 | `GitHubAppState` / `GitHubAppRequired` / `PendingGitHubAppInstall` | spoke App diagnosis | decides whether silence is expected |
 
@@ -31,9 +32,11 @@ never re-derives it.
    protocol fields, does *not* qualify, so the gate never silences a spoke the
    hub cannot read. A reported post **error** still flags regardless — a broken
    post path is broken whoever is paused.
-4. **Age** — with no error reported, a post time older than
-   `advisoryStaleThreshold` (90 min) is stale, but only when the App can write
-   at all (`appCanWriteForAdvisory`). Unparseable timestamps are unknown.
+4. **Age** — with no error reported, the threshold is the historical 90 minutes
+   or two update intervals, whichever is longer. The interval baseline is
+   `max(configured interval, 60s)`, so deliberately slow healthy cadences do not
+   false-alarm. The post is stale only when the App can write at all
+   (`appCanWriteForAdvisory`). Unparseable timestamps are unknown.
 
 ## Suppression matrix (#4167)
 

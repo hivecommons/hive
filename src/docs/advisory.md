@@ -1,10 +1,10 @@
 # Advisory digest
 
 Advisory agents (scanner, ci-maintainer, reviewer, and friends) file their
-findings as **advisory beads**. Once per governor eval cycle the hive rolls the
-open advisory beads of every agent into a single **advisory digest** and posts it
-as a pinned comment on the advisory issue of the primary repo, rewriting the same
-comment each cycle so a repo owner has exactly one place to look.
+findings as **advisory beads**. The hive rolls the open advisory beads of every
+agent into a single **advisory digest** and posts it as a pinned comment on the
+advisory issue of the primary repo, updating the same comment so a repo owner has
+exactly one place to look.
 
 Everything on this page lives under `governor.advisory` in `hive.yaml`, and every
 setting is also editable from **Governor Config → Advisory** in the dashboard
@@ -16,8 +16,17 @@ governor:
     max_findings: 10
     show_all: false       # true = ignore max_findings
     staleness_days: 7
+    update_interval_s: 0  # 0 = historical 60-second default
     pr_autoclose: true
 ```
+
+`governor.advisory.update_interval_s` controls how often the forge-facing
+digest refresh is attempted. Zero or an omitted field preserves the 60-second
+default; positive values below 30 seconds are clamped to 30 with one process
+warning. Changes made in the dashboard are read live on the next governor eval
+cycle, without a restart. The eval cycle still ingests findings and refreshes
+dashboard state normally, and the byte-identical-content guard still skips an
+unnecessary forge write when a refresh is due.
 
 ## Keeping findings current
 

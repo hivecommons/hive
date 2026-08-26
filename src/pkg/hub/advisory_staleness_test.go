@@ -36,6 +36,21 @@ func TestAdvisoryStale_FreshDigestNotStale(t *testing.T) {
 	}
 }
 
+func TestAdvisoryStale_LongConfiguredIntervalRemainsHealthy(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryUpdateIntervalS = int((2 * time.Hour) / time.Second)
+	e.AdvisoryLastPostedAt = rfc3339Ago(3 * time.Hour)
+
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("three-hour-old post on a two-hour cadence must remain healthy: %s", reason)
+	}
+
+	e.AdvisoryLastPostedAt = rfc3339Ago(5 * time.Hour)
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatal("post older than two configured intervals must be stale")
+	}
+}
+
 func TestAdvisoryStale_PastThresholdIsStale(t *testing.T) {
 	e := advisoryModeEntry()
 	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Minute)
@@ -223,9 +238,10 @@ func TestAppCanWriteForAdvisory_EmptyStateIsWritable(t *testing.T) {
 func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	posted := advNow.Format(time.RFC3339)
 	in := HeartbeatPayload{
-		HiveID:               "hosted-adv",
-		AdvisoryLastPostedAt: posted,
-		AdvisoryError:        "rate limit",
+		HiveID:                  "hosted-adv",
+		AdvisoryLastPostedAt:    posted,
+		AdvisoryUpdateIntervalS: 300,
+		AdvisoryError:           "rate limit",
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
@@ -240,6 +256,9 @@ func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	}
 	if out.AdvisoryError != "rate limit" {
 		t.Fatalf("advisory_error lost in round-trip: got %q", out.AdvisoryError)
+	}
+	if out.AdvisoryUpdateIntervalS != 300 {
+		t.Fatalf("advisory_update_interval_s lost in round-trip: got %d", out.AdvisoryUpdateIntervalS)
 	}
 
 	// Empty fields must be omitted so an old spoke's wire format is untouched.

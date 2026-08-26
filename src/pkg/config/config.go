@@ -32,6 +32,8 @@ import (
 // only the last 1-2 on the PVC. Serializing every Save() closes the race.
 var saveMu sync.Mutex
 
+var advisoryUpdateIntervalClampWarning sync.Once
+
 type Config struct {
 	Project       ProjectConfig          `yaml:"project"`
 	Policies      PoliciesConfig         `yaml:"policies"`
@@ -1366,6 +1368,10 @@ type AdvisoryConfig struct {
 	// re-reported before the hive auto-closes it. Default
 	// defaultAdvisoryStalenessDays.
 	StalenessDays int `yaml:"staleness_days" json:"staleness_days"`
+	// UpdateIntervalS controls how often the pinned advisory digest is checked
+	// and refreshed. Zero/unset preserves the historical 60-second default;
+	// positive values below AdvisoryUpdateIntervalMinS are clamped on load.
+	UpdateIntervalS int `yaml:"update_interval_s,omitempty" json:"update_interval_s,omitempty"`
 	// PRAutoClose retires an advisory finding when a merged PR's title is
 	// close enough to the finding's title. *bool so absent is distinct from an
 	// explicit false; default true.
@@ -1375,6 +1381,31 @@ type AdvisoryConfig struct {
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
 func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 	return a.PRAutoClose == nil || *a.PRAutoClose
+}
+
+// AdvisoryUpdateInterval resolves the configured digest refresh cadence.
+// Config is live-read by the eval loop, so dashboard changes apply without a
+// restart. The defensive clamp also covers configs constructed directly in
+// tests or by callers that have not run applyDefaults.
+func (a AdvisoryConfig) AdvisoryUpdateInterval() time.Duration {
+	seconds := ClampAdvisoryUpdateIntervalS(a.UpdateIntervalS)
+	if seconds == 0 {
+		seconds = AdvisoryUpdateIntervalDefaultS
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// ClampAdvisoryUpdateIntervalS preserves zero as the default sentinel and
+// clamps all other too-small values. The warning is process-wide so config
+// load, live dashboard updates, and defensive resolution cannot spam logs.
+func ClampAdvisoryUpdateIntervalS(seconds int) int {
+	if seconds != 0 && seconds < AdvisoryUpdateIntervalMinS {
+		advisoryUpdateIntervalClampWarning.Do(func() {
+			log.Printf("[config] warning: governor.advisory.update_interval_s=%d is below the %ds minimum; clamped to %d", seconds, AdvisoryUpdateIntervalMinS, AdvisoryUpdateIntervalMinS)
+		})
+		return AdvisoryUpdateIntervalMinS
+	}
+	return seconds
 }
 
 // Default governor mode thresholds, in queue items (actionable issues + open
@@ -4015,6 +4046,11 @@ const (
 	// without being re-reported. Advisory agents re-scan far more often than
 	// weekly, so a finding untouched for a week is one no agent still sees.
 	defaultAdvisoryStalenessDays = 7
+	// AdvisoryUpdateIntervalDefaultS preserves the historical digest cadence
+	// for existing configs. AdvisoryUpdateIntervalMinS prevents a typo from
+	// creating a tight GitHub API loop.
+	AdvisoryUpdateIntervalDefaultS = 60
+	AdvisoryUpdateIntervalMinS     = 30
 )
 
 func (c *Config) applyDefaults() {
@@ -4259,6 +4295,7 @@ func (c *Config) applyDefaults() {
 	if c.Governor.Advisory.StalenessDays == 0 {
 		c.Governor.Advisory.StalenessDays = defaultAdvisoryStalenessDays
 	}
+	c.Governor.Advisory.UpdateIntervalS = ClampAdvisoryUpdateIntervalS(c.Governor.Advisory.UpdateIntervalS)
 	if c.Governor.Advisory.PRAutoClose == nil {
 		on := true
 		c.Governor.Advisory.PRAutoClose = &on

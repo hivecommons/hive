@@ -2443,6 +2443,7 @@ func main() {
 			"providers", len(cfg.Governor.Rotation.Providers))
 	}
 
+	advisorySchedule := &advisoryPostSchedule{}
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
 		Config:           cfg,
 		AgentMgr:         agentMgr,
@@ -2482,7 +2483,7 @@ func main() {
 			initAgentConfigDrivenSystems(cfg)
 		},
 		EnumerateFunc: func() {
-			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
+			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, advisorySchedule, nil, logger)
 		},
 		AdvisoryResetFunc: func(newPrimaryRepo string) {
 			logger.Info("advisory reset: primary repo changed, creating new advisory issue", "repo", newPrimaryRepo)
@@ -3617,6 +3618,7 @@ func main() {
 					}
 					return postedAt.UTC().Format(time.RFC3339)
 				}(),
+				AdvisoryUpdateIntervalS: int(cfg.Governor.Advisory.AdvisoryUpdateInterval() / time.Second),
 				AdvisoryError: func() string {
 					_, _, errMsg := dashSrv.AdvisoryState()
 					return errMsg
@@ -4660,7 +4662,7 @@ func main() {
 	// interval. A hive with no persisted state (fresh install) has no LastKick
 	// entries, and every cadenced agent is still kicked here, unchanged.
 	logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
-	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
+	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, advisorySchedule, nil, logger)
 	runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
@@ -4702,7 +4704,7 @@ func main() {
 					}
 				}
 			}
-			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
+			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, advisorySchedule, restarted, logger)
 			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
@@ -5418,6 +5420,31 @@ func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, 
 	return ghClient != nil && hasPinnedIssue
 }
 
+// advisoryPostSchedule gates only the forge-facing digest refresh. The eval
+// loop still ingests findings and refreshes dashboard state on every tick. Its
+// interval is supplied on every call, so a live config edit takes effect on the
+// next eval without restarting the hive.
+type advisoryPostSchedule struct {
+	mu          sync.Mutex
+	lastAttempt map[string]time.Time
+}
+
+func (s *advisoryPostSchedule) due(repo string, interval time.Duration, now time.Time) bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last := s.lastAttempt[repo]; !last.IsZero() && now.Before(last.Add(interval)) {
+		return false
+	}
+	if s.lastAttempt == nil {
+		s.lastAttempt = make(map[string]time.Time)
+	}
+	s.lastAttempt[repo] = now
+	return true
+}
+
 // advisoryIssueMissingError is the error recorded (and reported to the hub) when
 // a hive has findings to publish but no advisory issue to publish them to. It is
 // deliberately an ERROR rather than a silent skip: the hub's staleness gate
@@ -5453,6 +5480,7 @@ func runEvalCycle(
 	lastActionable *atomic.Pointer[github.ActionableResult],
 	advisoryStore *advisory.Store,
 	advisoryIssues map[string]int,
+	advisorySchedule *advisoryPostSchedule,
 	restartedAgents []string,
 	logger *slog.Logger,
 ) {
@@ -6083,7 +6111,8 @@ func runEvalCycle(
 		// freshness: otherwise the pinned comment and AdvisoryLastPostedAt
 		// freeze after the last finding disappears, and the hub reports a stale
 		// advisory loop even though the agents are running cleanly.
-		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) {
+		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) &&
+			advisorySchedule.due(primaryRepo, advCfg.AdvisoryUpdateInterval(), time.Now()) {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))

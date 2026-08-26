@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/pkg/advisory"
 	"github.com/kubestellar/hive/pkg/beads"
@@ -88,6 +89,32 @@ func TestEmptyAdvisoryDigestPostsOnlyToExistingIssue(t *testing.T) {
 	}
 	if !shouldPostAdvisoryDigest(withResolved, nil, false) {
 		t.Fatal("recently resolved findings must still flow to the missing-issue error path")
+	}
+}
+
+func TestAdvisoryPostScheduleLiveInterval(t *testing.T) {
+	schedule := &advisoryPostSchedule{}
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	advisoryCfg := config.AdvisoryConfig{}
+
+	if !schedule.due("org/repo", advisoryCfg.AdvisoryUpdateInterval(), now) {
+		t.Fatal("first advisory cycle must be due")
+	}
+	if schedule.due("org/repo", advisoryCfg.AdvisoryUpdateInterval(), now.Add(59*time.Second)) {
+		t.Fatal("unset interval must preserve the 60-second default")
+	}
+	if !schedule.due("org/repo", advisoryCfg.AdvisoryUpdateInterval(), now.Add(60*time.Second)) {
+		t.Fatal("default interval should be due at 60 seconds")
+	}
+
+	// The interval is read from config on each eval: extending it live must
+	// delay the next post relative to the most recent attempt.
+	advisoryCfg.UpdateIntervalS = 300
+	if schedule.due("org/repo", advisoryCfg.AdvisoryUpdateInterval(), now.Add(299*time.Second)) {
+		t.Fatal("live 300-second interval should suppress an early post")
+	}
+	if !schedule.due("org/repo", advisoryCfg.AdvisoryUpdateInterval(), now.Add(360*time.Second)) {
+		t.Fatal("live 300-second interval should allow the next due post")
 	}
 }
 

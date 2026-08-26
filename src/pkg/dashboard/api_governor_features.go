@@ -247,10 +247,11 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		MaxFindings   *int  `json:"max_findings"`
-		ShowAll       *bool `json:"show_all"`
-		StalenessDays *int  `json:"staleness_days"`
-		PRAutoClose   *bool `json:"pr_autoclose"`
+		MaxFindings    *int  `json:"max_findings"`
+		ShowAll        *bool `json:"show_all"`
+		StalenessDays  *int  `json:"staleness_days"`
+		UpdateInterval *int  `json:"update_interval_s"`
+		PRAutoClose    *bool `json:"pr_autoclose"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -266,6 +267,10 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "staleness_days must be 1 or greater", http.StatusBadRequest)
 		return
 	}
+	if body.UpdateInterval != nil && *body.UpdateInterval < 0 {
+		jsonError(w, "update_interval_s must be 0 or greater", http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
@@ -277,6 +282,9 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	}
 	if body.StalenessDays != nil {
 		cfg.Governor.Advisory.StalenessDays = *body.StalenessDays
+	}
+	if body.UpdateInterval != nil {
+		cfg.Governor.Advisory.UpdateIntervalS = config.ClampAdvisoryUpdateIntervalS(*body.UpdateInterval)
 	}
 	if body.PRAutoClose != nil {
 		v := *body.PRAutoClose
@@ -297,10 +305,11 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 	a := cfg.Governor.Advisory
 	return map[string]interface{}{
-		"max_findings":   a.MaxFindings,
-		"show_all":       a.ShowAll,
-		"staleness_days": a.StalenessDays,
-		"pr_autoclose":   a.PRAutoCloseEnabled(),
+		"max_findings":      a.MaxFindings,
+		"show_all":          a.ShowAll,
+		"staleness_days":    a.StalenessDays,
+		"update_interval_s": a.UpdateIntervalS,
+		"pr_autoclose":      a.PRAutoCloseEnabled(),
 	}
 }
 

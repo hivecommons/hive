@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 type advisoryAPIResponse struct {
-	MaxFindings   int  `json:"max_findings"`
-	ShowAll       bool `json:"show_all"`
-	StalenessDays int  `json:"staleness_days"`
-	PRAutoClose   bool `json:"pr_autoclose"`
+	MaxFindings    int  `json:"max_findings"`
+	ShowAll        bool `json:"show_all"`
+	StalenessDays  int  `json:"staleness_days"`
+	UpdateInterval int  `json:"update_interval_s"`
+	PRAutoClose    bool `json:"pr_autoclose"`
 }
 
 func getAdvisorySettings(t *testing.T, s *Server) advisoryAPIResponse {
@@ -44,14 +47,14 @@ func TestGovAdvisory_GetPutRoundTrip(t *testing.T) {
 	s := govServer(t)
 
 	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{
-		"max_findings": 25, "show_all": true, "staleness_days": 3, "pr_autoclose": false,
+		"max_findings": 25, "show_all": true, "staleness_days": 3, "update_interval_s": 300, "pr_autoclose": false,
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("put advisory settings: %d — %s", rec.Code, rec.Body.String())
 	}
 
 	got := getAdvisorySettings(t, s)
-	if got.MaxFindings != 25 || !got.ShowAll || got.StalenessDays != 3 || got.PRAutoClose {
-		t.Fatalf("settings = %+v, want {25 true 3 false}", got)
+	if got.MaxFindings != 25 || !got.ShowAll || got.StalenessDays != 3 || got.UpdateInterval != 300 || got.PRAutoClose {
+		t.Fatalf("settings = %+v, want update interval 300", got)
 	}
 	if s.deps.Config.Governor.Advisory.PRAutoCloseEnabled() {
 		t.Error("pr_autoclose: false must be stored as an explicit false pointer")
@@ -65,7 +68,7 @@ func TestGovAdvisory_GetPutRoundTrip(t *testing.T) {
 	if got.MaxFindings != 5 {
 		t.Errorf("MaxFindings = %d, want the updated 5", got.MaxFindings)
 	}
-	if !got.ShowAll || got.StalenessDays != 3 || got.PRAutoClose {
+	if !got.ShowAll || got.StalenessDays != 3 || got.UpdateInterval != 300 || got.PRAutoClose {
 		t.Errorf("partial put changed untouched fields: %+v", got)
 	}
 }
@@ -84,6 +87,7 @@ func TestGovAdvisory_Validation(t *testing.T) {
 		{"negative max findings", map[string]any{"max_findings": -1}},
 		{"zero staleness", map[string]any{"staleness_days": 0}},
 		{"negative staleness", map[string]any{"staleness_days": -7}},
+		{"negative update interval", map[string]any{"update_interval_s": -1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if rec := doPut(s, "/api/config/governor/advisory", tc.body); rec.Code != http.StatusBadRequest {
@@ -94,6 +98,24 @@ func TestGovAdvisory_Validation(t *testing.T) {
 
 	if rec := doPutRaw(s, "/api/config/governor/advisory", "not json"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body: expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGovAdvisory_UpdateIntervalZeroAndClamp(t *testing.T) {
+	s := govServer(t)
+
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("put default interval: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := getAdvisorySettings(t, s).UpdateInterval; got != 0 {
+		t.Fatalf("default sentinel = %d, want 0", got)
+	}
+
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 5}); rec.Code != http.StatusOK {
+		t.Fatalf("put clamped interval: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := getAdvisorySettings(t, s).UpdateInterval; got != config.AdvisoryUpdateIntervalMinS {
+		t.Fatalf("clamped interval = %d, want %d", got, config.AdvisoryUpdateIntervalMinS)
 	}
 }
 

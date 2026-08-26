@@ -5,16 +5,28 @@ import (
 	"time"
 )
 
-// advisoryStaleThreshold is how long a hive's advisory digest may go without a
-// successful update before the hub flags it as stale. Advisory digests are
-// posted once per governor eval cycle; even a low-ACMM hive (which evaluates
-// infrequently by design — on the order of every ~10 min) posts far more often
-// than this. 90 minutes is therefore comfortably longer than any realistic
-// posting interval, so the pill only lights up on a digest path that has
-// GENUINELY wedged (a working App that has quietly stopped posting), never on a
-// hive that is merely slow. Kept a named constant with this reasoning so the
-// threshold is not a bare magic number.
+// advisoryStaleThreshold is the historical minimum age before the hub flags a
+// digest as stale. advisoryStaleThresholdFor expands it when the spoke reports
+// a deliberately slower configured update interval, so existing/default hives
+// retain the exact 90-minute behavior while slow healthy hives do not alarm.
 const advisoryStaleThreshold = 90 * time.Minute
+
+const advisoryDefaultUpdateInterval = 60 * time.Second
+
+// advisoryStaleThresholdFor preserves the historical 90-minute threshold for
+// old/default spokes and expands it for intentionally slower digest cadences.
+// Two configured intervals allow normal scheduling jitter and one delayed
+// cycle before declaring the path wedged.
+func advisoryStaleThresholdFor(e RegistryEntry) time.Duration {
+	baseline := advisoryDefaultUpdateInterval
+	if configured := time.Duration(e.AdvisoryUpdateIntervalS) * time.Second; configured > baseline {
+		baseline = configured
+	}
+	if intervalThreshold := 2 * baseline; intervalThreshold > advisoryStaleThreshold {
+		return intervalThreshold
+	}
+	return advisoryStaleThreshold
+}
 
 // appCanWriteForAdvisory reports whether a hive's GitHub App is in a state that
 // COULD post an advisory digest right now. It is the "app can write" gate on
@@ -214,7 +226,7 @@ func advisoryStale(e RegistryEntry, now time.Time) (stale bool, reason string) {
 	if err != nil {
 		return false, ""
 	}
-	if now.Sub(postedAt) > advisoryStaleThreshold {
+	if now.Sub(postedAt) > advisoryStaleThresholdFor(e) {
 		return true, "advisory digest has not updated since " + postedAt.UTC().Format(time.RFC3339)
 	}
 	return false, ""
