@@ -280,6 +280,7 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 		"PROJECT_AI_AUTHOR":     lit(s.cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":    lit(reposList),
 		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
+		"PROJECT_OBSERVABILITY": lit(s.cfg.Governor.ProjectObservability.PromptSection()),
 		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
 		"HIVE_ID":               lit(s.cfg.HiveID),
 		"AGENT_LIST":            lit(agentList),
@@ -592,6 +593,14 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	// operator overrides vulnerable indefinitely (kubestellar/hive#4744).
 	defer func() {
 		message = s.addHeldPRCoordination(agentName, actionable, message)
+		// Fix-before-new: an agent with red PRs of its own must see them —
+		// with the CI evidence — ahead of any new work. Injected at the same
+		// post-resolution seam as the held-PR preflight so no template path
+		// can omit it (kubestellar/hive#4744): observed live on
+		// kubestellar/console (2026-08-26), ten red split-PRs each had exactly
+		// one commit — kicks kept spawning NEW PRs while the reaper's
+		// re-engagements aged every red SHA to its cap unfixed.
+		message = s.addRedPRFixFirst(agentName, message)
 	}()
 
 	baseName := s.cfg.BaseAgentName(agentName)
@@ -747,6 +756,127 @@ func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
 	return mode == "ISSUES_AND_PRS" || mode == "ISSUES_PRS_MERGE"
 }
 
+// isPRCapableAgent reports whether the agent's effective mode lets it push
+// branches / open PRs at all. Advisory-only agents can never repair a red PR,
+// so the fix-before-new section would be noise for them.
+func (s *Scheduler) isPRCapableAgent(agentName string) bool {
+	if s.cfg == nil {
+		return false
+	}
+	agentCfg, ok := s.cfg.Agents[agentName]
+	if !ok {
+		agentCfg, ok = s.cfg.Agents[s.cfg.BaseAgentName(agentName)]
+	}
+	if !ok {
+		return false
+	}
+	mode := agentCfg.Mode
+	if agentCfg.Tools != nil {
+		if effective := agentCfg.Tools.EffectiveMode(); effective != "" {
+			mode = effective
+		}
+	}
+	return mode == "ISSUES_AND_PRS" || mode == "ISSUES_PRS_MERGE"
+}
+
+// redPRFixMaxDetailed bounds how many red PRs get a full evidence entry in one
+// kick; the rest are summarized so a pathological backlog cannot flood the
+// prompt. redPRFixExcerptRunes bounds the per-PR CI evidence excerpt.
+const (
+	redPRFixMaxDetailed  = 5
+	redPRFixExcerptRunes = 400
+)
+
+// addRedPRFixFirst prepends a fix-before-new section listing the agent's OWN
+// red-CI PRs, with the failing checks and the raw CI evidence, right below the
+// kick header. It reads ci-failing.json (written by writeMergeEligible each
+// eval tick), which attributes each PR to the agent whose relay request opened
+// it. Unattributed rows default to scanner — the fleet's primary PR creator.
+// Escalated (needs-human) PRs are never listed: they belong to a human.
+func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
+	if message == "" || !s.isPRCapableAgent(agentName) {
+		return message
+	}
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		return message
+	}
+	section := formatRedPRFixData(data, s.cfg.BaseAgentName(agentName))
+	if section == "" {
+		return message
+	}
+	// Insert directly after the "[agent:x]" header line when present, so the
+	// section is the first thing the agent reads; otherwise prefix.
+	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
+		return message[:idx+1] + section + message[idx+1:]
+	}
+	return section + message
+}
+
+// formatRedPRFixData renders the fix-before-new section for one agent from
+// raw ci-failing.json bytes. Empty result means the agent has no open,
+// non-escalated red PRs.
+func formatRedPRFixData(data []byte, agent string) string {
+	type ciFailingRow struct {
+		Number        int      `json:"number"`
+		Repo          string   `json:"repo"`
+		Title         string   `json:"title"`
+		Agent         string   `json:"agent"`
+		FailingChecks []string `json:"failing_checks"`
+		Excerpt       string   `json:"excerpt"`
+		Escalated     bool     `json:"escalated"`
+	}
+	var payload struct {
+		Items []ciFailingRow `json:"ci_failing"`
+	}
+	if json.Unmarshal(data, &payload) != nil {
+		return ""
+	}
+	var mine []ciFailingRow
+	for _, pr := range payload.Items {
+		if pr.Escalated {
+			continue // needs-human: hands off for agents
+		}
+		owner := pr.Agent
+		if owner == "" {
+			owner = "scanner"
+		}
+		if owner != agent {
+			continue
+		}
+		mine = append(mine, pr)
+	}
+	if len(mine) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI (%d)\n\n", len(mine)))
+	b.WriteString("These PRs are YOURS and they are red. Repairing them comes BEFORE claiming\n")
+	b.WriteString("new issues or opening ANY new PR. For each one:\n")
+	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
+	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR. Do NOT leave these\n")
+	b.WriteString("for a later cycle — every kick will re-list them until they are green.\n\n")
+	for i, pr := range mine {
+		if i >= redPRFixMaxDetailed {
+			b.WriteString(fmt.Sprintf("  … and %d more (full list: %s)\n", len(mine)-i, ciFailingPath))
+			break
+		}
+		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		if len(pr.FailingChecks) > 0 {
+			b.WriteString(fmt.Sprintf("    failing: %s\n", strings.Join(pr.FailingChecks, ", ")))
+		}
+		if excerpt := strings.TrimSpace(pr.Excerpt); excerpt != "" {
+			if runes := []rune(excerpt); len(runes) > redPRFixExcerptRunes {
+				excerpt = string(runes[:redPRFixExcerptRunes]) + "…"
+			}
+			b.WriteString("    evidence: " + strings.ReplaceAll(excerpt, "\n", "\n              ") + "\n")
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableResult) (string, bool) {
 	if actionable == nil {
 		return "  (none)", false
@@ -900,8 +1030,8 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 	return b.String()
 }
 
-const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
-const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
+var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
+var ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 func (s *Scheduler) buildMergeEligibleList() string {
 	data, err := os.ReadFile(mergeEligiblePath)

@@ -24,6 +24,7 @@ import (
 	"github.com/kubestellar/hive/pkg/resolve"
 	"github.com/kubestellar/hive/pkg/skillreg"
 	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/kubestellar/hive/pkg/watchdog"
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard
@@ -443,6 +444,16 @@ func buildSkills() FrontendSkills {
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
 	currentMode := strings.ToLower(string(govState.Mode))
 
+	// The watchdog's authority is hive-wide, but it rides each agent's payload
+	// because it is only meaningful next to that agent's conditions: it is what
+	// tells a reader whether a condition implied an action actually taken.
+	watchdogMode := ""
+	if cfg != nil {
+		if s, _ := watchdog.SettingsFrom(cfg.Governor.Watchdog); s.Enabled() {
+			watchdogMode = string(s.Mode)
+		}
+	}
+
 	packAllowed := acmmPackAllowedSet(cfg)
 	onDemandSet := config.OnDemandAgentsFromPacks()
 
@@ -592,6 +603,8 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			// #4697: transient-API-error retry nudges, surfaced beside the
 			// other two nudge counters.
 			TransientNudges: proc.TransientNudges,
+			Conditions:      proc.WatchdogConditions,
+			WatchdogMode:    watchdogMode,
 		}
 
 		acmmLevel := 0

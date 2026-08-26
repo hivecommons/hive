@@ -17,6 +17,7 @@ governor:
     show_all: false       # true = ignore max_findings
     staleness_days: 7
     pr_autoclose: true
+    update_interval_s: 0  # 0 = default (~60s cycle); 30–3600 to slow the refresh
 ```
 
 ## Keeping findings current
@@ -118,7 +119,11 @@ rendered ones used to.
 ## The digest stopped updating
 
 The digest is posted to one pinned issue per repo, titled **🐝 Hive Advisory
-Report**. Three things can stop it, and all three now surface rather than fail
+Report**. By default it refreshes every governor eval cycle (~60s); an operator
+can slow that deliberately (see below), which is a configured cadence, not a
+stall.
+
+Three things can stop it, and all three now surface rather than fail
 quietly:
 
 - **The pinned issue could not be resolved.** The hive ensures the issue at boot;
@@ -147,6 +152,33 @@ To check freshness: the hive's row on the hub shows the last successful post
 time and any error; on the spoke, `posted advisory digest` is logged at INFO on
 every successful update, and `advisory digest not posted` at WARN when there is
 nothing to post to.
+
+## How often the digest updates
+
+`governor.advisory.update_interval_s` — default `0`, meaning the digest is
+checked and refreshed every governor eval cycle (~60s), exactly the behavior
+before the knob existed. Set it between `30` and `3600` seconds to slow the
+refresh — useful to cut GitHub API writes, notification churn on watched
+repos, and audit-log noise. Also editable from **Governor Config → Advisory →
+When it updates**; dashboard edits apply live from the next cycle, no restart.
+
+Details worth knowing:
+
+- The throttle paces only the GitHub comment write. The digest itself, the
+  dashboard view, and the status broadcast still refresh every cycle.
+- The window advances only on a **successful** post, so a failed write is
+  retried on the very next cycle rather than waiting out the interval.
+- A brand-new finding on a quiet hive posts immediately; only subsequent
+  refreshes wait for the interval.
+- Byte-identical digests are skipped regardless of this setting, with a
+  periodic forced full rewrite to heal hand-edited comments; that forced
+  rewrite is counted in post attempts, so its spacing stretches proportionally
+  at longer intervals.
+- The maximum (1 hour) is deliberately capped under the hub's 90-minute
+  wedged-digest alarm, so a healthy slow cadence can never be flagged as a
+  stalled digest.
+- Values outside the band are rejected by the dashboard API and clamped (with
+  a one-time warning in the hive log) when hand-edited into `hive.yaml`.
 
 ## Related
 

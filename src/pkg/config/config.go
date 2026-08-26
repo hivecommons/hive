@@ -1098,15 +1098,19 @@ type GovernorConfig struct {
 	//
 	// Valid values: "" | off | brief | full — the same set as the per-agent
 	// field, validated by ValidateExplainMode.
-	ExplainMode string              `yaml:"explain_mode,omitempty"`
-	Labels      LabelsConfig        `yaml:"labels"`
-	Sensing     SensingConfig       `yaml:"sensing"`
-	Health      HealthConfig        `yaml:"health"`
-	Budget      BudgetConfig        `yaml:"budget"`
-	Logging     LoggingConfig       `yaml:"logging"`
-	LiteLLM     LiteLLMConfig       `yaml:"litellm"`
-	VLLM        InferenceAuthConfig `yaml:"vllm"`
-	LLMD        InferenceAuthConfig `yaml:"llm-d"`
+	ExplainMode string        `yaml:"explain_mode,omitempty"`
+	Labels      LabelsConfig  `yaml:"labels"`
+	Sensing     SensingConfig `yaml:"sensing"`
+	// Watchdog configures the per-agent self-healing reconciler (RFC #4665).
+	// Zero value = enabled with the RFC defaults; see pkg/config/watchdog.go
+	// for why defaults resolve lazily instead of via applyDefaults.
+	Watchdog WatchdogConfig      `yaml:"watchdog,omitempty"`
+	Health   HealthConfig        `yaml:"health"`
+	Budget   BudgetConfig        `yaml:"budget"`
+	Logging  LoggingConfig       `yaml:"logging"`
+	LiteLLM  LiteLLMConfig       `yaml:"litellm"`
+	VLLM     InferenceAuthConfig `yaml:"vllm"`
+	LLMD     InferenceAuthConfig `yaml:"llm-d"`
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.
@@ -1167,6 +1171,11 @@ type GovernorConfig struct {
 	// digest shows, and how long a finding may go un-reconfirmed before the
 	// hive retires it. See AdvisoryConfig.
 	Advisory AdvisoryConfig `yaml:"advisory,omitempty" json:"advisory,omitempty"`
+
+	// ProjectObservability configures what the telemetry and operations agents
+	// recommend for the MANAGED PROJECT. It is deliberately separate from
+	// Config.OTel/Tracing, which export Hive's own telemetry.
+	ProjectObservability ProjectObservabilityConfig `yaml:"project_observability,omitempty" json:"project_observability,omitempty"`
 
 	// WorkSource selects where hive reads work items (Step 01 of the loop).
 	// Absent or type="" defaults to GitHub Issues — backward-compatible for
@@ -1342,6 +1351,68 @@ type JiraSourceConfig struct {
 	HoldLabels  []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
 }
 
+// ProjectObservabilityBackendRef names references an agent may place in managed
+// project configuration. Values are identifiers only: EndpointEnv is an
+// environment-variable NAME and CredentialSecret is a Kubernetes-style
+// "secret-name/key" reference, never a literal endpoint or credential.
+type ProjectObservabilityBackendRef struct {
+	EndpointEnv      string `yaml:"endpoint_env,omitempty" json:"endpoint_env,omitempty"`
+	CredentialSecret string `yaml:"credential_secret,omitempty" json:"credential_secret,omitempty"`
+}
+
+// ProjectObservabilityConfig is the operator-confirmed target stack for the
+// managed project's telemetry and operations agents. Empty means detect and
+// report only; it never authorizes an exporter to send data off-box.
+type ProjectObservabilityConfig struct {
+	OpenSource []string                                  `yaml:"open_source,omitempty" json:"open_source,omitempty"`
+	KubeNative []string                                  `yaml:"kube_native,omitempty" json:"kube_native,omitempty"`
+	Commercial []string                                  `yaml:"commercial,omitempty" json:"commercial,omitempty"`
+	References map[string]ProjectObservabilityBackendRef `yaml:"references,omitempty" json:"references,omitempty"`
+}
+
+// PromptSection renders the confirmed managed-project targets without exposing
+// any secret values. The result is injected only into the telemetry and
+// operations policy templates through ${PROJECT_OBSERVABILITY}.
+func (p ProjectObservabilityConfig) PromptSection() string {
+	var b strings.Builder
+	b.WriteString("MANAGED-PROJECT OBSERVABILITY TARGETS (operator-confirmed):\n")
+	writeFamily := func(label string, values []string) {
+		if len(values) == 0 {
+			b.WriteString("  " + label + ": (none configured)\n")
+			return
+		}
+		b.WriteString("  " + label + ": " + strings.Join(values, ", ") + "\n")
+	}
+	writeFamily("open source", p.OpenSource)
+	writeFamily("kube-native", p.KubeNative)
+	writeFamily("commercial", p.Commercial)
+	if len(p.OpenSource)+len(p.KubeNative)+len(p.Commercial) == 0 {
+		b.WriteString("  No backend is confirmed. Detect the existing stack and report recommendations only; do not add an exporter or external data flow.\n")
+	}
+	if len(p.References) > 0 {
+		b.WriteString("  safe references (names only):\n")
+		keys := make([]string, 0, len(p.References))
+		for name := range p.References {
+			keys = append(keys, name)
+		}
+		sort.Strings(keys)
+		for _, name := range keys {
+			ref := p.References[name]
+			parts := make([]string, 0, 2)
+			if ref.EndpointEnv != "" {
+				parts = append(parts, "endpoint env="+ref.EndpointEnv)
+			}
+			if ref.CredentialSecret != "" {
+				parts = append(parts, "credential secret="+ref.CredentialSecret)
+			}
+			if len(parts) > 0 {
+				b.WriteString("    " + name + ": " + strings.Join(parts, ", ") + "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // AdvisoryConfig controls the advisory digest's size and the lifecycle of the
 // beads behind it.
 //
@@ -1370,11 +1441,60 @@ type AdvisoryConfig struct {
 	// close enough to the finding's title. *bool so absent is distinct from an
 	// explicit false; default true.
 	PRAutoClose *bool `yaml:"pr_autoclose,omitempty" json:"pr_autoclose,omitempty"`
+	// UpdateIntervalS throttles how often, in seconds, the digest comment on
+	// the pinned advisory issue is refreshed (#4820). 0 (or absent) means
+	// UNSET and keeps today's behavior: a post attempt every governor eval
+	// cycle (~60s at the default cadence). Operators raise it to reduce
+	// GitHub API writes and notification churn on watched repos.
+	//
+	// The raw value is stored as written so hive.yaml round-trips byte-for-
+	// byte; consumers resolve it through UpdateInterval, which clamps into
+	// [MinAdvisoryUpdateIntervalS, MaxAdvisoryUpdateIntervalS]. The max
+	// exists for the hub's wedged-digest alarm: its staleness threshold
+	// (90 min) must stay comfortably above every healthy configured cadence
+	// so a user-lengthened interval never false-alarms as a wedge — pinned by
+	// TestAdvisoryStaleThresholdCoversMaxUpdateInterval in pkg/hub.
+	UpdateIntervalS int `yaml:"update_interval_s,omitempty" json:"update_interval_s,omitempty"`
 }
 
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
 func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 	return a.PRAutoClose == nil || *a.PRAutoClose
+}
+
+// Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard
+// PUT validates against them and pkg/hub pins the invariant that its
+// advisory-staleness threshold exceeds the maximum allowed posting cadence
+// (so a healthy slow digest never reads as wedged).
+const (
+	// MinAdvisoryUpdateIntervalS floors a configured interval at 30s: below
+	// the ~60s eval cycle the throttle is meaningless, and a typo like 3
+	// would silently disable the setting.
+	MinAdvisoryUpdateIntervalS = 30
+	// MaxAdvisoryUpdateIntervalS caps the interval at one hour. The hub flags
+	// a digest as wedged when its last successful post is older than 90
+	// minutes; capping the healthy cadence at 60 minutes keeps every allowed
+	// interval comfortably inside that threshold.
+	MaxAdvisoryUpdateIntervalS = 3600
+)
+
+// UpdateInterval resolves UpdateIntervalS to the effective posting throttle.
+// 0 means no throttle — post every eval cycle, exactly the pre-#4820 behavior
+// — and a set value is clamped into [MinAdvisoryUpdateIntervalS,
+// MaxAdvisoryUpdateIntervalS]. Negative values are treated as unset rather
+// than clamped up, so garbage cannot silently slow a hive down.
+func (a AdvisoryConfig) UpdateInterval() time.Duration {
+	if a.UpdateIntervalS <= 0 {
+		return 0
+	}
+	s := a.UpdateIntervalS
+	if s < MinAdvisoryUpdateIntervalS {
+		s = MinAdvisoryUpdateIntervalS
+	}
+	if s > MaxAdvisoryUpdateIntervalS {
+		s = MaxAdvisoryUpdateIntervalS
+	}
+	return time.Duration(s) * time.Second
 }
 
 // Default governor mode thresholds, in queue items (actionable issues + open

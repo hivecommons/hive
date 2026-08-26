@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -247,10 +248,11 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		MaxFindings   *int  `json:"max_findings"`
-		ShowAll       *bool `json:"show_all"`
-		StalenessDays *int  `json:"staleness_days"`
-		PRAutoClose   *bool `json:"pr_autoclose"`
+		MaxFindings     *int  `json:"max_findings"`
+		ShowAll         *bool `json:"show_all"`
+		StalenessDays   *int  `json:"staleness_days"`
+		PRAutoClose     *bool `json:"pr_autoclose"`
+		UpdateIntervalS *int  `json:"update_interval_s"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -264,6 +266,16 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	}
 	if body.StalenessDays != nil && *body.StalenessDays < minAdvisoryStalenessDays {
 		jsonError(w, "staleness_days must be 1 or greater", http.StatusBadRequest)
+		return
+	}
+	// 0 is the explicit "default cadence" sentinel; anything else must land in
+	// the allowed band. Rejecting (rather than silently clamping) an
+	// out-of-range dashboard edit matches the max_findings/staleness_days
+	// contract above: the operator sees the rule instead of a mystery value.
+	if body.UpdateIntervalS != nil && *body.UpdateIntervalS != 0 &&
+		(*body.UpdateIntervalS < config.MinAdvisoryUpdateIntervalS || *body.UpdateIntervalS > config.MaxAdvisoryUpdateIntervalS) {
+		jsonError(w, fmt.Sprintf("update_interval_s must be 0 (default cadence) or between %d and %d seconds",
+			config.MinAdvisoryUpdateIntervalS, config.MaxAdvisoryUpdateIntervalS), http.StatusBadRequest)
 		return
 	}
 
@@ -282,6 +294,9 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		v := *body.PRAutoClose
 		cfg.Governor.Advisory.PRAutoClose = &v
 	}
+	if body.UpdateIntervalS != nil {
+		cfg.Governor.Advisory.UpdateIntervalS = *body.UpdateIntervalS
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after advisory update", "error", err)
@@ -297,10 +312,11 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 	a := cfg.Governor.Advisory
 	return map[string]interface{}{
-		"max_findings":   a.MaxFindings,
-		"show_all":       a.ShowAll,
-		"staleness_days": a.StalenessDays,
-		"pr_autoclose":   a.PRAutoCloseEnabled(),
+		"max_findings":      a.MaxFindings,
+		"show_all":          a.ShowAll,
+		"staleness_days":    a.StalenessDays,
+		"pr_autoclose":      a.PRAutoCloseEnabled(),
+		"update_interval_s": a.UpdateIntervalS,
 	}
 }
 

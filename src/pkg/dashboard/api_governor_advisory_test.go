@@ -7,10 +7,11 @@ import (
 )
 
 type advisoryAPIResponse struct {
-	MaxFindings   int  `json:"max_findings"`
-	ShowAll       bool `json:"show_all"`
-	StalenessDays int  `json:"staleness_days"`
-	PRAutoClose   bool `json:"pr_autoclose"`
+	MaxFindings     int  `json:"max_findings"`
+	ShowAll         bool `json:"show_all"`
+	StalenessDays   int  `json:"staleness_days"`
+	PRAutoClose     bool `json:"pr_autoclose"`
+	UpdateIntervalS int  `json:"update_interval_s"`
 }
 
 func getAdvisorySettings(t *testing.T, s *Server) advisoryAPIResponse {
@@ -84,6 +85,9 @@ func TestGovAdvisory_Validation(t *testing.T) {
 		{"negative max findings", map[string]any{"max_findings": -1}},
 		{"zero staleness", map[string]any{"staleness_days": 0}},
 		{"negative staleness", map[string]any{"staleness_days": -7}},
+		{"negative update interval", map[string]any{"update_interval_s": -60}},
+		{"update interval below minimum", map[string]any{"update_interval_s": 5}},
+		{"update interval above maximum", map[string]any{"update_interval_s": 86400}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if rec := doPut(s, "/api/config/governor/advisory", tc.body); rec.Code != http.StatusBadRequest {
@@ -94,6 +98,44 @@ func TestGovAdvisory_Validation(t *testing.T) {
 
 	if rec := doPutRaw(s, "/api/config/governor/advisory", "not json"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body: expected 400, got %d", rec.Code)
+	}
+}
+
+// TestGovAdvisory_UpdateIntervalRoundTrip pins the #4820 knob's API contract:
+// unset reports 0 (the "default cadence" sentinel), an in-range PUT round-trips
+// verbatim, an explicit 0 resets to the default, and partial updates leave it
+// untouched.
+func TestGovAdvisory_UpdateIntervalRoundTrip(t *testing.T) {
+	s := govServer(t)
+
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 0 {
+		t.Fatalf("untouched update_interval_s = %d, want the 0 default sentinel", got.UpdateIntervalS)
+	}
+
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 300}); rec.Code != http.StatusOK {
+		t.Fatalf("put update_interval_s: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 300 {
+		t.Fatalf("update_interval_s = %d, want the configured 300", got.UpdateIntervalS)
+	}
+	if s.deps.Config.Governor.Advisory.UpdateIntervalS != 300 {
+		t.Fatal("PUT did not store update_interval_s on the live config")
+	}
+
+	// A partial update of a sibling field leaves the interval alone.
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"max_findings": 7}); rec.Code != http.StatusOK {
+		t.Fatalf("partial put: %d", rec.Code)
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 300 {
+		t.Fatalf("partial put changed update_interval_s to %d", got.UpdateIntervalS)
+	}
+
+	// Explicit 0 is the supported way back to the default cadence.
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("reset put: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 0 {
+		t.Fatalf("update_interval_s = %d after reset, want 0", got.UpdateIntervalS)
 	}
 }
 

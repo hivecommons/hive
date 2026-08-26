@@ -81,6 +81,7 @@ import (
 	"github.com/kubestellar/hive/pkg/tokens"
 	"github.com/kubestellar/hive/pkg/tracing"
 	"github.com/kubestellar/hive/pkg/trajectory"
+	"github.com/kubestellar/hive/pkg/watchdog"
 	"github.com/kubestellar/hive/pkg/watsonx"
 	"github.com/kubestellar/hive/pkg/worksource"
 	"go.opentelemetry.io/otel/attribute"
@@ -2437,6 +2438,48 @@ func main() {
 			"providers", len(cfg.Governor.Rotation.Providers))
 	}
 
+	// Agent self-healing watchdog (RFC #4665): liveness/readiness
+	// reconciliation on the governor tick. Config problems fall back to the
+	// RFC defaults loudly — a typo must not disable self-healing silently.
+	wdSettings, wdCfgErrs := watchdog.SettingsFrom(cfg.Governor.Watchdog)
+	for _, e := range wdCfgErrs {
+		logger.Warn("watchdog config problem", "error", e)
+	}
+	var wd *watchdog.Reconciler
+	if wdSettings.Enabled() {
+		wdFleet := agent.WatchdogFleet{
+			M: agentMgr,
+			// Queue depth for the readiness gate: an agent producing nothing
+			// while nothing is queued is correct, not unhealthy. Read live
+			// from the governor so it reflects the current sweep.
+			Queued: func() (int, bool) {
+				st := gov.GetState()
+				return st.QueueIssues + st.QueuePRs, true
+			},
+		}
+		wd = watchdog.New(wdSettings, wdFleet, dashSrv, logger,
+			watchdog.WithAuthProbes(watchdogAuthProbes(cfg)))
+		if saved != nil && len(saved.Watchdog) > 0 {
+			wd.Restore(saved.Watchdog)
+		}
+		// Dead-session recovery moves under the watchdog's bounded ladder ONLY
+		// when the watchdog may actually act. In observe mode the manager's
+		// crash loop keeps its existing job, so there is never a window in
+		// which neither component restarts a dead agent.
+		agentMgr.SetDeadSessionRecoveryOwner(wdSettings.MayAct())
+		logger.Info("agent watchdog enabled (RFC #4665)",
+			"mode", string(wdSettings.Mode),
+			"probe_interval", wdSettings.ProbeInterval,
+			"crash_loop_after", wdSettings.CrashLoopAfter,
+			"auth_probe", wdSettings.AuthProbe,
+			"dead_session_recovery", map[bool]string{true: "watchdog", false: "crash-loop"}[wdSettings.MayAct()])
+		if wdSettings.Mode == watchdog.ModeObserve {
+			logger.Info("agent watchdog is in OBSERVE mode: it will classify agents, publish conditions and record what it WOULD have done, but will not restart or pause anything. Set governor.watchdog.mode: heal to enable healing.")
+		}
+	} else {
+		logger.Info("agent watchdog disabled by config", "mode", string(wdSettings.Mode))
+	}
+
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
 		Config:           cfg,
 		AgentMgr:         agentMgr,
@@ -2470,7 +2513,7 @@ func main() {
 			return getClaimLedger(logger).Lookup(repo, number)
 		},
 		PersistFunc: func() {
-			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv, wd)
 		},
 		ReInitFunc: func() {
 			initAgentConfigDrivenSystems(cfg)
@@ -4656,8 +4699,11 @@ func main() {
 	logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
 	runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
+	if wd != nil {
+		wd.Tick(ctx)
+	}
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
-	persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
+	persistState(agentMgr, gov, cfg, statePath, logger, dashSrv, wd)
 
 	agentTickCh := func() <-chan time.Time {
 		if agentTicker != nil {
@@ -4670,7 +4716,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down, persisting state")
-			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv, wd)
 			return
 		case <-ticker.C:
 			restarted := agentMgr.CheckAndRestartCrashedAgents(ctx)
@@ -4696,6 +4742,40 @@ func main() {
 					}
 				}
 			}
+			// Watchdog sweep (RFC #4665): synchronous but bounded — every
+			// probe carries a deadline and restarts run detached under a hard
+			// timeout, so a wedged agent can never stall this tick. Tick
+			// self-gates to watchdog.probe_interval_s.
+			//
+			// It runs BEFORE runEvalCycle so agents it revived join this
+			// cycle's resume-kick list rather than waiting a full eval
+			// interval. Restarts are detached, so a given sweep's completions
+			// are usually collected on the next pass — TakeRestarted drains
+			// whatever has finished, and the governor gate gets the final say
+			// either way.
+			if wd != nil {
+				// Re-resolve the mode each sweep so a change saved from the
+				// dashboard (or the fleet-wide kill switch being engaged)
+				// takes effect without a restart — and so dead-session
+				// ownership moves with it. Without this, leaving heal via the
+				// settings page would stop the watchdog restarting while the
+				// manager's crash loop was still standing down: a window in
+				// which NEITHER recovers a dead agent.
+				if s, errs := watchdog.SettingsFrom(cfg.Governor.Watchdog); s.Mode != wd.Mode() {
+					for _, e := range errs {
+						logger.Warn("watchdog config problem", "error", e)
+					}
+					logger.Info("watchdog mode changed", "from", string(wd.Mode()), "to", string(s.Mode))
+					dashSrv.AuditLog("system", "watchdog-mode", "from="+string(wd.Mode())+", to="+string(s.Mode), "")
+					wd.SetSettings(s)
+					agentMgr.SetDeadSessionRecoveryOwner(s.MayAct())
+				}
+				wd.Tick(ctx)
+				for _, name := range wd.TakeRestarted() {
+					dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)
+					restarted = append(restarted, name)
+				}
+			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
 			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
@@ -4717,7 +4797,7 @@ func main() {
 					logger.Info("retro lane filed advisory beads", "findings", n)
 				}
 			}
-			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv, wd)
 			if cfg.Governor.EvalIntervalS != lastEvalInterval && cfg.Governor.EvalIntervalS > 0 {
 				logger.Info("eval interval changed, resetting ticker",
 					"from", lastEvalInterval, "to", cfg.Governor.EvalIntervalS)
@@ -5412,6 +5492,54 @@ func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, 
 	return ghClient != nil && hasPinnedIssue
 }
 
+// advisoryPostGate tracks, per repo, when the digest was last SUCCESSFULLY
+// posted, so governor.advisory.update_interval_s (#4820) can throttle the
+// GitHub round-trip. Package-level because runEvalCycle carries no state of
+// its own, and mutex-guarded because startup/restart call sites exist besides
+// the ticker. clampLogged makes the "interval clamped" warning a one-shot
+// instead of a per-cycle drone.
+var advisoryPostGate = struct {
+	mu          sync.Mutex
+	lastSuccess map[string]time.Time
+	clampLogged bool
+}{lastSuccess: map[string]time.Time{}}
+
+// advisoryPostDue reports whether the update-interval gate is open for a post
+// attempt to repo, logging (once) if the configured value was clamped. An
+// interval of 0 (unset knob) means the gate is ALWAYS open — the digest posts
+// every eval cycle, exactly the pre-#4820 cadence — and a repo with no
+// successful post since process start is open too, so the first post is never
+// delayed. The gate advances only on SUCCESS (recordAdvisoryPostSuccess,
+// mirroring how the #4818 skip-guard records its hash): a failed attempt is
+// retried on the very next cycle instead of waiting out the interval, keeping
+// error recovery — and the hub's staleness signal — as prompt as today.
+func advisoryPostDue(advCfg config.AdvisoryConfig, repo string, now time.Time, logger *slog.Logger) bool {
+	interval := advCfg.UpdateInterval()
+	advisoryPostGate.mu.Lock()
+	defer advisoryPostGate.mu.Unlock()
+	if raw := advCfg.UpdateIntervalS; raw > 0 && time.Duration(raw)*time.Second != interval && !advisoryPostGate.clampLogged {
+		advisoryPostGate.clampLogged = true
+		logger.Warn("advisory update_interval_s outside allowed bounds — clamped",
+			"configured_s", raw, "effective_s", int(interval.Seconds()),
+			"min_s", config.MinAdvisoryUpdateIntervalS, "max_s", config.MaxAdvisoryUpdateIntervalS)
+	}
+	if interval <= 0 {
+		return true
+	}
+	last, ok := advisoryPostGate.lastSuccess[repo]
+	return !ok || now.Sub(last) >= interval
+}
+
+// recordAdvisoryPostSuccess advances the update-interval gate for repo after a
+// successful digest write. Skip-if-unchanged cycles count too: pkg/github
+// returns nil for them by design so freshness advances (#4818/#4821), and an
+// unchanged digest is exactly the case the throttle exists to quiet.
+func recordAdvisoryPostSuccess(repo string, now time.Time) {
+	advisoryPostGate.mu.Lock()
+	defer advisoryPostGate.mu.Unlock()
+	advisoryPostGate.lastSuccess[repo] = now
+}
+
 // advisoryIssueMissingError is the error recorded (and reported to the hub) when
 // a hive has findings to publish but no advisory issue to publish them to. It is
 // deliberately an ERROR rather than a silent skip: the hub's staleness gate
@@ -6077,7 +6205,20 @@ func runEvalCycle(
 		// freshness: otherwise the pinned comment and AdvisoryLastPostedAt
 		// freeze after the last finding disappears, and the hub reports a stale
 		// advisory loop even though the agents are running cleanly.
-		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) {
+		//
+		// advisoryPostDue additionally paces the GitHub write to the
+		// operator's governor.advisory.update_interval_s (#4820); 0/unset
+		// keeps this exact per-cycle cadence. cfg is read live each cycle —
+		// the same pattern as the staleness/max-findings knobs above — so a
+		// dashboard edit applies from the next cycle without a restart. The
+		// digest itself and the dashboard state above still refresh every
+		// cycle; only the comment write is throttled. Note the #4821
+		// write-through counts consecutive unchanged post ATTEMPTS, so its
+		// forced full rewrite stretches with this interval (60 attempts ×
+		// interval) — acceptable, since it only heals out-of-band comment
+		// edits, and documented in the settings tooltip.
+		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) &&
+			advisoryPostDue(advCfg, primaryRepo, time.Now(), logger) {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))
@@ -6175,6 +6316,7 @@ func runEvalCycle(
 						// Record the fresh, successful digest post so the hub's
 						// advisory-staleness gate stays satisfied for this hive.
 						dashSrv.RecordAdvisoryPost(digest.TotalCount)
+						recordAdvisoryPostSuccess(primaryRepo, time.Now())
 						dashSrv.RecordAdvisoryOverflow(digest.OverflowCount)
 						// A successful write proves the app is installed AND has
 						// write access — clear BOTH the perm issue and the
@@ -6569,7 +6711,26 @@ func randomName() string {
 	return adj + "-" + noun
 }
 
-func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server) {
+// watchdogAuthProbes builds the per-provider credential probes for the
+// watchdog by adapting the rotation package's provider probers (#4608) —
+// the same machinery the #4645 probe rewrite targets, so that rewrite reaches
+// the watchdog automatically.
+func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
+	threshold := cfg.Governor.Rotation.EffectiveThreshold()
+	probers := []rotation.Prober{
+		rotation.ClaudeProber{ThresholdPct: threshold},
+		rotation.CodexProber{ThresholdPct: threshold},
+		rotation.AgyProber{ThresholdPct: threshold},
+		rotation.DeepSeekProber{},
+	}
+	out := make(map[string]watchdog.AuthProbe, len(probers))
+	for _, p := range probers {
+		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: p}
+	}
+	return out
+}
+
+func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
@@ -6655,6 +6816,14 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	// Only written when engaged — a never-thrown breaker adds nothing.
 	if engaged, breakerPaused := agentMgr.BreakerState(); engaged {
 		state.Breaker = &snapshot.BreakerState{Engaged: true, Paused: breakerPaused}
+	}
+
+	// Persist the watchdog's backoff/crash-loop/condition state (RFC #4665
+	// open question 2: it rides the existing state file).
+	if wd != nil {
+		if wdState := wd.Snapshot(); len(wdState) > 0 {
+			state.Watchdog = wdState
+		}
 	}
 
 	if err := snapshot.SaveState(path, state, logger); err != nil {
@@ -7659,6 +7828,47 @@ func fullRepoName(repo, org string) string {
 	return org + "/" + repo
 }
 
+// auditPRAttributionWindow bounds how far back the audit trail is scanned to
+// map open PRs to the agent that opened them. Red PRs older than this fall
+// back to scanner ownership in the kick builders — acceptable: 14d exceeds any
+// PR the fleet should still be iterating on.
+const auditPRAttributionWindow = 14 * 24 * time.Hour
+
+// auditPRAgents maps "org/repo#number" → agent name from the audit trail's
+// agent_pr_created entries (attribution.go records one per relay-opened PR,
+// reuses included). Reading the on-disk log per eval tick keeps this
+// stateless; OutputActionsSince touches no receiver state, so a zero-value
+// AuditLog is safe here.
+func auditPRAgents(org string, since time.Time, auditPath string) map[string]string {
+	entries := (&dashboard.AuditLog{}).OutputActionsSince(since,
+		map[string]bool{github.AuditActionAgentPRCreated: true}, auditPath)
+	out := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.Agent == "" {
+			continue
+		}
+		var repo, number string
+		for _, part := range strings.Split(e.Detail, ",") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
+				switch k {
+				case "repo":
+					repo = v
+				case "number":
+					number = v
+				}
+			}
+		}
+		if repo == "" || number == "" {
+			continue
+		}
+		if !strings.Contains(repo, "/") && org != "" {
+			repo = org + "/" + repo
+		}
+		out[repo+"#"+number] = e.Agent
+	}
+	return out
+}
+
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
@@ -7698,7 +7908,14 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// builders list them separately and agents must NOT dispatch more
 		// fix work for them.
 		Escalated bool `json:"escalated,omitempty"`
+		// Agent is the hive agent whose relay request opened this PR (from the
+		// audit trail's agent_pr_created entries). The scheduler's
+		// fix-before-new section routes each red PR back to its author; empty
+		// means unattributed (kick builders default it to scanner).
+		Agent string `json:"agent,omitempty"`
 	}
+
+	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
 
 	var eligible []eligiblePR
 	var failing []failingPR
@@ -7743,6 +7960,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				FailingChecks: pr.FailingChecks,
 				Excerpt:       pr.CIFailureExcerpt,
 				Escalated:     escalatedPRs[escalation.Key(fullRepo, pr.Number)],
+				Agent:         prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
 			})
 			continue
 		}
