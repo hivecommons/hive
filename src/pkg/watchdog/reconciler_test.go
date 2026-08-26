@@ -976,10 +976,22 @@ func TestAuditDetailLeaksNoPaneContent(t *testing.T) {
 	const secret = "sk-ant-SUPERSECRET-TOKEN"
 	fleet := newFakeFleet("a1")
 	obs := deadObs()
-	obs.Pane = "agent@spoke:~$ export ANTHROPIC_API_KEY=" + secret
+	// The secret sits in scrollback ABOVE the prompt, which is how a leaked
+	// credential actually appears — and leaves the last line a bare prompt so
+	// the agent still classifies as dead. Putting it ON the prompt line made
+	// the line 64 chars and non-$-terminated, so looksLikeShellPrompt refused
+	// it, the agent classified Unknown, and nothing was ever restarted: the
+	// test then timed out in waitRestart instead of checking anything.
+	obs.Pane = "export ANTHROPIC_API_KEY=" + secret + "\nagent@spoke:~$"
 	fleet.setObs("a1", obs)
 	alerter := newFakeAlerter()
 	r := newTestReconciler(t, fastSettings(), fleet, alerter, newFakeClock())
+
+	// Positive control: the fixture must actually reach a restart decision, or
+	// "no secret in the audit log" would pass because there was no audit log.
+	if cls := Classify(obs, r.now(), fastSettings()); !cls.Class.Dead() {
+		t.Fatalf("fixture must classify as dead to produce an audited action, got %s", cls.Class)
+	}
 
 	r.Tick(context.Background())
 	fleet.waitRestart(t)
