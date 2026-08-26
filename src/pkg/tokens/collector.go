@@ -90,7 +90,6 @@ type Collector struct {
 	logger                    *slog.Logger
 	mu                        sync.RWMutex
 	latest                    *AggregateSummary
-	issueCosts                map[string]int64
 	scanInterval              time.Duration
 	prevSessionCount          int
 	prevTotalTokens           int64
@@ -117,7 +116,6 @@ func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
 		persistPath:  defaultPersistPath,
 		detector:     DefaultAgentDetector,
 		logger:       logger,
-		issueCosts:   make(map[string]int64),
 		scanInterval: defaultScanInterval,
 		prevByAgent:  make(map[string]int64),
 	}
@@ -269,24 +267,6 @@ func (c *Collector) Summary() *AggregateSummary {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.latest
-}
-
-func (c *Collector) SeedIssueCosts(costs map[string]int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for k, v := range costs {
-		c.issueCosts[k] = v
-	}
-}
-
-func (c *Collector) IssueCosts() map[string]int64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	result := make(map[string]int64, len(c.issueCosts))
-	for k, v := range c.issueCosts {
-		result[k] = v
-	}
-	return result
 }
 
 func CollectFromDir(sessionsDir string, agentDetector func(firstMsg string) string) (*AggregateSummary, error) {

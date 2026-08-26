@@ -24,7 +24,6 @@ func newObserveCommand(env *commandEnv) *cobra.Command {
 		help string
 	}{
 		{name: "tokens", path: "/api/tokens", help: "Show token usage summary"},
-		{name: "costs", path: "/api/issue-costs", help: "Show per-issue token costs"},
 		{name: "audit", path: "/api/audit", help: "Show the recent audit log"},
 		{name: "history", path: "/api/history", help: "Show governor evaluation history"},
 		{name: "timeline", path: "/api/timeline", help: "Show the kick and mode timeline"},

@@ -329,7 +329,7 @@ func TestCovG2_BudgetIgnore(t *testing.T) {
 func TestCovG2_SimpleGets(t *testing.T) {
 	s, _ := apiServer(t)
 	for _, p := range []string{
-		"/api/gh-auth", "/api/model-advisor", "/api/tokens", "/api/issue-costs",
+		"/api/gh-auth", "/api/model-advisor", "/api/tokens",
 		"/api/config/backends", "/api/cost", "/api/cost/history",
 	} {
 		if rec := doGet(s, p); rec.Code != http.StatusOK {

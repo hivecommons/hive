@@ -1734,12 +1734,10 @@ func main() {
 	go agent.StartPermissionsWatcher(logger)
 
 	const statePath = "/data/hive-state.json"
-	var savedIssueCosts map[string]int64
 	saved, stateErr := snapshot.LoadState(statePath, logger)
 	if stateErr != nil {
 		logger.Warn("failed to load persisted state", "error", stateErr)
 	} else if saved != nil {
-		savedIssueCosts = saved.IssueCosts
 		restoreAgentRuntimeState(saved, cfg, agentMgr, logger)
 		// Re-establish the fleet breaker AFTER per-agent pauses are restored
 		// above: the agents it held are already back in the paused state (with
@@ -2015,10 +2013,6 @@ func main() {
 	tokenCollector.SetClaudeSessionsDir(cfg.Data.ClaudeSessionsDir)
 	tokenCollector.SetCopilotSessionsDir(cfg.Data.CopilotSessionsDir)
 	tokenCollector.SetBobSessionsDir(cfg.Data.BobSessionsDir)
-	if len(savedIssueCosts) > 0 {
-		tokenCollector.SeedIssueCosts(savedIssueCosts)
-		logger.Info("issue costs restored", "entries", len(savedIssueCosts))
-	}
 	tokenStop := make(chan struct{})
 	go tokenCollector.Start(tokenStop)
 	defer close(tokenStop)
@@ -2476,7 +2470,7 @@ func main() {
 			return getClaimLedger(logger).Lookup(repo, number)
 		},
 		PersistFunc: func() {
-			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
 		},
 		ReInitFunc: func() {
 			initAgentConfigDrivenSystems(cfg)
@@ -4663,7 +4657,7 @@ func main() {
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
 	runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
-	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+	persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
 
 	agentTickCh := func() <-chan time.Time {
 		if agentTicker != nil {
@@ -4676,7 +4670,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down, persisting state")
-			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
 			return
 		case <-ticker.C:
 			restarted := agentMgr.CheckAndRestartCrashedAgents(ctx)
@@ -4723,7 +4717,7 @@ func main() {
 					logger.Info("retro lane filed advisory beads", "findings", n)
 				}
 			}
-			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
+			persistState(agentMgr, gov, cfg, statePath, logger, dashSrv)
 			if cfg.Governor.EvalIntervalS != lastEvalInterval && cfg.Governor.EvalIntervalS > 0 {
 				logger.Info("eval interval changed, resetting ticker",
 					"from", lastEvalInterval, "to", cfg.Governor.EvalIntervalS)
@@ -6575,7 +6569,7 @@ func randomName() string {
 	return adj + "-" + noun
 }
 
-func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, tc *tokens.Collector, path string, logger *slog.Logger, dashSrv *dashboard.Server) {
+func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
@@ -6639,11 +6633,6 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent}
 	}
 
-	var issueCosts map[string]int64
-	if tc != nil {
-		issueCosts = tc.IssueCosts()
-	}
-
 	state := &snapshot.PersistedState{
 		Agents:               agents,
 		GovernorMode:         string(govState.Mode),
@@ -6658,7 +6647,6 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		BudgetByModel:        budget.ByModel,
 		BudgetWindowBaseline: budget.WindowBaseline,
 		KickHistory:          kickEntries,
-		IssueCosts:           issueCosts,
 		LastEval:             govState.LastEval,
 		ACMMLevel:            cfg.ACMMLevel,
 	}

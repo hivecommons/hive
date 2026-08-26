@@ -156,7 +156,6 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/cost/history` | Dashboard auth/session | Cost History | `pkg/dashboard/api.go:84` |
 | `GET` | `/api/trend/history` | Dashboard auth/session | Trend History | `pkg/dashboard/api.go:85` |
 | `GET` | `/api/timeseries` | Dashboard auth/session | Time Series | `pkg/dashboard/api.go:86` |
-| `GET` | `/api/issue-costs` | Dashboard auth/session | Issue Costs | `pkg/dashboard/api.go:87` |
 
 ## Knowledge
 

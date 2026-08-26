@@ -5730,24 +5730,6 @@
     }
 
     let currentAgentMetrics = {};
-    // Per-issue token cost data — keyed by issue number (string)
-    let issueCosts = {};
-
-    async function fetchIssueCosts() {
-      try {
-        const r = await fetch('/api/issue-costs');
-        const data = await r.json();
-        issueCosts = {};
-        for (const entry of (data || [])) {
-          if (entry.issue && entry.issue !== 'unknown') {
-            issueCosts[String(entry.issue)] = entry;
-          }
-        }
-      } catch (_) { /* non-fatal — cost display is optional */ }
-    }
-    // fetchIssueCosts() — deferred to _deferredInit
-    const ISSUE_COSTS_REFRESH_MS = 60000;
-
     function resolveStatValue(stat, name) {
       const src = stat.source;
       const field = stat.field;
@@ -5875,22 +5857,10 @@
           const prIcon = p.state === 'merged' ? '✓' : '⎇';
           const prCls = p.state === 'merged' ? 'ind-pr ind-merged' : 'ind-pr';
           const prTip = p.prTitle ? esc(p.prTitle) : '';
-          let costHtml = '';
-          if (p.state === 'merged') {
-            const cost = issueCosts[String(p.issue)];
-            if (cost) {
-              const tokVal = cost.tokens_exact != null ? cost.tokens_exact : cost.tokens_estimated;
-              if (tokVal > 0) {
-                const isExact = cost.tokens_exact != null;
-                const costTip = isExact ? 'exact token count (from session metadata)' : 'estimated (total ÷ issues)';
-                costHtml = ` <span class="ind-cost" title="${costTip}" style="color:var(--muted);font-size:0.65rem">${isExact ? '' : '~'}${fmtTokens(tokVal)} tok</span>`;
-              }
-            }
-          }
           return `<div class="ind-pair">
           ${_repoTag(p)}<a class="ind-tag ind-issue" href="${_ghUrl(p,'issues')}" target="_blank" title="${issueTip}">${issueLabel}</a>
           <span class="ind-arrow">→</span>
-          <a class="ind-tag ${prCls}" href="${_ghUrl(p,'pull')}" target="_blank" title="${prTip}">${prIcon} #${p.pr}</a>${costHtml}
+          <a class="ind-tag ${prCls}" href="${_ghUrl(p,'pull')}" target="_blank" title="${prTip}">${prIcon} #${p.pr}</a>
         </div>`;
         };
         const renderWip = (ip) => {
@@ -22824,7 +22794,6 @@ function burnAreaChart() {
         const deferred = [
           () => fetchFactHistory(),
           () => fetchTrendHistory().then(() => fetchHistory()).then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
-          () => fetchIssueCosts().then(() => { setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS); }),
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
           () => fetchBudgetHistory().then(() => { setInterval(fetchBudgetHistory, HISTORY_REFRESH_MS); }),
           () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
