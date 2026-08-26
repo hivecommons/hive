@@ -20547,12 +20547,12 @@ function burnAreaChart() {
       const refs = p.references || {};
       const family = (key, label) => {
         const selected = new Set(Array.isArray(p[key]) ? p[key] : []);
-        return `<div class="config-field"><label>${label}</label><select multiple size="${Math.min(7, (supported[key] || []).length)}" data-change-action="gh75" data-family="${key}">${(supported[key] || []).map(v => `<option value="${esc(v)}" ${selected.has(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>`;
+        return `<div class="config-field"><label>${label}</label><select multiple size="${Math.min(7, (supported[key] || []).length)}" data-change-action="gh77" data-family="${key}">${(supported[key] || []).map(v => `<option value="${esc(v)}" ${selected.has(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>`;
       };
       const selectedPlatforms = [...new Set([...(p.open_source || []), ...(p.kube_native || []), ...(p.commercial || [])])].sort();
       const refRows = selectedPlatforms.map(platform => {
         const ref = refs[platform] || {};
-        return `<div style="border:1px solid var(--border);border-radius:7px;padding:9px;margin-top:8px"><div style="font-size:0.75rem;font-weight:600;margin-bottom:6px">${esc(platform)}</div><div class="config-field-row"><div class="config-field"><label>Endpoint environment variable</label><input type="text" value="${esc(ref.endpoint_env || '')}" placeholder="OTEL_EXPORTER_OTLP_ENDPOINT" data-change-action="gh76" data-platform="${esc(platform)}" data-ref-key="endpoint_env"></div><div class="config-field"><label>Credential secret reference</label><input type="text" value="${esc(ref.credential_secret || '')}" placeholder="observability-credentials/api-key" data-change-action="gh76" data-platform="${esc(platform)}" data-ref-key="credential_secret"></div></div></div>`;
+        return `<div style="border:1px solid var(--border);border-radius:7px;padding:9px;margin-top:8px"><div style="font-size:0.75rem;font-weight:600;margin-bottom:6px">${esc(platform)}</div><div class="config-field-row"><div class="config-field"><label>Endpoint environment variable</label><input type="text" value="${esc(ref.endpoint_env || '')}" placeholder="OTEL_EXPORTER_OTLP_ENDPOINT" data-change-action="gh78" data-platform="${esc(platform)}" data-ref-key="endpoint_env"></div><div class="config-field"><label>Credential secret reference</label><input type="text" value="${esc(ref.credential_secret || '')}" placeholder="observability-credentials/api-key" data-change-action="gh78" data-platform="${esc(platform)}" data-ref-key="credential_secret"></div></div></div>`;
       }).join('');
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Targets for the managed project's telemetry and operations agents. Hive's own OTLP export remains in <b>Features</b>.</p>
@@ -23114,8 +23114,8 @@ function burnAreaChart() {
       gh72: function (event, A) { markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
       gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
-      gh75: function (event, A) { projectObservabilityPlatformsChanged(this); },
-      gh76: function (event, A) { projectObservabilityReferenceChanged(this); },
+      gh77: function (event, A) { projectObservabilityPlatformsChanged(this); },
+      gh78: function (event, A) { projectObservabilityReferenceChanged(this); },
       gh0: function (event, A) { document.getElementById('gh-setup-overlay').style.display='none'; },
       gh1: function (event, A) { openConfigDialog('governor',null,'Repos'); },
       gh2: function (event, A) { acmmSelectRepo(null); },
