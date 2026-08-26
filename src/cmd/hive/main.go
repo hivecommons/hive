@@ -7671,6 +7671,47 @@ func fullRepoName(repo, org string) string {
 	return org + "/" + repo
 }
 
+// auditPRAttributionWindow bounds how far back the audit trail is scanned to
+// map open PRs to the agent that opened them. Red PRs older than this fall
+// back to scanner ownership in the kick builders — acceptable: 14d exceeds any
+// PR the fleet should still be iterating on.
+const auditPRAttributionWindow = 14 * 24 * time.Hour
+
+// auditPRAgents maps "org/repo#number" → agent name from the audit trail's
+// agent_pr_created entries (attribution.go records one per relay-opened PR,
+// reuses included). Reading the on-disk log per eval tick keeps this
+// stateless; OutputActionsSince touches no receiver state, so a zero-value
+// AuditLog is safe here.
+func auditPRAgents(org string, since time.Time, auditPath string) map[string]string {
+	entries := (&dashboard.AuditLog{}).OutputActionsSince(since,
+		map[string]bool{github.AuditActionAgentPRCreated: true}, auditPath)
+	out := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.Agent == "" {
+			continue
+		}
+		var repo, number string
+		for _, part := range strings.Split(e.Detail, ",") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
+				switch k {
+				case "repo":
+					repo = v
+				case "number":
+					number = v
+				}
+			}
+		}
+		if repo == "" || number == "" {
+			continue
+		}
+		if !strings.Contains(repo, "/") && org != "" {
+			repo = org + "/" + repo
+		}
+		out[repo+"#"+number] = e.Agent
+	}
+	return out
+}
+
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
@@ -7710,7 +7751,14 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// builders list them separately and agents must NOT dispatch more
 		// fix work for them.
 		Escalated bool `json:"escalated,omitempty"`
+		// Agent is the hive agent whose relay request opened this PR (from the
+		// audit trail's agent_pr_created entries). The scheduler's
+		// fix-before-new section routes each red PR back to its author; empty
+		// means unattributed (kick builders default it to scanner).
+		Agent string `json:"agent,omitempty"`
 	}
+
+	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
 
 	var eligible []eligiblePR
 	var failing []failingPR
@@ -7755,6 +7803,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				FailingChecks: pr.FailingChecks,
 				Excerpt:       pr.CIFailureExcerpt,
 				Escalated:     escalatedPRs[escalation.Key(fullRepo, pr.Number)],
+				Agent:         prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
 			})
 			continue
 		}
