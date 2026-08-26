@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	inceptionWatchIntervalS     = 5 * time.Second
 	inceptionBeadRefPrefix      = "inception/"
 	minQuestionsForAdvance      = 5
 	minFactsForAdvance          = 3
@@ -31,6 +30,20 @@ const (
 	agentIdleThreshold          = 30 * time.Second // agent must be idle this long before fallback
 )
 
+var (
+	inceptionWatchIntervalS    = 5 * time.Second
+	inceptionFastPollInterval  = 2 * time.Second
+	plukSubscriberPollInterval = 500 * time.Millisecond
+	plukSubscriberSeekEnd      = true
+	plukLogFile                = func() string { return fmt.Sprintf("%s/hive-brainstorm.jsonl", plukLogDir) }
+)
+
+type inceptionAgentManager interface {
+	GetBufferOutput(name string, lines int) ([]string, error)
+	SendKick(name string, message string) error
+	RestartWithBootstrap(ctx context.Context, name, prompt string) error
+}
+
 // InceptionWatcher polls brainstorm beads and bridges them into the inception
 // state machine. It detects question beads (capture → clarify) and fact beads
 // (structure → scaffold), advancing phases automatically.
@@ -38,7 +51,7 @@ type InceptionWatcher struct {
 	beadStore *beads.Store
 	inception *knowledge.InceptionEngine
 	scheduler *scheduler.Scheduler
-	agentMgr  *agent.Manager
+	agentMgr  inceptionAgentManager
 	governor  *governor.Governor
 	logger    *slog.Logger
 
@@ -72,28 +85,35 @@ func NewInceptionWatcher(
 	gov *governor.Governor,
 	logger *slog.Logger,
 ) *InceptionWatcher {
-	return &InceptionWatcher{
+	w := &InceptionWatcher{
 		beadStore: beadStore,
 		inception: inception,
 		scheduler: sched,
-		agentMgr:  agentMgr,
 		governor:  gov,
 		logger:    logger,
 	}
+	if agentMgr != nil {
+		w.agentMgr = agentMgr
+	}
+	return w
 }
 
 // Run starts the polling loop and event subscriber. Blocks until ctx is cancelled.
 func (w *InceptionWatcher) Run(ctx context.Context) {
 	w.ctx = ctx
 	w.logger.Info("inception watcher started")
-	ticker := time.NewTicker(inceptionWatchIntervalS)
+	watchInterval := inceptionWatchIntervalS
+	fastPollInterval := inceptionFastPollInterval
+	plukLog := plukLogFile()
+	plukPollInterval := plukSubscriberPollInterval
+	plukSeekEnd := plukSubscriberSeekEnd
+	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
 
 	// Start pluk event subscriber for brainstorm session
-	go w.runPlukSubscriber(ctx)
+	go w.runPlukSubscriberWithSettings(ctx, plukLog, watchInterval, plukPollInterval, plukSeekEnd)
 
-	const fastPollInterval = 2 * time.Second
-	lastInterval := inceptionWatchIntervalS
+	lastInterval := watchInterval
 
 	for {
 		// Adaptive polling: 2s during capture/structure, 5s otherwise
@@ -102,7 +122,7 @@ func (w *InceptionWatcher) Run(ctx context.Context) {
 		if state != nil && (state.Phase == knowledge.PhaseCapture || state.Phase == knowledge.PhaseStructure) {
 			targetInterval = fastPollInterval
 		} else {
-			targetInterval = inceptionWatchIntervalS
+			targetInterval = watchInterval
 		}
 		if targetInterval != lastInterval {
 			ticker.Reset(targetInterval)
@@ -415,8 +435,10 @@ const plukLogDir = "/var/run/pluk/logs"
 // stream and takes immediate action on relevant events. This replaces 5s
 // polling with real-time event-driven reactions.
 func (w *InceptionWatcher) runPlukSubscriber(ctx context.Context) {
-	logFile := fmt.Sprintf("%s/hive-brainstorm.jsonl", plukLogDir)
+	w.runPlukSubscriberWithSettings(ctx, plukLogFile(), inceptionWatchIntervalS, plukSubscriberPollInterval, plukSubscriberSeekEnd)
+}
 
+func (w *InceptionWatcher) runPlukSubscriberWithSettings(ctx context.Context, logFile string, watchInterval, pollInterval time.Duration, seekEnd bool) {
 	// Wait for the log file to exist
 	for {
 		if _, err := os.Stat(logFile); err == nil {
@@ -425,7 +447,7 @@ func (w *InceptionWatcher) runPlukSubscriber(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(inceptionWatchIntervalS):
+		case <-time.After(watchInterval):
 			continue
 		}
 	}
@@ -441,15 +463,15 @@ func (w *InceptionWatcher) runPlukSubscriber(ctx context.Context) {
 	defer f.Close()
 
 	// Seek to end — we only care about new events
-	if _, err := f.Seek(0, 2); err != nil {
-		w.logger.Warn("pluk subscriber: cannot seek to end", "error", err)
+	if seekEnd {
+		if _, err := f.Seek(0, 2); err != nil {
+			w.logger.Warn("pluk subscriber: cannot seek to end", "error", err)
+		}
 	}
 
 	scanner := bufio.NewScanner(f)
 	const plukMaxLineBytes = 1 << 20 // 1 MiB — agent output can exceed 64KB default
 	scanner.Buffer(make([]byte, 0, plukMaxLineBytes), plukMaxLineBytes)
-	const pollInterval = 500 * time.Millisecond
-
 	for {
 		select {
 		case <-ctx.Done():
