@@ -547,6 +547,8 @@ func TestWedgedRestartNeverBlocksTickAndNeverStacks(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Tick blocked on a wedged restart — the control-plane guard failed")
 	}
+	waitFor(t, func() bool { return fleet.restartCount() == 1 },
+		"initial wedged restart was never invoked")
 
 	// Past the hard timeout the wedge is alerted; no restart stacks on it.
 	clock.Advance(s.RestartTimeout + time.Second)
@@ -1106,6 +1108,9 @@ func TestDeadSessionRestartsOncePerBackoffNotPerTick(t *testing.T) {
 	)
 	for i := 0; i < sweeps; i++ {
 		r.Tick(context.Background())
+		if restartInFlight(r, "a1") {
+			fleet.waitRestart(t, r)
+		}
 		clock.Advance(sweepGap)
 	}
 	// Detached restarts settle asynchronously, so wait for the ladder's count
@@ -1392,4 +1397,11 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+func restartInFlight(r *Reconciler, name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.agents[name]
+	return ok && rec.restartInFlight
 }
