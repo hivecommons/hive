@@ -1635,9 +1635,18 @@
     }
 
     var _contribHiveId = '';
+    function closeContribModal() {
+      document.getElementById('contrib-modal').style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && document.getElementById('contrib-modal').style.display === 'flex') closeContribModal();
+    });
     async function openContributeInfo(name, id) {
       _contribHiveId = id;
       document.getElementById('contrib-modal').style.display = 'flex';
+      // Lock the page scroll behind the modal (#4805); restored on close.
+      document.body.style.overflow = 'hidden';
       document.getElementById('contrib-hive-name').textContent = name;
       document.getElementById('contrib-hive-id').textContent = id;
       var area = document.getElementById('contrib-access-area');
@@ -1757,14 +1766,14 @@
     })();
   </script>
 
-  <div id="contrib-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:32px;max-width:540px;width:90%;max-height:80vh;overflow-y:auto">
+  <div id="contrib-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center;overscroll-behavior:contain;overscroll-behavior-y:contain" onclick="if(event.target===this)closeContribModal()">
+    <div style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:32px;max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
       <h2 style="font-size:1.3rem;margin-bottom:4px;color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:16px">Hive ID: <code id="contrib-hive-id" style="font-size:0.75rem;background:#080b0f85;border:1px solid var(--line);padding:2px 6px;border-radius:4px"></code></p>
       <p style="color:var(--muted);font-size:0.9rem;line-height:1.6;margin-bottom:20px">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
       <div id="contrib-access-area"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:12px">
-        <button onclick="document.getElementById('contrib-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
+        <button onclick="closeContribModal()" style="padding:8px 20px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
       </div>
     </div>
   </div>
