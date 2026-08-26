@@ -406,6 +406,8 @@ func TestComputeAgentRosterMismatch_WarningReason(t *testing.T) {
 		{Name: "quality"},
 		{Name: "guide"},
 		{Name: "supervisor"},
+		{Name: "telemetry"},
+		{Name: "operations"},
 		{Name: "outreach"},
 	}
 	got := computeAgentRosterMismatch(2, agents)
@@ -427,9 +429,11 @@ func TestComputeAgentRosterMismatch_NoWarningForMatchingOrUnknown(t *testing.T) 
 	matching := []AgentSummary{
 		{Name: "brainstorm"},
 		{Name: "guide"},
+		{Name: "operations"},
 		{Name: "quality"},
 		{Name: "scanner"},
 		{Name: "supervisor"},
+		{Name: "telemetry"},
 	}
 	if got := computeAgentRosterMismatch(2, matching); got != nil {
 		t.Fatalf("matching roster got warning %+v", got)
