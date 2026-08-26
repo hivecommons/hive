@@ -1412,3 +1412,55 @@ func shaNumber(t *testing.T, path string) int {
 	t.Fatalf("sha number not found in %q", path)
 	return 0
 }
+
+// A sweep merge must land on the attribution audit trail as pr_merged — the
+// activity collector counts that trail and the /fleet L6 health verdict is
+// judged on merges. The sweep paths skipping this audit made merging hives
+// read as "no merge in Nd" red (kubestellar/console, 2026-08-26).
+func TestSweepQueuedAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number:          7,
+		author:          "alice",
+		queuedBy:        "bob",
+		label:           true,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	type auditRec struct{ action, detail, agent string }
+	var trail []auditRec
+	c.SetAttributionHooks(AttributionHooks{
+		Audit: func(action, detail, agent string) {
+			trail = append(trail, auditRec{action, detail, agent})
+		},
+	})
+
+	if _, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(merged) != 1 {
+		t.Fatalf("expected one merge, got %v", merged)
+	}
+	var got *auditRec
+	for i := range trail {
+		if trail[i].action == AuditActionPRMerged {
+			got = &trail[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("no %s entry on the attribution trail; trail=%#v", AuditActionPRMerged, trail)
+	}
+	if got.agent != AttributionAgentGovernor {
+		t.Errorf("pr_merged agent = %q, want %q", got.agent, AttributionAgentGovernor)
+	}
+	for _, want := range []string{"number=7", "method=squash"} {
+		if !strings.Contains(got.detail, want) {
+			t.Errorf("pr_merged detail missing %q: %q", want, got.detail)
+		}
+	}
+}
