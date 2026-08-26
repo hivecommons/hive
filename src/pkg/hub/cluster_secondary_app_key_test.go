@@ -725,13 +725,27 @@ func TestDecideSecondaryAppKeySyncIsIdempotent(t *testing.T) {
 // TestSecondaryAppAssignmentEndpoint covers the one path that writes
 // SecondaryAppID.
 func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
 	withTempAppKeyDir(t)
-	withTempHivesDir(t)
-	s := newSecondaryAppTestServer(t)
+	s := newHandlerHub()
+	s.clusters = secondaryAppTestClusters()
+	mkUser(t, hubAdminUsername)
+	mkUser(t, "bob")
 	mustSaveHive(t, &SaaSHive{ID: "hive-a", ClusterID: "vllm-d"})
 
-	// Assigning the cluster's PRIMARY app is refused: one App cannot be both.
-	if rec := putSecondaryApp(t, s, "hive-a", 5686); rec.Code != http.StatusConflict {
+	// This field IS the authorization decision for key delivery, so anything
+	// that can write it can direct key material at a hive. Non-admins may not.
+	if rec := putSecondaryApp(t, s, "bob", "hive-a", 4729416); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin: status = %d, want %d (%s)", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 0 {
+		t.Fatalf("a non-admin recorded a secondary app: %d", h.SecondaryAppID)
+	}
+
+	// Assigning the app this hive already authenticates as is refused: one App
+	// cannot be both primary and secondary.
+	if rec := putSecondaryApp(t, s, hubAdminUsername, "hive-a", 5686); rec.Code != http.StatusConflict {
 		t.Fatalf("assigning the primary app: status = %d, want %d (%s)", rec.Code, http.StatusConflict, rec.Body.String())
 	}
 	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 0 {
@@ -739,7 +753,7 @@ func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
 	}
 
 	// POSITIVE CONTROL: a genuine second App is recorded.
-	if rec := putSecondaryApp(t, s, "hive-a", 4729416); rec.Code != http.StatusOK {
+	if rec := putSecondaryApp(t, s, hubAdminUsername, "hive-a", 4729416); rec.Code != http.StatusOK {
 		t.Fatalf("positive control: status = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 4729416 {
@@ -747,7 +761,7 @@ func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
 	}
 
 	// Clearing is explicit and reversible.
-	if rec := putSecondaryApp(t, s, "hive-a", 0); rec.Code != http.StatusOK {
+	if rec := putSecondaryApp(t, s, hubAdminUsername, "hive-a", 0); rec.Code != http.StatusOK {
 		t.Fatalf("clear: status = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if h := loadSaaSHive("hive-a"); h.SecondaryAppID != 0 {
@@ -755,7 +769,7 @@ func TestSecondaryAppAssignmentEndpoint(t *testing.T) {
 	}
 
 	// Unknown hive.
-	if rec := putSecondaryApp(t, s, "nope", 4729416); rec.Code != http.StatusNotFound {
+	if rec := putSecondaryApp(t, s, hubAdminUsername, "nope", 4729416); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown hive: status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
@@ -819,16 +833,21 @@ func TestSecondaryAppKeysForClusterIgnoresForeignFiles(t *testing.T) {
 
 // --- helpers ---
 
+// secondaryAppTestClusters is the fleet shape these tests reason about: a
+// cluster with a primary App (vllm-d, app 5686 — the live GHE App ID), one with
+// none, and a second cluster fronting the SAME App so cross-cluster attribution
+// is exercised.
+func secondaryAppTestClusters() map[string]ClusterConfig {
+	return map[string]ClusterConfig{
+		"vllm-d": {ID: "vllm-d", GitHubAppID: 5686},
+		"no-app": {ID: "no-app"},
+		"other":  {ID: "other", GitHubAppID: 5686},
+	}
+}
+
 func newSecondaryAppTestServer(t *testing.T) *HubServer {
 	t.Helper()
-	return &HubServer{
-		logger: appKeyTestLogger(),
-		clusters: map[string]ClusterConfig{
-			"vllm-d": {ID: "vllm-d", GitHubAppID: 5686},
-			"no-app": {ID: "no-app"},
-			"other":  {ID: "other", GitHubAppID: 5686},
-		},
-	}
+	return &HubServer{logger: appKeyTestLogger(), clusters: secondaryAppTestClusters()}
 }
 
 func putClusterAppKey(t *testing.T, s *HubServer, clusterID string, body clusterAppKeyRequest) *httptest.ResponseRecorder {
@@ -845,15 +864,14 @@ func putClusterAppKey(t *testing.T, s *HubServer, clusterID string, body cluster
 	return rec
 }
 
-func putSecondaryApp(t *testing.T, s *HubServer, hiveID string, appID int64) *httptest.ResponseRecorder {
+func putSecondaryApp(t *testing.T, s *HubServer, user, hiveID string, appID int64) *httptest.ResponseRecorder {
 	t.Helper()
 	raw, err := json.Marshal(secondaryAppAssignmentRequest{AppID: appID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPut,
-		"/api/saas/hives/"+hiveID+"/secondary-app", strings.NewReader(string(raw)))
-	req.SetPathValue("id", hiveID)
+	req := setPathValue(reqWithUser(http.MethodPut,
+		"/api/saas/hives/"+hiveID+"/secondary-app", string(raw), user), "id", hiveID)
 	rec := httptest.NewRecorder()
 	s.handleSetHiveSecondaryApp(rec, req)
 	return rec

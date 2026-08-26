@@ -286,10 +286,24 @@ func (s *HubServer) handleSetHiveSecondaryApp(w http.ResponseWriter, r *http.Req
 	// would make one App both primary and secondary for the hive, so two
 	// independent delivery lanes would write the same /data/gh-app-key-<id>.pem
 	// and the last beat would decide which key the hive signs with.
+	//
+	// Judged against ResolveHiveIdentity, never against the cluster record's
+	// github_app_id. A cluster hosts hives of BOTH forges, so the cluster
+	// default is not necessarily the App any one hive authenticates as — a
+	// public-elected hive on a GHE-default cluster resolves the PUBLIC App. Read
+	// from the cluster directly, this guard would refuse the wrong App ID for
+	// exactly those hives and permit the one that actually collides. It is also
+	// the single-resolver rule the fleet already enforces
+	// (TestNoCallSiteResolvesIdentityIndependently): provisioning, the heartbeat
+	// answer and this check must not be able to give three different answers.
 	if body.AppID != 0 {
-		if c, ok := s.clusters[strings.TrimSpace(h.ClusterID)]; ok && c.GitHubAppID != 0 && body.AppID == c.GitHubAppID {
+		var cluster *ClusterConfig
+		if c, ok := s.clusters[strings.TrimSpace(h.ClusterID)]; ok {
+			cluster = &c
+		}
+		if id := ResolveHiveIdentity(h, cluster); id.AppID != 0 && body.AppID == id.AppID {
 			http.Error(w, fmt.Sprintf(
-				`{"error":"app %d is this hive's cluster primary app and cannot also be its secondary app"}`,
+				`{"error":"app %d is the app this hive already authenticates as and cannot also be its secondary app"}`,
 				body.AppID), http.StatusConflict)
 			return
 		}
