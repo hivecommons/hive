@@ -514,7 +514,7 @@ func TestSyncModeFilesLevel3(t *testing.T) {
 	m.SyncModeFiles(3)
 
 	// Check mode files were written
-	scannerMode, _ := os.ReadFile("/tmp/.hive-mode-scanner")
+	scannerMode, _ := os.ReadFile(filepath.Join(agentStateDir, ".hive-mode-scanner"))
 	_ = scannerMode
 }
 

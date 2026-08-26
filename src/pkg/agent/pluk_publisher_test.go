@@ -88,7 +88,7 @@ func TestPlukPipePaneCmdQuotesEveryOperand(t *testing.T) {
 // "<plukLogDir>/hive-brainstorm.jsonl" and hive-panes.sh globs
 // "$LOG_DIR"/hive-*.jsonl. If this drifts, both go quiet without erroring.
 func TestPlukSessionLogPathMatchesItsConsumers(t *testing.T) {
-	got := plukSessionLogPath(plukRunDir, "hive-brainstorm")
+	got := plukSessionLogPath(productionPlukRunDir, "hive-brainstorm")
 	const want = "/var/run/pluk/logs/hive-brainstorm.jsonl"
 	if got != want {
 		t.Fatalf("log path = %q, want %q — the inception watcher tails the literal %q",

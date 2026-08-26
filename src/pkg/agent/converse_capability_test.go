@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -125,7 +126,7 @@ func TestAgentCapabilitiesResolution(t *testing.T) {
 // which is the failure mode worth a test of its own.
 func TestWriteAgentCapsFileRevokes(t *testing.T) {
 	name := "capsprobe-4492"
-	path := "/tmp/.hive-caps-" + name
+	path := filepath.Join(agentStateDir, ".hive-caps-"+name)
 	t.Cleanup(func() { os.Remove(path) })
 
 	m := &Manager{logger: discardLogger()}
