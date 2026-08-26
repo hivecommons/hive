@@ -16,8 +16,10 @@ on:
 # cancel in-progress builds: on a fast-merging release branch (v2 saw ~34 merges
 # in 2h), cancel-in-progress meant every build was killed by the next merge and
 # NONE ever completed, freezing <branch>-latest and blocking all deploys. With
-# cancel-in-progress:false the builds queue and each runs to completion, so
-# <branch>-latest always advances to the newest merged commit.
+# cancel-in-progress:false the builds queue and each runs to completion. Each
+# completed build publishes an immutable SHA tag; publish-image-tags.sh uses a
+# per-tag workflow generation to advance moving tags without either starving
+# during a merge burst or regressing when queued runs execute out of order.
 concurrency:
   group: docker-build-${{ github.ref_name }}
   cancel-in-progress: false
@@ -143,6 +145,11 @@ jobs:
           build-args: |
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
+          # Monotonic moving-tag guard metadata (#4804). This config label is
+          # inherited by each platform manifest without changing its media type.
+          labels: |
+            io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
+            org.opencontainers.image.revision=${{ github.sha }}
           # STALE-BINARY FIX (unblocks the #3760 fix in the SHIPPED image).
           # `no-cache-filters: builder` alone rebuilt
           # a fresh /hive in the `builder` stage but let BuildKit serve the FINAL
@@ -269,6 +276,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [gate, build]
     steps:
+      - name: Checkout tag publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -286,56 +296,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify build commit is still HEAD of branch
-        id: head-check
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} "$BRANCH" | awk '{print $1}')
-          if [ "${{ github.sha }}" != "$CURRENT_HEAD" ]; then
-            echo "Build is stale (built ${{ github.sha }} but $BRANCH HEAD is $CURRENT_HEAD) — skipping tag"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Extract git metadata
-        if: steps.head-check.outputs.stale != 'true'
-        id: meta
-        run: |
-          echo "git_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          # Docker tags can't contain '/', but branch names can (feat/x).
-          # Use the github.ref_name expression (reliably populated) and
-          # sanitize '/' -> '-' so feat/x becomes tag feat-x-latest.
-          REF_NAME='${{ github.ref_name }}'
-          echo "branch_tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
-          # RELEASE CHANNELS. stable/candidate/edge are moving pointers that must
-          # always resolve to the newest good build of the RELEASE branch (v4).
-          # They are emitted here, in the same imagetools create that publishes
-          # <branch>-latest, so a channel is a RETAG of the digest we just built —
-          # never a rebuild, and never a manual promotion step that can be
-          # forgotten. Empty on every other branch, so a feature branch can never
-          # move a channel out from under production.
-          if [ "$REF_NAME" = "v4" ]; then
-            echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_channels=" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create manifest list and push
-        if: steps.head-check.outputs.stale != 'true'
-        working-directory: /tmp/digests
         run: |
-          shopt -s nullglob
-          digests=(*)
-          if [ ${#digests[@]} -eq 0 ]; then
-            echo "No digests to merge (per-arch builds published none) — skipping."
-            exit 0
-          fi
-          docker buildx imagetools create \
-            -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.branch_tag }}-latest \
-            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive:%s ' "$c"; done) \
-            -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.git_short }} \
-            $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' "${digests[@]}")
+          src/scripts/publish-image-tags.sh \
+            ghcr.io/kubestellar/hive /tmp/digests \
+            '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
+            v4 false
 
   build-contributor:
     needs: gate
@@ -374,6 +340,9 @@ jobs:
           context: .
           file: src/Dockerfile.contributor
           platforms: ${{ matrix.platform }}
+          labels: |
+            io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
+            org.opencontainers.image.revision=${{ github.sha }}
           # #3760: no default provenance/SBOM attestations → plain image
           # manifests, not an OCI index. See the note on the main build above.
           provenance: false
@@ -403,6 +372,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [gate, build-contributor]
     steps:
+      - name: Checkout tag publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -420,57 +392,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify build commit is still HEAD of branch
-        id: head-check
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} "$BRANCH" | awk '{print $1}')
-          if [ "${{ github.sha }}" != "$CURRENT_HEAD" ]; then
-            echo "Build is stale (built ${{ github.sha }} but $BRANCH HEAD is $CURRENT_HEAD) — skipping tag"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Extract git metadata
-        if: steps.head-check.outputs.stale != 'true'
-        id: meta
-        run: |
-          echo "git_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          # Docker tags can't contain '/', but branch names can (feat/x).
-          # Use the github.ref_name expression (reliably populated) and
-          # sanitize '/' -> '-' so feat/x becomes tag feat-x-latest.
-          REF_NAME='${{ github.ref_name }}'
-          echo "branch_tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
-          # RELEASE CHANNELS. stable/candidate/edge are moving pointers that must
-          # always resolve to the newest good build of the RELEASE branch (v4).
-          # They are emitted here, in the same imagetools create that publishes
-          # <branch>-latest, so a channel is a RETAG of the digest we just built —
-          # never a rebuild, and never a manual promotion step that can be
-          # forgotten. Empty on every other branch, so a feature branch can never
-          # move a channel out from under production.
-          if [ "$REF_NAME" = "v4" ]; then
-            echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_channels=" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create contributor manifest list and push
-        if: steps.head-check.outputs.stale != 'true'
-        working-directory: /tmp/contrib-digests
         run: |
-          shopt -s nullglob
-          digests=(*)
-          if [ ${#digests[@]} -eq 0 ]; then
-            echo "No digests to merge (per-arch builds published none) — skipping."
-            exit 0
-          fi
-          docker buildx imagetools create \
-            -t ghcr.io/kubestellar/hive-contributor:latest \
-            -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.branch_tag }}-latest \
-            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-contributor:%s ' "$c"; done) \
-            -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.git_short }} \
-            $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' "${digests[@]}")
+          src/scripts/publish-image-tags.sh \
+            ghcr.io/kubestellar/hive-contributor /tmp/contrib-digests \
+            '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
+            v4 true
 
   build-hub:
     needs: gate
@@ -512,6 +439,9 @@ jobs:
           build-args: |
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
+          labels: |
+            io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
+            org.opencontainers.image.revision=${{ github.sha }}
           # STALE-BINARY FIX (see the main build step). The hub image also does
           # `COPY --from=builder /hive` into a `runtime` final stage, and its GHA
           # cache scope (hub-<slug>) is likewise branch-persistent — so without
@@ -547,6 +477,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [gate, build-hub]
     steps:
+      - name: Checkout tag publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -564,54 +497,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify build commit is still HEAD of branch
-        id: head-check
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} "$BRANCH" | awk '{print $1}')
-          if [ "${{ github.sha }}" != "$CURRENT_HEAD" ]; then
-            echo "Build is stale (built ${{ github.sha }} but $BRANCH HEAD is $CURRENT_HEAD) — skipping tag"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Extract git metadata
-        if: steps.head-check.outputs.stale != 'true'
-        id: meta
-        run: |
-          echo "git_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          # Docker tags can't contain '/', but branch names can (feat/x).
-          # Use the github.ref_name expression (reliably populated) and
-          # sanitize '/' -> '-' so feat/x becomes tag feat-x-latest.
-          REF_NAME='${{ github.ref_name }}'
-          echo "branch_tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
-          # RELEASE CHANNELS. stable/candidate/edge are moving pointers that must
-          # always resolve to the newest good build of the RELEASE branch (v4).
-          # They are emitted here, in the same imagetools create that publishes
-          # <branch>-latest, so a channel is a RETAG of the digest we just built —
-          # never a rebuild, and never a manual promotion step that can be
-          # forgotten. Empty on every other branch, so a feature branch can never
-          # move a channel out from under production.
-          if [ "$REF_NAME" = "v4" ]; then
-            echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_channels=" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create hub manifest list and push
-        if: steps.head-check.outputs.stale != 'true'
-        working-directory: /tmp/hub-digests
         run: |
-          shopt -s nullglob
-          digests=(*)
-          if [ ${#digests[@]} -eq 0 ]; then
-            echo "No digests to merge (per-arch builds published none) — skipping."
-            exit 0
-          fi
-          docker buildx imagetools create \
-            -t ghcr.io/kubestellar/hive-hub:latest \
-            -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.branch_tag }}-latest \
-            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-hub:%s ' "$c"; done) \
-            -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.git_short }} \
-            $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' "${digests[@]}")
+          src/scripts/publish-image-tags.sh \
+            ghcr.io/kubestellar/hive-hub /tmp/hub-digests \
+            '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
+            v4 true

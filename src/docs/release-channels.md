@@ -20,6 +20,8 @@ Channels are **retags, not rebuilds**. The `docker.yml` workflow adds `stable`, 
 
 Only builds of branch `v4` publish channels — a feature-branch build can never move a production channel.
 
+Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. Moving tags (`v4-latest` and the three channels) advance when that build is newer than or equal to the generation currently published; an older workflow that runs out of queue order publishes only its immutable tag. This avoids both failure modes of a HEAD-only guard: a merge burst cannot starve all tags, and an old queued build cannot move a channel backwards. Registry inspection failures fail the publish job instead of producing a silent green skip.
+
 ## Switching a hive to a channel
 
 From the hub dashboard's **My Hives** list, click the blue version pill on a hive row. The menu lists branches first, then a **Channels** section with the three channels (most stable first). Only the hive's **owner** can switch.
