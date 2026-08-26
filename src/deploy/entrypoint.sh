@@ -819,9 +819,9 @@ print('\n'.join(sorted(names)))
         groupadd --gid "$AGENT_UID" "$ROLE_GROUP" 2>/dev/null || true
       fi
       if ! id "hive-${agent_name}" >/dev/null 2>&1; then
-        useradd --system -u "$AGENT_UID" -g "$ROLE_GROUP" -G node -d /data/home -M -s /bin/bash "hive-${agent_name}" 2>/dev/null || true
+        useradd --system -u "$AGENT_UID" -g node -G "$ROLE_GROUP" -d /data/home -M -s /bin/bash "hive-${agent_name}" 2>/dev/null || true
       else
-        usermod -g "$ROLE_GROUP" -a -G node "hive-${agent_name}" 2>/dev/null || true
+        usermod -g node -a -G "$ROLE_GROUP" "hive-${agent_name}" 2>/dev/null || true
       fi
       usermod -a -G "$ROLE_GROUP" dev 2>/dev/null || true
       # Pre-provision every per-agent Codex home while entrypoint still has
