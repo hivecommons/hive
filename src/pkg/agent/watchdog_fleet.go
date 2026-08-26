@@ -32,14 +32,35 @@ type WatchdogFleet struct {
 // loop (CheckAndRestartCrashedAgents) and the #4606 token-restart path;
 // reconciling them here would create the second uncoordinated restart loop
 // the RFC warns against.
+//
+// Two further classes are excluded for the same reason the stall checks and
+// the fleet breaker exclude them (manager.go: inference stall sweep,
+// EngageBreaker), because for them a quiet pane is correct behavior rather
+// than a fault — the house rule that a facet lighting up constantly gets
+// ignored (hub/agent_inactivity.go):
+//
+//   - OnDemand agents are MEANT to sit idle until summoned. Their pane
+//     legitimately shows no activity for days; classifying that as no-output
+//     and restarting it would fight the feature.
+//   - Sandboxed agents do not run a persistent tmux CLI session at all —
+//     execution is per-kick in a container. Every sweep would observe
+//     no-session, read it as dead, and restart an agent that was never
+//     supposed to hold a pane.
 func (f WatchdogFleet) AgentNames() []string {
 	f.M.mu.RLock()
 	defer f.M.mu.RUnlock()
 	names := make([]string, 0, len(f.M.agents))
 	for name, a := range f.M.agents {
-		if a.State == StateRunning && a.HasLaunched {
-			names = append(names, name)
+		if a == nil || a.State != StateRunning || !a.HasLaunched {
+			continue
 		}
+		if a.Config.OnDemand {
+			continue
+		}
+		if f.M.agentSandboxEnabledLocked(a) {
+			continue
+		}
+		names = append(names, name)
 	}
 	return names
 }

@@ -179,6 +179,43 @@ func TestWatchdogAgentNamesOnlyRunningLaunchedAgents(t *testing.T) {
 	}
 }
 
+// TestWatchdogAgentNamesExcludesQuietByDesign asserts the quiet-by-design
+// invariant: an agent whose pane is SUPPOSED to be silent is never handed to
+// the reconciler, because the reconciler's only reading of a silent pane is
+// "dead, restart it". On-demand agents idle until summoned and sandboxed
+// agents hold no persistent tmux session at all, so both would be restarted
+// forever. The plain running agent in the same table is the positive control:
+// it proves the filter excludes these two classes specifically rather than
+// returning an empty list for some unrelated reason.
+func TestWatchdogAgentNamesExcludesQuietByDesign(t *testing.T) {
+	m, _ := newWatchdogTestManager(t, map[string]string{
+		"plain": "claude", "ondemand": "claude", "sandboxed": "claude",
+	})
+
+	onDemand := m.agents["ondemand"].Config
+	onDemand.OnDemand = true
+	m.agents["ondemand"].Config = onDemand
+
+	// SandboxEnabled is an AND of the global switch and the per-agent
+	// override, so both have to be set for the agent to actually be sandboxed.
+	m.sandboxConfig = config.AgentSandboxConfig{Enabled: true}
+	sandboxed := m.agents["sandboxed"].Config
+	enabled := true
+	sandboxed.Sandbox = &config.AgentSandboxOverride{Enabled: &enabled}
+	m.agents["sandboxed"].Config = sandboxed
+
+	// Positive control: the same manager, same states — only the two
+	// quiet-by-design flags differ.
+	if !m.agents["sandboxed"].Config.SandboxEnabled(m.sandboxConfig) {
+		t.Fatal("precondition: the sandboxed agent must actually read as sandboxed")
+	}
+
+	names := WatchdogFleet{M: m}.AgentNames()
+	if len(names) != 1 || names[0] != "plain" {
+		t.Fatalf("AgentNames = %v, want [plain] — on-demand and sandboxed agents are quiet by design and must never be reconciled", names)
+	}
+}
+
 func TestWatchdogFleetPauseRestartDelegation(t *testing.T) {
 	m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
 	fleet := WatchdogFleet{M: m}
