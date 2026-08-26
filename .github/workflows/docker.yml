@@ -217,16 +217,19 @@ jobs:
           fi
           ACTUAL=$(docker run --rm --entrypoint /usr/local/bin/hive "$IMG" --version)
           echo "image reports: $ACTUAL"
-          echo "expected commit: ${EXPECTED_SHA::7} (from $EXPECTED_SHA)"
-          case "$ACTUAL" in
-            *"commit ${EXPECTED_SHA::7},"*)
-              echo "Freshness OK: embedded commit matches the built SHA"
-              ;;
-            *)
-              echo "::error::STALE BINARY: image reports '$ACTUAL' but this build is $EXPECTED_SHA. The published/validated image does not contain the code of this commit."
-              exit 1
-              ;;
-          esac
+          EXPECTED_SHORT="${EXPECTED_SHA::7}"
+          REPORTED_FULL=$(printf '%s\n' "$ACTUAL" | sed -n 's/.*commit:\{0,1\} \([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1)
+          REPORTED_COMMIT="${REPORTED_FULL::7}"
+          echo "expected commit: $EXPECTED_SHORT (from $EXPECTED_SHA)"
+          if [ -z "$REPORTED_COMMIT" ]; then
+            echo "::error::STALE BINARY: could not parse commit from '$ACTUAL'. The version output format changed or stamping is broken."
+            exit 1
+          fi
+          if [ "$REPORTED_COMMIT" != "$EXPECTED_SHORT" ]; then
+            echo "::error::STALE BINARY: image reports '$ACTUAL' but this build is $EXPECTED_SHA. The published/validated image does not contain the code of this commit."
+            exit 1
+          fi
+          echo "Freshness OK: embedded commit matches the built SHA"
 
       # SECURITY (#3866, CWE-250/732): assert the REAL built image ships exactly
       # one setuid/setgid binary, the su-exec launcher helper.
