@@ -2588,6 +2588,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.GitHubAppConfig = keyCfg
 	}
 
+	// Optional SECOND App key (#4815), targeted at this hive alone.
+	//
+	// Runs INDEPENDENTLY of the two branches above rather than inside either,
+	// because the primary reconcile's steady state is "push nothing" — a healthy
+	// hive already holding the right primary key gets no GitHubAppConfig at all,
+	// and nesting this there would make the secondary key undeliverable to
+	// exactly the healthy hives that are supposed to receive it. It attaches to
+	// whatever config those branches produced, or creates an otherwise-empty one
+	// whose zero AppID/InstallationID and empty PrivateKey the spoke reads as
+	// "not speaking to those fields".
+	//
+	// Every hive without a SecondaryAppID — the whole fleet today — returns nil
+	// from the resolver and this block is a no-op: no new field, no new state,
+	// no change to the payload.
+	if secCfg := s.secondaryAppKeyForHeartbeat(&payload); secCfg != nil {
+		if resp.GitHubAppConfig == nil {
+			resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
+		}
+		resp.GitHubAppConfig.SecondaryKey = secCfg
+	}
+
 	// SECURITY (C1/N3, CWE-200/639): the fleet-wide additional-key broadcast that
 	// once ran here was removed. It attached every OTHER tenant's App private key
 	// to every heartbeat, and — because the handler trusts the body-supplied

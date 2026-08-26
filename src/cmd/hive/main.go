@@ -4139,33 +4139,53 @@ func main() {
 			// collide with the primary /data/gh-app-key.pem above. Writing one that
 			// matches our OWN app_id must take effect immediately: flip keyChanged
 			// so the client is rebuilt below, exactly as a primary-key change does.
-			for _, ak := range ghCfg.AdditionalKeys {
-				if ak.PrivateKey == "" || ak.AppID <= 0 {
-					continue
+			// applyDeliveredPerAppKey writes ONE (app_id, key) pair to its
+			// per-app-id file and reports whether that changed the key we
+			// ourselves sign with. Shared by the (now-inert) AdditionalKeys loop
+			// and the targeted SecondaryKey delivery below so both write through
+			// identical code — the alternative is two copies of an atomic 0600
+			// write, one of which eventually loses a guard.
+			applyDeliveredPerAppKey := func(kind string, appID int64, privateKey string) {
+				if privateKey == "" || appID <= 0 {
+					return
 				}
-				perAppPath := perAppIDKeyPath(ak.AppID)
+				perAppPath := perAppIDKeyPath(appID)
 				beforeFP, _ := config.AppKeyFingerprintFromFile(perAppPath)
-				fp, err := writePerAppIDKey(ak.AppID, ak.PrivateKey)
+				fp, err := writePerAppIDKey(appID, privateKey)
 				if err != nil {
-					logger.Error("failed to write additional github app key from heartbeat",
-						"app_id", ak.AppID, "error", err)
-					continue
+					logger.Error("failed to write "+kind+" github app key from heartbeat",
+						"app_id", appID, "error", err)
+					return
 				}
 				changed := fp != "" && fp != beforeFP
-				logger.Info("additional github app private key written via heartbeat",
-					"app_id", ak.AppID,
+				logger.Info(kind+" github app private key written via heartbeat",
+					"app_id", appID,
 					"path", perAppPath,
 					"from_fingerprint", beforeFP,
 					"to_fingerprint", fp,
 					"key_changed", changed,
 				)
-				// If this additional key is for the App we ourselves authenticate
-				// as, it is now the key resolveAppKeyFile will pick — treat it like
-				// a primary-key rotation so the client rebuild below uses it.
-				if changed && ak.AppID == cfg.GitHub.AppID {
+				// If this key is for the App we ourselves authenticate as, it is
+				// now the key resolveAppKeyFile will pick — treat it like a
+				// primary-key rotation so the client rebuild below uses it.
+				if changed && appID == cfg.GitHub.AppID {
 					keyChanged = true
 					appAuth.DropCachedToken()
 				}
+			}
+			for _, ak := range ghCfg.AdditionalKeys {
+				applyDeliveredPerAppKey("additional", ak.AppID, ak.PrivateKey)
+			}
+
+			// The OPTIONAL SECOND App key (#4815), delivered targeted at this
+			// hive alone rather than broadcast. It lands in the same
+			// /data/gh-app-key-<appid>.pem namespace the spoke has always used,
+			// so heldPerAppIDKeyFingerprints reports it back on the next beat
+			// (which is what stops the hub re-pushing it) and the Forge App tab
+			// renders it, both with no further change. nil for every hive with no
+			// second App.
+			if ghCfg.SecondaryKey != nil {
+				applyDeliveredPerAppKey("secondary", ghCfg.SecondaryKey.AppID, ghCfg.SecondaryKey.PrivateKey)
 			}
 
 			// Adopt a hub-delivered app_id only when it names a REAL App. Zero

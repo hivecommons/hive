@@ -117,14 +117,28 @@ func storeClusterAppKey(clusterID, pemData string) error {
 	if !ok {
 		return fmt.Errorf("invalid cluster id for app key store: %q", clusterID)
 	}
+	return storeAppKeyAtPath(path, pemData, "cluster "+clusterID)
+}
+
+// storeAppKeyAtPath is storeClusterAppKey's body, extracted verbatim so the
+// secondary-App store (cluster_secondary_app_key.go) writes through the SAME
+// code rather than a copy.
+//
+// The extraction is deliberate and the copy is the thing being avoided: this
+// function is where 0700/0600, the create-with-final-mode, the fsync and the
+// atomic rename live. A second store with its own hand-rolled write would be
+// one review away from dropping the Sync or creating world-readable and nobody
+// would notice until a key leaked. subject names the owner of the key for error
+// messages only — it must never be, and never is, the key material.
+func storeAppKeyAtPath(path, pemData, subject string) error {
 	trimmed := strings.TrimSpace(pemData)
 	if !strings.HasPrefix(trimmed, "-----BEGIN") {
-		return fmt.Errorf("app key for cluster %s is not PEM", clusterID)
+		return fmt.Errorf("app key for %s is not PEM", subject)
 	}
 	// Validate before persisting: a key we cannot fingerprint is a key we could
 	// never compare against a spoke's report, so it would be pushed forever.
 	if _, err := config.AppKeyFingerprint(trimmed); err != nil {
-		return fmt.Errorf("app key for cluster %s is unusable: %w", clusterID, err)
+		return fmt.Errorf("app key for %s is unusable: %w", subject, err)
 	}
 
 	if err := os.MkdirAll(clusterAppKeyDir, clusterAppKeyDirMode); err != nil {
@@ -1156,6 +1170,29 @@ type clusterAppKeyRequest struct {
 	// PrivateKey is the PEM private key. It is WRITE-ONLY: it is stored to the
 	// 0600 key file and is never returned by any endpoint, in any form.
 	PrivateKey string `json:"private_key"`
+	// ForAppID scopes the upload to a SPECIFIC App, so a cluster can hold a
+	// second (optional) App's key beside its primary one (#4815).
+	//
+	// OPTIONAL AND ABSENT BY DEFAULT. Omitted — the shape every existing caller
+	// sends — means "the cluster's primary App", which writes the same
+	// <clusterID>.pem the endpoint has always written, with the same result.
+	// Nothing about the existing contract changes.
+	//
+	// WHY NOT REUSE AppID ABOVE
+	//
+	// AppID already means "also record this as the cluster's primary
+	// github_app_id in clusters.json" and callers send it that way today. Giving
+	// it a second meaning would make an existing primary-key upload that names
+	// its own App ID — a completely ordinary request — suddenly write to a
+	// secondary path instead, silently leaving the primary key stale. A separate
+	// field cannot be misread by a caller that has never heard of it.
+	//
+	// Setting it to the cluster's primary App is REJECTED rather than accepted
+	// as a no-op alias: an operator who believes they are uploading a second
+	// App's key while actually naming the primary would otherwise overwrite the
+	// key ~55 live hives authenticate with. That silent overwrite is the entire
+	// bug this field exists to prevent, so it must fail loudly.
+	ForAppID int64 `json:"for_app_id,omitempty"`
 }
 
 // clusterAppKeyStatus is the read side. It carries the fingerprint and NEVER the
@@ -1166,6 +1203,38 @@ type clusterAppKeyStatus struct {
 	AppID       int64  `json:"app_id,omitempty"`
 	HasKey      bool   `json:"has_key"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// SecondaryKeys lists the cluster's non-primary App keys, fingerprints only,
+	// ascending by App ID. omitempty and nil for every cluster that has none —
+	// which is every cluster in the fleet today — so an existing consumer of
+	// this payload sees a byte-identical response.
+	SecondaryKeys []secondaryAppKeyStatus `json:"secondary_keys,omitempty"`
+}
+
+// secondaryAppKeyStatus is one non-primary App key the hub holds for a cluster.
+// Like clusterAppKeyStatus it carries the fingerprint and NEVER the key; the
+// omission is the contract, not an oversight.
+type secondaryAppKeyStatus struct {
+	AppID       int64  `json:"app_id"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+// secondaryAppKeyStatusesFor builds the read-side inventory of a cluster's
+// non-primary keys. Fingerprints are recomputed from disk rather than cached so
+// the operator sees what is actually stored, which is the whole point of the
+// endpoint (confirming an upload landed).
+func secondaryAppKeyStatusesFor(clusterID string) []secondaryAppKeyStatus {
+	appIDs := secondaryAppKeysForCluster(clusterID)
+	if len(appIDs) == 0 {
+		return nil
+	}
+	out := make([]secondaryAppKeyStatus, 0, len(appIDs))
+	for _, id := range appIDs {
+		out = append(out, secondaryAppKeyStatus{
+			AppID:       id,
+			Fingerprint: secondaryAppKeyFingerprint(clusterID, id),
+		})
+	}
+	return out
 }
 
 // handleGetClusterAppKeys reports, per cluster, whether a hub-held App key
@@ -1177,10 +1246,15 @@ func (s *HubServer) handleGetClusterAppKeys(w http.ResponseWriter, r *http.Reque
 	for id, c := range s.clusters {
 		fp := clusterAppKeyFingerprint(id)
 		statuses = append(statuses, clusterAppKeyStatus{
-			ClusterID:   id,
-			AppID:       c.GitHubAppID,
-			HasKey:      fp != "",
-			Fingerprint: fp,
+			ClusterID: id,
+			AppID:     c.GitHubAppID,
+			// HasKey stays the PRIMARY key's presence. A cluster holding only a
+			// secondary key still has no primary key, and reporting otherwise
+			// would tell an operator the fleet's auth is provisioned when it is
+			// not.
+			HasKey:        fp != "",
+			Fingerprint:   fp,
+			SecondaryKeys: secondaryAppKeyStatusesFor(id),
 		})
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ClusterID < statuses[j].ClusterID })
@@ -1217,6 +1291,69 @@ func (s *HubServer) handlePutClusterAppKey(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"private_key is not a usable RSA/EC private key"}`, http.StatusBadRequest)
 		return
 	}
+	primaryAppID := s.clusters[clusterID].GitHubAppID
+
+	// SECOND-APP UPLOAD (#4815). Taken BEFORE any write, and it returns from its
+	// own branch rather than falling through, so there is no path on which a
+	// secondary upload can reach storeClusterAppKey and clobber the primary key.
+	if body.ForAppID != 0 {
+		if body.ForAppID < 0 {
+			http.Error(w, `{"error":"for_app_id must be a positive github app id"}`, http.StatusBadRequest)
+			return
+		}
+		// The guard this issue exists for. An operator naming the cluster's own
+		// App here believes they are adding a second key; accepting it would
+		// either overwrite the key ~55 live hives authenticate with, or fork a
+		// shadow copy that silently goes stale. Refuse, and say which App the
+		// cluster's primary actually is so the mistake is obvious.
+		if primaryAppID != 0 && body.ForAppID == primaryAppID {
+			http.Error(w, fmt.Sprintf(
+				`{"error":"app %d is this cluster's primary app; omit for_app_id to replace the primary key"}`,
+				body.ForAppID), http.StatusConflict)
+			return
+		}
+		// A cluster with no primary app_id configured has no primary key to
+		// protect, but it also has no way to tell a "second" App from its first.
+		// Refuse rather than guess: silently creating a secondary key on such a
+		// cluster would leave the real primary slot empty and the reconcile
+		// delivering nothing, with the operator believing the upload landed.
+		if primaryAppID == 0 {
+			http.Error(w, `{"error":"cluster has no primary github_app_id configured; upload its primary key first"}`, http.StatusConflict)
+			return
+		}
+		if body.AppID != 0 && body.AppID != body.ForAppID {
+			// app_id sets the cluster's PRIMARY App. Combining it with a
+			// secondary upload asks for two contradictory things in one request.
+			http.Error(w, `{"error":"app_id cannot be set on a secondary (for_app_id) upload"}`, http.StatusBadRequest)
+			return
+		}
+		if err := storeSecondaryAppKey(clusterID, body.ForAppID, primaryAppID, key); err != nil {
+			s.logger.Error("failed to store secondary cluster app key",
+				"cluster_id", clusterID, "for_app_id", body.ForAppID, "error", err)
+			http.Error(w, `{"error":"failed to store key"}`, http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("audit: secondary github app key stored for cluster",
+			"cluster_id", clusterID,
+			"for_app_id", body.ForAppID,
+			"primary_app_id", primaryAppID,
+			"fingerprint", fp, // fingerprint only — never the key
+			// The primary's fingerprint is logged UNCHANGED so the audit trail
+			// itself is the evidence that this upload did not disturb it.
+			"primary_fingerprint", clusterAppKeyFingerprint(clusterID),
+			"by", s.getAuthUser(r),
+		)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(clusterAppKeyStatus{
+			ClusterID:     clusterID,
+			AppID:         primaryAppID,
+			HasKey:        clusterAppKeyFingerprint(clusterID) != "",
+			Fingerprint:   clusterAppKeyFingerprint(clusterID),
+			SecondaryKeys: secondaryAppKeyStatusesFor(clusterID),
+		})
+		return
+	}
+
 	if err := storeClusterAppKey(clusterID, key); err != nil {
 		s.logger.Error("failed to store cluster app key", "cluster_id", clusterID, "error", err)
 		http.Error(w, `{"error":"failed to store key"}`, http.StatusInternalServerError)
@@ -1225,7 +1362,7 @@ func (s *HubServer) handlePutClusterAppKey(w http.ResponseWriter, r *http.Reques
 
 	// Persist the app_id alongside so the cluster has a complete identity. The
 	// ID is not secret and belongs in clusters.json.
-	appID := s.clusters[clusterID].GitHubAppID
+	appID := primaryAppID
 	if body.AppID != 0 && body.AppID != appID {
 		if err := s.setClusterAppID(clusterID, body.AppID); err != nil {
 			s.logger.Warn("stored cluster app key but failed to persist app_id",
@@ -1248,6 +1385,9 @@ func (s *HubServer) handlePutClusterAppKey(w http.ResponseWriter, r *http.Reques
 		AppID:       appID,
 		HasKey:      true,
 		Fingerprint: fp,
+		// nil — hence absent from the JSON — for every cluster without a second
+		// App, so a primary upload's response stays byte-identical to today's.
+		SecondaryKeys: secondaryAppKeyStatusesFor(clusterID),
 	})
 }
 

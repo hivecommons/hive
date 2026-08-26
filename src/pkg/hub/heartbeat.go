@@ -2065,6 +2065,23 @@ type HeartbeatGitHubAppConfig struct {
 	// so it deserializes to empty on both sides; a spoke that reads it (older
 	// builds) simply never receives entries. It always arrives nil now.
 	AdditionalKeys []HeartbeatAppKey `json:"additional_keys,omitempty"`
+	// SecondaryKey delivers the ONE optional second App key this hive is
+	// authorized to hold (#4815), so a cluster's second App — the optional
+	// Visual Hive App, #4030 — can receive a credential without the primary key
+	// having anywhere else to go.
+	//
+	// WHY THIS IS NOT AdditionalKeys REVIVED. AdditionalKeys is a LIST selected
+	// from the fleet key set with no binding to the caller, which is exactly what
+	// made it the CWE-200/639 cross-tenant disclosure. This is a SINGLE key
+	// resolved from SaaSHive.SecondaryAppID on the hub's own record for the
+	// authenticated hive (secondaryAppKeyForHive): the hive is handed the one App
+	// an operator assigned it or nothing at all, and no value a spoke sends can
+	// change which App that is. The singular type is part of the guarantee — a
+	// list is the shape that invites "while we're here, send the others too".
+	//
+	// nil for every hive without a SecondaryAppID, which is the entire fleet
+	// today, so the heartbeat payload is byte-identical for them.
+	SecondaryKey *HeartbeatAppKey `json:"secondary_key,omitempty"`
 }
 
 // HeartbeatAppKey is one (app_id, private key) pair the hub delivers alongside

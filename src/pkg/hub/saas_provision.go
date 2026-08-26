@@ -624,6 +624,33 @@ type SaaSHive struct {
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`
 
+	// SecondaryAppID names an OPTIONAL SECOND GitHub App this hive is
+	// authorized to hold a key for, alongside the App it authenticates as.
+	// Zero — the value on every one of the ~55 existing meta.json records, and
+	// the value a hive keeps unless an operator sets it — means "this hive has
+	// no second App", and every path below returns immediately.
+	//
+	// WHY THE AUTHORIZATION LIVES ON THE HIVE RECORD
+	//
+	// This field IS the access-control decision for secondary key delivery, and
+	// it is on the hub-owned record precisely because nothing a spoke sends can
+	// write it. The removed AdditionalKeys broadcast (heartbeat.go, CWE-200/639)
+	// failed because delivery was decided from the FLEET key set with no binding
+	// to the caller at all, and the heartbeat trusts a body-supplied hive_id
+	// under one fleet-shared bearer — so any hive could name any hive_id and be
+	// handed every tenant's key. Resolving the App ID from this field, on the
+	// record the hub loaded for the authenticated hive, means a spoke cannot
+	// name the App it wants: it receives the one App an operator assigned it, or
+	// nothing.
+	//
+	// It is an App ID and NOT a bool ("has viz app") so the assignment is
+	// explicit about WHICH App, and so a future third App needs no new field
+	// shape. It carries no key material and no health state: an absent or
+	// undelivered secondary App must never affect githubAppRequired /
+	// githubAppState, because an ORDINARY hive not having an optional App is not
+	// a fault.
+	SecondaryAppID int64 `json:"secondary_app_id,omitempty"`
+
 	// TrackedChannel is the release channel ("stable", "candidate", "edge")
 	// this hive's image is pinned to, or "" for a hive on a plain branch.
 	//
