@@ -107,7 +107,7 @@ const (
 // auditAction returns the action name for a decision, marking it not-taken
 // when the watchdog is only observing.
 func (r *Reconciler) auditAction(base string) string {
-	if r.settings.MayAct() {
+	if r.snapshotSettings().MayAct() {
 		return base
 	}
 	return base + observedSuffix
@@ -280,10 +280,47 @@ func DefaultBackendProvider(backend string) string {
 }
 
 // Enabled reports whether the reconciler runs at all (observe still runs).
-func (r *Reconciler) Enabled() bool { return r.settings.Enabled() }
+func (r *Reconciler) Enabled() bool { return r.snapshotSettings().Enabled() }
+
+// snapshotSettings returns the current settings under the lock, for the paths
+// that read them outside a *Locked helper. Settings are swappable at runtime
+// (SetSettings), so they must never be read unsynchronized.
+func (r *Reconciler) snapshotSettings() Settings {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.settings
+}
 
 // Mode reports the reconciler's current authority level.
-func (r *Reconciler) Mode() Mode { return r.settings.Mode }
+func (r *Reconciler) Mode() Mode {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.settings.Mode
+}
+
+// SetSettings swaps the resolved settings live, so an operator changing the
+// mode from the dashboard takes effect on the next sweep rather than at the
+// next pod restart.
+//
+// Dropping from heal to a mode that cannot act clears the in-memory ladder:
+// the failure counts and backoff deadlines describe restarts this reconciler
+// is no longer performing, and keeping them would mean that re-enabling heal
+// resumed part-way up a ladder built while it had no authority — including
+// escalating straight to a pause. Restart bookkeeping already in flight is
+// left alone; it settles on its own goroutine.
+func (r *Reconciler) SetSettings(s Settings) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wasActing := r.settings.MayAct()
+	r.settings = s
+	if wasActing && !s.MayAct() {
+		for _, rec := range r.agents {
+			rec.Failures = 0
+			rec.CrashLooping = false
+			rec.BackoffUntil = time.Time{}
+		}
+	}
+}
 
 // Conditions returns a copy of the agent's current condition set.
 func (r *Reconciler) Conditions(name string) []Condition {
@@ -362,11 +399,12 @@ func (r *Reconciler) recordLocked(name string) *agentRecord {
 // stuck agent (the RFC's control-plane guard). Calls inside ProbeInterval of
 // the previous sweep are no-ops.
 func (r *Reconciler) Tick(ctx context.Context) {
-	if !r.settings.Enabled() {
-		return
-	}
 	now := r.now()
 	r.mu.Lock()
+	if !r.settings.Enabled() {
+		r.mu.Unlock()
+		return
+	}
 	if !r.lastTick.IsZero() && now.Sub(r.lastTick) < r.settings.ProbeInterval {
 		r.mu.Unlock()
 		return
@@ -391,7 +429,7 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, name string, now time.T
 		r.logger.Warn("watchdog: agent unobservable", "agent", name, "error", err)
 		return
 	}
-	cls := Classify(obs, now, r.settings)
+	cls := Classify(obs, now, r.snapshotSettings())
 	paused := r.fleet.IsPaused(name)
 
 	r.mu.Lock()
@@ -563,7 +601,8 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 	r.audit(auditActionRestart,
 		fmt.Sprintf("class=%s reason=%s failure=%d/%d backoff=%v",
 			cls.Class, cls.Reason, failures, r.settings.CrashLoopAfter, backoff), name)
-	return func() { r.restartDetached(name) }
+	timeout := r.settings.RestartTimeout
+	return func() { r.restartDetached(name, timeout) }
 }
 
 // restartDetached runs the restart under the hard timeout without ever
@@ -571,9 +610,9 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 // wedges, restartInFlight stays true — the next tick alerts (see
 // checkWedgedRestartLocked) and no second restart stacks on it. At most one
 // goroutine exists per agent.
-func (r *Reconciler) restartDetached(name string) {
+func (r *Reconciler) restartDetached(name string, timeout time.Duration) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), r.settings.RestartTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		err := r.fleet.Restart(ctx, name)
 		r.mu.Lock()
@@ -598,6 +637,7 @@ func (r *Reconciler) restartDetached(name string) {
 // evidence and (b) the provider credential probe, cached per provider per
 // sweep so N agents on one provider cost one probe.
 func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observation, cls Classification, now time.Time, cache map[string]authVerdict) {
+	settings := r.snapshotSettings()
 	status := ConditionUnknown
 	reason := "NoProbe"
 	message := "no credential probe available for backend " + obs.Backend
@@ -613,7 +653,7 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 		status = ConditionFalse
 		reason = "CredentialMissing"
 		message = "per-agent credential probe reports no credential for backend " + obs.Backend
-	} else if r.settings.AuthProbe {
+	} else if settings.AuthProbe {
 		provider := r.backendProvider(obs.Backend)
 		if probe, ok := r.authProbes[provider]; ok && provider != "" {
 			v, cached := cache[provider]
@@ -667,6 +707,7 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 // decision on RFC open question 3): it publishes Producing=False and a
 // warning alert, degrading the agent's standing rather than its life.
 func (r *Reconciler) reconcileReadiness(name string, now time.Time) {
+	settings := r.snapshotSettings()
 	last, ok := r.fleet.LastProduction(name)
 	status := ConditionUnknown
 	reason := "NoEvidence"
@@ -674,7 +715,7 @@ func (r *Reconciler) reconcileReadiness(name string, now time.Time) {
 	if ok {
 		age := now.Sub(last)
 		switch {
-		case age < r.settings.NoProductionFor:
+		case age < settings.NoProductionFor:
 			status = ConditionTrue
 			reason = "RecentProduction"
 			message = fmt.Sprintf("last production evidence %v ago", age.Round(time.Minute))
@@ -700,7 +741,7 @@ func (r *Reconciler) reconcileReadiness(name string, now time.Time) {
 			default:
 				status = ConditionFalse
 				reason = "NoRecentProduction"
-				message = fmt.Sprintf("no production evidence for %v (threshold %v) while %d item(s) are queued", age.Round(time.Minute), r.settings.NoProductionFor, queued)
+				message = fmt.Sprintf("no production evidence for %v (threshold %v) while %d item(s) are queued", age.Round(time.Minute), settings.NoProductionFor, queued)
 			}
 		}
 	}

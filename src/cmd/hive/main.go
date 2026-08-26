@@ -4760,6 +4760,22 @@ func main() {
 			// whatever has finished, and the governor gate gets the final say
 			// either way.
 			if wd != nil {
+				// Re-resolve the mode each sweep so a change saved from the
+				// dashboard (or the fleet-wide kill switch being engaged)
+				// takes effect without a restart — and so dead-session
+				// ownership moves with it. Without this, leaving heal via the
+				// settings page would stop the watchdog restarting while the
+				// manager's crash loop was still standing down: a window in
+				// which NEITHER recovers a dead agent.
+				if s, errs := watchdog.SettingsFrom(cfg.Governor.Watchdog); s.Mode != wd.Mode() {
+					for _, e := range errs {
+						logger.Warn("watchdog config problem", "error", e)
+					}
+					logger.Info("watchdog mode changed", "from", string(wd.Mode()), "to", string(s.Mode))
+					dashSrv.AuditLog("system", "watchdog-mode", "from="+string(wd.Mode())+", to="+string(s.Mode), "")
+					wd.SetSettings(s)
+					agentMgr.SetDeadSessionRecoveryOwner(s.MayAct())
+				}
 				wd.Tick(ctx)
 				for _, name := range wd.TakeRestarted() {
 					dashSrv.AuditLog("system", "restart", "trigger=watchdog", name)

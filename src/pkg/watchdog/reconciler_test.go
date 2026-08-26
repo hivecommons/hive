@@ -1176,6 +1176,55 @@ func TestTakeRestartedSkipsFailedRestarts(t *testing.T) {
 	}
 }
 
+// TestSetSettingsSwapsModeLive asserts an operator changing the mode from the
+// dashboard takes effect on the next sweep, in both directions, and that
+// dropping out of heal clears a ladder built while it had authority — so
+// re-enabling heal does not resume part-way up, or escalate straight to a pause.
+func TestSetSettingsSwapsModeLive(t *testing.T) {
+	fleet := newFakeFleet("a1")
+	fleet.setObs("a1", deadObs())
+	clock := newFakeClock()
+	heal := fastSettings()
+	r := newTestReconciler(t, heal, fleet, newFakeAlerter(), clock)
+
+	// Heal: acts.
+	r.Tick(context.Background())
+	fleet.waitRestart(t)
+	if fleet.restartCount() != 1 {
+		t.Fatalf("precondition: heal must restart, got %d", fleet.restartCount())
+	}
+
+	// Operator drops to observe.
+	observe := fastSettings()
+	observe.Mode = ModeObserve
+	r.SetSettings(observe)
+	if r.Mode() != ModeObserve {
+		t.Fatalf("Mode() = %q, want observe", r.Mode())
+	}
+
+	r.mu.Lock()
+	failures := r.agents["a1"].Failures
+	r.mu.Unlock()
+	if failures != 0 {
+		t.Fatalf("leaving heal must clear the ladder, got %d failures — re-enabling heal would resume part-way up", failures)
+	}
+
+	clock.Advance(time.Hour)
+	r.Tick(context.Background())
+	if fleet.restartCount() != 1 {
+		t.Fatalf("observe must not restart after the swap, got %d", fleet.restartCount())
+	}
+
+	// And back to heal: acts again.
+	r.SetSettings(heal)
+	clock.Advance(time.Hour)
+	r.Tick(context.Background())
+	fleet.waitRestart(t)
+	if fleet.restartCount() != 2 {
+		t.Fatalf("returning to heal must restore healing, got %d", fleet.restartCount())
+	}
+}
+
 func TestSnapshotRestoreRoundtrip(t *testing.T) {
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
