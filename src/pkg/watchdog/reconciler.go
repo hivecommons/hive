@@ -104,10 +104,16 @@ const (
 	observedSuffix = "-observed"
 )
 
-// auditAction returns the action name for a decision, marking it not-taken
+// auditActionFor returns the action name for a decision, marking it not-taken
 // when the watchdog is only observing.
-func (r *Reconciler) auditAction(base string) string {
-	if r.snapshotSettings().MayAct() {
+//
+// It takes `acting` rather than reading the settings itself. Every caller is
+// inside a *Locked helper that already holds r.mu and has already resolved
+// MayAct(); reaching back for a locked snapshot from there self-deadlocks on a
+// non-reentrant sync.Mutex — the goroutine blocks waiting for the lock it is
+// itself holding, wedging the reconciler on a live hive, not just in test.
+func auditActionFor(base string, acting bool) string {
+	if acting {
 		return base
 	}
 	return base + observedSuffix
@@ -559,7 +565,7 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 			// exists to keep producing it.
 			r.logger.Warn("watchdog: would escalate to pause (observe mode; no action taken)",
 				"agent", name, "failures", rec.Failures, "class", string(cls.Class), "mode", string(r.settings.Mode))
-			r.audit(r.auditAction(auditActionPause), "would pause: "+detail, name)
+			r.audit(auditActionFor(auditActionPause, acting), "would pause: "+detail, name)
 			return nil
 		}
 
@@ -592,7 +598,7 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 		// ladder rather than one already part-way up.
 		r.logger.Warn("watchdog: would restart dead agent (observe mode; no action taken)",
 			"agent", name, "class", string(cls.Class), "reason", cls.Reason, "mode", string(r.settings.Mode))
-		r.audit(r.auditAction(auditActionRestart),
+		r.audit(auditActionFor(auditActionRestart, acting),
 			fmt.Sprintf("would restart: class=%s reason=%s", cls.Class, cls.Reason), name)
 		return nil
 	}

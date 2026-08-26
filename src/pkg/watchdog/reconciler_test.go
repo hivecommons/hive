@@ -764,6 +764,44 @@ func TestProducingRequiresQueuedWork(t *testing.T) {
 	})
 }
 
+// TestReconcileDoesNotSelfDeadlock is the regression guard for the observe-mode
+// self-deadlock: planRestartLocked runs with r.mu held, and a helper inside it
+// reached back for a locked settings snapshot, so the goroutine blocked forever
+// waiting for the lock it was itself holding. A non-reentrant sync.Mutex makes
+// that a hang, not a panic, so it presented as a 10-minute test timeout — and
+// on a live hive it would have wedged the governor tick the watchdog rides.
+//
+// Asserting "Tick returns" is the whole point: a deadlock cannot be caught by
+// inspecting state afterwards, because there is no afterwards. Every mode is
+// exercised because the deadlocking branches were observe-only, and heal is
+// the positive control proving the input reaches the restart decision at all.
+func TestReconcileDoesNotSelfDeadlock(t *testing.T) {
+	for _, mode := range []Mode{ModeObserve, ModeHeal} {
+		t.Run(string(mode), func(t *testing.T) {
+			fleet := newFakeFleet("a1")
+			fleet.setObs("a1", deadObs())
+			s := fastSettings()
+			s.Mode = mode
+			// Drive the crash-loop branch too: both it and the plain restart
+			// branch had a re-entrant call.
+			s.CrashLoopAfter = 1
+			r := newTestReconciler(t, s, fleet, newFakeAlerter(), newFakeClock())
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				r.Tick(context.Background()) // restart decision
+				r.Tick(context.Background()) // crash-loop decision
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("Tick deadlocked in mode %q — a locked helper re-entered r.mu", mode)
+			}
+		})
+	}
+}
+
 // TestObserveModeTakesNoAction asserts observe mode is genuinely inert. The
 // heal subtest is the positive control on the SAME input: it proves the input
 // is one the reconciler demonstrably acts on, so observe passing cannot mean
