@@ -110,8 +110,13 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 	if !ensureRequestDir(c.logger, "pr", prRequestDir()) {
 		return
 	}
+	// Capture the poll interval BEFORE spawning: the goroutine's first read of
+	// the package-level interval races with a test's fastTick cleanup restoring
+	// it (the race detector flagged exactly that on v4 CI). Reading it here is
+	// sequenced with the caller, and the loop only ever needed it once anyway.
+	interval := prRequestPollInterval
 	go func() {
-		t := time.NewTicker(prRequestPollInterval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {

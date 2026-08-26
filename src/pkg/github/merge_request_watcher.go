@@ -165,8 +165,13 @@ func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeReques
 		c.logger.Warn("merge-request watcher: could not set group-writable perms on request dir; agents may be unable to request merges",
 			slog.String("dir", mergeRequestDir()), slog.String("error", err.Error()))
 	}
+	// Capture the poll interval BEFORE spawning: the goroutine's first read of
+	// the package-level interval races with a test's fastTick cleanup restoring
+	// it (the race detector flagged exactly that on v4 CI). Reading it here is
+	// sequenced with the caller, and the loop only ever needed it once anyway.
+	interval := mergeRequestPollInterval
 	go func() {
-		t := time.NewTicker(mergeRequestPollInterval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {

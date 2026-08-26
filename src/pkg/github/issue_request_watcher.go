@@ -122,8 +122,13 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 	if !ensureRequestDir(c.logger, "issue", issueRequestDir()) {
 		return
 	}
+	// Capture the poll interval BEFORE spawning: the goroutine's first read of
+	// the package-level interval races with a test's fastTick cleanup restoring
+	// it (the race detector flagged exactly that on v4 CI). Reading it here is
+	// sequenced with the caller, and the loop only ever needed it once anyway.
+	interval := issueRequestPollInterval
 	go func() {
-		t := time.NewTicker(issueRequestPollInterval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {

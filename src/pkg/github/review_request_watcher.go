@@ -102,8 +102,13 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 		c.logger.Warn("review-request watcher: could not set group-writable perms on request dir; agents may be unable to review",
 			slog.String("dir", reviewRequestDir()), slog.String("error", err.Error()))
 	}
+	// Capture the poll interval BEFORE spawning: the goroutine's first read of
+	// the package-level interval races with a test's fastTick cleanup restoring
+	// it (the race detector flagged exactly that on v4 CI). Reading it here is
+	// sequenced with the caller, and the loop only ever needed it once anyway.
+	interval := reviewRequestPollInterval
 	go func() {
-		t := time.NewTicker(reviewRequestPollInterval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
