@@ -3,8 +3,10 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 publisher="$script_dir/publish-image-tags.sh"
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+tmp_root=${TMPDIR:-"$script_dir/../.test-tmp"}
+mkdir -p "$tmp_root"
+tmp=$(mktemp -d "$tmp_root/publish-tags.XXXXXX")
+trap 'rm -rf "$tmp"; rmdir "$tmp_root" 2>/dev/null || true' EXIT
 mkdir -p "$tmp/bin" "$tmp/digests"
 touch "$tmp/digests/aaaaaaaa" "$tmp/digests/bbbbbbbb"
 
@@ -14,9 +16,13 @@ set -euo pipefail
 if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
   ref=${@: -1}
   case "${MOCK_INSPECT_MODE:-legacy}" in
-    missing) echo 'manifest unknown' >&2; exit 1 ;;
+    missing) echo "ERROR: $ref: not found" >&2; exit 1 ;;
     failure) echo 'dial tcp: registry unavailable' >&2; exit 1 ;;
     legacy) echo '{"config":{"Labels":{}}}' ;;
+    sha-missing-moving-newer)
+      if [[ $ref == *':abcdef1' ]]; then echo 'manifest unknown' >&2; exit 1; fi
+      printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"101"}}}\n'
+      ;;
     mixed)
       if [[ $ref == *':latest' ]]; then value=101; else value=99; fi
       printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s"}}}\n' "$value"
@@ -53,10 +59,17 @@ run_case 99 100 "$capture"
 grep -q 'hive:v4-latest' "$capture"
 
 capture="$tmp/create-stale"
-run_case 101 100 "$capture"
+run_case sha-missing-moving-newer 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
 if grep -q 'hive:v4-latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
   echo "stale run moved a mutable tag" >&2
+  exit 1
+fi
+
+capture="$tmp/create-idempotent"
+run_case 100 100 "$capture"
+if [ -e "$capture" ]; then
+  echo "rerun of an already-published workflow generation published tags again" >&2
   exit 1
 fi
 
