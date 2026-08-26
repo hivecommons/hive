@@ -50,6 +50,7 @@ func helperDeleteHiveEnv(t *testing.T) (*HubServer, *http.ServeMux) {
 	})
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	t.Cleanup(srv.StopSaveLoop)
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /api/saas/hives/{id}", srv.handleDeleteHive)
 	return srv, mux
@@ -412,6 +413,7 @@ func TestRemoveRegistryEntryPersistsSynchronously(t *testing.T) {
 	_, _ = helperDeleteHiveEnv(t)
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	t.Cleanup(srv.StopSaveLoop)
 	const keepID = "keep-me-hive"
 	const dropID = "drop-me-hive"
 	srv.mu.Lock()
@@ -456,6 +458,7 @@ func TestKubectlUnreachableHiveIsNotReaped(t *testing.T) {
 	_, _ = helperDeleteHiveEnv(t)
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	t.Cleanup(srv.StopSaveLoop)
 	const unreachableID = "hosted-unreachable-spoke-hive"
 	// Beat recently enough to be well inside staleRemoveAge, but old enough to
 	// be marked offline: exactly what an unreachable-but-alive hive looks like.

@@ -353,7 +353,7 @@ func TestSyncModeFiles_WritesCorrectMode(t *testing.T) {
 
 	m.SyncModeFiles(4)
 
-	data, err := os.ReadFile("/tmp/.hive-mode-scanner")
+	data, err := os.ReadFile(filepath.Join(agentStateDir, ".hive-mode-scanner"))
 	if err != nil {
 		t.Skipf("could not read mode file: %v", err)
 	}

@@ -109,9 +109,16 @@ type issueRetryState struct {
 // dropped in IssueRequestDir. Same contract as StartPRRequestWatcher: returns
 // immediately, runs until ctx cancel, nil client is a no-op (requests
 // accumulate rather than silently dropping), nil authz fails closed.
-func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueRequestAuthorizer, nowFn func() time.Time) {
+//
+// The returned channel closes when the watcher goroutine has exited (or
+// immediately when it never starts), so callers — tests above all — can JOIN
+// the loop after cancelling instead of sleeping and hoping: an unjoined
+// watcher outliving its test races the test's global-seam restores.
+func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueRequestAuthorizer, nowFn func() time.Time) <-chan struct{} {
+	done := make(chan struct{})
 	if c == nil {
-		return
+		close(done)
+		return done
 	}
 	c.issueAuthz = authz
 	if nowFn == nil {
@@ -120,21 +127,36 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 	// Shared with PrepareRequestDirs, which creates this queue unconditionally
 	// at boot so findings can accumulate even before a watcher runs.
 	if !ensureRequestDir(c.logger, "issue", issueRequestDir()) {
-		return
+		close(done)
+		return done
 	}
+	// Capture the poll interval BEFORE spawning: the goroutine's first read of
+	// the package-level interval races with a test's fastTick cleanup restoring
+	// it (the race detector flagged exactly that on v4 CI). Reading it here is
+	// sequenced with the caller, and the loop only ever needed it once anyway.
+	interval := issueRequestPollInterval
 	go func() {
-		t := time.NewTicker(issueRequestPollInterval)
+		defer close(done)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// A cancelled ctx can lose the select to an already-ready tick
+				// (select picks randomly among ready cases), letting the loop
+				// process one more scan after cancellation. Fail the tick
+				// closed so cancel means no further processing.
+				if ctx.Err() != nil {
+					return
+				}
 				c.processIssueRequests(ctx, nowFn)
 			}
 		}
 	}()
 	c.logger.Info("issue-request watcher started", slog.String("dir", issueRequestDir()))
+	return done
 }
 
 func (c *Client) processIssueRequests(ctx context.Context, nowFn func() time.Time) {

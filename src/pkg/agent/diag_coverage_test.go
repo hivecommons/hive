@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -76,10 +77,10 @@ func TestLaunchInTmux_GooseBootstrap(t *testing.T) {
 	}
 	defer cleanupAgent(t, m, "cxa")
 	// Bootstrap file should have been written for goose.
-	if _, err := os.Stat("/tmp/.hive-bootstrap-a.txt"); err != nil {
+	if _, err := os.Stat(filepath.Join(agentStateDir, ".hive-bootstrap-a.txt")); err != nil {
 		t.Logf("goose bootstrap file: %v", err)
 	}
-	os.Remove("/tmp/.hive-bootstrap-a.txt")
+	os.Remove(filepath.Join(agentStateDir, ".hive-bootstrap-a.txt"))
 }
 
 // TestLaunchInTmux_GooseNoBootstrap covers the minimal --text branch for goose
@@ -98,7 +99,7 @@ func TestLaunchInTmux_GooseNoBootstrap(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	defer cleanupAgent(t, m, "cxa")
-	os.Remove("/tmp/.hive-bootstrap-a.txt")
+	os.Remove(filepath.Join(agentStateDir, ".hive-bootstrap-a.txt"))
 }
 
 // TestLaunchInTmux_ClaudeIssuesOnly / DefaultMode cover the claude mode switch

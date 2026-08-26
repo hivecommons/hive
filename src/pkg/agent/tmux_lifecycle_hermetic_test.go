@@ -12,16 +12,23 @@ import (
 	"github.com/kubestellar/hive/pkg/config"
 )
 
-func installHermeticTmux(t *testing.T) string {
+func installHermeticTmux(t *testing.T, logCommands bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "tmux.log")
 	script := `#!/bin/sh
-printf '%s\n' "$*" >> "$HIVE_FAKE_TMUX_LOG"
+if [ -n "${HIVE_FAKE_TMUX_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$HIVE_FAKE_TMUX_LOG"
+fi
 case "$*" in
   *has-session*) exit "${HIVE_FAKE_TMUX_HAS_SESSION_EXIT:-0}" ;;
   *capture-pane*) printf '%s' "$HIVE_FAKE_TMUX_OUTPUT"; exit "${HIVE_FAKE_TMUX_CAPTURE_EXIT:-0}" ;;
-  *send-keys*) printf '%s\n' "$*" >> "$HIVE_FAKE_TMUX_KEYS"; exit 0 ;;
+  *send-keys*)
+    if [ -n "${HIVE_FAKE_TMUX_KEYS:-}" ]; then
+      printf '%s\n' "$*" >> "$HIVE_FAKE_TMUX_KEYS"
+    fi
+    exit 0
+    ;;
 esac
 exit 0
 `
@@ -29,12 +36,14 @@ exit 0
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HIVE_FAKE_TMUX_LOG", logPath)
+	if logCommands {
+		t.Setenv("HIVE_FAKE_TMUX_LOG", logPath)
+	}
 	return logPath
 }
 
 func TestHermeticTmuxSessionExistsAndCapturePane(t *testing.T) {
-	logPath := installHermeticTmux(t)
+	logPath := installHermeticTmux(t, true)
 	t.Setenv("HIVE_FAKE_TMUX_OUTPUT", "Copilot\n❯ ready\n")
 
 	m := NewManager(nil, discardLogger(), ProjectContext{})
@@ -64,7 +73,10 @@ func TestHermeticTmuxSessionExistsAndCapturePane(t *testing.T) {
 }
 
 func TestHermeticWaitForLegacySessionReadyPaths(t *testing.T) {
-	installHermeticTmux(t)
+	// This test only needs pane output. Avoid a command log in the TempDir:
+	// package-level background tmux probes can inherit this fake through PATH
+	// and race TempDir cleanup by recreating the log after RemoveAll starts.
+	logPath := installHermeticTmux(t, false)
 	t.Setenv("HIVE_FAKE_TMUX_OUTPUT", "goose is ready\n")
 
 	m := NewManager(nil, discardLogger(), ProjectContext{})
@@ -73,6 +85,9 @@ func TestHermeticWaitForLegacySessionReadyPaths(t *testing.T) {
 	}
 	if !m.waitForInputPrompt("hive-ready") {
 		t.Fatal("waitForInputPrompt should return true once the fake pane has an input prompt")
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("wait-path test created an unnecessary command log: %v", err)
 	}
 }
 

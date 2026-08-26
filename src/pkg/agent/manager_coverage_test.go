@@ -387,7 +387,10 @@ func TestNewManager_CustomWorkDir(t *testing.T) {
 }
 
 func TestNewManager_DefaultWorkDir(t *testing.T) {
-	os.Unsetenv("HIVE_WORK_DIR")
+	// "" (not Unsetenv) so TestMain's package-wide HIVE_WORK_DIR guard
+	// (#4737/#4738) is restored after this test instead of leaking an unset
+	// var to the rest of the run.
+	t.Setenv("HIVE_WORK_DIR", "")
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
 	if m.workDir != "/data/agents" {
 		t.Errorf("workDir = %q, want /data/agents", m.workDir)

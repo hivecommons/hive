@@ -34,6 +34,11 @@ func testEnvPairs(ap *AgentProcess) []agentEnvPair {
 // hermetic temp tree. Pin tests on the production config read this.
 var productionWatchedHomeDirs []string
 
+// productionPlukRunDir is the production default of plukRunDir, snapshotted by
+// TestMain before it redirects the run dir into the hermetic temp tree. Pin
+// tests on the production path read this.
+var productionPlukRunDir string
+
 func TestMain(m *testing.M) {
 	defaultTmuxSocket = fmt.Sprintf("ht%d", os.Getpid())
 
@@ -94,6 +99,12 @@ func TestMain(m *testing.M) {
 	// /data trees when they exist. Point every walk root into the temp tree so
 	// no test can touch live agent data or spend minutes walking real dirs.
 	permRoot := filepath.Join(dir, "perm")
+	// The state-file writers (mode/caps/bootstrap below) need the directory to
+	// exist, exactly as /tmp always does in production.
+	if err := os.MkdirAll(permRoot, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: MkdirAll permRoot: %v\n", err)
+		os.Exit(1)
+	}
 	// Snapshot the production list first: TestWatchedHomeDirsIncludesBob pins
 	// the production default (bob's /data/home/.bob entry), not the override.
 	productionWatchedHomeDirs = append([]string(nil), WatchedHomeDirs...)
@@ -102,6 +113,15 @@ func TestMain(m *testing.M) {
 	GooseLogsDir = filepath.Join(permRoot, "home", ".local", "state", "goose", "logs", "cli")
 	ModeFileGlob = filepath.Join(permRoot, ".hive-mode-*")
 	CapsFileGlob = filepath.Join(permRoot, ".hive-caps-*")
+	// The mode/caps/bootstrap WRITERS must land where the globs above scan —
+	// and never in the real /tmp, where a live hive's gh-wrapper reads
+	// .hive-mode-<agent>: a test rewriting that file would change a REAL
+	// agent's enforcement mode (#4737/#4738).
+	agentStateDir = permRoot
+	// pluk is on PATH on live-hive hosts, so the launch path would otherwise
+	// mkdir /var/run/pluk and create session logs there (#4737/#4738).
+	productionPlukRunDir = plukRunDir
+	plukRunDir = filepath.Join(dir, "pluk")
 
 	// Pacing shrink (#4717/#4688): the suite's 440 tests pay production pacing
 	// (1-3s sleeps, 60-120s poll deadlines) against stub CLIs that render
@@ -136,7 +156,28 @@ func TestMain(m *testing.M) {
 	diagnosticTimeoutSec = 3
 	diagnosticPollSec = 1
 
+	// Env-resolved default paths (#4737/#4738): NewManager's default workDir is
+	// /data/agents and the kick-log archive default is /data/logs/kicks — a test
+	// that forgets to set these launches into (and the permission fixer walks)
+	// LIVE agent workspaces on a host that runs a hive. Guard package-wide;
+	// tests pinning the production defaults t.Setenv these to "" explicitly.
+	originalWorkDir, hadWorkDir := os.LookupEnv("HIVE_WORK_DIR")
+	originalKickLogDir, hadKickLogDir := os.LookupEnv(kickLogDirEnv)
+	os.Setenv("HIVE_WORK_DIR", filepath.Join(dir, "work"))
+	os.Setenv(kickLogDirEnv, filepath.Join(dir, "kicks"))
+
 	code := m.Run()
+
+	if hadWorkDir {
+		os.Setenv("HIVE_WORK_DIR", originalWorkDir)
+	} else {
+		os.Unsetenv("HIVE_WORK_DIR")
+	}
+	if hadKickLogDir {
+		os.Setenv(kickLogDirEnv, originalKickLogDir)
+	} else {
+		os.Unsetenv(kickLogDirEnv)
+	}
 
 	os.Setenv("PATH", originalPath)
 	if originalTMUX == "" {

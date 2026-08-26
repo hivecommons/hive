@@ -828,6 +828,20 @@ var agentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
 // agentTokenCachePerms restricts a per-agent credential file to owner-only.
 const agentTokenCachePerms = 0o600
 
+// agentStateDir is the directory holding the per-agent runtime state files:
+// .hive-mode-<name> / .hive-caps-<name> (the enforcement files gh-wrapper.sh
+// and the proxy read) and .hive-bootstrap-<name>.txt (the goose bootstrap
+// prompt, cat'ed by a launch command built from this same value, so writer and
+// reader can never disagree).
+//
+// A var (not const) as a TEST SEAM, matching the
+// ModeFileGlob/CapsFileGlob/SharedRepoParent convention: a test suite running
+// on a host that also runs a live hive must never write the live enforcement
+// files under /tmp — rewriting /tmp/.hive-mode-<agent> from a test would
+// change a REAL agent's GitHub enforcement mode (#4737/#4738). TestMain points
+// this at the per-run temp tree. Production value is unchanged.
+var agentStateDir = "/tmp"
+
 // AgentMintTokenCachePath returns the per-agent mint-token cache file path. It
 // sits beside the GitHub App token cache but is a distinct file so the two
 // credentials never collide — an agent reads the App token for GitHub and the
@@ -2452,7 +2466,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// deliverStartupKick above, so no /tmp/.hive-bootstrap-<name>.txt is
 		// written for them. bob used to land here and get a file nothing ever
 		// read; that dead write is gone with the deferral above.
-		promptFile := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
+		promptFile := filepath.Join(agentStateDir, fmt.Sprintf(".hive-bootstrap-%s.txt", agent.Name))
 		// N15: owner-only + O_NOFOLLOW (see writeAgentStateFile).
 		if err := writeAgentStateFile(promptFile, []byte(bootstrapPrompt)); err != nil {
 			m.logger.Warn("failed to write bootstrap prompt", "name", agent.Name, "error", err)
@@ -2465,7 +2479,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// Without bootstrap, use a minimal --text prompt so goose output is
 	// visible to tmux capture-pane (--instructions - uses hidden TUI).
 	if backend == "goose" && bootstrapPrompt == "" {
-		minimalPrompt := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
+		minimalPrompt := filepath.Join(agentStateDir, fmt.Sprintf(".hive-bootstrap-%s.txt", agent.Name))
 		if err := writeAgentStateFile(minimalPrompt, []byte("You are an AI agent. Wait for instructions from the supervisor.")); err != nil {
 			m.logger.Warn("failed to write minimal bootstrap prompt", "name", agent.Name, "error", err)
 		}
@@ -7524,7 +7538,7 @@ func (m *Manager) SyncModeFiles(level int) {
 				mode = parsed
 			}
 		}
-		modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", name)
+		modeFile := filepath.Join(agentStateDir, ".hive-mode-"+name)
 		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
@@ -7556,7 +7570,7 @@ func (m *Manager) agentCapabilities(agent *AgentProcess) AgentCapabilities {
 // a cleared `converse` actually revokes: leaving a stale file behind would keep
 // granting the capability after the operator turned it off.
 func (m *Manager) writeAgentCapsFile(name string, caps AgentCapabilities) {
-	capsFile := fmt.Sprintf("/tmp/.hive-caps-%s", name)
+	capsFile := filepath.Join(agentStateDir, ".hive-caps-"+name)
 	if err := writeAgentStateFile(capsFile, []byte(caps.String())); err != nil {
 		m.logger.Warn("caps file write failed", "file", capsFile, "error", err)
 	}
@@ -7899,7 +7913,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	} else {
 		vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", mode.String(), false})
 	}
-	modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", agent.Name)
+	modeFile := filepath.Join(agentStateDir, ".hive-mode-"+agent.Name)
 	if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}

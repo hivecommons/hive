@@ -6,9 +6,14 @@ import (
 	"path/filepath"
 )
 
-const (
-	plukRunDir = "/var/run/pluk"
-)
+// plukRunDir is where pluk's run state and per-session logs live.
+//
+// A var (not const) as a TEST SEAM, matching the agentTokenCacheDir
+// convention: `pluk` is on PATH on any host running a live hive, so a test
+// that launches an agent would otherwise try to create /var/run/pluk and
+// session logs on the live host (#4737/#4738). TestMain points this at the
+// per-run temp tree. Production value is unchanged.
+var plukRunDir = "/var/run/pluk"
 
 // pluk runs from per-agent tmux servers. Agent UIDs differ, but they all share
 // the node group, so setgid keeps new entries group-owned without opening the

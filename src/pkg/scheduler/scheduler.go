@@ -576,9 +576,24 @@ Your workdir is, at most, a checkout of the primary repo — never of the others
 
 const maxIssuesPerKick = 100
 
+const (
+	holdGatedACMMMinLevel = 3
+	holdGatedACMMMaxLevel = 5
+)
+
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
-func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) (message string) {
+	// Hold-gated PRs are deliberately absent from actionable.PRs: fetchPRs moves
+	// them into actionable.Hold as soon as it sees the hold label. Wrap every
+	// resolution path here so config templates, repo-sourced prompts, embedded
+	// defaults, hardcoded fallbacks, scheduled kicks, and manual kicks all see
+	// the same occupied-ground preflight. A template-only fix would leave stale
+	// operator overrides vulnerable indefinitely (kubestellar/hive#4744).
+	defer func() {
+		message = s.addHeldPRCoordination(agentName, actionable, message)
+	}()
+
 	baseName := s.cfg.BaseAgentName(agentName)
 	// 0. GitHub-sourced prompt: if the agent declares a prompt_source, resolve it
 	//    live at kick time (with allowlist gating + graceful fallback). A miss
@@ -663,6 +678,107 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	default:
 		return s.buildGenericMessage(agentName, issues, actionable)
 	}
+}
+
+// addHeldPRCoordination makes open, human-review-gated work visible before a
+// PR-capable agent chooses its next target. These PRs cannot ride ${PR_LIST}:
+// the hold gate intentionally removes them from the actionable PR population.
+// The section is injected outside policy-template resolution so a customized
+// or remotely sourced policy cannot accidentally omit the coordination fact.
+func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.ActionableResult, message string) string {
+	if message == "" || !s.isHoldGatedPRAgent(agentName) {
+		return message
+	}
+	claims, failClosed := s.formatHeldPRClaimsWithPolicy(actionable)
+	if failClosed {
+		if s.logger != nil {
+			s.logger.Warn("ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
+		}
+		return ""
+	}
+
+	section := `## Open hold-gated PR coordination — mandatory preflight
+
+The PRs below are open and awaiting human review. Their files, functions, and
+tracking-issue clusters are occupied ground even when they have been waiting
+for hours. Review latency is not abandonment.
+
+OPEN HOLD-GATED PRs:
+` + claims + `
+
+Before choosing work:
+1. Compare your intended files, functions, and tracker cluster with every
+   plausibly related PR above.
+2. Inspect any plausible overlap with ` + "`gh pr view <number> --repo <repo> --json title,body,files`" + `
+   and, when needed, ` + "`gh pr diff <number> --repo <repo>`" + `. The supplied list is the
+   authoritative open-PR snapshot; do not run ` + "`gh pr list`" + ` to rebuild it.
+3. If another PR already covers any intended ground, choose a disjoint cluster
+   or stand down. If the snapshot says additional PRs were omitted, stand down:
+   unseen occupied ground cannot be proven disjoint. Do not write a second
+   implementation and do not remove hold.
+4. Make each new PR title and body name the exact files/functions/cluster it
+   claims so the next kick can make the same comparison.
+
+`
+	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
+		return message[:newline+1] + "\n" + section + message[newline+1:]
+	}
+	return section + message
+}
+
+func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
+	if s.cfg == nil || s.cfg.ACMMLevel == nil || *s.cfg.ACMMLevel < holdGatedACMMMinLevel || *s.cfg.ACMMLevel > holdGatedACMMMaxLevel {
+		return false
+	}
+	baseName := s.cfg.BaseAgentName(agentName)
+	agentCfg, ok := s.cfg.Agents[agentName]
+	if !ok {
+		agentCfg, ok = s.cfg.Agents[baseName]
+	}
+	if !ok {
+		return false
+	}
+	mode := agentCfg.Mode
+	if agentCfg.Tools != nil {
+		if effective := agentCfg.Tools.EffectiveMode(); effective != "" {
+			mode = effective
+		}
+	}
+	return mode == "ISSUES_AND_PRS" || mode == "ISSUES_PRS_MERGE"
+}
+
+func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableResult) (string, bool) {
+	if actionable == nil {
+		return "  (none)", false
+	}
+	var b strings.Builder
+	shown := 0
+	omitted := 0
+	failClosed := false
+	for _, item := range actionable.Hold.Items {
+		if item.Type != "pr" {
+			continue
+		}
+		if shown >= maxIssuesPerKick {
+			omitted++
+			continue
+		}
+		title, verdict := s.enforceIssueTextVerdict(item.Title)
+		failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
+		const maxHeldPRTitleRunes = 70
+		if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
+			title = string(runes[:maxHeldPRTitleRunes])
+		}
+		b.WriteString(fmt.Sprintf("  %s#%d %s\n", item.Repo, item.Number, title))
+		shown++
+	}
+	if omitted > 0 {
+		b.WriteString(fmt.Sprintf("  ... %d additional open held PRs omitted; STAND DOWN this kick\n", omitted))
+	}
+	if shown == 0 {
+		return "  (none)", failClosed
+	}
+	return strings.TrimSuffix(b.String(), "\n"), failClosed
 }
 
 func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *github.ActionableResult) string {
