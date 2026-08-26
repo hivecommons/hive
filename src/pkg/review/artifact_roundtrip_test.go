@@ -57,6 +57,11 @@ func TestCollectAndWriteRoundTrip(t *testing.T) {
 	if loaded.HasAggregateApproval("kubestellar/hive", 2807, "deadbeef") {
 		t.Fatal("HasAggregateApproval matched a different head SHA")
 	}
+	// WriteArtifact persists atomically (write temp, rename); the temp file
+	// must not survive a successful write.
+	if _, err := os.Stat(out + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file must be renamed away, stat err=%v", err)
+	}
 }
 
 func TestCollectAndWriteCollectError(t *testing.T) {
