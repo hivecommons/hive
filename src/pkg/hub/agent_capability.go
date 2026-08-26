@@ -393,6 +393,14 @@ type agentFleetRollup struct {
 	Expected int `json:"expected"`
 	Running  int `json:"running"`
 	Able     int `json:"able"`
+	// Paused is how many expected-active agents are deliberately quiet because
+	// the operator paused them. Live all-paused hives (aslom/hive-agent,
+	// castrojo/endusers, hashicorp/dev-portal, inference-sim/sim2real, and
+	// peers) reported Expected>0, Running=0, Problems=0 and therefore fell
+	// into the false "no agents running" outage leg. Pause is an operator
+	// choice, not a dead session; count it separately so hive health can say
+	// "all agents paused" instead of inventing a crash.
+	Paused   int `json:"paused,omitempty"`
 	Stuck    int `json:"stuck"`
 	Impotent int `json:"impotent"`
 	// Problems is how many agents the governor expects on that cannot deliver
@@ -595,6 +603,9 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 		if a.ExpectedActive {
 			r.Expected++
 		}
+		if a.ExpectedActive && (a.Paused || strings.EqualFold(a.State, agentStatePaused)) {
+			r.Paused++
+		}
 		if v.RunState == runWorking {
 			r.Running++
 		}
@@ -618,6 +629,18 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 				r.QuotaExhausted++
 			case runDead, runSessionGone:
 				r.DeadOrGone++
+			case runWorking:
+				if v.BlockedReason == "sitting at login prompt" {
+					// Login prompts are actionable the moment the ABLE leg sees
+					// NeedsLogin on an interactive backend, even while the ACTUAL
+					// leg is still inside its 20-minute grace and therefore says
+					// runWorking. Live "placeholder/" and available-akswec2 pool
+					// hives hit this shape: Problems>0 but LoginStuck stayed zero,
+					// so /fleet hid the cause behind "N agent(s) blocked". Bucket
+					// by the blocked reason as a fallback so the hive chip tells
+					// the operator to re-login.
+					r.LoginStuck++
+				}
 			}
 		}
 	}

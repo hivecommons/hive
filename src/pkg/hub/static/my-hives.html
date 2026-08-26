@@ -156,6 +156,7 @@
   /* Health dot (left of hive name) — reflects PROBLEMS, not online/offline. */
   .hdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
   .hdot.problem { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .hdot.warning { background: var(--amber); box-shadow: 0 0 0 3px rgba(224,168,0,.14); }
   .hdot.ok { background: var(--green); }
   .hdot.unknown { background: var(--gray); }
   .hdot.offline { background: transparent; border: 1px solid var(--gray); }
@@ -290,7 +291,7 @@
 </header>
 <div class="wrap">
   <div class="legend">
-    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting) · <span class="hdot parked"></span> parked (all agents quiet by design — hive not in use)</span>
+    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot warning"></span> warning (operator action) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting) · <span class="hdot parked"></span> parked (all agents quiet by design — hive not in use)</span>
     <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
     <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
     <span><b>gh app:</b> <span class="github-app-health ok"><span class="light"></span>ok</span> · <span class="github-app-health degraded"><span class="light"></span>stale</span> · <span class="github-app-health broken"><span class="light"></span>broken</span> · <span class="github-app-health unknown"><span class="light"></span>n/a</span></span>
@@ -715,9 +716,9 @@ function deltaHTML(a) {
   if (a.quietByDesign) return '<span class="delta quiet">quiet</span>';
   return "";
 }
-// hiveHealth returns "problem" | "ok" | "unknown" | "offline" | "parked" for
+// hiveHealth returns "problem" | "warning" | "ok" | "unknown" | "offline" | "parked" for
 // the left dot. The backend now sends an ACMM-banded output verdict
-// (h.healthVerdict = {state:green|red|unknown, reason, outputKind, lastOutputAt,
+// (h.healthVerdict = {state:green|amber|red|unknown, reason, outputKind, lastOutputAt,
 // queuedWork}) that answers the core question — "does this hive have recent
 // output back to its work source, for the level it is AT?" — with the level
 // banding, precondition gates and queue-gate already applied. We prefer it, but
@@ -736,6 +737,7 @@ function hiveHealth(h) {
   var v = h.healthVerdict;
   if (v && v.state) {
     if (v.state === "red") return "problem";
+    if (v.state === "amber") return "warning";
     if (v.state === "green") return "ok";
     return "unknown"; // v.state === "unknown"
   }
@@ -759,7 +761,7 @@ function whyChipHTML(h, health) {
   if (health === "parked" || health === "offline") return "";
   var v = h.healthVerdict;
   if (!v || !v.reason) return "";
-  var cls = v.state === "red" ? "why-chip bad" : (v.state === "unknown" ? "why-chip unknown" : "why-chip");
+  var cls = v.state === "red" ? "why-chip bad" : (v.state === "amber" ? "why-chip warn" : (v.state === "unknown" ? "why-chip unknown" : "why-chip"));
   return '<span class="' + cls + '" title="' + esc(v.outputKind ? "output judged on: " + v.outputKind : "hive-health") + '">' + esc(v.reason) + '</span>';
 }
 function rosterMismatchChipHTML(h) {
@@ -812,11 +814,14 @@ function renderHives(hives) {
   tb.innerHTML = "";
   hives = hives || [];
 
-  // Rank: problems first, then unknown, then ok; stable within a rank by name.
-  var rank = { problem: 0, unknown: 1, offline: 2, parked: 3, ok: 4 };
+  // Rank: problems first, then amber operator-action warnings, then unknown,
+  // then ok; stable within a rank by name.
+  var rank = { problem: 0, warning: 1, unknown: 2, offline: 3, parked: 4, ok: 5 };
   var rows = hives.map(function (h) { return { h: h, health: hiveHealth(h) }; });
   rows.sort(function (a, b) {
-    var d = (rank[a.health] || 9) - (rank[b.health] || 9);
+    var ar = Object.prototype.hasOwnProperty.call(rank, a.health) ? rank[a.health] : 9;
+    var br = Object.prototype.hasOwnProperty.call(rank, b.health) ? rank[b.health] : 9;
+    var d = ar - br;
     if (d) return d;
     return String(a.h.name || a.h.id).localeCompare(String(b.h.name || b.h.id));
   });

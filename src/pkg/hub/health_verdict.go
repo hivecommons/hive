@@ -25,6 +25,7 @@ import (
 
 const (
 	HealthStateGreen   = "green"
+	HealthStateAmber   = "amber"
 	HealthStateRed     = "red"
 	HealthStateUnknown = "unknown"
 )
@@ -45,7 +46,7 @@ const (
 
 // HealthVerdict is the at-a-glance answer for one hive, surfaced on MyHiveEntry.
 type HealthVerdict struct {
-	State string `json:"state"` // green | red | unknown
+	State string `json:"state"` // green | amber | red | unknown
 	// Reason is a short human phrase for the WHY chip ("last output 3h ago",
 	// "GitHub App broken", "no agents running", "queue empty — idle").
 	Reason string `json:"reason"`
@@ -127,6 +128,14 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 				// Nothing alive at all: keep the familiar wording so a fully
 				// down hive reads the same as before the cause split.
 				v.Reason = "no agents running"
+			case rollup.DeadOrGone == rollup.Problems:
+				// Katamari/ibm-aiops-orchestrator live shape: guide+supervisor
+				// were failed/dead while quality+scanner still ran. The old
+				// Running==0 guard meant the cause fell through to generic
+				// "2 agent(s) blocked", hiding the restart remedy. When every
+				// problem is dead/gone, name that cause even if other agents in
+				// the hive are still healthy.
+				v.Reason = fmt.Sprintf("%d agent(s) down — restart needed", rollup.DeadOrGone)
 			case rollup.IdleWithWork == rollup.Problems:
 				// Sessions are alive but every scheduled agent is sitting past
 				// the idle threshold while work is queued. "no agents running"
@@ -139,6 +148,19 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 			return v
 		}
 		if rollup.Expected > 0 && rollup.Running == 0 {
+			if rollup.Paused == rollup.Expected {
+				// Live all-paused hives (aslom/hive-agent, castrojo/endusers,
+				// hashicorp/dev-portal, inference-sim/sim2real, singhar/go-ci,
+				// torch-spyre/spyre-inference, TradingAsBuddies/falcon-core,
+				// zacburns/mlz-manager, llm-d/llm-d-workload-variant-autoscaler)
+				// are ExpectedActive because work is queued, but every agent is
+				// intentionally paused. That is operator choice, not a red outage;
+				// still, queued work will not move until somebody resumes them, so
+				// amber is more honest than the green "off by schedule" verdict.
+				v.State = HealthStateAmber
+				v.Reason = "all agents paused — resume to produce output"
+				return v
+			}
 			v.State = HealthStateRed
 			v.Reason = "no agents running"
 			return v

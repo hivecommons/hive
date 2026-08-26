@@ -314,6 +314,27 @@ func TestRollup_LoginStuckCount(t *testing.T) {
 	}
 }
 
+func TestRollup_LoginPromptWithinGraceStillBucketsHiveCause(t *testing.T) {
+	now := time.Now()
+	guide := modernWorking(now)
+	guide.Name, guide.Backend = "guide", "copilot"
+	guide.NeedsLogin = true
+	guide.StartedAt = now.Add(-(inactiveAgentStartupGrace + 2*time.Minute)).UTC().Format(time.RFC3339)
+
+	v := deriveAgentVerdict(guide, hiveBlockers{}, 17, now)
+	if v.RunState != runWorking {
+		t.Fatalf("login prompt inside 20m grace should still be runWorking, got %+v", v)
+	}
+	if !v.Problem || v.BlockedReason != "sitting at login prompt" {
+		t.Fatalf("ABLE leg must mark the login prompt as the problem cause, got %+v", v)
+	}
+
+	r := rollupAgents([]AgentSummary{guide}, hiveBlockers{}, 17, now)
+	if r.Problems != 1 || r.LoginStuck != 1 {
+		t.Fatalf("login-in-grace pool-hive shape must bucket as login-stuck cause, got %+v", r)
+	}
+}
+
 // TestParseAgentTime_CompactWireFormat pins the colonless timestamp variant
 // spokes emit live ("2026-08-22T024118Z"). RFC3339-only parsing returned !ok
 // for every such value, which silently disabled the needs-login grace and the
@@ -356,6 +377,9 @@ func TestRollup_Counts(t *testing.T) {
 	if r.Able != 1 {
 		t.Errorf("able = %d, want 1", r.Able)
 	}
+	if r.Paused != 1 {
+		t.Errorf("paused = %d, want 1 (expected-active paused agent)", r.Paused)
+	}
 	// stuck: loginStuck (running+login) and down (dead). paused is not stuck.
 	if r.Stuck != 2 {
 		t.Errorf("stuck = %d, want 2 (login-stuck + down)", r.Stuck)
@@ -363,6 +387,26 @@ func TestRollup_Counts(t *testing.T) {
 	// impotent: only loginStuck (running but blocked). down is not running.
 	if r.Impotent != 1 {
 		t.Errorf("impotent = %d, want 1 (login-stuck)", r.Impotent)
+	}
+}
+
+func TestRollup_AllExpectedAgentsPaused(t *testing.T) {
+	now := time.Now()
+	agent := func(name string) AgentSummary {
+		a := modernWorking(now)
+		a.Name = name
+		a.State = agentStatePaused
+		a.Paused = true
+		return a
+	}
+
+	r := rollupAgents([]AgentSummary{
+		agent("quality"),
+		agent("scanner"),
+		agent("supervisor"),
+	}, hiveBlockers{}, 11, now)
+	if r.Expected != 3 || r.Paused != 3 || r.Running != 0 || r.Problems != 0 {
+		t.Fatalf("all-paused live shape should be expected+paused, not dead/problematic: %+v", r)
 	}
 }
 

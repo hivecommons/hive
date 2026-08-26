@@ -157,6 +157,33 @@ func TestHiveHealthForReasons(t *testing.T) {
 			wantReason: "no agents running",
 		},
 		{
+			// Katamari/ibm-aiops-orchestrator live shape: guide+supervisor are
+			// down, but quality+scanner still run. The hive is not fully out, so
+			// preserve the real cause instead of falling through to the generic
+			// "2 agent(s) blocked".
+			name:   "L3 all problems dead while other agents run — names restart cause",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 4, Running: 2, Known: 4, Problems: 2, DeadOrGone: 2},
+			app:    okApp(), queued: 3,
+			wantState:  HealthStateRed,
+			wantReason: "2 agent(s) down — restart needed",
+		},
+		{
+			// Live all-paused hives (aslom/hive-agent, castrojo/endusers,
+			// hashicorp/dev-portal, inference-sim/sim2real, singhar/go-ci,
+			// torch-spyre/spyre-inference, TradingAsBuddies/falcon-core,
+			// zacburns/mlz-manager, llm-d/llm-d-workload-variant-autoscaler):
+			// ExpectedActive remains true while the operator deliberately pauses
+			// every agent. That is not "no agents running" red; queued work will
+			// wait until a resume, so show an amber action chip.
+			name:   "L3 all expected agents paused — amber resume reason",
+			entry:  base(3),
+			rollup: agentFleetRollup{Expected: 3, Running: 0, Known: 3, Paused: 3},
+			app:    okApp(), queued: 11,
+			wantState:  HealthStateAmber,
+			wantReason: "all agents paused — resume to produce output",
+		},
+		{
 			name:      "L4 recent create — reason humanizes the age",
 			entry:     withActivity(writer(base(4)), ractivity("o/r", rfc(now.Add(-3*time.Hour)), "", "", "")),
 			rollup:    okRollup(),
@@ -245,6 +272,81 @@ func TestHiveHealth_L2FreshAdvisoryIgnoresWriteIncapableIdleAgents(t *testing.T)
 	v := hiveHealthFor(e, rollup, okApp(), 9, now)
 	if v.State != HealthStateGreen || !strings.Contains(v.Reason, "advisory 4m ago") {
 		t.Fatalf("fresh L2 advisory should stay healthy, got state=%s reason=%q", v.State, v.Reason)
+	}
+}
+
+func TestHiveHealth_LiveFleetCauseShapes(t *testing.T) {
+	now := time.Date(2026, 8, 26, 15, 28, 0, 0, time.UTC)
+	base := RegistryEntry{Online: true, ACMMLevel: 3}
+	working := func(name string) AgentSummary {
+		a := modernWorking(now)
+		a.Name = name
+		return a
+	}
+	paused := func(name string) AgentSummary {
+		a := working(name)
+		a.State = agentStatePaused
+		a.Paused = true
+		return a
+	}
+	dead := func(name string) AgentSummary {
+		a := working(name)
+		a.State = "failed"
+		return a
+	}
+	loginInGrace := func(name string) AgentSummary {
+		a := working(name)
+		a.Backend = "copilot"
+		a.NeedsLogin = true
+		a.StartedAt = now.Add(-(inactiveAgentStartupGrace + 2*time.Minute)).UTC().Format(time.RFC3339)
+		return a
+	}
+
+	tests := []struct {
+		name       string
+		agents     []AgentSummary
+		wantState  string
+		wantReason string
+	}{
+		{
+			// The all-paused hives seen live (for example aslom/hive-agent and
+			// castrojo/endusers) have queued work and ExpectedActive agents, but
+			// every expected agent is deliberately paused by the operator.
+			name:       "all agents paused",
+			agents:     []AgentSummary{paused("quality"), paused("scanner"), paused("supervisor")},
+			wantState:  HealthStateAmber,
+			wantReason: "all agents paused — resume to produce output",
+		},
+		{
+			// The placeholder/available-akswec2 pool shape is inside the 20m
+			// login grace, so RunState is still working; the ABLE leg already
+			// knows the cause is a login prompt and the hive chip must say that.
+			name:       "login prompt inside grace",
+			agents:     []AgentSummary{loginInGrace("guide"), loginInGrace("quality"), loginInGrace("scanner"), loginInGrace("supervisor")},
+			wantState:  HealthStateRed,
+			wantReason: "4 agent(s) stuck at login — re-login needed",
+		},
+		{
+			// Katamari/ibm-aiops-orchestrator had guide+supervisor down while
+			// quality+scanner still ran; this is a partial outage, not a generic
+			// blocked count.
+			name:       "dead agents while others run",
+			agents:     []AgentSummary{dead("guide"), dead("supervisor"), working("quality"), working("scanner")},
+			wantState:  HealthStateRed,
+			wantReason: "2 agent(s) down — restart needed",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := base
+			e.Agents = tc.agents
+			rollup := rollupAgents(tc.agents, hiveBlockers{}, 9, now)
+			v := hiveHealthFor(e, rollup, okApp(), 9, now)
+			if v.State != tc.wantState || v.Reason != tc.wantReason {
+				t.Fatalf("verdict = (%s, %q), want (%s, %q); rollup=%+v",
+					v.State, v.Reason, tc.wantState, tc.wantReason, rollup)
+			}
+		})
 	}
 }
 
