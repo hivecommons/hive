@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -248,6 +250,37 @@ func TestDiscoverClaudeModels_ExpiredSkipsHTTP(t *testing.T) {
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	if r := s.discoverClaudeModels(); !r.fallback {
 		t.Fatalf("expired token must fall back, got %+v", r)
+	}
+}
+
+func TestDiscoverClaudeModelsLogsDoNotLeakCredentials(t *testing.T) {
+	const oauthToken = "sk-ant-oat-do-not-log"
+	writeClaudeCredentials(t, oauthToken, time.Now().Add(-time.Hour).UnixMilli())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	var logs bytes.Buffer
+	s := &Server{
+		cliModels: newCLIModelCache(),
+		logger:    slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})),
+	}
+	if r := s.discoverClaudeModels(); !r.fallback {
+		t.Fatalf("expired token must fall back, got %+v", r)
+	}
+	if got := logs.String(); strings.Contains(got, oauthToken) || strings.Contains(got, "Bearer "+oauthToken) {
+		t.Fatalf("logs leaked credential material: %s", got)
+	}
+
+	logs.Reset()
+	const apiKey = "sk-ant-api-key-do-not-log"
+	t.Setenv("ANTHROPIC_API_KEY", apiKey)
+	ts := claudeModelsTestServer(t, http.StatusUnauthorized, `{"error":{"type":"authentication_error"}}`, nil)
+	redirectAnthropicEndpoint(t, ts.URL)
+
+	if r := s.discoverClaudeModels(); !r.fallback {
+		t.Fatalf("unauthorized API-key probe must fall back, got %+v", r)
+	}
+	if got := logs.String(); strings.Contains(got, apiKey) {
+		t.Fatalf("logs leaked API key material: %s", got)
 	}
 }
 
