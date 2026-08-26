@@ -171,13 +171,44 @@ func (f *fakeFleet) pauseCount() int {
 }
 
 // waitRestart blocks until one Restart call completes or the test times out.
-func (f *fakeFleet) waitRestart(t *testing.T) {
+//
+// It takes a reconciler so it can also wait for the restart goroutine to
+// SETTLE. The fake's restartDone send happens inside Restart, which returns
+// before restartDetached retakes r.mu to clear restartInFlight — so a test
+// that only waited on the channel could drive the next Tick while the latch
+// was still set, and planRestartLocked would correctly refuse to stack a
+// second restart on an apparently in-flight one. That presented as a later
+// restart silently never happening and the NEXT waitRestart timing out, which
+// is a harness race, not a product bug.
+func (f *fakeFleet) waitRestart(t *testing.T, r *Reconciler) {
 	t.Helper()
 	select {
 	case <-f.restartDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for a restart to complete")
 	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		rec, ok := r.agents[f.lastRestarted()]
+		inFlight := ok && rec.restartInFlight
+		r.mu.Unlock()
+		if !inFlight {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("restart goroutine never cleared restartInFlight")
+}
+
+// lastRestarted names the most recent Restart target.
+func (f *fakeFleet) lastRestarted() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.restarts) == 0 {
+		return ""
+	}
+	return f.restarts[len(f.restarts)-1]
 }
 
 // auditEntry is one recorded durable audit write.
@@ -355,7 +386,7 @@ func TestDeadAgentRestartWithExponentialBackoff(t *testing.T) {
 
 	// Failure 1: restart fires immediately.
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if fleet.restartCount() != 1 {
 		t.Fatalf("want 1 restart, got %d", fleet.restartCount())
 	}
@@ -370,7 +401,7 @@ func TestDeadAgentRestartWithExponentialBackoff(t *testing.T) {
 	// Past 1m: failure 2 fires; backoff doubles to 2m.
 	clock.Advance(31 * time.Second)
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if fleet.restartCount() != 2 {
 		t.Fatalf("want 2 restarts after first backoff, got %d", fleet.restartCount())
 	}
@@ -385,7 +416,7 @@ func TestDeadAgentRestartWithExponentialBackoff(t *testing.T) {
 	// Another 61s crosses the 2m window: failure 3.
 	clock.Advance(61 * time.Second)
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if fleet.restartCount() != 3 {
 		t.Fatalf("want 3 restarts, got %d", fleet.restartCount())
 	}
@@ -408,7 +439,7 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		r.Tick(context.Background())
-		fleet.waitRestart(t)
+		fleet.waitRestart(t, r)
 		clock.Advance(time.Second)
 	}
 	if fleet.restartCount() != 2 {
@@ -456,7 +487,7 @@ func TestHealthyWindowResetsFailuresAndClearsAlert(t *testing.T) {
 	// Drive into crash loop.
 	for i := 0; i < 2; i++ {
 		r.Tick(context.Background())
-		fleet.waitRestart(t)
+		fleet.waitRestart(t, r)
 		clock.Advance(time.Second)
 	}
 	r.Tick(context.Background())
@@ -530,7 +561,7 @@ func TestWedgedRestartNeverBlocksTickAndNeverStacks(t *testing.T) {
 
 	// Un-wedge: the in-flight flag clears and the alert lifts.
 	close(fleet.restartBlock)
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	waitFor(t, func() bool { return !alerter.has(wedgeAlertID("a1")) },
 		"wedge alert must clear once the restart returns")
 }
@@ -854,7 +885,7 @@ func TestObserveModeTakesNoAction(t *testing.T) {
 		r := newTestReconciler(t, fastSettings(), fleet, alerter, newFakeClock())
 
 		r.Tick(context.Background())
-		fleet.waitRestart(t)
+		fleet.waitRestart(t, r)
 
 		if fleet.restartCount() != 1 {
 			t.Fatalf("heal must restart this input, got %d", fleet.restartCount())
@@ -932,7 +963,7 @@ func TestAuditRecordsActionsNotSweeps(t *testing.T) {
 	// Positive control: the same reconciler DOES record a real action.
 	fleet.setObs("a1", deadObs())
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if alerter.auditCount() == 0 {
 		t.Fatal("a real action must be recorded (positive control)")
 	}
@@ -952,7 +983,7 @@ func TestCrashLoopPauseIsAudited(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		r.Tick(context.Background())
-		fleet.waitRestart(t)
+		fleet.waitRestart(t, r)
 		clock.Advance(time.Second)
 	}
 	r.Tick(context.Background())
@@ -994,7 +1025,7 @@ func TestAuditDetailLeaksNoPaneContent(t *testing.T) {
 	}
 
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 
 	if alerter.auditCount() == 0 {
 		t.Fatal("precondition: an action must have been audited")
@@ -1042,7 +1073,7 @@ func TestBootGraceSuppressesDeadVerdicts(t *testing.T) {
 		})
 		r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), clock)
 		r.Tick(context.Background())
-		fleet.waitRestart(t)
+		fleet.waitRestart(t, r)
 
 		if fleet.restartCount() != 1 {
 			t.Fatalf("a dead session past grace must be restarted, got %d", fleet.restartCount())
@@ -1120,7 +1151,7 @@ func TestProbeIntervalGatesSweeps(t *testing.T) {
 	r := newTestReconciler(t, s, fleet, newFakeAlerter(), clock)
 
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	clock.Advance(time.Minute)
 	r.Tick(context.Background()) // inside the interval: no sweep at all
 	clock.Advance(5 * time.Minute)
@@ -1174,7 +1205,7 @@ func TestRestartFailureIsCountedNotHidden(t *testing.T) {
 	clock := newFakeClock()
 	r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), clock)
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	r.mu.Lock()
 	failures := r.agents["a1"].Failures
 	r.mu.Unlock()
@@ -1193,7 +1224,7 @@ func TestTakeRestartedReportsSuccessesOnce(t *testing.T) {
 	r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), newFakeClock())
 
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 
 	// The restart goroutine records the success just after Restart returns, so
 	// drain until it lands rather than sampling once.
@@ -1220,7 +1251,7 @@ func TestTakeRestartedSkipsFailedRestarts(t *testing.T) {
 	r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), newFakeClock())
 
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if got := r.TakeRestarted(); len(got) != 0 {
 		t.Fatalf("a failed restart must not be resume-kicked, got %v", got)
 	}
@@ -1239,7 +1270,7 @@ func TestSetSettingsSwapsModeLive(t *testing.T) {
 
 	// Heal: acts.
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if fleet.restartCount() != 1 {
 		t.Fatalf("precondition: heal must restart, got %d", fleet.restartCount())
 	}
@@ -1269,7 +1300,7 @@ func TestSetSettingsSwapsModeLive(t *testing.T) {
 	r.SetSettings(heal)
 	clock.Advance(time.Hour)
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 	if fleet.restartCount() != 2 {
 		t.Fatalf("returning to heal must restore healing, got %d", fleet.restartCount())
 	}
@@ -1281,7 +1312,7 @@ func TestSnapshotRestoreRoundtrip(t *testing.T) {
 	clock := newFakeClock()
 	r := newTestReconciler(t, fastSettings(), fleet, newFakeAlerter(), clock)
 	r.Tick(context.Background())
-	fleet.waitRestart(t)
+	fleet.waitRestart(t, r)
 
 	snap := r.Snapshot()
 	if snap["a1"].Failures != 1 || snap["a1"].BackoffUntil == nil || len(snap["a1"].Conditions) == 0 {
