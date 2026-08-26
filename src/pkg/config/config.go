@@ -1370,6 +1370,38 @@ type AdvisoryConfig struct {
 	// close enough to the finding's title. *bool so absent is distinct from an
 	// explicit false; default true.
 	PRAutoClose *bool `yaml:"pr_autoclose,omitempty" json:"pr_autoclose,omitempty"`
+	// UpdateIntervalS throttles how often the pinned advisory-issue digest
+	// comment is checked and refreshed, in seconds. 0 (or absent) means UNSET:
+	// the digest posts on every governor eval cycle, exactly the cadence every
+	// install had before this knob existed (#4820) — deliberately NOT
+	// materialized to a fixed number on load, because "every eval cycle"
+	// tracks governor.eval_interval_s, whatever that is set to. Values below
+	// MinAdvisoryUpdateIntervalS are clamped up at use time (hand-edited
+	// hive.yaml included), never rejected — see EffectiveUpdateInterval.
+	UpdateIntervalS int `yaml:"update_interval_s,omitempty" json:"update_interval_s,omitempty"`
+}
+
+// MinAdvisoryUpdateIntervalS is the floor for
+// governor.advisory.update_interval_s once it is set at all: a sub-30s cadence
+// only multiplies GitHub API writes — the opposite of what the knob is for —
+// so anything lower clamps up rather than erroring out a hand-edited
+// hive.yaml. Exported because the dashboard PUT handler normalizes writes to
+// the same floor.
+const MinAdvisoryUpdateIntervalS = 30
+
+// EffectiveUpdateInterval resolves UpdateIntervalS to the cadence the posting
+// loop actually honors. (0, false) when unset — the digest posts every
+// governor eval cycle, the pre-#4820 behavior — otherwise the configured
+// duration clamped to MinAdvisoryUpdateIntervalS, with clamped reporting
+// whether the floor was applied (the caller logs that once).
+func (a AdvisoryConfig) EffectiveUpdateInterval() (d time.Duration, clamped bool) {
+	if a.UpdateIntervalS <= 0 {
+		return 0, false
+	}
+	if a.UpdateIntervalS < MinAdvisoryUpdateIntervalS {
+		return MinAdvisoryUpdateIntervalS * time.Second, true
+	}
+	return time.Duration(a.UpdateIntervalS) * time.Second, false
 }
 
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).

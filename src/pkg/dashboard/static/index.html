@@ -20394,6 +20394,14 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${a.pr_autoclose === false ? '' : 'on'}" data-action="toggleConfigSwitch" data-section="advisory" data-key="pr_autoclose"></div>
             <span class="config-toggle-label">Close findings fixed by a merged PR <span style="color:var(--muted);font-weight:400">— match merged PR titles against open findings</span></span>
           </div>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">When it updates</div>
+          <div class="config-field">
+            <label>Update interval (s) <span class="config-info">i<span class="config-tooltip">How often the digest comment on the advisory issue is checked and refreshed, in seconds. 0 means the default: every governor cycle (~60s). Values below 30 are raised to 30. Longer intervals reduce GitHub API writes and notification churn on watched repos; unchanged digests are already skipped either way.</span></span></label>
+            <input type="number" min="0" step="1" value="${a.update_interval_s || 0}" placeholder="60" data-change-action="markDirty" data-arg0="advisory" data-arg1="update_interval_s" data-arg-types="s,s,N">
+          </div>
         </div>`;
     }
 

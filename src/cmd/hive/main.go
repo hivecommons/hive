@@ -3632,6 +3632,17 @@ func main() {
 					_, overflow := dashSrv.AdvisoryCounts()
 					return overflow
 				}(),
+				// The spoke's EFFECTIVE advisory update interval (#4820), in
+				// seconds, so the hub can widen its staleness baseline for a
+				// hive whose operator deliberately slowed the digest cadence —
+				// a healthy 4-hour cadence must never trip the 90-minute
+				// default wedge alarm. 0 = unset (default cadence): the hub
+				// keeps its default threshold, which is also what it does for
+				// old spokes that never report the field.
+				AdvisoryUpdateIntervalS: func() int {
+					d, _ := cfg.Governor.Advisory.EffectiveUpdateInterval()
+					return int(d / time.Second)
+				}(),
 				// Inference-backend auth-failure signal (repeated 401s from a
 				// stale gateway key). Reported as its own field so the hub can
 				// raise a dedicated inference-auth alert whose ROOT cause an
@@ -5418,6 +5429,34 @@ func shouldPostAdvisoryDigest(digest *advisory.Digest, ghClient *github.Client, 
 	return ghClient != nil && hasPinnedIssue
 }
 
+// advisoryPostGate tracks, per repo, when the digest was last SUCCESSFULLY
+// posted, so governor.advisory.update_interval_s (#4820) can throttle the
+// GitHub round-trip. Package-level for the same reason as providerBudgetNotify
+// (runEvalCycle has no state of its own) and mutex-guarded for the same reason
+// too (startup/restart call sites besides the ticker). clampLogged makes the
+// "value below minimum, clamped" warning a one-shot instead of a per-cycle
+// drone.
+var advisoryPostGate = struct {
+	mu          sync.Mutex
+	lastSuccess map[string]time.Time
+	clampLogged bool
+}{lastSuccess: map[string]time.Time{}}
+
+// advisoryPostDue reports whether the update-interval gate is open for a post
+// attempt. interval 0 (unset knob) means the gate is ALWAYS open — the digest
+// posts every eval cycle, exactly the pre-#4820 cadence — and a zero
+// lastSuccess (no successful post since process start) opens it too, so the
+// first post is never delayed. The gate advances only on SUCCESS (mirroring
+// the #4818 skip-guard's hash recording): a failed attempt is retried on the
+// very next cycle instead of waiting out the configured interval, keeping
+// error recovery — and the hub's staleness signal — as prompt as today.
+func advisoryPostDue(interval time.Duration, lastSuccess, now time.Time) bool {
+	if interval <= 0 || lastSuccess.IsZero() {
+		return true
+	}
+	return now.Sub(lastSuccess) >= interval
+}
+
 // advisoryIssueMissingError is the error recorded (and reported to the hub) when
 // a hive has findings to publish but no advisory issue to publish them to. It is
 // deliberately an ERROR rather than a silent skip: the hub's staleness gate
@@ -6083,7 +6122,33 @@ func runEvalCycle(
 		// freshness: otherwise the pinned comment and AdvisoryLastPostedAt
 		// freeze after the last finding disappears, and the hub reports a stale
 		// advisory loop even though the agents are running cleanly.
-		if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) {
+		//
+		// The posting CADENCE is gated by governor.advisory.update_interval_s
+		// (#4820), re-read from live config every cycle like the other governor
+		// knobs, so a dashboard save takes effect without a restart. Unset/0
+		// leaves the gate always open — today's every-cycle behavior. Only the
+		// GitHub round-trip is throttled: the digest above is still built and
+		// handed to the dashboard every cycle, and the #4818 skip-if-unchanged
+		// guard still applies WITHIN each cycle the gate lets through (its
+		// forced write-through counts POST ATTEMPTS, so at a longer interval
+		// the ~hourly full rewrite stretches to 60 attempts × interval —
+		// acceptable, since the write-through only heals out-of-band comment
+		// edits). The gate advances only on SUCCESS, so quiet or failed cycles
+		// never delay the next attempt beyond today's cadence.
+		advisoryInterval, advisoryClamped := cfg.Governor.Advisory.EffectiveUpdateInterval()
+		advisoryPostGate.mu.Lock()
+		if advisoryClamped && !advisoryPostGate.clampLogged {
+			advisoryPostGate.clampLogged = true
+			logger.Warn("governor.advisory.update_interval_s below minimum — clamped",
+				"configured_s", cfg.Governor.Advisory.UpdateIntervalS,
+				"effective_s", int(advisoryInterval/time.Second))
+		}
+		advisoryLastPost := advisoryPostGate.lastSuccess[primaryRepo]
+		advisoryPostGate.mu.Unlock()
+		if !advisoryPostDue(advisoryInterval, advisoryLastPost, time.Now()) {
+			logger.Debug("advisory digest post deferred by update interval",
+				"repo", primaryRepo, "interval", advisoryInterval, "last_post", advisoryLastPost)
+		} else if shouldPostAdvisoryDigest(digest, ghClient, hasExistingPinnedIssueForEmptyDigest) {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))
@@ -6178,6 +6243,13 @@ func runEvalCycle(
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
+						// Advance the update-interval gate (#4820) only on this
+						// verified success — a skipped-unchanged cycle (#4818)
+						// lands here too and counts, since it is equal proof of
+						// a prior successful write.
+						advisoryPostGate.mu.Lock()
+						advisoryPostGate.lastSuccess[primaryRepo] = time.Now()
+						advisoryPostGate.mu.Unlock()
 						// Record the fresh, successful digest post so the hub's
 						// advisory-staleness gate stays satisfied for this hive.
 						dashSrv.RecordAdvisoryPost(digest.TotalCount)

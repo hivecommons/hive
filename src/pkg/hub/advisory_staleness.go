@@ -16,6 +16,24 @@ import (
 // threshold is not a bare magic number.
 const advisoryStaleThreshold = 90 * time.Minute
 
+// advisoryStaleThresholdFor is the staleness baseline for ONE hive:
+// max(advisoryStaleThreshold, 2× the spoke's reported update interval). Since
+// #4820 an operator can deliberately slow the digest cadence past the default
+// 90-minute threshold (e.g. a 4-hour interval), and the spoke reports the
+// effective interval over the heartbeat exactly so that healthy slowness is
+// never read as a wedge. Twice the interval, not the interval itself: a hive
+// posting exactly on schedule would otherwise brush the threshold every window
+// and flap the pill on any jitter — doubling means one FULLY missed window
+// plus the same again as headroom before the alarm fires. A zero/absent
+// interval (default cadence, or an old spoke) keeps the default threshold, so
+// nothing changes for existing fleets.
+func advisoryStaleThresholdFor(e RegistryEntry) time.Duration {
+	if iv := time.Duration(e.AdvisoryUpdateIntervalS) * time.Second; 2*iv > advisoryStaleThreshold {
+		return 2 * iv
+	}
+	return advisoryStaleThreshold
+}
+
 // appCanWriteForAdvisory reports whether a hive's GitHub App is in a state that
 // COULD post an advisory digest right now. It is the "app can write" gate on
 // the staleness alarm: a hive that legitimately cannot post — the App is not
@@ -214,7 +232,7 @@ func advisoryStale(e RegistryEntry, now time.Time) (stale bool, reason string) {
 	if err != nil {
 		return false, ""
 	}
-	if now.Sub(postedAt) > advisoryStaleThreshold {
+	if now.Sub(postedAt) > advisoryStaleThresholdFor(e) {
 		return true, "advisory digest has not updated since " + postedAt.UTC().Format(time.RFC3339)
 	}
 	return false, ""

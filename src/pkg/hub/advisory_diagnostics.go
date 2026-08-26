@@ -111,7 +111,7 @@ func diagnoseAdvisory(e RegistryEntry, now time.Time) AdvisoryDiagnosis {
 	aged := false
 	if parseErr == nil {
 		d.AgeMinutes = int64(now.Sub(postedAt) / time.Minute)
-		aged = now.Sub(postedAt) > advisoryStaleThreshold
+		aged = now.Sub(postedAt) > advisoryStaleThresholdFor(e)
 	}
 
 	if stale, reason := advisoryStale(e, now); stale {

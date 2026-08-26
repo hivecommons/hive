@@ -137,6 +137,12 @@ type RegistryEntry struct {
 	// it). My Hives renders the pair so a capped digest never reads as complete.
 	AdvisoryFindingCount  int `json:"advisoryFindingCount,omitempty"`
 	AdvisoryOverflowCount int `json:"advisoryOverflowCount,omitempty"`
+	// AdvisoryUpdateIntervalS is the spoke's effective advisory update
+	// interval in seconds (#4820), 0 when unset (default cadence) or the spoke
+	// is too old to report it. The staleness gate widens its baseline to
+	// max(advisoryStaleThreshold, 2× this) so a deliberately slowed but
+	// healthy cadence never reads as a wedge — see advisoryStaleThresholdFor.
+	AdvisoryUpdateIntervalS int `json:"advisoryUpdateIntervalS,omitempty"`
 	// InferenceAuthError is the log-safe cause set when the spoke's inference
 	// backend has rejected several consecutive calls with 401 (a stale gateway
 	// key). Empty = inference auth healthy / no inference backend / old spoke,
@@ -1687,7 +1693,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
 		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
 		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
-		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
+		// Clamped to a week: an absurd spoke-reported interval must not be
+		// able to disable the staleness alarm outright.
+		AdvisoryUpdateIntervalS: clampInt(payload.AdvisoryUpdateIntervalS, 0, 7*24*3600),
+		AdvisoryError:           sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),

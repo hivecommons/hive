@@ -17,6 +17,7 @@ governor:
     show_all: false       # true = ignore max_findings
     staleness_days: 7
     pr_autoclose: true
+    update_interval_s: 0  # 0 = every governor cycle (the default)
 ```
 
 ## Keeping findings current
@@ -114,6 +115,29 @@ resolved) the ranking falls back to severity-then-recency and no path is
 checked. Path lookups are cached per commit and stop as soon as the cap is
 filled, so ranking the full finding set costs roughly what verifying only the
 rendered ones used to.
+
+## How often it updates
+
+By default the digest comment is checked and refreshed once per governor eval
+cycle (~60s), and since #4818 a byte-identical digest is skipped rather than
+rewritten. `governor.advisory.update_interval_s` additionally slows the
+*checking/posting cadence itself* — useful to cut GitHub API traffic,
+notification churn on watched repos, or audit-log noise.
+
+- `governor.advisory.update_interval_s` — default `0`, meaning "every eval
+  cycle": exactly the cadence every install had before the knob existed.
+  Values `1`–`29` are clamped up to `30` (logged once); there is no benefit to
+  a sub-30s cadence. The setting is re-read every cycle, so a dashboard save
+  applies live without a restart.
+- The window is measured from the last **successful** post, so a failed post is
+  retried on the very next cycle instead of waiting out the interval, and the
+  first post after process start is never delayed.
+- The dashboard's own advisory view is refreshed every cycle regardless — only
+  the GitHub comment write is paced.
+- The hub's stale-advisory alarm widens its baseline to
+  `max(90 minutes, 2 × update_interval_s)` for a hive reporting a configured
+  interval, so a deliberately slow but healthy cadence is never flagged as a
+  wedged digest.
 
 ## The digest stopped updating
 

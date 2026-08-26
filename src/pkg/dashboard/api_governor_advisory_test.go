@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 type advisoryAPIResponse struct {
-	MaxFindings   int  `json:"max_findings"`
-	ShowAll       bool `json:"show_all"`
-	StalenessDays int  `json:"staleness_days"`
-	PRAutoClose   bool `json:"pr_autoclose"`
+	MaxFindings     int  `json:"max_findings"`
+	ShowAll         bool `json:"show_all"`
+	StalenessDays   int  `json:"staleness_days"`
+	PRAutoClose     bool `json:"pr_autoclose"`
+	UpdateIntervalS int  `json:"update_interval_s"`
 }
 
 func getAdvisorySettings(t *testing.T, s *Server) advisoryAPIResponse {
@@ -84,6 +87,7 @@ func TestGovAdvisory_Validation(t *testing.T) {
 		{"negative max findings", map[string]any{"max_findings": -1}},
 		{"zero staleness", map[string]any{"staleness_days": 0}},
 		{"negative staleness", map[string]any{"staleness_days": -7}},
+		{"negative update interval", map[string]any{"update_interval_s": -60}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if rec := doPut(s, "/api/config/governor/advisory", tc.body); rec.Code != http.StatusBadRequest {
@@ -94,6 +98,51 @@ func TestGovAdvisory_Validation(t *testing.T) {
 
 	if rec := doPutRaw(s, "/api/config/governor/advisory", "not json"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body: expected 400, got %d", rec.Code)
+	}
+}
+
+// TestGovAdvisory_UpdateInterval pins the #4820 wiring end to end: the field
+// round-trips through PUT and GET, 0 means default (and is what an untouched
+// server reports), a sub-floor write is normalized up to the 30s floor so the
+// GET reports the cadence the hive actually runs, and an absent key leaves
+// the setting alone.
+func TestGovAdvisory_UpdateInterval(t *testing.T) {
+	s := govServer(t)
+
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 0 {
+		t.Fatalf("untouched update_interval_s = %d, want 0 (default cadence)", got.UpdateIntervalS)
+	}
+
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 300}); rec.Code != http.StatusOK {
+		t.Fatalf("put update_interval_s: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 300 {
+		t.Fatalf("update_interval_s = %d, want 300", got.UpdateIntervalS)
+	}
+	if s.deps.Config.Governor.Advisory.UpdateIntervalS != 300 {
+		t.Fatal("PUT did not persist update_interval_s into config")
+	}
+
+	// A sub-floor value is clamped up at write time, never stored as typed.
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 10}); rec.Code != http.StatusOK {
+		t.Fatalf("put sub-floor interval: %d", rec.Code)
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != config.MinAdvisoryUpdateIntervalS {
+		t.Fatalf("sub-floor write stored %d, want the %d floor", got.UpdateIntervalS, config.MinAdvisoryUpdateIntervalS)
+	}
+
+	// Absent key = untouched; explicit 0 = back to default cadence.
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"max_findings": 5}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated put: %d", rec.Code)
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != config.MinAdvisoryUpdateIntervalS {
+		t.Fatalf("absent key changed update_interval_s to %d", got.UpdateIntervalS)
+	}
+	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{"update_interval_s": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("put zero interval: %d", rec.Code)
+	}
+	if got := getAdvisorySettings(t, s); got.UpdateIntervalS != 0 {
+		t.Fatalf("explicit 0 stored as %d, want 0 (default cadence, gate always open)", got.UpdateIntervalS)
 	}
 }
 

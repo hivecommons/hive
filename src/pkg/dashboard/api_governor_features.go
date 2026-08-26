@@ -247,10 +247,11 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		MaxFindings   *int  `json:"max_findings"`
-		ShowAll       *bool `json:"show_all"`
-		StalenessDays *int  `json:"staleness_days"`
-		PRAutoClose   *bool `json:"pr_autoclose"`
+		MaxFindings     *int  `json:"max_findings"`
+		ShowAll         *bool `json:"show_all"`
+		StalenessDays   *int  `json:"staleness_days"`
+		PRAutoClose     *bool `json:"pr_autoclose"`
+		UpdateIntervalS *int  `json:"update_interval_s"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -264,6 +265,10 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	}
 	if body.StalenessDays != nil && *body.StalenessDays < minAdvisoryStalenessDays {
 		jsonError(w, "staleness_days must be 1 or greater", http.StatusBadRequest)
+		return
+	}
+	if body.UpdateIntervalS != nil && *body.UpdateIntervalS < 0 {
+		jsonError(w, "update_interval_s must be 0 (default) or greater", http.StatusBadRequest)
 		return
 	}
 
@@ -282,6 +287,17 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		v := *body.PRAutoClose
 		cfg.Governor.Advisory.PRAutoClose = &v
 	}
+	if body.UpdateIntervalS != nil {
+		// Normalize the write to the same floor EffectiveUpdateInterval
+		// enforces at use time, so the value the GET reports back is the
+		// cadence the hive actually runs. 0 stays 0 — it means "default
+		// cadence" (every eval cycle), not "post continuously".
+		v := *body.UpdateIntervalS
+		if v > 0 && v < config.MinAdvisoryUpdateIntervalS {
+			v = config.MinAdvisoryUpdateIntervalS
+		}
+		cfg.Governor.Advisory.UpdateIntervalS = v
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after advisory update", "error", err)
@@ -297,10 +313,11 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 	a := cfg.Governor.Advisory
 	return map[string]interface{}{
-		"max_findings":   a.MaxFindings,
-		"show_all":       a.ShowAll,
-		"staleness_days": a.StalenessDays,
-		"pr_autoclose":   a.PRAutoCloseEnabled(),
+		"max_findings":      a.MaxFindings,
+		"show_all":          a.ShowAll,
+		"staleness_days":    a.StalenessDays,
+		"pr_autoclose":      a.PRAutoCloseEnabled(),
+		"update_interval_s": a.UpdateIntervalS,
 	}
 }
 

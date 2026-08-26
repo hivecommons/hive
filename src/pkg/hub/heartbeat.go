@@ -626,6 +626,15 @@ type HeartbeatPayload struct {
 	// whole picture when it is deliberately only the top of it.
 	AdvisoryFindingCount  int `json:"advisory_finding_count,omitempty"`
 	AdvisoryOverflowCount int `json:"advisory_overflow_count,omitempty"`
+	// AdvisoryUpdateIntervalS is the spoke's EFFECTIVE
+	// governor.advisory.update_interval_s (#4820), in seconds — already
+	// clamped to its floor, so the hub can trust it as the real cadence. The
+	// hub widens its advisory-staleness baseline to cover it, so an operator
+	// who deliberately slowed the digest cadence is never false-alarmed as
+	// wedged. 0 means unset (default every-cycle cadence) — the same thing an
+	// old spoke that never reports the field looks like — and keeps the hub's
+	// default threshold.
+	AdvisoryUpdateIntervalS int `json:"advisory_update_interval_s,omitempty"`
 	// InferenceAuthError is the log-safe cause string set when this spoke's
 	// self-hosted inference backend (LiteLLM/vLLM/llm-d gateway) has rejected
 	// several CONSECUTIVE calls with 401 — a stale/invalid gateway key that
