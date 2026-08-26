@@ -38,7 +38,11 @@ type SessionSummary struct {
 	CacheCreate  int64  `json:"cache_create"`
 	TotalTokens  int64  `json:"total_tokens"`
 	Messages     int    `json:"messages"`
-	LastActive   int64  `json:"last_active,omitempty"`
+	// FirstActive / LastActive bracket the session in time: the earliest and
+	// latest event timestamps seen while parsing, as unix-milliseconds stamps
+	// (0 when the scanner could not determine them).
+	FirstActive int64 `json:"first_active,omitempty"`
+	LastActive  int64 `json:"last_active,omitempty"`
 }
 
 // AgentModelBucket holds per-agent or per-model token breakdown.
@@ -68,8 +72,12 @@ type AggregateSummary struct {
 
 const (
 	defaultScanInterval = 30 * time.Second
-	defaultPersistPath  = "/data/token-summary.json"
 )
+
+// defaultPersistPath is the PVC location of the token summary snapshot.
+// It is a var (not a const) only so tests can point it at a temp path;
+// production always uses the fixed /data/token-summary.json location.
+var defaultPersistPath = "/data/token-summary.json"
 
 type Collector struct {
 	sessionsDir               string
@@ -87,6 +95,14 @@ type Collector struct {
 	prevSessionCount          int
 	prevTotalTokens           int64
 	prevByAgent               map[string]int64
+
+	// loadOnce guards the one-time restore of the persisted snapshot. The
+	// load is deferred until first read (see Summary) instead of happening in
+	// NewCollector so callers may redirect defaultPersistPath or call
+	// SetPersistPath after construction — otherwise the constructor eagerly
+	// reads the live /data/token-summary.json on a hive host and tests see
+	// production data instead of a clean initial state (#4585).
+	loadOnce sync.Once
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
@@ -97,6 +113,9 @@ func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
 // is known before restoration. It keeps tests, multiple local hives, and other
 // isolated runtimes from sharing the process-wide default snapshot.
 func NewCollectorWithPersistPath(sessionsDir, persistPath string, logger *slog.Logger) *Collector {
+	// A nil logger must not become a latent panic: loadSnapshot logs on the
+	// first successful restore, which only happens on hosts where the snapshot
+	// file exists — exactly the environments where a crash hurts most (#4664).
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -109,11 +128,13 @@ func NewCollectorWithPersistPath(sessionsDir, persistPath string, logger *slog.L
 		scanInterval: defaultScanInterval,
 		prevByAgent:  make(map[string]int64),
 	}
-	c.loadSnapshot()
 	return c
 }
 
 // SetPersistPath overrides the default path for the token summary snapshot.
+// Safe to call after construction and before first use: the persisted
+// snapshot is loaded lazily on first Summary/scan, so the override wins even
+// when set later than NewCollector (#4585).
 func (c *Collector) SetPersistPath(path string) {
 	c.persistPath = path
 }
@@ -170,6 +191,12 @@ func (c *Collector) Start(stop <-chan struct{}) {
 }
 
 func (c *Collector) scan() {
+	// Restore the persisted snapshot once, BEFORE the first scan overwrites
+	// c.latest, preserving the original constructor-time load order (#4585).
+	c.mu.Lock()
+	c.loadOnce.Do(c.loadSnapshot)
+	c.mu.Unlock()
+
 	agg, err := CollectFromDir(c.sessionsDir, c.detector)
 	if err != nil {
 		c.logger.Warn("token scan failed", "error", err)
@@ -195,7 +222,7 @@ func (c *Collector) scan() {
 	}
 
 	if c.bobSessionsDir != "" {
-		bobAgg, err := ScanBobSessions(c.bobSessionsDir)
+		bobAgg, err := ScanBobSessionsWithLogger(c.bobSessionsDir, c.logger)
 		if err != nil {
 			c.logger.Warn("bob session scan failed", "error", err)
 		} else if bobAgg != nil && bobAgg.SessionCount > 0 {
@@ -240,6 +267,12 @@ func (c *Collector) scan() {
 }
 
 func (c *Collector) Summary() *AggregateSummary {
+	// Restore the persisted snapshot once, on first read, under the write
+	// lock so a concurrent reader never observes the load mid-write.
+	c.mu.Lock()
+	c.loadOnce.Do(c.loadSnapshot)
+	c.mu.Unlock()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.latest

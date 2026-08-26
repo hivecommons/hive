@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 
 	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/config"
@@ -23,6 +26,62 @@ import (
 // swallowed here while "backend override restored" was logged unconditionally,
 // so the operator saw a successful restore of a value that was already gone.
 // Failures are now logged as the failures they are.
+// pausedRestoreDetail builds the "restoring N paused agent(s)" fragment of
+// the boot audit line. Two lessons from #4041 are baked in:
+//
+//   - On-demand agents (agent config on_demand, or on-demand per their pack
+//     definition) are startup-paused BY DESIGN — brainstorm is triggered by
+//     inception only and has never run at boot. Counting them alongside real
+//     restored pauses inflated "restoring 9 paused agent(s)" on a hive whose
+//     owner had paused 8, and that inflated bare count is what made a
+//     deliberate quiesce read as a fresh systemic event on every upgrade
+//     restart. They are reported separately, never in the headline count.
+//   - The bare count says nothing about WHO paused WHAT. The per-trigger
+//     breakdown ("dashboard-api: 8") lets a fleet owner reading logs tell an
+//     owner-initiated mass pause from a login-detector cascade at a glance.
+//
+// statuses carries the manager's post-restore pause provenance; agents
+// missing from it (not yet registered) count under the "unknown" trigger
+// rather than being dropped — the total must always add up.
+func pausedRestoreDetail(enabled map[string]config.AgentConfig, onDemandFromPack map[string]bool, statuses map[string]*agent.AgentProcess) string {
+	restored := 0
+	byDesign := 0
+	byTrigger := map[string]int{}
+	for name, ac := range enabled {
+		if !ac.Paused {
+			continue
+		}
+		if ac.OnDemand || onDemandFromPack[name] {
+			byDesign++
+			continue
+		}
+		restored++
+		trigger := "unknown"
+		if proc, ok := statuses[name]; ok && proc != nil && strings.TrimSpace(proc.PausedTrigger) != "" {
+			trigger = proc.PausedTrigger
+		}
+		byTrigger[trigger]++
+	}
+
+	detail := fmt.Sprintf("restoring %d paused agent(s)", restored)
+	if len(byTrigger) > 0 {
+		triggers := make([]string, 0, len(byTrigger))
+		for t := range byTrigger {
+			triggers = append(triggers, t)
+		}
+		sort.Strings(triggers)
+		parts := make([]string, 0, len(triggers))
+		for _, t := range triggers {
+			parts = append(parts, fmt.Sprintf("%s: %d", t, byTrigger[t]))
+		}
+		detail += " (" + strings.Join(parts, ", ") + ")"
+	}
+	if byDesign > 0 {
+		detail += fmt.Sprintf("; %d on-demand agent(s) startup-paused by design", byDesign)
+	}
+	return detail
+}
+
 func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config, agentMgr *agent.Manager, logger *slog.Logger) {
 	for name, as := range saved.Agents {
 		if _, inConfig := cfg.Agents[name]; !inConfig {
@@ -38,9 +97,12 @@ func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config
 			if trigger == "" {
 				trigger = "state-restore"
 			}
-			_ = agentMgr.Pause(name, trigger, reason)
+			// Replay the acting user too (#4041): without it, every restart
+			// downgraded an owner-attributed pause to an anonymous one, and a
+			// deliberate quiesce read like a malfunction days later.
+			_ = agentMgr.PauseBy(name, trigger, reason, as.PausedBy)
 			if as.PausedAt != nil {
-				agentMgr.SeedPauseState(name, *as.PausedAt, trigger, reason)
+				agentMgr.SeedPauseState(name, *as.PausedAt, trigger, reason, as.PausedBy)
 			}
 		}
 		if as.PinnedCLI != "" {

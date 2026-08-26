@@ -62,12 +62,6 @@ func TestHandleInferenceRequestTranslationFail(t *testing.T) {
 // ---------- StartInferenceTranslator: read body error ----------
 
 func TestStartInferenceTranslatorReadBodyError(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:18444")
-	if err != nil {
-		t.Skipf("port 18444 not available: %v", err)
-	}
-	ln.Close()
-
 	caCert, caX509, _ := generateCA()
 	p := &GitHubProxy{
 		caCert:     caCert,
@@ -79,16 +73,15 @@ func TestStartInferenceTranslatorReadBodyError(t *testing.T) {
 	}
 	p.inference.Set("agent1", &InferenceRoute{Backend: "vllm", Endpoint: "http://localhost:1", Model: "test"})
 
-	go p.StartInferenceTranslator()
-	time.Sleep(200 * time.Millisecond)
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
 
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:18444", time.Second)
+	conn, err := net.DialTimeout("tcp", translator.Listener.Addr().String(), time.Second)
 	if err != nil {
-		t.Skipf("could not connect: %v", err)
+		t.Fatalf("connect to translator: %v", err)
 	}
-	conn.Write([]byte("POST /v1/messages HTTP/1.1\r\nHost: localhost\r\nx-api-key: sk-hive-agent1\r\nContent-Length: 999999\r\n\r\npartial"))
-	conn.Close()
-	time.Sleep(200 * time.Millisecond)
+	_, _ = conn.Write([]byte("POST /v1/messages HTTP/1.1\r\nHost: localhost\r\nx-api-key: sk-hive-agent1\r\nContent-Length: 999999\r\n\r\npartial"))
+	_ = conn.Close()
 }
 
 // ---------- handleInferenceRequest: streaming SSE error ----------
@@ -174,7 +167,7 @@ func TestProxyHTTPGitPathUpstreamWriteError(t *testing.T) {
 
 	upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	fmt.Fprintf(clientConn, "POST /org/repo.git/info/refs HTTP/1.1\r\nHost: github.com\r\nContent-Length: 0\r\n\r\n")
 	time.Sleep(200 * time.Millisecond)

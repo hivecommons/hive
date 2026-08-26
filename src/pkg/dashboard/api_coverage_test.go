@@ -305,6 +305,9 @@ func TestHandleKnowledgeSubsList_WithKnowledge(t *testing.T) {
 }
 
 func TestHandleKnowledgeSubsAdd_WithKnowledge(t *testing.T) {
+	// L3: keep this hermetic — the subscription URL below must classify as
+	// public without an external DNS lookup.
+	stubPrivateURLResolver(t, "example.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 
@@ -326,6 +329,8 @@ func TestHandleKnowledgeSubsAdd_MissingURL(t *testing.T) {
 }
 
 func TestHandleKnowledgeSubsAdd_DefaultLayer(t *testing.T) {
+	// L3: keep this hermetic — see stubPrivateURLResolver.
+	stubPrivateURLResolver(t, "new.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 
@@ -337,6 +342,8 @@ func TestHandleKnowledgeSubsAdd_DefaultLayer(t *testing.T) {
 }
 
 func TestHandleKnowledgeSubsRemove_WithKnowledge(t *testing.T) {
+	// L3: keep this hermetic — see stubPrivateURLResolver.
+	stubPrivateURLResolver(t, "example.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 
@@ -2331,6 +2338,8 @@ func TestHandleIssueCosts_WithCollector(t *testing.T) {
 // ---- handleKnowledgeSubsAdd with all fields ----
 
 func TestHandleKnowledgeSubsAdd_AllFields(t *testing.T) {
+	// L3: keep this hermetic — see stubPrivateURLResolver.
+	stubPrivateURLResolver(t, "example.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 	rec := doPost(s, "/api/knowledge/subscriptions", map[string]string{

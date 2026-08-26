@@ -103,7 +103,7 @@ ln -sf "$SCANNER_HOME/state.db" "$AGENTS_HOME/supervisor/state.db" 2>/dev/null |
 
 # NOTE: No cron installation. EXECUTOR MODE — agents are kicked by the
 # governor (systemd timer) and supervisor, not by self-scheduled crons.
-# See docs/architecture.md for details.
+# See src/docs/architecture.md for details.
 
 # 7. Install hive instances
 log "Installing hive instances"

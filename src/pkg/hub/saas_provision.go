@@ -1,8 +1,10 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	cryptoRand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -27,8 +29,20 @@ const (
 	maxHivesPerUser   = 3
 	maxSaaSHivesTotal = 0 // 0 = unlimited
 	provisionTimeout  = 5 * time.Minute
-	cpuRequest        = "500m"
-	cpuLimit          = "2000m"
+	// cpuRequest/memRequest are the SCHEDULING footprint (what the scheduler
+	// reserves per hive) and directly set fleet density; the limits below are
+	// the burst ceiling and are unchanged. Right-sized 2026-08 from live fleet
+	// measurement (59 hives across vllm-d + hive-oke via kubectl top):
+	//   CPU:    p50 29-65m,   p90 0.5-1.7 cores, max 1.9  → 250m request
+	//   Memory: p50 0.8-1.1Gi, p90 1.3-2.9Gi,    max 3Gi  → 2Gi request
+	// Halving both doubles schedulable density on existing clusters (500
+	// hives: 125 vCPU + 1 TiB requested instead of 250 vCPU + 2 TiB). CPU is
+	// compressible so under-request only slows, never kills; memory bursts
+	// above 2Gi ride the 16Gi limit, with node overcommit bounded by the p90.
+	// Applies to NEW provisions; existing deployments keep their requests
+	// until their manifest is next re-applied.
+	cpuRequest = "250m"
+	cpuLimit   = "2000m"
 	// memRequest/memLimit size the spoke pod for the WHOLE agent fleet, not just
 	// the Go hive process. Each active coding agent (Copilot/Claude CLI) grows to
 	// ~2GB RSS, and an L6 hive runs 5-6 concurrently plus the hive process, so an
@@ -38,7 +52,7 @@ const (
 	// and the PR pipeline stalls (observed 2026-08-06: 9 OOM kills, whole fleet
 	// down ~4.5h on console-4vkt). 16Gi gives each agent headroom; OKE nodes have
 	// ~90GiB allocatable, so this is comfortably schedulable.
-	memRequest            = "4Gi"
+	memRequest            = "2Gi"
 	memLimit              = "16Gi"
 	nfsStorageCapacity    = "50Gi"
 	nfsMountTargetIP      = "10.0.10.30"
@@ -161,26 +175,40 @@ var clustersConfigPath = "/data/saas/clusters.json"
 // hive spokes onto. Each cluster has its own kubeconfig, storage backend,
 // ingress style, and optional platform-specific settings (OCI, OpenShift).
 type ClusterConfig struct {
-	ID                string `json:"id" yaml:"id"`
-	Name              string `json:"name" yaml:"name"`
-	KubeconfigPath    string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
-	Context           string `json:"context" yaml:"context"`
-	InCluster         bool   `json:"in_cluster" yaml:"in_cluster"`
-	StorageClass      string `json:"storage_class" yaml:"storage_class"`
-	StorageType       string `json:"storage_type" yaml:"storage_type"`
-	NFSMountIP        string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
-	IngressType       string `json:"ingress_type" yaml:"ingress_type"`
-	IngressClass      string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
-	CertIssuer        string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
-	Domain            string `json:"domain" yaml:"domain"`
-	DomainPrefix      string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
-	OCICompartment    string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
-	OCIAvailDomain    string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
-	OCIMountTarget    string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
-	OCIExportSet      string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
-	RequiresSCC       bool   `json:"requires_scc" yaml:"requires_scc"`
-	SCCName           string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
-	HasGPU            bool   `json:"has_gpu" yaml:"has_gpu"`
+	ID             string `json:"id" yaml:"id"`
+	Name           string `json:"name" yaml:"name"`
+	KubeconfigPath string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
+	Context        string `json:"context" yaml:"context"`
+	InCluster      bool   `json:"in_cluster" yaml:"in_cluster"`
+	StorageClass   string `json:"storage_class" yaml:"storage_class"`
+	StorageType    string `json:"storage_type" yaml:"storage_type"`
+	NFSMountIP     string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
+	IngressType    string `json:"ingress_type" yaml:"ingress_type"`
+	IngressClass   string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
+	CertIssuer     string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
+	Domain         string `json:"domain" yaml:"domain"`
+	DomainPrefix   string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
+	OCICompartment string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
+	OCIAvailDomain string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
+	OCIMountTarget string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
+	OCIExportSet   string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
+	RequiresSCC    bool   `json:"requires_scc" yaml:"requires_scc"`
+	SCCName        string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
+	HasGPU         bool   `json:"has_gpu" yaml:"has_gpu"`
+	// MaxHives caps how many hosted hives (SaaS records, assigned or pooled)
+	// may exist on this cluster. 0 = unlimited. This is the HARD per-cluster
+	// gate: the bin-packed capacity estimate (hiveSlotsForNode) is advisory
+	// and can be optimistic, but routes/PVCs/namespaces and image-pull
+	// bandwidth all scale with hive COUNT, so operators need an explicit
+	// ceiling they can set per cluster as the fleet grows.
+	MaxHives int `json:"max_hives,omitempty" yaml:"max_hives,omitempty"`
+	// PoolMin/PoolTarget drive the watermark pool replenisher
+	// (pool_replenisher.go): when clean available placeholders on this
+	// cluster drop below pool_min, the hub provisions up to pool_target.
+	// pool_target 0 (the default) disables auto-replenish for the cluster;
+	// pool_min 0 with a target treats the target itself as the floor.
+	PoolMin           int    `json:"pool_min,omitempty" yaml:"pool_min,omitempty"`
+	PoolTarget        int    `json:"pool_target,omitempty" yaml:"pool_target,omitempty"`
 	Arch              string `json:"arch" yaml:"arch"`
 	ImageTag          string `json:"image_tag" yaml:"image_tag"`
 	ImagePullPolicy   string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
@@ -337,17 +365,25 @@ func clusterDefaultForge(c *ClusterConfig) string {
 	return publicForgeHost
 }
 
-// kubectlForCluster builds an exec.Cmd that targets a specific cluster.
-// For in-cluster configs (InCluster == true) it runs plain kubectl;
-// for remote clusters it injects --kubeconfig and --context flags.
-func kubectlForCluster(cluster *ClusterConfig, args ...string) *exec.Cmd {
-	return exec.Command("kubectl", kubectlArgsForCluster(cluster, args...)...)
+// kubectlForCluster builds a bounded kubectl command that targets a specific
+// cluster. For in-cluster configs (InCluster == true) it runs plain kubectl;
+// for remote clusters it injects --kubeconfig and --context flags. Execution
+// (Output/CombinedOutput/Run) acquires a per-cluster concurrency slot — see
+// kubectl_executor.go.
+func kubectlForCluster(cluster *ClusterConfig, args ...string) *kubectlCmd {
+	return &kubectlCmd{
+		Cmd:       exec.Command("kubectl", kubectlArgsForCluster(cluster, args...)...),
+		clusterID: cluster.ID,
+	}
 }
 
 // kubectlForClusterContext is like kubectlForCluster but lets callers bound the
 // command lifetime with a context.
-func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...)
+func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args ...string) *kubectlCmd {
+	return &kubectlCmd{
+		Cmd:       exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...),
+		clusterID: cluster.ID,
+	}
 }
 
 // unreachableKubeconfigSentinel is aimed at instead of a real kubeconfig when a
@@ -405,7 +441,7 @@ func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 
 // readSAToken reads the current service account token from the projected volume.
 func readSAToken() string {
-	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	data, err := os.ReadFile(filepath.Join(serviceAccountDir, "token"))
 	if err != nil {
 		return ""
 	}
@@ -465,6 +501,17 @@ type SaaSHive struct {
 	Owner       string `json:"owner"`
 	ProjectName string `json:"project_name"`
 	Org         string `json:"org"`
+	// DashboardTokenHash is the SHA-256 (hex) of the hive's dashboard token —
+	// the spoke's DASHBOARD_AUTH_TOKEN / hive-secrets/dashboard-token value.
+	// It is the hub's OWN record of the spoke's proof credential, written when
+	// provisioning mints the token and refreshed from the spoke's authenticated
+	// heartbeat (dashboard_token_hash) and from any successful live secret
+	// read. Spoke-relayed upgrade requests verify their X-Hive-Proxy-Auth proof
+	// against this first, so verification works for hives on clusters the hub
+	// cannot kubectl into (pull-only / unreachable) — the live secret read is
+	// only a fallback. A hash, never the raw token: the hub must be able to
+	// VERIFY the spoke's credential without holding a copy it could leak.
+	DashboardTokenHash string `json:"dashboard_token_hash,omitempty"`
 	// GitHubHost is the GitHub instance this project lives on — empty means
 	// public github.com, otherwise a GitHub Enterprise host (github.ibm.com,
 	// github.cisco.com, …). Recorded at assign time from the requested org so
@@ -472,10 +519,16 @@ type SaaSHive struct {
 	GitHubHost  string   `json:"github_host,omitempty"`
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo"`
-	ACMMLevel   int      `json:"acmm_level"`
-	Status      string   `json:"status"`
-	CreatedAt   string   `json:"created_at"`
-	Subdomain   string   `json:"subdomain"`
+	// IssueFilter, when set on this record (admin-managed meta), is delivered
+	// to the spoke with the claim push so a fleet whose owner gates agent work
+	// on an approval label gets the gate from first boot. nil = never pushed;
+	// the spoke's own project.issue_filter (dashboard/config-managed) is then
+	// authoritative and is never blanked by the reconcile.
+	IssueFilter *config.IssueFilterConfig `json:"issue_filter,omitempty"`
+	ACMMLevel   int                       `json:"acmm_level"`
+	Status      string                    `json:"status"`
+	CreatedAt   string                    `json:"created_at"`
+	Subdomain   string                    `json:"subdomain"`
 	// VanityURL is the friendly dashboard URL derived from the claimed project
 	// (e.g. hosted-<org>-<repo>-*.hive.kubestellar.io), set at ASSIGN time. Its
 	// presence is the explicit marker that a placeholder has been claimed —
@@ -571,6 +624,33 @@ type SaaSHive struct {
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`
 
+	// SecondaryAppID names an OPTIONAL SECOND GitHub App this hive is
+	// authorized to hold a key for, alongside the App it authenticates as.
+	// Zero — the value on every one of the ~55 existing meta.json records, and
+	// the value a hive keeps unless an operator sets it — means "this hive has
+	// no second App", and every path below returns immediately.
+	//
+	// WHY THE AUTHORIZATION LIVES ON THE HIVE RECORD
+	//
+	// This field IS the access-control decision for secondary key delivery, and
+	// it is on the hub-owned record precisely because nothing a spoke sends can
+	// write it. The removed AdditionalKeys broadcast (heartbeat.go, CWE-200/639)
+	// failed because delivery was decided from the FLEET key set with no binding
+	// to the caller at all, and the heartbeat trusts a body-supplied hive_id
+	// under one fleet-shared bearer — so any hive could name any hive_id and be
+	// handed every tenant's key. Resolving the App ID from this field, on the
+	// record the hub loaded for the authenticated hive, means a spoke cannot
+	// name the App it wants: it receives the one App an operator assigned it, or
+	// nothing.
+	//
+	// It is an App ID and NOT a bool ("has viz app") so the assignment is
+	// explicit about WHICH App, and so a future third App needs no new field
+	// shape. It carries no key material and no health state: an absent or
+	// undelivered secondary App must never affect githubAppRequired /
+	// githubAppState, because an ORDINARY hive not having an optional App is not
+	// a fault.
+	SecondaryAppID int64 `json:"secondary_app_id,omitempty"`
+
 	// TrackedChannel is the release channel ("stable", "candidate", "edge")
 	// this hive's image is pinned to, or "" for a hive on a plain branch.
 	//
@@ -640,7 +720,9 @@ type SaaSHive struct {
 	// AutoUpgradeMode gates WHEN an enabled auto-upgrade may fire:
 	// AutoUpgradeModeInstant (or empty) upgrades as soon as the hive is seen
 	// behind latest; AutoUpgradeModeDaily upgrades at most once per ET calendar
-	// day, at or after autoUpgradeDailyHour. omitempty keeps existing meta.json
+	// day, at or after autoUpgradeDailyHour; AutoUpgradeModeWeekly upgrades at
+	// most once per ISO week, at or after autoUpgradeDailyHour on Tuesday.
+	// omitempty keeps existing meta.json
 	// records byte-identical until the operator actually picks a mode, and an
 	// absent field reads as instant — so the ~42 records already on the PVC keep
 	// today's behaviour exactly.
@@ -1613,8 +1695,8 @@ func loadSaaSHive(id string) *SaaSHive {
 		return nil
 	}
 	path := filepath.Join(saasHivesDir, id, "meta.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
+	data, ok := readHiveMeta(path)
+	if !ok {
 		return nil
 	}
 	var h SaaSHive
@@ -1639,7 +1721,11 @@ func saveSaaSHive(h *SaaSHive) error {
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	storeHiveMeta(path, data)
+	return nil
 }
 
 // removeHiveRecord durably purges the hub-side, on-disk record for a deleted
@@ -1664,6 +1750,7 @@ func removeHiveRecord(id string, logger *slog.Logger) {
 		return
 	}
 	hiveDir := filepath.Join(saasHivesDir, id)
+	evictHiveMeta(filepath.Join(hiveDir, "meta.json"))
 	if err := os.RemoveAll(hiveDir); err != nil {
 		logger.Warn("removeHiveRecord: failed to remove hive directory", "path", hiveDir, "error", err)
 	}
@@ -1713,10 +1800,19 @@ func countUserHives(username string) int {
 // user record, so direct-route spokes enforce the same read/read-write/merger
 // tiers as hub-proxied spokes. Usernames are sanitized to guard the env value,
 // and the owner is de-duplicated so they appear exactly once.
+//
+// Identities are sanitized with sanitizeAllowlistIdentity, NOT the hive-id
+// sanitize() below: that one lower-cases and strips every character outside
+// [a-z0-9-], which DESTROYED canonical provider identities — "ibmid:310002BM0V"
+// became "ibmid310002bm0v", an entry that can never match the user's real
+// identity at login, so a non-GitHub grantee was silently locked out of the
+// spoke they were granted (part of the recurring "granted owner still denied"
+// class). The spoke parses entries on the LAST colon (splitAuthorizedEntry),
+// so a provider-prefixed name is safe to deliver verbatim.
 func authorizedUsersForHive(h *SaaSHive) string {
 	entries := make([]string, 0, 4)
 	seen := map[string]bool{}
-	owner := sanitize(h.Owner)
+	owner := sanitizeAllowlistIdentity(h.Owner)
 	if owner != "" {
 		entries = append(entries, owner+":"+saasRoleOwner)
 		seen[strings.ToLower(owner)] = true
@@ -1729,7 +1825,7 @@ func authorizedUsersForHive(h *SaaSHive) string {
 		if !config.ValidRole(role) {
 			role = saasRoleRead
 		}
-		name := sanitize(u.GitHubUsername)
+		name := sanitizeAllowlistIdentity(u.GitHubUsername)
 		if name == "" || seen[strings.ToLower(name)] {
 			continue
 		}
@@ -1737,6 +1833,22 @@ func authorizedUsersForHive(h *SaaSHive) string {
 		seen[strings.ToLower(name)] = true
 	}
 	return strings.Join(entries, ",")
+}
+
+// sanitizeAllowlistIdentity guards an identity destined for the allowlist env
+// value while PRESERVING it: letters (both cases — OIDC subjects are
+// case-sensitive), digits, and the identity charset ':', '.', '_', '-' pass;
+// everything else (spaces, commas, quotes, shell metacharacters) is dropped so
+// the comma-separated env value cannot be corrupted or escaped.
+func sanitizeAllowlistIdentity(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == ':' || c == '.' || c == '_' || c == '-' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }
 
 // provisionAppKey is one additional App key rendered into the provisioning
@@ -1803,6 +1915,139 @@ func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID st
 	return out
 }
 
+// spokeSecretsMountPrefix is where the hive-secrets Secret is projected in the
+// spoke pod. A key_file under this prefix can only resolve to an entry the same
+// manifest puts in that Secret — nothing else ever writes there, because the
+// projection is a read-only tmpfs.
+const spokeSecretsMountPrefix = "/secrets/"
+
+// assertSpokeManifestKeyFile rejects a rendered manifest whose hive.yaml seed
+// pins github.key_file at a /secrets path the SAME manifest does not create.
+//
+// THE BUG THIS EXISTS FOR (#4368)
+//
+// The ConfigMap seed used to emit `key_file: /secrets/gh-app-key.pem` for every
+// App-using hive — gated on UseApp. The hive-secrets Secret creates that entry
+// gated on UseAppFull, which additionally requires an installation_id AND an
+// inline private key at request time. A hive provisioned with an App id but
+// without the key inline (the normal case when the key arrives later through
+// the heartbeat delivery lane) therefore got a seed pointing at a file that
+// would never exist.
+//
+// It then failed in the worst available way. An explicit key_file wins outright
+// in resolveAppKeyFile (cmd/hive/main.go) — deliberately, because a path an
+// operator typed must not be silently redirected — so the key that DID arrive,
+// at /data/gh-app-key-<app_id>.pem, was never even tried. The whole 2026-08-12
+// batch (four hives) reported github_auth: fail with the right key sitting on
+// the PVC, and the hub's own alert text blamed an undelivered key.
+//
+// The template no longer pins key_file at all: it is derivable from app_id, and
+// resolveAppKeyFile's last fallback is /secrets/gh-app-key.pem, so a hive
+// provisioned WITH an inline key still resolves to exactly the file it used to
+// be pinned to. This check is what keeps the coupling from coming back — a
+// future pin is fine, but only if the manifest also creates what it names.
+//
+// Deliberately narrow. Only /secrets paths are checkable at render time: /data
+// is an empty PVC until the first key delivery, so a /data pin is not wrong
+// here, merely unverifiable, and any other path is an operator's own location.
+func assertSpokeManifestKeyFile(manifest string) error {
+	pinned := manifestKeyFilePins(manifest)
+	if len(pinned) == 0 {
+		return nil
+	}
+	created := manifestSecretKeys(manifest, "hive-secrets")
+	for _, p := range pinned {
+		if !strings.HasPrefix(p, spokeSecretsMountPrefix) {
+			continue
+		}
+		name := strings.TrimPrefix(p, spokeSecretsMountPrefix)
+		if _, ok := created[name]; !ok {
+			return fmt.Errorf(
+				"hive.yaml seeds github.key_file=%s but the hive-secrets Secret has no %q entry — "+
+					"the spoke would pin an explicit key path that never exists, and an explicit "+
+					"key_file short-circuits the fallback that would otherwise find the delivered key (#4368)",
+				p, name)
+		}
+	}
+	return nil
+}
+
+// manifestKeyFilePins returns every github.key_file value the rendered manifest
+// seeds. Commented-out lines are ignored: the template documents the absent pin
+// in a YAML comment, and a comment is not a pin.
+func manifestKeyFilePins(manifest string) []string {
+	var out []string
+	for _, line := range strings.Split(manifest, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		const key = "key_file:"
+		if !strings.HasPrefix(trimmed, key) {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(trimmed, key))
+		if i := strings.Index(v, " #"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		v = strings.Trim(v, `"'`)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// manifestSecretKeys returns the data/stringData key names of the named Secret
+// document in a multi-document manifest, as a set.
+//
+// Scoped to one document on purpose: the manifest carries several Secrets
+// (hive-tls among them), and matching a key name against the wrong one would
+// make this assertion agree with something it never checked.
+func manifestSecretKeys(manifest, secretName string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, doc := range strings.Split(manifest, "\n---") {
+		if !strings.Contains(doc, "kind: Secret") {
+			continue
+		}
+		if !strings.Contains(doc, "name: "+secretName+"\n") {
+			continue
+		}
+		inData := false
+		for _, line := range strings.Split(doc, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "data:" || trimmed == "stringData:" {
+				inData = true
+				continue
+			}
+			if !inData {
+				continue
+			}
+			// A non-indented line ends the block.
+			if line != "" && !strings.HasPrefix(line, " ") {
+				inData = false
+				continue
+			}
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			// Entries are exactly two spaces in; anything deeper is a value
+			// continuation line of a block scalar (the PEM bodies).
+			if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
+				continue
+			}
+			name, _, found := strings.Cut(trimmed, ":")
+			if !found {
+				continue
+			}
+			if name = strings.TrimSpace(name); name != "" {
+				out[name] = struct{}{}
+			}
+		}
+	}
+	return out
+}
+
 // fleetKeys carries every GitHub App private key the fleet knows, keyed by
 // app_id, so a freshly provisioned spoke starts life holding ALL of them rather
 // than waiting for the heartbeat's additional-key delivery to catch up. Pass nil
@@ -1862,6 +2107,20 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		imageTag = "v4-latest"
 	}
 
+	// Mint the spoke's dashboard token here (rather than inline in `data`) so
+	// its hash can be recorded on the hive record below once the manifest is
+	// applied: that stored record is what lets the hub verify spoke-relayed
+	// upgrade proofs WITHOUT a live secret read, which is impossible on
+	// pull-only clusters. See SaaSHive.DashboardTokenHash.
+	dashboardToken := func() string {
+		b := make([]byte, dashboardTokenBytes)
+		if _, err := cryptoRand.Read(b); err != nil {
+			logger.Error("failed to generate dashboard token", "error", err)
+			return ""
+		}
+		return hex.EncodeToString(b)
+	}()
+
 	data := map[string]any{
 		"ID":              h.ID,
 		"Namespace":       "hive-hosted-" + h.ID,
@@ -1916,14 +2175,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"MemLimit":              memLimit,
 		"RolloutMaxSurge":       rolloutMaxSurge,
 		"RolloutMaxUnavailable": rolloutMaxUnavailable,
-		"DashboardToken": func() string {
-			b := make([]byte, dashboardTokenBytes)
-			if _, err := cryptoRand.Read(b); err != nil {
-				logger.Error("failed to generate dashboard token", "error", err)
-				return ""
-			}
-			return hex.EncodeToString(b)
-		}(),
+		"DashboardToken":        dashboardToken,
 		// C2 domain separation (CWE-321/798): the spoke Deployment is injected ONLY
 		// the derived sub-keys it needs — the heartbeat bearer, plus the session
 		// verification key and the SSO PUBLIC key — and NEVER the master
@@ -1941,31 +2193,27 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// hive_id — and three key-delivery lanes read off that claimed ID.
 		// Binding the bearer to the hive makes the claim self-authenticating.
 		//
-		// All five resolve against provisionCurrentSecret() — the CURRENT
+		// All four resolve against provisionCurrentSecret() — the CURRENT
 		// generation's master (hub_keys.go). Provisioning and the
 		// perhive_env_reconcile sweep MUST derive identically or they would
 		// fight and roll a pod every cycle forever, so both sides read the
 		// generation set through the same helper. Before any rotation exists
 		// this is byte-identical to the old provisionMasterSecret() reads.
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
-		// RESIDUAL-2: PER-HIVE, matching desiredPerHiveEnv. This MUST move in
-		// lockstep with the reconcile sweep — the two derivations fighting is
-		// exactly the "roll a pod every cycle forever" failure the comment
-		// above warns about.
-		"SessionKey":   provisionSessionKey(h.ID),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
-		// hive_hub_user with this and cannot mint one — unlike SessionKey below,
-		// which is symmetric and therefore let any spoke forge a hub ADMIN cookie.
-		// SessionKey is still shipped for the rollout window so a spoke on an older
-		// image keeps verifying legacy cookies; remove it once the fleet has rolled.
+		// hive_hub_user with this and cannot mint one. The old symmetric
+		// SessionKey that used to sit here — which could ALSO mint, letting any
+		// spoke forge a hub ADMIN cookie — is gone (issue #3234): every lane
+		// that ever verified against it (F1, N3, F23) was already deleted, so
+		// it is no longer injected at all rather than shipped-but-unused.
 		"SessionPublicKey": provisionSessionPublicKey(),
 		// N3: the terminal key is PER-HIVE, not fleet-wide. Without it
-		// TerminalSigningKey() falls through to the fleet-uniform SessionKey
-		// above, so an assertion minted on one spoke verifies on every other —
-		// any tenant could forge a shell grant on any other tenant. The spoke
-		// both mints and verifies this key locally, so symmetric is correct;
-		// only the sharing was wrong.
+		// TerminalSigningKey() falls through to the self-derived fleet-wide
+		// session key, so an assertion minted on one spoke verifies on every
+		// other — any tenant could forge a shell grant on any other tenant. The
+		// spoke both mints and verifies this key locally, so symmetric is
+		// correct; only the sharing was wrong.
 		"TerminalKey": provisionTerminalKey(h.ID),
 		// The per-hive contributor-invite signing key. inviteSigningSecret() used
 		// the raw master as its HMAC key, making invites the LAST spoke-side
@@ -2054,14 +2302,33 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		return fmt.Errorf("template parse: %w", err)
 	}
 
+	// Render to memory first so the manifest can be CHECKED before it is
+	// applied. #4368 shipped four hives whose seed named a key file the same
+	// manifest never created; the failure was invisible until the first App
+	// call, hours later and on a different machine. Rendering into a buffer
+	// costs nothing here (every value is already in memory in `data`) and is
+	// what makes assertSpokeManifestKeyFile possible at all.
+	var manifestBuf bytes.Buffer
+	if err := tmpl.Execute(&manifestBuf, data); err != nil {
+		return fmt.Errorf("template exec: %w", err)
+	}
+	if err := assertSpokeManifestKeyFile(manifestBuf.String()); err != nil {
+		// Refuse to create a hive that cannot load its own App key. A hive that
+		// never provisions is a visible failure the admin can retry; one that
+		// provisions broken is a silent github_auth: fail nobody looks at until
+		// an agent needs the App.
+		logger.Error("refusing to apply spoke manifest", "hive", h.ID, "error", err)
+		return fmt.Errorf("spoke manifest rejected: %w", err)
+	}
+
 	manifestPath := filepath.Join(dir, "all.yaml")
 	f, err := os.Create(manifestPath)
 	if err != nil {
 		return fmt.Errorf("create manifest: %w", err)
 	}
-	if err := tmpl.Execute(f, data); err != nil {
+	if _, err := f.Write(manifestBuf.Bytes()); err != nil {
 		f.Close()
-		return fmt.Errorf("template exec: %w", err)
+		return fmt.Errorf("write manifest: %w", err)
 	}
 	f.Close()
 
@@ -2087,8 +2354,24 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 	// renamed and must instead be kept self-describing via labels.
 	stampHostedNamespaceIdentity(cluster, data["Namespace"].(string), h.ProjectName, h.Org, h.ID, logger)
 
+	// Record the hub's own copy of the proof credential — the manifest just
+	// applied is what injects this exact token into the spoke, so this is the
+	// authoritative moment to remember it. Callers persist h on success.
+	if dashboardToken != "" {
+		h.DashboardTokenHash = HashDashboardToken(dashboardToken)
+	}
+
 	logger.Info("audit: saas hive provisioned", "hive_id", h.ID, "owner", h.Owner, "org", h.Org, "cluster", cluster.ID)
 	return nil
+}
+
+// HashDashboardToken returns the SHA-256 hex digest of a spoke dashboard
+// token — the form the hub stores (SaaSHive.DashboardTokenHash) and the spoke
+// reports over the heartbeat, so neither side ever transmits or persists a
+// second copy of the raw credential.
+func HashDashboardToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // deprovisionHive performs best-effort cleanup of all resources associated
@@ -2425,7 +2708,10 @@ data:
 {{- if .UseApp}}
       app_id: {{.AppID}}
       installation_id: {{.InstallationID}}
-      key_file: /secrets/gh-app-key.pem
+      # key_file is deliberately NOT pinned here: it is derivable from app_id,
+      # and an explicit value short-circuits resolveAppKeyFile before the key
+      # that actually arrived can be found. See assertSpokeManifestKeyFile
+      # below for the full account (#4368).
 {{- else}}
       token: "${HIVE_GITHUB_TOKEN}"
 {{- end}}
@@ -2643,6 +2929,18 @@ spec:
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
         securityContext:
+          # COVERAGE (#4379): src/deploy/test_manifest_caps_runtime.sh boots the
+          # k8s manifest's exact grant (drop ALL plus its add list) and drives the
+          # privilege chain through it. This template is covered by CONTAINMENT
+          # rather than by its own boot: it adds capabilities but does NOT drop
+          # ALL, so its bounding set is the runtime default set UNION this add
+          # list -- a superset of the set that job boots, since the default set
+          # already contains CHOWN, DAC_OVERRIDE, SETGID, SETUID and SETPCAP.
+          # Both halves of that argument are asserted there, so introducing a
+          # drop list here, or an added capability the k8s manifest does not
+          # have, turns that job RED with an instruction to give this template
+          # its own boot. Do not "fix" that by copying the six capabilities in --
+          # that would silently NARROW the hosted bounding set.
           capabilities:
             add:
             - NET_ADMIN
@@ -2719,30 +3017,34 @@ spec:
         # session, an SSO-as-any-owner token, or an impersonation grant.
         - name: HIVE_HEARTBEAT_KEY
           value: "{{.HeartbeatKey}}"
-        - name: HIVE_SESSION_KEY
-          value: "{{.SessionKey}}"
         # C2 asymmetric SSO: spokes receive only the Ed25519 PUBLIC key and
         # therefore cannot mint SSO tokens (only the hub, holding the private
         # seed, can). Replaces the earlier symmetric HIVE_SSO_KEY.
         - name: HIVE_SSO_PUBLIC_KEY
           value: "{{.SSOPublicKey}}"
-        # N2 (CWE-321/798): the Ed25519 PUBLIC key for hub SESSION cookies.
-        # HIVE_SESSION_KEY above is symmetric, so every spoke that could VERIFY
-        # hive_hub_user could also MINT it — including "clubanderson.<sig>",
-        # which requireAdmin accepts on ~21 admin routes. With this the spoke
-        # verifies and cannot forge. HIVE_SESSION_KEY is still injected for the
-        # rollout window (a spoke on an older image only knows the legacy
-        # format); drop it once the fleet has rolled.
+        # N2 (CWE-321/798): the Ed25519 PUBLIC key for hub SESSION cookies. A
+        # spoke can only VERIFY hive_hub_user with this, never mint it. The
+        # symmetric HIVE_SESSION_KEY that used to sit here let any spoke that
+        # could verify also MINT — including "clubanderson.<sig>", which
+        # requireAdmin accepts on ~21 admin routes. It is no longer injected
+        # (issue #3234): every lane that verified against it — F1 (Go legacy
+        # cookie lane), N3 (terminal key fall-through), F23 (Node proxy copy)
+        # — was already deleted, so shipping it at all was unjustified secret
+        # exposure with no remaining purpose. A spoke that lacks it self-derives
+        # a fleet-wide fallback value from HIVE_HUB_SECRET for its IS_HOSTED
+        # boot signal only (proxy/server.js deriveSessionKey) — never as a
+        # verification comparand, so the disagreement with any spoke that still
+        # holds the old per-hive value is harmless.
         - name: HIVE_SESSION_PUBLIC_KEY
           value: "{{.SessionPublicKey}}"
         # N3 (CWE-862): the terminal signing key is PER-HIVE. This spoke both
         # mints the assertion (dashboard/session.go, at login) and verifies it
         # (proxy/server.js, on /terminal), so a symmetric key is the right shape
         # — but it must not be shared. Without this var TerminalSigningKey()
-        # fell through to HIVE_SESSION_KEY, which is byte-identical fleet-wide,
-        # so an assertion minted here verified on EVERY other tenant's spoke:
-        # one hostile operator could forge a shell grant for an arbitrary user
-        # on an arbitrary hive. Both resolvers already prefer this var.
+        # falls through to the self-derived fleet-wide session key, so an
+        # assertion minted here would verify on EVERY other tenant's spoke: one
+        # hostile operator could forge a shell grant for an arbitrary user on an
+        # arbitrary hive. Both resolvers already prefer this var.
         - name: HIVE_TERMINAL_KEY
           value: "{{.TerminalKey}}"
         # The per-hive contributor-invite signing key. inviteSigningSecret() on
@@ -2863,6 +3165,31 @@ spec:
     http:
       paths:
       - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hive
+            port:
+              number: {{.DashboardPort}}
+  tls:
+  - hosts:
+    - {{.DashboardHost}}
+    secretName: hive-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hive-api
+  namespace: {{.Namespace}}
+  annotations:
+    cert-manager.io/cluster-issuer: {{.CertIssuer}}
+spec:
+  ingressClassName: {{.IngressClass}}
+  rules:
+  - host: {{.DashboardHost}}
+    http:
+      paths:
+      - path: /api/v1
         pathType: Prefix
         backend:
           service:
@@ -3047,7 +3374,7 @@ spec:
 
 	// nginx: append a rule + TLS host to each existing Ingress via a JSON patch.
 	patched := 0
-	for _, ing := range []string{"hive", "hive-contribute", "hive-terminal"} {
+	for _, ing := range []string{"hive", "hive-api", "hive-contribute", "hive-terminal"} {
 		raw, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", ing, "-o", "json").Output()
 		if err != nil {
 			continue // not every spoke has all three

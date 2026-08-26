@@ -10,7 +10,9 @@ operates it.
 go build -o bin/hivectl ./cmd/hivectl
 
 # Point at a server (default: http://127.0.0.1:3001) and provide the token
-# via an environment variable, never as a flag value.
+# via an environment variable, never as a flag value. The value must match the
+# server's dashboard token — see "Generating and rotating HIVE_DASHBOARD_TOKEN"
+# in env-vars.md (generate with: openssl rand -hex 32).
 export HIVE_DASHBOARD_TOKEN="..."
 bin/hivectl system status
 

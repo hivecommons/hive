@@ -284,7 +284,7 @@ func TestInstallIdInputIsCrossBrowserHardened(t *testing.T) {
 	if !strings.Contains(inTag, `autocomplete="off"`) {
 		t.Errorf("install-ID input must set autocomplete=\"off\" so Firefox form history can't clear/refill the value:\n%s", inTag)
 	}
-	if !strings.Contains(inTag, "submitGitHubInstallationID()") || !strings.Contains(inTag, "Enter") {
+	if !strings.Contains(inTag, `data-keydown-action="submitGitHubInstallationID"`) || !strings.Contains(inTag, "Enter") {
 		t.Errorf("install-ID input must submit on Enter so entry works even if the Set-ID button is obscured or its click is flaky in Firefox:\n%s", inTag)
 	}
 

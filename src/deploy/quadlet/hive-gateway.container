@@ -1,0 +1,145 @@
+# The authenticating gateway, as a Quadlet .container unit (#4375).
+#
+# THIS UNIT IS A SECURITY BOUNDARY, not a convenience. src/docker-compose.yaml
+# publishes 3001 and only 3001, and says why in the file:
+#
+#     SECURITY: only the authenticating proxy port is published. :7681 (the raw
+#     writable ttyd terminal) is intentionally NOT published — the terminal is
+#     reached through :3001/terminal, which authenticates first. Publishing 7681
+#     exposed an unauthenticated shell into the credential-holding container.
+#
+# The Podman assets have to encode the same split, and this is the unit that
+# does it. Adding a second PublishPort= here is the one edit that turns a
+# working deployment into a remote root shell, and nothing at runtime looks
+# wrong when it happens: the dashboard still works. src/deploy/
+# test_quadlet_port_boundary.sh fails the build if it is made.
+#
+# WHY THERE IS NO PublishPort FOR 7681 AND ALSO NO Expose. Podman needs no key
+# at all for container-to-container reachability: every member of a netavark
+# network can reach every port of every other member, so the Compose stack's
+# `expose:` list is documentation there and would be documentation here too.
+# Quadlet's key for it is spelled `ExposeHostPort=`, which is `--expose`, and
+# `--expose` becomes a real published port the moment anything adds `-P`. A
+# documentation-only key that can turn into a published port is not worth the
+# risk on this particular port, so the reachability is documented in prose
+# instead. See src/docs/podman-standalone-quadlet.md for the measurement.
+
+[Unit]
+Description=Hive authenticating gateway
+Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
+
+# The Compose equivalent is `depends_on: hive: condition: service_healthy`, and
+# this is the same statement in systemd's vocabulary. It works because
+# hive.container sets Notify=healthy: hive.service is Type=notify and does not
+# reach `active` until /api/health answers, so After= here means "after Hive is
+# HEALTHY", not merely "after conmon started". Starting the gateway earlier
+# would serve 502s on the port operators were told to trust.
+#
+# Requires= (rather than Wants=) is deliberate: if Hive fails to start there is
+# nothing to proxy to, and a gateway answering on :3001 with Hive absent is
+# worse than a port that refuses connections. It also propagates a manual
+# `systemctl stop hive.service` to the gateway.
+Requires=hive.service
+After=hive.service
+
+[Container]
+# From the one source of truth, src/deploy/standalone-images.sh (#4206), digest
+# and all. The digest is the point: this is the process holding the only
+# published port on the host. src/deploy/test_standalone_image_refs.sh fails if
+# this line stops agreeing with that file, including if the digest is dropped
+# and the reference falls back to the floating tag.
+Image=docker.io/library/nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+ContainerName=hive-gateway
+
+# The #4210 ownership labels, matching hive_podman_labels in
+# bin/hive-podman-cleanup.sh, so bin/hive-podman-teardown.sh (#4343) can see
+# this container — its selection is the ownership label set and nothing else.
+Label=io.kubestellar.hive.owned=true
+Label=io.kubestellar.hive.component=gateway
+Label=io.kubestellar.hive.instance=default
+Label=io.kubestellar.hive.runtime=podman
+
+# The shared network. Referenced by unit name so the generated service orders
+# itself after hive-network.service, and so the gateway resolves `hive` by name
+# through aardvark-dns — which is what src/deploy/nginx.conf's
+# `upstream hive_api { server hive:3001; }` needs.
+Network=hive.network
+
+# THE ONLY PUBLISHED PORT ON THE HOST. Host 3001 -> gateway 3001, matching the
+# Compose stack's "3001:3001" exactly, including binding all interfaces rather
+# than loopback: this is the port a remote operator reaches the dashboard on.
+# Everything else — Hive's 3001 and 3002, and the raw ttyd terminal on 7681 —
+# stays inside the network. Read the header before adding a second line here.
+PublishPort=3001:3001
+
+# The gateway config, read-only. The container must not be able to rewrite the
+# config it serves from; the Compose stack mounts it :ro for the same reason and
+# test_standalone_service_contract.sh asserts it.
+#
+# :Z relabels private to this container, which is correct because exactly one
+# container reads this file. %E is /etc for a rootful unit and ~/.config for a
+# rootless one, the same specifier hive.container uses — so this is
+# /etc/hive/nginx.conf or ~/.config/hive/nginx.conf, installed from
+# src/deploy/nginx.conf.
+Volume=%E/hive/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+
+# READINESS. Same command, endpoint, and intervals as the Compose gateway
+# healthcheck. It is a genuine end-to-end probe rather than a liveness ping:
+# /api/health is proxied to hive:3001, so a passing check means nginx started,
+# resolved `hive` over the shared network, and got an answer back. nginx's
+# proxy_intercept_errors turns an unreachable upstream into a 503, which
+# `curl -sf` fails on.
+#
+# Notify=healthy makes `systemctl start hive-gateway.service` return only once
+# that holds. HealthCmd= is mandatory for it to mean anything — the generator
+# accepts Notify=healthy with no healthcheck and exits 0, producing a unit that
+# reports started the moment conmon is up. curl is present in nginx:alpine at
+# the pinned digest (verified: /usr/bin/curl).
+Notify=healthy
+HealthCmd=curl -sf http://127.0.0.1:3001/api/health
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=30s
+
+[Service]
+# ADR-0017: set TimeoutStartSec explicitly, larger than HealthStartPeriod plus
+# the retry budget (30s + 3x10s = 60s here). The host default is not a safe
+# fallback — 45s was measured on Fedora — and the generated ExecStart carries
+# --rm, so a timeout deletes the container that holds the evidence. The budget
+# is smaller than hive.container's 300s because this unit only starts after
+# Hive is already healthy; nginx itself is up in under a second.
+TimeoutStartSec=120
+
+# Restart=always, matching Compose's `restart: unless-stopped` and the sibling
+# hive.container (#4415). They are the same statement: systemd never restarts a
+# unit that a `systemctl stop` job stopped, so a deliberate stop still stays
+# stopped, while an out-of-band removal is recovered after RestartSec.
+#
+# on-failure was strictly weaker HERE IN PARTICULAR, because this unit holds the
+# ONLY PUBLISHED PORT ON THE HOST. The pinned nginx image carries
+# `STOPSIGNAL SIGQUIT` — nginx's graceful shutdown — so an external
+# `podman stop hive-gateway` is a CLEAN, EXIT-0 shutdown. Measured on podman
+# 5.8.4 with this image and this [Service] block:
+#
+#   Restart=on-failure   inactive/dead/success, ExecMainStatus=0,
+#                        `systemctl is-failed` -> `inactive`, container never
+#                        returns. :3001 refuses connections and NOTHING is red.
+#   Restart=always       back up within RestartSec, unit stays active/running.
+#
+# NOTE the difference from hive.container, and do not copy its extra line here.
+# That unit needs `SuccessExitStatus=143 SIGTERM` because the Hive entrypoint
+# traps SIGTERM and exits 143, which is NOT in systemd's default success set.
+# nginx exits 0, which already is — so this unit needs the restart policy and
+# nothing else.
+Restart=always
+RestartSec=30
+
+# NOT default.target, deliberately (#4478) — and this unit matters as much as
+# hive.container's line: Requires=hive.service above means a gateway job in
+# the boot transaction would drag Hive's job back into it. hive-boot.target is
+# started by hive-boot-gate.service after the manager declares startup
+# finished, so neither unit ever holds the boot. See hive.container's
+# [Install] comment and src/deploy/systemd/.
+[Install]
+WantedBy=hive-boot.target

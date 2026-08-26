@@ -5,6 +5,11 @@
 /config/agent.env
 examples/kubestellar/agents/agent.env
 
+# Environment variables / credentials
+.env
+.env.*
+*.env
+
 # Beads ledger — runtime state, not source code
 .beads/
 node_modules/

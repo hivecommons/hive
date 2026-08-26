@@ -79,6 +79,10 @@ func TestNewHubServerRecoversArmedUpgradesFromDisk(t *testing.T) {
 	}
 
 	s := NewHubServer(0, slog.Default(), "test", "v2")
+	// Join the save loop before t.TempDir cleanup: recovery arms a requestSave,
+	// and an unjoined loop would recreate the registry inside the TempDir while
+	// the framework removes it (#4774).
+	t.Cleanup(s.StopSaveLoop)
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()

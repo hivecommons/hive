@@ -35,7 +35,7 @@ gh issue create --repo "$HIVE_REPO" \
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[guide] docs: <short description>" \
-  --body "## Documentation Fix\n\n<what this PR adds/changes>\n\nFixes #<issue-number>\n\n---\n*Filed by guide agent (ACMM L6 — full mode)*" \
+  --body "## Documentation Fix\n\n<what this PR adds/changes>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by guide agent (ACMM L6 — full mode)*" \
   --label "documentation"
 ```
 

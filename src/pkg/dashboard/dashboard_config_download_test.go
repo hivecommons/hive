@@ -213,10 +213,11 @@ func TestHandleSelfUpgradeWithHubURL(t *testing.T) {
 	defer hub.Close()
 
 	cfg := &config.Config{
-		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{URL: hub.URL},
-		HiveID:  "test-hive-123",
+		Project:   config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		Agents:    map[string]config.AgentConfig{},
+		Hub:       config.HubConfig{URL: hub.URL},
+		HiveID:    "test-hive-123",
+		Dashboard: config.DashboardConfig{AuthToken: "spoke-token"},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
@@ -234,12 +235,59 @@ func TestHandleSelfUpgradeWithHubURL(t *testing.T) {
 	}
 }
 
+func TestHandleSelfUpgradeForwardsSpokeSessionProof(t *testing.T) {
+	const (
+		user       = "alice"
+		role       = "owner"
+		proofToken = "spoke-dashboard-token"
+	)
+
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Hive-User"); got != user {
+			t.Errorf("X-Hive-User = %q, want %q", got, user)
+		}
+		if got := r.Header.Get("X-Hive-Role"); got != role {
+			t.Errorf("X-Hive-Role = %q, want %q", got, role)
+		}
+		if got := r.Header.Get(proxyAuthHeader); got != proofToken {
+			t.Errorf("%s = %q, want %q", proxyAuthHeader, got, proofToken)
+		}
+		if _, err := r.Cookie("hive_hub_user"); err == nil {
+			t.Fatal("test request unexpectedly depended on hub cookie auth")
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"upgrading"}`))
+	}))
+	defer hub.Close()
+
+	cfg := &config.Config{
+		Project:   config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		Agents:    map[string]config.AgentConfig{},
+		Hub:       config.HubConfig{URL: hub.URL},
+		HiveID:    "test-hive-123",
+		Dashboard: config.DashboardConfig{AuthToken: proofToken},
+	}
+	srv := NewServer(0, slog.Default())
+	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
+
+	req := httptest.NewRequest("POST", "/api/self-upgrade", nil)
+	req.Header.Set("X-Hive-User", user)
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	srv.handleSelfUpgrade(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleSelfUpgradeHubUnreachable(t *testing.T) {
 	cfg := &config.Config{
-		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
-		Hub:     config.HubConfig{URL: "http://127.0.0.1:1"},
-		HiveID:  "test-hive-123",
+		Project:   config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
+		Agents:    map[string]config.AgentConfig{},
+		Hub:       config.HubConfig{URL: "http://127.0.0.1:1"},
+		HiveID:    "test-hive-123",
+		Dashboard: config.DashboardConfig{AuthToken: "spoke-token"},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}

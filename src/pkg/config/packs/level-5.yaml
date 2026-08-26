@@ -3,7 +3,7 @@ name: Semi-Autonomous
 description: 'Multi-loop feedback (formerly ''Semi-Automated''). Agents open issues AND pull requests. All agent
   PRs get a ''hold'' label automatically — humans batch-review and approve. Adds architect
   (+architect) for RFCs and strategist (+strategist) for cross-agent coordination.
-  Eight agents total. The system proposes; it does not merge autonomously.
+  Eleven agents total, including opt-in telemetry and operations. The system proposes; it does not merge autonomously.
 
   '
 governor:
@@ -30,6 +30,8 @@ governor:
       sec-check: 4h
       architect: 4h
       strategist: 4h
+      telemetry: paused
+      operations: paused
     busy:
       supervisor: 5m
       scanner: 4h
@@ -39,6 +41,8 @@ governor:
       sec-check: 4h
       architect: 4h
       strategist: 4h
+      telemetry: paused
+      operations: paused
     quiet:
       supervisor: 5m
       scanner: 4h
@@ -48,6 +52,8 @@ governor:
       sec-check: 4h
       architect: 4h
       strategist: 4h
+      telemetry: paused
+      operations: paused
     idle:
       supervisor: 5m
       scanner: 4h
@@ -57,6 +63,8 @@ governor:
       sec-check: 4h
       architect: 4h
       strategist: 4h
+      telemetry: paused
+      operations: paused
 agents:
 - name: supervisor
   display_name: Supervisor
@@ -296,3 +304,37 @@ agents:
 
     '
   clear_on_kick: true
+- name: telemetry
+  display_name: telemetry
+  role: telemetry
+  description: Adds vendor-neutral instrumentation and configured observability backend artifacts to managed projects.
+  emoji: 📡
+  color: '#00a8cc'
+  sort_order: 65
+  backend: copilot
+  model: claude-sonnet-4-6
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  kick_template: telemetry-holdgated.md
+  include_repos: true
+  stale_timeout: 28800
+  lane_keywords: [observability, opentelemetry, prometheus, grafana, tracing, metrics, structured-logging, servicemonitor, podmonitor]
+  interactions: Opens issues and hold-gated PRs for bounded, explicitly configured telemetry improvements.
+  knowledge_use: Reads project stack and selected observability backends from the knowledge base.
+- name: operations
+  display_name: operations
+  role: operations
+  description: Adds health checks, SLOs, runbooks, alerts, and release or rollback safeguards to managed projects.
+  emoji: 🚨
+  color: '#d35400'
+  sort_order: 66
+  backend: copilot
+  model: claude-sonnet-4-6
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  kick_template: operations-holdgated.md
+  include_repos: true
+  stale_timeout: 28800
+  lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
+  interactions: Opens issues and hold-gated PRs for operational-practice improvements.
+  knowledge_use: Reads reliability goals and operational conventions from the knowledge base.

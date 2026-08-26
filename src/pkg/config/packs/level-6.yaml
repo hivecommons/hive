@@ -2,7 +2,7 @@ level: 6
 name: Fully Autonomous
 description: 'Multi-loop with external orchestration. Agents open issues, create PRs,
   and auto-merge on green CI. No hold label. Adds outreach agent (+outreach) for community
-  engagement and external-facing actions. Nine agents total. Highest trust — governor
+  engagement and external-facing actions. Twelve agents total, including opt-in telemetry and operations. Highest trust — governor
   at fastest cadence.
 
   '
@@ -30,6 +30,8 @@ governor:
       outreach: 30m
       sec-check: 15m
       strategist: 30m
+      telemetry: paused
+      operations: paused
     busy:
       supervisor: 2m
       scanner: 10m
@@ -39,6 +41,8 @@ governor:
       outreach: 1h
       sec-check: 30m
       strategist: 1h
+      telemetry: paused
+      operations: paused
     quiet:
       supervisor: 3m
       scanner: 20m
@@ -48,6 +52,8 @@ governor:
       outreach: 2h
       sec-check: 1h
       strategist: 2h
+      telemetry: paused
+      operations: paused
     idle:
       supervisor: 5m
       scanner: 30m
@@ -57,6 +63,8 @@ governor:
       outreach: 4h
       sec-check: 2h
       strategist: 4h
+      telemetry: paused
+      operations: paused
 agents:
 - name: supervisor
   display_name: Supervisor
@@ -322,3 +330,37 @@ agents:
 
     '
   clear_on_kick: true
+- name: telemetry
+  display_name: telemetry
+  role: telemetry
+  description: Adds vendor-neutral instrumentation and configured observability backend artifacts to managed projects.
+  emoji: 📡
+  color: '#00a8cc'
+  sort_order: 65
+  backend: copilot
+  model: claude-sonnet-4-6
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  kick_template: telemetry-full.md
+  include_repos: true
+  stale_timeout: 28800
+  lane_keywords: [observability, opentelemetry, prometheus, grafana, tracing, metrics, structured-logging, servicemonitor, podmonitor]
+  interactions: Opens issues and PRs for bounded, explicitly configured telemetry improvements; never merges its own PRs.
+  knowledge_use: Reads project stack and selected observability backends from the knowledge base.
+- name: operations
+  display_name: operations
+  role: operations
+  description: Adds health checks, SLOs, runbooks, alerts, and release or rollback safeguards to managed projects.
+  emoji: 🚨
+  color: '#d35400'
+  sort_order: 66
+  backend: copilot
+  model: claude-sonnet-4-6
+  bead_role: worker
+  mode: ISSUES_AND_PRS
+  kick_template: operations-full.md
+  include_repos: true
+  stale_timeout: 28800
+  lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
+  interactions: Opens issues and PRs for operational-practice improvements; never merges its own PRs.
+  knowledge_use: Reads reliability goals and operational conventions from the knowledge base.

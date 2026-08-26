@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,15 +24,14 @@ import (
 // ---------- NewGitHubProxy: test construction ----------
 
 func TestNewGitHubProxy(t *testing.T) {
-	// NewGitHubProxy writes CA cert to CACertPath (/data/proxy-ca.pem)
-	// which may not be writable. Skip if so.
-	dir := "/data"
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Skipf("cannot create %s: %v", dir, err)
-		}
-		defer os.RemoveAll(dir)
-	}
+	// NewGitHubProxy writes the CA cert/key to CACertPath/caKeyPath, which
+	// default to live /data paths. Redirect them to a temp dir so the test
+	// is hermetic and never touches (or requires) the host's real CA files.
+	tmpDir := t.TempDir()
+	origCert, origKey := CACertPath, caKeyPath
+	CACertPath = filepath.Join(tmpDir, "proxy-ca.pem")
+	caKeyPath = filepath.Join(tmpDir, "proxy-ca-key.pem")
+	t.Cleanup(func() { CACertPath, caKeyPath = origCert, origKey })
 
 	p, err := NewGitHubProxy(slog.Default(), "myorg", []string{"console", "docs"})
 	if err != nil {
@@ -110,77 +110,10 @@ func TestStartInferenceTranslatorIntegration(t *testing.T) {
 	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test-model"}
 	p.inference.Set("test-agent", route)
 
-	// Start the translator on a free port
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
 
-	// Build the mux manually (mirrors StartInferenceTranslator)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("x-api-key")
-		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
-
-		rt := p.inference.Get(agentName)
-		if rt == nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if r.Body != nil {
-			r.Body.Close()
-		}
-		if err != nil {
-			http.Error(w, `{"type":"error"}`, http.StatusBadRequest)
-			return
-		}
-
-		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model, 0, "")
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
-			return
-		}
-
-		upstreamURL := strings.TrimRight(rt.Endpoint, "/") + "/v1/chat/completions"
-		upstreamReq, _ := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(openaiBody)))
-		upstreamReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(upstreamReq)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
-
-		if isStreaming {
-			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.WriteHeader(http.StatusOK)
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-			translateOpenAISSEToAnthropic(resp.Body, w, rt.Model)
-			return
-		}
-
-		respBody, _ := io.ReadAll(resp.Body)
-		translated, _ := translateOpenAIResponseToAnthropic(respBody, rt.Model)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(translated)
-	})
-
-	server := &http.Server{Handler: mux}
-	go server.Serve(ln)
-	defer server.Close()
-
-	baseURL := "http://" + ln.Addr().String()
+	baseURL := translator.URL
 
 	// Test non-streaming
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
@@ -297,7 +230,7 @@ func TestProxyHTTPAllowedPOSTWithBody(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	body := `{"body":"diagnosis"}`
 	go func() {
@@ -342,7 +275,7 @@ func TestProxyHTTPGraphQLMutationAllowed(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesOnly)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesOnly, agent.AgentCapabilities{})
 
 	body := `{"query":"mutation { addStar(input: {}) { id } }"}`
 	go func() {
@@ -385,11 +318,32 @@ func TestHandleConnectDirectAnthropicNoRoute(t *testing.T) {
 	p.inference = newInferenceRouter()
 	// No route set for any agent
 
+	// Create a local TCP server to tunnel to
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte("tunnel response"))
+	}()
+
+	addr := ln.Addr().String()
+	host, _, _ := net.SplitHostPort(addr)
+	RegisterAnthropicHost(host)
+	defer unregisterAnthropicHost(host)
+
 	clientConn, proxyClient := net.Pipe()
 	defer clientConn.Close()
 
-	req, _ := http.NewRequest("CONNECT", "http://api.anthropic.com:443", nil)
-	req.Host = "api.anthropic.com:443"
+	req, _ := http.NewRequest("CONNECT", "http://"+addr, nil)
+	req.Host = addr
 	req.Header.Set("Proxy-Authorization", "hive scanner")
 
 	go func() {
@@ -397,24 +351,15 @@ func TestHandleConnectDirectAnthropicNoRoute(t *testing.T) {
 		proxyClient.Close()
 	}()
 
-	// Without a route, Anthropic is not GitHub either, so tunnelDirect is called
-	// tunnel will fail to dial api.anthropic.com:443 => 502
-	buf := make([]byte, 4096)
-	var collected []byte
-	for {
-		clientConn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		n, err := clientConn.Read(buf)
-		if n > 0 {
-			collected = append(collected, buf[:n]...)
-		}
-		if err != nil {
-			break
-		}
+	// Without a route for scanner, Anthropic host is not GitHub, so tunnelDirect is called.
+	// tunnelDirect connects to local listener => 200 Connection established
+	reader := bufio.NewReader(clientConn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read response: %v", err)
 	}
-	// Should get either 200 (tunnel) or 502 (failed dial)
-	response := string(collected)
-	if !strings.Contains(response, "200") && !strings.Contains(response, "502") {
-		t.Errorf("expected 200 or 502, got: %s", response)
+	if !strings.Contains(line, "200") {
+		t.Errorf("expected 200, got: %s", line)
 	}
 }
 
@@ -519,7 +464,7 @@ func TestProxyHTTPBlockedPOSTShowsPath(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// POST to pulls (blocked for advisory)
 	go func() {
@@ -703,7 +648,7 @@ func TestProxyHTTPUpstreamWriteError(t *testing.T) {
 		proxyUpstream.Close()
 	}()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
 	// proxyHTTP will fail writing to closed upstream and return

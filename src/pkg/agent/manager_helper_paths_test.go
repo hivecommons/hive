@@ -318,6 +318,7 @@ func TestCaptureFullLog_CapturesPaneContent(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
 		"scanner": makeAgentConfig("claude", "sonnet"),
 	}, discardLogger(), ProjectContext{})
+	forceSharedUID(t, m, "scanner")
 
 	session := "hive-capture-full-log"
 	newRawTmuxSession(t, session)

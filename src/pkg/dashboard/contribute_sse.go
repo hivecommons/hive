@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
 
 // ── Operations command center: live SSE broadcast + ready-work queue ──────────
@@ -61,6 +62,13 @@ type sseEvent struct {
 	Activity *ActivityEntry   `json:"activity,omitempty"` // set when Type=="activity"
 	Replay   []ActivityEntry  `json:"replay,omitempty"`   // set when Type=="hello"
 	Queue    []ReadyQueueItem `json:"queue,omitempty"`    // set when Type=="hello"
+	// Withheld and AdmissionCoverage are the #4246 convergence admission
+	// diagnostics, set on the "hello" frame ONLY when the convergence toggle is
+	// in shadow mode (default off → both absent, payload unchanged). They come
+	// from the SAME sweep that produced Queue, so the two cannot disagree.
+	// Existing SSE clients ignore additive fields.
+	Withheld          []AdmissionWithheldItem `json:"withheld,omitempty"`
+	AdmissionCoverage *AdmissionCoverage      `json:"admission_coverage,omitempty"`
 }
 
 // ReadyQueueItem is one admissible/ready issue in the "queue waiting to be picked
@@ -72,6 +80,18 @@ type ReadyQueueItem struct {
 	Title  string   `json:"title"`
 	URL    string   `json:"url,omitempty"`
 	Labels []string `json:"labels,omitempty"`
+	// Key, SourceType and ExternalID carry the item's canonical, source-aware
+	// identity (kubestellar/hive#4245). All three are additive and omitempty, so
+	// a GitHub-only hive's payload is byte-for-byte what it was.
+	//
+	// Key is the identity every exclusion and the operator's hold/order controls
+	// match on: "owner/repo#42" for GitHub-backed work (unchanged), and
+	// "owner/repo!ENG-123" for a string-keyed source. Number stays 0 for
+	// external work — clients that only understand GitHub keep reading it and
+	// simply do not recognise those rows, rather than seeing a bogus "#0".
+	Key        string `json:"key,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
 	// MatchesInterest is set true, per VIEWER, when at least one of the issue's
 	// labels exactly matches (case-insensitive) a label the viewing contributor
 	// declared interest in (issue #2637). It is a SOFT signal the Operations tab
@@ -94,6 +114,17 @@ type ReadyQueueItem struct {
 	// Empty when the operator held with no note, so the badge falls back to its
 	// generic text. omitempty so a hold without a reason is byte-for-byte unchanged.
 	HeldReason string `json:"held_reason,omitempty"`
+}
+
+// identityKey returns the canonical identity this row is matched by. It prefers
+// the explicit Key, and falls back to the GitHub "repo#number" spelling so a
+// row built by older code (or by a test constructing the struct literally) still
+// matches operator hold and order entries exactly as it always did.
+func (it ReadyQueueItem) identityKey() string {
+	if it.Key != "" {
+		return it.Key
+	}
+	return worksource.Ref{Repo: it.Repo, Number: it.Number}.Key()
 }
 
 // sseSubscriber is one connected browser. events is the fan-out channel; done is
@@ -184,19 +215,35 @@ func (h *ContributeWSHub) broadcastActivity(entry ActivityEntry) {
 // draws from, minus the per-contributor own-work reshuffle. That is the documented
 // "simple recent/top-N is acceptable" fallback the spec permits.
 func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
+	return h.admissionQueueSnapshot(limit, false).queue
+}
+
+// admissionQueueSnapshot is the single admission pass behind ReadyQueue and the
+// #4246 diagnostics surface. One sweep produces BOTH the offerable queue and —
+// when withDiagnostics is true (convergence shadow mode) — the withheld
+// collection for convergence-blocked/unknown candidates, retaining the exact
+// Decision each refusal computed rather than re-evaluating it. The snapshot is
+// ephemeral: built per call, never cached, so every request re-observes current
+// authoritative state.
+func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool) queueAdmissionSnapshot {
 	if limit <= 0 {
 		limit = readyQueueDefaultLimit
 	}
-	out := []ReadyQueueItem{}
+	snap := queueAdmissionSnapshot{queue: []ReadyQueueItem{}}
+	if withDiagnostics {
+		snap.withheld = []AdmissionWithheldItem{}
+		snap.coverage.Policy = admissionCoveragePolicy
+	}
+	out := snap.queue
 	if h == nil || h.server == nil {
-		return out
+		return snap
 	}
 
 	h.server.statusMu.RLock()
 	status := h.server.status
 	h.server.statusMu.RUnlock()
 	if status == nil {
-		return out
+		return snap
 	}
 
 	// Which issues are already being worked right now — exclude them from "ready"
@@ -224,6 +271,9 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	// candidate — so the dependency gate stays cheap, and discarded when the pass
 	// ends so the next call re-observes current state.
 	sweep := h.newAdmissionSweep()
+	if withDiagnostics {
+		snap.coverage = h.admissionCoverageFromSweep(sweep)
+	}
 
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
@@ -241,37 +291,41 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			if err := json.Unmarshal(b, &issue); err != nil {
 				continue
 			}
-			number := 0
-			switch n := issue["number"].(type) {
-			case float64:
-				number = int(n)
-			case int:
-				number = n
-			}
-			if number == 0 {
+			// Canonical, source-aware identity (kubestellar/hive#4245). The old
+			// code read only "number" and skipped zero, which dropped every
+			// Linear/Jira item from the queue outright. Now an item is skipped
+			// only when it has NO identity at all — no issue number AND no
+			// external key — because that is the one case where any key we
+			// invented would be a fabrication.
+			ref := refFromIssueMap(repo.Full, issue)
+			itemKey := ref.Key()
+			if itemKey == "" {
 				continue
 			}
+			number := ref.Number
 			// Operator HOLD (#queue-hold): a parked issue is never offered, so it is
 			// kept OUT of the offer-eligible `out` set. It is still collected into
 			// heldItems (tagged Held) so it stays visible-but-dimmed for the operator.
 			// Checked before cooldown/active so a held-AND-cooled issue still shows as
 			// held (the operator's manual decision is the stronger, persistent signal).
-			holdKey := fmt.Sprintf("%s#%d", repo.Full, number)
-			if _, isHeld := held[holdKey]; isHeld {
+			if _, isHeld := held[itemKey]; isHeld {
 				title, _ := issue["title"].(string)
 				url, _ := issue["url"].(string)
 				heldItems = append(heldItems, ReadyQueueItem{
 					Repo:       repo.Full,
 					Number:     number,
+					Key:        itemKey,
+					SourceType: ref.SourceType,
+					ExternalID: ref.ExternalID,
 					Title:      title,
 					URL:        url,
 					Labels:     stringSliceFromAny(issue["labels"]),
 					Held:       true,
-					HeldReason: holdReasons[holdKey], // "" when no note (map miss) — omitempty
+					HeldReason: holdReasons[itemKey], // "" when no note (map miss) — omitempty
 				})
 				continue
 			}
-			if h.isTaskInCooldown(repo.Full, number) {
+			if h.isTaskInCooldownKey(itemKey) {
 				continue
 			}
 			// #3987: a live no_work_needed verdict withholds the issue from the
@@ -279,27 +333,43 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			// that pool — the two surfaces must agree (same contract the claim
 			// ledger admission pins). The hive AGENT pipeline does not read
 			// this ledger anywhere.
-			if h.isSuppressedByNoWorkVerdict(repo.Full, number, issueUpdatedAtFromMap(issue)) {
+			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
 				continue
 			}
-			if h.isTaskInFailureCooldown(repo.Full, number) {
+			if h.isTaskInFailureCooldownKey(itemKey) {
 				continue
 			}
-			if active[fmt.Sprintf("%s#%d", repo.Full, number)] {
+			if active[itemKey] {
 				continue
 			}
+			labels := stringSliceFromAny(issue["labels"])
 			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
-				repoFull: repo.Full,
-				repoName: repo.Name,
-				number:   number,
+				repoFull:  repo.Full,
+				repoName:  repo.Name,
+				number:    number,
+				ref:       ref,
+				labels:    labels,
+				dependsOn: dependenciesFromIssueMap(issue),
 			})
 			if !decision.admitted {
+				// #4246: retain the convergence Decision behind this refusal
+				// instead of discarding it. Only convergence refusals are
+				// collected (an open-PR claim never reaches the dependency gate
+				// and carries a zero Decision), only in shadow mode, and only up
+				// to the same bound as the queue so a pathological ledger can
+				// never blow out the payload. Blocked/unknown work stays OUT of
+				// the queue and out of assignment exactly as before.
+				if withDiagnostics && decision.reason != contributorAdmissionReasonOpenPRClaim && len(snap.withheld) < limit {
+					title, _ := issue["title"].(string)
+					url, _ := issue["url"].(string)
+					snap.withheld = append(snap.withheld,
+						withheldItemFromDecision(repo.Full, ref, title, url, decision.convergence))
+				}
 				continue
 			}
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
-			labels := stringSliceFromAny(issue["labels"])
 			assignees := stringSliceFromAny(issue["assignees"])
 
 			// Apply the SAME admission filters selectTask enforces so the queue
@@ -320,11 +390,14 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			}
 
 			out = append(out, ReadyQueueItem{
-				Repo:   repo.Full,
-				Number: number,
-				Title:  title,
-				URL:    url,
-				Labels: labels,
+				Repo:       repo.Full,
+				Number:     number,
+				Key:        itemKey,
+				SourceType: ref.SourceType,
+				ExternalID: ref.ExternalID,
+				Title:      title,
+				URL:        url,
+				Labels:     labels,
 			})
 		}
 	}
@@ -353,7 +426,8 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	// operator's parked rows off-screen — the operator must always be able to see and
 	// Resume what they held.
 	out = append(out, heldItems...)
-	return out
+	snap.queue = out
+	return snap
 }
 
 // queueOrderIndex builds a "owner/repo#number" -> priority-rank map from the
@@ -413,7 +487,7 @@ func applyQueueOrder(items []ReadyQueueItem, order []string) {
 	// Unpinned items rank at len(idx) (all pinned ranks are < len(idx)), so they all
 	// sort behind every pinned item while SliceStable preserves their scan order.
 	rank := func(it ReadyQueueItem) int {
-		if r, ok := idx[fmt.Sprintf("%s#%d", it.Repo, it.Number)]; ok {
+		if r, ok := idx[it.identityKey()]; ok {
 			return r
 		}
 		return len(idx)
@@ -478,10 +552,19 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 	if len(replay) > sseReplayCap {
 		replay = replay[len(replay)-sseReplayCap:]
 	}
+	// One snapshot feeds queue AND (in shadow mode) the #4246 diagnostics, so
+	// the hello frame's queue and withheld collections come from the same sweep.
+	diag := s.convergenceDiagnosticsEnabled()
+	snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, diag)
 	hello := sseEvent{
 		Type:   "hello",
 		Replay: replay,
-		Queue:  s.contributeHub.ReadyQueue(readyQueueDefaultLimit),
+		Queue:  snap.queue,
+	}
+	if diag {
+		hello.Withheld = snap.withheld
+		cov := snap.coverage
+		hello.AdmissionCoverage = &cov
 	}
 	if !writeSSE(w, hello) {
 		return

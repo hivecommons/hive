@@ -59,6 +59,22 @@ const (
 	// Directory must be traversable by every agent UID so each can open its
 	// own 0640 file; the files themselves carry the per-agent restriction.
 	agentTokenCacheDirPerms = 0o755
+
+	// botLoginFileName is the trusted bot-identity file gh-wrapper.sh's author
+	// gate reads (#4044). App installation tokens have no /user identity —
+	// `gh api user` 403s for every staff agent — so the wrapper cannot resolve
+	// "who am I" from the token itself. This process DOES know: it mints every
+	// tier token as "<app-slug>[bot]". Publishing that login into the
+	// agent-token cache dir (dev-owned, mode 0755 — no agent UID can write it)
+	// gives the wrapper an identity oracle the agent cannot spoof, preserving
+	// the #3982 fail-closed/anti-spoof posture while making author-gated
+	// self-listing work again.
+	botLoginFileName = "gh-bot-login"
+	// botLoginFilePerms: world-readable on purpose — the bot login is public
+	// metadata (it appears on every PR the App authors), and every agent UID
+	// must be able to read it. The security property is UNWRITABILITY (dir
+	// owned by dev), not secrecy.
+	botLoginFilePerms = 0o644
 )
 
 // agentTokenCacheDir is the directory holding per-agent token caches. It is a
@@ -77,6 +93,10 @@ type AppAuth struct {
 	mu          sync.RWMutex
 	cachedToken string
 	tokenExpiry time.Time
+	// botLogin is the App bot identity ("<app-slug>[bot]") this installation's
+	// tokens act as. Set via SetBotLogin at client wiring time; when non-empty,
+	// WriteAgentToken publishes it to the trusted bot-identity file (#4044).
+	botLogin string
 }
 
 func NewAppAuth(appID, installationID int64, keyFile string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
@@ -268,9 +288,15 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	var perms *gh.InstallationPermissions
 	switch tier {
 	case "newcomer":
-		// Newcomers can comment on issues but not access code
+		// Newcomers (ISSUES_ONLY agents) can comment on and file issues, and
+		// READ code — filing a meaningful issue requires reading the repo it
+		// is about (#4289). Write remains impossible: contents:write is
+		// absent, so any push authenticates but is rejected server-side by
+		// GitHub with 403.
 		perms = &gh.InstallationPermissions{
-			Issues: gh.Ptr("write"),
+			Issues:   gh.Ptr("write"),
+			Contents: gh.Ptr("read"),
+			Metadata: gh.Ptr("read"),
 		}
 	case "contributor":
 		perms = &gh.InstallationPermissions{
@@ -286,11 +312,26 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			PullRequests: gh.Ptr("write"),
 			Checks:       gh.Ptr("read"),
 			Metadata:     gh.Ptr("read"),
+			// Workflows:write lets trusted-tier agents push branches that
+			// touch .github/workflows (#4677) — without it GitHub rejects
+			// such pushes server-side ("refusing to allow a GitHub App to
+			// create or update workflow ... without workflows permission").
+			// A requested permission must be a subset of what the App
+			// installation grants, so if the installation has not accepted
+			// Workflows read & write yet, the mint below falls back to a
+			// token without it and logs the missing grant instead of
+			// breaking every trusted-tier mint.
+			Workflows: gh.Ptr("write"),
 		}
 	case "advisor":
-		// Advisors review agent PRs — they only need to read, not write.
-		// Don't request issues permission at all to prevent creation.
+		// Advisors review agent PRs and audit repo contents — their core
+		// function is READING the repo, so Contents:read is required (#4289:
+		// without it every contents/tarball API call and git fetch 403s no
+		// matter what the installation grants). They must not write:
+		// contents:write is absent, so pushes are rejected server-side by
+		// GitHub. Don't request issues permission at all to prevent creation.
 		perms = &gh.InstallationPermissions{
+			Contents:     gh.Ptr("read"),
 			Metadata:     gh.Ptr("read"),
 			PullRequests: gh.Ptr("read"),
 		}
@@ -311,6 +352,21 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 	defer cancel()
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, a.installationID, opts)
+	if err != nil && perms.Workflows != nil {
+		// The installation has likely not accepted the Workflows permission
+		// on the App yet — GitHub refuses to mint a token requesting a
+		// permission the installation does not grant. Degrade honestly
+		// rather than failing every trusted-tier mint: retry without
+		// workflows and surface exactly what the operator must flip (#4677).
+		a.logger.Warn("scoped token mint with workflows:write failed; retrying without it — "+
+			"pushes touching .github/workflows will be rejected until the App grants Workflows read & write "+
+			"(App settings → Permissions → Workflows → Read and write, then re-accept on the installation; see docs/github-app-setup.md)",
+			"tier", tier, "error", err)
+		perms.Workflows = nil
+		retryCtx, retryCancel := mintContext(ctx)
+		defer retryCancel()
+		installToken, _, err = jwtClient.Apps.CreateInstallationToken(retryCtx, a.installationID, opts)
+	}
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
 	}
@@ -322,6 +378,65 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 // AgentTokenCachePath returns the per-agent token cache file path.
 func AgentTokenCachePath(agentName string) string {
 	return agentTokenCacheDir + "/gh-token-" + agentName + ".cache"
+}
+
+// BotLoginFilePath returns the trusted bot-identity file path read by
+// gh-wrapper.sh's author gate (#4044).
+func BotLoginFilePath() string {
+	return agentTokenCacheDir + "/" + botLoginFileName
+}
+
+// SetBotLogin records the App bot login ("<app-slug>[bot]") so token delivery
+// can publish it to the trusted bot-identity file. Empty (no usable App)
+// leaves the file unwritten and the wrapper's author gate fail-closed.
+func (a *AppAuth) SetBotLogin(login string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.botLogin = login
+}
+
+// publishBotLogin writes the trusted bot-identity file the gh wrapper's author
+// gate reads (#4044). Failure is deliberately SOFT (warn, never error): the
+// file only widens what an agent can list; without it the gate stays exactly
+// as fail-closed as before this file existed, whereas failing token delivery
+// over it would take down every GitHub operation to protect a listing.
+func (a *AppAuth) publishBotLogin() {
+	a.mu.RLock()
+	login := a.botLogin
+	a.mu.RUnlock()
+	if login == "" {
+		return
+	}
+
+	path := BotLoginFilePath()
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == login {
+		return // already current — skip the write (called on every token refresh)
+	}
+
+	// Write-temp-then-rename, the OPPOSITE of the token caches' in-place rule:
+	// this file is dev-owned world-readable (no pre-created ownership to
+	// preserve), it is shared by every agent, and concurrent launch paths call
+	// this without coordination — rename keeps every reader seeing a complete
+	// login, never a torn write.
+	tmp, err := os.CreateTemp(agentTokenCacheDir, botLoginFileName+".tmp-")
+	if err != nil {
+		a.logger.Warn("cannot publish bot identity file — author-gated gh listing will stay fail-closed for staff agents (#4044)", "path", path, "error", err)
+		return
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	_, werr := tmp.WriteString(login)
+	if werr == nil {
+		werr = tmp.Chmod(botLoginFilePerms)
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		a.logger.Warn("cannot publish bot identity file — author-gated gh listing will stay fail-closed for staff agents (#4044)", "path", path, "error", werr)
+	}
 }
 
 // WriteAgentToken mints a tier-scoped token for the given agent and writes it
@@ -357,6 +472,11 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	if err := os.MkdirAll(agentTokenCacheDir, agentTokenCacheDirPerms); err != nil {
 		return fmt.Errorf("creating agent token dir: %w", err)
 	}
+
+	// Publish the trusted bot-identity file alongside the token (#4044). Every
+	// mint/refresh path re-asserts it, so a pod that lost /var/run self-heals
+	// within one token-refresh interval. Soft-fails internally — see doc.
+	a.publishBotLogin()
 
 	cachePath := AgentTokenCachePath(agentName)
 	preCreated := true
@@ -479,6 +599,34 @@ func normalizedInstallationPermissions(permissions *gh.InstallationPermissions) 
 	return decoded, nil
 }
 
+// VerifyRepoRead proves the ADVISORY-TIER repository read path works for
+// owner/repo: it mints an advisor scoped token restricted to that single repo
+// (exactly the credential an L2 guide agent receives) and performs a real
+// Contents read with it. This is the verification gate for closing #2575's
+// "no clone mechanism / no repository access mechanism" findings — a digest
+// post only proves issues:write, while those findings are about Contents
+// read, which the advisor tier lacked entirely before #4291. A nil return
+// means the read demonstrably succeeded; any error means the finding's
+// condition may still hold and the caller must not close it.
+func (a *AppAuth) VerifyRepoRead(ctx context.Context, owner, repo string) error {
+	if owner == "" || repo == "" {
+		return fmt.Errorf("verifying repo read: owner and repo are required")
+	}
+	token, err := a.ScopedTokenForRepos(ctx, "advisor", []string{repo})
+	if err != nil {
+		return fmt.Errorf("minting advisor token for %s/%s: %w", owner, repo, err)
+	}
+	readCtx, cancel := mintContext(ctx)
+	defer cancel()
+	client := newTokenClient(token, a.apiURL)
+	// Root directory listing: works on any non-empty repo with Contents:read,
+	// unlike a README fetch, which 404s on repos without one.
+	if _, _, _, err := client.Repositories.GetContents(readCtx, owner, repo, "", nil); err != nil {
+		return fmt.Errorf("reading contents of %s/%s with advisor token: %w", owner, repo, err)
+	}
+	return nil
+}
+
 type appTransport struct {
 	auth *AppAuth
 	base http.RoundTripper
@@ -492,7 +640,11 @@ func (t *appTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	req2 := req.Clone(req.Context())
 	req2.Header.Set("Authorization", "Bearer "+token)
-	return t.base.RoundTrip(req2)
+	base := t.base
+	if base == nil {
+		base = sharedProxyTrust.sharedTransport()
+	}
+	return base.RoundTrip(req2)
 }
 
 func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Logger) *Client {
@@ -500,9 +652,15 @@ func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Lo
 }
 
 func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, logger *slog.Logger, appBotLogin string) *Client {
+	// This factory is the one place where the AppAuth that mints agent tokens
+	// meets the resolved bot login (cfg.GitHub.BotLogin()), including every
+	// config-refresh/reinit path in main.go. Recording it here is what lets
+	// WriteAgentToken publish the trusted bot-identity file for the gh
+	// wrapper's author gate (#4044) without threading the login through each
+	// call site separately.
+	auth.SetBotLogin(appBotLogin)
 	transport := &appTransport{
 		auth: auth,
-		base: http.DefaultTransport,
 	}
 	const appClientTimeout = 30 * time.Second
 	httpClient := &http.Client{Transport: transport, Timeout: appClientTimeout}

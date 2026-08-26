@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/kubestellar/hive/pkg/hub"
 	"github.com/kubestellar/hive/pkg/openrouter"
 	"github.com/kubestellar/hive/pkg/planning"
+	"github.com/kubestellar/hive/pkg/watchdog"
 )
 
 //go:embed static
@@ -101,9 +103,31 @@ type Server struct {
 	tokenHist *timeSeries[TokenSparklineEntry]
 	factHist  *timeSeries[FactHistoryEntry]
 	costHist  *timeSeries[CostHistoryEntry]
+	// budgetWindowHist records one row per CLOSED budget window (#4298). Lazily
+	// built like the sparkline rings so a zero-value Server works in tests.
+	budgetWindowOnce sync.Once
+	budgetWindowHist *budgetWindowTracker
+
+	// convergenceModeTrk captures one (mode, generation) pair per enrolled
+	// eval pass and detects transitions (#4263). convergenceSoakTrk records the
+	// bounded per-pass soak telemetry. Both lazily built like the rings above.
+	convergenceModeOnce sync.Once
+	convergenceModeTrk  *convergenceModeTracker
+	convergenceSoakOnce sync.Once
+	convergenceSoakTrk  *convergenceSoakTracker
 
 	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
+
+	// statusSeq / statusMutationEpoch power the stale-snapshot guard (#4348).
+	// statusSeq increments on every published full snapshot and travels in the
+	// payload so the frontend can drop out-of-order status responses.
+	// statusMutationEpoch increments on every state mutation; a snapshot
+	// rebuild that STARTED before the latest mutation is dropped at publish
+	// time, so no published snapshot can revert a mutation the operator has
+	// already been told succeeded. Both guarded by statusMu.
+	statusSeq           uint64
+	statusMutationEpoch uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -132,6 +156,11 @@ type Server struct {
 	// carries key material.
 	advisoryLastPostedAt time.Time
 	advisoryLastFindings int
+	// advisoryLastOverflow is how many findings the top-N cap held BACK from the
+	// digest that was last posted (0 when nothing was capped). It rides to the
+	// hub alongside the finding count so My Hives can say "12 findings (top 10)"
+	// rather than implying the ten shown are all there are.
+	advisoryLastOverflow int
 	advisoryLastError    string
 
 	// decomposeKickerOverride is a test-only seam for the Phase 4 plan-from-issue
@@ -165,6 +194,12 @@ type Server struct {
 	openRouterStateOnce  sync.Once
 	openRouterStateStore *openrouter.StateStore
 
+	// Linear agent integration (RFC #4492 Part 2): lazily-built service
+	// bundling the install store, control-plane client, webhook receiver, and
+	// session responder. See api_linear_agent.go.
+	linearAgentOnce sync.Once
+	linearAgentSvc  *linearAgentService
+
 	audit *AuditLog
 
 	// presenceEngagedAt maps a username to the last time their browser
@@ -181,6 +216,9 @@ type Server struct {
 	cachedLatestHash    string
 	cachedLatestMessage string
 	cachedLatestAt      time.Time
+	cachedStableV4Hash  string
+	cachedStableV4At    time.Time
+	commitBehindCache   map[string]int
 
 	contributeHub *ContributeWSHub
 
@@ -251,15 +289,25 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	Timestamp string           `json:"timestamp"`
-	HiveID    string           `json:"hiveId"`
-	Agents    []FrontendAgent  `json:"agents"`
-	Governor  FrontendGovernor `json:"governor"`
-	Tokens    FrontendTokens   `json:"tokens"`
-	Repos     []FrontendRepo   `json:"repos"`
-	Beads     FrontendBeads    `json:"beads"`
-	Planning  FrontendPlanning `json:"planning"`
-	Health    map[string]any   `json:"health"`
+	Timestamp string `json:"timestamp"`
+	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
+	// any status payload whose seq is older than the last one it rendered,
+	// so a stale in-flight poll/SSE response can never repaint over a newer
+	// snapshot (e.g. reverting a just-reset restart counter).
+	StatusSeq uint64 `json:"statusSeq"`
+	// StatusInstance identifies the server process that produced the seq.
+	// Seqs restart at 1 when the spoke restarts; the frontend resets its
+	// guard counters when the instance changes instead of dropping forever.
+	StatusInstance   string                    `json:"statusInstance"`
+	HiveID           string                    `json:"hiveId"`
+	Agents           []FrontendAgent           `json:"agents"`
+	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
+	Governor         FrontendGovernor          `json:"governor"`
+	Tokens           FrontendTokens            `json:"tokens"`
+	Repos            []FrontendRepo            `json:"repos"`
+	Beads            FrontendBeads             `json:"beads"`
+	Planning         FrontendPlanning          `json:"planning"`
+	Health           map[string]any            `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -378,6 +426,15 @@ type InferenceBackend struct {
 	Name      string   `json:"name"`
 	Inference bool     `json:"inference"`
 	Models    []string `json:"models"`
+	// ModelsFallback is true when Models is NOT an authoritative census of
+	// what the backend offers: the static alias list substituted because
+	// live /v1/models discovery failed (endpoint down, 403, etc), a PARTIAL
+	// sweep in which some endpoints answered and others did not, or the
+	// HIVE_*_MODELS env list standing in for a registered endpoint that
+	// failed to answer. The UI must not treat any of these as evidence that
+	// models were actually added or removed (#4426, #4438) — diffing against
+	// one is what produced the "Model removed from litellm: …" toast storms.
+	ModelsFallback bool `json:"models_fallback,omitempty"`
 }
 
 type FrontendAgent struct {
@@ -401,6 +458,7 @@ type FrontendAgent struct {
 	PausedAt         string `json:"pausedAt,omitempty"`
 	PausedReason     string `json:"pausedReason,omitempty"`
 	PausedTrigger    string `json:"pausedTrigger,omitempty"`
+	PausedBy         string `json:"pausedBy,omitempty"`
 	OffByCadence     bool   `json:"offByCadence"`
 	NeedsLogin       bool   `json:"needsLogin"`
 	AuthAvailable    bool   `json:"authAvailable"`
@@ -437,6 +495,39 @@ type FrontendAgent struct {
 	LastError        string `json:"lastError,omitempty"`
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
+	TransientNudges  int    `json:"transientNudges,omitempty"`
+	// Conditions is the watchdog reconciler's observed-truth condition set
+	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
+	// State config echo. Empty until the watchdog's first sweep.
+	Conditions []watchdog.Condition `json:"conditions,omitempty"`
+	// WatchdogMode is the authority the watchdog was running under when it
+	// published Conditions. The UI needs it to say whether a condition implied
+	// an action that was actually TAKEN: in observe mode a "crash-looping"
+	// verdict means the agent was NOT paused, and a reader must not conclude
+	// otherwise.
+	WatchdogMode string `json:"watchdogMode,omitempty"`
+}
+
+// FrontendConfiguredAgent is the secret-free config inventory used by the
+// dashboard to surface agents that have no runtime process (notably agents
+// configured with enabled: false). Runtime details remain in FrontendAgent.
+type FrontendConfiguredAgent struct {
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName,omitempty"`
+	Description  string `json:"description,omitempty"`
+	SortOrder    int    `json:"sortOrder"`
+	Emoji        string `json:"emoji,omitempty"`
+	Color        string `json:"color,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	ModelOwner   string `json:"modelOwner,omitempty"`
+	BackendOwner string `json:"backendOwner,omitempty"`
+	// Mode/ModeEmoji are resolved the same way buildAgents resolves them for a
+	// running agent: the agent's own Mode override if set, else the ACMM level
+	// default. A disabled agent has no runtime entry, so without these the
+	// sidebar cannot say what the agent WOULD do once enabled — which is the
+	// one thing an operator wants to check before enabling it.
+	Mode      string `json:"mode,omitempty"`
+	ModeEmoji string `json:"modeEmoji,omitempty"`
 }
 
 type FrontendGovernor struct {
@@ -557,13 +648,22 @@ type FrontendBudget struct {
 	HoursRemaining  float64 `json:"HOURS_REMAINING"`
 	ProjectedWeekly int64   `json:"PROJECTED_WEEKLY"`
 	ProjectedPct    float64 `json:"PROJECTED_PCT"`
-	LastUpdated     string  `json:"LAST_UPDATED"`
+	// WindowHoursRemaining is wall-clock time until the current budget period
+	// resets. HoursRemaining above is instead how long the remaining token
+	// allowance would last at the observed burn rate.
+	WindowHoursRemaining float64 `json:"WINDOW_HOURS_REMAINING"`
+	LastUpdated          string  `json:"LAST_UPDATED"`
 	// Exhausted is true when the weekly limit is set and window spend has
 	// reached it — the governor is suppressing kicks for non-exempt agents.
 	Exhausted bool `json:"BUDGET_EXHAUSTED"`
 	// WindowEndsAt is when the current budget window rolls (RFC3339);
 	// empty unless a weekly limit is set and a window is open.
 	WindowEndsAt string `json:"WINDOW_ENDS_AT"`
+	// WindowStartsAt is when the current window opened (RFC3339), i.e. the last
+	// reset. Additive (#4298): it is what lets a usage graph mark where the
+	// resets fell, and what bounds each row of the per-window history. Empty
+	// under exactly the same conditions as WindowEndsAt.
+	WindowStartsAt string `json:"WINDOW_STARTS_AT,omitempty"`
 }
 
 type FrontendCadence struct {
@@ -768,17 +868,18 @@ func (s *Server) buildInferenceBackends() []InferenceBackend {
 		{"vllm", "vLLM (self-hosted)"},
 		{"llm-d", "llm-d (self-hosted)"},
 	} {
-		models := s.queryInferenceModels(b.id)
+		models, fallback := s.queryInferenceModelsDetailed(b.id)
 		backends = append(backends, InferenceBackend{
-			ID: b.id, Name: b.name, Inference: true, Models: models,
+			ID: b.id, Name: b.name, Inference: true, Models: models, ModelsFallback: fallback,
 		})
 	}
 	// litellm has no in-cluster default — include it only when an endpoint
 	// is registered, so an unconfigured backend isn't SSE-pushed empty.
 	if endpoints, ok := s.getInferenceEndpoints("litellm"); ok && len(endpoints) > 0 {
+		models, fallback := s.queryInferenceModelsDetailed("litellm")
 		backends = append(backends, InferenceBackend{
 			ID: "litellm", Name: "LiteLLM (proxy)", Inference: true,
-			Models: s.queryInferenceModels("litellm"),
+			Models: models, ModelsFallback: fallback,
 		})
 	}
 	return backends
@@ -1072,21 +1173,20 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		//     nonces, so the #3863 startup-pre-gzip + strong-ETag design for the
 		//     SPA document is untouched.
 		//
-		//   script-src-attr 'unsafe-inline'  — inline on*= HANDLER attributes.
-		//     STAGED, not accepted: 426 on*= attributes in static/index.html
-		//     plus ~145 more built as strings and injected through 169
-		//     innerHTML/insertAdjacentHTML sites. Neither nonces nor elem-hashes
-		//     apply to attributes, so closing this half is an event-delegation
-		//     refactor of the SPA (#3848), and until then an injected on*=
-		//     attribute still executes. TestCSPScriptSrcAttrUnsafeInlineIsStaged
-		//     is the tripwire: invert it, never relax it.
+		//   script-src-attr 'none'  — inline on*= HANDLER attributes.
+		//     CLOSED by the #3848 event-delegation refactor: every former on*=
+		//     attribute in static/index.html and in Go-generated HTML now uses
+		//     data-action / data-* attributes dispatched by central document
+		//     listeners, so no markup-level handler attribute remains and an
+		//     injected on*= attribute never executes.
+		//     TestCSPScriptSrcAttrUnsafeInlineIsAbsent pins this closed.
 		//
-		//   script-src 'self' 'unsafe-inline'  — the CSP2 fallback, unchanged,
+		//   script-src 'self'  — the CSP2 fallback, now also without
+		//     'unsafe-inline' (nothing inline-attribute-based remains to allow),
 		//     and it must NEVER carry the hashes: a hash in this directive makes
 		//     hash-aware browsers ignore 'unsafe-inline' here, and a browser
 		//     that knows hashes but not script-src-elem/-attr (Firefox < 108)
 		//     would then block every inline handler and blank the dashboard.
-		//     Pre-CSP3 browsers keep exactly today's behaviour.
 		//
 		// The secret that 'unsafe-inline' used to expose is gone regardless: the
 		// dashboard token is never rendered into the page (see serveIndex in
@@ -1102,10 +1202,12 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// style-src (#3848 part 2) is scoped as TWO directives rather than one
 		// blanket allowance, because the two halves have different futures:
 		//
-		//   style-src-attr 'unsafe-inline'  — the 2061 inline style="" attributes.
-		//     ACCEPTED, permanently, and not a staging compromise: CSP has no
-		//     nonce or hash form for attribute-level styles, so there is no
-		//     policy that both allows them and constrains them. Closing this
+		//   style-src-attr 'unsafe-inline'  — the ~2,055 inline style="" attributes.
+		//     ACCEPTED, permanently, and not a staging compromise (ADR-0015/0016):
+		//     CSP has no nonce or hash form for attribute-level styles, so there
+		//     is no policy that both allows them and constrains them, and CSS
+		//     injection is not an XSS vector — an injected style attribute can
+		//     deface the page but cannot execute script. Closing this
 		//     would mean deleting every style attribute in the UI. See
 		//     ADR-0015 for the rationale and the residual risk.
 		//
@@ -1120,7 +1222,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// Both are listed AFTER the style-src fallback, which browsers without
 		// CSP3 support use instead; the effective policy is identical either way,
 		// so this split names the decision without changing behaviour.
-		scriptDirectives := "script-src 'self' 'unsafe-inline'; script-src-elem " + baseScriptSrcElem() + "; script-src-attr 'unsafe-inline'"
+		scriptDirectives := "script-src 'self'; script-src-elem " + baseScriptSrcElem() + "; script-src-attr 'none'"
 		if r.URL.Path == "/terminal" || strings.HasPrefix(r.URL.Path, "/terminal/") {
 			scriptDirectives = "script-src 'self' 'unsafe-inline'"
 		}
@@ -1163,10 +1265,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			// sends the user back to log in — a bounce. This grants no extra
 			// access: everyone is already admitted on this branch.
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// Role comes from liveSessionRole, never sess.Role directly: a
+				// Manage Access change must not stay frozen in a 30-day session.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
 				}
 			} else if r.Header.Get("X-Hive-Role") == "" {
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
@@ -1199,11 +1305,34 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		trusted := internalTrusted
 		if internalTrusted {
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// Scope the shared-token request down to the session's user, at
+				// their LIVE allowlist role (liveSessionRole): a hub-side grant,
+				// downgrade, or revocation must take effect now, not when the
+				// 30-day session happens to expire. A revoked user (ok=false)
+				// gets no identity injected at all — possession of the internal
+				// token still authenticates the request, but it must not carry
+				// the revoked user's name or any role.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
 				}
+			} else {
+				// No per-user session to scope this request down: the shared
+				// internal token IS the operator credential on this path (the
+				// local gateway authenticates the browser with the same token,
+				// strips client identity headers, then injects X-Hive-Internal).
+				// Grant owner with the server-set verified marker so owner-only
+				// mutations (budget save, pause, etc.) work for the operator.
+				// Inbound identity headers were already stripped above, so this
+				// cannot be reached by spoofing — only by presenting the secret,
+				// which is owner-equivalent by definition. Without this, the F14
+				// provenance hardening locked the real owner out of owner-gated
+				// endpoints on every shared-token deployment (#4134).
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
@@ -1260,12 +1389,23 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// and each sees themselves — no shared identity.
 		if !trusted {
 			if sess := s.sessionFromRequest(r); sess != nil {
-				r.Header.Set("X-Hive-User", sess.Username)
-				r.Header.Set("X-Hive-Role", sess.Role)
-				if isOwnerRole(sess.Role) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				// The role is re-resolved against the LIVE allowlist on every
+				// request (liveSessionRole), never read from the session record:
+				// the hub heartbeat keeps cfg.Dashboard.AuthorizedUsers in sync
+				// with Manage Access, and a grant/downgrade/revocation must bind
+				// now — not after the 30-day session expires. This is the fix for
+				// the recurring "owner access required for a granted owner" class
+				// (3rd report; see session_live_role.go). ok=false means the
+				// allowlist is enforced and the user was REVOKED: fall through
+				// unauthenticated instead of honoring the stale session.
+				if role, ok := s.liveSessionRole(sess); ok {
+					r.Header.Set("X-Hive-User", sess.Username)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
+					trusted = true
 				}
-				trusted = true
 			}
 		}
 
@@ -1284,6 +1424,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			expected := "Bearer " + s.authToken
 			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
 				trusted = true
+				// Same reasoning as the X-Hive-Internal path above: the shared
+				// dashboard token is the operator credential, and the dashboard
+				// UI itself authenticates with it (Authorization: Bearer from
+				// localStorage) on token-secured spokes reached directly. The
+				// per-user session path already ran and did not match, and
+				// inbound identity headers were stripped, so granting owner here
+				// requires possession of the secret — nothing less (#4134).
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
@@ -1395,6 +1544,11 @@ func isPublicPath(path string) bool {
 		// The trailing-slash boundary excludes /api/contributors while keeping the
 		// real public routes (register, the WS upgrade, status, etc.) public.
 		return true
+	case path == "/api/v1" || strings.HasPrefix(path, "/api/v1/"):
+		// GitHub bearer authentication is enforced by handleAPIv1. Keeping this
+		// versioned prefix outside dashboard session auth lets non-browser clients
+		// reach that handler without trusting cookies or X-Hive-* headers.
+		return true
 	case path == "/leaderboard" || strings.HasPrefix(path, "/leaderboard/"):
 		return true
 	case strings.HasPrefix(path, "/api/leaderboard"):
@@ -1406,6 +1560,17 @@ func isPublicPath(path string) bool {
 		// session, so the path must be public. The single-use state token in the
 		// query IS the credential — the handler verifies it (unknown/expired/
 		// replayed states are rejected) before storing anything.
+		return true
+	case path == linearAgentCallbackPath:
+		// Linear agent OAuth return (RFC #4492 Part 2): the installing admin's
+		// browser comes back from linear.app with no hive session. The
+		// single-use state token is the credential, verified server-side.
+		return true
+	case path == linearAgentWebhookPath:
+		// Linear AgentSessionEvent webhooks: Linear's servers cannot hold a
+		// dashboard session. NOT actually open — the handler fails closed
+		// without LINEAR_WEBHOOK_SECRET and verifies the HMAC signature over
+		// the raw body plus the signed timestamp's replay window.
 		return true
 	case path == "/sso":
 		// SSO handoff exchange: the caller has no session yet, the signed hub
@@ -1465,13 +1630,13 @@ a:hover{text-decoration:underline}
   <h1>Hive</h1>
   <p class="subtitle">Sign in with GitHub to access this dashboard</p>
   <div id="step-start">
-    <button id="btn-start" onclick="startFlow()">Sign in with GitHub</button>
+    <button id="btn-start" data-action="startFlow">Sign in with GitHub</button>
   </div>
   <div id="step-code" style="display:none">
     <p class="instructions">Enter this code at GitHub:</p>
     <div class="code-wrap">
       <div class="code-box" id="user-code">--------</div>
-      <button class="copy-btn" id="copy-btn" onclick="copyAndOpen()">Copy &amp; Open</button>
+      <button class="copy-btn" id="copy-btn" data-action="copyAndOpen">Copy &amp; Open</button>
     </div>
     <p class="instructions"><a id="verify-link" href="#" target="_blank" rel="noopener">Open GitHub verification page ↗</a></p>
     <p class="status"><span class="spinner"></span> Waiting for authorization…</p>
@@ -1482,10 +1647,20 @@ a:hover{text-decoration:underline}
   </div>
   <div id="step-error" style="display:none">
     <p class="error" id="error-msg"></p>
-    <button onclick="location.reload()" style="margin-top:16px">Try again</button>
+    <button data-action="reload" style="margin-top:16px">Try again</button>
   </div>
 </div>
 <script>
+// Event delegation (no inline on*= attributes; CSP script-src-attr is 'none').
+document.addEventListener('click',function(e){
+  var el=e.target.closest('[data-action]');
+  if(!el)return;
+  switch(el.getAttribute('data-action')){
+    case 'startFlow':startFlow();break;
+    case 'copyAndOpen':copyAndOpen();break;
+    case 'reload':location.reload();break;
+  }
+});
 function showStep(id){['step-start','step-code','step-done','step-error'].forEach(
   s=>document.getElementById(s).style.display=s===id?'block':'none')}
 function showError(msg){document.getElementById('error-msg').textContent=msg;showStep('step-error')}
@@ -1566,7 +1741,41 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 	})
 }
 
+// BeginStatusSnapshot returns the current mutation epoch. Callers that build
+// a full status snapshot should capture this BEFORE reading any state and
+// pass it to UpdateStatusIfFresh, which drops the snapshot if a mutation
+// landed while it was being built (#4348).
+func (s *Server) BeginStatusSnapshot() uint64 {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+	return s.statusMutationEpoch
+}
+
+// noteStatusMutation records that server-side state just changed. It returns
+// the minimum StatusSeq a published snapshot must carry to be guaranteed to
+// reflect the mutation — any snapshot published with a lower seq was built
+// before it. Mutation handlers hand this floor to the frontend so it can
+// discard stale in-flight status responses (#4348).
+func (s *Server) noteStatusMutation() uint64 {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	s.statusMutationEpoch++
+	return s.statusSeq + 1
+}
+
+// UpdateStatus publishes a snapshot unconditionally (epoch captured at entry).
+// Prefer BeginStatusSnapshot + UpdateStatusIfFresh when the snapshot build is
+// slow enough for a mutation to race it.
 func (s *Server) UpdateStatus(status *StatusPayload) {
+	s.UpdateStatusIfFresh(status, s.BeginStatusSnapshot())
+}
+
+// UpdateStatusIfFresh publishes the snapshot unless a state mutation happened
+// after buildEpoch was captured — a stale build must not overwrite (and then
+// broadcast) pre-mutation values the operator has already seen change.
+// Returns whether the snapshot was published; the mutation's own
+// refresh-after-mutation rebuild repaints shortly after a drop.
+func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) bool {
 	if s.deps != nil && s.deps.Config != nil {
 		status.ACMMLevel = detectACMMLevel(s.deps.Config)
 		status.ACMMPackAgents = buildACMMPackAgents(s.deps.Config)
@@ -1640,6 +1849,19 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.hubBannerMu.RUnlock()
 
 	s.statusMu.Lock()
+	if buildEpoch < s.statusMutationEpoch {
+		// A mutation landed after this snapshot's build began: its data may
+		// predate the mutation. Drop it — the mutation's own refresh rebuild
+		// (which began after the epoch bump) publishes the fresh state.
+		curEpoch := s.statusMutationEpoch
+		s.statusMu.Unlock()
+		s.logger.Debug("dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch)
+		return false
+	}
+	s.statusSeq++
+	status.StatusSeq = s.statusSeq
+	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	s.status = status
 	s.lastFullBroadcast = time.Now()
@@ -1647,14 +1869,18 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
+	// #4298: fold the budget window into per-window history so a closed window's
+	// consumption survives the reset that erases the live number.
+	s.ObserveBudgetWindow(status)
 
 	data, err := json.Marshal(status)
 	if err != nil {
 		s.logger.Warn("failed to marshal status for SSE", "error", err)
-		return
+		return true
 	}
 
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+	return true
 }
 
 // AddSystemAlert adds a critical alert visible on the dashboard.
@@ -1726,10 +1952,14 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the acting user: a direct-route spoke has a per-user session
 	// cookie; a hub-proxied spoke gets identity injected as X-Hive-User /
-	// X-Hive-Role by nginx. Either establishes an authenticated user.
+	// X-Hive-Role by nginx. Either establishes an authenticated user. The role
+	// is the LIVE allowlist role (session_live_role.go): a revoked session
+	// must not keep dismissing banners under its stale identity.
 	username, role := "", ""
 	if sess := s.sessionFromRequest(r); sess != nil {
-		username, role = sess.Username, sess.Role
+		if live, ok := s.liveSessionRole(sess); ok {
+			username, role = sess.Username, live
+		}
 	} else if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
 		username, role = hubUser, r.Header.Get("X-Hive-Role")
 	}
@@ -1765,6 +1995,39 @@ func (s *Server) githubAppNotInstalled() bool {
 	s.githubAppMu.RLock()
 	defer s.githubAppMu.RUnlock()
 	return s.githubAppRequired && s.githubAppState == githubAppStateNotInstalledToken
+}
+
+// Operator-side pkg/github AppAuthState wire tokens (AppAuthState.
+// OperatorActionable()): credential failures only the hub operator can fix.
+// Kept as literals for the same reason as githubAppStateNotInstalledToken.
+const (
+	githubAppStateKeyMissingToken    = "key-missing"
+	githubAppStateKeyInvalidToken    = "key-invalid"
+	githubAppStateNoAppAssignedToken = "no-app-assigned"
+)
+
+// githubAppCredsUndelivered is the config-truth rule for the OPERATOR-SIDE
+// credential states, the exact sibling of githubAppNotInstalled: an App whose
+// private key never arrived (or cannot sign for it) can never mint, so
+// github_auth must fail in BOTH health surfaces even while a token-based
+// GHClient still works. Before this, a hive stuck on key-missing showed
+// github_auth ✓ ("token-based") for 8 days while its agents could not act as
+// the App at all — the green check is what let kelly-headwaters sit degraded
+// and unexamined (2026-08-12 → 2026-08-20). Returns the failure detail, or ""
+// when no operator-side state is in force.
+func (s *Server) githubAppCredsUndelivered() string {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	if !s.githubAppRequired {
+		return ""
+	}
+	switch s.githubAppState {
+	case githubAppStateKeyMissingToken, githubAppStateNoAppAssignedToken:
+		return "GitHub App credentials not delivered by the hub — agents cannot act as the App (operator action; no action needed from the hive owner)"
+	case githubAppStateKeyInvalidToken:
+		return "GitHub App private key does not match the App it authenticates as — GitHub rejects its JWT (operator must push the correct key)"
+	}
+	return ""
 }
 
 func (s *Server) SetGitHubAppRequired(required bool) {
@@ -2071,9 +2334,14 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		failCount++
 	}
 
-	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
+	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
 		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org"}
+		overall = "degraded"
+		failCount++
+	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail}
 		overall = "degraded"
 		failCount++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
@@ -2085,7 +2353,15 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 			failCount++
 		}
 	} else if s.deps != nil && s.deps.GHClient != nil {
-		checks["github_auth"] = map[string]any{"status": "pass", "detail": "token-based"}
+		// Stays "pass": a too-narrow PAT authenticates fine, so the auth is not
+		// what is broken — a capability is. Reporting it as a fail would send
+		// an operator to re-issue working credentials. The detail carries the
+		// specific missing scope so the diagnosis is not left to a runtime 403.
+		detail := "token-based"
+		if s.deps.GHTokenScopes.Status == github.ScopeStatusMissing {
+			detail = "token-based — " + s.deps.GHTokenScopes.Detail
+		}
+		checks["github_auth"] = map[string]any{"status": "pass", "detail": detail}
 	} else {
 		checks["github_auth"] = map[string]any{"status": "fail", "detail": "no GitHub auth configured"}
 		overall = "degraded"
@@ -2650,6 +2926,24 @@ func (s *Server) RecordAdvisoryPost(findings int) {
 	s.advisoryLastError = ""
 }
 
+// RecordAdvisoryOverflow records how many findings the top-N cap withheld from
+// the digest just posted. Kept separate from RecordAdvisoryPost so the
+// long-standing "a post happened, with this many findings" contract (and every
+// caller of it) is untouched; a hive that never caps simply reports 0.
+func (s *Server) RecordAdvisoryOverflow(n int) {
+	s.advisoryMu.Lock()
+	defer s.advisoryMu.Unlock()
+	s.advisoryLastOverflow = n
+}
+
+// AdvisoryCounts returns the finding count that went out in the last posted
+// digest and how many further findings the cap withheld.
+func (s *Server) AdvisoryCounts() (findings, overflow int) {
+	s.advisoryMu.RLock()
+	defer s.advisoryMu.RUnlock()
+	return s.advisoryLastFindings, s.advisoryLastOverflow
+}
+
 // RecordAdvisoryError records that a digest post ATTEMPT failed, with a
 // log-safe error string (the same one the spoke logs — never key material). It
 // does NOT advance advisoryLastPostedAt: the last SUCCESSFUL post time must
@@ -2678,6 +2972,13 @@ func (s *Server) RecordAdvisoryError(errMsg string) {
 // more specific cause; the inference-auth fold only fills an otherwise-empty
 // error. It self-clears the moment inference recovers, because the provider
 // stops reporting the signal.
+//
+// Bead-store LOAD failures fold the same way (fma incident: /data/beads dirs
+// group-owned by a foreign gid locked the server out at startup, so every
+// digest built empty and the advisory silently aged for 3 days while the
+// agents kept writing findings). Gated on participation like the inference
+// fold, and outranked by both a real post error and the inference cause —
+// which are more specific. Self-clears on a restart that loads all stores.
 func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, lastError string) {
 	s.advisoryMu.RLock()
 	postedAt, findings, errMsg := s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
@@ -2686,6 +2987,8 @@ func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, last
 	if errMsg == "" && !postedAt.IsZero() {
 		if infErr, _ := InferenceAuthError(); infErr != "" {
 			errMsg = infErr
+		} else if s.deps != nil && s.deps.BeadStoreLoadFailures > 0 {
+			errMsg = fmt.Sprintf("%d bead store(s) failed to load at startup (check /data/beads ownership) — advisory digest is built from the stores that DID load", s.deps.BeadStoreLoadFailures)
 		}
 	}
 	return postedAt, findings, errMsg
@@ -2786,9 +3089,13 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		fails++
 	}
 
-	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
+	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org"})
+		fails++
+	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail})
 		fails++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {
@@ -2804,7 +3111,12 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			checks = append(checks, check{Name: "github_auth", Status: "pass"})
 		}
 	} else if s.deps != nil && s.deps.GHClient != nil {
-		checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: "token"})
+		// See the /health counterpart above: pass with a scope-specific detail.
+		detail := "token"
+		if s.deps.GHTokenScopes.Status == github.ScopeStatusMissing {
+			detail = "token — " + s.deps.GHTokenScopes.Detail
+		}
+		checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: detail})
 	} else {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "no auth"})
 		fails++

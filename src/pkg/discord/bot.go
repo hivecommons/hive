@@ -48,6 +48,7 @@ var aliases = map[string]string{
 	"sc": "scanner", "ar": "architect", "ou": "outreach",
 	"su": "supervisor", "ci": "ci-maintainer", "se": "sec-check",
 	"sg": "strategist", "te": "quality", "qa": "quality",
+	"tm": "telemetry", "op": "operations",
 }
 
 func SetAgentIdentities(identities map[string]AgentIdentity) {

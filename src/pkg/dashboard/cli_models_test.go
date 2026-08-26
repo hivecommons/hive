@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -113,6 +115,12 @@ func TestQueryCLIModels_ClaudeFallbackNoCreds(t *testing.T) {
 // does not error.
 func TestQueryCLIModels_CopilotFallbackNoToken(t *testing.T) {
 	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	// Stub the SDK helper seam: on a live hive host the helper is installed
+	// with stored CLI auth, so discovery would succeed without a token and
+	// the result would not be marked fallback.
+	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
+		return nil, errors.New("sdk helper not installed")
+	})
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	r := s.queryCLIModels("copilot")
 	if len(r.models) == 0 {

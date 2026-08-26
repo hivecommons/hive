@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/beads"
 	"github.com/kubestellar/hive/pkg/classify"
 	"github.com/kubestellar/hive/pkg/config"
@@ -33,9 +34,6 @@ import (
 
 func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.deps = deps
-	if deps != nil && deps.ConfigCoordinator == nil && deps.Config != nil {
-		deps.ConfigCoordinator = NewConfigCoordinator(deps.Config, deps.Governor, deps.AgentMgr)
-	}
 	s.loadSidebarFromDisk()
 	s.registerContributeRoutes()
 
@@ -49,6 +47,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
 	s.mux.HandleFunc("DELETE /api/config/variables/{name}", s.handleVariableDelete)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
+	s.mux.HandleFunc("GET /api/providers/headroom", s.handleProvidersHeadroom)
 	s.mux.HandleFunc("POST /api/presence", s.handlePresence)
 	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
@@ -69,6 +68,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
 	// Backs the Terminal's "view / download full log" controls.
 	s.mux.HandleFunc("GET /api/agents/{name}/log", s.handleAgentFullLog)
+	// Durable per-kick run-log history (#4296, #4295): list archived kick
+	// logs, fetch one, and a minimal HTML index page linked from agent cards.
+	s.mux.HandleFunc("GET /api/agents/{name}/kicks", s.handleAgentKickLogList)
+	s.mux.HandleFunc("GET /api/agents/{name}/kicks/{id}", s.handleAgentKickLog)
+	s.mux.HandleFunc("GET /agents/{name}/kicks", s.handleAgentKickHistoryPage)
 
 	s.mux.HandleFunc("GET /api/role", s.handleRole)
 
@@ -90,6 +94,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
+	// #4298: "for every recent reset, how much of the budget had been used".
+	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)
 	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
 	s.mux.HandleFunc("GET /api/timeseries", s.handleTimeSeries)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
@@ -104,15 +110,6 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/gh-user-auth/poll", s.handleGHUserAuthPoll)
 	s.mux.HandleFunc("POST /api/gh-user-auth/logout", s.handleGHUserAuthLogout)
 	s.mux.HandleFunc("GET /api/gh-user-auth/session", s.handleGHUserAuthSession)
-	s.mux.HandleFunc("POST /api/integrated/setup/plan", s.handleIntegratedSetupPlan)
-	s.mux.HandleFunc("POST /api/integrated/setup/apply", s.handleIntegratedSetupApply)
-	s.mux.HandleFunc("POST /api/integrated/preflight", s.handleIntegratedPreflight)
-	s.mux.HandleFunc("GET /api/integrated/status", s.handleIntegratedStatus)
-	s.mux.HandleFunc("GET /api/integrated/doctor", s.handleIntegratedDoctor)
-	s.mux.HandleFunc("POST /api/integrated/baseline/plan", s.handleIntegratedBaselinePlan)
-	s.mux.HandleFunc("POST /api/integrated/baseline/approve", s.handleIntegratedBaselineApprove)
-	s.mux.HandleFunc("POST /api/integrated/control/plan", s.handleIntegratedControlPlan)
-	s.mux.HandleFunc("POST /api/integrated/control/apply", s.handleIntegratedControlApply)
 
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
@@ -138,18 +135,56 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
 	s.mux.HandleFunc("PUT /api/config/governor/sensing", s.handleGovernorSensing)
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
+	s.mux.HandleFunc("GET /api/config/governor/threshold-scaling", s.handleGovernorThresholdScalingGet)
+	s.mux.HandleFunc("PUT /api/config/governor/threshold-scaling", s.handleGovernorThresholdScaling)
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
 	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
+	s.mux.HandleFunc("PUT /api/config/governor/watchdog", s.handleGovernorWatchdog)
+	// Escalation breaker is a top-level Config field (not GovernorConfig), but
+	// its UI lives on the governor Health tab — see api_escalation.go.
+	s.mux.HandleFunc("GET /api/config/escalation", s.handleEscalationGet)
+	s.mux.HandleFunc("PUT /api/config/escalation", s.handleEscalationPut)
+	// Review-swarm merge gate is a top-level Config field (not GovernorConfig),
+	// but its UI lives on the governor Features tab — see api_config_review.go.
+	s.mux.HandleFunc("GET /api/config/review", s.handleReviewConfigGet)
+	s.mux.HandleFunc("PUT /api/config/review", s.handleReviewConfigPut)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
+	s.mux.HandleFunc("GET /api/config/governor/general-advanced", s.handleGovernorGeneralAdvancedGet)
+	s.mux.HandleFunc("PUT /api/config/governor/general-advanced", s.handleGovernorGeneralAdvancedPut)
+
+	// auto_merge is a top-level Config field (not GovernorConfig), but its UI
+	// lives on the governor Features tab — see api_config_automerge.go.
+	s.mux.HandleFunc("GET /api/config/auto-merge", s.handleAutoMergeGet)
+	s.mux.HandleFunc("PUT /api/config/auto-merge", s.handleAutoMergePut)
+	// convergence is a top-level Config field (not GovernorConfig); its UI
+	// lives on the governor Features tab — see api_config_convergence.go
+	// (#4263 off/shadow/enforce rollout). The soak endpoint is the
+	// fixed-commit telemetry read path (convergence_soak.go).
+	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
+	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
+	s.mux.HandleFunc("GET /api/convergence/soak", s.handleConvergenceSoak)
+	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
+	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
+	s.mux.HandleFunc("GET /api/config/governor/replan", s.handleGovernorReplanGet)
+	s.mux.HandleFunc("PUT /api/config/governor/replan", s.handleGovernorReplanPut)
+	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
+	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
+	s.mux.HandleFunc("GET /api/config/governor/project-observability", s.handleGovernorProjectObservabilityGet)
+	s.mux.HandleFunc("PUT /api/config/governor/project-observability", s.handleGovernorProjectObservabilityPut)
+	// Backup encryption key: presence-only status, set, and clear. The key
+	// value is never returned by any of these (#4129).
+	s.mux.HandleFunc("GET /api/config/governor/backup", s.handleBackupKeyStatus)
+	s.mux.HandleFunc("PUT /api/config/governor/backup", s.handleBackupKeySet)
+	s.mux.HandleFunc("DELETE /api/config/governor/backup", s.handleBackupKeyClear)
 	// bob API key: PUT sets/replaces, DELETE revokes. Both are non-GET, so the
 	// roleEnforcement middleware already 403s a read-only role — no separate
 	// authorization rule is needed or wanted here.
@@ -159,12 +194,15 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Live key validation (pasted or saved key) — see bob_key_probe.go.
 	s.mux.HandleFunc("POST /api/config/governor/bob/test", s.handleGovernorBobKeyTest)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
+	s.mux.HandleFunc("GET /api/config/governor/inference-auth", s.handleGovernorInferenceAuthGet)
+	s.mux.HandleFunc("PUT /api/config/governor/inference-auth", s.handleGovernorInferenceAuthPut)
 	s.mux.HandleFunc("GET /api/config/governor/gateways", s.handleGovernorGatewaysList)
 	s.mux.HandleFunc("PUT /api/config/governor/gateways", s.handleGovernorGatewaysUpsert)
 	s.mux.HandleFunc("DELETE /api/config/governor/gateways/{name}", s.handleGovernorGatewaysDelete)
 	s.mux.HandleFunc("POST /api/config/governor/gateways/{name}/test", s.handleGovernorGatewaysTest)
 	s.mux.HandleFunc("POST /api/config/governor/gateways/discover", s.handleGovernorGatewaysDiscover)
 	s.registerOpenRouterRoutes()
+	s.registerLinearAgentRoutes()
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
@@ -382,10 +420,20 @@ func (s *Server) resolveAgentParam(nameOrID string) string {
 }
 
 func (s *Server) refreshAfterMutation() {
-	s.syncGovernorSnapshot()
+	s.refreshAfterMutationSeq()
+}
+
+// refreshAfterMutationSeq bumps the mutation epoch (so any in-flight snapshot
+// rebuild that started before this mutation is dropped at publish, #4348),
+// kicks an async rebuild, and returns the minimum StatusSeq of snapshots
+// guaranteed to reflect the mutation. Handlers whose UI patches the DOM
+// optimistically should return that floor to the frontend.
+func (s *Server) refreshAfterMutationSeq() uint64 {
+	floor := s.noteStatusMutation()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		go s.deps.RefreshFunc()
 	}
+	return floor
 }
 
 func (s *Server) persistAfterMutation() {
@@ -395,12 +443,19 @@ func (s *Server) persistAfterMutation() {
 }
 
 func (s *Server) refreshAndPersist() {
-	s.refreshAfterMutation()
+	s.refreshAndPersistSeq()
+}
+
+// refreshAndPersistSeq is refreshAndPersist returning the post-mutation
+// StatusSeq floor (see refreshAfterMutationSeq).
+func (s *Server) refreshAndPersistSeq() uint64 {
+	floor := s.refreshAfterMutationSeq()
 	s.persistAfterMutation()
+	return floor
 }
 
 func (s *Server) refreshAndPersistSync() {
-	s.syncGovernorSnapshot()
+	s.noteStatusMutation()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		s.deps.RefreshFunc()
 	}
@@ -409,53 +464,33 @@ func (s *Server) refreshAndPersistSync() {
 	}
 }
 
-// saveConfig is retained for embedded callers. Production handlers stage
-// changes through mutateConfig; this compatibility boundary still publishes
-// through the same coordinator and never uses the lossy SkipNext watcher path.
+// saveConfig persists the in-memory config to disk, skipping the next
+// watcher reload to prevent the watcher from overwriting concurrent
+// in-memory mutations with a stale file read.
 func (s *Server) saveConfig() error {
-	if s.deps == nil || s.deps.Config == nil {
+	if s.deps == nil || s.deps.Config == nil || s.deps.Config.SourcePath == "" {
 		return nil
 	}
-	if s.deps.ConfigCoordinator == nil {
-		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
+	if s.deps.SkipReloadFunc != nil {
+		s.deps.SkipReloadFunc()
 	}
-	return s.deps.ConfigCoordinator.Mutate(nil)
+	if err := s.deps.Config.Save(); err != nil {
+		return err
+	}
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateConfig(s.deps.Config.Governor)
+		// The dashboard can add or remove repos, which moves every scaled
+		// default threshold (#3498). Without this, a repo change would not
+		// reach the governor until the next process restart.
+		s.deps.Governor.SetRepoCount(s.deps.Config.Project.RepoCount())
+	}
+	return nil
 }
 
 func (s *Server) persistOnly() {
-	s.syncGovernorSnapshot()
 	if s.deps != nil && s.deps.PersistFunc != nil {
 		s.deps.PersistFunc()
 	}
-}
-
-func (s *Server) mutateConfig(mutate func(*config.Config) error) error {
-	if s.deps == nil || s.deps.ConfigCoordinator == nil {
-		return fmt.Errorf("runtime config coordinator is not configured")
-	}
-	return s.deps.ConfigCoordinator.Mutate(mutate)
-}
-
-func (s *Server) configSnapshot() *config.Config {
-	if s.deps == nil {
-		return nil
-	}
-	if s.deps.ConfigCoordinator != nil {
-		return s.deps.ConfigCoordinator.Snapshot()
-	}
-	return s.deps.Config.Clone()
-}
-
-// syncGovernorSnapshot retains legacy refresh/persist boundaries while routing
-// their publication through the coordinator's Manager-before-Governor order.
-func (s *Server) syncGovernorSnapshot() {
-	if s.deps == nil || s.deps.Config == nil {
-		return
-	}
-	if s.deps.ConfigCoordinator == nil {
-		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
-	}
-	s.deps.ConfigCoordinator.PublishCurrent()
 }
 
 func (s *Server) refreshAsync() {
@@ -522,8 +557,15 @@ func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	user := r.Header.Get("X-Hive-User")
 	if sess := s.sessionFromRequest(r); sess != nil {
-		user = sess.Username
-		role = sess.Role
+		// Live allowlist role, never the role frozen into the session at login
+		// (session_live_role.go): this endpoint drives what the UI believes the
+		// user may do, so a Manage Access grant/downgrade must show up here the
+		// moment the heartbeat delivers it — the same rule authenticate applies
+		// to every gated request. A revoked session reports no identity.
+		if live, ok := s.liveSessionRole(sess); ok {
+			user = sess.Username
+			role = live
+		}
 	}
 	if role == "" {
 		role = "owner"
@@ -570,10 +612,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	cached := s.cachedLatestHash
 	cachedMsg := s.cachedLatestMessage
 	cacheAge := time.Since(s.cachedLatestAt)
+	stableV4 := s.cachedStableV4Hash
+	stableV4Age := time.Since(s.cachedStableV4At)
 	s.versionMu.RUnlock()
 
-	const versionCacheTTL = 5 * time.Minute
-	if cacheAge > versionCacheTTL || cached == "" {
+	if cacheAge > dashboardVersionTipCacheTTL || cached == "" {
 		if latest, err := s.fetchLatestRemoteHash(); err == nil && latest != "" {
 			msg := s.fetchCommitMessage(latest)
 			s.versionMu.Lock()
@@ -583,6 +626,17 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			s.versionMu.Unlock()
 			cached = latest
 			cachedMsg = msg
+		}
+	}
+	if upstreamBranch() == dashboardStableReleaseBranch {
+		stableV4 = cached
+	} else if stableV4Age > dashboardVersionTipCacheTTL || stableV4 == "" {
+		if latest, err := s.fetchRemoteHashForBranch(dashboardStableReleaseBranch); err == nil && latest != "" {
+			s.versionMu.Lock()
+			s.cachedStableV4Hash = latest
+			s.cachedStableV4At = time.Now()
+			s.versionMu.Unlock()
+			stableV4 = latest
 		}
 	}
 
@@ -601,11 +655,92 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["latestMessage"] = cachedMsg
 		}
 	}
+	if stableV4 != "" {
+		stableShort := shortSHADashboard(stableV4)
+		resp["stableV4Hash"] = stableV4
+		resp["stableV4Short"] = stableShort
+		// Distinguish "the tip has no image yet" (a known state: nothing to
+		// upgrade to, compare never attempted) from "the compare failed"
+		// (genuinely unknown). Without this the frontend renders a yellow
+		// "? behind" next to the green ✓ whenever the tip is unbuilt (#4804).
+		stableImageReady := ghcrTagExistsCached(stableShort)
+		resp["stableV4ImageReady"] = stableImageReady
+		if sameCommitDashboard(versionHash, stableV4) {
+			resp["commitsBehind"] = 0
+		} else if stableImageReady {
+			if count, ok := s.commitsBehindStableTip(versionHash, stableV4); ok {
+				resp["commitsBehind"] = count
+			}
+		}
+	}
 
 	jsonResponse(w, resp)
 }
 
+const dashboardVersionTipCacheTTL = 5 * time.Minute
+const dashboardStableReleaseBranch = "v4"
+
+func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
+	base = shortSHADashboard(base)
+	head = shortSHADashboard(head)
+	if base == "" || head == "" {
+		return 0, false
+	}
+	if sameCommitDashboard(base, head) {
+		return 0, true
+	}
+	key := base + "..." + head
+	s.versionMu.RLock()
+	if s.commitBehindCache != nil {
+		if count, ok := s.commitBehindCache[key]; ok {
+			s.versionMu.RUnlock()
+			return count, true
+		}
+	}
+	s.versionMu.RUnlock()
+	if s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
+		return 0, false
+	}
+	count, err := s.deps.GHClient.CompareAheadBy(s.deps.Ctx, "kubestellar", "hive", base, head)
+	if err != nil {
+		s.logger.Warn("failed to compare commits behind stable tip", "base", base, "head", head, "error", err)
+		return 0, false
+	}
+	s.versionMu.Lock()
+	if s.commitBehindCache == nil {
+		s.commitBehindCache = map[string]int{}
+	}
+	s.commitBehindCache[key] = count
+	s.versionMu.Unlock()
+	return count, true
+}
+
+func shortSHADashboard(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > hub.StandardSHALen {
+		return s[:hub.StandardSHALen]
+	}
+	return s
+}
+
+func sameCommitDashboard(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	return strings.EqualFold(a[:n], b[:n])
+}
+
 func (s *Server) fetchLatestRemoteHash() (string, error) {
+	return s.fetchRemoteHashForBranch(upstreamBranch())
+}
+
+func (s *Server) fetchRemoteHashForBranch(branch string) (string, error) {
 	if s.deps == nil || s.deps.GHClient == nil {
 		return "", fmt.Errorf("no github client")
 	}
@@ -613,7 +748,7 @@ func (s *Server) fetchLatestRemoteHash() (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("no context")
 	}
-	return s.deps.GHClient.LatestCommitHash(ctx, "kubestellar", "hive", upstreamBranch())
+	return s.deps.GHClient.LatestCommitHash(ctx, "kubestellar", "hive", branch)
 }
 
 // fetchCommitMessage returns the first line of the commit message for a given SHA.
@@ -685,7 +820,7 @@ func ghcrTagExists(tag string) bool {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := s.configSnapshot()
+	cfg := s.deps.Config
 	primaryRepo := cfg.Project.PrimaryRepo
 	if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 		primaryRepo = cfg.Project.Repos[0]
@@ -700,7 +835,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// github.ibm.com hive for github.com. ResolvedBaseURL falls back to the api_url
 	// host in exactly that case (mirrors HostLabel).
 	githubBaseURL := cfg.GitHub.ResolvedBaseURL()
-	jsonResponse(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"org":       cfg.Project.Org,
 		"repos":     cfg.Project.Repos,
 		"ai_author": cfg.Project.AIAuthor,
@@ -714,7 +849,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"hub_url":             cfg.Hub.URL,
 		"hive_id":             cfg.HiveID,
 		"github_base_url":     githubBaseURL,
-	})
+	}
+	// The active project.issue_filter, read-only: which issues agents may
+	// initiate work on, by label. Omitted entirely when no filter is
+	// configured so the payload (and the UI note keyed off it) stays quiet
+	// for the ordinary unfiltered hive.
+	if !cfg.Project.IssueFilter.IsZero() {
+		resp["issue_filter"] = cfg.Project.IssueFilter
+	}
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
@@ -780,7 +923,21 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	upgradeURL := hubURL + "/api/saas/hives/" + url.PathEscape(hiveID) + "/upgrade"
 
+	user := r.Header.Get("X-Hive-User")
+	proof := s.authToken
+	if proof == "" && s.deps.Config.Dashboard.AuthToken != "" {
+		proof = s.deps.Config.Dashboard.AuthToken
+	}
 	cookie, _ := r.Cookie("hive_hub_user")
+	if proof == "" && cookie == nil {
+		// Fail fast and honestly: with no dashboard-token proof and no hub
+		// session cookie to relay, the hub is guaranteed to reject this request,
+		// and "not authenticated" would mislead a logged-in owner. Name the
+		// missing credential and how to configure it (#4446 honest-error
+		// standard).
+		jsonError(w, "self-upgrade needs this spoke's dashboard token to prove itself to the hub — set DASHBOARD_AUTH_TOKEN (the hive-secrets/dashboard-token secret) and restart the spoke", http.StatusBadRequest)
+		return
+	}
 	const upgradeTimeout = 30 * time.Second
 	client := &http.Client{Timeout: upgradeTimeout}
 	req, err := http.NewRequest("POST", upgradeURL, nil)
@@ -790,6 +947,15 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if cookie != nil {
 		req.AddCookie(cookie)
+	}
+	if user != "" {
+		req.Header.Set("X-Hive-User", user)
+	}
+	if role != "" {
+		req.Header.Set("X-Hive-Role", role)
+	}
+	if proof != "" {
+		req.Header.Set(proxyAuthHeader, proof)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://hive.kubestellar.io")
@@ -1305,6 +1471,12 @@ func (s *Server) validateModelForAgent(name, model string) error {
 	if len(known) == 0 {
 		return nil // cannot enumerate — do not block
 	}
+	// Copilot catalog/CLI nomenclature drifts between "." and "-" (#4262):
+	// the served list is canonical, so compare the canonicalized candidate
+	// rather than rejecting a dotted/dashed variant of an available model.
+	if backend == "copilot" {
+		model = agent.CanonicalizeCopilotModel(model)
+	}
 	for _, id := range known {
 		if id == model {
 			return nil
@@ -1409,10 +1581,11 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 // requireOwnerRole returns true when authenticate established owner-level access.
 // A client-supplied X-Hive-Role is not enough: authenticate strips inbound role
 // headers before auth and sets ownerRoleVerifiedHeader only for trusted owner
-// sessions or proof-verified hub proxy identities. Owner-only mutations must
-// require its server-only verification marker, so legacy/proofless proxy
-// headers and shared-token requests fail closed instead of trusting spoofable
-// client input.
+// sessions, proof-verified hub proxy identities, or shared-token operators
+// (X-Hive-Internal / bearer token — possession of the secret is the owner
+// credential on those deployments). Owner-only mutations must require its
+// server-only verification marker, so legacy/proofless proxy headers fail
+// closed instead of trusting spoofable client input.
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
 	if !isOwnerRole(role) || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
@@ -1452,7 +1625,10 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deps.AgentMgr.Pause(name, "dashboard-api", "manual pause"); err != nil {
+	// Record the acting user on the pause itself (#4041): the audit log has
+	// always known who clicked, but the agent state did not, so a deliberate
+	// owner mass-pause was indistinguishable from a malfunction days later.
+	if err := s.deps.AgentMgr.PauseBy(name, "dashboard-api", "manual pause", requestUser(r)); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1689,8 +1865,11 @@ func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Logger.Info("audit: restart count reset", "agent", name, "trigger", "dashboard-api")
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "reset", "agent": name})
+	floor := s.refreshAndPersistSeq()
+	// minStatusSeq: status snapshots below this seq were built before the
+	// reset — the dashboard drops them so the zeroed counter can't flicker
+	// back to the stale value (#4348).
+	jsonResponse(w, map[string]any{"ok": true, "status": "reset", "agent": name, "minStatusSeq": floor})
 }
 
 // --- Token access audit log ---
@@ -1823,23 +2002,22 @@ func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const userTokenPath = "/data/gh-user-token"
-
-func (s *Server) resolvedUserTokenPath() string {
-	if strings.TrimSpace(s.userTokenPath) != "" {
-		return s.userTokenPath
-	}
-	return userTokenPath
-}
+var userTokenPath = "/data/gh-user-token"
 
 func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) {
 	// The login status must reflect THIS request's user, not the single
 	// persisted token. On a direct-route spoke, resolving from the per-user
 	// session is the only correct answer — otherwise every visitor would see
 	// the last-authenticated user's identity (the reported vulnerability).
+	// The role is the LIVE allowlist role (session_live_role.go), not the one
+	// frozen into the session at login, so the UI's idea of the user's
+	// capabilities always matches what the gated endpoints will enforce; a
+	// revoked session reports logged-out rather than a ghost identity.
 	if sess := s.sessionFromRequest(r); sess != nil {
-		jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": sess.Role})
-		return
+		if live, ok := s.liveSessionRole(sess); ok {
+			jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": live})
+			return
+		}
 	}
 	// Hub-proxied path: nginx injects the per-user X-Hive-User/X-Hive-Role, so
 	// report THAT user rather than the single shared persisted token (which
@@ -1854,7 +2032,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
 	}
-	tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
+	tokenData, err := os.ReadFile(userTokenPath)
 	if err != nil || len(strings.TrimSpace(string(tokenData))) == 0 {
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
@@ -2082,21 +2260,20 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// keeps the spoke the authority on who may enter, even via SSO — a valid
 	// hub token for a user not on the allowlist is refused. The role comes from
 	// the allowlist (authoritative), not the token, so the hub can never
-	// escalate a user's role on the spoke.
-	role := tokenRole
-	if s.deps != nil && s.deps.Config != nil {
-		if allowRole, ok := s.deps.Config.Dashboard.AuthorizedRole(username); ok {
-			role = allowRole
-		} else if s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled() {
-			// Allowlist is enforced and this user isn't on it → deny.
-			if s.deps.Logger != nil {
-				s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
-			}
-			writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
-				"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
-				"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
-			return
+	// escalate a user's role on the spoke. liveAllowlistRole is the same shared
+	// rule authenticate re-applies on EVERY subsequent request
+	// (session_live_role.go), so the role minted here can never outlive a later
+	// Manage Access change.
+	role, authorized := s.liveAllowlistRole(username, tokenRole)
+	if !authorized {
+		// Allowlist is enforced and this user isn't on it → deny.
+		if s.deps != nil && s.deps.Logger != nil {
+			s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
 		}
+		writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
+			"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
+			"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
+		return
 	}
 	if role == "" {
 		role = config.RoleRead
@@ -2228,7 +2405,7 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	// logging-out owner's own token stranded on disk. Viewer logouts leave the
 	// hive's user client intact.
 	if !s.directRouteAuthzEnabled() || loggedOutRole == config.RoleOwner {
-		os.Remove(s.resolvedUserTokenPath())
+		os.Remove(userTokenPath)
 	}
 	clearSessionCookie(w)
 	s.auditFromRequest(r, "gh_auth_logout", "", "")
@@ -2360,17 +2537,13 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proc, err := s.deps.AgentMgr.GetStatus(name)
-	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
-		return
-	}
 
 	cli := agentCfg.Backend
-	if proc.BackendOverride != "" {
+	if err == nil && proc.BackendOverride != "" {
 		cli = proc.BackendOverride
 	}
 	model := agentCfg.Model
-	if proc.ModelOverride != "" {
+	if err == nil && proc.ModelOverride != "" {
 		model = proc.ModelOverride
 	}
 
@@ -2426,7 +2599,12 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 		models[modeName] = ""
 	}
 
-	lastPrompt := proc.LastKickMessage
+	lastPrompt := ""
+	pinnedCLI := agentCfg.CLIPinned
+	if err == nil {
+		lastPrompt = proc.LastKickMessage
+		pinnedCLI = pinnedCLI || proc.PinnedCLI != ""
+	}
 
 	// Read restrictions from agent work dir files
 	restrictions := s.loadAgentRestrictions(name)
@@ -2447,11 +2625,14 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, map[string]interface{}{
 		"general": map[string]interface{}{
+			"enabled":          agentCfg.Enabled,
 			"launchCmd":        launchCmd,
 			"displayName":      displayName,
 			"description":      agentCfg.Description,
-			"cliPinned":        agentCfg.CLIPinned || proc.PinnedCLI != "",
+			"cliPinned":        pinnedCLI,
 			"cliPinValue":      cli,
+			"modelOwner":       agentCfg.ModelOwner,
+			"backendOwner":     agentCfg.BackendOwner,
 			"staleTimeout":     staleTimeout,
 			"restartStrategy":  restartStrategy,
 			"model":            model,
@@ -2470,6 +2651,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"detectKeywords":   agentCfg.DetectKeywords,
 			"aliases":          agentCfg.Aliases,
 			"cavemanMode":      agentCfg.CavemanMode,
+			"explainMode":      agentCfg.ExplainMode,
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			"replicas":         agentCfg.Replicas,
@@ -2922,12 +3104,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	if _, ok := current.Agents[name]; !ok {
+	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -2943,7 +3120,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	agentCfg := current.Agents[name]
+	agentCfg := s.deps.Config.Agents[name]
 	if v, ok := body["enabled"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.Enabled = b
@@ -3113,12 +3290,25 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["cavemanMode"]; ok {
 		if s, ok := v.(string); ok {
 			s = sanitizeString(s)
-			validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
-			if !validCavemanModes[s] {
+			// Same gate as config.Validate, so the write path cannot persist a
+			// value that would fail the next config load.
+			if !config.ValidateCavemanMode(s) {
 				jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
 				return
 			}
 			agentCfg.CavemanMode = s
+		}
+	}
+	if v, ok := body["explainMode"]; ok {
+		if s, ok := v.(string); ok {
+			s = sanitizeString(s)
+			// Same gate as config.Validate, so the write path cannot persist a
+			// value that would fail the next config load.
+			if !config.ValidateExplainMode(s) {
+				jsonError(w, "explain_mode must be one of: off, brief, full (or empty to inherit the hive default)", http.StatusBadRequest)
+				return
+			}
+			agentCfg.ExplainMode = s
 		}
 	}
 	// promptSource: a nested {owner,repo,path,ref} object (or explicit null to
@@ -3176,70 +3366,43 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	previousAgents := map[string]struct{}{}
-	if s.deps.AgentMgr != nil {
-		for existing := range s.deps.AgentMgr.AllStatuses() {
-			previousAgents[existing] = struct{}{}
-		}
+	prevAgents := make(map[string]config.AgentConfig, len(s.deps.Config.Agents))
+	for k, v := range s.deps.Config.Agents {
+		prevAgents[k] = v
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		candidate.Agents[name] = agentCfg
-		if err := candidate.ExpandAgentReplicas(); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist agent config: "+err.Error(), http.StatusInternalServerError)
+	s.deps.Config.Agents[name] = agentCfg
+	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+		s.deps.Config.Agents = prevAgents
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	committed := s.configSnapshot()
-	if committed == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	if s.deps.AgentMgr != nil {
-		for added, ac := range committed.Agents {
-			if _, existed := previousAgents[added]; existed || !ac.Enabled || ac.OnDemand {
-				continue
-			}
+	agentCfg = s.deps.Config.Agents[name]
+	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
+	for _, added := range addedAgents {
+		if ac, ok := s.deps.Config.Agents[added]; ok && !ac.OnDemand {
 			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
 				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
 			}
 		}
 	}
-	if baseCfg, ok := committed.Agents[name]; ok {
-		agentCfg = baseCfg
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
 	}
 
 	// Sync the updated config into the agent process so that status builders
 	// (which read from AgentProcess.Config, not the global config map) reflect
-	// changes like display_name immediately. Replicas materialized by the
-	// coordinator are already present in the manager before this point.
-	if s.deps.AgentMgr != nil {
-		if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
-			s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
-		}
-		for replica, replicaCfg := range committed.Agents {
-			if replicaCfg.ReplicaOf != name {
-				continue
-			}
-			if err := s.deps.AgentMgr.UpdateConfig(replica, replicaCfg); err != nil {
-				s.logger.Warn("failed to sync replica config to process", "agent", replica, "error", err)
-			}
-		}
+	// changes like display_name immediately.
+	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after agent update", "agent", name, "error", err)
 	}
 
 	s.deps.AgentMgr.SyncModeFiles(s.deps.AgentMgr.GetACMMLevel())
-	// Sync the committed config into the agent process so status builders reflect
-	// fields such as display_name and repository-backed prompt metadata immediately.
-	if err := s.deps.AgentMgr.UpdateConfig(name, committed.Agents[name]); err != nil {
-		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
-	}
-	if agentsDir := committed.Data.AgentsDir; agentsDir != "" {
-		if err := config.SaveAgentFile(agentsDir, name, committed.Agents[name]); err != nil {
+	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
 		}
 	}
@@ -3274,12 +3437,7 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	if _, ok := current.Agents[name]; !ok {
+	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -3290,11 +3448,14 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Parse and validate all cadences up front (v2 Cadence type: seconds,
-	// interval string, or schedule object) so bad input gets a 400 before
-	// the transactional mutateConfig apply (dd's config coordinator).
-	parsed := make(map[string]config.Cadence, len(body))
 	for modeName, raw := range body {
+		mode, ok := s.deps.Config.Governor.Modes[modeName]
+		if !ok {
+			continue
+		}
+		if mode.Cadences == nil {
+			mode.Cadences = make(map[string]config.Cadence)
+		}
 		var seconds int64
 		var cadence config.Cadence
 		if err := json.Unmarshal(raw, &seconds); err == nil {
@@ -3312,30 +3473,15 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if cadence.Mode() == config.CadenceModeInterval && cadence.IsPaused() {
-			cadence = "pause"
+			mode.Cadences[name] = "pause"
+		} else {
+			mode.Cadences[name] = cadence
 		}
-		parsed[modeName] = cadence
+		s.deps.Config.Governor.Modes[modeName] = mode
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		for modeName, cadence := range parsed {
-			mode, ok := candidate.Governor.Modes[modeName]
-			if !ok {
-				continue
-			}
-			if mode.Cadences == nil {
-				mode.Cadences = make(map[string]config.Cadence)
-			}
-			mode.Cadences[name] = cadence
-			candidate.Governor.Modes[modeName] = mode
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist cadence config: "+err.Error(), http.StatusInternalServerError)
-		return
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after cadence update", "agent", name, "error", err)
 	}
 	s.auditFromRequest(r, "config_agent_cadences", auditDetail("section", "cadences"), name)
 	s.refreshAndPersist()
@@ -3357,12 +3503,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	agentCfg, ok := current.Agents[name]
+	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3387,19 +3528,19 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		candidate.Agents[name] = agentCfg
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist model config: "+err.Error(), http.StatusInternalServerError)
-		return
+	s.deps.Config.Agents[name] = agentCfg
+
+	// Sync updated backend/model into the agent process so status builders
+	// reflect the change without requiring a restart.
+	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
-	committed := s.configSnapshot()
-	if agentsDir := committed.Data.AgentsDir; agentsDir != "" {
-		if err := config.SaveAgentFile(agentsDir, name, committed.Agents[name]); err != nil {
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after model update", "agent", name, "error", err)
+	}
+	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
 		}
 	}
@@ -3549,12 +3690,7 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	agentCfg, ok := current.Agents[name]
+	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3569,16 +3705,7 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 	}
 
 	agentCfg.Channels = body.Channels
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		candidate.Agents[name] = agentCfg
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist channel config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	s.deps.Config.Agents[name] = agentCfg
 	s.auditFromRequest(r, "config_agent_channels", auditDetail("section", "channels"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
@@ -3590,12 +3717,7 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	agentCfg, ok := current.Agents[name]
+	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3608,16 +3730,7 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	agentCfg.Tools = &body
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		candidate.Agents[name] = agentCfg
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist tool config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	s.deps.Config.Agents[name] = agentCfg
 	s.auditFromRequest(r, "config_agent_tools", auditDetail("section", "tools"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
@@ -3629,12 +3742,7 @@ func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Req
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	agentCfg, ok := current.Agents[name]
+	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3649,16 +3757,7 @@ func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Req
 	}
 
 	agentCfg.Connections = body.Connections
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		candidate.Agents[name] = agentCfg
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist connection config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	s.deps.Config.Agents[name] = agentCfg
 	s.auditFromRequest(r, "config_agent_connections", auditDetail("section", "connections"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
@@ -3699,7 +3798,7 @@ func (s *Server) handleAgentPrompt(w http.ResponseWriter, r *http.Request) {
 		template = s.loadPromptTemplate(name)
 	}
 
-	const repoBaseURL = "https://github.com/kubestellar/hive/blob/v2/"
+	const repoBaseURL = "https://github.com/kubestellar/hive/blob/HEAD/"
 	sourceFiles := []map[string]string{}
 
 	templateName := ""
@@ -3772,12 +3871,7 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	if _, ok := current.Agents[name]; !ok {
+	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -3803,7 +3897,7 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentCfg := current.Agents[name]
+	agentCfg := s.deps.Config.Agents[name]
 
 	// Repo-sourced prompt import (Prompt Template tab).
 	if body.PromptSource != nil {
@@ -3830,19 +3924,12 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 			// Bake-only: the prompt is now a plain copy on disk; drop the live link.
 			agentCfg.PromptSource = nil
 		}
-		if err := s.mutateConfig(func(candidate *config.Config) error {
-			if _, exists := candidate.Agents[name]; !exists {
-				return fmt.Errorf("agent %s no longer exists", name)
-			}
-			candidate.Agents[name] = agentCfg
-			return nil
-		}); err != nil {
-			jsonError(w, "failed to persist prompt source: "+err.Error(), http.StatusInternalServerError)
-			return
+		s.deps.Config.Agents[name] = agentCfg
+		if err := s.saveConfig(); err != nil {
+			s.logger.Error("failed to persist config after prompt import", "agent", name, "error", err)
 		}
-		committed := s.configSnapshot()
-		if agentsDir := committed.Data.AgentsDir; agentsDir != "" {
-			if err := config.SaveAgentFile(agentsDir, name, committed.Agents[name]); err != nil {
+		if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+			if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 				s.logger.Error("failed to persist agent overlay after prompt import", "agent", name, "error", err)
 			}
 		}
@@ -3868,17 +3955,12 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		agentConfig, exists := candidate.Agents[name]
-		if !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		agentConfig.KickTemplate = templateFileName
-		candidate.Agents[name] = agentConfig
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist prompt config: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Point the agent's KickTemplate to the saved file
+	agentCfg.KickTemplate = templateFileName
+	s.deps.Config.Agents[name] = agentCfg
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after template save", "agent", name, "error", err)
 	}
 	s.refreshAndPersist()
 
@@ -4160,6 +4242,18 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// The raw map above is what the operator SET (0 = unset). The governor
+	// ladders on the resolved values, which for an unset mode are the defaults
+	// scaled by repo count (#3498). Send both, so the settings panel can show
+	// the numbers actually in force next to the ones being edited instead of
+	// falling back to its own copy of the unscaled defaults.
+	repoCount := cfg.Project.RepoCount()
+	effectiveThresholds := map[string]int{
+		"quiet": cfg.Governor.EffectiveThreshold("quiet", repoCount),
+		"busy":  cfg.Governor.EffectiveThreshold("busy", repoCount),
+		"surge": cfg.Governor.EffectiveThreshold("surge", repoCount),
+	}
+
 	// Build full org/repo paths
 	org := cfg.Project.Org
 	repos := make([]string, 0, len(cfg.Project.Repos))
@@ -4195,12 +4289,20 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"agents":      agents,
-		"thresholds":  thresholds,
-		"labels":      cfg.Governor.Labels.Exempt,
-		"holdLabels":  github.HoldLabels,
-		"repos":       repos,
-		"primaryRepo": primaryRepo,
+		"agents":              agents,
+		"thresholds":          thresholds,
+		"effectiveThresholds": effectiveThresholds,
+		"thresholdScaling":    cfg.Governor.ThresholdScalingMode(),
+		"repoCount":           repoCount,
+		"labels":              cfg.Governor.Labels.Exempt,
+		"holdLabels":          github.HoldLabels,
+		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
+		// project.issue_filter.require_labels — when non-empty, agents may
+		// ONLY initiate work on issues carrying at least one of them. Edited
+		// on the same Labels tab so operators have one place for label policy.
+		"requireLabels": cfg.Project.IssueFilter.RequireLabels,
+		"repos":         repos,
+		"primaryRepo":   primaryRepo,
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
@@ -4211,6 +4313,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"healthcheckInterval": cfg.Governor.Health.HealthcheckInterval,
 			"restartCooldown":     cfg.Governor.Health.RestartCooldown,
 			"modelLock":           cfg.Governor.Health.ModelLock,
+			"watchdog":            watchdogConfigPayload(cfg),
 		},
 		"sensing": map[string]interface{}{
 			"ghRatePatterns":     cfg.Governor.Sensing.GHRatePatterns,
@@ -4227,16 +4330,24 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"compress":   cfg.Governor.Logging.Compress,
 			"level":      cfg.Governor.Logging.Level,
 		},
-		"litellm":    litellmSectionResponse(&cfg.Governor.LiteLLM),
-		"trajectory": trajectorySectionResponse(&cfg.Governor),
-		"classifier": classifierSectionResponse(),
-		"features":   featuresSectionResponse(cfg),
-		"security":   securitySectionResponse(cfg),
+		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
+		"trajectory":            trajectorySectionResponse(&cfg.Governor),
+		"classifier":            classifierSectionResponse(),
+		"features":              featuresSectionResponse(cfg),
+		"review":                cfg.Review,
+		"auto_merge":            autoMergeSectionResponse(cfg),
+		"convergence":           s.convergenceSectionResponse(cfg),
+		"advisory":              advisorySectionResponse(cfg),
+		"project_observability": s.projectObservabilityResponse(cfg),
+		"replan":                replanSectionResponse(cfg),
+		"work_source":           workSourceSectionResponse(cfg),
+		"security":              securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
 			// Effective value (default ON when unset) — the UI renders the
 			// switch from this, so an untouched hive shows it on.
 			"attributionTrailer": cfg.Governor.AttributionTrailerEnabled(),
 		},
+		"general_advanced": generalAdvancedSectionResponse(cfg),
 		"hub": map[string]interface{}{
 			"enabled": cfg.Hub.Enabled,
 			// namespace is read-only, runtime-derived display info (never
@@ -4339,6 +4450,7 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("eval_interval_s must be between %d and %d", minEvalIntervalS, maxEvalIntervalS), http.StatusBadRequest)
 			return
 		}
+		s.deps.Config.Governor.EvalIntervalS = body.EvalIntervalS
 	}
 	if body.GHRatePatterns != nil {
 		for _, p := range body.GHRatePatterns {
@@ -4347,6 +4459,7 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		s.deps.Config.Governor.Sensing.GHRatePatterns = body.GHRatePatterns
 	}
 	if body.CLIExcludePatterns != nil {
 		for _, p := range body.CLIExcludePatterns {
@@ -4355,9 +4468,10 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		s.deps.Config.Governor.Sensing.CLIExcludePatterns = body.CLIExcludePatterns
 	}
 	if body.LoginPatterns != nil {
-		filtered := make([]string, 0, len(body.LoginPatterns))
+		var filtered []string
 		for _, p := range body.LoginPatterns {
 			p = strings.TrimSpace(p)
 			if p == "" {
@@ -4369,7 +4483,7 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			}
 			filtered = append(filtered, p)
 		}
-		body.LoginPatterns = filtered
+		s.deps.Config.Governor.Sensing.LoginPatterns = filtered
 	}
 	const maxTTLSeconds = 86400 // 24 hours
 	if body.TTLSeconds != 0 {
@@ -4377,6 +4491,7 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("ttlSeconds must be between 1 and %d", maxTTLSeconds), http.StatusBadRequest)
 			return
 		}
+		s.deps.Config.Governor.Sensing.TTLSeconds = body.TTLSeconds
 	}
 	const maxPullbackSeconds = 86400 // 24 hours
 	if body.PullbackSeconds != 0 {
@@ -4384,31 +4499,11 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("pullbackSeconds must be between 1 and %d", maxPullbackSeconds), http.StatusBadRequest)
 			return
 		}
+		s.deps.Config.Governor.Sensing.PullbackSeconds = body.PullbackSeconds
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if body.EvalIntervalS != 0 {
-			candidate.Governor.EvalIntervalS = body.EvalIntervalS
-		}
-		if body.GHRatePatterns != nil {
-			candidate.Governor.Sensing.GHRatePatterns = body.GHRatePatterns
-		}
-		if body.CLIExcludePatterns != nil {
-			candidate.Governor.Sensing.CLIExcludePatterns = body.CLIExcludePatterns
-		}
-		if body.LoginPatterns != nil {
-			candidate.Governor.Sensing.LoginPatterns = body.LoginPatterns
-		}
-		if body.TTLSeconds != 0 {
-			candidate.Governor.Sensing.TTLSeconds = body.TTLSeconds
-		}
-		if body.PullbackSeconds != 0 {
-			candidate.Governor.Sensing.PullbackSeconds = body.PullbackSeconds
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist governor sensing config: "+err.Error(), http.StatusInternalServerError)
-		return
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_sensing", auditDetail("section", "sensing"), "")
 	s.refreshAndPersist()
@@ -4431,17 +4526,24 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		for modeName, threshold := range body {
-			if mode, ok := candidate.Governor.Modes[modeName]; ok {
-				mode.Threshold = threshold
-				candidate.Governor.Modes[modeName] = mode
-			}
+	for modeName, threshold := range body {
+		if mode, ok := s.deps.Config.Governor.Modes[modeName]; ok {
+			mode.Threshold = threshold
+			s.deps.Config.Governor.Modes[modeName] = mode
 		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist governor thresholds: "+err.Error(), http.StatusInternalServerError)
-		return
+	}
+
+	// #4037: the operator just typed these numbers, so they stop being
+	// pack-seeded bases and become absolutes that EffectiveThreshold returns
+	// verbatim — the #3498 guarantee that a hand-tuned `surge: 300` is never
+	// multiplied by the repo count. Cleared for the WHOLE set, deliberately:
+	// leaving the untouched modes scaling while this one does not can invert
+	// the mode ladder (a scaled busy above an unscaled surge). Editing any
+	// threshold means the operator owns all of them.
+	s.deps.Config.Governor.ThresholdsSource = ""
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after threshold update", "error", err)
 	}
 
 	// Trigger immediate governor re-evaluation so mode change is visible
@@ -4455,51 +4557,140 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
-func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
+// handleGovernorThresholdScalingGet returns the configured threshold-scaling
+// curve (with its default applied) so the Thresholds tab can prefill its
+// select without loading the whole governor config payload. OWNER-ONLY,
+// matching the write side and the rest of the governor-config surface.
+func (s *Server) handleGovernorThresholdScalingGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, map[string]string{
+		"threshold_scaling": s.deps.Config.Governor.ThresholdScalingMode(),
+	})
+}
+
+// handleGovernorThresholdScaling sets how the DEFAULT mode thresholds scale
+// with the hive's repo count (#3498).
+//
+// It is a separate route from handleGovernorThresholds because that one's body
+// is a flat map[string]int of mode name to threshold; a string curve does not
+// fit it, and widening it to map[string]any would put a parse branch on the
+// path every threshold drag already takes.
+func (s *Server) handleGovernorThresholdScaling(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
 
 	var body struct {
-		Labels []string `json:"labels"`
+		ThresholdScaling string `json:"thresholdScaling"`
+		// Snake-case alias so callers can send the same key the GET returns
+		// and the YAML config uses.
+		ThresholdScalingSnake string `json:"threshold_scaling"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if err := validateGovernorLabels(body.Labels); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+
+	raw := body.ThresholdScaling
+	if raw == "" {
+		raw = body.ThresholdScalingSnake
+	}
+	scaling := sanitizeString(raw)
+	// Same gate as config.validate, so the write path cannot persist a value
+	// that fails the next config load.
+	if !config.ValidateThresholdScaling(scaling) {
+		jsonError(w, "thresholdScaling must be one of: linear, sqrt, none (or empty for the default)", http.StatusBadRequest)
+		return
+	}
+	s.deps.Config.Governor.ThresholdScaling = scaling
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after threshold scaling update", "error", err)
+	}
+
+	// Changing the curve moves every scaled threshold, so re-evaluate now
+	// rather than leaving the hive on the old ladder until the next eval tick —
+	// matching what a threshold drag already does.
+	if s.deps.EnumerateFunc != nil {
+		go s.deps.EnumerateFunc()
+	}
+
+	s.auditFromRequest(r, "config_governor_threshold_scaling", auditDetail("section", "thresholdScaling"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 
-	filtered := make([]string, 0, len(body.Labels))
-	for _, l := range body.Labels {
-		isPermanent := false
-		for _, h := range github.HoldLabels {
-			if l == h {
-				isPermanent = true
-				break
-			}
-		}
-		for _, p := range github.PermanentExemptLabels {
-			if l == p {
-				isPermanent = true
-				break
-			}
-		}
-		if !isPermanent {
-			filtered = append(filtered, l)
-		}
+	// Both label polarities save through this one endpoint (the Labels tab
+	// edits both). POINTER-typed so an absent key means "unchanged" — a save
+	// that only touched the require list must not wipe the exempt list to
+	// empty, and vice versa.
+	var body struct {
+		Labels        *[]string `json:"labels"`
+		RequireLabels *[]string `json:"require_labels"`
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		candidate.Governor.Labels.Exempt = filtered
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist governor labels: "+err.Error(), http.StatusInternalServerError)
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if s.deps.GHClient != nil {
-		s.deps.GHClient.SetExemptLabels(filtered)
+	if body.Labels != nil {
+		if err := validateGovernorLabels(*body.Labels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.RequireLabels != nil {
+		if err := validateGovernorLabels(*body.RequireLabels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if body.Labels != nil {
+		filtered := make([]string, 0, len(*body.Labels))
+		for _, l := range *body.Labels {
+			isPermanent := false
+			for _, h := range github.HoldLabels {
+				if l == h {
+					isPermanent = true
+					break
+				}
+			}
+			for _, p := range github.PermanentExemptLabels {
+				if l == p {
+					isPermanent = true
+					break
+				}
+			}
+			if !isPermanent {
+				filtered = append(filtered, l)
+			}
+		}
+		s.deps.Config.Governor.Labels.Exempt = filtered
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetExemptLabels(filtered)
+		}
+	}
+	if body.RequireLabels != nil {
+		// The require gate (project.issue_filter): empty list = filter off.
+		// Takes effect on the next enumeration via the scan client.
+		s.deps.Config.Project.IssueFilter.RequireLabels = *body.RequireLabels
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetIssueFilter(s.deps.Config.Project.IssueFilter)
+		}
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after label update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_labels", auditDetail("section", "labels"), "")
 	s.refreshAndPersist()
@@ -4548,27 +4739,19 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist through the config coordinator (dd) rather than mutating
-	// s.deps.Config in place. The values applied are the effective ones
-	// computed above: a nil pointer means "leave the stored value alone",
-	// so only fields the client actually sent are written.
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if body.TotalTokens != nil {
-			candidate.Governor.Budget.TotalTokens = totalTokens
-		}
-		if body.PeriodDays != nil {
-			candidate.Governor.Budget.PeriodDays = periodDays
-		}
-		if body.CriticalPct != nil {
-			candidate.Governor.Budget.CriticalPct = criticalPct
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist governor budget: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	if body.TotalTokens != nil {
+		s.deps.Config.Governor.Budget.TotalTokens = totalTokens
 		s.deps.Governor.SetBudgetLimit(totalTokens)
+	}
+	if body.PeriodDays != nil {
+		s.deps.Config.Governor.Budget.PeriodDays = periodDays
+	}
+	if body.CriticalPct != nil {
+		s.deps.Config.Governor.Budget.CriticalPct = criticalPct
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after budget update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_budget", auditDetail("section", "budget"), "")
 	s.refreshAndPersist()
@@ -4587,8 +4770,10 @@ func (s *Server) handleGovernorBudgetReset(w http.ResponseWriter, r *http.Reques
 	}
 	s.deps.Governor.ResetBudgetWindow()
 	s.auditFromRequest(r, "governor_budget_window_reset", auditDetail("section", "budget"), "")
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "reset"})
+	floor := s.refreshAndPersistSeq()
+	// minStatusSeq: see handleResetRestarts — lets the dashboard discard
+	// pre-reset status snapshots so the budget bar can't revert (#4348).
+	jsonResponse(w, map[string]any{"ok": true, "status": "reset", "minStatusSeq": floor})
 }
 
 func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Request) {
@@ -4615,28 +4800,25 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 	}
 
 	isMasked := func(v string) bool { return strings.HasPrefix(v, "•") }
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if (body.NtfyServer != "" && !isMasked(body.NtfyServer)) || (body.NtfyTopic != "" && !isMasked(body.NtfyTopic)) {
-			if candidate.Notifications.Ntfy == nil {
-				candidate.Notifications.Ntfy = &config.NtfyConfig{}
-			}
-			if body.NtfyServer != "" && !isMasked(body.NtfyServer) {
-				candidate.Notifications.Ntfy.Server = body.NtfyServer
-			}
-			if body.NtfyTopic != "" && !isMasked(body.NtfyTopic) {
-				candidate.Notifications.Ntfy.Topic = body.NtfyTopic
-			}
+	if (body.NtfyServer != "" && !isMasked(body.NtfyServer)) || (body.NtfyTopic != "" && !isMasked(body.NtfyTopic)) {
+		if s.deps.Config.Notifications.Ntfy == nil {
+			s.deps.Config.Notifications.Ntfy = &config.NtfyConfig{}
 		}
-		if body.DiscordWebhook != "" && !isMasked(body.DiscordWebhook) {
-			if candidate.Notifications.Discord == nil {
-				candidate.Notifications.Discord = &config.DiscordConfig{}
-			}
-			candidate.Notifications.Discord.Webhook = body.DiscordWebhook
+		if body.NtfyServer != "" && !isMasked(body.NtfyServer) {
+			s.deps.Config.Notifications.Ntfy.Server = body.NtfyServer
 		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist notification config: "+err.Error(), http.StatusInternalServerError)
-		return
+		if body.NtfyTopic != "" && !isMasked(body.NtfyTopic) {
+			s.deps.Config.Notifications.Ntfy.Topic = body.NtfyTopic
+		}
+	}
+	if body.DiscordWebhook != "" && !isMasked(body.DiscordWebhook) {
+		if s.deps.Config.Notifications.Discord == nil {
+			s.deps.Config.Notifications.Discord = &config.DiscordConfig{}
+		}
+		s.deps.Config.Notifications.Discord.Webhook = body.DiscordWebhook
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after notification update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_notifications", auditDetail("section", "notifications"), "")
 	s.refreshAndPersist()
@@ -4662,20 +4844,17 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if body.HealthcheckInterval > 0 {
-			candidate.Governor.Health.HealthcheckInterval = body.HealthcheckInterval
-		}
-		if body.RestartCooldown > 0 {
-			candidate.Governor.Health.RestartCooldown = body.RestartCooldown
-		}
-		if body.ModelLock != nil {
-			candidate.Governor.Health.ModelLock = *body.ModelLock
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist governor health config: "+err.Error(), http.StatusInternalServerError)
-		return
+	if body.HealthcheckInterval > 0 {
+		s.deps.Config.Governor.Health.HealthcheckInterval = body.HealthcheckInterval
+	}
+	if body.RestartCooldown > 0 {
+		s.deps.Config.Governor.Health.RestartCooldown = body.RestartCooldown
+	}
+	if body.ModelLock != nil {
+		s.deps.Config.Governor.Health.ModelLock = *body.ModelLock
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after health update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_health", auditDetail("section", "health"), "")
 	s.refreshAndPersist()
@@ -4698,44 +4877,34 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	if err := validateGovernorLogging(current.Governor.Logging.Dir, body.MaxSizeMB, body.MaxAgeDays); err != nil {
+	if err := validateGovernorLogging(s.deps.Config.Governor.Logging.Dir, body.MaxSizeMB, body.MaxAgeDays); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	if body.MaxSizeMB > 0 {
+		s.deps.Config.Governor.Logging.MaxSizeMB = body.MaxSizeMB
+	}
+	if body.MaxAgeDays > 0 {
+		s.deps.Config.Governor.Logging.MaxAgeDays = body.MaxAgeDays
+	}
+	if body.MaxBackups > 0 {
+		s.deps.Config.Governor.Logging.MaxBackups = body.MaxBackups
+	}
+	if body.Compress != nil {
+		s.deps.Config.Governor.Logging.Compress = *body.Compress
+	}
 	if body.Level != "" {
 		switch body.Level {
 		case "debug", "info", "warn", "error":
+			s.deps.Config.Governor.Logging.Level = body.Level
 		default:
 			jsonError(w, "level must be one of: debug, info, warn, error", http.StatusBadRequest)
 			return
 		}
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if body.MaxSizeMB > 0 {
-			candidate.Governor.Logging.MaxSizeMB = body.MaxSizeMB
-		}
-		if body.MaxAgeDays > 0 {
-			candidate.Governor.Logging.MaxAgeDays = body.MaxAgeDays
-		}
-		if body.MaxBackups > 0 {
-			candidate.Governor.Logging.MaxBackups = body.MaxBackups
-		}
-		if body.Compress != nil {
-			candidate.Governor.Logging.Compress = *body.Compress
-		}
-		if body.Level != "" {
-			candidate.Governor.Logging.Level = body.Level
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist governor logging config: "+err.Error(), http.StatusInternalServerError)
-		return
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after logging update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_logging", auditDetail("section", "logging"), "")
 	s.refreshAndPersist()
@@ -4826,111 +4995,99 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	// Validate snapshot frame ancestors before opening the config
-	// transaction so a bad payload yields a 400 (not a 500 from
-	// mutateConfig). normalized is applied to Dashboard inside the closure.
-	var normalizedFrameAncestors []string
+	cfg := s.deps.Config
+	if body.Enabled != nil {
+		cfg.Hub.Enabled = *body.Enabled
+	}
+	if body.URL != "" {
+		cfg.Hub.URL = body.URL
+	}
+	if body.DashboardURL != "" {
+		cfg.Hub.DashboardURL = body.DashboardURL
+	}
+	cfg.Hub.SnapshotURL = body.SnapshotURL
+	if body.IsPublic != nil {
+		cfg.Hub.IsPublic = *body.IsPublic
+	}
+	if body.AutoSnapshot != nil {
+		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
+	}
 	if body.SnapshotFrameAncestors != nil {
 		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		normalizedFrameAncestors = normalized
+		cfg.Dashboard.SnapshotFrameAncestors = normalized
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if body.Enabled != nil {
-			candidate.Hub.Enabled = *body.Enabled
-		}
-		if body.URL != "" {
-			candidate.Hub.URL = body.URL
-		}
-		if body.DashboardURL != "" {
-			candidate.Hub.DashboardURL = body.DashboardURL
-		}
-		candidate.Hub.SnapshotURL = body.SnapshotURL
-		if body.IsPublic != nil {
-			candidate.Hub.IsPublic = *body.IsPublic
-		}
-		if body.AutoSnapshot != nil {
-			candidate.Hub.AutoSnapshot = *body.AutoSnapshot
-		}
-		if body.SnapshotFrameAncestors != nil {
-			candidate.Dashboard.SnapshotFrameAncestors = normalizedFrameAncestors
-		}
-		if body.AutoUpgrade != nil {
-			candidate.Hub.AutoUpgrade = *body.AutoUpgrade
-		}
-		if body.ContributeSuspended != nil {
-			candidate.Hub.ContributeSuspended = *body.ContributeSuspended
-		}
-		if body.ContributeTitlesMode != nil {
-			candidate.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
-		}
-		if body.ContributeAuthorsMode != nil {
-			candidate.Hub.ContributeAuthorsMode = *body.ContributeAuthorsMode
-		}
-		if body.ContributeLabelsMode != nil {
-			candidate.Hub.ContributeLabelsMode = *body.ContributeLabelsMode
-		}
-		if body.ContributeAllowLabels != nil {
-			candidate.Hub.ContributeAllowLabels = body.ContributeAllowLabels
-		}
-		if body.ContributeDenyLabels != nil {
-			candidate.Hub.ContributeDenyLabels = body.ContributeDenyLabels
-		}
-		if body.ContributeDenyTitles != nil {
-			candidate.Hub.ContributeDenyTitles = body.ContributeDenyTitles
-		}
-		if body.ContributeDenyAuthors != nil {
-			candidate.Hub.ContributeDenyAuthors = body.ContributeDenyAuthors
-		}
-		if body.ContributeAllowModels != nil {
-			candidate.Hub.ContributeAllowModels = body.ContributeAllowModels
-		}
-		if body.ContributeRejectUnknownModels != nil {
-			candidate.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
-		}
-		if body.ContributeSkipAssignedToOthers != nil {
-			candidate.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
-		}
-		// Cooldown toggle: store the client's on/off intent as a non-nil pointer so it
-		// is round-tripped exactly (nil would default back to enabled). A client that
-		// omits the field leaves the current value untouched.
-		if body.ContributeCooldownEnabled != nil {
-			v := *body.ContributeCooldownEnabled
-			candidate.Hub.ContributeCooldownEnabled = &v
-		}
-		// Cooldown period (hours): stored as-is; the config resolver
-		// (ContributeCooldownHoursOrDefault) clamps to the valid range at read time and
-		// applyDefaults clamps any persisted value, so a stray input can never park an
-		// issue forever. A client sending 0 means "use the default".
-		if body.ContributeCooldownHours != nil {
-			candidate.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
-		}
-		if body.ContributeDelegatableRoles != nil {
-			candidate.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
-		}
-		if body.DisabledRepos != nil {
-			candidate.Hub.DisabledRepos = body.DisabledRepos
-		}
-		if body.DisabledTiers != nil {
-			candidate.Hub.DisabledTiers = body.DisabledTiers
-		}
-		if body.TierLimits != nil {
-			candidate.Hub.TierLimits = body.TierLimits
-		}
-		// Normalize any client-supplied filter mode to a valid value (unknown/empty
-		// -> deny), so a bad payload can't leave a mode that silently changes
-		// enforcement in an unexpected way.
-		candidate.Hub.ContributeTitlesMode = config.NormalizeFilterMode(candidate.Hub.ContributeTitlesMode)
-		candidate.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(candidate.Hub.ContributeAuthorsMode)
-		candidate.Hub.ContributeLabelsMode = config.NormalizeFilterMode(candidate.Hub.ContributeLabelsMode)
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist hub config: "+err.Error(), http.StatusInternalServerError)
-		return
+	if body.AutoUpgrade != nil {
+		cfg.Hub.AutoUpgrade = *body.AutoUpgrade
 	}
+	if body.ContributeSuspended != nil {
+		cfg.Hub.ContributeSuspended = *body.ContributeSuspended
+	}
+	if body.ContributeTitlesMode != nil {
+		cfg.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
+	}
+	if body.ContributeAuthorsMode != nil {
+		cfg.Hub.ContributeAuthorsMode = *body.ContributeAuthorsMode
+	}
+	if body.ContributeLabelsMode != nil {
+		cfg.Hub.ContributeLabelsMode = *body.ContributeLabelsMode
+	}
+	if body.ContributeAllowLabels != nil {
+		cfg.Hub.ContributeAllowLabels = body.ContributeAllowLabels
+	}
+	if body.ContributeDenyLabels != nil {
+		cfg.Hub.ContributeDenyLabels = body.ContributeDenyLabels
+	}
+	if body.ContributeDenyTitles != nil {
+		cfg.Hub.ContributeDenyTitles = body.ContributeDenyTitles
+	}
+	if body.ContributeDenyAuthors != nil {
+		cfg.Hub.ContributeDenyAuthors = body.ContributeDenyAuthors
+	}
+	if body.ContributeAllowModels != nil {
+		cfg.Hub.ContributeAllowModels = body.ContributeAllowModels
+	}
+	if body.ContributeRejectUnknownModels != nil {
+		cfg.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
+	}
+	if body.ContributeSkipAssignedToOthers != nil {
+		cfg.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
+	}
+	// Cooldown toggle: store the client's on/off intent as a non-nil pointer so it
+	// is round-tripped exactly (nil would default back to enabled). A client that
+	// omits the field leaves the current value untouched.
+	if body.ContributeCooldownEnabled != nil {
+		v := *body.ContributeCooldownEnabled
+		cfg.Hub.ContributeCooldownEnabled = &v
+	}
+	// Cooldown period (hours): stored as-is; the config resolver
+	// (ContributeCooldownHoursOrDefault) clamps to the valid range at read time and
+	// applyDefaults clamps any persisted value, so a stray input can never park an
+	// issue forever. A client sending 0 means "use the default".
+	if body.ContributeCooldownHours != nil {
+		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
+	}
+	if body.ContributeDelegatableRoles != nil {
+		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
+	}
+	if body.DisabledRepos != nil {
+		cfg.Hub.DisabledRepos = body.DisabledRepos
+	}
+	if body.DisabledTiers != nil {
+		cfg.Hub.DisabledTiers = body.DisabledTiers
+	}
+	if body.TierLimits != nil {
+		cfg.Hub.TierLimits = body.TierLimits
+	}
+	// Normalize any client-supplied filter mode to a valid value (unknown/empty
+	// -> deny), so a bad payload can't leave a mode that silently changes
+	// enforcement in an unexpected way.
+	cfg.Hub.ContributeTitlesMode = config.NormalizeFilterMode(cfg.Hub.ContributeTitlesMode)
+	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
+	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -5217,7 +5374,7 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	cfg := s.configSnapshot()
+	cfg := s.deps.Config
 	// Apply to a copy first so validation failure leaves config untouched.
 	lc := cfg.Governor.LiteLLM
 	if body.Endpoint != nil {
@@ -5291,13 +5448,10 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 			s.logger.Info("cleared key-like value from litellm api_key_env (replaced by stored API key)")
 		}
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		candidate.Governor.LiteLLM = lc
-		return nil
-	}); err != nil {
+	cfg.Governor.LiteLLM = lc
+
+	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after litellm update", "error", err)
-		jsonError(w, "failed to persist LiteLLM config", http.StatusInternalServerError)
-		return
 	}
 	s.auditFromRequest(r, "config_governor_litellm", auditDetail("section", "litellm"), "")
 
@@ -5566,7 +5720,7 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, exists := s.configSnapshot().Agents[body.Name]; exists {
+	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
 	}
@@ -5609,7 +5763,7 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	}
 
 	name := r.PathValue("name")
-	if _, ok := s.configSnapshot().Agents[name]; !ok {
+	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -6426,7 +6580,12 @@ func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID 
 
 func (s *Server) requestHasGitHubSetupAdmin(r *http.Request) bool {
 	if sess := s.sessionFromRequest(r); sess != nil {
-		return config.RoleAtLeast(sess.Role, config.RoleReadWrite)
+		// Authz decision: use the LIVE allowlist role (session_live_role.go),
+		// never the role frozen into the session at login — a downgrade or
+		// revocation must strip GitHub-setup admin immediately, and a granted
+		// owner must gain it without re-login (same class as #4299).
+		live, ok := s.liveSessionRole(sess)
+		return ok && config.RoleAtLeast(live, config.RoleReadWrite)
 	}
 	role := r.Header.Get("X-Hive-Role")
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {
@@ -6537,7 +6696,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := s.fetchInferenceModelsForBackend(backend, endpoints)
+	models, complete := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
 	fallback := false
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
@@ -6553,6 +6712,13 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		"backend":  backend,
 		"models":   models,
 		"fallback": fallback,
+		// partial: some of the backend's endpoints answered and others did
+		// not, so `models` is a FLOOR, not a census — every id in it really
+		// was discovered (so the dropdown labels them normally, unlike the
+		// static fallback), but a model's absence proves nothing. Auto-heal
+		// must sit out this sample rather than switch an agent off a model
+		// that only the unreachable endpoint serves (#4438).
+		"partial": !fallback && !complete,
 	}
 	// Some LiteLLM gateways advertise the FULL catalog on /v1/models but scope
 	// a key's team to a SUBSET; a non-entitled model 403s at inference. When
@@ -6622,23 +6788,37 @@ func intersectEntitled(discovered, entitled []string) []string {
 // Falls back to the legacy raw-key path whenever no gateway resolves for this
 // name (env-configured vllm/llm-d endpoints), keeping existing behaviour.
 func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []string) []string {
+	models, _ := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
+	return models
+}
+
+// fetchInferenceModelsForBackendDetailed additionally reports whether EVERY
+// endpoint answered, so a caller can tell a complete census from a partial one
+// (#4438). It matters most here: this is the discovery the dashboard's model
+// auto-heal reads, and auto-heal does not merely toast — it rewrites the
+// agent's configured model and relaunches its session. A gateway that drops
+// out of a multi-endpoint sweep must never be able to spend an agent's
+// selection that way.
+func (s *Server) fetchInferenceModelsForBackendDetailed(backend string, endpoints []string) ([]string, bool) {
 	gw := s.resolveGatewayForBackend(backend)
 	if gw == nil || !gatewayKindNeedsProbeAuth(gw.Kind) {
-		return fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+		return fetchModelsFromEndpointsDetailed(endpoints, s.inferenceAPIKey(backend))
 	}
 	bearer, headers, err := gatewayProbeAuth(gw.Kind, gw.ResolveAPIKey(), gw.ProjectID)
 	if err != nil {
 		s.logger.Warn("gateway auth for model discovery failed",
 			"backend", backend, "kind", gw.Kind, "error", err)
-		return nil
+		return nil, false
 	}
 	seen := make(map[string]bool)
 	var all []string
+	complete := true
 	for _, ep := range endpoints {
 		models, err := fetchModelsWithHeaders(ep, bearer, headers)
 		if err != nil {
 			s.logger.Warn("model discovery failed",
 				"backend", backend, "kind", gw.Kind, "endpoint", ep, "error", err)
+			complete = false
 			continue
 		}
 		for _, m := range models {
@@ -6648,7 +6828,7 @@ func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []stri
 			}
 		}
 	}
-	return all
+	return all, complete
 }
 
 // gatewayKindNeedsProbeAuth reports whether a gateway kind requires the
@@ -6745,10 +6925,34 @@ var inferenceStaticModelAliases = []string{
 }
 
 func (s *Server) queryInferenceModels(backend string) []string {
-	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
-		models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+	models, _ := s.queryInferenceModelsDetailed(backend)
+	return models
+}
+
+// queryInferenceModelsDetailed additionally reports whether the returned list
+// is NON-AUTHORITATIVE — a stand-in for a census that did not fully succeed —
+// rather than a complete live-discovered or operator-configured set. Callers
+// surfacing model add/remove events must ignore diffs against such a list.
+//
+// Three shapes are non-authoritative, and all three produced the same false
+// "Model removed" storm before they were flagged:
+//   - the static aliases, when discovery failed outright (#4426);
+//   - a PARTIAL sweep, when some endpoints answered and others did not;
+//   - the HIVE_*_MODELS env list, when it is reached only BECAUSE a
+//     registered endpoint failed to answer (#4438).
+//
+// The env list is authoritative in the one case where it is the configured
+// source of models rather than a consolation prize: no endpoint registered at
+// all, so nothing was ever probed.
+func (s *Server) queryInferenceModelsDetailed(backend string) ([]string, bool) {
+	endpoints, ok := s.getInferenceEndpoints(backend)
+	probed := ok && len(endpoints) > 0
+	if probed {
+		models, complete := fetchModelsFromEndpointsDetailed(endpoints, s.inferenceAPIKey(backend))
 		if len(models) > 0 {
-			return models
+			// Show a partial sweep — a short dropdown beats an empty one —
+			// but never let it stand as a census of what exists.
+			return models, !complete
 		}
 	}
 	envVar := "HIVE_VLLM_MODELS"
@@ -6759,11 +6963,11 @@ func (s *Server) queryInferenceModels(backend string) []string {
 		envVar = "HIVE_LITELLM_MODELS"
 	}
 	if val := os.Getenv(envVar); val != "" {
-		return inferenceModelsFromEnv(envVar, "")
+		return inferenceModelsFromEnv(envVar, ""), probed
 	}
 	// Discovery failed or the backend is unconfigured — fall back to the
 	// common static aliases (unverified against any endpoint/key).
-	return inferenceStaticModelAliases
+	return inferenceStaticModelAliases, true
 }
 
 const inferenceModelQueryTimeout = 5 * time.Second
@@ -6772,11 +6976,25 @@ const inferenceModelQueryTimeout = 5 * time.Second
 // a deduplicated, combined list of all model IDs found. apiKey is optional
 // (litellm requires bearer auth; vllm/llm-d do not).
 func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
+	models, _ := fetchModelsFromEndpointsDetailed(endpoints, apiKey)
+	return models
+}
+
+// fetchModelsFromEndpointsDetailed additionally reports whether EVERY endpoint
+// answered. A PARTIAL sweep — one gateway of several timing out or answering
+// 403 while its siblings reply — still returns a non-empty list, and a caller
+// that diffs model sets must not read the survivors as "the unreachable
+// endpoint's models were removed" (#4438: a partial sweep wallpapered the
+// dashboard with false "Model removed from litellm: …" toasts, including for
+// the very model the hive's agents were configured to use).
+func fetchModelsFromEndpointsDetailed(endpoints []string, apiKey string) ([]string, bool) {
 	seen := make(map[string]bool)
 	var all []string
+	complete := true
 	for _, ep := range endpoints {
 		models, err := fetchModelsFromEndpoint(ep, apiKey)
 		if err != nil {
+			complete = false
 			continue
 		}
 		for _, m := range models {
@@ -6786,7 +7004,7 @@ func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
 			}
 		}
 	}
-	return all
+	return all, complete
 }
 
 func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
@@ -6894,27 +7112,19 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		candidate.Knowledge.Enabled = body.Enabled
-		return nil
-	}); err != nil {
-		s.logger.Error("failed to persist config after knowledge toggle", "error", err)
-		jsonError(w, "failed to persist knowledge config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	committed := s.configSnapshot()
+	s.deps.Config.Knowledge.Enabled = body.Enabled
 
 	if body.Enabled && s.deps.Knowledge == nil {
-		layers := make([]knowledge.LayerConfig, len(committed.Knowledge.Layers))
-		for i, l := range committed.Knowledge.Layers {
+		layers := make([]knowledge.LayerConfig, len(s.deps.Config.Knowledge.Layers))
+		for i, l := range s.deps.Config.Knowledge.Layers {
 			layers[i] = knowledge.LayerConfig{Type: knowledge.LayerType(l.Type), Path: l.Path, URL: l.URL, Shared: l.Shared}
 		}
 		kcfg := knowledge.KnowledgeConfig{
 			Enabled: true,
 			Layers:  layers,
 			Primer: knowledge.PrimerConfig{
-				MaxFacts:      committed.Knowledge.Primer.MaxFacts,
-				MergeStrategy: committed.Knowledge.Primer.MergeStrategy,
+				MaxFacts:      s.deps.Config.Knowledge.Primer.MaxFacts,
+				MergeStrategy: s.deps.Config.Knowledge.Primer.MergeStrategy,
 			},
 		}
 		api := knowledge.NewKnowledgeAPI(layers, kcfg, s.deps.Logger)
@@ -6924,7 +7134,7 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps.BeadSynthesizer != nil {
-		if body.Enabled && committed.Knowledge.BeadSynthesizer.IsEnabled() {
+		if body.Enabled && s.deps.Config.Knowledge.BeadSynthesizer.IsEnabled() {
 			s.deps.BeadSynthesizer.StartBackground(s.deps.Ctx)
 			s.logger.Info("bead synthesizer started via knowledge toggle")
 		} else if !body.Enabled {
@@ -6933,13 +7143,16 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after knowledge toggle", "error", err)
+	}
 	s.auditFromRequest(r, "knowledge_toggle", auditDetail("enabled", fmt.Sprintf("%v", body.Enabled)), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "enabled": fmt.Sprintf("%v", body.Enabled)})
 }
 
 func (s *Server) handleBeadSynthStatus(w http.ResponseWriter, r *http.Request) {
-	cfg := s.configSnapshot().Knowledge.BeadSynthesizer
+	cfg := s.deps.Config.Knowledge.BeadSynthesizer
 	running := false
 	if s.deps.BeadSynthesizer != nil {
 		running = s.deps.BeadSynthesizer.IsRunning()
@@ -6969,14 +7182,7 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enabled := body.Enabled
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		candidate.Knowledge.BeadSynthesizer.Enabled = &enabled
-		return nil
-	}); err != nil {
-		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)
-		jsonError(w, "failed to persist bead synthesizer config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	s.deps.Config.Knowledge.BeadSynthesizer.Enabled = &enabled
 
 	if s.deps.BeadSynthesizer != nil {
 		if enabled {
@@ -6988,6 +7194,9 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)
+	}
 	s.auditFromRequest(r, "bead_synth_toggle", auditDetail("enabled", fmt.Sprintf("%v", enabled)), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "bead_synthesizer_enabled": fmt.Sprintf("%v", enabled)})
@@ -7212,6 +7421,47 @@ func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.TrendHistory())
+}
+
+// handleBudgetHistory serves the per-budget-window report (#4298): one row per
+// CLOSED window, newest first, plus the window still open so an operator sees
+// the whole picture in one response rather than joining two endpoints.
+//
+// `windows` is ALWAYS an array, never null — a hive that has not yet seen a
+// roll returns `[]`, which a client renders as "no history yet" rather than
+// crashing on a nil. That is the compatibility requirement #4298 names: new
+// code must not break an environment that was never keeping this history.
+func (s *Server) handleBudgetHistory(w http.ResponseWriter, r *http.Request) {
+	windows := s.BudgetWindowHistory()
+	if windows == nil {
+		windows = []BudgetWindowEntry{}
+	}
+
+	resp := map[string]any{"windows": windows}
+
+	// The open window, straight from the live status, so the report reads
+	// continuously from "now" back through the closed rows.
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status != nil {
+		b := status.Budget
+		current := map[string]any{
+			"limit":     b.WeeklyBudget,
+			"used":      b.Used,
+			"pctUsed":   b.PctUsed,
+			"exhausted": b.Exhausted,
+		}
+		if b.WindowStartsAt != "" {
+			current["windowStart"] = b.WindowStartsAt
+		}
+		if b.WindowEndsAt != "" {
+			current["windowEnd"] = b.WindowEndsAt
+		}
+		resp["current"] = current
+	}
+
+	jsonResponse(w, resp)
 }
 
 // handleTimeSeries is the unified read endpoint over the sparkline histories.
@@ -7814,27 +8064,23 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 	}
 
 	alreadyInConfig := false
-	for _, gs := range s.configSnapshot().Knowledge.GitSources {
+	for _, gs := range s.deps.Config.Knowledge.GitSources {
 		if gs.URL == req.URL && gs.Subpath == req.Subpath {
 			alreadyInConfig = true
 			break
 		}
 	}
 	if !alreadyInConfig {
-		if err := s.mutateConfig(func(candidate *config.Config) error {
-			candidate.Knowledge.GitSources = append(candidate.Knowledge.GitSources, config.GitSourceConfigYAML{
-				Name:    req.Name,
-				URL:     req.URL,
-				Branch:  req.Branch,
-				Subpath: req.Subpath,
-				Layer:   req.Layer,
-			})
-			return nil
-		}); err != nil {
-			s.logger.Error("failed to persist config after git source connect", "error", err)
-			jsonError(w, "failed to persist git source config: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		s.deps.Config.Knowledge.GitSources = append(s.deps.Config.Knowledge.GitSources, config.GitSourceConfigYAML{
+			Name:    req.Name,
+			URL:     req.URL,
+			Branch:  req.Branch,
+			Subpath: req.Subpath,
+			Layer:   req.Layer,
+		})
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after git source connect", "error", err)
 	}
 
 	s.auditFromRequest(r, "git_source_connect", auditDetail("name", req.Name, "url", req.URL), "")
@@ -7869,20 +8115,16 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		filtered := make([]config.GitSourceConfigYAML, 0, len(candidate.Knowledge.GitSources))
-		for _, gs := range candidate.Knowledge.GitSources {
-			if gs.URL == req.URL && gs.Subpath == req.Subpath {
-				continue
-			}
-			filtered = append(filtered, gs)
+	filtered := make([]config.GitSourceConfigYAML, 0, len(s.deps.Config.Knowledge.GitSources))
+	for _, gs := range s.deps.Config.Knowledge.GitSources {
+		if gs.URL == req.URL && gs.Subpath == req.Subpath {
+			continue
 		}
-		candidate.Knowledge.GitSources = filtered
-		return nil
-	}); err != nil {
+		filtered = append(filtered, gs)
+	}
+	s.deps.Config.Knowledge.GitSources = filtered
+	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after git source disconnect", "error", err)
-		jsonError(w, "failed to persist git source config: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	s.auditFromRequest(r, "git_source_disconnect", auditDetail("url", req.URL), "")
@@ -8126,12 +8368,8 @@ func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
 	}
 	body.ID = sanitizeString(body.ID)
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		candidate.HiveID = body.ID
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to persist hive ID: "+err.Error(), http.StatusInternalServerError)
-		return
+	if s.deps != nil && s.deps.Config != nil {
+		s.deps.Config.HiveID = body.ID
 	}
 
 	// Persist the new ID to disk so it survives restarts

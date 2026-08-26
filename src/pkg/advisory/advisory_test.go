@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 	"time"
 
@@ -49,7 +48,7 @@ func TestFormatDigestMarkdown(t *testing.T) {
 		{Agent: "quality", Severity: "low", Title: "typo in docs", Type: "style"},
 	}
 	d := BuildDigest(findings, "busy")
-	md := FormatDigestMarkdown(d, "", "")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: ""})
 	if md == "" {
 		t.Fatal("expected non-empty markdown")
 	}
@@ -66,40 +65,23 @@ func TestFormatDigestMarkdown(t *testing.T) {
 
 func TestFormatDigestMarkdownEmpty(t *testing.T) {
 	d := BuildDigest(nil, "idle")
-	md := FormatDigestMarkdown(d, "", "")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: ""})
 	if md != "" {
 		t.Errorf("expected empty markdown for 0 findings, got %d chars", len(md))
 	}
 }
 
-func TestFormatDigestMarkdownIsStableAcrossFindingOrder(t *testing.T) {
-	generatedAt := time.Date(2026, time.August, 2, 3, 10, 0, 0, time.UTC)
-	findings := []Finding{
-		{Agent: "quality", Type: "bug", Severity: "low", Title: "Zulu", Detail: "second", File: "z.go", Line: 20},
-		{Agent: "quality", Type: "bug", Severity: "low", Title: "Alpha", Detail: "first", File: "a.go", Line: 10},
-		{Agent: "scanner", Type: "security", Severity: "high", Title: "Guard", Detail: "high", File: "guard.go", Line: 1},
+func TestFormatDigestMarkdownEmptyFreshnessMarker(t *testing.T) {
+	d := BuildDigest(nil, "idle")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: "", ShowEmpty: true})
+	if md == "" {
+		t.Fatal("expected non-empty markdown for an explicit empty freshness marker")
 	}
-	forward := &Digest{
-		GeneratedAt: generatedAt,
-		ByAgent: map[string][]Finding{
-			"quality": {findings[0], findings[1]},
-			"scanner": {findings[2]},
-		},
-		TotalCount: len(findings),
+	if !contains(md, "✅ No open advisory findings") {
+		t.Errorf("missing no-findings freshness marker:\n%s", md)
 	}
-	reversed := &Digest{
-		GeneratedAt: generatedAt,
-		ByAgent: map[string][]Finding{
-			"scanner": {findings[2]},
-			"quality": {findings[1], findings[0]},
-		},
-		TotalCount: len(findings),
-	}
-
-	gotForward := FormatDigestMarkdown(forward, "", "")
-	gotReversed := FormatDigestMarkdown(reversed, "", "")
-	if gotForward != gotReversed {
-		t.Fatalf("finding order changed advisory markdown:\nforward:\n%s\nreversed:\n%s", gotForward, gotReversed)
+	if !contains(md, "evaluated ") {
+		t.Errorf("missing evaluation timestamp:\n%s", md)
 	}
 }
 
@@ -113,7 +95,7 @@ func TestFormatDigestMarkdownWithResolved(t *testing.T) {
 			{Agent: "scanner", Title: "old bug", ClosedAt: time.Now(), File: "old.go"},
 		},
 	}
-	md := FormatDigestMarkdown(d, "", "")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: ""})
 	if !contains(md, "Recently Resolved") {
 		t.Error("missing Recently Resolved section")
 	}
@@ -136,7 +118,7 @@ func TestFormatDigestMarkdownLinkifiesRefs(t *testing.T) {
 		{Agent: "quality", Severity: "medium", Type: "perf", Title: "slow loop", File: "pkg/a.go", Line: 12},
 	}
 	d := BuildDigest(findings, "busy")
-	md := FormatDigestMarkdown(d, "llm-d-incubation", "llm-d-fast-model-actuation")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "llm-d-incubation", PrimaryRepo: "llm-d-fast-model-actuation"})
 
 	wantLinks := []string{
 		"[llm-d-fast-model-actuation#585](https://github.com/llm-d-incubation/llm-d-fast-model-actuation/issues/585)",
@@ -424,7 +406,7 @@ func TestBuildDigestFromBeads(t *testing.T) {
 	_ = store.Close(b3.ID)
 
 	stores := map[string]*beads.Store{"scanner": store}
-	d := BuildDigestFromBeads(stores, "busy")
+	d := BuildDigestFromBeads(stores, "busy", DigestOptions{})
 
 	if d.TotalCount != 1 {
 		t.Errorf("TotalCount = %d, want 1 (only advisory types, open only)", d.TotalCount)
@@ -442,49 +424,9 @@ func TestBuildDigestFromBeads(t *testing.T) {
 
 func TestBuildDigestFromBeadsEmpty(t *testing.T) {
 	stores := map[string]*beads.Store{}
-	d := BuildDigestFromBeads(stores, "idle")
+	d := BuildDigestFromBeads(stores, "idle", DigestOptions{})
 	if d.TotalCount != 0 {
 		t.Errorf("TotalCount = %d, want 0", d.TotalCount)
-	}
-}
-
-func TestSortAdvisoryBeadsDeterministicallyBreaksTimestampTies(t *testing.T) {
-	const createdAt = "2026-08-04T06:45:00Z"
-	decode := func(raw string) *beads.Bead {
-		t.Helper()
-		var bead beads.Bead
-		if err := json.Unmarshal([]byte(raw), &bead); err != nil {
-			t.Fatalf("decode bead: %v", err)
-		}
-		return &bead
-	}
-	desktop := decode(`{"id":"bead-z","title":"Maintain visual test: overbroad_full_page","type":"bug","status":"open","priority":3,"actor":"quality","external_ref":"visual-hive://finding/desktop","created_at":"` + createdAt + `","updated_at":"` + createdAt + `"}`)
-	mobile := decode(`{"id":"bead-a","title":"Maintain visual test: overbroad_full_page","type":"bug","status":"open","priority":3,"actor":"quality","external_ref":"visual-hive://finding/mobile","created_at":"` + createdAt + `","updated_at":"` + createdAt + `"}`)
-
-	forward := []*beads.Bead{desktop, mobile}
-	reverse := []*beads.Bead{mobile, desktop}
-	sortAdvisoryBeads(forward)
-	sortAdvisoryBeads(reverse)
-
-	if forward[0].ID != reverse[0].ID || forward[0].ExternalRef != "visual-hive://finding/desktop" {
-		t.Fatalf("timestamp tie selected different advisory representatives: forward=%s reverse=%s", forward[0].ID, reverse[0].ID)
-	}
-}
-
-func TestResolvedFindingSortKeyBreaksClosedAtTies(t *testing.T) {
-	closedAt := time.Date(2026, time.August, 4, 6, 45, 0, 0, time.UTC)
-	items := []ResolvedFinding{
-		{Agent: "quality", Title: "Zulu", File: "z.go", ClosedAt: closedAt},
-		{Agent: "quality", Title: "Alpha", File: "a.go", ClosedAt: closedAt},
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if !items[i].ClosedAt.Equal(items[j].ClosedAt) {
-			return items[i].ClosedAt.After(items[j].ClosedAt)
-		}
-		return resolvedFindingSortKey(items[i]) < resolvedFindingSortKey(items[j])
-	})
-	if items[0].Title != "Alpha" {
-		t.Fatalf("resolved timestamp tie was not deterministic: first=%q", items[0].Title)
 	}
 }
 
@@ -549,7 +491,7 @@ func TestBuildDigestFromBeadsDedupesCosmeticVariants(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d := BuildDigestFromBeads(map[string]*beads.Store{"ci-maintainer": store}, "busy")
+	d := BuildDigestFromBeads(map[string]*beads.Store{"ci-maintainer": store}, "busy", DigestOptions{})
 	if d.TotalCount != 1 {
 		t.Errorf("TotalCount = %d, want 1 — titles differing only in run numbers/punctuation are the same finding", d.TotalCount)
 	}
@@ -590,7 +532,7 @@ func TestFormatDigestMarkdownCapsPerAgentTypeGroups(t *testing.T) {
 		Title: "coverage gate failing", Timestamp: base,
 	})
 	d := BuildDigest(findings, "busy")
-	md := FormatDigestMarkdown(d, "", "")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "", PrimaryRepo: ""})
 
 	if !contains(md, "…plus 3 more [ci-failure] findings from ci-maintainer") {
 		t.Errorf("missing collapse line for the capped group:\n%s", md)

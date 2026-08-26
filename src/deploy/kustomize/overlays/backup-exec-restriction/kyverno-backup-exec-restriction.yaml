@@ -1,0 +1,90 @@
+# Optional Kyverno ClusterPolicy that enforces the namespace restriction the
+# backup CronJob's ClusterRole cannot express in pure RBAC.
+#
+# Background (issue #4062):
+#   The hive-hub-backup ClusterRole grants pods/exec: create cluster-wide
+#   because Kubernetes RBAC has no wildcard-namespace syntax. The backup binary
+#   only ever targets hive-hosted-<id> namespaces, but the RBAC allows exec
+#   into any namespace. A compromised backup pod could exploit this to shell
+#   into pods outside the hive-hosted-* namespace tree.
+#
+# This policy enforces the application-level intent at the admission layer:
+# the hive-hub-backup ServiceAccount may create pods/exec subresource requests
+# ONLY when the target resource namespace starts with "hive-hosted-".
+#
+# Prerequisites:
+#   - Kyverno >= 1.11 installed in the cluster (the Pod/exec subresource match
+#     syntax used below requires Kyverno 1.10+; 1.11 is the tested floor)
+#   - The backup CronJob and ClusterRole in src/deploy/k8s/backup-cronjob.yaml
+#     must already be applied
+#
+# Apply with:
+#   kubectl apply -f kyverno-backup-exec-restriction.yaml
+#
+# Or include this overlay in your kustomize build:
+#   kustomize build src/deploy/kustomize/overlays/backup-exec-restriction
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-backup-exec-to-hive-namespaces
+  annotations:
+    policies.kyverno.io/title: Restrict backup pods/exec to hive-hosted-* namespaces
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: ServiceAccount
+    policies.kyverno.io/description: >-
+      Restricts the hive-hub-backup ServiceAccount's pods/exec privilege to
+      namespaces matching the hive-hosted-* prefix, closing the gap between
+      what the ClusterRole permits (cluster-wide) and what the backup binary
+      actually requires (only spoke namespaces). See issue #4062.
+spec:
+  # Fail OPEN (Ignore) deliberately.
+  #
+  # This policy matches Pod/exec CONNECT requests cluster-wide. With
+  # failurePolicy: Fail, any Kyverno outage (upgrade, crashloop, webhook cert
+  # rotation, node pressure) would make the API server reject the admission
+  # review and block EVERY `kubectl exec` in the cluster — including the exec
+  # an operator needs to debug Kyverno itself. That availability risk is far
+  # larger than the residual risk this policy mitigates.
+  #
+  # Fail-open semantics: while Kyverno is unavailable, the backup SA's exec is
+  # constrained only by RBAC (cluster-wide) plus the application-level
+  # namespace guard in pkg/hubbackup/collect.go, which is compiled into the
+  # backup binary and cannot be bypassed by a Kyverno outage. This policy is
+  # defence-in-depth, not the sole control.
+  failurePolicy: Ignore
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: restrict-backup-exec-namespace
+      # Kyverno 1.10 dropped the PodExecOptions kind: exec is matched as the
+      # Pod/exec subresource, and the admission request arrives with
+      # operation CONNECT (not CREATE).
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod/exec
+            subjects:
+              - kind: ServiceAccount
+                name: hive-hub-backup
+                namespace: hive-hub
+      preconditions:
+        all:
+          - key: "{{ request.operation }}"
+            operator: Equals
+            value: CONNECT
+      validate:
+        message: >-
+          hive-hub-backup may only exec into pods in namespaces prefixed with
+          'hive-hosted-'. Attempted target namespace: {{ request.namespace }}.
+          See issue #4062 for context.
+        deny:
+          conditions:
+            all:
+              # Wildcards are not evaluated by Equals/NotEquals, so the prefix
+              # test is an explicit regex over the target namespace.
+              - key: "{{ regex_match('^hive-hosted-[a-z0-9]([-a-z0-9]*[a-z0-9])?$', request.namespace) }}"
+                operator: Equals
+                value: false

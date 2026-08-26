@@ -1,0 +1,259 @@
+name: Podman Rootful Lane
+
+# The rootful Podman lane on hosted amd64 (#4335), lane 2 of the map in
+# src/docs/podman-ci-runner-map.md (#4211).
+#
+# #4200 established the rootful baseline and shipped
+# src/deploy/probe_podman_rootful_netadmin.sh, but nothing ran it per PR.
+# Rootful is the reference the rootless result is measured against, so a silent
+# regression here invalidates that comparison. This workflow is the wrapper
+# that makes the existing probe run on every pull request; the probe itself is
+# not modified by this lane.
+#
+# The three cases it runs, all as real root:
+#
+#   default    rootful, no added capability   -> fail closed, exit 77
+#   netadmin   rootful + --cap-add NET_ADMIN  -> egress redirect installed
+#   advisory   HIVE_PROXY_ADVISORY_OK=true    -> starts with the explicit warning
+#
+# The probe exits non-zero when a case stops matching the contract recorded in
+# src/docs/podman-rootful-egress-baseline.md, and this job does not swallow
+# that status.
+#
+# WHAT A GREEN TICK HERE DOES AND DOES NOT MEAN. The probe pulls a published
+# image, so this lane asserts that the *published* image's egress gate still
+# behaves under rootful Podman and that the runner still provides a working
+# rootful stack. It does NOT build the PR's own image, so a change to
+# src/deploy/entrypoint.sh is not covered until that change is published.
+# Probing a PR-built image is the map's lane 3 and is outside #4335's boundary,
+# which is "wrap the existing probe in a workflow".
+#
+# No path filters, on purpose. #4339 is what a skipped guard looks like: a
+# workflow scoped so narrowly that it reports green by never running.
+#
+# SAFETY BOUNDARIES, from the map's "Permissions and safety boundaries". This
+# lane runs containers as real root on the runner VM, so they are tighter here
+# than anywhere else:
+#
+#   * contents: read and nothing more.
+#   * No secrets, and therefore no pull_request_target. Fork PRs are the
+#     coverage that matters most and they get no secrets anyway;
+#     pull_request_target would run untrusted code with repository credentials
+#     as root, which is the one combination the map forbids outright.
+#   * No engine socket is mounted anywhere.
+#   * Storage isolation is the probe's, and this lane leaves it alone: --store
+#     is deliberately NOT passed, so the probe builds its own throwaway
+#     graphroot/runroot under /var/tmp and removes it itself. Pointing this job
+#     at a shared store — including the runner's own /var/lib/containers — would
+#     defeat the isolation #4200 built in. The post-run step below asserts that
+#     the host's rootful store really was left untouched.
+#
+# Rootful on an ephemeral hosted runner is acceptable precisely because the VM
+# is single-use. Do not copy this lane onto a persistent self-hosted runner
+# without re-reading that section of the map first.
+
+on:
+  push:
+    branches:
+      - dd
+      - v2
+      - v4
+  pull_request:
+    branches:
+      - dd
+      - v2
+      - v4
+  workflow_dispatch:
+    inputs:
+      somark:
+        description: 'Also isolate the SO_MARK exemption from the owner-UID one (needs outbound egress)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podman-rootful-lane-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rootful-probe:
+    name: rootful startup, exit-77, and egress gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Assert the environment, do not assume it. Podman is preinstalled on
+      # this runner image and sudo is passwordless, so there is no setup step —
+      # which is exactly why both have to be checked: a runner-image change is
+      # silent, and would otherwise turn a real regression into a test that
+      # quietly stopped covering anything.
+      #
+      # The floor is asserted; the exact version is reported. Pinning the exact
+      # version would make every benign runner bump a red build, so a
+      # difference from the version #4211 recorded is surfaced as a notice
+      # instead — visible, not fatal.
+      - name: Assert the rootful Podman stack this lane depends on
+        id: stack
+        env:
+          RECORDED_PODMAN: '5.8.4'
+        run: |
+          # shellcheck disable=SC2016 # the --format strings stay single-quoted:
+          # those are Go template braces for Podman, not shell expansions, and
+          # the shell must not touch them.
+          set -euo pipefail
+
+          if ! command -v podman >/dev/null 2>&1; then
+            echo "::error::podman is not installed on this runner; #4211 recorded it preinstalled at /usr/local/bin/podman"
+            exit 1
+          fi
+
+          # -n, never a prompt: without passwordless sudo this lane cannot run
+          # rootful at all, and a hang is a worse failure than a red X.
+          if ! sudo -n true 2>/dev/null; then
+            echo "::error::passwordless sudo is not available; this lane cannot exercise rootful Podman. Record the missing facility in src/docs/podman-ci-runner-map.md."
+            exit 1
+          fi
+
+          version="$(sudo -n podman info --format '{{.Version.Version}}')"
+          rootless="$(sudo -n podman info --format '{{.Host.Security.Rootless}}')"
+          cgroups="$(sudo -n podman info --format '{{.Host.CgroupsVersion}}')"
+          backend="$(sudo -n podman info --format '{{.Host.NetworkBackend}}')"
+          runtime="$(sudo -n podman info --format '{{.Host.OCIRuntime.Name}}')"
+          hoststore="$(sudo -n podman info --format '{{.Store.GraphRoot}}')"
+
+          printf 'podman       %s (%s)\n' "$version" "$(command -v podman)"
+          printf 'rootless     %s\n' "$rootless"
+          printf 'cgroups      %s\n' "$cgroups"
+          printf 'backend      %s\n' "$backend"
+          printf 'runtime      %s\n' "$runtime"
+          printf 'host store   %s (the probe must NOT use this)\n' "$hoststore"
+
+          # THE assertion of this lane. Rootless is #4334's lane; if `sudo
+          # podman` ever came back rootless — a sudo/XDG_RUNTIME_DIR change is
+          # all it would take — every case below would still pass and would
+          # mean something else entirely. The probe refuses to run in that
+          # state too, but it must not be the only thing checking: a lane that
+          # can silently swap root modes is not a baseline.
+          if [ "$rootless" != "false" ]; then
+            echo "::error::sudo podman reports rootless=${rootless}; this lane must run ROOTFUL (rootless is #4334)"
+            exit 1
+          fi
+
+          # A floor, not a pin. 4.x is the oldest series with the --cap-add
+          # NET_ADMIN behaviour the whole matrix turns on.
+          major="${version%%.*}"
+          if [ "${major:-0}" -lt 4 ]; then
+            echo "::error::podman ${version} is below the 4.x floor this lane needs for --cap-add NET_ADMIN"
+            exit 1
+          fi
+
+          if [ "$version" != "$RECORDED_PODMAN" ]; then
+            echo "::notice::runner Podman is ${version}; src/docs/podman-ci-runner-map.md recorded ${RECORDED_PODMAN}. Re-check the map if this lane starts behaving differently."
+          fi
+
+          # Handed to the post-run isolation check so it compares against the
+          # store this job actually saw, not a hardcoded path. The image count
+          # is the baseline that check compares against: the probe pulls a
+          # multi-gigabyte image, so a store it was wrongly pointed at grows by
+          # at least one image and stays grown — a far more durable trace than
+          # its containers, which are all --rm.
+          echo "host_store=${hoststore}" >>"$GITHUB_OUTPUT"
+          echo "images_before=$(sudo -n podman images -q | wc -l)" >>"$GITHUB_OUTPUT"
+
+          {
+            printf '### Rootful Podman lane environment\n\n'
+            printf '| | |\n| --- | --- |\n'
+            printf '| Podman | `%s` (map recorded `%s`) |\n' "$version" "$RECORDED_PODMAN"
+            printf '| Root mode | rootless=`%s` |\n' "$rootless"
+            printf '| cgroups | `%s` |\n' "$cgroups"
+            printf '| Network backend | `%s` |\n' "$backend"
+            printf '| OCI runtime | `%s` |\n' "$runtime"
+            printf '| Host rootful store | `%s` (probe uses a throwaway store) |\n' "$hoststore"
+            printf '| Runner | `%s`, image `%s` |\n' "$RUNNER_OS" "${ImageVersion:-unknown}"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # The probe's exit status is the result. 0 means every case matched the
+      # documented contract; 1 means one did not — a gate that failed to
+      # install lands here; 78 means a prerequisite was missing, which is a
+      # broken lane rather than a passing one and must be just as loud.
+      #
+      # There is deliberately no continue-on-error and no `|| true`: the whole
+      # point of the lane is that a failed gate fails the job.
+      #
+      # No --store argument. See the storage note in the header.
+      - name: Rootful startup, exit-77, and egress-gate matrix (#4200)
+        env:
+          SOMARK: ${{ inputs.somark }}
+        run: |
+          set -uo pipefail
+
+          args=""
+          if [ "${SOMARK:-false}" = "true" ]; then
+            args="--somark"
+          fi
+
+          # The runner invokes this with `bash -e`, so errexit has to come off
+          # deliberately: the probe's exit status IS the result, and it has to
+          # survive to the diagnosis below instead of aborting the step early.
+          set +e
+          # shellcheck disable=SC2086 # args is a deliberate single optional flag
+          sudo -n bash src/deploy/probe_podman_rootful_netadmin.sh $args
+          status=$?
+          set -e
+
+          case "$status" in
+            0)
+              echo "::notice::rootful matrix matched the documented baseline"
+              printf '\n✅ The three-case rootful matrix matched the baseline in `src/docs/podman-rootful-egress-baseline.md`.\n' >>"$GITHUB_STEP_SUMMARY"
+              ;;
+            78)
+              echo "::error::the probe could not run — a prerequisite is missing (EX_CONFIG). A lane that cannot run is not a lane that passed."
+              printf '\n❌ Prerequisite missing (exit 78). See the log for which one.\n' >>"$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::error::the rootful matrix no longer matches the documented baseline (exit ${status})"
+              printf '\n❌ The rootful matrix did not match the baseline (exit %s).\n' "$status" >>"$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+
+          exit "$status"
+
+      # The probe's storage isolation is an acceptance criterion, so it is
+      # checked rather than trusted. If a future edit ever pointed this lane at
+      # a shared store, the probe's containers and the pulled image would land
+      # in the host's rootful store instead of the throwaway one — and on a
+      # persistent runner that is the collision the map warns about. `always()`
+      # because a failed matrix is exactly when leftovers matter.
+      - name: Assert the probe left the host's rootful store alone
+        if: always()
+        env:
+          HOST_STORE: ${{ steps.stack.outputs.host_store }}
+          IMAGES_BEFORE: ${{ steps.stack.outputs.images_before }}
+        run: |
+          # shellcheck disable=SC2016 # {{.Names}} is a Podman Go template
+          set -uo pipefail
+
+          # Nothing to compare against if the assertion step never got that
+          # far; that failure is already the job's failure.
+          if [ -z "${IMAGES_BEFORE:-}" ]; then
+            echo "::notice::stack assertion did not complete, so there is no store baseline to compare against"
+            exit 0
+          fi
+
+          after="$(sudo -n podman images -q | wc -l)"
+          leaked="$(sudo -n podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^hive-rootful-probe-' || true)"
+
+          printf 'host store %s: %s image(s) before, %s after\n' "$HOST_STORE" "$IMAGES_BEFORE" "$after"
+
+          if [ "$after" -ne "$IMAGES_BEFORE" ] || [ -n "$leaked" ]; then
+            echo "::error::the probe wrote into the host's rootful store (${HOST_STORE}); its --root/--runroot isolation was bypassed"
+            sudo -n podman images
+            [ -n "$leaked" ] && printf 'leftover containers:\n%s\n' "$leaked"
+            exit 1
+          fi
+
+          echo "the host's rootful store is unchanged: the probe's throwaway store held"

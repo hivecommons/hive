@@ -216,7 +216,12 @@ paths:
     post:
       tags: [Access]
       summary: Grant access
-      description: Add a user with a role. Cannot have zero owners.
+      description: >
+        Add a user with a role, or update an existing grant. Cannot have zero
+        owners. An optional expires_at bounds the grant in time: after that
+        instant the role is revoked automatically. Omitting expires_at
+        preserves an existing expiry; sending an empty string clears it
+        (permanent).
       security:
         - cookieAuth: []
       parameters:
@@ -237,6 +242,12 @@ paths:
                 role:
                   type: string
                   enum: [read, read-write, owner]
+                expires_at:
+                  type: string
+                  description: >
+                    Optional expiry as YYYY-MM-DD (valid through that day, UTC)
+                    or RFC3339. Empty string clears the expiry; omitted
+                    preserves any existing expiry.
 
   /api/saas/hives/{id}/access/{username}:
     delete:

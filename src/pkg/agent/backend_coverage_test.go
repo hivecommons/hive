@@ -303,6 +303,55 @@ func TestBackendBinaryName_EverySupportedBackendResolves(t *testing.T) {
 	}
 }
 
+func TestManagerBackendBinaryName_ConfiguredGatewayResolvesToClaude(t *testing.T) {
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+	m.SetGatewayBackendChecker(func(backend string) bool {
+		return strings.EqualFold(backend, "openrouter")
+	})
+	for _, backend := range []string{"openrouter", "OpenRouter"} {
+		binary, err := m.backendBinaryName(backend)
+		if err != nil {
+			t.Errorf("configured gateway backend %q must launch, got %v", backend, err)
+			continue
+		}
+		if binary != "claude" {
+			t.Errorf("m.backendBinaryName(%q) = %q, want claude", backend, binary)
+		}
+	}
+}
+
+func TestAcceptedBackendsAreLaunchableByConstruction(t *testing.T) {
+	g := config.GovernorConfig{
+		Gateways: []config.GatewayConfig{
+			{Name: "openrouter", Kind: config.GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1"},
+			{Name: "Corp-Watsonx", Kind: config.GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+		},
+	}
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+	m.SetGatewayBackendChecker(func(backend string) bool {
+		return g.ResolveGateway(backend) != nil && backend != ""
+	})
+
+	backends := append([]string{""}, config.SupportedBackends()...)
+	backends = append(backends, "openrouter", "OPENROUTER", "corp-watsonx")
+	for _, backend := range backends {
+		if err := g.ValidateBackend(backend); err != nil {
+			t.Errorf("test backend %q should be accepted by config: %v", backend, err)
+			continue
+		}
+		if err := m.validateBackendName(backend); err != nil {
+			t.Errorf("backend %q accepted by config but rejected by manager validation: %v", backend, err)
+			continue
+		}
+		if backend == "" {
+			continue
+		}
+		if binary, err := m.backendBinaryName(backend); err != nil || binary == "" {
+			t.Errorf("backend %q validates but is not launchable: binary=%q err=%v", backend, binary, err)
+		}
+	}
+}
+
 // TestBackendBinaryName_AgyLaunchesAntigravityCLI pins agy to its own binary.
 //
 // agy is the Antigravity CLI, Google's replacement for the Gemini CLI: Google

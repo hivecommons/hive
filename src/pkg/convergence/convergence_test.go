@@ -232,6 +232,9 @@ func TestSubjectKey(t *testing.T) {
 	if got := (Subject{Repo: "acme/widget", Number: 7}).Key(); got != "acme/widget#7" {
 		t.Fatalf("Subject.Key() = %q, want the canonical owner/repo#number form", got)
 	}
+	if got := (Subject{WorkKey: "acme/widget!ENG-7"}).Key(); got != "acme/widget!ENG-7" {
+		t.Fatalf("external Subject.Key() = %q, want worksource.Ref key", got)
+	}
 }
 
 func TestDecisionConditionMiss(t *testing.T) {

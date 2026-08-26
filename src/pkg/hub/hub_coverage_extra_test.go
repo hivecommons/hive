@@ -552,7 +552,7 @@ func TestHandleMyHivesAdminSeesAllHives(t *testing.T) {
 	}
 	srv.mu.Unlock()
 
-	req := httptest.NewRequest("GET", "/my-hives", nil)
+	req := httptest.NewRequest("GET", "/fleet", nil)
 	req.Header.Set("Authorization", "Bearer ghp_admin_myhives")
 	w := httptest.NewRecorder()
 	srv.handleMyHives(w, req)

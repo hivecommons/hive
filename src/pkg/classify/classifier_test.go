@@ -209,6 +209,28 @@ func TestClassify_OutreachLane(t *testing.T) {
 	}
 }
 
+func TestClassify_OperabilityLanes(t *testing.T) {
+	tests := []struct {
+		title string
+		want  Lane
+	}{
+		{"Add an OpenTelemetry collector configuration", Lane("telemetry")},
+		{"Create a readiness runbook and rollback procedure", Lane("operations")},
+		{"Define an SLO for API availability", Lane("scanner")},
+		{"Add a service-level-objective for API availability", Lane("operations")},
+		{"Fix the slow login redirect", Lane("scanner")},
+		{"Fix the sliding window rate limiter", Lane("scanner")},
+		{"Fix an array slice panic", Lane("scanner")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			if got := Classify(makeIssue(tt.title)).Lane; got != tt.want {
+				t.Errorf("lane = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClassify_TitlePrefixRoutesToLane(t *testing.T) {
 	cases := []struct {
 		title    string
@@ -286,8 +308,8 @@ func TestClassify_ArchitectBeatsReviewer(t *testing.T) {
 
 func TestClassify_ClusterKeyExtraction(t *testing.T) {
 	cases := []struct {
-		title      string
-		wantKey    string
+		title   string
+		wantKey string
 	}{
 		{"Dashboard loading spinner is broken", "dashboard"},
 		{"Card border radius too large", "card"},

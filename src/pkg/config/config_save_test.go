@@ -609,12 +609,19 @@ func TestSaveWritesDashboardOverlayInK8sMode(t *testing.T) {
 
 func TestSaveSkipsDashboardOverlayOutsideK8s(t *testing.T) {
 	dir := t.TempDir()
-	origOverlay := DashboardOverlayFile
+	origOverlay, origRuntime := DashboardOverlayFile, RuntimeConfigFile
 	DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")
-	t.Cleanup(func() { DashboardOverlayFile = origOverlay })
+	// Keep Save()'s runtime-config write off the live /data too.
+	RuntimeConfigFile = filepath.Join(dir, "hive.yaml.runtime")
+	t.Cleanup(func() { DashboardOverlayFile, RuntimeConfigFile = origOverlay, origRuntime })
 	// No KUBERNETES_SERVICE_HOST and (on dev/CI machines) no
-	// serviceaccount token file — Docker mode.
+	// serviceaccount token file — Docker mode. On a live hive host the
+	// SA token file DOES exist, so redirect the probe path too (#4595
+	// hermeticity pattern) instead of relying on the host's filesystem.
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	origSAToken := saTokenFile
+	saTokenFile = filepath.Join(dir, "no-such-sa-token")
+	t.Cleanup(func() { saTokenFile = origSAToken })
 
 	cfg := &Config{
 		SourcePath: filepath.Join(dir, "hive.yaml"),

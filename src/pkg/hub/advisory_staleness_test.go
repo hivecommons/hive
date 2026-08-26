@@ -2,8 +2,11 @@ package hub
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // baseNow is a fixed reference time so age-based cases are deterministic.
@@ -35,6 +38,33 @@ func TestAdvisoryStale_FreshDigestNotStale(t *testing.T) {
 	}
 }
 
+// TestAdvisoryStaleThresholdCoversMaxUpdateInterval pins the invariant that
+// makes governor.advisory.update_interval_s (#4820) safe: the hub's staleness
+// baseline is effectively max(configured interval, default cadence) because
+// the SLOWEST legal cadence stays at least 30 minutes under the alarm
+// threshold. If either side moves — the threshold shrinks or the config max
+// grows — a hive healthily posting at its configured maximum would false-alarm
+// as wedged, and this test fails first.
+func TestAdvisoryStaleThresholdCoversMaxUpdateInterval(t *testing.T) {
+	maxCadence := time.Duration(config.MaxAdvisoryUpdateIntervalS) * time.Second
+	if advisoryStaleThreshold < maxCadence+30*time.Minute {
+		t.Fatalf("advisoryStaleThreshold (%v) must exceed the max configurable advisory update interval (%v) by ≥30m of slack",
+			advisoryStaleThreshold, maxCadence)
+	}
+}
+
+// TestAdvisoryStale_HealthyLongCadenceNotWedged is the behavioral half of the
+// invariant above: a hive whose operator slowed the digest to the maximum
+// allowed hourly cadence, and which last posted a full such interval ago (plus
+// eval-cycle slack), must NOT light the wedged-digest pill.
+func TestAdvisoryStale_HealthyLongCadenceNotWedged(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(time.Duration(config.MaxAdvisoryUpdateIntervalS)*time.Second + 5*time.Minute)
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("a healthy max-interval cadence must not read as wedged, got reason %q", reason)
+	}
+}
+
 func TestAdvisoryStale_PastThresholdIsStale(t *testing.T) {
 	e := advisoryModeEntry()
 	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Minute)
@@ -44,6 +74,85 @@ func TestAdvisoryStale_PastThresholdIsStale(t *testing.T) {
 	}
 	if reason == "" {
 		t.Fatalf("a stale flag must carry a reason for the tooltip")
+	}
+}
+
+// pausedAgent / offScheduleAgent / activeAgent build the AgentSummary shapes
+// the quiet-by-design gate discriminates. ExpectedActive/Enabled/CanOpenIssue
+// are set so none of them read as legacy (legacyAgent must return false).
+func pausedAgent(name string) AgentSummary {
+	return AgentSummary{Name: name, State: agentStatePaused, Paused: true, Enabled: true, CanOpenIssue: true}
+}
+func offScheduleAgent(name string) AgentSummary {
+	return AgentSummary{Name: name, State: "idle", ExpectedActive: false, Enabled: true, CanOpenIssue: true}
+}
+func activeAgent(name string) AgentSummary {
+	return AgentSummary{Name: name, State: agentStateRunning, ExpectedActive: true, Enabled: true, CanOpenIssue: true}
+}
+
+// An aged digest on a hive whose EVERY agent is deliberately quiet (paused or
+// off-schedule) is the operator's own pause, not a wedge — never a pill.
+// An off-schedule agent whose persistent session is still alive
+// (state=running) is quiet all the same — the suppression must not require
+// the session to be torn down.
+func TestAdvisoryStale_OffScheduleRunningSessionStillSuppresses(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+	e.Agents = []AgentSummary{
+		pausedAgent("supervisor"),
+		{Name: "scanner", State: agentStateRunning, ExpectedActive: false, Enabled: true, CanOpenIssue: true},
+	}
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("an off-schedule idle session must still count as quiet, got %q", reason)
+	}
+}
+
+func TestAdvisoryStale_AllAgentsQuietSuppressesAgedTimestamp(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+	e.Agents = []AgentSummary{pausedAgent("scanner"), offScheduleAgent("guide")}
+	if stale, reason := advisoryStale(e, advNow); stale {
+		t.Fatalf("all agents quiet by design must suppress the aged-digest alarm, got %q", reason)
+	}
+}
+
+// A reported post ERROR is a broken post path regardless of who is paused —
+// the quiet gate must not swallow it.
+func TestAdvisoryStale_AllAgentsQuietDoesNotSuppressError(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryError = "403 posting digest comment"
+	e.Agents = []AgentSummary{pausedAgent("scanner"), pausedAgent("guide")}
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("a reported post error must stay stale even with every agent paused")
+	}
+}
+
+// One working agent means findings are expected — the aged alarm stands.
+func TestAdvisoryStale_OneActiveAgentKeepsAgedAlarm(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+	e.Agents = []AgentSummary{pausedAgent("scanner"), activeAgent("guide")}
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("an active agent must keep the aged-digest alarm")
+	}
+}
+
+// Unknowns never suppress: no reported agents, or a legacy agent that reports
+// none of the new protocol fields, must leave the alarm in place.
+func TestAdvisoryStale_UnknownAgentsNeverSuppress(t *testing.T) {
+	aged := func() RegistryEntry {
+		e := advisoryModeEntry()
+		e.AdvisoryLastPostedAt = rfc3339Ago(advisoryStaleThreshold + time.Hour)
+		return e
+	}
+	e := aged() // no agents reported at all
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("a hive reporting no agents must not have the alarm suppressed")
+	}
+	e = aged()
+	e.Agents = []AgentSummary{{Name: "old"}} // legacy shape: no new-protocol fields
+	if stale, _ := advisoryStale(e, advNow); !stale {
+		t.Fatalf("a legacy agent entry must not suppress the alarm")
 	}
 }
 
@@ -171,5 +280,23 @@ func TestHeartbeatPayload_CarriesAdvisoryFields(t *testing.T) {
 	}
 	if _, ok := m["advisory_error"]; ok {
 		t.Fatalf("advisory_error must be omitted when empty")
+	}
+}
+
+// A spoke that has NEVER posted since its last restart but reports a post error
+// is a participant with a broken digest path — exactly the #4167 shape, where
+// the advisory issue could not be resolved so nothing was ever posted. Gate 1
+// must accept the error alone as proof of participation, otherwise the wedge
+// stays invisible for as long as the process lives.
+func TestAdvisoryStale_NeverPostedButErroredIsStale(t *testing.T) {
+	e := advisoryModeEntry()
+	e.AdvisoryLastPostedAt = "" // no successful post since restart
+	e.AdvisoryError = "no advisory issue resolved for org/repo — digest not posted"
+	stale, reason := advisoryStale(e, advNow)
+	if !stale {
+		t.Fatal("a reported post error with no successful post must still flag the digest stale")
+	}
+	if !strings.Contains(reason, "no advisory issue resolved") {
+		t.Fatalf("the reason must carry the reported cause, got %q", reason)
 	}
 }

@@ -63,6 +63,37 @@ func readMergeResult(t *testing.T, reqPath string) MergeResponse {
 	return resp
 }
 
+func TestMergeRequestWatcherSetsQueueMode(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		preexist bool
+	}{
+		{name: "fresh"},
+		{name: "upgrade existing", preexist: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "merge-requests")
+			if tt.preexist {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatalf("pre-create merge queue: %v", err)
+				}
+				if err := os.Chmod(dir, 0o755); err != nil {
+					t.Fatalf("pre-create chmod: %v", err)
+				}
+			}
+			mergeRequestDirForTest = dir
+			t.Cleanup(func() { mergeRequestDirForTest = "" })
+
+			ctx, cancel := context.WithCancel(context.Background())
+			done := testMergeClient(t, "http://127.0.0.1:0").StartMergeRequestWatcher(ctx, nil, nil)
+			cancel()
+			<-done
+
+			assertRequestDirMode(t, "merge", dir)
+		})
+	}
+}
+
 // End-to-end: a merge request file is merged over REST, consumed, result written.
 func TestMergeRequestWatcher_MergesAndConsumes(t *testing.T) {
 	merges := 0

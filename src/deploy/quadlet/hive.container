@@ -1,0 +1,267 @@
+# The Hive service, as a Quadlet .container unit (#4354).
+#
+# ADR-0017 chose Quadlet as the Podman persistent lifecycle. This is the unit
+# that decision was for. It runs the Hive service itself; the authenticating
+# gateway that fronts it is hive-gateway.container and the network they share
+# is hive.network (#4375).
+#
+# READINESS IS THE POINT. Notify=healthy generates Type=notify,
+# NotifyAccess=all, and `podman run --sdnotify=healthy`, which holds the unit
+# in `activating` until the healthcheck below passes. `systemctl start`
+# returning therefore means Hive answered /api/health, not merely that a
+# process was spawned. That property is why ADR-0017 chose Quadlet over
+# `podman compose` and over a bare --restart=always container, and it is the
+# reason HealthCmd= is set explicitly: the generator accepts Notify=healthy
+# with no healthcheck and exits 0, producing a unit that reports "started" the
+# moment conmon is up. A dry-run gate cannot catch that; only setting it can.
+#
+# BOTH ROOT MODES, ONE FILE. The bind-mount sources use %E, the systemd
+# configuration-directory specifier: /etc for a system (rootful) unit and
+# ~/.config for a --user (rootless) one. ADR-0017 warns that %h expands to
+# /root in a system unit, so a unit written with %h is not portable across
+# that boundary; %E is, and it puts the operator's files where each mode
+# expects them.
+#
+# AUTO-UPDATE IS OFF HERE, DELIBERATELY (#4411, #4188). There is no
+# `AutoUpdate=` key in this file: nothing polls a registry or acts on its own
+# until an operator opts in with `bin/hive-podman-update.sh autoupdate on`,
+# which drops `optional/hive-autoupdate.conf` in as
+# hive.container.d/20-autoupdate.conf. It IS achievable on this unit as
+# written — `podman auto-update --rollback` fires on a bad-but-startable image
+# even though this unit never reads `failed`, because podman reads the D-Bus
+# start-job result rather than ActiveState, so Restart= below stays exactly as
+# it is. What it costs (one full TimeoutStartSec of downtime per bad update,
+# repeated on every timer firing) is measured in
+# src/docs/podman-auto-update.md. Read that before turning it on.
+#
+# Podman version: ADR-0017 RECOMMENDS 5.6.0. The verified floor is UNKNOWN —
+# nothing between 5.0.0 and 5.8.4 has been exercised, and 5.8.4 is only the
+# version the spikes happened to run on, not a floor. Notify=healthy needs
+# 5.0.0 at minimum. This unit joins no .pod, so the podman#26105 wrong-pod-name
+# regression that motivates the 5.6.0 recommendation does not apply to it.
+
+[Unit]
+Description=Hive service
+Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
+
+# THE GATEWAY IS THE OTHER HALF OF THE DEPLOYMENT (#4516). hive-gateway.service
+# carries Requires=hive.service, which propagates a STOP from here to it and
+# nothing else -- so a hive that goes down takes the gateway with it, and a hive
+# that comes back does NOT bring it back. `systemctl restart hive.service` only
+# re-starts dependents that are ACTIVE when the job runs, and after a failed
+# update the gateway is not: the failing start already stopped it.
+#
+# That is fine for anything routed through bin/hive-podman-update.sh, which
+# starts the gateway itself since #4503. It is not fine for
+# `podman auto-update --rollback`, which restarts this unit over D-Bus and never
+# runs Hive's scripts: measured, the rollback restored the image correctly and
+# left :3001 -- the only published port -- dead until a human noticed, on a
+# daily timer, with rc=0 and hive.service active throughout.
+#
+# Wants= closes it at the unit level, so EVERY path that starts hive brings the
+# gateway with it: the timer, a bare `systemctl start`, and the scripts alike.
+#
+# Wants= and not Upholds=: Upholds would also restart a gateway an operator
+# deliberately stopped, which is a legitimate thing to do and not ours to undo.
+# Wants= restores it when hive STARTS and leaves a deliberate stop alone.
+# Wants= also has no systemd version floor, where Upholds= needs 249+.
+# It introduces no ordering: hive-gateway.container's own After=hive.service
+# still sequences them, verified by the config-contract test.
+Wants=hive-gateway.service
+
+[Container]
+# From the one source of truth, src/deploy/standalone-images.sh (#4206), so the
+# Podman and Docker assets cannot drift. src/deploy/test_standalone_image_refs.sh
+# fails if this line stops agreeing with it. Fully qualified on purpose: the
+# Quadlet generator warns on a short name and `podman auto-update` refuses one.
+#
+# IT IS A FLOATING TAG, AND AN OPERATOR MUST NOT ROLL BACK TO ONE. Today's
+# `:stable` and last month's `:stable` are different images with the same name,
+# so this line records a channel, not a version. The deployed version is pinned
+# by DIGEST in a Quadlet drop-in instead --
+# hive.container.d/10-image.conf, which Quadlet merges into this file on every
+# daemon-reload. Do not move the pin in here: this line has to keep agreeing
+# with the source of truth above, and a digest edited in here would be
+# overwritten by the next sync with it. See #4378 and
+# src/docs/podman-quadlet-update-rollback.md; bin/hive-podman-update.sh writes
+# the drop-in and reads its own pin history back for `rollback`.
+Image=ghcr.io/kubestellar/hive:stable
+ContainerName=hive
+
+# The #4210 ownership labels, matching hive_podman_labels in
+# bin/hive-podman-cleanup.sh. They are what makes this container visible to
+# bin/hive-podman-teardown.sh (#4343), whose selection is the ownership label
+# set and nothing else — an unlabelled container is invisible to it and would
+# survive every teardown. A Quadlet unit is static, so the instance label is
+# the contract's default; a second deployment on one host needs its own unit
+# with its own instance value.
+Label=io.kubestellar.hive.owned=true
+Label=io.kubestellar.hive.component=hive
+Label=io.kubestellar.hive.instance=default
+Label=io.kubestellar.hive.runtime=podman
+
+# CAP_NET_ADMIN is what the entrypoint needs to install the forced-proxy egress
+# redirect. Without it the entrypoint fails closed with exit 77 unless
+# HIVE_PROXY_ADVISORY_OK=true is set deliberately — see the support matrix.
+AddCapability=NET_ADMIN
+
+# Persistent state. The .volume unit is referenced by unit name so the
+# generated service orders itself after it.
+#
+# NO :z OR :Z HERE, deliberately — this is the one Volume= line in this file
+# without a relabel suffix. Podman already labels a named volume
+# container_file_t:s0 with no MCS category, which is exactly what a volume
+# read by a recreated container needs. Adding :Z stamps a private category and
+# the next mount without the flag is denied, with no AVC recorded to explain
+# it. Characterised in src/docs/podman-volume-persistence.md (#4376); the bind
+# mounts below are the opposite case.
+Volume=hive-data.volume:/data
+
+# The shared network (#4375). Referenced by unit name for the same reason as
+# the volume: the generated service picks up Requires=/After=hive-network.service.
+#
+# This is what makes the container reachable as `hive` from the gateway, which
+# is how src/deploy/nginx.conf finds its upstream. It is also the whole extent
+# of the exposure: joining a network publishes nothing, so 3001, 3002 and 7681
+# are reachable from other members of this network and from nowhere else.
+Network=hive.network
+
+# Operator-supplied configuration and secrets. %E is /etc for a rootful unit
+# and ~/.config for a rootless one.
+#
+# :Z relabels private to this container, which is correct here because exactly
+# one container uses these paths. Do NOT change it to :z for the secrets
+# directory: :z is the shared label, and these are secrets. On a host without
+# SELinux both are no-ops.
+Volume=%E/hive/hive.yaml:/etc/hive/hive.yaml:ro,Z
+Volume=%E/hive/secrets:/secrets:ro,Z
+
+# Tokens and notification settings, kept out of the unit file.
+#
+# This file must EXIST — create it empty if every setting lives in hive.yaml.
+# Quadlet does NOT honour systemd's leading `-` optional-file prefix here:
+# `EnvironmentFile=-%E/hive/hive.env` generates cleanly and then resolves to
+# `<unit dir>/-%E/hive/hive.env`, a path that will never exist, because the `-`
+# stops the value looking absolute and Quadlet joins relative values to the
+# unit directory. The dry-run does not warn about it. Measured on Podman 5.8.4;
+# do not "restore" the dash.
+EnvironmentFile=%E/hive/hive.env
+
+# NO PublishPort, DELIBERATELY. The service listens on 3002 (API) and 3001
+# (proxy), and 7681 is the raw writable ttyd terminal which must never be
+# published — reaching it goes through the authenticating gateway on
+# :3001/terminal, which authenticates first. The single published port on the
+# host belongs to hive-gateway.container and is 3001 and nothing else, exactly
+# as in src/docker-compose.yaml. src/deploy/test_quadlet_port_boundary.sh fails
+# the build if a PublishPort= appears here.
+
+# READINESS. HealthCmd is required for Notify=healthy to mean anything; see the
+# header. /api/health is the same endpoint the Kubernetes readiness probe and
+# the Compose healthcheck use, so "healthy" means the same thing on all three.
+#
+# IT PROBES BOTH LISTENERS, and it did not always (#4476). The container serves
+# on two ports: 3002 is the Go API, 3001 is the Node auth proxy — and 3001 is
+# what src/deploy/nginx.conf points `upstream hive_api` at, so it is the port
+# the gateway and every operator actually reach. 3d1e6077 moved that upstream
+# off 3002 deliberately, so the gateway cannot reach the API without passing
+# the proxy first.
+#
+# Probing 3002 alone therefore certified the half nobody reaches. Measured:
+# with HIVE_DASHBOARD_TOKEN absent from hive.env the proxy fails closed and
+# never binds 3001, while 3002 answers 200 throughout — `hive.service` active
+# and the container `healthy` for the entire two minutes the deployment was
+# unusable, with the only red arriving 120s later on hive-gateway.service as an
+# nginx `connect() failed (111: Connection refused)` naming neither the port nor
+# the variable. The unit that owns the broken process now reports it.
+#
+# Podman runs a --health-cmd that is not a JSON array as an argument to
+# /bin/sh -c, so the `&&` below is the shell's: either half failing is
+# unhealthy. Quadlet passes the whole value through as ONE argument — verified
+# against the generator's --dryrun, which renders it
+# `--health-cmd "curl\x20-sf\x20...\x20&&\x20curl\x20-sf\x20..."`.
+#
+# THE FIRST PORT IS COUPLED TO `dashboard.port` IN THE MOUNTED hive.yaml, and
+# nothing enforces the coupling. 3002 is the Go default (defaultDashboardPort in
+# pkg/config/config.go), what src/deploy/hive.yaml sets, and what the Compose
+# healthcheck probes — but src/hive.yaml.example ships 3001 for source runs.
+# Install that file unchanged and Hive serves on 3001, this probe never answers,
+# and Notify=healthy correctly holds the unit in `activating` for the whole
+# TimeoutStartSec below before --rm deletes the evidence. Change one, change the
+# other (#4367).
+#
+# THE SECOND IS COUPLED TO HIVE_PROXY_PORT, which src/proxy/server.js defaults
+# to 3001 and which nginx.conf names as its upstream. Probing it needs no
+# credential in any mode the proxy boots in — including hosted, where
+# HIVE_DASHBOARD_TOKEN is unset by design — because only mutating methods are
+# authenticated. src/proxy/health_probe.test.js is the guard on that: if GET
+# /api/health ever starts requiring one, this probe can never pass and every
+# start hangs for TimeoutStartSec. src/deploy/test_quadlet_config_contract.sh
+# asserts both couplings from the outside.
+Notify=healthy
+HealthCmd=curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=120s
+
+[Service]
+# THE LABELLED VOLUME MUST EXIST BEFORE THIS UNIT MAY START (#4485).
+#
+# The generated ExecStart carries `-v hive-data:/data`, and podman auto-creates
+# a missing named volume — with NO labels and no warning. If
+# hive-data-volume.service is stale-`active` from a previous boot while the
+# volume it created is gone, systemd skips it, this unit's own start creates
+# the volume instead, and the result is invisible to
+# bin/hive-podman-teardown.sh forever: `--ignore` on a later unit start
+# returns success WITHOUT applying labels, and teardown cannot see what it
+# cannot select. Teardown then reports "no Hive-owned volumes" while
+# audit.jsonl and every byte of Hive state survive on disk.
+#
+# So the auto-create path is closed rather than documented: this unit refuses
+# to start unless hive-data already exists AND carries the #4210 ownership
+# marker. The failure is loud — `systemctl status hive.service` names the
+# repair — instead of a healthy-looking stack whose state is orphaned.
+ExecStartPre=/bin/sh -c 'podman volume inspect hive-data --format "{{.Labels}}" 2>/dev/null | grep -qF "io.kubestellar.hive.owned:true" || { echo "hive-data is missing or lacks its io.kubestellar.hive.* ownership labels; refusing to start so the volume is never auto-created unlabelled (#4485). If it is missing: systemctl restart hive-data-volume.service (add --user when rootless). If it exists unlabelled: back it up first — see src/docs/backup-restore.md." >&2; exit 1; }'
+
+# ADR-0017: every .container unit must set TimeoutStartSec explicitly, larger
+# than HealthStartPeriod plus the retry budget (120s + 3x10s = 150s here). The
+# host default is NOT a safe fallback — it was measured at 45s on Fedora and
+# 90s on the GitHub runners, both below the start period, and the generated
+# ExecStart carries --rm, so a timeout deletes the container that holds the
+# evidence of why it timed out.
+TimeoutStartSec=300
+
+# An intentional `systemctl stop` must not be recorded as a crash. The Hive
+# entrypoint handles SIGTERM, persists state, and exits 143 (128+SIGTERM) — the
+# conventional "terminated by signal" status. systemd's default success set is
+# exit 0 alone, so without this line a clean stop lands the unit in
+# `ActiveState=failed`, `Result=exit-code`, `ExecMainStatus=143`: it shows red
+# in `systemctl status`, trips `systemctl is-failed`, and puts the whole host
+# into `degraded`. Measured in BOTH root modes on Podman 5.8.4 (#4377).
+SuccessExitStatus=143 SIGTERM
+
+# Restart=always, NOT on-failure, and the two lines above are why. Making 143 a
+# success takes it out of on-failure's set, so with on-failure an external
+# `podman rm -f hive` or `podman stop hive` would leave the unit
+# `inactive/dead/success` — service down, nothing restarted, and nothing for
+# monitoring to see. Measured (#4377). Restart=always closes that: systemd
+# never restarts a unit that a `systemctl stop` job stopped, so a deliberate
+# stop still stays stopped and clean, while an external removal is recovered
+# after RestartSec.
+Restart=always
+RestartSec=30
+
+# NOT default.target, deliberately (#4478). In the system manager
+# default.target is the boot transaction, and systemd does not declare the
+# boot finished until every job in it is done — so with Notify=healthy above,
+# a rootful Hive that never became healthy held the whole boot for its
+# TimeoutStartSec (measured: 20.188s of a 20s stand-in timeout,
+# src/deploy/probe_boot_transaction_coupling.sh). hive-boot.target is wanted
+# by nothing at boot; hive-boot-gate.service (the one Hive unit that IS in
+# default.target) starts it as a new transaction once the manager declares
+# startup finished. Hive still starts on every boot, the boot never waits on
+# it, and an interactive `systemctl start hive.service` still blocks until
+# healthy — including the start job `podman auto-update --rollback` watches
+# (#4407), which is unchanged. Both plain units live in src/deploy/systemd/.
+[Install]
+WantedBy=hive-boot.target

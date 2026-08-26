@@ -42,6 +42,7 @@ func TestHeartbeatPreservesHubSetPrivate(t *testing.T) {
 	}
 
 	srv := NewHubServer(0, slog.Default(), "test", "v4")
+	t.Cleanup(srv.StopSaveLoop)
 	srv.setHubSecret("")
 
 	// The placeholder spoke reports its provisioning default: is_public=true.
@@ -111,6 +112,7 @@ func TestHeartbeatPreservesHubSetPrivateOnFirstBeat(t *testing.T) {
 	}
 
 	srv := NewHubServer(0, slog.Default(), "test", "v4")
+	t.Cleanup(srv.StopSaveLoop)
 	srv.setHubSecret("")
 
 	body := `{"hive_id":"` + hiveID + `","org":"available-oke-260812-fresh","is_public":true}`

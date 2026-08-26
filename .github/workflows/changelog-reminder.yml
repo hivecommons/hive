@@ -1,0 +1,148 @@
+name: Changelog Reminder
+
+# Why this exists
+#
+# CHANGELOG.md states its own rule — "maintainers should add notable user-facing
+# changes as PRs land" — and that rule quietly stopped being followed: the file
+# went eleven days and roughly a hundred and thirty merges without an entry, and
+# only a docs-sweep agent noticed. Backfilling it resets the clock but does not
+# stop the drift, so this reminds at the one moment somebody can act cheaply:
+# while the PR is still open.
+#
+# It is ADVISORY ON PURPOSE. Most PRs genuinely do not belong in a changelog
+# whose own guidance excludes routine refactors, test-only changes and
+# dependency churn, so a hard gate would fail honest work and train people to
+# ignore it — or worse, to add noise entries just to make it green. It comments
+# once and always succeeds; the judgement stays with the author.
+#
+# "Always succeeds" is load-bearing and was not true (#4440): on a fork PR the
+# comment POST 403s, because GitHub caps GITHUB_TOKEN at read-only for
+# `pull_request` events from forks whatever the permissions: block requests, and
+# `bash -e` turned that into a red check on every external contribution. The
+# reminder is now delivered as a JOB SUMMARY and a ::notice:: annotation, which
+# need no write permission and therefore reach forks and same-repo branches
+# alike; the PR comment is attempted on top of that and its failure is
+# tolerated. src/deploy/test_changelog_reminder.sh executes the real step script
+# against a stubbed `gh` that 403s and asserts it still exits 0.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  remind:
+    name: changelog reminder
+    # Drafts and bots are excluded: a draft is not ready for this question, and
+    # dependency bumps are exactly what the changelog guidance excludes.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'copilot-swe-agent[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether this PR touches CHANGELOG.md
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Paginate: a large PR can exceed one page, and a missed page would
+          # produce a false reminder on a PR that did update the changelog.
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          if printf '%s\n' "$files" | grep -qx 'CHANGELOG.md'; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Docs-only and CI-only changes are not user-facing in the sense the
+          # changelog means, so they are never worth a reminder.
+          if printf '%s\n' "$files" | grep -qvE '^(src/docs/|docs/|\.github/|README\.md$|CHANGELOG\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remind once
+        if: steps.check.outputs.touched == 'false' && steps.check.outputs.code == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          # NOT `set -e` (#4440). This step delivers a REMINDER, and the header
+          # above promises it "always succeeds" and "never blocks a merge". It
+          # did neither on a pull request from a FORK: GitHub caps GITHUB_TOKEN
+          # at read-only for `pull_request` events raised from forks, whatever
+          # the permissions: block asks for, so the comment POST answered
+          #
+          #   gh: Resource not accessible by integration (HTTP 403)
+          #
+          # and `shell: bash -e` turned that into a failed check. The result was
+          # the exact thing the header set out to avoid — an advisory reminder
+          # behaving as a gate — on every external contribution, which is the
+          # population least likely to know the convention and most in need of
+          # the nudge. They got a red check and no reminder.
+          set -uo pipefail
+
+          marker='<!-- changelog-reminder -->'
+
+          # Body built in a heredoc rather than inline: the text starts a line
+          # with '**', which YAML would read as an alias in a plain scalar.
+          body_file="$(mktemp)"
+          cat > "$body_file" <<EOF
+          $marker
+          **Changelog:** this PR changes code but does not touch \`CHANGELOG.md\`.
+
+          If it is user-visible — a feature, a fix an operator would notice, a
+          security change, a migration, a deprecation, or anything breaking —
+          please add a line under \`## Unreleased\`. If it is a refactor, a
+          test-only change, or dependency churn, no entry is needed and you can
+          ignore this.
+
+          This is a reminder, not a gate; it never blocks a merge.
+          EOF
+          # Strip the YAML block indentation the heredoc preserved.
+          sed -i 's/^          //' "$body_file"
+
+          # DELIVER IT SOMEWHERE THAT ALWAYS WORKS, FIRST. The job summary and a
+          # ::notice:: annotation need no write permission at all, so they reach
+          # fork PRs and same-repo branches identically. This is the delivery the
+          # reminder can actually rely on; the PR comment below is a nicety on
+          # top of it.
+          {
+            printf '### Changelog reminder\n\n'
+            grep -v "^${marker}$" "$body_file"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "::notice title=Changelog reminder::This PR changes code but does not touch CHANGELOG.md. If it is user-visible, please add a line under '## Unreleased'. Not a gate."
+
+          # A fork PR cannot post, so do not try: a 403 in the log invites the
+          # next reader to debug a permission that is working as designed.
+          if [ "${IS_FORK:-false}" = "true" ]; then
+            echo "fork PR — GITHUB_TOKEN is read-only here, so the reminder was delivered as a job summary and annotation instead of a comment"
+            exit 0
+          fi
+
+          # Same-repo PR: a comment is nicer, and only ever once. A reminder that
+          # reappears on every push is noise, and noise is how the previous
+          # convention died. A failed dedupe READ must not skip the comment, and
+          # must not fail the job either.
+          if gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[].body' 2>/dev/null \
+              | grep -qF "$marker"; then
+            echo "already reminded"
+            exit 0
+          fi
+
+          # Tolerated, not asserted. Even on a same-repo PR an org policy can
+          # narrow GITHUB_TOKEN, and the reminder has already been delivered
+          # above either way.
+          if ! gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body_file"; then
+            echo "::notice::could not post the reminder as a PR comment; it is in this job's summary instead"
+          fi
+          exit 0

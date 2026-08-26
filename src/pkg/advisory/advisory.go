@@ -69,6 +69,13 @@ type Digest struct {
 	ByAgent          map[string][]Finding `json:"by_agent"`
 	TotalCount       int                  `json:"total_count"`
 	RecentlyResolved []ResolvedFinding    `json:"recently_resolved,omitempty"`
+	// Capped is set when the top-N cap dropped findings from ByAgent, and
+	// OverflowCount is how many were dropped. TotalCount always describes what
+	// is RENDERED, so these two carry the part the reader cannot see and the
+	// renderer announces them explicitly — a silently shortened digest would be
+	// worse than a long one.
+	Capped        bool `json:"capped,omitempty"`
+	OverflowCount int  `json:"overflow_count,omitempty"`
 	// AnalyzedSnapshot, when set, pins the digest to a single repo commit: the
 	// latest commit of the target repo as of when this post cycle started. It is
 	// cited in the rendered comment and used by VerifyFindingPaths to detect
@@ -154,6 +161,7 @@ func (s *Store) ReadNewFindings() ([]Finding, error) {
 func BuildDigest(findings []Finding, mode string) *Digest {
 	byAgent := make(map[string][]Finding)
 	for _, f := range findings {
+		f = capCoverageGapSeverity(f)
 		byAgent[f.Agent] = append(byAgent[f.Agent], f)
 	}
 	// Collapse restatements of the same finding (#2364). TotalCount must be
@@ -170,6 +178,19 @@ func BuildDigest(findings []Finding, mode string) *Digest {
 		ByAgent:     byAgent,
 		TotalCount:  total,
 	}
+}
+
+// capCoverageGapSeverity enforces the quality-policy rule that a coverage-gap
+// finding is never critical (#4734). The policy text alone is advisory — a
+// non-compliant quality agent filed a critical coverage-gap on a live hive
+// digest despite the rule — so the digest render caps it mechanically. The
+// policy's priority ladder tops out at high (missing both unit and e2e
+// coverage), which is what an over-severe finding is demoted to.
+func capCoverageGapSeverity(f Finding) Finding {
+	if f.Type == "coverage-gap" && f.Severity == "critical" {
+		f.Severity = "high"
+	}
+	return f
 }
 
 // isAdvisoryBeadType returns true for bead types that represent actionable
@@ -343,11 +364,162 @@ func severityRank(sev string) int {
 	}
 }
 
+// DigestOptions carries the per-hive advisory settings through digest
+// construction and rendering: how many findings to show, and the org/repo used
+// to linkify issue references.
+type DigestOptions struct {
+	// MaxFindings caps the rendered findings. 0 means no cap here, but a loaded
+	// config never carries 0 (config.applyDefaults resolves it to the default),
+	// so operators lift the cap with ShowAll — see config.AdvisoryConfig.
+	MaxFindings int
+	// ShowAll bypasses MaxFindings — the owner opt-in for the full list.
+	ShowAll bool
+	Org     string
+	// ShowEmpty renders a freshness-marker digest even when there are no
+	// open or recently resolved findings. Callers should only enable this when
+	// updating an existing advisory participant's pinned issue/comment.
+	ShowEmpty bool
+	// PrimaryRepo is the repo the digest is posted to, used to resolve
+	// repo-less "gh-123" references.
+	PrimaryRepo string
+	// Snapshot pins the digest to one repo commit. BuildDigestFromBeads copies
+	// it to Digest.AnalyzedSnapshot so the rendered comment cites the exact tree
+	// the findings were checked against (#3704).
+	Snapshot *Snapshot
+	// VerifyPath reports whether a repo file path exists at Snapshot. When set,
+	// BuildDigestFromBeads consults it while ranking so a finding whose file is
+	// gone loses its top-N slot to a live one (#2364). It is called only for
+	// file-path refs, only for findings the ranking actually reaches, and at
+	// most once per distinct path. nil disables verification entirely.
+	VerifyPath func(path string) bool
+}
+
+// effectiveCap returns the number of findings to render, or 0 for "no cap".
+func (o DigestOptions) effectiveCap() int {
+	if o.ShowAll || o.MaxFindings <= 0 {
+		return 0
+	}
+	return o.MaxFindings
+}
+
+// applyTopN keeps only the highest-priority findings across ALL agents and
+// reports how many it dropped.
+//
+// The ranking is global rather than per-agent on purpose: a repo owner cares
+// which findings matter most, not which agent produced them, and a per-agent
+// quota would let a chatty agent's low-severity items displace another agent's
+// critical one. Ordering is severity first, then — when verify is supplied —
+// findings whose file still exists, then most-recent-first: the newest report of
+// an equally severe problem is the one still happening.
+//
+// verify, when non-nil, reports whether a finding's file path still exists at
+// the analyzed snapshot. A finding whose path is gone is one the renderer must
+// caption "may be outdated" (#3704), so it does not hold a top-N slot ahead of
+// a live finding of the SAME severity — it is set aside and used only to
+// backfill slots no fresh finding of that severity claims. This is the same
+// principle as capping AFTER collapseNearDuplicates: a scarce top-N is spent on
+// distinct, current problems or it is not worth reading. Freshness deliberately
+// does not cross severity bands (see the loop below).
+//
+// Verification is on-demand and ordered: the ranked list is walked from the top
+// and verify is called only until cap findings are in hand, at most once per
+// distinct path. Ranking the full set therefore costs about as many lookups as
+// verifying the survivors alone did, not one per finding.
+func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) bool) (map[string][]Finding, int) {
+	if cap <= 0 {
+		return byAgent, 0
+	}
+	var all []Finding
+	for _, fs := range byAgent {
+		all = append(all, fs...)
+	}
+	if len(all) <= cap {
+		return byAgent, 0
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		// severityRank is "higher is worse", so the ordering is descending.
+		if ri, rj := severityRank(all[i].Severity), severityRank(all[j].Severity); ri != rj {
+			return ri > rj
+		}
+		if !all[i].Timestamp.Equal(all[j].Timestamp) {
+			return all[i].Timestamp.After(all[j].Timestamp)
+		}
+		// Deterministic last resort so the digest does not reshuffle between
+		// cycles when timestamps tie (bead stores iterate in map order).
+		if all[i].Agent != all[j].Agent {
+			return all[i].Agent < all[j].Agent
+		}
+		return all[i].Title < all[j].Title
+	})
+
+	overflow := len(all) - cap
+	var kept []Finding
+	if verify == nil {
+		kept = all[:cap]
+	} else {
+		checked := make(map[string]bool)
+		markStale := func(f *Finding) {
+			if !isFilePathRef(f.File) {
+				return
+			}
+			path := splitFilePathRef(f.File)
+			ok, seen := checked[path]
+			if !seen {
+				ok = verify(path)
+				checked[path] = ok
+			}
+			f.PathStale = !ok
+		}
+		// Walk severity band by severity band, highest first. Freshness only
+		// breaks ties WITHIN a band: PathStale means the cited path moved, not
+		// that the problem is gone, so a stale critical must still outrank a
+		// live low — demoting across bands would let a cosmetic nit displace a
+		// security finding whose file was merely renamed.
+		for i := 0; i < len(all) && len(kept) < cap; {
+			rank := severityRank(all[i].Severity)
+			j := i
+			for j < len(all) && severityRank(all[j].Severity) == rank {
+				j++
+			}
+			// Stale findings in this band are set aside rather than dropped so
+			// they can backfill slots no fresh finding of equal severity claims
+			// — rendering 6 findings under a cap of 10 would hide work for no
+			// reason.
+			var stale []Finding
+			for _, f := range all[i:j] {
+				if len(kept) == cap {
+					break
+				}
+				markStale(&f)
+				if f.PathStale {
+					stale = append(stale, f)
+					continue
+				}
+				kept = append(kept, f)
+			}
+			for k := 0; len(kept) < cap && k < len(stale); k++ {
+				kept = append(kept, stale[k])
+			}
+			i = j
+		}
+	}
+
+	capped := make(map[string][]Finding, len(byAgent))
+	for _, f := range kept {
+		capped[f.Agent] = append(capped[f.Agent], f)
+	}
+	return capped, overflow
+}
+
 // BuildDigestFromBeads creates a digest by reading open advisory beads from all
 // agent bead stores. Only advisory/bug/feature beads are included — task and
 // decision beads are internal agent work items, not findings for repo owners.
 // Beads closed within the last 48 hours are included in RecentlyResolved.
-func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
+//
+// opts.MaxFindings (unless opts.ShowAll) caps the result to the most severe,
+// most recent findings; the remainder is counted in OverflowCount rather than
+// dropped silently.
+func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts DigestOptions) *Digest {
 	byAgent := make(map[string][]Finding)
 	var resolved []ResolvedFinding
 	total := 0
@@ -403,6 +575,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 			if d := b.Meta("detail"); d != "" && f.Detail == "" {
 				f.Detail = d
 			}
+			f = capCoverageGapSeverity(f)
 			byAgent[agentName] = append(byAgent[agentName], f)
 			total++
 		}
@@ -415,6 +588,14 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 		byAgent[agent] = collapseNearDuplicates(fs)
 		total += len(byAgent[agent])
 	}
+	// Cap AFTER collapsing: a top-10 built from uncollapsed restatements would
+	// spend its ten slots on one recurring problem. For the same reason the cap
+	// is staleness-aware (opts.VerifyPath) — a finding whose file no longer
+	// exists is not worth a slot a live finding could have had (#2364).
+	byAgent, overflow := applyTopN(byAgent, opts.effectiveCap(), opts.VerifyPath)
+	if overflow > 0 {
+		total -= overflow
+	}
 	sort.Slice(resolved, func(i, j int) bool {
 		if !resolved[i].ClosedAt.Equal(resolved[j].ClosedAt) {
 			return resolved[i].ClosedAt.After(resolved[j].ClosedAt)
@@ -425,13 +606,23 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 	if len(resolved) > maxRecentlyResolved {
 		resolved = resolved[:maxRecentlyResolved]
 	}
-	return &Digest{
+	d := &Digest{
 		GeneratedAt:      time.Now(),
 		Mode:             mode,
 		ByAgent:          byAgent,
 		TotalCount:       total,
 		RecentlyResolved: resolved,
+		Capped:           overflow > 0,
+		OverflowCount:    overflow,
+		AnalyzedSnapshot: opts.Snapshot,
 	}
+	// When the cap was not reached, applyTopN returned early and never verified
+	// anything, so the surviving findings still need their paths checked before
+	// the renderer cites them as live.
+	if opts.VerifyPath != nil && overflow == 0 {
+		VerifyFindingPaths(d, opts.VerifyPath)
+	}
+	return d
 }
 
 // sortAdvisoryBeads preserves the existing one-open-finding-per-title digest
@@ -720,21 +911,31 @@ func VerifyFindingPaths(d *Digest, exists func(path string) bool) {
 // view without reading per-agent sections. org and primaryRepo identify where
 // the digest is posted; they are used to turn issue/PR references in findings
 // into working links, and may be empty to skip linkification.
-func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
+//
+// When the digest was capped to a top-N, a note near the top says so and names
+// the setting that lifts the cap — the reader must never have to wonder whether
+// the list is complete.
+func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
+	org, primaryRepo := opts.Org, opts.PrimaryRepo
 	if d.TotalCount == 0 {
-		// No open findings. If nothing was recently resolved either, there is
-		// nothing to say — return "" so no digest comment is created. But when
-		// findings WERE just resolved, an updated digest must still be posted:
-		// otherwise the pinned comment freezes on its last non-empty state and
-		// keeps showing healed findings forever (#2575).
-		if len(d.RecentlyResolved) == 0 {
+		// No open findings. If findings WERE just resolved, an updated digest
+		// must still be posted: otherwise the pinned comment freezes on its last
+		// non-empty state and keeps showing healed findings forever (#2575).
+		// If nothing was recently resolved either, render only when the caller is
+		// deliberately refreshing an existing advisory participant's pinned issue;
+		// otherwise keep returning "" so no digest comment is created.
+		if len(d.RecentlyResolved) == 0 && !opts.ShowEmpty {
 			return ""
 		}
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
 		b.WriteString("> Automated code review findings from [Hive](https://github.com/kubestellar/hive) agents. ")
 		b.WriteString("This comment is updated periodically.\n\n")
-		b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
+		if len(d.RecentlyResolved) == 0 {
+			b.WriteString(fmt.Sprintf("**Findings:** 0 — ✅ No open advisory findings · evaluated %s.\n\n", d.GeneratedAt.Format(time.RFC3339)))
+		} else {
+			b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
+		}
 		writeRecentlyResolved(&b, d, org, primaryRepo)
 		writeAnalyzedFooter(&b, d)
 		return NeutralizeMentions(b.String())
@@ -761,6 +962,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 	b.WriteString("> Automated code review findings from [Hive](https://github.com/kubestellar/hive) agents. ")
 	b.WriteString("Each finding includes a file reference and suggested fix. This comment is updated periodically.\n\n")
 	b.WriteString(fmt.Sprintf("**Findings:** %d\n\n", d.TotalCount))
+	writeCapNote(&b, d)
 
 	b.WriteString("| Severity | Count |\n|----------|-------|\n")
 	for _, sev := range sevOrder {
@@ -864,6 +1066,16 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 	return NeutralizeMentions(b.String())
 }
 
+// writeCapNote announces a top-N cap and how to lift it. Rendered only when the
+// digest was actually shortened, so an uncapped digest carries no noise.
+func writeCapNote(b *strings.Builder, d *Digest) {
+	if !d.Capped || d.OverflowCount <= 0 {
+		return
+	}
+	fmt.Fprintf(b, "> 💡 Showing top %d findings (by severity). %d more exist. Set `governor.advisory.show_all: true` to see all.\n\n",
+		d.TotalCount, d.OverflowCount)
+}
+
 // writeRecentlyResolved renders the "Recently Resolved" digest section. Shared
 // by the normal and the zero-findings ("all clear") digest renderings.
 func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo string) {
@@ -957,6 +1169,12 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 				continue
 			}
 			if b.Title == f.Title && b.Type == beads.TypeAdvisory {
+				// The finding is being re-reported, which is exactly the signal
+				// staleness pruning consumes: stamp it so PruneStaleAdvisoryBeads
+				// keeps this bead alive for another window. Skipping the stamp
+				// here would let a finding an agent reports every single cycle
+				// still age out and be auto-closed.
+				_ = store.SetLastSeenAt(b.ID, time.Now())
 				dup = true
 				break
 			}
@@ -982,7 +1200,10 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 			meta["detail"] = logscrub.ScrubString(f.Detail)
 		}
 
-		b, err := store.Create(logscrub.ScrubString(f.Title), beads.TypeAdvisory, severityToPriority(f.Severity), f.Agent, ref)
+		// Upsert, not Create: it stamps LastSeenAt on the new bead (so the
+		// staleness clock starts) and folds in the cosmetic title drift that
+		// exact-title dedup above cannot catch.
+		b, err := store.Upsert(logscrub.ScrubString(f.Title), beads.TypeAdvisory, severityToPriority(f.Severity), f.Agent, ref)
 		if err != nil {
 			continue
 		}

@@ -541,12 +541,13 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 		return fmt.Errorf("translate request: %w", err)
 	}
 
-	upstreamURL := strings.TrimRight(route.Endpoint, "/") + "/v1/chat/completions"
+	upstreamURL := openAIChatCompletionsURL(route.Endpoint)
 	upstreamReq, err := http.NewRequestWithContext(
 		clientReq.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
 	if err != nil {
 		return fmt.Errorf("create upstream request: %w", err)
 	}
+
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	applyInferenceAuth(upstreamReq, route)
 
@@ -608,6 +609,14 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(translated)
 	return err
+}
+
+func openAIChatCompletionsURL(endpoint string) string {
+	base := strings.TrimRight(endpoint, "/")
+	if strings.HasSuffix(base, "/v1") {
+		return base + "/chat/completions"
+	}
+	return base + "/v1/chat/completions"
 }
 
 type flushResponseWriter struct {

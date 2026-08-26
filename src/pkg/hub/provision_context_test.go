@@ -134,17 +134,26 @@ func TestEnrichProvisionRequests(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("saveSaaSUser(alice): %v", err)
 	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "ibmid:650001ABCD", LinkedGitHubLogin: "jane-gh", Hives: map[string]string{
+		"hosted-oke-10": "owner",
+	}}); err != nil {
+		t.Fatalf("saveSaaSUser(ibmid): %v", err)
+	}
 	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "bob", Hives: map[string]string{}}); err != nil {
 		t.Fatalf("saveSaaSUser(bob): %v", err)
 	}
 
 	reqs := []ProvisionRequest{
 		{Username: "alice", Status: provisionStatusApproved, AssignedHive: "hosted-oke-06"},
+		{Username: "ibmid:650001ABCD", Status: provisionStatusPending, AssignedHive: "hosted-oke-10"},
 		{Username: "bob", Status: provisionStatusDenied, DenyReason: "no capacity"},
 		{Username: "ghost", Status: provisionStatusApproved, AssignedHive: "hosted-oke-99"},
 	}
 	got := enrichProvisionRequests(reqs)
 
+	if got[0].UserID != "alice" {
+		t.Errorf("alice user_id = %q, want %q", got[0].UserID, "alice")
+	}
 	if got[0].AssignedRole != "owner" {
 		t.Errorf("alice assigned_role = %q, want %q", got[0].AssignedRole, "owner")
 	}
@@ -152,18 +161,96 @@ func TestEnrichProvisionRequests(t *testing.T) {
 	if !reflect.DeepEqual(got[0].OtherHives, wantOther) {
 		t.Errorf("alice other_hives = %+v, want %+v", got[0].OtherHives, wantOther)
 	}
+	if got[1].UserID != "jane-gh" {
+		t.Errorf("linked OIDC request user_id = %q, want jane-gh", got[1].UserID)
+	}
+	if got[1].UserIDSource != "github" {
+		t.Errorf("linked OIDC request user_id_source = %q, want github", got[1].UserIDSource)
+	}
 	// A denial assigns nothing, so there is no role to show.
-	if got[1].AssignedRole != "" || got[1].OtherHives != nil {
-		t.Errorf("denied request enriched: role=%q other=%+v", got[1].AssignedRole, got[1].OtherHives)
+	if got[2].AssignedRole != "" || got[2].OtherHives != nil {
+		t.Errorf("denied request enriched: role=%q other=%+v", got[2].AssignedRole, got[2].OtherHives)
 	}
 	// A request whose requester has no user record must not invent access.
-	if got[2].AssignedRole != "" || got[2].OtherHives != nil {
-		t.Errorf("unknown requester enriched: role=%q other=%+v", got[2].AssignedRole, got[2].OtherHives)
+	if got[3].AssignedRole != "" || got[3].OtherHives != nil {
+		t.Errorf("unknown requester enriched: role=%q other=%+v", got[3].AssignedRole, got[3].OtherHives)
 	}
 
 	// Empty input must not blow up or read the roster.
 	if out := enrichProvisionRequests(nil); out != nil {
 		t.Errorf("enrichProvisionRequests(nil) = %+v, want nil", out)
+	}
+}
+
+func TestProvisionRequestUserIDPreference(t *testing.T) {
+	tests := []struct {
+		name            string
+		username        string
+		user            *SaaSUser
+		requestFullName string
+		want            string
+	}{
+		{
+			name:     "linked GitHub login beats raw IBMid subject",
+			username: "ibmid:650001ABCD",
+			user:     &SaaSUser{GitHubUsername: "ibmid:650001ABCD", LinkedGitHubLogin: "jane-gh", Email: "jane@example.com", DisplayName: "Jane Doe"},
+			want:     "jane-gh",
+		},
+		{
+			name:     "plain GitHub login is already a user id",
+			username: "octocat",
+			user:     &SaaSUser{GitHubUsername: "octocat", DisplayName: "The Octocat"},
+			want:     "octocat",
+		},
+		{
+			name:     "email beats opaque provider subject",
+			username: "ibmid:650001ABCD",
+			user:     &SaaSUser{GitHubUsername: "ibmid:650001ABCD", Email: "jane@example.com", DisplayName: "Jane Doe"},
+			want:     "jane@example.com",
+		},
+		{
+			name:     "display name beats opaque provider subject when no email",
+			username: "ibmid:650001ABCD",
+			user:     &SaaSUser{GitHubUsername: "ibmid:650001ABCD", DisplayName: "Jane Doe"},
+			want:     "Jane Doe",
+		},
+		{
+			name:            "request full name helps new records without stored claims",
+			username:        "ibmid:650001ABCD",
+			requestFullName: "Jane Doe",
+			want:            "Jane Doe",
+		},
+		{
+			name:     "fallback keeps native subject for old opaque records",
+			username: "ibmid:650001ABCD",
+			want:     "ibmid:650001ABCD",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := provisionRequestUserID(tt.username, tt.user, tt.requestFullName); got != tt.want {
+				t.Errorf("provisionRequestUserID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProvisionRequestUserIDRenderingPinned(t *testing.T) {
+	checks := []string{
+		"function provisionRequesterPrimary(pr)",
+		"var id = String(pr.user_id || '').trim();",
+		"return id || String(pr.username || '').trim();",
+		"function provisionRequesterNativeSubject(pr)",
+		"title=\"Native provider subject\"",
+		"pr && pr.user_id_source === 'github'",
+		"var primary = provisionRequesterPrimary(pr);",
+		"provisionRequesterAvatar(pr, TABLE_AVATAR_PX, 'margin-right:8px')",
+		"provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px')",
+	}
+	for _, snippet := range checks {
+		if !strings.Contains(dashboardHTML, snippet) {
+			t.Errorf("dashboardHTML missing provision user-id render snippet %q", snippet)
+		}
 	}
 }
 

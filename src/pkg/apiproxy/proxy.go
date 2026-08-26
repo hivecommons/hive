@@ -3,6 +3,7 @@ package apiproxy
 import (
 	"bufio"
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ const (
 	sseEventMsgDelta   = "message_delta"
 	sseEventMsgStop    = "message_stop"
 	sseEventContentDlt = "content_block_delta"
+	bearerPrefix       = "Bearer "
 )
 
 // Event represents a logged API interaction.
@@ -46,11 +48,17 @@ type Proxy struct {
 	upstream     *url.URL
 	reverseProxy *httputil.ReverseProxy
 	handler      EventHandler
-	apiKey       string
-	mu           sync.RWMutex
+	// apiKey is the upstream credential swapped in on the outbound request.
+	apiKey string
+	// clientAuthToken is the credential callers must present to this proxy. It
+	// is deliberately distinct from apiKey so a configured upstream key is
+	// never an implicit credential for anyone who can reach the listener. It
+	// is required: when empty every request is refused with 503.
+	clientAuthToken string
+	mu              sync.RWMutex
 }
 
-func New(upstreamURL string, handler EventHandler, apiKey string) (*Proxy, error) {
+func New(upstreamURL string, handler EventHandler, apiKey, clientAuthToken string) (*Proxy, error) {
 	if upstreamURL == "" {
 		upstreamURL = defaultUpstream
 	}
@@ -60,9 +68,10 @@ func New(upstreamURL string, handler EventHandler, apiKey string) (*Proxy, error
 	}
 
 	p := &Proxy{
-		upstream: u,
-		handler:  handler,
-		apiKey:   apiKey,
+		upstream:        u,
+		handler:         handler,
+		apiKey:          apiKey,
+		clientAuthToken: clientAuthToken,
 	}
 
 	p.reverseProxy = &httputil.ReverseProxy{
@@ -89,6 +98,35 @@ func isValidAuth(req *http.Request) bool {
 	return false
 }
 
+// validateClientAuth reports whether the caller presented the configured client
+// auth token in either an `Authorization: Bearer` or `X-Api-Key` header. The
+// comparison is constant time so the token cannot be recovered through response
+// timing.
+func validateClientAuth(r *http.Request, expectedToken string) bool {
+	if expectedToken == "" {
+		return false
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, bearerPrefix) {
+		token := strings.TrimPrefix(auth, bearerPrefix)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) == 1 {
+			return true
+		}
+	}
+	key := r.Header.Get("X-Api-Key")
+	return key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(expectedToken)) == 1
+}
+
+// stripClientAuth removes headers whose value is exactly the proxy-local gate
+// token so it is never forwarded upstream.
+func stripClientAuth(r *http.Request, token string) {
+	if auth := r.Header.Get("Authorization"); strings.TrimPrefix(auth, bearerPrefix) == token && strings.HasPrefix(auth, bearerPrefix) {
+		r.Header.Del("Authorization")
+	}
+	if r.Header.Get("X-Api-Key") == token {
+		r.Header.Del("X-Api-Key")
+	}
+}
+
 func (p *Proxy) director(req *http.Request) {
 	req.URL.Scheme = p.upstream.Scheme
 	req.URL.Host = p.upstream.Host
@@ -98,8 +136,11 @@ func (p *Proxy) director(req *http.Request) {
 	// Negligible overhead for a local proxy; allows line-by-line SSE parsing.
 	req.Header.Del("Accept-Encoding")
 
+	// Swap in the upstream key when the caller did not bring an upstream
+	// credential of its own. Gate credentials have already been stripped by
+	// ServeHTTP, so anything left here is a caller-supplied upstream key.
 	if p.apiKey != "" && !isValidAuth(req) {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+		req.Header.Set("Authorization", bearerPrefix+p.apiKey)
 		req.Header.Del("X-Api-Key")
 	}
 }
@@ -270,6 +311,26 @@ func (p *Proxy) errorHandler(w http.ResponseWriter, r *http.Request, err error) 
 
 // ServeHTTP implements http.Handler.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Fail closed when no gate token is configured: an unauthenticated relay
+	// would let any co-resident loopback process spend the host upstream key.
+	if p.clientAuthToken == "" {
+		http.Error(w, "proxy misconfigured: client auth token required", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Gate on the client-provided auth token, which is separate from the
+	// upstream key: a configured upstream key must never act as an implicit
+	// credential for anyone who can reach this listener. Rejected requests are
+	// neither logged nor forwarded upstream.
+	if !validateClientAuth(r, p.clientAuthToken) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// The gate token is proxy-local and must never reach the upstream. Once
+	// stripped, any remaining credential is a caller-supplied upstream key
+	// and the director decides whether to swap in the configured one.
+	stripClientAuth(r, p.clientAuthToken)
+
 	if p.handler != nil {
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyLog))
 		if err == nil {

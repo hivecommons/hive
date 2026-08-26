@@ -1,9 +1,9 @@
-# Pinned to the golang:1.26-alpine multi-arch index digest to prevent
+# Pinned to the golang:1.27-alpine multi-arch index digest to prevent
 # floating-tag supply-chain risk. Refresh deliberately (same technique as
 # src/Dockerfile: resolve via auth.docker.io token + HEAD manifest for repo
-# library/golang, tag 1.26-alpine) and update both the tag and the @sha256
+# library/golang, tag 1.27-alpine) and update both the tag and the @sha256
 # digest together.
-FROM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS builder
+FROM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 

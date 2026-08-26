@@ -127,7 +127,7 @@ func TestFormatDigestMarkdownContainsNoRawMentions(t *testing.T) {
 		{Agent: "quality", Title: "fix suggested by @bob-2 landed", ClosedAt: now},
 	}
 
-	md := FormatDigestMarkdown(d, "testorg", "testrepo")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "testorg", PrimaryRepo: "testrepo"})
 
 	if mentionPattern.MatchString(md) {
 		t.Errorf("digest body contains a raw @mention:\n%s", md)
@@ -160,7 +160,7 @@ func TestFormatDigestMarkdownZeroFindingsNoRawMentions(t *testing.T) {
 			{Agent: "quality", Title: "issue reported by @carol resolved", ClosedAt: time.Now()},
 		},
 	}
-	md := FormatDigestMarkdown(d, "testorg", "testrepo")
+	md := FormatDigestMarkdown(d, DigestOptions{Org: "testorg", PrimaryRepo: "testrepo"})
 	if mentionPattern.MatchString(md) {
 		t.Errorf("all-clear digest body contains a raw @mention:\n%s", md)
 	}

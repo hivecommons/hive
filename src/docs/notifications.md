@@ -52,7 +52,7 @@ Use a Discord **webhook URL**, not a bot token, for notification delivery.
 
 ## What triggers notifications
 
-The v2 Go process sends notifications for these events:
+The Hive Go process sends notifications for these events:
 
 | Event | Priority | Source |
 |---|---|---|
@@ -62,7 +62,7 @@ The v2 Go process sends notifications for these events:
 | A running agent pane matches a configured login-required pattern; Hive pauses that agent and sends the backend-specific login instruction. | high | `scanForLoginRequired` in `src/cmd/hive/main.go` |
 | Trajectory review detects divergence and either pauses the agent or flags the divergence. | high | `src/pkg/dashboard/trajectory_sink.go` and `src/pkg/trajectory/lane.go` |
 
-The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the v2 YAML block.
+The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
 
 ## Testing delivery
 
@@ -93,4 +93,4 @@ Webhook notifications are the `notifications.discord.webhook` field above.
 
 The repository also contains a separate Discord bot under [`../../discord/`](../../discord/). That bot is a Node.js service using `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_PRIMARY` to connect to Discord, route commands, and bridge dashboard/pipeline status. It is not required for webhook notifications, and a bot token cannot replace `notifications.discord.webhook`.
 
-For the v2 Go process, bot startup uses `notifications.discord.bot_token` and `notifications.discord.channel_id` when both are set. Those fields start the bot integration; they do not send ordinary webhook notifications unless `notifications.discord.webhook` is also configured.
+For the Hive Go process, bot startup uses `notifications.discord.bot_token` and `notifications.discord.channel_id` when both are set. Those fields start the bot integration; they do not send ordinary webhook notifications unless `notifications.discord.webhook` is also configured.

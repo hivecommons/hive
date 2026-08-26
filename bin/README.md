@@ -9,7 +9,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | Script | Stage | Purpose |
 |---|---|---|
 | `run-pipeline.sh` | Orchestrator | Runs configured pre-kick stages in dependency order: enumerator, classifier, gate, and monitor. Supports `--agent` and `--stage` selectors. |
-| `enumerate-actionable.sh` | Enumerator | Builds `/var/run/hive-metrics/actionable.json` with actionable issues and PRs, excluding holds, drafts, selected labels, ADOPTERS-only PRs, and external issues missing a commit SHA. |
+| `enumerate-actionable.sh` | Enumerator | Builds `/var/run/hive-metrics/actionable.json` with actionable issues and PRs, excluding holds, blocked external-dependency work, drafts, selected labels, ADOPTERS-only PRs, and external issues missing a commit SHA. |
 | `issue-classifier.sh` | Classifier | Enriches `actionable.json` with deterministic metadata such as complexity tier, model recommendation, tracker status, cluster key, lane, and architecture-review flag. |
 | `architecture-detector.sh` | Classifier | Adds architecture signals to actionable issues from `hive-project.yaml` rules so the classifier can route them to the architect lane. |
 | `pr-cluster-detector.sh` | Classifier | Groups related actionable issues into clusters using component, reporter timing, label-combo, and failure-mode signals. |
@@ -43,7 +43,9 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `git-credential-hive.sh` | Credentials | Git credential helper that serves cached GitHub App tokens and honors the host requested by Git. |
 | `gh-wrapper.sh` | Enforcement | `gh` wrapper that injects App tokens and enforces global/per-agent restriction rules from `/etc/hive/restrictions/<agent-id>.json`. |
 | `hive-open-pr.sh` | Enforcement | Agent-side wrapper for PR creation requests. It writes a request file for the Hive watcher so PRs are opened by the GitHub App bot and pass the same ACMM authorization checks. |
+| `hive-review.sh` | Enforcement | Agent-side wrapper for `gh pr review`. Writes a review-request file the Hive submits with the App token and audits as `agent_pr_reviewed`, so PR-review activity is attributed and visible to hive-health (a direct `gh pr review` is invisible). |
 | `setup-proxy-iptables.sh` | Enforcement | Installs iptables rules in the container to force GitHub HTTPS traffic through the ACMM proxy even if an agent unsets proxy variables. |
+| `agent-env-scrub.sh` | Enforcement | Sourced (never executed) at the start of every shell in an agent's process tree, via `BASH_ENV`/`ENV` from `agent-launch.sh` and an `/etc/bash.bashrc` guard, to unset the live GitHub credentials backend CLIs re-export into agent tool shells (#4045). |
 | `hive-config.sh` | Config | Shared shell config reader that exposes project, repo, agent, dashboard, health, and policy values parsed from `hive-project.yaml`. |
 
 ## Deployment and local operation
@@ -51,9 +53,15 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | Script | Stage | Purpose |
 |---|---|---|
 | `hive.sh` | CLI | Operator command wrapper for starting the supervisor, checking status, attaching, kicking agents, reading logs, and stopping agents. |
-| `hive-setup.sh` | Bootstrap | All-in-one Ubuntu 24.04 LXC setup for a Docker-based Hive v2 instance, including generated `hive.yaml` and env files. |
+| `hive-setup.sh` | Bootstrap | All-in-one Ubuntu 24.04 LXC setup for a Docker-based Hive v2 instance, including generated `hive.yaml` and env files. **Docker-only**: it installs Docker Engine and drives `docker compose`, and predates `HIVE_DEPLOY_RUNTIME`, so that variable does not redirect it. For a Podman install follow the [README's Quick Start (Podman)](../README.md#quick-start-podman); see [Deployment helper scripts](../src/docs/deployment-scripts.md#all-in-one-lxc-setup). |
 | `hive-prereq-check.sh` | Bootstrap | Validates host prerequisites for a Docker-based Hive v2 install and can attempt fixes with `--fix`. |
 | `hive-deploy.sh` | Deploy | Pulls the latest Hive repository and syncs scripts to `/usr/local/bin`; also restarts Discord bot components when their files change. |
+| `hive-standalone-runtime.sh` | Deploy | Selects the standalone container engine from `HIVE_DEPLOY_RUNTIME` (`docker` by default) and runs commands against it without ever falling back to the other engine. |
+| `hive-podman-cleanup.sh` | Deploy | Defines the Hive ownership labels for Podman containers, pods, networks, volumes, and images, and guards cleanup so it can never widen into a store-wide Podman/Buildah operation. See [`src/docs/podman-ownership-cleanup.md`](../src/docs/podman-ownership-cleanup.md). |
+| `hive-podman-teardown.sh` | Deploy | Tears down one standalone Podman deployment through the #4210 ownership contract: every resource is selected by the ownership label, every command is passed through the cleanup guard before it runs, and a command the guard rejects aborts the teardown. Plans by default; `run --yes` removes. Unlabelled containers, pods, volumes, and networks are invisible to it. See [`src/docs/podman-ownership-cleanup.md`](../src/docs/podman-ownership-cleanup.md). |
+| `hive-podman-preflight.sh` | Bootstrap | Read-only Podman diagnostics before a lifecycle runs: engine/version, the connection it is actually talking to, rootless vs rootful, and cgroup version. Runs only when `HIVE_DEPLOY_RUNTIME` selects podman; `hive-prereq-check.sh` invokes it. |
+| `hive-podman-preflight-host.sh` | Deploy | Read-only Podman preflight for SELinux state and mount labeling, configuration/secrets readability, and published host-port availability. Runs only when `HIVE_DEPLOY_RUNTIME=podman`. See [`src/docs/podman-preflight-host.md`](../src/docs/podman-preflight-host.md). |
+| `hive-podman-preflight-ids.sh` | Deploy | Read-only Podman preflight for rootless subordinate UID/GID delegation, unsupported (NFS and other distributed) container storage, and the rootless network backend/helper. Never edits `/etc/subuid` or `/etc/subgid`. Runs only when `HIVE_DEPLOY_RUNTIME=podman`. See [`src/docs/podman-preflight-ids.md`](../src/docs/podman-preflight-ids.md). |
 | `federation-heartbeat.sh` | Federation | Sends live contributor and actionable-work stats to the Hive federation registry. |
 | `notify.sh` | Notifications | Shared Bash notification library for ntfy, Slack incoming webhooks, and Discord webhooks. |
 
@@ -83,3 +91,10 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
 | `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.sh` as JavaScript with stubs. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
+| `test_bin_suites_wired.sh` | Fails when a test suite in this directory is not run by any workflow, Justfile target, or hook (#4363). |
+| `test_hive_standalone_runtime.sh` | `hive-standalone-runtime.sh` engine selection: Docker default, explicit Podman, and no silent fallback. |
+| `test_hive_podman_cleanup.sh` | `hive-podman-cleanup.sh` ownership labels and cleanup guard. Analyses arguments only: it contacts no container engine and deletes nothing. |
+| `test_hive_podman_teardown.sh` | `hive-podman-teardown.sh` against a fake Podman whose store holds Hive's resources next to a Distrobox, an unrelated development container, and somebody's Postgres volume. Asserts the unowned resources survive every teardown, replays every command the teardown issued through the #4210 guard, and checks that a hostile resource name aborts the run instead of widening it. |
+| `test_hive_podman_preflight.sh` | `hive-podman-preflight.sh` engine, connection, root-mode, and cgroup checks. Drives a stub engine, so the whole matrix runs on a host with no Podman installed. |
+| `test_hive_podman_preflight_host.sh` | `hive-podman-preflight-host.sh` across enforcing, permissive, and disabled SELinux, wrong and missing mount labels, unreadable and over-permissive secrets, and occupied and sub-floor ports. Every input is mocked; it runs no container and changes nothing on the host. |
+| `test_hive_podman_preflight_ids.sh` | `hive-podman-preflight-ids.sh` across delegated, missing, short, and multi-range subordinate IDs, NFS and other unsupported graphroots, tmpfs, a missing rootless network helper, and rootful hosts. Every input is mocked; `PATH` is the fake bin alone, so no real helper on the test machine can mask an absent one. |

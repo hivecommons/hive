@@ -131,20 +131,22 @@ func TestDashboardRenderCacheSignature(t *testing.T) {
 	}
 }
 
-// TestDashboardPlaceholdersBypassFilters asserts the scoping rule shared by the
-// chips, the search box and the facets: an unassigned placeholder is never
-// filtered out, so the pool an admin is about to assign from cannot vanish
-// while they type.
-func TestDashboardPlaceholdersBypassFilters(t *testing.T) {
+// TestDashboardPlaceholdersBypassNonSearchFilters asserts the split scoping
+// rule: status/facet filters do not hide unassigned inventory, but free-text
+// search still narrows placeholders so the visible rows match the search box.
+func TestDashboardPlaceholdersBypassNonSearchFilters(t *testing.T) {
 	html := dashScript(t)
-	const want = "if (isPlaceholderHive(h)) return true;"
+	const want = "var filteredUnassigned = (_dashSearchQuery || '').trim()"
 	if !strings.Contains(html, want) {
-		t.Error("applyDashFilters must let placeholder hives bypass every filter")
+		t.Error("renderHives must apply free-text search to unassigned placeholders")
 	}
-	// Each predicate is checked independently: applyDashFilters ANDs these
-	// together, but other features (e.g. the fleet-alert drill-down) add their
-	// own terms to the same chain, so pinning one exact expression would break
-	// on every such addition without indicating a real regression.
+	if !strings.Contains(html, "var hives = filteredAssigned.concat(filteredUnassigned);") {
+		t.Error("renderHives must render the search-filtered placeholder set")
+	}
+	// Each assigned-row predicate is checked independently: applyDashFilters
+	// ANDs these together, but other features (e.g. the fleet-alert drill-down)
+	// add their own terms to the same chain, so pinning one exact expression
+	// would break on every such addition without indicating a real regression.
 	for _, pred := range []string{
 		"hiveMatchesFilters(h)",
 		"hiveMatchesSearch(h)",

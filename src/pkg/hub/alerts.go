@@ -121,6 +121,23 @@ const (
 	// only after several consecutive 401s and clears on the next success — so
 	// the alert self-heals when the key is fixed.
 	AlertTypeInferenceAuthFailed = "inference-auth-failed"
+	// AlertTypeAppCredsUndelivered — a claimed hive requires GitHub App
+	// auth but reports an OPERATOR-SIDE credential state (key-missing,
+	// key-invalid or no-app-assigned; see operatorSideAppStates in journey.go).
+	// The hive owner cannot see, supply or correct the App private key — it is
+	// hub-distributed — so every owner-facing surface deliberately stands down
+	// for these states (the spoke banner says "no action needed from you", the
+	// journey never nudges, advisory staleness is suppressed). That made the
+	// condition structurally silent: kelly-headwaters sat Degraded on
+	// key-missing for 8 days with zero tokens ever consumed before an operator
+	// happened to hover the fleet row (#4316). This alert is the ACTIVE signal
+	// to the only actor who can fix it. Critical, because the hive provably
+	// cannot work at all until the key lands. The reason names the cluster and
+	// carries the exact remedy (PUT /api/saas/admin/cluster-app-keys/{id});
+	// FirstSeen shows the operator how long the hive has been stranded. Clears
+	// on its own once the key is delivered and the spoke reports a healthy
+	// state.
+	AlertTypeAppCredsUndelivered = "app-creds-undelivered"
 )
 
 // --- Thresholds. Every one is a named constant with a rationale. ---
@@ -525,6 +542,20 @@ type alertHive struct {
 	// the alert when it is non-empty and drops it when it clears. Never carries
 	// key material.
 	InferenceAuthError string
+
+	// GitHubAppRequired / GitHubAppState are the spoke's own report of whether
+	// its config demands App auth and, when App auth is failing, WHY (the
+	// github.AppAuthState wire token). Carried verbatim: the spoke owns the
+	// classification, and appStateIsOperatorSide (journey.go) owns which tokens
+	// mean "only the hub operator can fix this". ClusterID names the cluster
+	// whose key store is the remedy. ClusterHasKey is hub-observed fact — set
+	// by fleetAlerts from the per-cluster PEM store, never by
+	// alertHiveFromEntry — so the reason can say whether the fix is "upload a
+	// key" (none exists) or "the delivered key is wrong / not arriving".
+	GitHubAppRequired bool
+	GitHubAppState    string
+	ClusterID         string
+	ClusterHasKey     bool
 }
 
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
@@ -554,6 +585,12 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		InactiveAgentsReason: h.InactiveAgentsReason,
 
 		InferenceAuthError: h.InferenceAuthError,
+
+		GitHubAppRequired: h.GitHubAppRequired,
+		GitHubAppState:    h.GitHubAppState,
+		ClusterID:         h.ClusterID,
+		// ClusterHasKey is NOT set here: it is hub-observed (the PEM store on
+		// disk), not entry-carried. fleetAlerts fills it in.
 	}
 }
 
@@ -706,6 +743,45 @@ func withoutAuthClassChecks(names []string) []string {
 		}
 	}
 	return kept
+}
+
+// appCredsUndeliveredReason builds the operator-facing reason for an
+// app-creds-undelivered alert. It names the failing state, the cluster, and —
+// critically — the exact remedy, because the upload endpoint was undocumented
+// for long enough that a stranded hive sat unnoticed for 8 days (#4316). The
+// string is deterministic for a given hive state, so the alert never appears
+// to churn between polls. It never carries key material; ClusterHasKey and the
+// state token are the only key-related facts referenced.
+func appCredsUndeliveredReason(h alertHive) string {
+	cluster := strings.TrimSpace(h.ClusterID)
+	clusterLabel := cluster
+	if clusterLabel == "" {
+		clusterLabel = "its cluster"
+	}
+	pathID := cluster
+	if pathID == "" {
+		// No cluster reported (a spoke too old, or a registry gap): the remedy
+		// still names the endpoint, with the placeholder the operator must
+		// fill in.
+		pathID = "{clusterID}"
+	}
+	remedy := "PUT /api/saas/admin/cluster-app-keys/" + pathID + " with the App's PEM private key"
+
+	switch strings.TrimSpace(h.GitHubAppState) {
+	case appStateKeyInvalidToken:
+		return "GitHub App private key on this spoke does not match the App it authenticates as, so GitHub rejects every JWT it signs — " +
+			"only an operator can fix this: replace the key for " + clusterLabel + " via " + remedy
+	case appStateNoAppAssignedToken:
+		return "No real GitHub App was ever assigned to this hive (it still carries the placeholder app_id) — " +
+			"only an operator can fix this: assign the cluster's App and upload its key via " + remedy
+	default: // appStateKeyMissingToken, and any future operator-side token.
+		if h.ClusterHasKey {
+			return "GitHub App private key has not reached this spoke even though the hub holds a key for " + clusterLabel + " — " +
+				"check heartbeat delivery, or re-upload via " + remedy
+		}
+		return "GitHub App private key was never delivered: the hub holds no key for " + clusterLabel + " — " +
+			"only an operator can fix this: upload it via " + remedy
+	}
 }
 
 // fleetMedianTokens returns the median TotalTokens24h across claimed, online
@@ -906,6 +982,31 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 			}
 		}
 
+		// --- Rule: GitHub App credentials are in an operator-side state. ---
+		// Claimed only: a placeholder has no App by design. Gated on the
+		// spoke's OWN GitHubAppRequired verdict plus an operator-side
+		// GitHubAppState (key-missing / key-invalid / no-app-assigned) — the
+		// exact states every owner-facing surface deliberately silences, which
+		// is why an operator alert is the ONLY active signal for them (#4316).
+		//
+		// Deliberately NOT gated on the hive being online (Danathar, #4322):
+		// an offline hive raises its own offline alert, but that alert cannot
+		// say WHY the hive never worked — and gating here would drop the
+		// credential alert exactly when the hive is worst off, still keyless
+		// and now not even heartbeating. The two answer different questions
+		// and an operator needs both. This also matches every other
+		// spoke-state rule above (health-check, advisory, inference), none of
+		// which gate on Online.
+		//
+		// Critical: the hive provably cannot work until the hub delivers a
+		// usable key. Self-clears once the key lands and the spoke stops
+		// reporting the state; the standard retention pass drops the
+		// condition and its ack.
+		if !h.IsPlaceholder && h.GitHubAppRequired && appStateIsOperatorSide(h.GitHubAppState) {
+			add(h.ID, h.Name, AlertTypeAppCredsUndelivered, AlertSeverityCritical,
+				appCredsUndeliveredReason(h))
+		}
+
 		// --- Rule: agents are running but not working. ---
 		// The condition is NOT re-derived here: it is precomputed by
 		// evaluateInactiveAgents(), which already excludes paused and
@@ -1076,6 +1177,24 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	hives := make([]alertHive, 0, len(entries))
 	for _, e := range entries {
 		hives = append(hives, alertHiveFromEntry(e))
+	}
+	// ClusterHasKey is hub-observed fact (the per-cluster PEM store on disk),
+	// so it is stamped here rather than in alertHiveFromEntry, which must stay
+	// constructible in unit tests without a HubServer or a filesystem. One
+	// read per DISTINCT cluster per evaluation, not per hive — a fleet shares
+	// a handful of clusters.
+	keyByCluster := map[string]bool{}
+	for i := range hives {
+		cid := strings.TrimSpace(hives[i].ClusterID)
+		if cid == "" {
+			continue
+		}
+		hasKey, seen := keyByCluster[cid]
+		if !seen {
+			hasKey = loadClusterAppKey(cid) != ""
+			keyByCluster[cid] = hasKey
+		}
+		hives[i].ClusterHasKey = hasKey
 	}
 	// driftAlerts is nil today. When the config-drift evaluator lands, its
 	// signals are passed here and flow through the same ordering, ack and
@@ -1250,6 +1369,7 @@ var knownAlertTypes = map[string]bool{
 	AlertTypeURLUnreachable:      true,
 	AlertTypeURLPrivateNetwork:   true,
 	AlertTypeInferenceAuthFailed: true,
+	AlertTypeAppCredsUndelivered: true,
 }
 
 func isKnownAlertType(t string) bool { return knownAlertTypes[t] }

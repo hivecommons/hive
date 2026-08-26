@@ -77,6 +77,8 @@ var knownRoles = map[string]bool{
 	"quality":       true,
 	"ci-maintainer": true,
 	"sec-check":     true,
+	"telemetry":     true,
+	"operations":    true,
 	"architect":     true,
 	"strategist":    true,
 	"outreach":      true,

@@ -7,7 +7,18 @@ set -euo pipefail
 #   /tmp/tmux-{agent_uid}/hive-{name}
 # We extract the owner from the socket and su-exec as that user.
 
-SESSION=${1:-supervisor}
+# Remember whether ttyd actually forwarded a session name. When it did not, the
+# fallback below picks a session the operator never asked for, and the resulting
+# "no tmux socket found" is a symptom several steps downstream of the real cause
+# (#4593: ttyd started without -a/--url-arg discards the dashboard's ?arg=).
+# Distinguishing the two cases is what lets the error message say so.
+if [ "$#" -ge 1 ] && [ -n "${1:-}" ]; then
+  SESSION="$1"
+  SESSION_FROM_ARG=1
+else
+  SESSION="supervisor"
+  SESSION_FROM_ARG=0
+fi
 
 # Find the per-agent socket: /tmp/tmux-*/${SESSION}
 TMUX_SOCKET=""
@@ -26,6 +37,26 @@ fi
 
 if [ ! -S "$TMUX_SOCKET" ]; then
   echo "error: no tmux socket found for session '${SESSION}'" >&2
+  if [ "$SESSION_FROM_ARG" -eq 0 ]; then
+    # The operator never typed 'supervisor' — the fallback did. Say where the
+    # name should have come from instead of naming a session nobody asked for.
+    echo "hint: no session name was passed to this script, so it fell back to" >&2
+    echo "      '${SESSION}'. The dashboard sends the name as ?arg=hive-<agent>," >&2
+    echo "      which ttyd only forwards when it is started with -a/--url-arg." >&2
+    echo "      Check ttyd's argv for -a (regression #4593)." >&2
+  fi
+  # Real sessions are named hive-<agent>, so listing them turns a dead end into
+  # the one thing the caller needs: a name that would have worked.
+  FOUND=""
+  for sock in /tmp/tmux-*/*; do
+    [ -S "$sock" ] || continue
+    FOUND="${FOUND} $(basename "$sock")"
+  done
+  if [ -n "$FOUND" ]; then
+    echo "available sessions:${FOUND}" >&2
+  else
+    echo "available sessions: none — no agent tmux sockets exist under /tmp/tmux-*/" >&2
+  fi
   exit 1
 fi
 
@@ -58,20 +89,79 @@ CURRENT_UID=$(id -u)
 # HIVE_TTYD_HISTORY_LIMIT overrides the scrollback depth applied on attach.
 TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
 
+# Scrollback state legibility (issue #4399). Two things sit in the top-right of
+# this terminal and neither says what it is:
+#
+#   * tmux's DEFAULT status-right is a live WALL CLOCK. An operator read it as a
+#     timestamp OF THE CONTENT and tried to line it up with the scrollback,
+#     which can never work — it is simply the time now.
+#   * copy-mode draws a black-on-yellow [position/total] counter, which is the
+#     only hint that the pane is scrolled back and reads like a line counter
+#     rather than a warning.
+#
+# copy-mode is the state that matters: while a pane is in it the pane STOPS
+# FOLLOWING LIVE OUTPUT, and because the mouse mode above puts the wheel into
+# copy-mode, an operator gets there by scrolling. copy-mode is PANE state on the
+# server, so closing the browser tab and reopening it re-attaches to a pane that
+# is still frozen — the exact "no more output, and reopening showed no more
+# output" report in #4399.
+#
+# The authoritative setting is applied at SESSION creation by the agent manager
+# (newSessionCommands in src/pkg/agent/manager.go). This attach-time set is the
+# same defense in depth as the history-limit raise above: it reaches sessions
+# created before that change, or outside the manager. Saved and restored around
+# the attach so an agent CLI that manages its own status line is not permanently
+# altered.
+#   * a pane whose application grabbed the mouse never enters copy-mode at all
+#     (the wheel rebind below forwards the wheel to the app), so the status line
+#     claimed a bare "[live]" no matter how far back the operator had scrolled
+#     inside the agent CLI's own buffer, and the position was nowhere (#4681).
+TTYD_STATUS_RIGHT="${HIVE_TTYD_STATUS_RIGHT:-#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,#{?mouse_any_flag,[live - this app handles its own scrolling#, so tmux has no line position] ,[live] }}now %H:%M:%S }"
+TTYD_STATUS_INTERVAL="${HIVE_TTYD_STATUS_INTERVAL:-2}"
+# tmux truncates status-right to status-right-length, DEFAULT 40 columns —
+# which cut the message above off mid-word. Raised to fit the longest
+# expansion (position counters included) with headroom.
+TTYD_STATUS_RIGHT_LENGTH="${HIVE_TTYD_STATUS_RIGHT_LENGTH:-140}"
+
 # attach_with runs the attach lifecycle. $1 is an optional command prefix
 # (e.g. "su-exec <spec>") so the same logic serves both the owner and non-owner
 # paths without duplication.
 attach_with() {
   local run=("$@")
   local prev_mouse prev_history exit_code=0
+  local prev_status prev_interval prev_status_len
   prev_mouse=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -v mouse 2>/dev/null || echo "on")
   prev_history=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv history-limit 2>/dev/null || echo "")
+  prev_status=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv status-right 2>/dev/null || echo "")
+  prev_interval=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv status-interval 2>/dev/null || echo "")
+  prev_status_len=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv status-right-length 2>/dev/null || echo "")
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse on 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" history-limit "$TTYD_HISTORY_LIMIT" 2>/dev/null || true
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right "$TTYD_STATUS_RIGHT" 2>/dev/null || true
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right-length "$TTYD_STATUS_RIGHT_LENGTH" 2>/dev/null || true
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-interval "$TTYD_STATUS_INTERVAL" 2>/dev/null || true
+  # #4399: hide tmux's unlabelled black-on-yellow copy-mode marker (its
+  # "<top-line write time> [pos/total]" is what the issue could not parse) —
+  # the labelled status line above carries the position instead. This is
+  # tmux's own default WheelUpPane binding with only -H added (tmux >= 3.2;
+  # older tmux rejects it, hence || true, and simply keeps the marker).
+  # Server-wide by nature and deliberately not restored on detach: each agent
+  # runs its own private tmux server, and the binding must persist so the
+  # NEXT wheel scroll — possibly before any browser attach — also hides it.
+  "${run[@]}" tmux -S "$TMUX_SOCKET" bind-key -n WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH' 2>/dev/null || true
   "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true
   if [ -n "$prev_history" ]; then
     "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" history-limit "$prev_history" 2>/dev/null || true
+  fi
+  if [ -n "$prev_status" ]; then
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right "$prev_status" 2>/dev/null || true
+  fi
+  if [ -n "$prev_status_len" ]; then
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-right-length "$prev_status_len" 2>/dev/null || true
+  fi
+  if [ -n "$prev_interval" ]; then
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -gt "$SESSION" status-interval "$prev_interval" 2>/dev/null || true
   fi
   return "$exit_code"
 }

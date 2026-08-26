@@ -215,11 +215,18 @@ func TestImpersonateCookieIsHostOnly(t *testing.T) {
 // change deliberately does not fix, so the decision is explicit in the suite
 // rather than an unexplained omission.
 //
-// hive_hub_user MUST keep Domain=.hive.kubestellar.io: each spoke's Node proxy
-// (src/proxy/server.js) independently verifies this cookie to authenticate the
-// tenant dashboard and terminal, and it can only verify a cookie the browser
-// sends it — which happens solely because of that Domain attribute. Making it
-// host-only or __Host- would log every hosted tenant out fleet-wide.
+// hive_hub_user MUST keep a Domain that covers <id>.hive.kubestellar.io: each
+// spoke's Node proxy (src/proxy/server.js) independently verifies this cookie
+// to authenticate the tenant dashboard and terminal, and it can only verify a
+// cookie the browser sends it — which happens solely because of that Domain
+// attribute. Making it host-only or __Host- would log every hosted tenant out
+// fleet-wide.
+//
+// #4171 widened the scope from .hive.kubestellar.io to the parent
+// .kubestellar.io so sibling first-party products (dibs.kubestellar.io)
+// receive it too — every spoke host is a deeper subdomain of that scope and
+// still receives the cookie. Logout must clear BOTH scopes: a pre-widening
+// session is a separate jar entry a parent-scoped deletion cannot remove.
 //
 // If you are here because you want the __Host- prefix the audit asked for: the
 // prerequisite is a spoke-scoped session minted at SSO handoff, so the hub
@@ -231,14 +238,13 @@ func TestImpersonateCookieIsHostOnly(t *testing.T) {
 func TestSessionCookieStillDomainScopedForSpokes(t *testing.T) {
 	s := newHandlerHub()
 	rec := httptest.NewRecorder()
-	s.handleLogout(rec, httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil))
+	s.handleLogout(rec, httptest.NewRequest(http.MethodPost, "https://hive.kubestellar.io/api/auth/logout", nil))
 
-	var found bool
+	domains := map[string]bool{}
 	for _, c := range rec.Result().Cookies() {
 		if c.Name != "hive_hub_user" {
 			continue
 		}
-		found = true
 		if c.Domain == "" {
 			t.Fatal("hive_hub_user is no longer domain-scoped. Each spoke's Node proxy " +
 				"(src/proxy/server.js) verifies this cookie and only receives it because of the " +
@@ -249,9 +255,20 @@ func TestSessionCookieStillDomainScopedForSpokes(t *testing.T) {
 		if !c.Secure || !c.HttpOnly {
 			t.Errorf("hive_hub_user lost hardening: Secure=%v HttpOnly=%v", c.Secure, c.HttpOnly)
 		}
+		if c.MaxAge >= 0 {
+			t.Errorf("logout cookie for Domain=%q is not a deletion (MaxAge=%d)", c.Domain, c.MaxAge)
+		}
+		domains[c.Domain] = true
 	}
-	if !found {
+	if len(domains) == 0 {
 		t.Fatal("handleLogout emitted no hive_hub_user cookie")
+	}
+	if !domains["kubestellar.io"] {
+		t.Errorf("logout does not clear the parent-scoped (#4171) session cookie, got domains %v", domains)
+	}
+	if !domains["hive.kubestellar.io"] {
+		t.Errorf("logout does not clear the legacy .hive.kubestellar.io-scoped session cookie "+
+			"(a pre-widening session is a separate jar entry), got domains %v", domains)
 	}
 }
 

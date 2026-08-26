@@ -34,7 +34,7 @@ func prRequestDir() string {
 // prRequestPollInterval is how often the watcher scans PRRequestDir. PR opens
 // are not latency-critical (the agent has already pushed and moved on), so a
 // modest interval keeps the API/log noise low.
-const prRequestPollInterval = 10 * time.Second
+var prRequestPollInterval = 10 * time.Second
 
 // PRRequest is the JSON an agent writes to PRRequestDir to ask the hive to open
 // a PR on its behalf. Repo may be "owner/repo" or a bare repo name; Base
@@ -96,45 +96,55 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 // hold-gated PRs were being opened unlabeled. A nil holdLabel means "never hold".
 //
 // nowFn is injectable for tests; pass nil for time.Now.
-func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func() bool, nowFn func() time.Time) {
+//
+// The returned channel closes when the watcher goroutine has exited (or
+// immediately when it never starts), so callers — tests above all — can JOIN
+// the loop after cancelling instead of sleeping and hoping: an unjoined
+// watcher outliving its test races the test's global-seam restores.
+func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func() bool, nowFn func() time.Time) <-chan struct{} {
+	done := make(chan struct{})
 	if c == nil {
-		return
+		close(done)
+		return done
 	}
 	c.prAuthz = authz
 	c.prHoldLabel = holdLabel
 	if nowFn == nil {
 		nowFn = time.Now
 	}
-	if err := os.MkdirAll(prRequestDir(), 0o777); err != nil {
-		c.logger.Warn("pr-request watcher: cannot create request dir; disabled",
-			slog.String("dir", prRequestDir()), slog.String("error", err.Error()))
-		return
+	// Shared with PrepareRequestDirs, which creates this queue unconditionally
+	// at boot so requests can accumulate even before a watcher runs.
+	if !ensureRequestDir(c.logger, "pr", prRequestDir()) {
+		close(done)
+		return done
 	}
-	// Agents (UID >= 2001, in the shared "node" group) must be able to DROP request
-	// files here — hive-open-pr runs AS the agent. MkdirAll is masked by umask to
-	// 0755 (not group-writable), so an agent's write gets EACCES and, under the
-	// hard switch, its PR silently fails to open. Force group-write + setgid (like
-	// /data/beads) so agent-written files inherit the node group and the dir is
-	// writable by every agent. The forge-check still holds: the watcher reads each
-	// file's OWNING UID, which is the agent that wrote it — group-writability lets
-	// them write, it does not let one agent forge another's ownership.
-	if err := os.Chmod(prRequestDir(), 0o3775); err != nil {
-		c.logger.Warn("pr-request watcher: could not set group-writable perms on request dir; agents may be unable to open PRs",
-			slog.String("dir", prRequestDir()), slog.String("error", err.Error()))
-	}
+	// Capture the poll interval BEFORE spawning: the goroutine's first read of
+	// the package-level interval races with a test's fastTick cleanup restoring
+	// it (the race detector flagged exactly that on v4 CI). Reading it here is
+	// sequenced with the caller, and the loop only ever needed it once anyway.
+	interval := prRequestPollInterval
 	go func() {
-		t := time.NewTicker(prRequestPollInterval)
+		defer close(done)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// A cancelled ctx can lose the select to an already-ready tick
+				// (select picks randomly among ready cases), letting the loop
+				// process one more scan after cancellation. Fail the tick
+				// closed so cancel means no further processing.
+				if ctx.Err() != nil {
+					return
+				}
 				c.processPRRequests(ctx, nowFn)
 			}
 		}
 	}()
 	c.logger.Info("pr-request watcher started", slog.String("dir", prRequestDir()))
+	return done
 }
 
 // processPRRequests handles one scan of the request dir. Exported-in-spirit for
@@ -164,11 +174,12 @@ func (c *Client) ProcessPRRequestsOnce(ctx context.Context) {
 }
 
 func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func() time.Time) {
-	data, fileUID, err := readAgentRequest(path)
-	if err != nil {
-		c.writePRResult(path, PRResponse{OK: false, Error: "invalid request file: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
-		_ = os.Rename(path, path+".bad")
+	if !c.prRetries.allows(path, nowFn()) {
 		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // vanished between ReadDir and here — fine
 	}
 	var req PRRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -176,12 +187,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		// retried every tick, and leave a result explaining why.
 		c.writePRResult(path, PRResponse{OK: false, Error: "invalid JSON: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
+		c.prRetries.clear(path)
 		c.logger.Warn("pr-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
-		return
-	}
-	if !c.managesRepository(req.Repo) {
-		c.denyPRRequest(path, req, "repository is outside this Hive's configured project scope", nowFn)
 		return
 	}
 
@@ -190,6 +198,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// can only speak for itself) AND be push-capable at the hive's ACMM level.
 	// The owning UID comes from the file's stat, which the requester cannot forge
 	// without actually running as that UID. A nil authorizer fails closed.
+	fileUID := statUID(data, path)
 	if c.prAuthz == nil {
 		c.denyPRRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
@@ -213,12 +222,24 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, body)
 	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	if err != nil {
-		// Leave the request in place so the next tick retries (transient API
-		// errors, main not yet pushed, etc.), but record the last error.
+		// Leave the request in place so a later tick retries (transient API
+		// errors, main not yet pushed, etc.) — but with exponential backoff, and
+		// quarantine once the give-up horizon passes. Retrying every tick
+		// forever let ~10 poisoned requests generate thousands of junk create
+		// calls an hour, tripping the org-wide secondary rate limit
+		// (request_retry.go).
 		resp.OK = false
 		resp.Error = err.Error()
 		c.writePRResult(path, resp)
-		c.logger.Warn("pr-request watcher: open failed, will retry",
+		if c.prRetries.noteFailure(path, nowFn()) {
+			_ = os.Rename(path, path+".failed")
+			c.prRetries.clear(path)
+			c.logger.Error("pr-request watcher: request exceeded retry horizon, quarantined",
+				slog.String("path", path), slog.String("repo", req.Repo),
+				slog.String("head", req.Head), slog.String("error", err.Error()))
+			return
+		}
+		c.logger.Warn("pr-request watcher: open failed, will retry with backoff",
 			slog.String("repo", req.Repo), slog.String("head", req.Head), slog.String("error", err.Error()))
 		return
 	}
@@ -262,6 +283,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.
 	_ = os.Remove(path)
+	c.prRetries.clear(path)
 	c.logger.Info("pr-request watcher: PR opened by App bot",
 		slog.String("repo", req.Repo), slog.String("head", req.Head),
 		slog.Int("number", res.Number), slog.Bool("reused", res.AlreadyExisted),
@@ -275,13 +297,29 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 func (c *Client) denyPRRequest(path string, req PRRequest, reason string, nowFn func() time.Time) {
 	c.writePRResult(path, PRResponse{OK: false, Error: "authorization denied: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Rename(path, path+".denied")
+	c.prRetries.clear(path)
 	c.logger.Warn("pr-request watcher: DENIED (policy)",
 		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
 		slog.String("head", req.Head), slog.String("reason", reason))
 }
 
+// statUID returns the UID that owns the request file. On the (Linux) container
+// this is a real UID that a forging process cannot fake without running as it.
+// data is unused but kept in the signature so a future non-stat proof (e.g. an
+// embedded signed token) can slot in without touching call sites.
+func statUID(_ []byte, path string) int {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return fileOwnerUID(fi)
+}
+
 func (c *Client) writePRResult(reqPath string, resp PRResponse) {
-	_ = writeWatcherResult(reqPath, resp)
+	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
+	if b, err := json.MarshalIndent(resp, "", "  "); err == nil {
+		_ = os.WriteFile(out, b, 0o644)
+	}
 }
 
 // WritePRRequest is a helper (used by tests and any in-process caller) to drop a

@@ -1,6 +1,6 @@
 # Local development
 
-This guide describes the local workflow for contributing to the Hive Go codebase on the `v2` branch.
+This guide describes the local workflow for contributing to the Hive Go codebase on the `v4` branch.
 
 ## Prerequisites
 
@@ -14,26 +14,26 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 ## Clone and branch
 
 ```bash
-git clone -b v2 https://github.com/kubestellar/hive.git
+git clone https://github.com/kubestellar/hive.git
 cd hive
-git switch -c <topic-branch> origin/v2
+git switch -c <topic-branch> origin/v4
 ```
 
-Use `v2` as the PR base for ordinary Hive development. Rebase or recreate your branch from a fresh `origin/v2` before opening or updating a PR.
+Use `v4` as the PR base for ordinary Hive development. Rebase or recreate your branch from a fresh `origin/v4` before opening or updating a PR.
 
 ## Build
 
 Build every package in the Go module:
 
 ```bash
-cd v2
+cd src
 go build ./...
 ```
 
 To build only the main Hive binary during quick iteration:
 
 ```bash
-cd v2
+cd src
 go build ./cmd/hive
 ```
 
@@ -42,7 +42,7 @@ go build ./cmd/hive
 Run the module tests from `src/`:
 
 ```bash
-cd v2
+cd src
 go test ./...
 ```
 
@@ -51,7 +51,7 @@ The `src/test/` package contains integration/regression coverage and may exercis
 Useful narrower loops:
 
 ```bash
-cd v2
+cd src
 go test ./pkg/...
 go test ./cmd/hive
 ```
@@ -64,10 +64,10 @@ Run `gofmt` on Go files you edit:
 gofmt -w path/to/file.go
 ```
 
-The v2 CI workflow runs `go vet ./...` after building the Hive binary. Reproduce that check locally from the Go module:
+The v4 CI workflow runs `go vet ./...` after building the Hive binary. Reproduce that check locally from the Go module:
 
 ```bash
-cd v2
+cd src
 go vet ./...
 ```
 
@@ -78,13 +78,16 @@ There is no public `just lint` recipe in the current root `Justfile`; use `go ve
 The quickest operator path remains Docker Compose from the root README:
 
 ```bash
-cd v2
-cp hive.yaml.example hive.yaml
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose up -d
+cp src/hive.yaml.example src/hive.yaml
+# src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
+# directory, so that is the `.env` Compose reads. A root `.env` is ignored.
+echo "HIVE_GITHUB_TOKEN=ghp_..." > src/.env
+# REQUIRED: the dashboard's auth proxy refuses to start without it.
+printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
+docker compose -f src/docker-compose.yaml up -d
 ```
 
-For source-level debugging, build with `go build ./cmd/hive` and run the generated binary with a local `hive.yaml`. Keep real tokens in your shell or local ignored files, never in commits.
+For source-level debugging, build with `go build ./cmd/hive` from `src/` and run the generated binary with a local `src/hive.yaml`. Keep real tokens in your shell or local ignored `.env` files, never in commits.
 
 ## Just recipes
 
@@ -107,7 +110,7 @@ Deployment and development tasks that are not listed by `just --list` are not pu
 
 ## Before opening a PR
 
-1. Rebase on the latest `origin/v2`.
+1. Rebase on the latest `origin/v4`.
 2. Run the build and tests that match your change.
 3. Commit with DCO sign-off: `git commit -s`.
-4. Open a PR against `v2` with an emoji-prefixed title, testing notes, and `Fixes #...` lines for closing issues.
+4. Open a PR against `v4` with an emoji-prefixed title, testing notes, and `Fixes #...` lines for closing issues.

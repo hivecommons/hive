@@ -171,10 +171,20 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.LastExcerpt = o.Excerpt
 		}
 		e.UpdatedAt = s.now()
+		// A PR whose CURRENT red SHA has exhausted its re-engagement budget has
+		// had every automated nudge it is going to get. If no new SHA ever
+		// appears — fix attempts are not even being PUSHED, e.g. the agents lost
+		// their write credentials (kubestellar/console, 2026-08-22: eight red
+		// PRs re-engaged every cycle for 15h with zero pushes) — the distinct-SHA
+		// count can never advance, so without this clause the PR sits in limbo
+		// forever: nudged, never fixed, never handed to a human. Budget
+		// exhaustion on an unchanged red SHA is therefore escalation-worthy in
+		// its own right.
+		exhausted := e.ReEngagements >= MaxReEngagements
 		results[key] = Result{
 			Attempts:    len(e.RedSHAs),
 			Escalated:   e.Escalated,
-			NewlyEscala: !e.Escalated && len(e.RedSHAs) >= threshold,
+			NewlyEscala: !e.Escalated && (len(e.RedSHAs) >= threshold || exhausted),
 		}
 	}
 	// Prune PRs that left the open set (merged or closed).

@@ -275,6 +275,249 @@ assert_reached "read-only gh api reaches gh" \
 assert_blocked "pr merge passes the surface gate and is held by eligibility" \
   "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge 123)" eligibility
 
+# ── #4043: label injection is best-effort, never a wall ──────────────────────
+# The edit/create arms append the agent/hive provenance labels. When the label
+# does not exist on the target repo, gh fails the WHOLE operation with
+# "'<label>' not found" — which took down a fleet owner's edit lane. The
+# wrapper must retry without labels. This stub simulates gh's behavior by
+# failing any invocation that carries a label-injection flag; the wrapper runs
+# under `set -e`, so these tests also pin that the retry is not dead code.
+echo "-- label injection falls back instead of failing the operation (#4043) --"
+LABEL_STUB="${WORK}/gh-stub-labelfail"
+cat >"$LABEL_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_LOG}"
+case " $* " in
+  *" --add-label "*|*" --label "*) exit 1 ;;
+esac
+exit 0
+STUBEOF
+chmod +x "$LABEL_STUB"
+
+# run_label_wrapper <args...> — like run_wrapper but with the label-failing
+# stub, and it reports the LAST stub invocation so the assertions can prove the
+# retry dropped the injected labels. Per-repo ensure caches live in /tmp; clear
+# ours so the label-create calls are deterministic.
+run_label_wrapper() {
+  : >"$STUB_LOG"
+  rm -f /tmp/.hive-labels-ensured-owner_repo
+  local out rc last
+  out="$(
+    HIVE_GH_WRAPPER_REAL_GH="$LABEL_STUB" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+    HIVE_ACMM_LEVEL=5 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" "$@" 2>&1
+  )"
+  rc=$?
+  rm -f /tmp/.hive-labels-ensured-owner_repo
+  last="$(tail -n 1 "$STUB_LOG" 2>/dev/null)"
+  echo "exit=${rc} last=${last}"
+}
+
+result="$(run_label_wrapper pr edit 5 --repo owner/repo --title x)"
+if [[ "$result" == "exit=0 last=pr edit 5 --repo owner/repo --title x" ]]; then
+  echo "  PASS: pr edit retries without injected labels and succeeds"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr edit retries without injected labels and succeeds"
+  echo "        got '$result', want exit=0 with an unlabeled final retry"
+  FAIL=$((FAIL + 1))
+fi
+
+result="$(run_label_wrapper issue edit 7 --repo owner/repo --add-assignee z)"
+if [[ "$result" == "exit=0 last=issue edit 7 --repo owner/repo --add-assignee z" ]]; then
+  echo "  PASS: issue edit retries without injected labels and succeeds"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: issue edit retries without injected labels and succeeds"
+  echo "        got '$result', want exit=0 with an unlabeled final retry"
+  FAIL=$((FAIL + 1))
+fi
+
+result="$(run_label_wrapper issue create --repo owner/repo --title t --body b)"
+if [[ "$result" == exit=0* && "$result" != *"--label"* ]]; then
+  echo "  PASS: issue create retries without injected labels and succeeds"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: issue create retries without injected labels and succeeds"
+  echo "        got '$result', want exit=0 with an unlabeled final retry"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── #4043: empty per-agent token cache must fail LOUD, not go unauthenticated ─
+# A pre-created-but-not-yet-minted (0-byte) cache passed the old -f check and
+# exported an EMPTY GH_TOKEN, sending every call out unauthenticated. Direct
+# invocation (not run_wrapper) because the harness treats this gate's message
+# as a harness error elsewhere.
+echo "-- empty token cache fails loud (#4043) --"
+EMPTY_CACHE="${WORK}/empty-token"
+: >"$EMPTY_CACHE"
+out="$(
+  HIVE_GH_WRAPPER_REAL_GH="$STUB" \
+  STUB_LOG="$STUB_LOG" \
+  HIVE_AGENT="testagent" \
+  HIVE_AGENT_ID="testagent" \
+  HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+  HIVE_AGENT_TOKEN_CACHE="$EMPTY_CACHE" \
+  HIVE_CONTRIBUTOR_MODE="false" \
+  bash "$WRAPPER" issue view 1 --repo owner/repo 2>&1
+)"
+rc=$?
+if [[ $rc -eq 1 && "$out" == *"per-agent scoped GitHub token not available"* ]]; then
+  echo "  PASS: empty token cache blocks with the fail-loud message"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: empty token cache blocks with the fail-loud message"
+  echo "        got rc=$rc out='$out'"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── #4044: author gate must work for App INSTALLATION tokens ─────────────────
+# Staff agents hold ghs_ installation tokens, for which `gh api user` 403s
+# unconditionally — the #3982 oracle could NEVER resolve for them, so every
+# author-gated list failed closed fleet-wide. The fix: the hive (which mints
+# the tokens) publishes the bot login to a trusted file in the agent-token dir
+# (dev-owned; no agent UID can write it). These tests drive the wrapper with a
+# stub that reproduces the 403, exactly like production installation tokens.
+#
+# HIVE_GH_WRAPPER_BOT_LOGIN_FILE relocates the trusted file for the harness
+# only — the wrapper honors it solely under HIVE_GH_WRAPPER_REAL_GH, where the
+# caller already substitutes the gh binary itself and the override grants
+# nothing new.
+echo "-- author gate resolves staff identity from the trusted file (#4044) --"
+
+# Stub reproducing an App installation token: /user is structurally
+# unavailable (HTTP 403 "Resource not accessible by integration").
+INSTALL_STUB="${WORK}/gh-stub-installation"
+cat >"$INSTALL_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_LOG}"
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "user" ]; then
+  echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+  exit 1
+fi
+exit 0
+STUBEOF
+chmod +x "$INSTALL_STUB"
+
+# Stub reproducing a USER token (contributor path): /user resolves normally.
+USER_STUB="${WORK}/gh-stub-usertoken"
+cat >"$USER_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_LOG}"
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "user" ]; then
+  echo "someuser"
+fi
+exit 0
+STUBEOF
+chmod +x "$USER_STUB"
+
+TRUSTED_LOGIN_FILE="${WORK}/gh-bot-login"
+printf 'test-app[bot]\n' >"$TRUSTED_LOGIN_FILE"
+
+# run_author_wrapper <stub> <login-file> [extra VAR=val...] -- <args...>
+# Reports "exit=<rc> last=<final stub argv> ::: <wrapper output>" so assertions
+# can pin both the decision and WHAT was forwarded to gh.
+run_author_wrapper() {
+  local stub="$1" login_file="$2"; shift 2
+  local extra_env=()
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do extra_env+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && shift
+  : >"$STUB_LOG"
+  local out rc
+  # ${arr[@]+...} keeps the empty-array case safe under `set -u` on bash 3.x.
+  out="$(
+    env ${extra_env[@]+"${extra_env[@]}"} \
+    HIVE_GH_WRAPPER_REAL_GH="$stub" \
+    HIVE_GH_WRAPPER_BOT_LOGIN_FILE="$login_file" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+    HIVE_ACMM_LEVEL=5 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" "$@" 2>&1
+  )"
+  rc=$?
+  local last
+  last="$(tail -n 1 "$STUB_LOG" 2>/dev/null)"
+  echo "exit=${rc} last=${last} ::: ${out}"
+}
+
+assert_author() {
+  local label="$1" result="$2" want="$3"
+  if [[ "$result" == $want ]]; then
+    echo "  PASS: $label"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $label"
+    echo "        got '$result'"
+    echo "        want glob '$want'"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# THE regression: an installation-token agent with the trusted file present
+# must be able to list its own items — and only its own.
+assert_author "installation token + trusted file: self-listing by bot login works" \
+  "$(run_author_wrapper "$INSTALL_STUB" "$TRUSTED_LOGIN_FILE" -- issue list --repo owner/repo --author 'test-app[bot]')" \
+  "exit=0 last=issue list --repo owner/repo --author test-app\[bot\] ::: *"
+assert_author "matching is [bot]-suffix-insensitive (bare slug allowed)" \
+  "$(run_author_wrapper "$INSTALL_STUB" "$TRUSTED_LOGIN_FILE" -- pr list --repo owner/repo --author test-app)" \
+  "exit=0 last=pr list --repo owner/repo --author test-app ::: *"
+# @me has no server-side meaning for an installation token — the wrapper must
+# substitute the trusted identity, or there is no working self-listing form.
+assert_author "--author @me is rewritten to the trusted bot identity" \
+  "$(run_author_wrapper "$INSTALL_STUB" "$TRUSTED_LOGIN_FILE" -- pr list --repo owner/repo --author @me)" \
+  "exit=0 last=pr list --repo owner/repo --author test-app\[bot\] ::: *"
+assert_author "--author=@me equals-form is rewritten too" \
+  "$(run_author_wrapper "$INSTALL_STUB" "$TRUSTED_LOGIN_FILE" -- pr list --repo owner/repo --author=@me)" \
+  "exit=0 last=pr list --repo owner/repo --author=test-app\[bot\] ::: *"
+
+# The gate itself must keep gating: a foreign author is still refused.
+assert_author "trusted file does not open listing OTHER authors" \
+  "$(run_author_wrapper "$INSTALL_STUB" "$TRUSTED_LOGIN_FILE" -- issue list --repo owner/repo --author someone-else)" \
+  "exit=1 last= ::: *must match the authenticated GitHub identity*"
+
+# Fail-closed is preserved when no trusted identity exists: the installation
+# token cannot resolve /user, so with the file missing there is NO oracle.
+assert_author "missing trusted file + installation token: explicit author fails closed" \
+  "$(run_author_wrapper "$INSTALL_STUB" "${WORK}/no-such-login-file" -- issue list --repo owner/repo --author 'test-app[bot]')" \
+  "exit=1 last=api user --jq .login ::: *requires authenticated GitHub identity*"
+: >"${WORK}/empty-login-file"
+assert_author "EMPTY trusted file + installation token: fails closed (no empty identity)" \
+  "$(run_author_wrapper "$INSTALL_STUB" "${WORK}/empty-login-file" -- issue list --repo owner/repo --author 'test-app[bot]')" \
+  "exit=1 last=api user --jq .login ::: *requires authenticated GitHub identity*"
+assert_author "missing trusted file + installation token: @me fails closed with the #4044 diagnosis" \
+  "$(run_author_wrapper "$INSTALL_STUB" "${WORK}/no-such-login-file" -- pr list --repo owner/repo --author @me)" \
+  "exit=1 last=api user --jq .login ::: *cannot work with an App installation token*"
+
+# POSITIVE CONTROL (the #3982 invariant): agent-controlled environment must
+# never seed the trusted identity. With no trusted file and a 403ing /user,
+# these env vars are the ONLY place the claimed identity appears — if any of
+# them were consulted, this listing would succeed.
+assert_author "env vars cannot seed the identity (#3982 invariant holds)" \
+  "$(run_author_wrapper "$INSTALL_STUB" "${WORK}/no-such-login-file" \
+      HIVE_AUTH_LOGIN_CACHED="test-app[bot]" HIVE_BOT_LOGIN="test-app[bot]" GITHUB_USER="test-app[bot]" \
+      -- issue list --repo owner/repo --author 'test-app[bot]')" \
+  "exit=1 last=api user --jq .login ::: *requires authenticated GitHub identity*"
+
+# USER-token path unchanged: with no trusted file, `gh api user` remains the
+# oracle — resolves, matches, mismatches refuse. (Contributor mode itself is an
+# image marker the harness cannot plant; the oracle chain is what's under test.)
+assert_author "user token without trusted file still resolves via gh api user" \
+  "$(run_author_wrapper "$USER_STUB" "${WORK}/no-such-login-file" -- issue list --repo owner/repo --author someuser)" \
+  "exit=0 last=issue list --repo owner/repo --author someuser ::: *"
+assert_author "user token without trusted file still refuses a foreign author" \
+  "$(run_author_wrapper "$USER_STUB" "${WORK}/no-such-login-file" -- issue list --repo owner/repo --author someone-else)" \
+  "exit=1 last=api user --jq .login ::: *must match the authenticated GitHub identity*"
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1

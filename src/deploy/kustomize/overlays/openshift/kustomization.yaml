@@ -12,6 +12,14 @@ kind: Kustomization
 #
 # It changes NOTHING about the workload itself; the base deployment already
 # carries the correct securityContext (fsGroup 1002, NET_ADMIN + su-exec caps).
+#
+# NOTE (capabilities): `anyuid` permits root but does NOT permit ADDING
+# capabilities, and the base deployment requests NET_ADMIN + the su-exec set —
+# so on a cluster with only stock SCCs the pod is still rejected at admission.
+# A cluster-admin must also apply the ../openshift-netadmin overlay (dedicated
+# `hive-netadmin` SCC), which additionally permits root and therefore makes
+# the anyuid binding below redundant-but-harmless. See that overlay's
+# kustomization.yaml and src/docs/net-admin-requirement.md.
 
 resources:
   - ../../../k8s

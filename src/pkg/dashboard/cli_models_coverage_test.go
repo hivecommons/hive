@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,6 +56,15 @@ func TestCovD_CLIStaticFallback(t *testing.T) {
 func TestCovD_DiscoverModelsNoCreds(t *testing.T) {
 	logger := testLoggerCovD()
 	s := NewServer(0, logger)
+
+	// On a live hive host the copilot SDK helper is installed and the agent
+	// HOME holds stored CLI auth, so the SDK probe succeeds even with no
+	// token and the result is not the static fallback. Stub the seam to the
+	// CI behavior (helper not installed) so the no-creds branch is what's
+	// actually tested.
+	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
+		return nil, errors.New("sdk helper not installed")
+	})
 
 	// No AgentMgr and no env var → copilotToken returns "" → fallback.
 	t.Setenv("COPILOT_GITHUB_TOKEN", "")

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // testKey is a deterministic non-secret AES-256 key used only by tests.
@@ -578,5 +580,66 @@ func TestN18_OversizeArchiveMemberIsRejected(t *testing.T) {
 	dest := t.TempDir()
 	if _, err := Extract(key, sealed, dest); err == nil {
 		t.Fatal("N18: an archive member larger than the restore limit was accepted — a decompression bomb can OOM the hub")
+	}
+}
+
+// Governor-config key resolution (#4129). A hosted spoke owner has no
+// deployment-env access, so ResolveKey must accept a key file named by
+// governor config — while keeping the env fallback and the fail-closed
+// refusal when neither supplies one.
+
+func TestResolveKeyFromGovernorConfigFile(t *testing.T) {
+	t.Setenv(EnvBackupKey, "")
+	path := filepath.Join(t.TempDir(), "backup_encryption_key")
+	if err := os.WriteFile(path, []byte(testKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	key, source, err := ResolveKeyWithSource(&config.BackupConfig{KeyFile: path})
+	if err != nil {
+		t.Fatalf("configured key must resolve without the env var: %v", err)
+	}
+	if len(key) != aesKeySize {
+		t.Fatalf("key len = %d, want %d", len(key), aesKeySize)
+	}
+	if source != "file:"+path {
+		t.Fatalf("source = %q, want file:%s", source, path)
+	}
+	// The safe source label is what gets logged and returned by APIs.
+	if strings.Contains(source, testKey) {
+		t.Fatal("source label leaked the key value")
+	}
+}
+
+// Fail-closed with a config present but empty: the refusal must still be the
+// explicit one, so an operator learns their backup would have been plaintext.
+func TestResolveKeyRefusesWhenNeitherSourceSet(t *testing.T) {
+	t.Setenv(EnvBackupKey, "")
+	_, _, err := ResolveKeyWithSource(&config.BackupConfig{
+		KeyFile: filepath.Join(t.TempDir(), "does-not-exist"),
+	})
+	if err == nil {
+		t.Fatal("expected a refusal when no source supplies a key")
+	}
+	if !strings.Contains(err.Error(), "refusing to write an unencrypted backup") {
+		t.Fatalf("want the explicit refusal, got %v", err)
+	}
+}
+
+// A malformed configured key must fail closed too, and the error must not
+// echo the (bad) key material back to a caller or a log.
+func TestResolveKeyRejectsMalformedConfiguredKeyWithoutEcho(t *testing.T) {
+	t.Setenv(EnvBackupKey, "")
+	path := filepath.Join(t.TempDir(), "backup_encryption_key")
+	const bad = "zz23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ResolveKeyWithSource(&config.BackupConfig{KeyFile: path})
+	if err == nil {
+		t.Fatal("a non-hex key must be rejected")
+	}
+	if strings.Contains(err.Error(), bad) {
+		t.Fatalf("error echoed key material: %v", err)
 	}
 }

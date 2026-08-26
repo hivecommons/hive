@@ -1,6 +1,6 @@
 # Dashboard REST API reference
 
-Pragmatic v1 endpoint index generated from route registrations in `pkg/dashboard/*.go` and `pkg/hub/*.go` on v2 HEAD (tests excluded). It lists method, path, coarse auth level, and one-line purpose. Request/response schemas are intentionally not hand-written here; see the handler source for exact payloads and validation.
+Pragmatic v1 endpoint index compiled by hand from route registrations in `src/pkg/dashboard/*.go` and `src/pkg/hub/*.go` (tests excluded). There is no generator; update this page in the same change that adds or renames a route. It lists method, path, coarse auth level, and one-line purpose. Request/response schemas are intentionally not hand-written here; see the handler source for exact payloads and validation.
 
 Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard token/session auth, and the `/api/v1` GitHub-token wrapper) or from hub route wrappers such as `requireAuth`. Hub rows marked handler-specific have no dashboard middleware; check the named handler for bearer secrets, admin checks, or public behavior.
 
@@ -90,6 +90,9 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/config/governor/hub` | Dashboard auth/session | Governor Hub | `pkg/dashboard/api.go:130` |
 | `PUT` | `/api/config/governor/litellm` | Dashboard auth/session | Governor Lite LLM | `pkg/dashboard/api.go:131` |
 | `PUT` | `/api/config/governor/trajectory` | Dashboard auth/session | Governor Trajectory | `pkg/dashboard/api.go:132` |
+| `GET` | `/api/config/governor/backup` | Owner only | Backup Key Status (presence + safe source label; never the key value) | `pkg/dashboard/backup_key.go` |
+| `PUT` | `/api/config/governor/backup` | Owner only | Backup Key Set (64-hex AES-256 key; stored 0600, path-only in `hive.yaml`) | `pkg/dashboard/backup_key.go` |
+| `DELETE` | `/api/config/governor/backup` | Owner only | Backup Key Clear (backups are refused again) | `pkg/dashboard/backup_key.go` |
 | `GET` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Status | `pkg/dashboard/api.go:136` |
 | `PUT` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key | `pkg/dashboard/api.go:137` |
 | `DELETE` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key Clear | `pkg/dashboard/api.go:138` |
@@ -232,15 +235,29 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 ### `/api/v1` contributor subpaths
 
 `handleAPIv1` dispatches authenticated contributor API calls below `/api/v1`.
-Use the Authorization header (or the `token` query parameter).
+Every request must carry a GitHub personal access token in the `Authorization`
+header, using either the `Bearer <token>` scheme (hosted clients) or the
+legacy `token <token>` scheme (what `gh auth token` and older hive CLIs
+send). Both are accepted; the legacy scheme is retained for backward
+compatibility. Credentials in the query string (`?token=`) are NOT supported
+and are rejected, because query strings land in ingress and access logs.
+
+Authorization: every `/api/v1` path except `/api/v1/me` additionally requires
+the caller to be in the hive's authorized-users allowlist (any role), and
+returns `403` otherwise — contributor, activity and knowledge data are
+hive-private, not world-readable. `/api/v1/me` is exempt because it only
+returns the caller's own profile. Client-supplied `X-Hive-User`, `X-Hive-Role`
+and owner-verified headers are stripped at the top of the handler; identity is
+always resolved server-side from the validated token.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET`/`POST` | `/api/v1/status` | GitHub token | Contributor status summary | `pkg/dashboard/api_contribute.go:6777` |
-| `GET`/`POST` | `/api/v1/activity` | GitHub token | Contributor activity feed | `pkg/dashboard/api_contribute.go:6779` |
-| `GET`/`POST` | `/api/v1/contributors` | GitHub token | Contributor list | `pkg/dashboard/api_contribute.go:6781` |
-| `GET`/`POST` | `/api/v1/knowledge` | GitHub token | Knowledge export | `pkg/dashboard/api_contribute.go:6783` |
-| `GET`/`POST` | `/api/v1/me` | GitHub token | Current contributor profile | `pkg/dashboard/api_contribute.go:6785` |
+| `GET`/`POST` | `/api/v1/status` | GitHub token + allowlist | Contributor status summary | `pkg/dashboard/api_contribute.go:6777` |
+| `GET`/`POST` | `/api/v1/activity` | GitHub token + allowlist | Contributor activity feed | `pkg/dashboard/api_contribute.go:6779` |
+| `GET`/`POST` | `/api/v1/contributors` | GitHub token + allowlist | Contributor list | `pkg/dashboard/api_contribute.go:6781` |
+| `GET`/`POST` | `/api/v1/knowledge` | GitHub token + allowlist | Knowledge export | `pkg/dashboard/api_contribute.go:6783` |
+| `GET`/`POST` | `/api/v1/me` | GitHub token (self-scoped, no allowlist) | Current contributor profile | `pkg/dashboard/api_contribute.go:6785` |
+| `POST` | `/api/v1/prs/{owner}/{repo}/{number}/queue-automerge` | GitHub token + merger/owner role (POST only; GET returns 405) | Queue PR auto-merge using the validated actor and current PR head | `pkg/dashboard/api_contribute.go` |
 
 ## Nous / strategy lab
 
@@ -305,8 +322,8 @@ Use the Authorization header (or the `token` query parameter).
 | `POST` | `/api/presence` | Dashboard auth/session | Presence | `pkg/dashboard/api.go:48` |
 | `GET` | `/api/prompt-history` | Dashboard auth/session | Prompt History | `pkg/dashboard/api.go:49` |
 | `POST` | `/api/self-upgrade` | Dashboard auth/session | Self Upgrade | `pkg/dashboard/api.go:50` |
-| `GET` | `/api/backup/status` | Dashboard auth/session | Backup Status | `pkg/dashboard/api.go:53` |
-| `POST` | `/api/backup` | Dashboard auth/session | Backup Download | `pkg/dashboard/api.go:54` |
+| `GET` | `/api/backup/status` | Owner only | Backup Status — `available:false` with a reason when no encryption key is configured | `pkg/dashboard/api.go:53` |
+| `POST` | `/api/backup` | Owner only | Backup Download — `412` when no encryption key is configured (never an unencrypted archive) | `pkg/dashboard/api.go:54` |
 | `POST` | `/api/banner-dismissed` | Dashboard auth/session | Banner Dismissed | `pkg/dashboard/api.go:55` |
 | `GET` | `/api/history` | Dashboard auth/session | History | `pkg/dashboard/api.go:59` |
 | `GET` | `/api/timeline` | Dashboard auth/session | Timeline | `pkg/dashboard/api.go:61` |

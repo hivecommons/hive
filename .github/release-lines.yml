@@ -1,0 +1,114 @@
+# Release-line branch allow-lists — the single source of truth for which
+# version branches CI is expected to cover.
+#
+# Nine workflows pin their `push` / `pull_request` triggers to an explicit list
+# of version-branch names. That list is hand-maintained, and it has already
+# failed once: podman-contract.yml named `v2` alone, mainline moved to `v4`, and
+# the workflow stopped running entirely (#4339). A guard that never executes
+# reports green forever, which is the one failure mode a guard cannot have.
+# Adding `v4` fixed that instance and left the mechanism intact, so the same
+# failure was queued up for the day `v5` is cut. #4405 asks for the guard.
+#
+# The names are also hand-written a SECOND time, outside any trigger: the gate
+# job in docker.yml carries them in a `LONG_LIVED` env var as its GHCR push
+# policy (#4462). That one is not a branch filter, so the trigger check cannot
+# see it — and its failure mode is worse than a skipped workflow. On the day
+# `v5` is cut, docker.yml still triggers on `'**'` so the image keeps BUILDING
+# on v5, while the push policy never publishes `v5-latest`; no hive could be
+# assigned to the new line through the hub's branch switcher, and the image
+# looks healthy the whole time. Green, not absent. `env_lists` below covers it.
+#
+# src/scripts/check-release-lines.sh asserts this file against
+# .github/workflows/*.yml, and .github/workflows/release-line-guard.yml runs it
+# on every branch. See src/docs/release-line-guard.md.
+#
+# CUTTING A NEW RELEASE LINE: add the branch name to `release_lines` below AND
+# to every workflow listed under `pinned` AND to every list under `env_lists`.
+# The guard fails until all three are done — that is the whole point, so do not
+# "fix" it by only editing one side.
+
+# The release lines CI is expected to cover.
+release_lines: [dd, v2, v4]
+
+# Workflows whose branch filters are pinned to the release lines.
+#
+# The value adjusts `release_lines` for that workflow:
+#   `[]`      release lines and nothing else
+#   `[name]`  an EXTRA branch this workflow legitimately allows
+#   `[-name]` a release line this workflow deliberately does NOT cover
+# EVERY `branches:` list in the file must equal `release_lines`, plus the
+# extras, minus the exclusions — exactly, no more and no less. An exclusion has
+# to be written down, which is the point: it turns a silent gap into a line
+# somebody has to justify, and a new release line still has to be added or
+# explicitly excluded here before the guard goes green again.
+pinned:
+  podman-arm64-lane.yml: []
+  podman-contract.yml: []
+  podman-rootful-lane.yml: []
+  podman-rootless-lane.yml: []
+  quadlet-gate.yml: []
+  # scorecard.yml also runs on `main`, which is not a release line and does not
+  # fit a `v*` pattern — this is why the guard asserts a set rather than
+  # replacing the pins with a wildcard. It has also never run on `v2`; that is
+  # recorded as an exclusion rather than quietly corrected, because turning
+  # OpenSSF Scorecard on for a release line is a maintainer decision, not a
+  # side effect of adding a CI guard. See the note at the bottom of this file.
+  #
+  # scorecard.yml is ALSO the one pinned workflow that the automated workflow
+  # sync from kubestellar/infra used to overwrite (#4616): the synced copy pins
+  # `[main]` only, so every `sync/workflows-from-infra` branch arrived with
+  # this guard red, and merging one would have silently stopped Scorecard on
+  # v4 — #4339 again. The sync now skips scorecard.yml for this repo
+  # (kubestellar/infra `caller-workflows/workflow-exclusions.yml`); this file
+  # is the pin the exclusion protects. If a sync branch ever goes red on this
+  # entry again, the exclusion has been lost upstream — restore it there; do
+  # not merge the sync branch, and do not "fix" it by widening this entry.
+  # See src/docs/release-line-guard.md, "The infra workflow sync".
+  scorecard.yml: [main, -v2]
+  suid-contract.yml: []
+  v2-ci.yml: []
+  v2-tests.yml: []
+
+# Workflows that deliberately do NOT pin to the release lines. Each must keep a
+# wildcard branch filter; if one is ever narrowed to a fixed list, the guard
+# fails and asks for it to be reclassified as `pinned`.
+unpinned:
+  # Builds a PR's image on every branch on purpose, with bot branches excluded.
+  docker.yml: '**'
+  # The guard itself. It must run on any branch, or it is #4339 one level up.
+  release-line-guard.yml: '**'
+
+# Hand-written release-line lists that are NOT trigger filters, and so are
+# invisible to the branch-filter check above. Each key is `<workflow> <ENV>`;
+# the value uses the same grammar as `pinned` — extras, and `-name` for a
+# release line the list deliberately omits.
+#
+# The variable must appear exactly once in the workflow. Zero means the list was
+# renamed or removed and the guard is asserting nothing; more than one means the
+# guard cannot tell which occurrence is the policy. Both fail rather than
+# guessing.
+env_lists:
+  # docker.yml's gate job: only long-lived branches push to GHCR. `mk` and `dd`
+  # are standing experimental branches — not release lines, but branches a hive
+  # can be assigned to, so they legitimately publish a `<branch>-latest` tag.
+  docker.yml LONG_LIVED: [mk, dd]
+
+# MAINTAINER DECISION — deliberately NOT answered here (#4405).
+#
+# Should `v2` still be in these allow-lists? Mainline is `v4`, yet eight of the
+# nine pinned workflows still fire on `v2` pushes and PRs — and the ninth,
+# scorecard.yml, never has, which is the inconsistency this guard surfaced on
+# its first run. Whether `v2` is still a supported release line is a maintainer
+# call, so this file records the status quo rather than picking a side:
+#
+#   - if `v2` IS still supported, scorecard.yml's `-v2` exclusion should be
+#     dropped and `v2` added to that workflow;
+#   - if it is NOT, remove `v2` from `release_lines` above and from the eight
+#     workflows that name it plus docker.yml's `LONG_LIVED` (and drop the
+#     now-redundant `-v2`).
+#
+# Either way it is one edit to `release_lines` plus the workflows, and this
+# guard proves the edit is complete — in both directions: retiring a line names
+# every list that still carries it, exactly as cutting one names every list that
+# does not. Until a maintainer says otherwise, the current behaviour stands
+# unchanged.

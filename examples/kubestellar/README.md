@@ -1,5 +1,15 @@
 # KubeStellar Production Deployment
 
+> **Historical v1 case study.** This example describes the launchd/`worker.sh`
+> deployment used by the KubeStellar project before the current containerized
+> Go runtime (branch `v4`; code under `src/`). It is kept as a worked example
+> of the v1 approach and as context for the agent definitions in
+> [`agents/`](agents/), which remain current-style. Do not follow the
+> installation steps below for a new deployment — use the
+> [Quick Start](../../README.md#quick-start) instead, and see
+> [`docs/LEGACY-v1-architecture.md`](../../docs/LEGACY-v1-architecture.md)
+> for the retired v1 architecture this example ran on.
+
 Production configuration for the hive system deployed on the [KubeStellar](https://kubestellar.io) project — a CNCF Sandbox multi-cluster management platform.
 
 ## Architecture

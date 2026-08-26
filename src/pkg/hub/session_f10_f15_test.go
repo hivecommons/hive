@@ -51,7 +51,7 @@ func TestF10ProductionMintsV3(t *testing.T) {
 	mkUser(t, "alice")
 
 	rec := httptest.NewRecorder()
-	if !s.mintSessionCookies(rec, "github:alice") {
+	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil), "github:alice") {
 		t.Fatal("mintSessionCookies failed")
 	}
 
@@ -92,7 +92,7 @@ func TestF10SignedExpiryIsEnforcedNotAdvisory(t *testing.T) {
 	s := f10f15Server(t)
 	mkUser(t, "alice")
 	rec := httptest.NewRecorder()
-	if !s.mintSessionCookies(rec, "github:alice") {
+	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil), "github:alice") {
 		t.Fatal("mint failed")
 	}
 	var value string
@@ -123,7 +123,7 @@ func TestF10LogoutActuallyRevokes(t *testing.T) {
 	mkUser(t, "alice")
 
 	rec := httptest.NewRecorder()
-	if !s.mintSessionCookies(rec, "github:alice") {
+	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil), "github:alice") {
 		t.Fatal("mint failed")
 	}
 	var value string
@@ -202,7 +202,7 @@ func TestF15LegitimateLogoutStillRevokes(t *testing.T) {
 	mkUser(t, "alice")
 
 	rec := httptest.NewRecorder()
-	if !s.mintSessionCookies(rec, "github:alice") {
+	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil), "github:alice") {
 		t.Fatal("mint failed")
 	}
 	var value string

@@ -113,6 +113,8 @@ func TestCovK2_LiteLLMKeyStore(t *testing.T) {
 	logger := covK2Logger()
 	s := NewServer(0, logger)
 	s.RegisterAPI(testDeps(t))
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "")
 
 	// Redirect the PVC key file to a temp path so writeLiteLLMKeyFile succeeds.
 	origFile := writableLiteLLMKeyFile

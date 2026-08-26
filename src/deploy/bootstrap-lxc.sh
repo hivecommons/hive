@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bootstrap-lxc.sh — Bootstrap a Proxmox LXC for Hive v2 (Docker-based).
+# bootstrap-lxc.sh — Bootstrap a Proxmox LXC for Hive (Docker-based).
 #
 # Run this INSIDE the LXC after creation with create-lxc.sh.
 #
 # What it does:
 #   1. Installs Docker Engine + Compose plugin
-#   2. Clones the hive repo (v2 branch)
+#   2. Clones the hive repo (HIVE_BRANCH, default v4)
 #   3. Builds the hive Docker image
 #   4. Creates a template .env file for tokens
 #
@@ -19,12 +19,13 @@ set -euo pipefail
 #
 # Usage:
 #   apt-get update -qq && apt-get install -y -qq curl
-#   curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/v2/src/deploy/bootstrap-lxc.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash
 #
 # After bootstrap, edit /opt/hive/.env and run:
 #   cd /opt/hive/src/deploy && docker compose -f docker-compose.yaml --env-file /opt/hive/.env up -d
 
 HIVE_DIR=/opt/hive
+HIVE_BRANCH="${HIVE_BRANCH:-v4}"
 ENV_FILE="${HIVE_DIR}/.env"
 
 # Fix locale warnings (common in LXC containers)
@@ -52,9 +53,9 @@ apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plug
 echo "=== Phase 3: Clone hive repo ==="
 if [ -d "${HIVE_DIR}/.git" ]; then
   echo "Hive repo already exists at ${HIVE_DIR}, pulling latest..."
-  cd "${HIVE_DIR}" && git pull --rebase origin v2
+  cd "${HIVE_DIR}" && git pull --rebase origin "${HIVE_BRANCH}"
 else
-  git clone --branch v2 --single-branch https://github.com/kubestellar/hive.git "${HIVE_DIR}"
+  git clone --branch "${HIVE_BRANCH}" --single-branch https://github.com/kubestellar/hive.git "${HIVE_DIR}"
 fi
 
 echo "=== Phase 4: Build Docker image ==="
@@ -64,7 +65,7 @@ docker compose -f src/docker-compose.yaml build
 echo "=== Phase 5: Create .env template ==="
 if [ ! -f "${ENV_FILE}" ]; then
   cat > "${ENV_FILE}" <<'ENVEOF'
-# Hive v2 environment — fill in before running docker compose up
+# Hive environment — fill in before running docker compose up
 #
 # HIVE_GITHUB_TOKEN: GitHub PAT or App token with repo access
 #   - For public repos: fine-grained PAT with "Public Repositories (read-only)"
@@ -90,7 +91,7 @@ fi
 
 echo ""
 echo "============================================="
-echo "  Hive v2 bootstrap complete"
+echo "  Hive bootstrap complete"
 echo "============================================="
 echo ""
 echo "Next steps:"

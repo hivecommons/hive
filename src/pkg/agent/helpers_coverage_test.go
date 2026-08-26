@@ -127,13 +127,105 @@ func TestUIDMapSave_Success(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnsureWatchedDirs_NoPanic(t *testing.T) {
-	// WatchedHomeDirs live under /data which usually can't be created here;
-	// the function logs warnings and never panics.
+	// TestMain points WatchedHomeDirs into the test temp tree, so this
+	// exercises the real mkdir path hermetically instead of warning against
+	// unwritable /data roots.
 	ensureWatchedDirs(discardLogger())
 }
 
-func TestFixPermissions_NoPanic(t *testing.T) {
+// TestFixPermissions_RepairsFixture used to be TestFixPermissions_NoPanic,
+// which called fixPermissions against whatever the HOST had: on a live hive it
+// walked (and could chown/chmod) real /data agent trees for 10+ minutes from a
+// unit test (#4685). TestMain now points every walk root into the test temp
+// tree, and this test upgrades "doesn't panic" to asserting the repair
+// behavior on a fixture it builds itself.
+func TestFixPermissions_RepairsFixture(t *testing.T) {
+	origWatched := WatchedHomeDirs
+	origShared := SharedRepoParent
+	origGoose := GooseLogsDir
+	origDevUID, origNodeGID := DevUID, NodeGID
+	t.Cleanup(func() {
+		WatchedHomeDirs = origWatched
+		SharedRepoParent = origShared
+		GooseLogsDir = origGoose
+		DevUID, NodeGID = origDevUID, origNodeGID
+	})
+
+	// fixEntry only chmods entries owned by DevUID (it refuses to touch other
+	// users' files) and skips the chown when uid/gid already match. Point the
+	// guard at the uid/gid this test process actually runs as, so the repair
+	// path is exercised rather than skipped.
+	DevUID = os.Getuid()
+	NodeGID = os.Getgid()
+
+	root := t.TempDir()
+	watched := filepath.Join(root, "watched")
+	SharedRepoParent = filepath.Join(root, "home")
+	GooseLogsDir = filepath.Join(root, "goose-logs")
+	WatchedHomeDirs = []string{watched}
+
+	// A too-narrow directory and file inside a watched root, and a repo clone
+	// under SharedRepoParent created the way the entrypoint does (0755 → group
+	// has no write, the exact ISSUES_AND_PRS lockout fixPermissions exists to
+	// heal).
+	narrowDir := filepath.Join(watched, "narrow")
+	if err := os.MkdirAll(narrowDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	narrowFile := filepath.Join(narrowDir, "settings.json")
+	if err := os.WriteFile(narrowFile, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(SharedRepoParent, "api-server")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoFile := filepath.Join(repo, "main.go")
+	if err := os.WriteFile(repoFile, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink pointing outside the tree must never be followed (CWE-59 guard
+	// in fixEntry): its target's mode must be left alone.
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(narrowDir, "planted-link")); err != nil {
+		t.Fatal(err)
+	}
+
 	fixPermissions(discardLogger())
+
+	assertMode := func(path string, wantBits os.FileMode) {
+		t.Helper()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if info.Mode().Perm()&wantBits != wantBits {
+			t.Errorf("%s mode = %v, missing required bits %v", path, info.Mode().Perm(), wantBits)
+		}
+	}
+	assertMode(narrowDir, DirPerms)   // 0700 dir → at least 0770
+	assertMode(narrowFile, FilePerms) // 0600 file → at least 0660
+	assertMode(repo, DirPerms)        // 0755 clone → group write restored
+	assertMode(repoFile, FilePerms)
+
+	if info, err := os.Stat(outside); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("symlink target outside the tree was touched: mode=%v err=%v — the CWE-59 guard regressed",
+			info.Mode().Perm(), err)
+	}
+
+	// Idempotent: a second run must change nothing (modes already satisfied).
+	before, _ := os.Stat(narrowDir)
+	fixPermissions(discardLogger())
+	after, _ := os.Stat(narrowDir)
+	if before.Mode() != after.Mode() {
+		t.Errorf("second fixPermissions run changed %s: %v -> %v", narrowDir, before.Mode(), after.Mode())
+	}
 }
 
 // ---------------------------------------------------------------------------

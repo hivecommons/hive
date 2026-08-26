@@ -65,7 +65,6 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretB, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretB, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretB, infoInviteKey, hiveID),
-		EnvSessionKey:       derivePerHiveKey(perHiveGenSecretB, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSessionEd25519Seed)),
 	}
@@ -73,7 +72,6 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretA, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretA, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretA, infoInviteKey, hiveID),
-		EnvSessionKey:       derivePerHiveKey(perHiveGenSecretA, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSessionEd25519Seed)),
 	}
@@ -159,7 +157,6 @@ func TestDesiredPerHiveEnvDerivesFromCurrentGeneration(t *testing.T) {
 	expect := map[string]string{
 		EnvHeartbeatKey:     derivePerHiveKey(cur, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(cur, infoTerminalKey, hiveID),
-		EnvSessionKey:       derivePerHiveKey(cur, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(cur, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(cur, infoSessionEd25519Seed)),
 	}
@@ -191,21 +188,8 @@ func TestPerHiveEnvGenerationIsAReadPathChangeToday(t *testing.T) {
 
 	master := provisionMasterSecret() // the PRE-generation expression
 	preGeneration := map[string]string{
-		EnvHeartbeatKey: derivePerHiveKey(master, infoHeartbeatKey, hiveID),
-		EnvTerminalKey:  derivePerHiveKey(master, infoTerminalKey, hiveID),
-		// AUDIT RESIDUAL-2. This entry is deliberately INVERTED rather than
-		// relaxed. It used to read deriveDomainKey(master, infoSessionKey) —
-		// the fleet-uniform expression — and it was correct to do so: this test
-		// proves the GENERATION work was a pure read-path change. Making the
-		// session key per-hive is a genuinely fleet-VISIBLE change, so leaving
-		// the old right-hand side here would have been a real failure, and
-		// simply deleting the entry would have silently dropped HIVE_SESSION_KEY
-		// from this test's coverage.
-		//
-		// The invariant this test exists to protect is unchanged for every other
-		// var; for this one the claim is now the opposite and is asserted
-		// explicitly below, so a revert to the fleet-wide formula FAILS here.
-		EnvSessionKey:       derivePerHiveKey(master, infoSessionKey, hiveID),
+		EnvHeartbeatKey:     derivePerHiveKey(master, infoHeartbeatKey, hiveID),
+		EnvTerminalKey:      derivePerHiveKey(master, infoTerminalKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(master, infoSessionEd25519Seed)),
 	}
@@ -220,16 +204,12 @@ func TestPerHiveEnvGenerationIsAReadPathChangeToday(t *testing.T) {
 		}
 	}
 
-	// AUDIT RESIDUAL-2, the inverted half. HIVE_SESSION_KEY must NOT equal the
-	// fleet-uniform value any more. Without this, restoring
-	// deriveDomainKey(master, infoSessionKey) in desiredPerHiveEnv would be
-	// caught only by the loop above — and only for as long as the fixture keeps
-	// the per-hive expression, which a merge resolving in favour of the older
-	// side would quietly undo. Asserting the negative pins the property itself
-	// rather than the fixture.
-	if fleetWide := deriveDomainKey(master, infoSessionKey); got[EnvSessionKey] == fleetWide {
-		t.Errorf("HIVE_SESSION_KEY is byte-identical to the fleet-wide derivation — RESIDUAL-2 regressed; " +
-			"desiredPerHiveEnv must use provisionSessionKey(hiveID), not deriveDomainKey(master, infoSessionKey)")
+	// Issue #3234: HIVE_SESSION_KEY must be ABSENT, not merely re-derived.
+	// TestSessionKeyIsPermanentlyRemoved (perhive_env_reconcile_test.go) covers
+	// the removal itself; this only guards against it silently reappearing in
+	// the generation-aware map this test exercises.
+	if _, present := got[EnvSessionKey]; present {
+		t.Error("desiredPerHiveEnv wants HIVE_SESSION_KEY under a rotated generation — issue #3234 removal regressed")
 	}
 }
 

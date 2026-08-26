@@ -1,6 +1,6 @@
 # TLS, HTTPS, and certificates
 
-Hive v2 does not implement native TLS configuration in `hive.yaml`. The dashboard and hub servers call Go `ListenAndServe`, and the bundled Docker gateway listens with plain HTTP. Production HTTPS is therefore an edge concern: terminate TLS at an ingress controller, OpenShift Route, load balancer, or reverse proxy, then proxy HTTP to Hive.
+Hive does not implement native TLS configuration in `hive.yaml`. The dashboard and hub servers call Go `ListenAndServe`, and the bundled Docker gateway listens with plain HTTP. Production HTTPS is therefore an edge concern: terminate TLS at an ingress controller, OpenShift Route, load balancer, or reverse proxy, then proxy HTTP to Hive.
 
 ## What the spoke serves
 

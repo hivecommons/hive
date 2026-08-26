@@ -21,16 +21,15 @@ build/test commands, see [`docs/development.md`](development.md).
 For most changes you do **not** need a cluster.
 
 - **Go code:** you need Go (see [`docs/development.md`](development.md) for the
-  version and `make`/`just` targets). `cd v2 && go build ./...` compiles the
+  version and `make`/`just` targets). `cd src && go build ./...` compiles the
   binary; that's enough to iterate on most code.
 - **Docs:** no toolchain needed — edit Markdown and preview locally.
 - **Running the whole thing:** the fastest full run is Docker Compose from the
-  repo's [Quick Start](../README.md#quick-start-docker-compose) (`cd v2 &&
-  docker compose up -d`). You only need Kubernetes for deployment-specific work.
+  repo's [Quick Start](../README.md#quick-start-docker-compose) (`docker compose -f src/docker-compose.yaml up -d`). You only need Kubernetes for deployment-specific work.
 
 ## 3. Test a change without a cluster
 
-- **Go:** `cd v2 && go test ./...` runs the unit suite. Most tests are
+- **Go:** `cd src && go test ./...` runs the unit suite. Most tests are
   hermetic; a few need env like `kubectl` and are skipped otherwise. See the
   Test section of [`docs/development.md`](development.md).
 - **Shell scripts:** `*.test.sh` / `*.test.js` files under
@@ -68,7 +67,7 @@ contribution:
 
 ## 6. Review and CI: what to expect
 
-- Open your PR against the **`v2`** branch (the active development branch).
+- Open your PR against the **`v4`** branch (the active development branch).
 - CI runs build, tests, a coverage check, and container image builds. Some
   checks (Playwright, `tide`) are non-blocking. The **required** checks are the
   build/test/coverage/docker ones.

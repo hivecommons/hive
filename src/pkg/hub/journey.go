@@ -225,11 +225,11 @@ type acmmLevelInfo struct {
 // moving there entails. Kept in sync with src/pkg/config/packs/level-*.yaml.
 var acmmLevels = map[int]acmmLevelInfo{
 	1: {"Inception", "an interactive brainstorm agent turns ideas into structured facts and scaffolding, with every action human-approved"},
-	2: {"Advisory", "five agents (supervisor, scanner, quality, guide, brainstorm) publish advisory findings to your dashboard and a tracking issue — still no GitHub writes"},
+	2: {"Advisory", "seven agents publish advisory findings, including opt-in telemetry and operations agents that start paused — still no GitHub writes"},
 	3: {"Quality-Gated", "the quality agent starts opening issues and hold-gated PRs about testing gaps, and ci-maintainer joins to watch build health — nothing merges without you"},
-	4: {"Security-Aware", "every agent files GitHub issues in its lane (bugs, docs gaps, workflow breakage) and a sec-check agent joins for vulnerabilities — issues only, still no PRs"},
-	5: {"Semi-Autonomous", "agents open pull requests as well as issues, all carrying a 'hold' label for you to batch-review, and architect plus strategist join — the system proposes, you dispose"},
-	6: {"Fully Autonomous", "agents open issues, raise PRs, and auto-merge them on green CI with no hold label, plus an outreach agent for community work — the highest trust setting"},
+	4: {"Security-Aware", "delivery agents file GitHub issues in their lanes and sec-check joins for vulnerabilities, while telemetry and operations remain advisory and paused"},
+	5: {"Semi-Autonomous", "agents open hold-gated pull requests as well as issues; architect and strategist join, while telemetry and operations are available paused for deliberate opt-in"},
+	6: {"Fully Autonomous", "agents can auto-merge on green CI at the highest trust setting; outreach joins, while telemetry and operations remain paused until deliberately enabled"},
 }
 
 // maxACMMLevel is the top of the 6-level model. A hive here has nowhere to

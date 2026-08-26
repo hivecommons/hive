@@ -70,6 +70,9 @@ func TestCovG_BuildSnapshot(t *testing.T) {
 
 func TestCovG_HandleSSO(t *testing.T) {
 	s := covMiscServer(t)
+	t.Setenv("HIVE_HUB_SECRET", "")
+	t.Setenv("HIVE_SSO_PUBLIC_KEY", "")
+	t.Setenv("HIVE_SSO_PUBLIC_KEY_PREV", "")
 
 	// No shared secret → terminal error page, NOT a redirect. Redirecting to
 	// "/" here is what produced the infinite browser bounce.

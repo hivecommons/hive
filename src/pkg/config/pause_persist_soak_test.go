@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+// hermeticPersistPaths keeps the pause-persist tests off the live host's
+// /data files (#4595 hermeticity pattern): Save() also writes
+// RuntimeConfigFile and (in K8s mode) DashboardOverlayFile, and Load()
+// merges overlays from the default /data/agent-configs — on a real hive
+// host those overlays carry paused: false and clobber the reloaded state.
+func hermeticPersistPaths(t *testing.T, dir string) {
+	t.Helper()
+	origRuntime, origOverlay := RuntimeConfigFile, DashboardOverlayFile
+	RuntimeConfigFile = filepath.Join(dir, "hive.yaml.runtime")
+	DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")
+	t.Cleanup(func() { RuntimeConfigFile, DashboardOverlayFile = origRuntime, origOverlay })
+}
+
 // TestPausePersist_ConcurrentSoak reproduces the production pause-persistence
 // path and proves it survives 30 restart cycles with CONCURRENT pauses — the
 // exact scenario (#1885) where unsynchronized concurrent cfg.Save() calls
@@ -18,6 +31,7 @@ import (
 func TestPausePersist_ConcurrentSoak(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hive.yaml")
+	hermeticPersistPaths(t, dir)
 
 	agents := map[string]AgentConfig{
 		"supervisor":    {Backend: "claude"},
@@ -35,6 +49,9 @@ func TestPausePersist_ConcurrentSoak(t *testing.T) {
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{AppID: 3568013},
 		Agents:     agents,
+		// Empty temp dir so Load() can't merge the live host's
+		// /data/agent-configs overlays over the paused flags.
+		Data: DataConfig{AgentsDir: t.TempDir()},
 	}
 
 	// The persist callback from cmd/hive/main.go, via the real production method.
@@ -116,6 +133,7 @@ func TestPausePersist_ConcurrentSoak(t *testing.T) {
 func TestPausePersist_TwoUnsynchronizedSavers(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hive.yaml")
+	hermeticPersistPaths(t, dir)
 
 	names := []string{"supervisor", "quality", "ci-maintainer", "architect",
 		"guide", "sec-check", "strategist"}
@@ -128,6 +146,9 @@ func TestPausePersist_TwoUnsynchronizedSavers(t *testing.T) {
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{AppID: 3568013},
 		Agents:     agents,
+		// Empty temp dir so Load() can't merge the live host's
+		// /data/agent-configs overlays over the paused flags.
+		Data: DataConfig{AgentsDir: t.TempDir()},
 	}
 
 	// Path A: the pause callback (main.go) -> SetAgentPausedAndSave.

@@ -414,6 +414,26 @@
             &mdash; leave it blank and we will use GitHub instead.
           </p>
         </div>
+        <!-- Country is OPTIONAL and self-declared. It is the AUTHORITATIVE
+             source for the flag shown beside your avatar: the hub otherwise
+             falls back to a best-effort guess from your browser's language
+             setting, which is a hint about a language, not about a person. An
+             explicit pick here replaces that guess; leaving it blank shows no
+             flag at all rather than a wrong one. Options are filled by
+             populateCountrySelect() so the code carries one list, not two. -->
+        <div style="margin-top:1rem">
+          <label for="req-country" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Country <span style="color:var(--muted);font-weight:400">(optional)</span>
+          </label>
+          <select id="req-country" onchange="updateSummary()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+            <option value="">Prefer not to say</option>
+          </select>
+          <p style="font-size:0.8rem;margin-top:6px;margin-bottom:0">
+            Shows a small flag next to your avatar in the hub. Leave it blank and we show none &mdash;
+            we will not guess a country we have no evidence for.
+          </p>
+        </div>
         <div id="contact-err" style="display:none;margin-top:8px;font-size:0.8rem;color:var(--red)"></div>
 
         <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
@@ -423,6 +443,7 @@
           <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
           <div style="color:var(--muted)">Name: <span id="summary-name" style="color:var(--text)">&mdash;</span></div>
           <div style="color:var(--muted)">Slack ID: <span id="summary-slack" style="color:var(--text)">&mdash;</span></div>
+          <div style="color:var(--muted)">Country: <span id="summary-country" style="color:var(--text)">&mdash;</span></div>
         </div>
         <!-- The wizard no longer asks anyone to install the GitHub App. This
              note is the handoff to where that now happens: after provisioning,
@@ -450,14 +471,14 @@
       <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your repos, your infrastructure.</p>
     </div>
     <div class="alt-card">
-      <pre><code>git clone -b v4 https://github.com/kubestellar/hive.git
-cd hive/v2
+      <pre><code>git clone https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
-# Edit hive.yaml: set your org, repos, and GitHub token
+cp src/hive.yaml.example src/hive.yaml
+# Edit src/hive.yaml: set your org, repos, and GitHub token
 
-export HIVE_GITHUB_TOKEN=ghp_your_token_here
-docker compose up -d
+echo "HIVE_GITHUB_TOKEN=ghp_your_token_here" > .env
+docker compose -f src/docker-compose.yaml up -d
 
 # Open the dashboard
 open http://localhost:3001</code></pre>
@@ -614,6 +635,17 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       var sl = contactValue('req-slack-id', CONTACT_MAX_SLACK);
       document.getElementById('summary-name').textContent = nm || em;
       document.getElementById('summary-slack').textContent = sl || em;
+      /* Country reads back as "flag Name", or the em-dash when nothing was
+         picked — the same "no evidence renders as nothing" rule the hub uses. */
+      var ctryEl = document.getElementById('summary-country');
+      if (ctryEl) {
+        var cc = selectedCountry();
+        var cname = '';
+        for (var ci = 0; ci < COUNTRIES.length; ci++) {
+          if (COUNTRIES[ci][0] === cc) { cname = COUNTRIES[ci][1]; break; }
+        }
+        ctryEl.textContent = cc ? (countryFlagEmoji(cc) + ' ' + cname) : em;
+      }
       // Surface the forge so the choice is explicit before the user submits — a
       // GHE host (from a pasted enterprise repo URL) reads "github.ibm.com", a
       // plain github.com request reads "github.com". Never blank/ambiguous.
@@ -746,6 +778,98 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       return ((el && el.value) || '').trim().slice(0, cap);
     }
 
+    /* ---- Country (optional, self-declared) ------------------------------
+       The list is ISO 3166-1 alpha-2 code + English name. It is deliberately
+       DATA, not markup: 200-odd hand-written <option> tags would be unreadable
+       and would drift from the codes the server validates.
+
+       The flag glyph beside each name is derived from the code itself — a flag
+       emoji is the two regional-indicator code points for its letters (U+1F1E6
+       is REGIONAL INDICATOR SYMBOL LETTER A) — so the wizard, like the
+       dashboard, needs no flag images and no external host. Mirrors
+       countryFlagEmoji in pkg/hub/user_country.go. */
+    var REGIONAL_INDICATOR_BASE = 0x1F1E6;
+    function countryFlagEmoji(code) {
+      var c = String(code || '').trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(c)) return '';
+      return String.fromCodePoint(
+        REGIONAL_INDICATOR_BASE + (c.charCodeAt(0) - 65),
+        REGIONAL_INDICATOR_BASE + (c.charCodeAt(1) - 65));
+    }
+
+    var COUNTRIES = [
+      ['AD','Andorra'],['AE','United Arab Emirates'],['AF','Afghanistan'],['AG','Antigua and Barbuda'],
+      ['AL','Albania'],['AM','Armenia'],['AO','Angola'],['AR','Argentina'],['AT','Austria'],
+      ['AU','Australia'],['AZ','Azerbaijan'],['BA','Bosnia and Herzegovina'],['BB','Barbados'],
+      ['BD','Bangladesh'],['BE','Belgium'],['BF','Burkina Faso'],['BG','Bulgaria'],['BH','Bahrain'],
+      ['BI','Burundi'],['BJ','Benin'],['BN','Brunei'],['BO','Bolivia'],['BR','Brazil'],['BS','Bahamas'],
+      ['BT','Bhutan'],['BW','Botswana'],['BY','Belarus'],['BZ','Belize'],['CA','Canada'],
+      ['CD','Congo (DRC)'],['CF','Central African Republic'],['CG','Congo'],['CH','Switzerland'],
+      ['CI','Côte d\'Ivoire'],['CL','Chile'],['CM','Cameroon'],['CN','China'],['CO','Colombia'],
+      ['CR','Costa Rica'],['CU','Cuba'],['CV','Cabo Verde'],['CY','Cyprus'],['CZ','Czechia'],
+      ['DE','Germany'],['DJ','Djibouti'],['DK','Denmark'],['DM','Dominica'],['DO','Dominican Republic'],
+      ['DZ','Algeria'],['EC','Ecuador'],['EE','Estonia'],['EG','Egypt'],['ER','Eritrea'],['ES','Spain'],
+      ['ET','Ethiopia'],['FI','Finland'],['FJ','Fiji'],['FM','Micronesia'],['FR','France'],['GA','Gabon'],
+      ['GB','United Kingdom'],['GD','Grenada'],['GE','Georgia'],['GH','Ghana'],['GM','Gambia'],
+      ['GN','Guinea'],['GQ','Equatorial Guinea'],['GR','Greece'],['GT','Guatemala'],['GW','Guinea-Bissau'],
+      ['GY','Guyana'],['HK','Hong Kong'],['HN','Honduras'],['HR','Croatia'],['HT','Haiti'],['HU','Hungary'],
+      ['ID','Indonesia'],['IE','Ireland'],['IL','Israel'],['IN','India'],['IQ','Iraq'],['IR','Iran'],
+      ['IS','Iceland'],['IT','Italy'],['JM','Jamaica'],['JO','Jordan'],['JP','Japan'],['KE','Kenya'],
+      ['KG','Kyrgyzstan'],['KH','Cambodia'],['KI','Kiribati'],['KM','Comoros'],['KN','Saint Kitts and Nevis'],
+      ['KP','North Korea'],['KR','South Korea'],['KW','Kuwait'],['KZ','Kazakhstan'],['LA','Laos'],
+      ['LB','Lebanon'],['LC','Saint Lucia'],['LI','Liechtenstein'],['LK','Sri Lanka'],['LR','Liberia'],
+      ['LS','Lesotho'],['LT','Lithuania'],['LU','Luxembourg'],['LV','Latvia'],['LY','Libya'],
+      ['MA','Morocco'],['MC','Monaco'],['MD','Moldova'],['ME','Montenegro'],['MG','Madagascar'],
+      ['MH','Marshall Islands'],['MK','North Macedonia'],['ML','Mali'],['MM','Myanmar'],['MN','Mongolia'],
+      ['MR','Mauritania'],['MT','Malta'],['MU','Mauritius'],['MV','Maldives'],['MW','Malawi'],
+      ['MX','Mexico'],['MY','Malaysia'],['MZ','Mozambique'],['NA','Namibia'],['NE','Niger'],
+      ['NG','Nigeria'],['NI','Nicaragua'],['NL','Netherlands'],['NO','Norway'],['NP','Nepal'],
+      ['NR','Nauru'],['NZ','New Zealand'],['OM','Oman'],['PA','Panama'],['PE','Peru'],
+      ['PG','Papua New Guinea'],['PH','Philippines'],['PK','Pakistan'],['PL','Poland'],['PS','Palestine'],
+      ['PT','Portugal'],['PW','Palau'],['PY','Paraguay'],['QA','Qatar'],['RO','Romania'],['RS','Serbia'],
+      ['RU','Russia'],['RW','Rwanda'],['SA','Saudi Arabia'],['SB','Solomon Islands'],['SC','Seychelles'],
+      ['SD','Sudan'],['SE','Sweden'],['SG','Singapore'],['SI','Slovenia'],['SK','Slovakia'],
+      ['SL','Sierra Leone'],['SM','San Marino'],['SN','Senegal'],['SO','Somalia'],['SR','Suriname'],
+      ['SS','South Sudan'],['ST','Sao Tome and Principe'],['SV','El Salvador'],['SY','Syria'],
+      ['SZ','Eswatini'],['TD','Chad'],['TG','Togo'],['TH','Thailand'],['TJ','Tajikistan'],
+      ['TL','Timor-Leste'],['TM','Turkmenistan'],['TN','Tunisia'],['TO','Tonga'],['TR','Türkiye'],
+      ['TT','Trinidad and Tobago'],['TV','Tuvalu'],['TW','Taiwan'],['TZ','Tanzania'],['UA','Ukraine'],
+      ['UG','Uganda'],['US','United States'],['UY','Uruguay'],['UZ','Uzbekistan'],['VA','Holy See'],
+      ['VC','Saint Vincent and the Grenadines'],['VE','Venezuela'],['VN','Vietnam'],['VU','Vanuatu'],
+      ['WS','Samoa'],['XK','Kosovo'],['YE','Yemen'],['ZA','South Africa'],['ZM','Zambia'],['ZW','Zimbabwe']
+    ];
+
+    /* Fill the country <select>. Built with createElement + textContent rather
+       than an innerHTML string: the names are static, but building options as
+       DOM keeps the one free-text-shaped surface in this wizard out of the
+       markup parser for good.
+
+       The blank "Prefer not to say" option is already in the markup and stays
+       SELECTED — the wizard never preselects a country. Preselecting one from
+       the browser's locale would turn a guess into something the user appears
+       to have declared, which is exactly the failure this feature avoids. */
+    function populateCountrySelect() {
+      var sel = document.getElementById('req-country');
+      if (!sel) return;
+      for (var i = 0; i < COUNTRIES.length; i++) {
+        var code = COUNTRIES[i][0], name = COUNTRIES[i][1];
+        var opt = document.createElement('option');
+        opt.value = code;
+        var flag = countryFlagEmoji(code);
+        opt.textContent = (flag ? flag + '  ' : '') + name;
+        sel.appendChild(opt);
+      }
+    }
+
+    /* The selected alpha-2 code, or '' for "prefer not to say". Validated to
+       the same shape the server enforces, so a tampered <option> value cannot
+       put anything else in the request body. */
+    function selectedCountry() {
+      var sel = document.getElementById('req-country');
+      var c = ((sel && sel.value) || '').trim().toUpperCase();
+      return /^[A-Z]{2}$/.test(c) ? c : '';
+    }
+
     function clearRepoError() {
       var err = document.getElementById('repo-manual-err');
       if (err) err.style.display = 'none';
@@ -875,7 +999,11 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
             // the hub copies these onto the user record, which is what the
             // admin users panel and the Slack sender read.
             full_name: fullName,
-            slack_id: slackID
+            slack_id: slackID,
+            // Optional, and sent in the JSON BODY — never as a query parameter.
+            // Country is personal data and a URL is the one place it would end
+            // up in access logs, Referer headers and browser history.
+            country: selectedCountry()
           })
         });
         var data = await resp.json();
@@ -895,9 +1023,25 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       }
     }
 
+    /* Fill the country list once, at load, before any auth answer arrives — the
+       dropdown is inert markup until it has options and does not depend on
+       being signed in. */
+    populateCountrySelect();
+
     fetch('/api/auth/user').then(function(r) { return r.json(); }).then(function(d) {
       if (d.authenticated) {
         _user = d;
+        /* Preselect the country the hub ALREADY holds for this user, so the
+           wizard shows what is on file rather than silently re-asking. That
+           value may itself be the Accept-Language inference — which is the
+           point: it puts the guess in front of the person who can correct it,
+           and submitting turns it into an explicit, authoritative choice.
+           Absent country leaves "Prefer not to say" selected. */
+        var ctrySel = document.getElementById('req-country');
+        if (ctrySel && /^[A-Za-z]{2}$/.test(String(d.country || ''))) {
+          ctrySel.value = String(d.country).toUpperCase();
+          updateSummary();
+        }
         document.getElementById('nav-login').style.display = 'none';
         document.getElementById('nav-logout').style.display = '';
         document.getElementById('nav-dashboard').style.display = '';

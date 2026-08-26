@@ -28,7 +28,7 @@ Examples in the current packs:
 - `guide-issues.md` is the L4 guide policy: documentation issues are allowed, PRs are not.
 - `scanner-issues.md` is the L4 scanner policy: issue filing only.
 - `supervisor-nogithub.md` is the supervisor policy from L2 through L6; it keeps orchestration separate from GitHub mutation.
-- `brainstorm-advisory.md` is the only brainstorm template referenced by v2 HEAD, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation, so operators should not create or rely on that filename unless they also set `kick_template` to it.
+- `brainstorm-advisory.md` is the only brainstorm template referenced by v4, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation from the retired v2 line, so operators should not create or rely on that filename unless they also set `kick_template` to it.
 
 ## Customizing prompts
 
@@ -41,11 +41,17 @@ Use one of these supported paths:
 
 Do not put secrets in policy Markdown. Prompts are shown in logs, dashboard history, and agent panes.
 
+### Debugging an agent: do not edit out "Output Rules — Terse Mode"
+
+Every shipped policy carries a terse-mode block telling the agent to act rather than narrate, and it is load-bearing: without it, weak models answer a kick with a plan for a human to run instead of running it. Deleting it to find out why an agent misbehaved is a fleet-visible prompt change that trades one debugging problem for a worse one.
+
+Use `explain_mode` instead — a per-agent option that has the agent emit `EXPLAIN:` lines giving its reason for each tool call, alongside the work rather than in place of it, with no policy edit and no redeploy. See [Explain mode](../docs/agent-configuration.md#explain-mode-debugging-agent-behaviour).
+
 ## Variables
 
 Kick templates reference variables as `${NAME}`. The scheduler replaces the built-in variables below on every scheduled kick; an unknown `${NAME}` is left literal. Operator-defined variables from the top-level `variables:` config block are resolved by the same engine, but built-ins win on name conflicts.
 
-The complete built-in scheduler set in v2 HEAD is:
+The complete built-in scheduler set in v4 is:
 
 | Variable | Runtime value | Notes |
 | --- | --- | --- |

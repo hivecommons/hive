@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,27 @@ func TestAgentSummaryZeroTimestampsOmittedFromJSON(t *testing.T) {
 	}
 	if strings.Contains(string(b), "0001-01-01") {
 		t.Errorf("year-1 timestamp leaked onto the wire: %s", b)
+	}
+	if strings.Contains(string(b), "kickIntervalSec") {
+		t.Errorf("zero kick interval leaked onto the wire: %s", b)
+	}
+}
+
+func TestNewAgentSummaryCarriesKickInterval(t *testing.T) {
+	want := int64(2 * time.Hour / time.Second)
+	as := NewAgentSummary("quality", agentStateRunning, "continuous", AgentActivity{
+		KickInterval: 2 * time.Hour,
+	})
+	if as.KickIntervalSec != want {
+		t.Fatalf("KickIntervalSec = %d, want %d", as.KickIntervalSec, want)
+	}
+
+	b, err := json.Marshal(as)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"kickIntervalSec":`+strconv.FormatInt(want, 10)) {
+		t.Fatalf("kick interval missing from heartbeat JSON: %s", b)
 	}
 }
 

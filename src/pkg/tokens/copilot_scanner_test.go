@@ -120,6 +120,23 @@ func TestParseCopilotSessionFile_FullLifecycle(t *testing.T) {
 	if summary.LastActive == 0 {
 		t.Error("LastActive should be set from message timestamps")
 	}
+	wantFirst := mustParseMillisCopilot(t, "2026-08-10T12:00:00.000Z")
+	if summary.FirstActive != wantFirst {
+		t.Errorf("FirstActive = %d, want %d (earliest timestamped event)", summary.FirstActive, wantFirst)
+	}
+	wantLast := mustParseMillisCopilot(t, "2026-08-10T12:00:05.000Z")
+	if summary.LastActive != wantLast {
+		t.Errorf("LastActive = %d, want %d (latest message timestamp)", summary.LastActive, wantLast)
+	}
+}
+
+func mustParseMillisCopilot(t *testing.T, raw string) int64 {
+	t.Helper()
+	ts := parseTimestampToUnixMilli(raw)
+	if ts == 0 {
+		t.Fatalf("failed to parse %q", raw)
+	}
+	return ts
 }
 
 func TestParseCopilotSessionFile_MalformedLinesSkipped(t *testing.T) {

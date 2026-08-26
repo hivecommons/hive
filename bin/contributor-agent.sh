@@ -91,6 +91,65 @@ fetch_knowledge_export() {
   return 1
 }
 
+link_backend_knowledge() {
+  local backend="$1"
+  local agent_md="$2"
+
+  case "$backend" in
+    claude|litellm)
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    copilot)
+      mkdir -p "${HOME}/.copilot"
+      ln -sf "$agent_md" "${HOME}/copilot-instructions.md"
+      ln -sf "$agent_md" "${HOME}/COPILOT.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    goose)
+      # Goose reads AGENTS.md and .goosehints; .goose-instructions.md / CLAUDE.md
+      # are NOT names it looks for (unless CONTEXT_FILE_NAMES is overridden), so
+      # without these two the knowledge export downloaded above never reached the
+      # model. Keep the old names for backward-compat, but add the ones Goose
+      # actually reads. (kubestellar/hive#2393 item 1.)
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/.goosehints"
+      ln -sf "$agent_md" "${HOME}/.goose-instructions.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      mkdir -p "${HOME}/.config/goose"
+      # Write the config only if the contributor/derived image hasn't provided one,
+      # so a downstream can add Goose extensions (MCP servers) or other settings
+      # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
+      if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
+        cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
+GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
+GOOSE_MODEL: ${GOOSE_MODEL:-phi4}
+GOOSECFG
+        echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
+      else
+        echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
+      fi
+      ;;
+    codex|pi)
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    bob)
+      # Bobshell 1.0.6 defaults to AGENTS.md and documents ~/.bob/AGENTS.md as
+      # its global context file. It does not load ~/CLAUDE.md. Keep the latter
+      # compatibility link while also installing the export where Bob reads it.
+      mkdir -p "${HOME}/.bob"
+      ln -sf "$agent_md" "${HOME}/.bob/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    agy)
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+    *)
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
+  esac
+}
+
 # Task-delivery mode (kubestellar/hive#2538). "interactive" (default) launches
 # the CLI in a tmux pane and the relay types tasks into it; "headless" skips the
 # tmux/CLI launch entirely and the relay drives a one-shot CLI per task with no
@@ -170,6 +229,11 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   rm -f "$AGENT_MD"
   echo "knowledge_fetch=unavailable"
   exit 1
+fi
+
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE:-}" == "1" ]]; then
+  link_backend_knowledge "$AGENT_BACKEND" "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}"
+  exit 0
 fi
 
 codex_auth_file() {
@@ -383,56 +447,8 @@ KNOWLEDGE_REFRESH_SECS=600
   done
 ) &
 
-# Make agent.md visible to each CLI backend
-case "$AGENT_BACKEND" in
-  claude|litellm)
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  copilot)
-    mkdir -p "${HOME}/.copilot"
-    ln -sf "$AGENT_MD" "${HOME}/copilot-instructions.md"
-    ln -sf "$AGENT_MD" "${HOME}/COPILOT.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  goose)
-    # Goose reads AGENTS.md and .goosehints; .goose-instructions.md / CLAUDE.md
-    # are NOT names it looks for (unless CONTEXT_FILE_NAMES is overridden), so
-    # without these two the knowledge export downloaded above never reached the
-    # model. Keep the old names for backward-compat, but add the ones Goose
-    # actually reads. (kubestellar/hive#2393 item 1.)
-    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
-    ln -sf "$AGENT_MD" "${HOME}/.goosehints"
-    ln -sf "$AGENT_MD" "${HOME}/.goose-instructions.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    mkdir -p "${HOME}/.config/goose"
-    # Write the config only if the contributor/derived image hasn't provided one,
-    # so a downstream can add Goose extensions (MCP servers) or other settings
-    # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
-    if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
-      cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
-GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
-GOOSE_MODEL: ${GOOSE_MODEL:-phi4}
-GOOSECFG
-      echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
-    else
-      echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
-    fi
-    ;;
-  codex)
-    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  pi)
-    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  agy)
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-  *)
-    ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
-    ;;
-esac
+# Make agent.md visible to the selected CLI backend.
+link_backend_knowledge "$AGENT_BACKEND" "$AGENT_MD"
 
 # Prepare a concrete workspace directory for the agent (kubestellar/hive#2545).
 # Previously the tmux session inherited the bare $HOME (/home/dev in the stock
@@ -455,6 +471,32 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
   tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
 fi
+
+# kubestellar/hive#4046: a long-lived tmux SERVER (this container can run one
+# for its whole lifetime) keeps its own working directory, and every pane it
+# forks afterward inherits it — even a pane started with an explicit, valid
+# `-c`, if the server's own cwd is already gone. That is exactly the shape of
+# directory HIVE_WORKSPACE_DIR is: agents clone into subdirectories of it
+# (contribute_ws.go's assignment prompt), so pinning the launch's `cd` at
+# HIVE_WORKSPACE_DIR itself would re-create the trap the moment that directory
+# is ever removed and recreated out from under a still-running server. Use a
+# dedicated directory instead — nothing in the task lifecycle deletes or
+# recreates it — so the CLI always starts somewhere resolvable regardless of
+# what happens to the workspace subtree underneath it; the CLI's own per-task
+# `cd` into $HIVE_WORKSPACE_DIR/<repo> (per the assignment prompt) is unchanged.
+#
+# NOT $HOME. The requirement above is only "stable", and $HOME satisfies it, but
+# the agent is launched with its backend's skip-permissions flag and runs
+# unattended, so its cwd is where every relative `ls`, `grep -r`, `find .` and
+# relative write lands by default. On the host (local mode) $HOME holds .ssh,
+# .gnupg and the contributor's own registration token in
+# .config/hive/contributor.env. Rooting an unattended agent there makes reaching
+# them the path of least resistance. This is defence in depth, not a boundary —
+# cwd grants nothing, the process runs as the user either way — but an empty
+# dedicated directory costs nothing and is not a git repo, which is what keeps
+# the agent from adopting its cwd as a checkout (#4168).
+export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
+mkdir -p "$HIVE_AGENT_CWD"
 
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."
@@ -528,7 +570,12 @@ fi
 # relay launches a one-shot CLI per task, and one-shot invocations do not draw
 # the trust/theme/onboarding dialogs this loop dismisses.
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
-  tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG $REASONING_FLAG" Enter
+  # kubestellar/hive#4046: `-c` on new-session above is NOT sufficient once the
+  # server's own cwd is already gone — verified: new-session with a valid `-c`
+  # still forks the pane into the dead directory. The `cd` in the literal
+  # launch line is what actually carries the fix; -c is defense-in-depth for a
+  # healthy server.
+  tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $CMD $PERM_FLAG $MODEL_FLAG $REASONING_FLAG" Enter
 
   # Auto-dismiss startup prompts (workspace trust, theme picker, etc.)
   AUTO_DISMISS_ATTEMPTS=10

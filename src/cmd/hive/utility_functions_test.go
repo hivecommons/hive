@@ -30,6 +30,24 @@ func TestLoginCommandForBackend(t *testing.T) {
 	}
 }
 
+func TestActionableIssueRefPinsGitHubAndWorksourceIdentity(t *testing.T) {
+	cases := []struct {
+		name  string
+		issue github.Issue
+		want  string
+	}{
+		{"github", github.Issue{Repo: "kubestellar/hive", Number: 42, ExternalID: "42"}, "kubestellar/hive#42"},
+		{"linear", github.Issue{Repo: "kubestellar/hive", SourceType: "linear", ExternalID: "ENG-7"}, "kubestellar/hive!ENG-7"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := actionableIssueRef(tc.issue); got != tc.want {
+				t.Fatalf("actionableIssueRef() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseEndpointList(t *testing.T) {
 	cases := []struct {
 		name string

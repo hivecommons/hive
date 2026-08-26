@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -120,7 +122,7 @@ func TestClaudeAPICredential_EnvKeyPrecedence(t *testing.T) {
 	// A valid OAuth file exists, but ANTHROPIC_API_KEY must win with x-api-key.
 	writeClaudeCredentials(t, "oauth-token", futureExpiryMs())
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api-key")
-	header, value, ok := claudeAPICredential()
+	header, value, ok := claudeAPICredential(nil)
 	if !ok || header != "x-api-key" || value != "sk-ant-api-key" {
 		t.Fatalf("env key must win: got %q=%q ok=%v", header, value, ok)
 	}
@@ -129,7 +131,7 @@ func TestClaudeAPICredential_EnvKeyPrecedence(t *testing.T) {
 func TestClaudeAPICredential_OAuthBearerFromHome(t *testing.T) {
 	writeClaudeCredentials(t, "oauth-token", futureExpiryMs())
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	header, value, ok := claudeAPICredential()
+	header, value, ok := claudeAPICredential(nil)
 	if !ok || header != "Authorization" || value != "Bearer oauth-token" {
 		t.Fatalf("expected bearer from $HOME credentials: got %q=%q ok=%v", header, value, ok)
 	}
@@ -137,7 +139,7 @@ func TestClaudeAPICredential_OAuthBearerFromHome(t *testing.T) {
 
 func TestClaudeAPICredential_NoneAvailable(t *testing.T) {
 	withoutClaudeCredentials(t)
-	if _, _, ok := claudeAPICredential(); ok {
+	if _, _, ok := claudeAPICredential(nil); ok {
 		t.Fatal("no env key and no file must yield ok=false")
 	}
 }
@@ -248,6 +250,37 @@ func TestDiscoverClaudeModels_ExpiredSkipsHTTP(t *testing.T) {
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	if r := s.discoverClaudeModels(); !r.fallback {
 		t.Fatalf("expired token must fall back, got %+v", r)
+	}
+}
+
+func TestDiscoverClaudeModelsLogsDoNotLeakCredentials(t *testing.T) {
+	const oauthToken = "sk-ant-oat-do-not-log"
+	writeClaudeCredentials(t, oauthToken, time.Now().Add(-time.Hour).UnixMilli())
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	var logs bytes.Buffer
+	s := &Server{
+		cliModels: newCLIModelCache(),
+		logger:    slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})),
+	}
+	if r := s.discoverClaudeModels(); !r.fallback {
+		t.Fatalf("expired token must fall back, got %+v", r)
+	}
+	if got := logs.String(); strings.Contains(got, oauthToken) || strings.Contains(got, "Bearer "+oauthToken) {
+		t.Fatalf("logs leaked credential material: %s", got)
+	}
+
+	logs.Reset()
+	const apiKey = "sk-ant-api-key-do-not-log"
+	t.Setenv("ANTHROPIC_API_KEY", apiKey)
+	ts := claudeModelsTestServer(t, http.StatusUnauthorized, `{"error":{"type":"authentication_error"}}`, nil)
+	redirectAnthropicEndpoint(t, ts.URL)
+
+	if r := s.discoverClaudeModels(); !r.fallback {
+		t.Fatalf("unauthorized API-key probe must fall back, got %+v", r)
+	}
+	if got := logs.String(); strings.Contains(got, apiKey) {
+		t.Fatalf("logs leaked API key material: %s", got)
 	}
 }
 

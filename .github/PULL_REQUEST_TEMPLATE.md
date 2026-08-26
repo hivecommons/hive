@@ -18,4 +18,5 @@ Fixes #
 - [ ] Title uses the repo emoji convention, for example `📖 docs: ...`, `🐛 fix: ...`, or `✨ feature: ...`.
 - [ ] Commits include DCO sign-off (`git commit -s`).
 - [ ] Docs, examples, and policies are updated when behavior changes.
+- [ ] `CHANGELOG.md` has an entry for user-visible changes (features, fixes, new env vars, behavior changes), or the change is not user-facing.
 - [ ] No secrets, credentials, or local runtime state are committed.

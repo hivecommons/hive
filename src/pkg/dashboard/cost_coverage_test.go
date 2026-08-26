@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/kubestellar/hive/pkg/config"
+	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/tokens"
 )
 
@@ -300,6 +301,41 @@ func TestCov_SourceForPriced(t *testing.T) {
 	}
 	if got := sourceForPriced(false); got != "unpriced" {
 		t.Errorf("unpriced -> %q", got)
+	}
+}
+
+func TestCov_HandleCost_WithPRIssueCounts(t *testing.T) {
+	s, deps := covServer(t)
+	deps.MetricsCollector = &MetricsCollector{
+		metrics:       make(map[string]any),
+		prIssueCounts: &ghpkg.PRIssueCounts{MergedPRs: 9, ClosedIssues: 4, UpdatedAt: "2026-08-18T00:00:00Z"},
+	}
+
+	rec := doGet(s, "/api/cost")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp costResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.MergedPRs != 9 {
+		t.Errorf("MergedPRs = %d, want 9", resp.MergedPRs)
+	}
+	if resp.ClosedIssues != 4 {
+		t.Errorf("ClosedIssues = %d, want 4", resp.ClosedIssues)
+	}
+}
+
+func TestCov_HandleCost_NoPRIssueCounts(t *testing.T) {
+	s, _ := covServer(t)
+	rec := doGet(s, "/api/cost")
+	var resp costResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.MergedPRs != 0 || resp.ClosedIssues != 0 {
+		t.Errorf("expected zero counts with no MetricsCollector, got merged=%d closed=%d", resp.MergedPRs, resp.ClosedIssues)
 	}
 }
 

@@ -176,7 +176,7 @@ func TestHandleMyHives(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	// A registry entry for the same hive to exercise the merge path.
-	s.registry.Hives = []RegistryEntry{{ID: "h1", Owner: "alice", Org: "acme", GitHash: "abc", Online: true}}
+	s.registry.Hives = []RegistryEntry{{ID: "h1", Owner: "alice", Org: "acme", GitHash: "abc", Online: true, DashboardURL: "https://h1.example.com"}}
 
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodGet, "/api/saas/my-hives", "", "alice")
@@ -187,5 +187,17 @@ func TestHandleMyHives(t *testing.T) {
 	var resp map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal my-hives: %v", err)
+	}
+	var typed struct {
+		Hives []MyHiveEntry `json:"hives"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &typed); err != nil {
+		t.Fatalf("unmarshal typed my-hives: %v", err)
+	}
+	if len(typed.Hives) != 1 {
+		t.Fatalf("hives len = %d, want 1", len(typed.Hives))
+	}
+	if got := typed.Hives[0].DashboardURL; got != "https://h1.example.com" {
+		t.Errorf("dashboard URL = %q, want registry value", got)
 	}
 }

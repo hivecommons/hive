@@ -1,5 +1,12 @@
 # Migrating from Hive v1 to v2
 
+> **Historical documentation.** Both ends of this migration are retired: v2 was
+> retired in August 2026. This page is kept for operators still running v1, who
+> will land on a retired v2 and should continue with
+> [`src/docs/migration-v2-v4.md`](../src/docs/migration-v2-v4.md). For the
+> current line (branch `v4`; code under `src/`), start with the
+> [`src/docs/README.md`](../src/docs/README.md) index.
+
 This guide is practical rather than automatic: v2 changes the runtime layout, config model, and agent policy system enough that you should migrate deliberately.
 
 ## Before you start

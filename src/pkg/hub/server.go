@@ -131,6 +131,12 @@ type RegistryEntry struct {
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
 	AdvisoryError string `json:"advisoryError,omitempty"`
+	// AdvisoryFindingCount is the finding count in the spoke's last posted
+	// digest; AdvisoryOverflowCount is how many further findings the top-N cap
+	// withheld from it (0 = nothing capped, or an old spoke that does not report
+	// it). My Hives renders the pair so a capped digest never reads as complete.
+	AdvisoryFindingCount  int `json:"advisoryFindingCount,omitempty"`
+	AdvisoryOverflowCount int `json:"advisoryOverflowCount,omitempty"`
 	// InferenceAuthError is the log-safe cause set when the spoke's inference
 	// backend has rejected several consecutive calls with 401 (a stale gateway
 	// key). Empty = inference auth healthy / no inference backend / old spoke,
@@ -139,8 +145,13 @@ type RegistryEntry struct {
 	// hive, also trips advisory staleness immediately with this cause. Self-
 	// clears when inference recovers. Never carries key material.
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
-	PrimaryRepo        string `json:"primaryRepo"`
-	DashboardURL       string `json:"dashboardUrl"`
+	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
+	// banner. It is separate from BudgetExhausted, which is hive-local governor
+	// budget; this means the upstream provider is refusing token purchases.
+	ProviderLimitReason  string `json:"providerLimitReason,omitempty"`
+	ProviderLimitRebuffs int    `json:"providerLimitRebuffs,omitempty"`
+	PrimaryRepo          string `json:"primaryRepo"`
+	DashboardURL         string `json:"dashboardUrl"`
 	// PublicURLSelfCheck is the spoke's own reachability verdict for
 	// DashboardURL. It is intentionally separate from the hub-side probe:
 	// private-network hives may be unreachable from the public hub while alive
@@ -149,14 +160,18 @@ type RegistryEntry struct {
 	// RouteExists is the spoke's in-cluster confirmation that an Ingress or
 	// OpenShift Route exists for DashboardURL's host. Nil means an old spoke
 	// did not report it; unknown means it could not verify (for example RBAC).
-	RouteExists        *RouteExistenceCheck  `json:"routeExists,omitempty"`
-	SnapshotURL        string                `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int                   `json:"acmmLevel"`
-	AgentCount         int                   `json:"agentCount"`
-	GovernorMode       string                `json:"governorMode"`
-	TotalTokens24h     int64                 `json:"totalTokens24h"`
-	ActionableIssues   int                   `json:"actionableIssues"`
-	ActionablePRs      int                   `json:"actionablePRs"`
+	RouteExists      *RouteExistenceCheck `json:"routeExists,omitempty"`
+	SnapshotURL      string               `json:"snapshotUrl,omitempty"`
+	ACMMLevel        int                  `json:"acmmLevel"`
+	AgentCount       int                  `json:"agentCount"`
+	GovernorMode     string               `json:"governorMode"`
+	TotalTokens24h   int64                `json:"totalTokens24h"`
+	ActionableIssues int                  `json:"actionableIssues"`
+	ActionablePRs    int                  `json:"actionablePRs"`
+	// WorkSource is the spoke's configured non-default work source type
+	// ("github_projects", "linear", "jira"). Empty for GitHub Issues (the
+	// default) — the dashboard only shows a badge when non-empty.
+	WorkSource         string                `json:"workSource,omitempty"`
 	ContributorCount   int                   `json:"contributorCount"`
 	ActiveContributors int                   `json:"activeContributors"`
 	Owner              string                `json:"owner,omitempty"`
@@ -236,14 +251,17 @@ type RegistryEntry struct {
 	// re-armed forever, which looks like progress but never is. Past
 	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
 	// human can see. Reset whenever the hive reaches a target.
-	OrphanedUpgradeSweeps   int          `json:"orphanedUpgradeSweeps,omitempty"`
-	IssueHistory            []SparkPoint `json:"issueHistory,omitempty"`
-	PRHistory               []SparkPoint `json:"prHistory,omitempty"`
-	GitHubAppRequired       bool         `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue      string       `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState          string       `json:"githubAppState,omitempty"`
-	RepoTargetMisconfigured bool         `json:"repoTargetMisconfigured,omitempty"`
-	RepoTargetIssue         string       `json:"repoTargetIssue,omitempty"`
+	OrphanedUpgradeSweeps    int          `json:"orphanedUpgradeSweeps,omitempty"`
+	IssueHistory             []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory                []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired        bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue       string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState           string       `json:"githubAppState,omitempty"`
+	GitHubAppTokenStatus     string       `json:"githubAppTokenStatus,omitempty"`
+	GitHubAppTokenLastMintAt string       `json:"githubAppTokenLastMintAt,omitempty"`
+	GitHubAppTokenError      string       `json:"githubAppTokenError,omitempty"`
+	RepoTargetMisconfigured  bool         `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue          string       `json:"repoTargetIssue,omitempty"`
 	// ConflictingReporters names two spoke instances that are BOTH reporting
 	// as this hive (e.g. "hive-abc… ↔ hive-def…"), set when their beats
 	// alternate. Non-empty is a critical drift signal: every field in this
@@ -298,6 +316,42 @@ type RegistryEntry struct {
 	// fleetStatsMaxAge. Zero means the spoke is too old to report it, which is
 	// treated as "not stale" so an upgrade does not blank the strip.
 	FleetStatsCollectedAt time.Time `json:"fleetStatsCollectedAt,omitempty"`
+
+	// RepoActivity is the spoke's audit-derived per-repo output summary
+	// (hive-health), always the sanitized product of sanitizeRepoActivity,
+	// never the raw payload. nil = the spoke is too old to report it ("no
+	// data", never "zero output"); carried forward across beats that omit it,
+	// like ComponentReach, so a restart or minimal upgrade-beat does not blank
+	// the last real summary. RepoActivityCollectedAt / RepoActivityWindowHours
+	// travel with it so the hub can age the summary and know the intended
+	// freshness window (see health_verdict.go).
+	RepoActivity            []RepoActivityWire `json:"repoActivity,omitempty"`
+	RepoActivityCollectedAt time.Time          `json:"repoActivityCollectedAt,omitempty"`
+	RepoActivityWindowHours int                `json:"repoActivityWindowHours,omitempty"`
+
+	// Quadrant signals reported by the spoke (nil = not reported). These back
+	// the per-hive quadrant score; see quadrant.go for how each is used and
+	// why absent evidence must never collapse to zero.
+	//
+	// BudgetCurrentSpend is tokens used in the CURRENT budget window, which is
+	// only meaningful alongside the window bounds — a bare zero cannot be told
+	// apart from a window that just rolled. The window length is the spoke's
+	// governor.budget.period_days (default 7d), so it must be normalised before
+	// being compared with the 90-day PR counters above.
+	BudgetCurrentSpend   *int64    `json:"budgetCurrentSpend,omitempty"`
+	BudgetLimit          *int64    `json:"budgetLimit,omitempty"`
+	BudgetWindowStartsAt time.Time `json:"budgetWindowStartsAt,omitempty"`
+	BudgetWindowEndsAt   time.Time `json:"budgetWindowEndsAt,omitempty"`
+	BudgetExhausted      *bool     `json:"budgetExhausted,omitempty"`
+	BudgetIgnored        *bool     `json:"budgetIgnored,omitempty"`
+	// HoldTotal / AwaitingReview / SLAViolations measure work stalled on a
+	// human or aging past its threshold; TasksCompleted7d is relay throughput
+	// summed on the spoke from its hourly buckets.
+	HoldTotal        *int `json:"holdTotal,omitempty"`
+	AwaitingReview   *int `json:"awaitingReview,omitempty"`
+	SLAViolations    *int `json:"slaViolations,omitempty"`
+	TasksCompleted7d *int `json:"tasksCompleted7d,omitempty"`
+
 	// ComponentReach is the LATEST component-reach report from this hive's
 	// spoke (#3993, phase 2a of #3973): per (component, running commit) span
 	// counters aggregated in-process on the spoke and carried on the
@@ -788,6 +842,18 @@ type HubServer struct {
 	mu       sync.RWMutex
 	logger   *slog.Logger
 	saveCh   chan struct{}
+	// saveLoopStop / saveLoopDone make the debounced saveLoop goroutine
+	// joinable (#4774). A hub built by NewHubServer used to leak its saveLoop
+	// forever: in tests, the loop could wake up to registrySaveDelay after the
+	// test returned and recreate registry files inside a t.TempDir the test
+	// framework was already removing — "TempDir RemoveAll cleanup: directory
+	// not empty" flakes. StopSaveLoop closes saveLoopStop and blocks on
+	// saveLoopDone, so a test that stops the server KNOWS no further registry
+	// write can happen. Both are nil on bare &HubServer{} test literals, which
+	// never start the loop; StopSaveLoop is a no-op for them.
+	saveLoopStop     chan struct{}
+	saveLoopDone     chan struct{}
+	saveLoopStopOnce sync.Once
 
 	// authProviders is the enabled human-login provider set (GitHub OAuth plus any
 	// configured OIDC providers — Google/IBMid/Red Hat/Microsoft/custom). Built
@@ -941,6 +1007,28 @@ type HubServer struct {
 	// whether or not this sweep ever runs — so a missed tick delays rewriting
 	// hub-generations.json, never extends the acceptance window.
 	lastGenerationRetire time.Time
+	// lastAccessExpirySweep throttles the expired-access persistence sweep
+	// (access_expiry.go). Same rationale and same guarding mutex as the sweeps
+	// above: poller-loop-only state.
+	//
+	// NOTE this throttles PERSISTENCE AND THE TIMELINE EVENT ONLY. An expired
+	// grant stops being honored at read time via loadSaaSUser's prune, on the
+	// wall clock, whether or not this sweep ever runs.
+	lastAccessExpirySweep time.Time
+	// lastOrphanedUpgradeSweep throttles the orphaned-upgrade latch sweep
+	// (stale_upgrade.go). Same rationale and same guarding mutex as the sweeps
+	// above: poller-loop-only state.
+	lastOrphanedUpgradeSweep time.Time
+	// lastStuckAssignmentSweep throttles the stuck-assignment reset sweep
+	// (saas_reset_assignment.go). Same rationale and same guarding mutex as the
+	// sweeps above: poller-loop-only state.
+	lastStuckAssignmentSweep time.Time
+	// lastPoolReplenish throttles the watermark pool replenisher
+	// (pool_replenisher.go); poolReplenishHold suspends a cluster's
+	// replenishing until the recorded time after a failed seed. Same
+	// poller-loop-only guarding mutex as the sweeps above.
+	lastPoolReplenish time.Time
+	poolReplenishHold map[string]time.Time
 	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
 	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
 	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see
@@ -1101,6 +1189,13 @@ type HubServer struct {
 	// persisted to reachHistoryPath, read by /api/reach for before/after
 	// deltas. nil on bare test servers; every touch point is nil-safe.
 	reachHistory *reachHistoryStore
+
+	// dibsPublic caches "is this repo public on github.com?" verdicts for the
+	// dibs repo feed (#4233, dibs_public_check.go). Created lazily by
+	// dibsChecker on the first /api/saas/dibs/repos request; tests pre-set the
+	// field to point at a fake GitHub API before that first call.
+	dibsPublicOnce sync.Once
+	dibsPublic     *dibsPublicChecker
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1213,6 +1308,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		mux:          http.NewServeMux(),
 		logger:       logger,
 		saveCh:       make(chan struct{}, 1),
+		saveLoopStop: make(chan struct{}),
+		saveLoopDone: make(chan struct{}),
 		registryPath: registryPath,
 		hubGitHash:   gitHash,
 		hubGitBranch: gitBranch,
@@ -1224,6 +1321,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		keyGenerations:          legacyGenerationSet(secret),
 		clusters:                loadClusters(logger),
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
+		poolReplenishHold:       make(map[string]time.Time),
 		heartbeatUpgrade:        make(map[string]string),
 		heartbeatSwitchTag:      make(map[string]string),
 		clusterUnreachableUntil: make(map[string]time.Time),
@@ -1378,6 +1476,22 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
 	// reference-architecture draft, shareable without artifact permissions.
 	s.mux.HandleFunc("GET /cncf-reference-architecture", s.serveStatic("static/cncf-reference-architecture.html"))
+	// Fleet-divergence view. The HTML shell is inert (no data) and served
+	// unauthenticated like every other static page; all sensitive data comes
+	// from GET /api/saas/my-hives, which is requireAuth-gated. On a 401 the page
+	// redirects to the OAuth login (see static/my-hives.html).
+	// The page lives at /fleet — matching the "Fleet" nav button that opens it.
+	// /my-hives (the original path) permanently redirects so old bookmarks,
+	// OAuth redirect params, and shared links keep working; the API endpoint
+	// /api/saas/my-hives is unchanged.
+	s.mux.HandleFunc("GET /fleet", s.serveStatic("static/my-hives.html"))
+	s.mux.HandleFunc("GET /my-hives", func(w http.ResponseWriter, r *http.Request) {
+		target := "/fleet"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+	})
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
 	// Open Graph preview image for shared links. Registered here rather than in
 	// registerOAuth because that function returns early when OAuth is
@@ -1419,6 +1533,9 @@ func (s *HubServer) Start(port int) error {
 }
 
 func (s *HubServer) Shutdown(timeout time.Duration) error {
+	// Join the registry save loop first, flushing any pending debounced write
+	// (#4774) — after this, no background registry I/O remains.
+	s.StopSaveLoop()
 	// Flush the reach history's final partial save interval (#3995) — the
 	// same durability courtesy the registry gets from its synchronous saves.
 	// Before the listener check: a server shut down before Start still owes
@@ -1497,6 +1614,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
+	// Adopt the spoke's reported dashboard-token hash into the hub's stored
+	// record — the reference spoke-relayed upgrade requests verify their proof
+	// against. Done only after the per-hive bearer authenticated the beat (a
+	// hive can only set its OWN record), only for hosted hives that have a
+	// record, and only when the value is a well-formed digest that changed.
+	s.adoptSpokeDashboardTokenHash(&payload)
 	// Normalize the reported SHA to the canonical short length up front so every
 	// downstream comparison is same-length against the hub's 7-char stored SHAs.
 	// (Spokes now build gitShort with `--short=7`; this covers any that predate
@@ -1573,16 +1696,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
 		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
 		// it as UNKNOWN rather than stale.
-		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
-		AdvisoryError:        sanitizeProseField(payload.AdvisoryError),
+		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
+		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
+		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
-		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
-		DashboardURL:       payload.DashboardURL,
-		PublicURLSelfCheck: sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
-		RouteExists:        sanitizeRouteExistenceCheck(payload.RouteExists),
-		SnapshotURL:        payload.SnapshotURL,
-		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
+		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),
+		ProviderLimitReason:  sanitizeProseField(payload.ProviderLimitReason),
+		ProviderLimitRebuffs: clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
+		DashboardURL:         payload.DashboardURL,
+		PublicURLSelfCheck:   sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
+		RouteExists:          sanitizeRouteExistenceCheck(payload.RouteExists),
+		SnapshotURL:          payload.SnapshotURL,
+		ACMMLevel:            clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {
@@ -1596,6 +1723,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TotalTokens24h:     clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:   clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:      clampInt(payload.Governor.PRs, 0, 10_000),
+		WorkSource:         sanitizeHeartbeatField(payload.Governor.WorkSource),
 		ContributorCount:   clampInt(payload.Contributors.Registered, 0, 10_000),
 		ActiveContributors: clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:              sanitizeHeartbeatField(payload.Owner),
@@ -1636,6 +1764,22 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// inactive-agent rule, never as evidence of idleness.
 				payload.Agents[i].StartedAt = sanitizeHeartbeatField(payload.Agents[i].StartedAt)
 				payload.Agents[i].LastActivityAt = sanitizeHeartbeatField(payload.Agents[i].LastActivityAt)
+				// Pause provenance (#4041). Trigger and actor are identifiers
+				// ("dashboard-api", a GitHub login); the reason is prose the
+				// hover renders to a human; the timestamp keeps its colons via
+				// the HTML-escaping sanitizer, same as the entry's StartedAt.
+				payload.Agents[i].PausedTrigger = sanitizeHeartbeatField(payload.Agents[i].PausedTrigger)
+				payload.Agents[i].PausedBy = sanitizeHeartbeatField(payload.Agents[i].PausedBy)
+				payload.Agents[i].PausedReason = sanitizeProseField(payload.Agents[i].PausedReason)
+				payload.Agents[i].PausedAt = sanitizeField(payload.Agents[i].PausedAt)
+				// Fleet-divergence signals (#hub-fleet-view). Backend is a spoke-
+				// reported identifier (claude/copilot/gemini/…) and is sanitized
+				// like State/Mode. The remaining new signals — ExpectedActive,
+				// CanOpenIssue, CanOpenPR, CanMerge, Enabled — are bools with no
+				// injectable surface, so they pass through unchanged; they are
+				// acknowledged here so a future reader sees every new field was
+				// considered by the sanitize pass.
+				payload.Agents[i].Backend = sanitizeHeartbeatField(payload.Agents[i].Backend)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -1660,17 +1804,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// verbatim ("The GitHub App is configured but has no installation.
 		// Install the app on your org to enable agents.") — the strict
 		// identifier sanitizer stripped every space out of it.
-		GitHubAppPermIssue:      sanitizeProseField(payload.GitHubAppPermIssue),
-		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
-		RepoTargetMisconfigured: payload.RepoTargetMisconfigured,
-		RepoTargetIssue:         sanitizeProseField(payload.RepoTargetIssue),
-		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
-		GitHubAppID:             payload.GitHubAppID,
-		GitHubAppSlug:           payload.GitHubAppSlug,
-		GitHubInstallationID:    payload.GitHubInstallationID,
-		GitHubAPIURL:            payload.GitHubAPIURL,
-		GitHubBaseURL:           payload.GitHubBaseURL,
-		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
+		GitHubAppPermIssue:       sanitizeProseField(payload.GitHubAppPermIssue),
+		GitHubAppState:           sanitizeHeartbeatField(payload.GitHubAppState),
+		GitHubAppTokenStatus:     sanitizeHeartbeatField(payload.GitHubAppTokenStatus),
+		GitHubAppTokenLastMintAt: sanitizeField(payload.GitHubAppTokenLastMintAt),
+		GitHubAppTokenError:      sanitizeProseField(payload.GitHubAppTokenError),
+		RepoTargetMisconfigured:  payload.RepoTargetMisconfigured,
+		RepoTargetIssue:          sanitizeProseField(payload.RepoTargetIssue),
+		StatusFlipping:           s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
+		GitHubAppID:              payload.GitHubAppID,
+		GitHubAppSlug:            payload.GitHubAppSlug,
+		GitHubInstallationID:     payload.GitHubInstallationID,
+		GitHubAPIURL:             payload.GitHubAPIURL,
+		GitHubBaseURL:            payload.GitHubBaseURL,
+		PendingGitHubAppInstall:  payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
 				return time.Now()
@@ -1680,6 +1827,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PRsMerged90d:   clampFleetCount(payload.PRsMerged90d),
 		PRsRejected90d: clampFleetCount(payload.PRsRejected90d),
 		CVEsClosed:     clampFleetCount(payload.CVEsClosed),
+		// Quadrant signals. Reuse clampFleetCount's discipline: a negative is
+		// nonsense from a spoke and becomes nil ("not reported") rather than
+		// being clamped to zero, which would be indistinguishable from a real
+		// measurement and would quietly drag the hive's score.
+		BudgetCurrentSpend:   clampQuadrantSpend(payload.BudgetCurrentSpend),
+		BudgetLimit:          clampQuadrantSpend(payload.BudgetLimit),
+		BudgetWindowStartsAt: parseHeartbeatTime(payload.BudgetWindowStartsAt),
+		BudgetWindowEndsAt:   parseHeartbeatTime(payload.BudgetWindowEndsAt),
+		BudgetExhausted:      payload.BudgetExhausted,
+		BudgetIgnored:        payload.BudgetIgnored,
+		HoldTotal:            clampFleetCount(payload.HoldTotal),
+		AwaitingReview:       clampFleetCount(payload.AwaitingReview),
+		SLAViolations:        clampFleetCount(payload.SLAViolations),
+		TasksCompleted7d:     clampFleetCount(payload.TasksCompleted7d),
 		FleetStatsCollectedAt: func() time.Time {
 			if payload.FleetStatsCollectedAt == "" {
 				return time.Time{}
@@ -1696,6 +1857,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Component reach (#3993): sanitized + clipped, never the raw spoke
 		// report — see sanitizeComponentReach for the bounds. Storage only.
 		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
+		// Per-repo output activity (hive-health): sanitized/clamped, never the
+		// raw payload. The collected-at + window travel with it so the verdict
+		// can age the summary.
+		RepoActivity:            sanitizeRepoActivity(payload.RepoActivity),
+		RepoActivityCollectedAt: parseHeartbeatTime(payload.RepoActivityCollectedAt),
+		RepoActivityWindowHours: clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
 	}
 
 	// Fleet error-rate history (#3995, phase 2c): fold this beat's rolling
@@ -1861,6 +2028,43 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.FleetStatsCollectedAt.IsZero() {
 				entry.FleetStatsCollectedAt = h.FleetStatsCollectedAt
 			}
+			// Carry the quadrant signals forward for the same reason as the
+			// counts above: a spoke that just restarted reports nil until its
+			// governor and collectors warm back up, and overwriting with nil
+			// would collapse that hive's kite to "not measured" for the gap —
+			// which reads as a data problem rather than the transient it is.
+			//
+			// The budget window is carried WITH its spend, never apart from
+			// it. The spend number means nothing without the bounds that scope
+			// it, so preserving one while dropping the other would produce a
+			// figure that looks current but describes a window that has since
+			// rolled.
+			if entry.BudgetCurrentSpend == nil && h.BudgetCurrentSpend != nil {
+				entry.BudgetCurrentSpend = h.BudgetCurrentSpend
+				entry.BudgetWindowStartsAt = h.BudgetWindowStartsAt
+				entry.BudgetWindowEndsAt = h.BudgetWindowEndsAt
+			}
+			if entry.BudgetLimit == nil && h.BudgetLimit != nil {
+				entry.BudgetLimit = h.BudgetLimit
+			}
+			if entry.BudgetExhausted == nil && h.BudgetExhausted != nil {
+				entry.BudgetExhausted = h.BudgetExhausted
+			}
+			if entry.BudgetIgnored == nil && h.BudgetIgnored != nil {
+				entry.BudgetIgnored = h.BudgetIgnored
+			}
+			if entry.HoldTotal == nil && h.HoldTotal != nil {
+				entry.HoldTotal = h.HoldTotal
+			}
+			if entry.AwaitingReview == nil && h.AwaitingReview != nil {
+				entry.AwaitingReview = h.AwaitingReview
+			}
+			if entry.SLAViolations == nil && h.SLAViolations != nil {
+				entry.SLAViolations = h.SLAViolations
+			}
+			if entry.TasksCompleted7d == nil && h.TasksCompleted7d != nil {
+				entry.TasksCompleted7d = h.TasksCompleted7d
+			}
 			// Carry the last real component-reach report forward when this
 			// beat omits one (#3993) — a restarting spoke reports nil until
 			// its counters warm back up from /data/reach-state.json, and
@@ -1869,11 +2073,45 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.ComponentReach == nil && h.ComponentReach != nil {
 				entry.ComponentReach = h.ComponentReach
 			}
+			// Carry the last real repo-activity summary forward when this beat
+			// omits it (minimal upgrade-beat, or a spoke whose collector hasn't
+			// re-warmed from /data/activity.json yet). The collected-at and
+			// window travel WITH the summary — same reasoning as the budget
+			// window: a count aged by a stale timestamp is honest, a count
+			// carried without its timestamp looks current when it isn't.
+			if entry.RepoActivity == nil && h.RepoActivity != nil {
+				entry.RepoActivity = h.RepoActivity
+				entry.RepoActivityCollectedAt = h.RepoActivityCollectedAt
+				entry.RepoActivityWindowHours = h.RepoActivityWindowHours
+			}
+			// Advisory post time survives a spoke restart — see
+			// carryAdvisoryPostTime for why that is the difference between a
+			// wedged digest being flagged and being invisible forever.
+			carryAdvisoryPostTime(&entry, h)
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {
 				branchForLatest = "v2"
 			}
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
+			// The orphan-sweep retry budget is HUB-side state and must survive
+			// ordinary heartbeats. The rebuilt entry starts from the payload
+			// (which never carries it), so without this carry every ~2-min
+			// beat silently reset OrphanedUpgradeSweeps to 0 — the terminal
+			// "give up after maxOrphanedUpgradeSweeps and report UpgradeFailed"
+			// state was unreachable for any hive that heartbeats at all, and a
+			// structurally-unable-to-upgrade hive looped clear→re-arm→re-latch
+			// forever, pinned in "Upgrading" with no human-visible fault. The
+			// completion branches below still reset it to 0 explicitly, which
+			// is the only legitimate reset: the upgrade actually landed.
+			entry.OrphanedUpgradeSweeps = h.OrphanedUpgradeSweeps
+			// A hive that demonstrably MOVED builds has ended whatever wedge
+			// streak the budget was counting, even when no latch is set (e.g.
+			// the sweep cleared it and the upgrade then landed) — carrying the
+			// spent budget into the NEXT upgrade would let a single future
+			// sweep tip a healthy hive straight into terminal UpgradeFailed.
+			if entry.GitHash != "" && h.GitHash != "" && !sameCommit(entry.GitHash, h.GitHash) {
+				entry.OrphanedUpgradeSweeps = 0
+			}
 			// Carry a previously-reported upgrade failure forward across ordinary
 			// heartbeats (which do not repeat it), but clear it the moment the
 			// spoke actually reports a NEW git hash — that means it finally moved.
@@ -2383,6 +2621,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// hive is a targeted operator/webhook action and must not be displaced
 		// by the fleet-wide default.
 		resp.GitHubAppConfig = keyCfg
+	}
+
+	// Optional SECOND App key (#4815), targeted at this hive alone.
+	//
+	// Runs INDEPENDENTLY of the two branches above rather than inside either,
+	// because the primary reconcile's steady state is "push nothing" — a healthy
+	// hive already holding the right primary key gets no GitHubAppConfig at all,
+	// and nesting this there would make the secondary key undeliverable to
+	// exactly the healthy hives that are supposed to receive it. It attaches to
+	// whatever config those branches produced, or creates an otherwise-empty one
+	// whose zero AppID/InstallationID and empty PrivateKey the spoke reads as
+	// "not speaking to those fields".
+	//
+	// Every hive without a SecondaryAppID — the whole fleet today — returns nil
+	// from the resolver and this block is a no-op: no new field, no new state,
+	// no change to the payload.
+	if secCfg := s.secondaryAppKeyForHeartbeat(&payload); secCfg != nil {
+		if resp.GitHubAppConfig == nil {
+			resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
+		}
+		resp.GitHubAppConfig.SecondaryKey = secCfg
 	}
 
 	// SECURITY (C1/N3, CWE-200/639): the fleet-wide additional-key broadcast that
@@ -2940,9 +3199,14 @@ func isAvailableRegistryEntry(h RegistryEntry) bool {
 // repos are counted across hives (deduplicated by org/repo reference) so two
 // hives on the same repo don't double-count it.
 //
+// The PR and CVE counters are deduplicated the same way, for the same reason:
+// they are ORG-scoped, so several hives in one org each report that org's whole
+// output and summing them multiplies it. See fleetCountAccumulator.
+//
 // Caller must hold s.mu (read or write).
 func (s *HubServer) computeFleetStats() FleetStats {
 	var fs FleetStats
+	var counts fleetCountAccumulator
 	repoSet := make(map[string]struct{})
 	for _, h := range s.registry.Hives {
 		// An UNASSIGNED hive is a pre-provisioned placeholder nobody has claimed
@@ -3035,18 +3299,116 @@ func (s *HubServer) computeFleetStats() FleetStats {
 			continue
 		}
 		fs.Reporting++
-		if h.PRsMerged90d != nil {
-			fs.PRsMerged += *h.PRsMerged90d
-		}
-		if h.PRsRejected90d != nil {
-			fs.PRsRejected += *h.PRsRejected90d
-		}
-		if h.CVEsClosed != nil {
-			fs.CVEsClosed += *h.CVEsClosed
-		}
+		// Accumulate into the (org, ai-author) group rather than straight into
+		// the total. Only the group's MAX is summed at the end, so an org-wide
+		// counter reported by several hives lands in the public figure once.
+		//
+		// Reporting/Eligible/Stale above stay PER-HIVE on purpose: they measure
+		// collection coverage ("how much of the fleet answered"), which is a
+		// question about hives, not about work. Deduping them would understate
+		// how much of the fleet is healthy.
+		group := fleetCountGroup(h)
+		counts.add(group, h.PRsMerged90d, h.PRsRejected90d, h.CVEsClosed)
 	}
+	fs.PRsMerged, fs.PRsRejected, fs.CVEsClosed = counts.totals()
 	fs.ReposManaged = len(repoSet)
 	return fs
+}
+
+// fleetCountAccumulator sums org-scoped contribution counters while collapsing
+// hives that report the SAME underlying work down to a single contribution.
+//
+// Needed because FleetStatsCollector counts AI-author PRs across a whole ORG
+// (see NewFleetStatsCollector), so every hive in an org reports that org's
+// entire output as its own. Summing those with += multiplies one org's number
+// by its hive count — measured live, three hives each reported prsMerged90d
+// = 3746 and the public landing-page total carried 11238 for work done once.
+//
+// Grouping is by fleetCountGroup, the same (org, ai-author) key the quadrant's
+// population dedupe uses, so the two surfaces cannot drift into disagreeing
+// about which hives are duplicates of each other.
+type fleetCountAccumulator struct {
+	// merged/rejected/cves map a group key to the largest value seen for it.
+	// Absent key means no hive in that group has reported that counter, which
+	// is NOT the same as a reported zero — see add.
+	merged   map[string]int
+	rejected map[string]int
+	cves     map[string]int
+	// ungrouped holds the running sum for hives whose group is unknown. They
+	// cannot be shown to duplicate anyone, so each counts on its own.
+	ungroupedMerged   int
+	ungroupedRejected int
+	ungroupedCVEs     int
+}
+
+// add folds one reporting hive's counters in. Each counter is handled
+// independently because a hive may report some and not others.
+//
+// nil means "this hive never computed that counter" and is skipped entirely, so
+// dedupe can never turn an unreported counter into a participating zero — the
+// nil-vs-zero discipline the *int pointers exist to preserve. A group whose
+// members are all nil for a counter contributes nothing to it, exactly as
+// before dedupe.
+func (a *fleetCountAccumulator) add(group string, merged, rejected, cves *int) {
+	if group == "" {
+		if merged != nil {
+			a.ungroupedMerged += *merged
+		}
+		if rejected != nil {
+			a.ungroupedRejected += *rejected
+		}
+		if cves != nil {
+			a.ungroupedCVEs += *cves
+		}
+		return
+	}
+	// Keep the MAXIMUM, not the first or the mean. The counter is org-wide and
+	// identical by construction, so in the healthy case every choice agrees;
+	// they differ only when the group's collectors ran at different moments,
+	// and over a fixed trailing window the freshest collect is the largest.
+	// Taking the max therefore lets the most complete measurement stand instead
+	// of letting collection timing pick the answer.
+	//
+	// Staleness needs no separate group-level rule: the ageing check above runs
+	// PER HIVE before this point, so a stale member is already dropped and the
+	// group is represented by its surviving fresh members. A group whose
+	// members are ALL stale contributes no value at all and is counted in
+	// fs.Stale, which is the conservative reading — the group is excluded
+	// exactly when nothing fresh remains to speak for it.
+	a.merged = maxInto(a.merged, group, merged)
+	a.rejected = maxInto(a.rejected, group, rejected)
+	a.cves = maxInto(a.cves, group, cves)
+}
+
+// maxInto records v as group's representative if it beats what is already
+// stored, lazily allocating m. A nil v records nothing, so an unreported
+// counter never creates a zero-valued entry.
+func maxInto(m map[string]int, group string, v *int) map[string]int {
+	if v == nil {
+		return m
+	}
+	if m == nil {
+		m = make(map[string]int)
+	}
+	if cur, seen := m[group]; !seen || *v > cur {
+		m[group] = *v
+	}
+	return m
+}
+
+// totals sums each group's single representative alongside the ungrouped hives.
+func (a *fleetCountAccumulator) totals() (merged, rejected, cves int) {
+	return a.ungroupedMerged + sumValues(a.merged),
+		a.ungroupedRejected + sumValues(a.rejected),
+		a.ungroupedCVEs + sumValues(a.cves)
+}
+
+func sumValues(m map[string]int) int {
+	var total int
+	for _, v := range m {
+		total += v
+	}
+	return total
 }
 
 // FleetStatsTrustworthy reports whether ANY hive contributed a fresh count.
@@ -3486,24 +3848,55 @@ func (s *HubServer) requestSave() {
 }
 
 func (s *HubServer) saveLoop() {
-	for range s.saveCh {
-		time.Sleep(registrySaveDelay)
-		s.mu.RLock()
-		data, err := json.MarshalIndent(s.registry, "", "  ")
-		s.mu.RUnlock()
-		if err != nil {
-			s.logger.Warn("hub registry marshal failed", "error", err)
-			continue
+	defer close(s.saveLoopDone)
+	for {
+		select {
+		case <-s.saveLoopStop:
+			// A request already queued when stop wins the select must still be
+			// flushed — both channels can be ready at once and select picks
+			// randomly, so drain deterministically.
+			select {
+			case <-s.saveCh:
+				s.saveLoopFlush()
+			default:
+			}
+			return
+		case <-s.saveCh:
 		}
-		tmpPath := s.registryPath + ".tmp"
-		if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-			s.logger.Warn("hub registry save failed", "path", tmpPath, "error", err)
-			continue
+		// Debounce, but stay cancelable: a stop during the delay flushes the
+		// pending request synchronously instead of abandoning it, so shutdown
+		// keeps the durability the delayed write was promising.
+		select {
+		case <-s.saveLoopStop:
+			s.saveLoopFlush()
+			return
+		case <-time.After(registrySaveDelay):
 		}
-		if err := os.Rename(tmpPath, s.registryPath); err != nil {
-			s.logger.Warn("hub registry rename failed", "error", err)
-		}
+		s.saveLoopFlush()
 	}
+}
+
+// saveLoopFlush is one debounced write, with saveLoop's historical
+// warn-and-continue error handling (a failed periodic save is retried by the
+// next requestSave; it must not kill the loop).
+func (s *HubServer) saveLoopFlush() {
+	if err := s.saveRegistryNow(); err != nil {
+		s.logger.Warn("hub registry save failed", "path", s.regPath(), "error", err)
+	}
+}
+
+// StopSaveLoop stops the debounced registry-save goroutine and waits for it to
+// exit, flushing any pending save request first (#4774). After it returns, no
+// further registry write can come from this server — which is what a test
+// holding the registry in a t.TempDir needs before the framework removes it.
+// Safe to call multiple times, and a no-op on bare &HubServer{} literals that
+// never started the loop.
+func (s *HubServer) StopSaveLoop() {
+	if s.saveLoopStop == nil {
+		return
+	}
+	s.saveLoopStopOnce.Do(func() { close(s.saveLoopStop) })
+	<-s.saveLoopDone
 }
 
 func (s *HubServer) findContributeHive() *RegistryEntry {
@@ -3578,6 +3971,24 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 // slow or malicious DNS server cannot block the caller indefinitely.
 const privateURLDNSTimeout = 5 * time.Second
 
+// hostResolver is the DNS seam used by isPrivateURL. Production ALWAYS uses
+// defaultHostResolver — this indirection exists only so tests can supply a
+// deterministic resolution result and stay hermetic in a network-isolated CI
+// sandbox (audit finding L3, 2026-08-17 security review). Tests that override
+// it must restore it via t.Cleanup. The fail-closed contract below (a resolver
+// error means "private") is unchanged and must stay that way: swapping the
+// resolver changes only WHERE answers come from, never how failures are
+// treated. Mirrors the identical seam in pkg/dashboard.
+type hostResolver func(ctx context.Context, host string) ([]string, error)
+
+var privateURLResolver hostResolver = defaultHostResolver
+
+func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
+	defer cancel()
+	return (&net.Resolver{}).LookupHost(resolveCtx, host)
+}
+
 func isPrivateURL(ctx context.Context, rawURL string) bool {
 	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
 		if strings.HasPrefix(rawURL, scheme) {
@@ -3600,10 +4011,7 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 	}
 
 	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
-	defer cancel()
-	resolver := &net.Resolver{}
-	addrs, err := resolver.LookupHost(resolveCtx, host)
+	addrs, err := privateURLResolver(ctx, host)
 	if err != nil {
 		// If DNS fails, treat as private (fail-closed) to prevent bypass.
 		return true
@@ -3634,6 +4042,14 @@ func clampInt(v, min, max int) int {
 // value. Ten million PRs from one hive is already far beyond plausible.
 const maxFleetCount = 10_000_000
 
+// maxQuadrantSpend bounds a hive's reported per-window token spend for the same
+// reason maxFleetCount bounds counts, but the stakes differ: quadrant scores are
+// fleet-RELATIVE percentiles, so one absurd value does not merely look wrong on
+// its own row — it stretches the distribution and pushes every honest hive
+// toward the same end of the axis. A trillion tokens in one budget window is
+// orders of magnitude beyond any real usage.
+const maxQuadrantSpend int64 = 1_000_000_000_000
+
 // clampFleetCount validates a spoke-reported fleet count pointer. nil stays nil
 // (the hive reported nothing — it must NOT be aggregated as a zero). A negative
 // value is treated as nil (garbage → don't count). Otherwise it is clamped to
@@ -3645,6 +4061,37 @@ func clampFleetCount(v *int) *int {
 	}
 	c := clampInt(*v, 0, maxFleetCount)
 	return &c
+}
+
+// clampQuadrantSpend sanitises a reported token spend the same way
+// clampFleetCount handles counts: a negative is nonsense from the spoke and
+// becomes nil ("not reported") rather than zero, so it can never be mistaken
+// for a hive that genuinely consumed nothing.
+//
+// The upper bound is deliberately generous — this is a token count over a
+// budget window, not a small tally — but it exists so a corrupt payload cannot
+// dominate a fleet-relative percentile and flatten every other hive's score.
+func clampQuadrantSpend(v *int64) *int64 {
+	if v == nil || *v < 0 {
+		return nil
+	}
+	c := clampInt64(*v, 0, maxQuadrantSpend)
+	return &c
+}
+
+// parseHeartbeatTime converts an RFC3339 timestamp from a heartbeat into a
+// time.Time, yielding the zero time for both an empty string (a spoke too old
+// to report it) and an unparseable one. Callers treat the zero time as "not
+// reported"; this mirrors how FleetStatsCollectedAt is handled at the upsert.
+func parseHeartbeatTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func clampInt64(v, min, max int64) int64 {

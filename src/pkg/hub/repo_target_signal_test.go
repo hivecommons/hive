@@ -8,7 +8,7 @@ import (
 )
 
 func TestHeartbeatPayloadCarriesRepoTargetMisconfig(t *testing.T) {
-	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."
+	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Settings → Repos."
 	raw, err := json.Marshal(HeartbeatPayload{
 		HiveID:                  "h1",
 		RepoTargetMisconfigured: true,
@@ -36,7 +36,7 @@ func TestMyHivesHealthBadgeShowsRepoTargetMisconfig(t *testing.T) {
 		"h.repoTargetMisconfigured",
 		"h.repoTargetIssue",
 		"var repoTargetBad = !isPlaceholderHive(h) && !!h.repoTargetMisconfigured",
-		"Repo target misconfigured — expected org/repo. Fix in Governor Config → Repos.",
+		"Repo target misconfigured — expected org/repo. Fix in Settings → Repos.",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("saas health badge missing %q", snippet)

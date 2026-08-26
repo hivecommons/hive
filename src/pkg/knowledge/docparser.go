@@ -110,7 +110,13 @@ func parsePDF(data []byte) ([]DocChunk, string) {
 // extractPageText extracts readable text from a PDF page. Prefers the PDF's
 // own text stream (GetPlainText) which preserves correct character ordering.
 // Falls back to positioned-glyph reconstruction only when GetPlainText fails.
-func extractPageText(page pdf.Page) string {
+func extractPageText(page pdf.Page) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = ""
+		}
+	}()
+
 	text, err := page.GetPlainText(nil)
 	if err == nil && strings.TrimSpace(text) != "" {
 		result := strings.ReplaceAll(text, "\r\n", "\n")

@@ -290,7 +290,7 @@ func TestSeedPauseStateUnit(t *testing.T) {
 	}, slog.Default(), ProjectContext{})
 
 	now := time.Now()
-	m.SeedPauseState("scanner", now, "test-trigger", "test-reason")
+	m.SeedPauseState("scanner", now, "test-trigger", "test-reason", "test-user")
 	m.mu.RLock()
 	agent := m.agents["scanner"]
 	m.mu.RUnlock()

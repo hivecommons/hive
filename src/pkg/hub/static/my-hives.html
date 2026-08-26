@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet — Expected vs Actual vs Able</title>
+<style>
+  :root {
+    --bg: #0d1420; --panel: #131c2b; --line: #22304a; --ink: #d7e2f2;
+    --muted: #8ba0bd; --green: #3fb968; --amber: #e0a800; --red: #e5484d;
+    --gray: #5a6b84; --accent: #4a9eff; --chip: #17212d; --text: #d7e2f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: inherit; text-decoration: none; }
+  .site-header {
+    z-index: 10;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    background: #080b0fc7;
+    border-bottom: 1px solid #ffffff14;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1rem clamp(1rem, 4vw, 4.5rem);
+    position: sticky;
+    top: 0;
+  }
+  .brand, .header-link, nav { align-items: center; display: flex; }
+  .brand { letter-spacing: 0; gap: .75rem; font-weight: 800; }
+  .brand-mark {
+    width: 2.5rem; height: 2.5rem;
+    color: var(--amber);
+    background: linear-gradient(145deg, rgba(224, 168, 0, .18), rgba(74, 158, 255, .10));
+    border: 1px solid rgba(224, 168, 0, .42);
+    border-radius: .65rem;
+    place-items: center;
+    font-size: 1.2rem;
+    display: grid;
+  }
+  nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
+  nav a:hover, .header-link:hover { color: var(--text); }
+  nav a.active { color: var(--amber); }
+  .header-link {
+    border: 1px solid var(--line);
+    width: fit-content;
+    color: var(--text);
+    border-radius: .55rem;
+    justify-self: end;
+    padding: .72rem 1rem;
+    font-weight: 700;
+  }
+  .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
+  .fleet-header {
+    padding: 16px 22px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  .fleet-header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .fleet-header .sub { color: var(--muted); font-size: 12px; }
+  .wrap {
+    padding: 16px clamp(16px, 2vw, 32px);
+    max-width: none;
+    width: 100%;
+    overflow-x: auto;
+  }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .legend b { color: var(--ink); font-weight: 600; }
+  table { width: 100%; min-width: 1180px; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th:nth-child(2), td:nth-child(2) { min-width: 360px; }
+  th:nth-child(7), td:nth-child(7) { min-width: 310px; }
+  tr.spoke { cursor: pointer; }
+  tr.spoke:hover { background: #16202f; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+  .dot.on { background: var(--green); }
+  .dot.off { background: var(--gray); }
+  .name { font-weight: 600; }
+  a.name { color: inherit; text-decoration: none; }
+  a.name:hover { text-decoration: underline; }
+  .chev { display: inline-block; width: 12px; color: var(--muted); transition: transform .1s; }
+  tr.spoke.open .chev { transform: rotate(90deg); }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
+    background: var(--chip); border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .rollup { font-variant-numeric: tabular-nums; }
+  .rollup .n { font-weight: 700; color: var(--ink); }
+  .rollup .warn { color: var(--amber); }
+  .rollup .bad { color: var(--red); }
+  .rollup .sep { color: var(--muted); margin: 0 4px; }
+  .output { color: var(--muted); font-size: 12px; }
+  td:nth-child(7) .output,
+  td:nth-child(7) .advisory-activity,
+  td:nth-child(7) .budget-health,
+  td:nth-child(7) .github-app-health { white-space: nowrap; }
+  /* agent sub-rows */
+  tr.agent td { background: #101825; border-bottom: 1px solid #1a2537; font-size: 13px; }
+  tr.agent .aname { padding-left: 26px; font-weight: 500; }
+  /* align-items:flex-start + a small top offset keeps the dot round and at the
+     first line when the label wraps to 2-3 lines in a narrow cell (e.g. "should
+     be working"). flex-shrink:0 stops the flexbox squeezing the fixed-size dot
+     into an oval. */
+  .rs { display: inline-flex; align-items: flex-start; gap: 6px; }
+  .rs .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 5px; }
+  .rs.working .swatch { background: var(--green); }
+  .rs.idle-at-prompt .swatch { background: var(--amber); }
+  .rs.stuck-at-login .swatch { background: var(--red); }
+  .rs.session-gone .swatch { background: var(--red); }
+  .rs.dead .swatch { background: var(--gray); }
+  .rs.quiet-by-design .swatch { background: transparent; border: 1px solid var(--green); }
+  .rs.unknown .swatch { background: var(--gray); }
+  .cap { display: inline-flex; align-items: center; gap: 6px; }
+  .cap .light { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+  .cap.green .light { background: var(--green); }
+  .cap.amber .light { background: var(--amber); }
+  .cap.red .light { background: var(--red); }
+  .cap.gray .light { background: var(--gray); }
+  .ticks { font-size: 11px; color: var(--muted); }
+  .tick.yes { color: var(--green); }
+  .tick.no { color: var(--red); }
+  .delta { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
+  .delta.problem { background: rgba(229,72,77,.16); color: var(--red); border: 1px solid rgba(229,72,77,.45); }
+  .delta.quiet { color: var(--muted); }
+  .rel { color: var(--muted); font-size: 11px; }
+  /* flex:0 0 8px + flex-start: same anti-squish treatment as .rs/.cap dots —
+     without it a wrapped label squeezes the fixed-size dot into an oval. */
+  .advisory-activity { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .advisory-activity .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
+  .advisory-activity.fresh .light { background: var(--green); }
+  .advisory-activity.aging .light { background: var(--amber); }
+  .advisory-activity.stale .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .advisory-activity.unknown .light { background: var(--gray); }
+  .budget-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .budget-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
+  .budget-health.ok .light { background: var(--green); }
+  .budget-health.warning .light { background: var(--amber); }
+  .budget-health.critical .light, .budget-health.exhausted .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .budget-health.unknown .light { background: var(--gray); }
+  .github-app-health { display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 3px; }
+  .github-app-health .light { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin-top: 3px; }
+  .github-app-health.ok .light { background: var(--green); }
+  .github-app-health.degraded .light { background: var(--amber); }
+  .github-app-health.broken .light { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .github-app-health.unknown .light { background: var(--gray); }
+  .status-msg { padding: 40px 0; text-align: center; color: var(--muted); }
+  a.reload { color: var(--accent); text-decoration: none; }
+  [title] { cursor: help; }
+  /* Health dot (left of hive name) — reflects PROBLEMS, not online/offline. */
+  .hdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  .hdot.problem { background: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.18); }
+  .hdot.warning { background: var(--amber); box-shadow: 0 0 0 3px rgba(224,168,0,.14); }
+  .hdot.ok { background: var(--green); }
+  .hdot.unknown { background: var(--gray); }
+  .hdot.offline { background: transparent; border: 1px solid var(--gray); }
+  .hdot.parked { background: transparent; border: 1px dashed var(--gray); }
+  .parked-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px dashed var(--gray); vertical-align: 1px; }
+  /* WHY chip: the hive-health verdict's reason, next to the name. Muted for a
+     healthy/idle hive, red-tinted when the verdict is red so the cause of a
+     broken hive reads at a glance. */
+  .why-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; }
+  .why-chip.bad { color: var(--red); border-color: rgba(229,72,77,.45); background: rgba(229,72,77,.06); }
+  .why-chip.warn { color: var(--amber); border-color: rgba(224,168,0,.55); background: rgba(224,168,0,.08); }
+  .why-chip.unknown { color: var(--gray); border-style: dashed; }
+  .hive-access-faces a:hover img { filter: brightness(1.12); }
+  /* Attach chip: one-click copy of the kubectl+tmux attach command for the
+     hive's spoke pod, so an operator can jump from a problematic /fleet row
+     straight into the pod for root-causing. Shows cluster · namespace on
+     hover; click copies, never expands the row. */
+  .attach-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; color: var(--gray); border: 1px solid var(--border, rgba(128,128,128,.3)); vertical-align: 1px; cursor: pointer; user-select: none; }
+  .attach-chip:hover { color: var(--fg); border-color: var(--fg); }
+  .attach-chip.copied { color: var(--green, #30a46c); border-color: var(--green, #30a46c); }
+  /* Per-repo output drill-down in the expanded sub-row. */
+  .repo-activity { display: flex; flex-direction: column; gap: 3px; }
+  .repo-activity-row { font-size: 11.5px; }
+  .repo-activity-row .repo { color: var(--fg, inherit); font-weight: 600; margin-right: 6px; }
+  /* Diagnosis block in the expanded sub-row: every raw fact an operator (or
+     an agent watching this page) needs to root-cause the hive without first
+     attaching — full error texts, App state + fix detail, budget numbers. */
+  .diag { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; border-left: 3px solid var(--border, rgba(128,128,128,.3)); padding-left: 8px; }
+  .diag .k { color: var(--muted); font-weight: 600; margin-right: 6px; white-space: nowrap; }
+  .diag .bad { color: var(--red); }
+  .diag .row { display: flex; align-items: baseline; }
+  .diag .row > span:last-child { word-break: break-word; }
+  .diag a { color: inherit; text-decoration: underline; }
+  /* Signed-in avatar + its menu, matching the spoke dashboard's nav avatar:
+     the image is the affordance, the dialog is right-anchored so extra width
+     grows leftward and stays on screen. Shown on hover AND kept open by
+     click (touch/keyboard operable), never hover-only. */
+  #nav-avatar { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--green, #46a758); vertical-align: middle; }
+  #nav-user-menu { display: none; position: absolute; right: 0; top: 34px; background: var(--panel, #16181d); border: 1px solid var(--line, #2a2e37); border-radius: 8px; padding: 4px 0; min-width: 170px; max-width: min(280px, calc(100vw - 24px)); z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: left; }
+  #nav-avatar-wrap.open #nav-user-menu, #nav-avatar-wrap:hover #nav-user-menu { display: block; }
+  #nav-user-menu > div#nav-menu-user { padding: 8px 16px; border-bottom: 1px solid var(--line, #2a2e37); font-weight: 600; font-size: .85rem; }
+  #nav-user-menu > div#nav-menu-role { padding: 2px 16px 6px; border-bottom: 1px solid var(--line, #2a2e37); font-size: .72rem; color: var(--gray); }
+  #nav-user-menu > a, #nav-user-menu > button { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: 8px 16px; background: none; border: none; color: inherit; text-decoration: none; font-size: .82rem; cursor: pointer; }
+  #nav-user-menu > a:hover, #nav-user-menu > button:hover { background: rgba(255,255,255,.06); }
+  /* Problem hives get a red left border so the eye lands on them. */
+  tr.spoke.health-problem td:first-child { border-left: 3px solid var(--red); }
+  tr.spoke.health-problem { background: rgba(229,72,77,.05); }
+  tr.agent.is-problem td { background: rgba(229,72,77,.07); }
+  /* Header summary + controls. */
+  .summary { font-size: 13px; }
+  .allclear { color: var(--green); font-weight: 600; }
+  .controls { margin-left: auto; display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .controls label { cursor: pointer; user-select: none; }
+  @media (max-width: 900px) {
+    .site-header { grid-template-columns: 1fr; position: static; }
+    .site-header nav { flex-wrap: wrap; gap: .85rem; }
+    .header-link { justify-self: start; }
+    .header-right { justify-self: start; }
+  }
+</style>
+</head>
+<body>
+<header class="site-header">
+  <a href="/" class="brand">
+    <span class="brand-mark">🐝</span>
+    <span>Hive</span>
+  </a>
+  <nav>
+    <a href="/">Hives</a>
+    <a href="/learn">Learn</a>
+    <a href="/reading">Reading</a>
+    <a href="/get-started">Get Started</a>
+    <a href="/dashboard">My Hives</a>
+    <a href="/fleet" id="nav-fleet" class="active" aria-current="page" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
+    <a href="/api/docs">API</a>
+    <a href="https://kubestellar.io/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
+    <span id="nav-user" class="nav-user"></span>
+  </nav>
+  <div class="header-right">
+    <span id="hub-version"></span>
+    <span id="nav-avatar-wrap" style="display:none;position:relative">
+      <img id="nav-avatar" src="" alt="" title="">
+      <div id="nav-user-menu" role="menu">
+        <div id="nav-menu-user"></div>
+        <div id="nav-menu-role" style="display:none"></div>
+        <a href="#" id="nav-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none">GitHub profile ↗</a>
+        <a href="/dashboard">My Hives</a>
+        <a href="/api/docs" target="_blank" rel="noopener noreferrer">API Docs ↗</a>
+        <button type="button" id="nav-menu-signout">Sign out</button>
+      </div>
+    </span>
+    <a href="#" class="header-link" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
+  </div>
+</header>
+<header class="fleet-header">
+  <h1>Fleet health</h1>
+  <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 authored writes: issues/PRs created, comments, reviews · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth / budget exhausted / repo Issues tab disabled). Absence of output a level does not produce is never a fault. The <b>⎘ attach</b> chip copies the kubectl+tmux command to jump into the hive's spoke pod for root-causing.</span>
+  <span id="summary" class="summary"></span>
+  <span class="controls">
+    <label><input type="checkbox" id="problemsOnly"> problems only</label>
+    <label><input type="checkbox" id="showHealthy"> show healthy</label>
+    <label><input type="checkbox" id="showUnassigned"> show unassigned</label>
+    <label>advisory output
+      <select id="advisoryFilter">
+        <option value="">all</option>
+        <option value="stale">stale</option>
+        <option value="aging">aging</option>
+        <option value="unknown">unknown/n/a</option>
+        <option value="fresh">fresh</option>
+      </select>
+    </label>
+    <label>budget
+      <select id="budgetFilter">
+        <option value="">all</option>
+        <option value="exhausted">exhausted</option>
+        <option value="critical">critical</option>
+        <option value="warning">warning</option>
+        <option value="unknown">unknown/n/a</option>
+        <option value="ok">ok</option>
+      </select>
+    </label>
+    <label>gh app
+      <select id="githubAppFilter">
+        <option value="">all</option>
+        <option value="broken">broken</option>
+        <option value="degraded">degraded/stale</option>
+        <option value="unknown">unknown/n/a</option>
+        <option value="ok">ok</option>
+      </select>
+    </label>
+  </span>
+</header>
+<div class="wrap">
+  <div class="legend">
+    <span><span class="hdot problem"></span> problem (needs attention) · <span class="hdot warning"></span> warning (operator action) · <span class="hdot ok"></span> ok · <span class="hdot unknown"></span> unknown (not yet reporting) · <span class="hdot parked"></span> parked (all agents quiet by design — hive not in use)</span>
+    <span><b>advisory output:</b> <span class="advisory-activity fresh"><span class="light"></span>fresh</span> · <span class="advisory-activity aging"><span class="light"></span>aging</span> · <span class="advisory-activity stale"><span class="light"></span>stale</span> · <span class="advisory-activity unknown"><span class="light"></span>n/a</span></span>
+    <span><b>budget:</b> <span class="budget-health ok"><span class="light"></span>ok</span> · <span class="budget-health warning"><span class="light"></span>warning</span> · <span class="budget-health critical"><span class="light"></span>critical</span> · <span class="budget-health exhausted"><span class="light"></span>exhausted</span> · <span class="budget-health unknown"><span class="light"></span>n/a</span></span>
+    <span><b>gh app:</b> <span class="github-app-health ok"><span class="light"></span>ok</span> · <span class="github-app-health degraded"><span class="light"></span>stale</span> · <span class="github-app-health broken"><span class="light"></span>broken</span> · <span class="github-app-health unknown"><span class="light"></span>n/a</span></span>
+    <span><span class="delta problem">PROBLEM</span> agents cannot work, output is stale, budget is depleted, or GitHub App auth is broken · <span class="delta quiet">quiet</span> paused / off by schedule</span>
+    <span><b>capability:</b> <span style="color:var(--green)">green</span> able · <span style="color:var(--amber)">amber</span> partial · <span style="color:var(--red)">red</span> blocked · <span style="color:var(--gray)">gray</span> unknown</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22px"></th>
+        <th>Hive</th>
+        <th>ACMM</th>
+        <th>Mode</th>
+        <th>Version</th>
+        <th>Divergence (expects · running · able)</th>
+        <th>Output (90d)</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="7" class="status-msg" id="statusCell">Loading fleet…</td></tr>
+    </tbody>
+  </table>
+</div>
+<script>
+"use strict";
+// Inert shell: no data is baked in. Everything comes from the authenticated
+// API; a 401 means "not signed in" and redirects to the OAuth login.
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function jsArg(s) {
+  var lit = "'" + String(s === null || s === undefined ? "" : s)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n") + "'";
+  return esc(lit);
+}
+function relTime(iso) {
+  if (!iso) return "";
+  var t = Date.parse(iso);
+  if (isNaN(t)) return "";
+  var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return s + "s ago";
+  var m = Math.floor(s / 60); if (m < 60) return m + "m ago";
+  var h = Math.floor(m / 60); if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+function acmmBadge(lvl) { return '<span class="badge">L' + esc(lvl == null ? "?" : lvl) + '</span>'; }
+function modeBadge(m) { return '<span class="badge">' + esc(m || "—") + '</span>'; }
+
+var AVATAR_HIDPI_SCALE = 2;
+var INLINE_ACCESS_AVATAR_MAX = 4;
+var INLINE_ACCESS_AVATAR_PX = 16;
+var ACCESS_ROLE_COLORS = {"owner": "#d29922", "merger": "#a371f7", "read-write": "#3fb950"};
+var ACCESS_ROLE_COLOR_DEFAULT = "#6b7280";
+var AVATAR_FALLBACK_HUES = [0, 25, 50, 145, 175, 200, 230, 260, 290, 330];
+var _liveHiveUsers = new Set();
+
+function accessRoleColor(role) {
+  return ACCESS_ROLE_COLORS[role] || ACCESS_ROLE_COLOR_DEFAULT;
+}
+function ghProfileURL(username) {
+  return "https://github.com/" + encodeURIComponent(String(username || ""));
+}
+function avatarInitials(username) {
+  var clean = String(username || "").replace(/[^A-Za-z0-9]/g, "");
+  if (!clean) return "?";
+  return clean.length === 1 ? clean.charAt(0).toUpperCase() : (clean.charAt(0) + clean.charAt(clean.length - 1)).toUpperCase();
+}
+function avatarFallbackHue(username) {
+  var s = String(username || ""), hash = 0;
+  for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_FALLBACK_HUES[hash % AVATAR_FALLBACK_HUES.length];
+}
+function avatarInitialsSVG(username, px) {
+  var initials = avatarInitials(username), hue = avatarFallbackHue(username);
+  var r = px / 2, fontSize = Math.round(px * 0.42);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px + '" viewBox="0 0 ' + px + ' ' + px + '">' +
+    '<circle cx="' + r + '" cy="' + r + '" r="' + r + '" fill="hsl(' + hue + ',45%,32%)"/>' +
+    '<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="system-ui,sans-serif" font-size="' + fontSize + '" font-weight="600" fill="#fff">' +
+    initials + '</text></svg>';
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+}
+function isUserLive(username) {
+  try { return _liveHiveUsers && _liveHiveUsers.has(String(username || "").toLowerCase()); }
+  catch (e) { return false; }
+}
+function avatarProfileLink(username, label, avatarHTML) {
+  var uname = String(username || "");
+  if (!uname) return avatarHTML;
+  var title = label || uname;
+  if (isUserLive(uname)) title = title + "\n● Logged into their hive now";
+  return '<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" ' +
+    'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" ' +
+    'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + "</a>";
+}
+function avatarImg(username, px, extraStyle) {
+  var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
+    'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + (extraStyle || "") + '" ' +
+    'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(username, px)) + '">';
+  if (isUserLive(username)) {
+    var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
+    return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
+      'padding:' + RING_GAP + 'px;border:' + RING_W + 'px dashed var(--green);border-radius:50%;' +
+      'vertical-align:middle;line-height:0">' + img + "</span>";
+  }
+  return img;
+}
+function linkedAvatar(username, px, label, extraStyle) {
+  return avatarProfileLink(username, label, avatarImg(username, px, extraStyle));
+}
+function fmtHours(secs) {
+  secs = Number(secs) || 0;
+  if (secs <= 0) return "0h";
+  var h = secs / 3600;
+  return h >= 10 ? Math.round(h) + "h" : h.toFixed(1).replace(/\.0$/, "") + "h";
+}
+function fmtUserTS(ts) { return ts ? relTime(ts) : ""; }
+function userTaskActivity() { return {done: 0, failed: 0}; }
+function userVerdict() { return null; }
+function accessAvatarTitle(a) {
+  var uname = String((a || {}).username || "");
+  var role = String((a || {}).role || "");
+  var lines = [uname + (role ? " — " + role : "")];
+  if (a && a.full_name) lines.push(String(a.full_name));
+  if (a && a.slack_id) lines.push("Slack: " + String(a.slack_id));
+  if (a && a.notes) lines.push("Notes: " + String(a.notes));
+  if (a && a.login_count) lines.push("Logins: " + a.login_count);
+  if (a && a.session_seconds) lines.push("Time in hive: " + fmtHours(a.session_seconds));
+  if (a && a.engaged_seconds) lines.push("Engaged time: " + fmtHours(a.engaged_seconds));
+  if (a && a.last_action_at) lines.push("Last real action: " + fmtUserTS(a.last_action_at));
+  return lines.join("\n");
+}
+function inlineAccessAvatar(a) {
+  var uname = String((a || {}).username || "");
+  var role = String((a || {}).role || "");
+  return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
+    "border:1px solid " + accessRoleColor(role) + ";background:var(--panel);flex:0 0 auto");
+}
+function hiveAccessAvatars(h) {
+  var members = (h && h.access) || [];
+  if (!members.length) return "";
+  var shown = members.slice(0, INLINE_ACCESS_AVATAR_MAX);
+  var faces = "";
+  for (var i = 0; i < shown.length; i++) faces += inlineAccessAvatar(shown[i]);
+  var overflow = members.length - shown.length;
+  if (overflow > 0) {
+    var hiddenNames = [];
+    for (var j = shown.length; j < members.length; j++) hiddenNames.push(String(members[j].username || ""));
+    faces += '<span title="' + escAttr(hiddenNames.join(", ")) + '" ' +
+      'style="font-size:0.62rem;color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + "</span>";
+  }
+  var label = members.length === 1 ? "1 user with access" : members.length + " users with access";
+  return '<span class="hive-access-faces" aria-label="' + escAttr(label) + '" ' +
+    'style="display:inline-flex;align-items:center;gap:2px;margin-left:6px;vertical-align:middle">' + faces + "</span>";
+}
+
+function rollupHTML(r) {
+  if (!r) return '<span class="output">no agents reported</span>';
+  // Legacy spoke: nothing known → say so, don't render "expects 0 · 0 able".
+  if ((r.known || 0) === 0) return '<span class="output">unknown (spoke not yet reporting)</span>';
+  var exp = r.expected || 0, run = r.running || 0, able = r.able || 0;
+  var runCls = run < exp ? "warn" : "", ableCls = able < run ? "bad" : "";
+  var alarm = "";
+  if ((r.problems || 0) > 0) {
+    alarm = ' <span class="delta problem" title="governor expects these agents on but they cannot work">' + r.problems + ' PROBLEM' + (r.problems > 1 ? "S" : "") + '</span>';
+  }
+  return '<span class="rollup">expects <span class="n">' + exp + '</span>' +
+    '<span class="sep">·</span><span class="n ' + runCls + '">' + run + '</span> running' +
+    '<span class="sep">·</span><span class="n ' + ableCls + '">' + able + '</span> able' + alarm + '</span>';
+}
+// sumRepoActivity totals one stat (e.g. "prs") across every repo the hive
+// reported, returning {count, newestAt}. newestAt is the max RFC3339 seen.
+function sumRepoActivity(repos, key) {
+  var count = 0, newest = "";
+  (repos || []).forEach(function (r) {
+    var s = r[key] || {};
+    count += s.count || 0;
+    if (s.newestAt && s.newestAt > newest) newest = s.newestAt;
+  });
+  return { count: count, newestAt: newest };
+}
+
+// outputHTML shows a hive's output the way its ACMM level is JUDGED, so the
+// cell answers the same question the verdict does:
+//   L1 Inception → "—" (produces nothing by design)
+//   L2 Advisory  → advisory freshness (the existing advisory line)
+//   L3–L5        → issues/PRs CREATED, with recency of the newest create
+//   L6           → creates + MERGES, with recency of the newest merge
+// Falls back to the old 90d PR/CVE line when the hive is too old to report the
+// per-repo activity the banding needs.
+function outputHTML(h) {
+  var lvl = h.acmmLevel;
+  var repos = h.repoActivity || [];
+
+  // L1 Inception: nothing to show.
+  if (lvl != null && lvl <= 1) {
+    return '<span class="output" title="inception — this hive produces no output by design">— inception</span>';
+  }
+  // L2 Advisory: the advisory stream IS the output.
+  if (lvl === 2) {
+    return advisoryActivityHTML(h.advisoryIssueActivity);
+  }
+
+  // L3+: per-repo created/merged output. Aggregate across repos.
+  if (repos.length) {
+    var iss = sumRepoActivity(repos, "issues");
+    var prs = sumRepoActivity(repos, "prs");
+    var mer = sumRepoActivity(repos, "merges");
+    var isMerge = lvl != null && lvl >= 6;
+    // The recency that matters at this level: newest merge (L6) or newest
+    // create (L3–L5).
+    var lead = isMerge ? mer : { count: prs.count, newestAt: (prs.newestAt > iss.newestAt ? prs.newestAt : iss.newestAt) };
+    var rel = lead.newestAt ? relTime(lead.newestAt) : "none";
+    var parts = 'issues ' + iss.count + ' · PRs ' + prs.count + (isMerge ? ' · merged ' + mer.count : '');
+    var leadLabel = isMerge ? 'last merge ' + rel : 'last create ' + rel;
+    // The advisory line rides along at EVERY level, same as the old-spoke
+    // fallback below — reporting repoActivity must not cost a hive its
+    // advisory indicator (post-upgrade regression: upgraded spokes lost the
+    // pill while old images kept it).
+    return '<span class="output" title="per-repo output over the last ' + esc((h.repoActivityWindowHours || 12)) + 'h; judged on ' + (isMerge ? 'merges (L6)' : 'creates (L3–L5)') + '">' +
+      esc(parts) + ' <span class="rel">(' + esc(leadLabel) + ')</span></span>' +
+      '<br>' + advisoryActivityHTML(h.advisoryIssueActivity);
+  }
+
+  // Fallback: no per-repo activity reported (old spoke) — the prior 90d line.
+  var m = h.prsMerged90d || 0, rej = h.prsRejected90d || 0, cve = h.cvesClosed || 0;
+  var out = (!m && !rej && !cve)
+    ? '<span class="output">—</span>'
+    : '<span class="output" title="hive-wide authored output, last 90 days">PRs merged ' + m +
+      ' · rejected ' + rej + ' · CVEs ' + cve + '</span>';
+  return out + '<br>' + advisoryActivityHTML(h.advisoryIssueActivity);
+}
+
+// repoActivityDrilldownHTML renders a per-repo breakdown table body for the
+// expandable sub-row: one line per repo with its issue/PR/merge/review/advisory
+// counts. Empty string when the hive reported no per-repo activity.
+function repoActivityDrilldownHTML(h) {
+  var repos = h.repoActivity || [];
+  if (!repos.length) return "";
+  var rows = repos.map(function (r) {
+    function cell(key, label) {
+      var s = r[key] || {};
+      if (!s.count) return "";
+      return label + " " + s.count + (s.newestAt ? " (" + relTime(s.newestAt) + ")" : "");
+    }
+    var bits = [cell("issues", "issues"), cell("prs", "PRs"), cell("merges", "merged"), cell("reviews", "reviews"), cell("claims", "claimed"), cell("advisory", "advisory")]
+      .filter(function (x) { return x; }).join(" · ");
+    return '<div class="repo-activity-row"><span class="repo">' + esc(r.repo) + '</span> <span class="output">' + (bits || "—") + '</span></div>';
+  }).join("");
+  return '<div class="repo-activity">' + rows + '</div>';
+}
+// linkifyEsc escapes text, then turns bare https URLs into clickable links —
+// GitHub App perm-issue messages carry the exact settings URL to fix them.
+function linkifyEsc(s) {
+  return esc(s).replace(/https:\/\/[^\s"'<>]+/g, function (u) {
+    return '<a href="' + u + '" target="_blank" rel="noopener">' + u + '</a>';
+  });
+}
+// diagnosisHTML renders the expanded "diagnosis" block: every raw fact needed
+// to root-cause the hive WITHOUT attaching first — full spoke-reported error
+// texts (the chips truncate), App state + fix detail, budget numbers, blocked
+// agents, heartbeat age. Facts that are absent or healthy self-suppress, so a
+// green hive renders an empty string and no sub-row at all. This is the
+// machine-readable-at-a-glance surface: an operator (or an agent monitoring
+// /fleet) should never need a second page to know WHY a row is red.
+function diagnosisHTML(h) {
+  var rows = [];
+  function add(label, valueHTML, bad) {
+    if (!valueHTML) return;
+    rows.push('<div class="row"><span class="k">' + esc(label) + '</span><span' + (bad ? ' class="bad"' : '') + '>' + valueHTML + '</span></div>');
+  }
+  var v = h.healthVerdict || {};
+  if (v.state === "red" || v.state === "unknown") {
+    var vbits = esc(v.reason || v.state);
+    if (v.outputKind) vbits += " · judged on " + esc(v.outputKind);
+    if (v.queuedWork) vbits += " · " + esc(v.queuedWork) + " queued";
+    if (v.lastOutputAt) vbits += " · last output " + esc(relTime(v.lastOutputAt));
+    add("verdict", vbits, v.state === "red");
+  }
+  if (h.advisoryError) add("advisory error", linkifyEsc(h.advisoryError), true);
+  if (h.advisoryStaleReason) add("advisory stale", esc(h.advisoryStaleReason), true);
+  var appState = h.githubAppState || "";
+  if (appState && appState !== "ok") add("gh app state", esc(appState), true);
+  if (h.githubAppTokenError) add("gh app token", esc(h.githubAppTokenError), true);
+  if (h.githubAppPermIssue) add("gh app fix", linkifyEsc(h.githubAppPermIssue), true);
+  if (h.budgetExhausted) {
+    var b = "EXHAUSTED — agents halted";
+    if (h.budgetCurrentSpend != null && h.budgetLimit != null) b += " (" + esc(h.budgetCurrentSpend) + " / " + esc(h.budgetLimit) + " tokens";
+    if (h.budgetWindowEndsAt) b += "; window resets " + esc(relTime(h.budgetWindowEndsAt));
+    if (h.budgetCurrentSpend != null && h.budgetLimit != null) b += ")";
+    add("budget", b, true);
+  }
+  if (h.inferenceAuthError) add("inference auth", esc(h.inferenceAuthError), true);
+  var blocked = (h.agentVerdicts || []).filter(function (a) { return a.problem && a.blockedReason; });
+  if (blocked.length) {
+    add("blocked agents", blocked.map(function (a) { return esc(a.name) + ": " + esc(a.blockedReason); }).join(" · "), true);
+  }
+  if (h.inactiveAgentsReason) add("inactive agents", esc(h.inactiveAgentsReason), true);
+  if (h.agentRosterMismatch && h.agentRosterMismatch.reason) add("agent roster", esc(h.agentRosterMismatch.reason), false);
+  if (h.urlUnreachableReason) add("dashboard url", esc(h.urlUnreachableReason), true);
+  if (!h.online && h.lastHeartbeat) add("last heartbeat", esc(relTime(h.lastHeartbeat)), true);
+  if (!rows.length) return "";
+  return '<div class="diag">' + rows.join("") + '</div>';
+}
+function advisoryActivityHTML(a) {
+  a = a || {};
+  var bucket = a.bucket || "unknown";
+  var rel = a.lastActivityAt ? relTime(a.lastActivityAt) : "n/a";
+  var label = bucket === "unknown" ? "advisories n/a" : "advisories " + bucket + " · " + rel;
+  return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory/issue activity: last issue or PR touched ' + esc(rel) + '">' +
+    '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
+}
+function budgetHealthHTML(b) {
+  b = b || {};
+  var bucket = b.bucket || "unknown";
+  var pct = Math.round(b.percentUsed || 0);
+  var label = b.providerLimited ? "provider quota exhausted" : (bucket === "unknown" ? (b.ignored ? "budget ignored" : "budget n/a") : "budget " + pct + "%");
+  var title = bucket === "unknown"
+    ? label
+    : "budget " + pct + "% used this window (" + (b.usedTokens || 0) + " / " + (b.limitTokens || 0) + " tokens)";
+  if (b.providerLimited) title = b.reason || label;
+  if (b.exhausted && !b.providerLimited) title += " — exhausted; governor may throttle";
+  return '<span class="budget-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
+    '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
+}
+function githubAppHealthHTML(g, h) {
+  g = g || {};
+  h = h || {};
+  var bucket = g.bucket || "unknown";
+  var rel = g.lastTokenMintAt ? relTime(g.lastTokenMintAt) : "n/a";
+  var oldSpoke = bucket === "unknown" && h.gitHash && h.commitsBehindStableV4 != null && h.commitsBehindStableV4 > 0;
+  var label = bucket === "unknown" ? (oldSpoke ? "gh app not reported" : "gh app n/a") : "gh app " + (bucket === "degraded" ? "stale" : bucket);
+  if (g.lastTokenMintAt) label += " · " + rel;
+  var title = g.detail || (g.lastTokenMintAt ? "last token mint " + rel : label);
+  if (oldSpoke && !g.detail) {
+    title = "This spoke has not reported GitHub App token-cache health yet; it is running an older image (" +
+      h.gitHash + ", " + h.commitsBehindStableV4 + " commits behind stable v4).";
+  } else if (bucket === "unknown" && !g.detail) {
+    title = "No GitHub App token-cache health was reported; this usually means no GitHub App is configured for this hive.";
+  }
+  return '<span class="github-app-health ' + esc(bucket) + '" title="' + esc(title) + '">' +
+    '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
+}
+function versionHTML(h) {
+  var sha = h.gitHash || "";
+  if (!sha) return '<span class="output">—</span>';
+  var behind = h.commitsBehindStableV4;
+  var badge = "";
+  if (behind != null && behind > 0) {
+    badge = ' <span class="badge" title="' + esc(behind) + ' commits behind stable v4 tip">' + esc(behind) + ' behind</span>';
+  } else if (behind == null) {
+    badge = ' <span class="badge" title="Could not compare this commit with stable v4 tip">? behind</span>';
+  }
+  return '<span style="font-family:monospace;color:var(--muted)">' + esc(sha) + '</span>' + badge;
+}
+function toggleHTML(a) {
+  // A legacy/unknown spoke did not report enabled/paused meaningfully — render
+  // "unknown", never "off" (the Bluefin false-off bug).
+  if (a.unknown) return '<span class="rel">unknown</span>';
+  if (a.paused) {
+    var prov = [];
+    if (a.pausedBy || a.pausedTrigger) prov.push("by " + (a.pausedBy || a.pausedTrigger));
+    if (a.pausedAt) prov.push(relTime(a.pausedAt));
+    if (a.pausedReason) prov.push("— " + a.pausedReason);
+    return '<span class="badge" title="' + esc(prov.join(" ")) + '">paused</span>';
+  }
+  if (a.enabled) return '<span><span class="dot on"></span>on</span>';
+  return '<span><span class="dot off"></span>off</span>';
+}
+// Display labels for each run-state machine value. "working" reads as an
+// overclaim ("this agent IS producing") when the capability column may say
+// otherwise, so it is shown as "should be working": the governor has it on and
+// its pane is alive — whether it actually is delivering is answered by the
+// PROBLEM / capability column beside it. The machine value stays "working"
+// (CSS class, JSON, tests) — only the human label changes.
+var RUN_STATE_LABELS = {
+  "working": "should be working",
+  "idle-at-prompt": "idle",
+  "stuck-at-login": "stuck at login",
+  "session-gone": "session gone",
+  "dead": "down",
+  "quiet-by-design": "quiet by design",
+  "unknown": "unknown"
+};
+function runStateHTML(a) {
+  var rs = a.unknown ? "unknown" : (a.runState || "unknown");
+  var label = RUN_STATE_LABELS[rs] || rs.replace(/-/g, " ");
+  var rel = a.lastActivityAt ? ' <span class="rel">' + esc(relTime(a.lastActivityAt)) + '</span>' : "";
+  var cadence = rs === "working" && a.kickIntervalSec ? ' <span class="rel">· ' + esc(formatCadence(a.kickIntervalSec)) + '</span>' : "";
+  return '<span class="rs ' + esc(rs) + '"><span class="swatch"></span>' + esc(label) + '</span>' + cadence + rel;
+}
+function formatCadence(seconds) {
+  var s = Number(seconds) || 0;
+  if (s <= 0) return "";
+  if (s % 86400 === 0) return (s / 86400) + "d";
+  if (s % 3600 === 0) return (s / 3600) + "h";
+  if (s % 60 === 0) return (s / 60) + "m";
+  return s + "s";
+}
+function capHTML(a) {
+  // Unknown (legacy): a single "unknown" chip, NOT red ✗ ticks — we cannot see
+  // its capability, and rendering ✗ reads as a hard failure it may not have.
+  if (a.unknown) return '<span class="cap gray" title="spoke has not reported capability yet"><span class="light"></span></span> <span class="ticks">unknown</span>';
+  var tier = a.capabilityTier || "gray";
+  function tick(ok, lbl) { return '<span class="tick ' + (ok ? "yes" : "no") + '">' + (ok ? "✓" : "✗") + " " + lbl + "</span>"; }
+  var ticks = '<span class="ticks">' + tick(a.canOpenIssue, "issue") + " " +
+    tick(a.canOpenPR, "PR") + " " + tick(a.canMerge, "merge") + "</span>";
+  var t = a.blockedReason ? ' title="' + esc(a.blockedReason) + '"' : "";
+  return '<span class="cap ' + esc(tier) + '"' + t + '><span class="light"></span></span> ' + ticks;
+}
+function deltaHTML(a) {
+  // THE alarm first: governor expects it on, it can't deliver (any reason).
+  if (a.problem) {
+    var why = a.blockedReason || (a.runState || "").replace(/-/g, " ") || "can't work";
+    return '<span class="delta problem" title="governor expects this agent on, but it cannot work">PROBLEM: ' + esc(why) + '</span>';
+  }
+  if (a.quietByDesign) return '<span class="delta quiet">quiet</span>';
+  return "";
+}
+// hiveHealth returns "problem" | "warning" | "ok" | "unknown" | "offline" | "parked" for
+// the left dot. The backend now sends an ACMM-banded output verdict
+// (h.healthVerdict = {state:green|amber|red|unknown, reason, outputKind, lastOutputAt,
+// queuedWork}) that answers the core question — "does this hive have recent
+// output back to its work source, for the level it is AT?" — with the level
+// banding, precondition gates and queue-gate already applied. We prefer it, but
+// keep the two MORE-SPECIFIC display states the verdict does not model:
+//   • parked  — every agent deliberately quiet (hive not in use); the verdict's
+//     queue-gate already reads this as green, but the operator wants it shown as
+//     parked, not plain ok.
+//   • offline — not reporting; the verdict returns unknown for this, but the
+//     dashed-ring offline dot is the clearer signal.
+// A broken GitHub App still outranks parked (auth is broken whether or not the
+// hive is in use); the verdict already reds on it at L2+.
+function hiveHealth(h) {
+  if (((h.githubAppHealth || {}).bucket || "") === "broken") return "problem";
+  if (h.allAgentsQuiet) return "parked";
+  if (!h.online) return "offline";
+  var v = h.healthVerdict;
+  if (v && v.state) {
+    if (v.state === "red") return "problem";
+    if (v.state === "amber") return "warning";
+    if (v.state === "green") return "ok";
+    return "unknown"; // v.state === "unknown"
+  }
+  // No verdict on the row (old hub, or a placeholder): fall back to the prior
+  // rollup-based derivation so the dot never goes blank.
+  if (((h.advisoryIssueActivity || {}).bucket || "") === "stale") return "problem";
+  if (((h.budgetHealth || {}).bucket || "") === "critical" || ((h.budgetHealth || {}).bucket || "") === "exhausted") return "problem";
+  var r = h.fleetRollup;
+  if (!r) return "unknown";
+  if ((r.problems || 0) > 0) return "problem";
+  if ((r.known || 0) === 0) return "unknown";
+  return "ok";
+}
+
+// whyChipHTML renders the small "WHY" chip next to a hive's name: the verdict's
+// reason ("last merge 3h ago" / "no write in 30h (7 queued)" / "advisory
+// stale"). Green reasons are muted, red reasons are tinted so a broken hive's
+// cause reads at a glance. Nothing for parked/offline (their own chip/dot say
+// it) or when there is no verdict.
+function whyChipHTML(h, health) {
+  if (health === "parked" || health === "offline") return "";
+  var v = h.healthVerdict;
+  if (!v || !v.reason) return "";
+  var cls = v.state === "red" ? "why-chip bad" : (v.state === "amber" ? "why-chip warn" : (v.state === "unknown" ? "why-chip unknown" : "why-chip"));
+  return '<span class="' + cls + '" title="' + esc(v.outputKind ? "output judged on: " + v.outputKind : "hive-health") + '">' + esc(v.reason) + '</span>';
+}
+function rosterMismatchChipHTML(h) {
+  var m = h.agentRosterMismatch || {};
+  if (!m.reason) return "";
+  return '<span class="why-chip warn" title="' + esc(m.reason) + '">agent roster mismatch</span>';
+}
+
+// Expand state persists across the 30s refresh (keyed by hive id) so an open
+// section does not collapse under the operator. "problems only" and "show all
+// hives" toggles persist in the same in-memory state.
+var expanded = {};      // hive id -> true when its agent rows are open
+var problemsOnly = false;
+var showHealthy = false; // when false, healthy hives are hidden to cut noise
+var showUnassigned = false; // pool spokes are hidden until explicitly requested
+var advisoryFilter = "";
+var budgetFilter = "";
+var githubAppFilter = "";
+
+function hiveKey(h) { return h.id || h.name; }
+function hiveNameHTML(h) {
+  var label = esc(h.name || h.id);
+  var dashboardURL = h.dashboardUrl || h.url || "";
+  if (!dashboardURL) return '<span class="name">' + label + '</span>';
+  return '<a class="name hive-link" href="' + esc(dashboardURL) + '" target="_blank" rel="noopener">' + label + '</a>';
+}
+
+// attachChipHTML renders a click-to-copy chip carrying the kubectl+tmux
+// attach command for the hive's spoke pod (cluster context + namespace come
+// from the hub registry). Only hosted hives report a namespace; BYO/self-
+// hosted hives get no chip. The point: go from "this row is red" to "I am
+// inside the pod" in one paste.
+function attachChipHTML(h) {
+  if (!h.namespace) return "";
+  var ctx = h.clusterId || "";
+  var cmd = "kubectl " + (ctx ? "--context " + ctx + " " : "") + "-n " + h.namespace + " exec -it deploy/hive -- tmux attach";
+  var label = (ctx ? ctx + " · " : "") + h.namespace;
+  return '<span class="attach-chip" data-cmd="' + esc(cmd) + '" title="' + esc(label + "\nclick to copy:\n" + cmd) + '">⎘ attach</span>';
+}
+
+function isUnassignedHive(h) {
+  if (h.unassigned) return true;
+  if (h.provStatus === "available") return true;
+  if (h.provStatus === "assigned" || h.assignedUnclaimed) return false;
+  return String(h.org || "").indexOf("available-") === 0;
+}
+
+function renderHives(hives) {
+  var tb = document.getElementById("rows");
+  tb.innerHTML = "";
+  hives = hives || [];
+
+  // Rank: problems first, then amber operator-action warnings, then unknown,
+  // then ok; stable within a rank by name.
+  var rank = { problem: 0, warning: 1, unknown: 2, offline: 3, parked: 4, ok: 5 };
+  var rows = hives.map(function (h) { return { h: h, health: hiveHealth(h) }; });
+  rows.sort(function (a, b) {
+    var ar = Object.prototype.hasOwnProperty.call(rank, a.health) ? rank[a.health] : 9;
+    var br = Object.prototype.hasOwnProperty.call(rank, b.health) ? rank[b.health] : 9;
+    var d = ar - br;
+    if (d) return d;
+    return String(a.h.name || a.h.id).localeCompare(String(b.h.name || b.h.id));
+  });
+
+  var visibleRows = rows.filter(function (row) {
+    var h = row.h, health = row.health;
+    if (!showUnassigned && isUnassignedHive(h)) return false;
+    if (problemsOnly && health !== "problem") return false;
+    if (!problemsOnly && !showHealthy && health === "ok") return false;
+    if (advisoryFilter && ((h.advisoryIssueActivity || {}).bucket || "unknown") !== advisoryFilter) return false;
+    if (budgetFilter && ((h.budgetHealth || {}).bucket || "unknown") !== budgetFilter) return false;
+    if (githubAppFilter && ((h.githubAppHealth || {}).bucket || "unknown") !== githubAppFilter) return false;
+    return true;
+  });
+  var problemCount = visibleRows.filter(function (r) { return r.health === "problem"; }).length;
+  var shown = 0;
+  visibleRows.forEach(function (row) {
+    var h = row.h, health = row.health;
+    shown++;
+
+    var isProblem = health === "problem";
+    var key = hiveKey(h);
+    // Problem hives auto-expand the first time they appear; the operator can
+    // still collapse them (tracked in `expanded`).
+    if (isProblem && !(key in expanded)) expanded[key] = true;
+    var open = !!expanded[key];
+
+    var tr = document.createElement("tr");
+    tr.className = "spoke health-" + health + (open ? " open" : "");
+    tr.innerHTML =
+      '<td><span class="chev">▶</span></td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + hiveAccessAvatars(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + rosterMismatchChipHTML(h) + attachChipHTML(h) + '</td>' +
+      '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
+      '<td>' + modeBadge(h.governorMode) + '</td>' +
+      '<td>' + versionHTML(h) + '</td>' +
+      '<td>' + rollupHTML(h.fleetRollup) + '</td>' +
+      '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth, h) + '</td>';
+    tb.appendChild(tr);
+    var link = tr.querySelector(".hive-link");
+    if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
+    tr.querySelectorAll(".hive-access-faces a").forEach(function (a) {
+      a.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
+
+    var verdicts = h.agentVerdicts || [];
+    var subRows = [];
+    // Diagnosis block: the raw WHY facts (full error texts, App fix URL,
+    // budget numbers) for any hive whose row is not plainly healthy. Renders
+    // first among the sub-rows so root cause is the first thing an expand
+    // reveals.
+    var diag = diagnosisHTML(h);
+    if (diag) {
+      var drow = document.createElement("tr");
+      drow.className = "agent" + (isProblem ? " is-problem" : "");
+      drow.style.display = open ? "" : "none";
+      drow.innerHTML = '<td></td><td class="aname" colspan="6">' + diag + '</td>';
+      tb.appendChild(drow);
+      subRows.push(drow);
+    }
+    // Agent rows stay alphabetical so the same agent is always in the same place.
+    var ordered = verdicts.slice().sort(function (a, b) {
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+    ordered.forEach(function (a) {
+      var sub = document.createElement("tr");
+      sub.className = "agent" + (a.problem ? " is-problem" : "");
+      sub.style.display = open ? "" : "none";
+      sub.innerHTML =
+        '<td></td>' +
+        '<td class="aname">' + esc(a.name) + (a.backend ? ' <span class="badge">' + esc(a.backend) + '</span>' : "") + '</td>' +
+        '<td>' + toggleHTML(a) + '</td>' +
+        '<td>' + runStateHTML(a) + '</td>' +
+        '<td></td>' +
+        '<td>' + capHTML(a) + " " + deltaHTML(a) + '</td>' +
+        '<td></td>';
+      tb.appendChild(sub);
+      subRows.push(sub);
+    });
+    if (!verdicts.length) {
+      var empty = document.createElement("tr");
+      empty.className = "agent";
+      empty.style.display = open ? "" : "none";
+      empty.innerHTML = '<td></td><td class="aname" colspan="6"><span class="output">no per-agent detail (spoke not yet reporting)</span></td>';
+      tb.appendChild(empty);
+      subRows.push(empty);
+    }
+    // Per-repo output drill-down (hive-health): one sub-row listing each repo's
+    // created/merged/reviewed counts with recency, so an operator can see WHICH
+    // repo a hive is (or isn't) producing against. Only when the hive reported
+    // per-repo activity.
+    var drill = repoActivityDrilldownHTML(h);
+    if (drill) {
+      var draw = document.createElement("tr");
+      draw.className = "agent";
+      draw.style.display = open ? "" : "none";
+      draw.innerHTML = '<td></td><td class="aname" colspan="6">' + drill + '</td>';
+      tb.appendChild(draw);
+      subRows.push(draw);
+    }
+    tr.addEventListener("click", function () {
+      expanded[key] = !expanded[key];
+      var o = expanded[key];
+      tr.classList.toggle("open", o);
+      subRows.forEach(function (s) { s.style.display = o ? "" : "none"; });
+    });
+  });
+
+  // Header summary + empty-state messaging.
+  var hdr = document.getElementById("summary");
+  if (hdr) {
+    hdr.innerHTML = problemCount > 0
+      ? '<span class="delta problem">' + problemCount + ' hive' + (problemCount > 1 ? "s" : "") + ' need attention</span>'
+      : '<span class="allclear">✓ all hives clear</span>';
+  }
+  if (!shown) {
+    var msg = problemsOnly
+      ? "No problems — every governor-expected agent is delivering and advisory output is current."
+      : (problemCount === 0 && !showHealthy ? "No problems. Healthy hives hidden — toggle “show healthy”." : "No hives match the active filters.");
+    var trE = document.createElement("tr");
+    trE.innerHTML = '<td colspan="7" class="status-msg">' + esc(msg) + '</td>';
+    tb.appendChild(trE);
+  }
+}
+
+function wireControls() {
+  var po = document.getElementById("problemsOnly");
+  if (po) po.addEventListener("change", function () { problemsOnly = po.checked; load(); });
+  var sh = document.getElementById("showHealthy");
+  if (sh) sh.addEventListener("change", function () { showHealthy = sh.checked; load(); });
+  var su = document.getElementById("showUnassigned");
+  if (su) su.addEventListener("change", function () { showUnassigned = su.checked; renderHives(lastHives); });
+  var af = document.getElementById("advisoryFilter");
+  if (af) af.addEventListener("change", function () { advisoryFilter = af.value; renderHives(lastHives); });
+  var bf = document.getElementById("budgetFilter");
+  if (bf) bf.addEventListener("change", function () { budgetFilter = bf.value; renderHives(lastHives); });
+  var gf = document.getElementById("githubAppFilter");
+  if (gf) gf.addEventListener("change", function () { githubAppFilter = gf.value; renderHives(lastHives); });
+}
+
+var lastHives = [];
+function load() {
+  fetch("/api/saas/my-hives", { credentials: "same-origin", headers: { "Accept": "application/json" } })
+    .then(function (r) {
+      if (r.status === 401) {
+        window.location.href = "/login?redirect=" + encodeURIComponent("/fleet");
+        throw new Error("redirecting to login");
+      }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(function (d) { lastHives = d.hives || []; renderHives(lastHives); })
+    .catch(function (e) {
+      if (e && e.message === "redirecting to login") return;
+      var c = document.getElementById("statusCell");
+      if (c) c.innerHTML = "Failed to load: " + esc(e.message) + ' — <a class="reload" href="/fleet">retry</a>';
+    });
+}
+wireControls();
+// Attach-chip copy: capture phase so the row's expand toggle never fires for
+// a chip click. Copies the kubectl+tmux command; brief "copied" feedback.
+document.getElementById("rows").addEventListener("click", function (ev) {
+  var el = ev.target;
+  while (el && el !== this && !(el.classList && el.classList.contains("attach-chip"))) el = el.parentNode;
+  if (!el || el === this) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  var cmd = el.getAttribute("data-cmd") || "";
+  var done = function () {
+    el.classList.add("copied");
+    el.textContent = "copied";
+    setTimeout(function () { el.classList.remove("copied"); el.textContent = "⎘ attach"; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(cmd).then(done, function () { window.prompt("copy:", cmd); });
+  } else {
+    window.prompt("copy:", cmd);
+  }
+}, true);
+load();
+setInterval(load, 30000);
+
+// Signed-in avatar + menu, same identity source the hub landing page uses
+// (/api/auth/user: login, avatar_url, hub_admin, optional country code).
+(function () {
+  fetch("/api/auth/user", { credentials: "same-origin" })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.authenticated) return;
+      var wrap = document.getElementById("nav-avatar-wrap");
+      var img = document.getElementById("nav-avatar");
+      if (!wrap || !img) return;
+      img.src = d.avatar_url || "";
+      img.alt = d.login || "";
+      img.title = d.login || "";
+      // Country code → flag glyph, derived the same way the dashboard does
+      // (two regional-indicator symbols), shown beside the login in the menu.
+      var flag = "";
+      if (d.country && /^[A-Za-z]{2}$/.test(d.country)) {
+        var cc = d.country.toUpperCase();
+        flag = " " + String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65, 0x1F1E6 + cc.charCodeAt(1) - 65);
+      }
+      document.getElementById("nav-menu-user").textContent = (d.login || "") + flag;
+      var role = document.getElementById("nav-menu-role");
+      if (role) { role.textContent = d.hub_admin ? "hub admin" : "member"; role.style.display = ""; }
+      var prof = document.getElementById("nav-menu-profile");
+      if (prof && d.login) { prof.href = "https://github.com/" + encodeURIComponent(d.login); prof.style.display = ""; }
+      var out = document.getElementById("nav-menu-signout");
+      if (out) out.addEventListener("click", function () {
+        fetch("/api/auth/logout", { method: "POST" }).then(function () { location.href = "/"; });
+      });
+      // Click pins the menu open (touch/keyboard); hover is handled in CSS.
+      img.addEventListener("click", function (e) { e.stopPropagation(); wrap.classList.toggle("open"); });
+      document.addEventListener("click", function () { wrap.classList.remove("open"); });
+      wrap.style.display = "";
+    })
+    .catch(function () {});
+})();
+</script>
+</body>
+</html>

@@ -97,16 +97,14 @@ func (s *Server) handleRenewTerminalAssertion(w http.ResponseWriter, r *http.Req
 
 	// Re-resolve the role from this hive's allowlist so a hub-side revocation or
 	// downgrade takes effect at renewal rather than being frozen at login.
-	role := sess.Role
-	if s.deps != nil && s.deps.Config != nil {
-		if allowRole, ok := s.deps.Config.Dashboard.AuthorizedRole(sess.Username); ok {
-			role = allowRole
-		} else if s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled() {
-			// Allowlist is enforced and this user is no longer on it. Deny, and
-			// write no cookie — the existing assertion then simply expires.
-			http.Error(w, `{"error":"not authorized for this hive"}`, http.StatusForbidden)
-			return
-		}
+	// liveAllowlistRole is the same shared rule authenticate and the SSO mint
+	// use (see session_live_role.go).
+	role, ok := s.liveAllowlistRole(sess.Username, sess.Role)
+	if !ok {
+		// Allowlist is enforced and this user is no longer on it. Deny, and
+		// write no cookie — the existing assertion then simply expires.
+		http.Error(w, `{"error":"not authorized for this hive"}`, http.StatusForbidden)
+		return
 	}
 
 	// Mint with the same helper the login and SSO paths use, so the assertion's

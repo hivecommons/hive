@@ -239,7 +239,7 @@ func TestFetchIDToken_ErrorPaths(t *testing.T) {
 	}))
 	defer srv1.Close()
 	p1 := &Provider{Name: "google", IsOIDC: true, TokenURL: srv1.URL, ClientID: "c"}
-	if _, err := p1.fetchIDToken(context.Background(), "code", "cb"); err == nil {
+	if _, _, err := p1.fetchIDToken(context.Background(), "code", "cb"); err == nil {
 		t.Error("non-200 token endpoint must error")
 	}
 
@@ -249,7 +249,7 @@ func TestFetchIDToken_ErrorPaths(t *testing.T) {
 	}))
 	defer srv2.Close()
 	p2 := &Provider{Name: "google", IsOIDC: true, TokenURL: srv2.URL, ClientID: "c"}
-	if _, err := p2.fetchIDToken(context.Background(), "code", "cb"); err == nil {
+	if _, _, err := p2.fetchIDToken(context.Background(), "code", "cb"); err == nil {
 		t.Error("token endpoint error object must error")
 	}
 
@@ -259,7 +259,7 @@ func TestFetchIDToken_ErrorPaths(t *testing.T) {
 	}))
 	defer srv3.Close()
 	p3 := &Provider{Name: "google", IsOIDC: true, TokenURL: srv3.URL, ClientID: "c"}
-	if _, err := p3.fetchIDToken(context.Background(), "code", "cb"); err == nil {
+	if _, _, err := p3.fetchIDToken(context.Background(), "code", "cb"); err == nil {
 		t.Error("missing id_token must error")
 	}
 
@@ -269,7 +269,7 @@ func TestFetchIDToken_ErrorPaths(t *testing.T) {
 	}))
 	defer srv4.Close()
 	p4 := &Provider{Name: "google", IsOIDC: true, TokenURL: srv4.URL, ClientID: "c"}
-	if _, err := p4.fetchIDToken(context.Background(), "code", "cb"); err == nil {
+	if _, _, err := p4.fetchIDToken(context.Background(), "code", "cb"); err == nil {
 		t.Error("malformed token response must error")
 	}
 }

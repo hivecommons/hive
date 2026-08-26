@@ -70,7 +70,7 @@ Steps:
 7. git add the changed files
 8. git commit -s -m "[scanner] fix: <short description covering all issues>"
 9. git push -u origin scanner/fix-<lowest-number>
-10. gh pr create --repo <org>/<repo> --title "[scanner] fix: <short description>" --body "Fixes #<n1>, Fixes #<n2>, Fixes #<n3>" (repeat Fixes keyword for each issue)
+10. gh pr create --repo <org>/<repo> --title "[scanner] fix: <short description>" --body "Fixes #<n1>, Fixes #<n2>, Fixes #<n3>" (repeat Fixes keyword for each issue -- only for issues this PR fully resolves; use Refs #<n> instead for any that are epics/multi-phase trackers)
 11. git worktree remove /tmp/scanner-fix-<lowest-number>
 12. Return immediately — do NOT wait for CI, do NOT merge, do NOT run build or lint
 ```

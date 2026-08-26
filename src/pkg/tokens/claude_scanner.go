@@ -164,6 +164,7 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 	scanner.Buffer(make([]byte, 0, maxScanBufSizeClaude), maxScanBufSizeClaude)
 
 	firstHumanMsg := ""
+	var firstTimestamp int64
 	var lastTimestamp int64
 
 	for scanner.Scan() {
@@ -189,6 +190,9 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 			}
 			summary.Messages++
 			lastTimestamp = parseTimestampToUnixMilli(raw.Timestamp)
+			if firstTimestamp == 0 {
+				firstTimestamp = lastTimestamp
+			}
 
 		case "human":
 			// Extract first human message for agent detection
@@ -207,6 +211,9 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 			}
 			summary.Messages++
 			lastTimestamp = parseTimestampToUnixMilli(raw.Timestamp)
+			if firstTimestamp == 0 {
+				firstTimestamp = lastTimestamp
+			}
 
 		default:
 			// Flat format fallback: entries with top-level input_tokens/output_tokens
@@ -222,6 +229,9 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 			if raw.Role == "user" || raw.Role == "assistant" {
 				summary.Messages++
 				lastTimestamp = time.Now().UnixMilli()
+				if firstTimestamp == 0 {
+					firstTimestamp = lastTimestamp
+				}
 			}
 			if raw.Role == "user" && firstHumanMsg == "" {
 				// Try Message field as a string for flat-format files
@@ -236,6 +246,7 @@ func parseClaudeSessionFile(path string, agentDetector func(string) string) (*Se
 	}
 
 	summary.TotalTokens = summary.InputTokens + summary.OutputTokens + summary.CacheRead + summary.CacheCreate
+	summary.FirstActive = firstTimestamp
 	summary.LastActive = lastTimestamp
 
 	if agentDetector != nil && firstHumanMsg != "" {

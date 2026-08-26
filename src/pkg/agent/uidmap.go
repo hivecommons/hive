@@ -10,8 +10,14 @@ import (
 	"sync"
 )
 
+// UIDMapPath is a var, not a const, so the pkg/agent TestMain can point it at
+// a path inside the test temp tree: NewManager loads it whenever it exists, so
+// on a host running a live hive the production map bleeds real agent UIDs into
+// unit tests (#4693). Production value unchanged; nothing outside tests may
+// mutate it.
+var UIDMapPath = "/var/run/hive/uid-map.json"
+
 const (
-	UIDMapPath   = "/var/run/hive/uid-map.json"
 	baseAgentUID = 2001
 	proxyUserUID = 1001
 )

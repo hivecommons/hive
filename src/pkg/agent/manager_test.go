@@ -30,6 +30,16 @@ func testEnvPairs(ap *AgentProcess) []agentEnvPair {
 	return m.agentEnvPairs(ap)
 }
 
+// productionWatchedHomeDirs is the production default of WatchedHomeDirs,
+// snapshotted by TestMain before it redirects the walk roots into the
+// hermetic temp tree. Pin tests on the production config read this.
+var productionWatchedHomeDirs []string
+
+// productionPlukRunDir is the production default of plukRunDir, snapshotted by
+// TestMain before it redirects the run dir into the hermetic temp tree. Pin
+// tests on the production path read this.
+var productionPlukRunDir string
+
 func TestMain(m *testing.M) {
 	defaultTmuxSocket = fmt.Sprintf("ht%d", os.Getpid())
 
@@ -81,7 +91,98 @@ func TestMain(m *testing.M) {
 	os.Unsetenv("TMUX")
 	os.Setenv("TMUX_TMPDIR", tmuxDir)
 
+	// Hermeticity seams (#4693/#4685): never read or touch host state.
+	//
+	// NewManager loads UIDMapPath whenever it exists; on a host running a live
+	// hive the production /var/run/hive/uid-map.json maps real agents, so test
+	// agents silently inherit real UIDs and per-UID tmux sockets (su-exec
+	// routing, live-socket targeting, UID-collision assertion failures). Point
+	// it into the test temp tree, where it never exists unless a test creates
+	// it.
+	UIDMapPath = filepath.Join(dir, "uid-map.json")
+	// fixPermissions/ensureWatchedDirs walk (and chown/chmod!) the production
+	// /data trees when they exist. Point every walk root into the temp tree so
+	// no test can touch live agent data or spend minutes walking real dirs.
+	permRoot := filepath.Join(dir, "perm")
+	// The state-file writers (mode/caps/bootstrap below) need the directory to
+	// exist, exactly as /tmp always does in production.
+	if err := os.MkdirAll(permRoot, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: MkdirAll permRoot: %v\n", err)
+		os.Exit(1)
+	}
+	// Snapshot the production list first: TestWatchedHomeDirsIncludesBob pins
+	// the production default (bob's /data/home/.bob entry), not the override.
+	productionWatchedHomeDirs = append([]string(nil), WatchedHomeDirs...)
+	WatchedHomeDirs = []string{filepath.Join(permRoot, "home", ".claude")}
+	SharedRepoParent = filepath.Join(permRoot, "home")
+	GooseLogsDir = filepath.Join(permRoot, "home", ".local", "state", "goose", "logs", "cli")
+	ModeFileGlob = filepath.Join(permRoot, ".hive-mode-*")
+	CapsFileGlob = filepath.Join(permRoot, ".hive-caps-*")
+	// The mode/caps/bootstrap WRITERS must land where the globs above scan —
+	// and never in the real /tmp, where a live hive's gh-wrapper reads
+	// .hive-mode-<agent>: a test rewriting that file would change a REAL
+	// agent's enforcement mode (#4737/#4738).
+	agentStateDir = permRoot
+	// pluk is on PATH on live-hive hosts, so the launch path would otherwise
+	// mkdir /var/run/pluk and create session logs there (#4737/#4738).
+	productionPlukRunDir = plukRunDir
+	plukRunDir = filepath.Join(dir, "pluk")
+
+	// Pacing shrink (#4717/#4688): the suite's 440 tests pay production pacing
+	// (1-3s sleeps, 60-120s poll deadlines) against stub CLIs that render
+	// instantly, which accumulates past the default 10m `go test` timeout and
+	// past coverage-hourly's 600s budget. Shrink the seams package-wide;
+	// pacing-sensitive relationships (TestBobInputHandlerSettleDelay) are
+	// preserved: bobInputHandlerSettleDelay stays distinct from the tmux pacing
+	// delays and far below inputPromptTimeout. Timeout-class values stay in
+	// whole seconds so slow CI runners keep real headroom. Poll intervals that
+	// fork a tmux subprocess per tick (CLI-ready, input-prompt, trust watcher —
+	// the last runs for each launched agent's whole lifetime) are shrunk to
+	// ~100-250ms, NOT to single-digit milliseconds: a 20ms fork loop across the
+	// suite's live agents is a measurable subprocess storm that starves tmux
+	// rendering and flakes pane-content assertions.
+	clearBeforeKickDelay = 20 * time.Millisecond
+	enterDelay = 3 * time.Millisecond
+	textToEnterDelay = 10 * time.Millisecond
+	chunkDelay = 10 * time.Millisecond
+	staleCheckDelay = 10 * time.Millisecond
+	cliReadyPollInterval = 100 * time.Millisecond
+	cliReadyTimeout = 5 * time.Second
+	inputPromptPollInterval = 100 * time.Millisecond
+	inputPromptTimeout = 8 * time.Second
+	preLaunchShellClearDelay = 5 * time.Millisecond
+	bobInputHandlerSettleDelay = 30 * time.Millisecond
+	sessionReadyDelay = 20 * time.Millisecond
+	paneCaptureSleep = 10 * time.Millisecond
+	trustPollInterval = 250 * time.Millisecond
+	trustMaxWait = 5 * time.Second
+	trustCooldown = 30 * time.Millisecond
+	trustReanswerAfter = 600 * time.Millisecond
+	diagnosticTimeoutSec = 3
+	diagnosticPollSec = 1
+
+	// Env-resolved default paths (#4737/#4738): NewManager's default workDir is
+	// /data/agents and the kick-log archive default is /data/logs/kicks — a test
+	// that forgets to set these launches into (and the permission fixer walks)
+	// LIVE agent workspaces on a host that runs a hive. Guard package-wide;
+	// tests pinning the production defaults t.Setenv these to "" explicitly.
+	originalWorkDir, hadWorkDir := os.LookupEnv("HIVE_WORK_DIR")
+	originalKickLogDir, hadKickLogDir := os.LookupEnv(kickLogDirEnv)
+	os.Setenv("HIVE_WORK_DIR", filepath.Join(dir, "work"))
+	os.Setenv(kickLogDirEnv, filepath.Join(dir, "kicks"))
+
 	code := m.Run()
+
+	if hadWorkDir {
+		os.Setenv("HIVE_WORK_DIR", originalWorkDir)
+	} else {
+		os.Unsetenv("HIVE_WORK_DIR")
+	}
+	if hadKickLogDir {
+		os.Setenv(kickLogDirEnv, originalKickLogDir)
+	} else {
+		os.Unsetenv(kickLogDirEnv)
+	}
 
 	os.Setenv("PATH", originalPath)
 	if originalTMUX == "" {
@@ -367,9 +468,24 @@ func TestAgentEnvPairs_ContainsRequiredKeys(t *testing.T) {
 	}
 }
 
-const baseEnvVarCount = 12 // HIVE_AGENT, HIVE_AGENT_DISPLAY_NAME, HIVE_BACKEND, HIVE_MODEL, HIVE_ACMM_LEVEL, HIVE_AGENT_MODE, HTTPS_PROXY, HTTP_PROXY, HIVE_PROXY_AGENT, GIT_TERMINAL_PROMPT, NODE_EXTRA_CA_CERTS, GIT_SSL_CAINFO
+const baseEnvVarCount = 13 // HIVE_AGENT, HIVE_AGENT_DISPLAY_NAME, HIVE_BACKEND, HIVE_MODEL, HIVE_ACMM_LEVEL, HIVE_AGENT_MODE, HTTPS_PROXY, HTTP_PROXY, HIVE_PROXY_AGENT, GIT_TERMINAL_PROMPT, NODE_EXTRA_CA_CERTS, GIT_SSL_CAINFO, HIVE_EXPLAIN_MODE
+
+// clearAmbientHiveEnv blanks the process env vars that agentEnvPairs
+// conditionally forwards (HIVE_ID, HIVE_SHA, HIVE_ADVISORY_ISSUE) so
+// count-sensitive assertions are hermetic. On a live hive host these are
+// exported into agent sessions, which made the exact-count tests below fail
+// on pristine v4 (15/16 pairs observed vs 13/14 expected). t.Setenv restores
+// the original values on cleanup and marks the test non-parallel, which is
+// required anyway since agentEnvPairs reads the process environment.
+func clearAmbientHiveEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HIVE_ID", "")
+	t.Setenv("HIVE_SHA", "")
+	t.Setenv("HIVE_ADVISORY_ISSUE", "")
+}
 
 func TestAgentEnvPairs_BaseEntryCount(t *testing.T) {
+	clearAmbientHiveEnv(t)
 	ap := &AgentProcess{
 		Name:   "agent",
 		Config: config.AgentConfig{Backend: "gemini", Model: "pro"},
@@ -399,6 +515,7 @@ func TestAgentEnvPairs_EmptyModelAllowed(t *testing.T) {
 }
 
 func TestAgentEnvPairs_BDDirFromBeadsDir(t *testing.T) {
+	clearAmbientHiveEnv(t)
 	ap := &AgentProcess{
 		Name: "scanner",
 		Config: config.AgentConfig{
