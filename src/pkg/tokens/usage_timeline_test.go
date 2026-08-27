@@ -131,6 +131,35 @@ func TestUsageTimelineUnknownTimestampsSortLast(t *testing.T) {
 	}
 }
 
+// TestSnapshotOmitsUsageTimeline pins that the live-only timeline never reaches
+// the persisted snapshot. It is recomputed from the source JSONL on every scan,
+// so persisting it buys nothing — but it would rewrite megabytes to
+// /data/token-summary.json every scan interval. The summed totals must survive
+// untouched, and the in-memory aggregate must NOT be mutated by saving.
+func TestSnapshotOmitsUsageTimeline(t *testing.T) {
+	agg := &AggregateSummary{
+		TotalTokens: 300,
+		Sessions: []SessionSummary{{
+			SessionID: "s1", Backend: BackendClaude,
+			InputTokens: 200, OutputTokens: 100, TotalTokens: 300,
+			Usage:          []UsageEvent{{TimestampMs: 1000, Coalesced: 2, Input: 200, Output: 100}},
+			UsageCoalesced: 1,
+		}},
+	}
+
+	stripped := stripUsageTimelines(agg)
+	if len(stripped.Sessions[0].Usage) != 0 || stripped.Sessions[0].UsageCoalesced != 0 {
+		t.Fatalf("timeline reached the snapshot: %+v", stripped.Sessions[0])
+	}
+	if stripped.Sessions[0].TotalTokens != 300 || stripped.TotalTokens != 300 {
+		t.Fatalf("stripping changed the totals: %+v", stripped.Sessions[0])
+	}
+	// The live aggregate must be unaffected — the join still needs its timeline.
+	if len(agg.Sessions[0].Usage) != 1 {
+		t.Fatal("stripUsageTimelines mutated the live aggregate")
+	}
+}
+
 // TestUsageTimelineDropsZeroTokenEvents keeps the timeline free of no-cost
 // entries, which would only dilute it.
 func TestUsageTimelineDropsZeroTokenEvents(t *testing.T) {

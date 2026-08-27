@@ -104,6 +104,39 @@ type SessionSummary struct {
 	UsageCoalesced int `json:"usage_coalesced,omitempty"`
 }
 
+// stripUsageTimelines returns a shallow copy of agg whose sessions carry no
+// Usage timeline, for persistence only.
+//
+// The timeline is a LIVE-ONLY structure. It is rebuilt from the source session
+// JSONL on every scan, so persisting it buys nothing on restart — but it would
+// cost a great deal: up to maxUsageEventsPerSession events per Claude session
+// at ~60-90 bytes of JSON each, re-marshalled and rewritten to
+// /data/token-summary.json every scanInterval. On a hive with many sessions
+// that turns a modest snapshot into a multi-megabyte write every 30 seconds,
+// for data that is discarded and recomputed at the next scan anyway.
+//
+// UsageCoalesced is likewise dropped: it describes a timeline that is not
+// present, and keeping it would imply a fidelity claim about nothing.
+//
+// The summed token fields are untouched, so a restored snapshot is exactly as
+// complete as it was before the timeline existed. A restored session therefore
+// has Backend set but Usage empty, which the repo-cost join treats as
+// not-time-resolved and reports under backend_unsupported rather than
+// silently dropping or misattributing its tokens.
+func stripUsageTimelines(agg *AggregateSummary) *AggregateSummary {
+	if agg == nil {
+		return nil
+	}
+	out := *agg
+	out.Sessions = make([]SessionSummary, len(agg.Sessions))
+	copy(out.Sessions, agg.Sessions)
+	for i := range out.Sessions {
+		out.Sessions[i].Usage = nil
+		out.Sessions[i].UsageCoalesced = 0
+	}
+	return &out
+}
+
 // UsageTotal sums the retained usage timeline. It exists so tests and consumers
 // can assert the timeline reconciles against TotalTokens without duplicating the
 // summation. Returns 0 for a session with no timeline.
@@ -511,7 +544,7 @@ func (c *Collector) saveSnapshot(agg *AggregateSummary) {
 	if c.persistPath == "" || agg == nil {
 		return
 	}
-	data, err := json.Marshal(agg)
+	data, err := json.Marshal(stripUsageTimelines(agg))
 	if err != nil {
 		c.logger.Warn("failed to marshal token snapshot", "error", err)
 		return
