@@ -71,6 +71,20 @@ that status is the thing to check before treating a page as current behaviour:
   "conversation-as-state" means either accepting backend-specific resume
   envelopes or moving off opaque interactive CLIs.
 
+- [Copilot per-repo cost capture at the MITM proxy](copilot-cost-capture.md) —
+  **investigation, no decision taken.** Phase 4 of epic #4836, which asked
+  whether Copilot token usage can be captured per request with repo context and
+  timestamps at the proxy. Its answer is a recommendation **against** building
+  phase 4 as scoped: per-request usage is available and already captured
+  (`src/pkg/proxy/github_proxy.go:2331`), but per-request repo context is not
+  available at the proxy in any form, and the nearest substitute — a "last
+  `api.github.com` repo seen" from `ExtractRepo` — is an inference from read
+  traffic, weaker than the audited `repo=` events phase 3 already joins against.
+  Read it for the one separable finding that is worth doing: the proxy has the
+  timestamps and `InferenceSink` discards them, so persisting per-request usage
+  with its timestamp would move Copilot from "structurally impossible" to
+  phase 3's existing join, in `pkg/tokens` only and off the request path.
+
 ## Adding a document here
 
 Add the page, then add a line above saying what a reader gets from it **and its
