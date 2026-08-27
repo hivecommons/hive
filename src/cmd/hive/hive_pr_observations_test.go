@@ -1,0 +1,98 @@
+package main
+
+import (
+	"testing"
+
+	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/github"
+)
+
+func observationsTestConfig() *config.Config {
+	return &config.Config{
+		Project: config.ProjectConfig{Org: "kubestellar", AIAuthor: "hive-bee"},
+	}
+}
+
+// hivePRObservations feeds the escalation ledger, so its author filter is a
+// gate: a HUMAN-authored PR must never become an escalation observation — the
+// fix-loop reaper re-dispatching agents onto a human's in-progress branch is
+// exactly the interference the filter exists to prevent.
+func TestHivePRObservationsExcludesHumanAuthors(t *testing.T) {
+	cfg := observationsTestConfig()
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{
+		{Repo: "hive", Number: 1, Author: "hive-bee", HeadSHA: "aaa"},
+		{Repo: "hive", Number: 2, Author: "human-dev", HeadSHA: "bbb"},
+		{Repo: "hive", Number: 3, Author: "dependabot[bot]", HeadSHA: "ccc"},
+	}}}
+
+	obs := hivePRObservations(cfg, actionable)
+
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2 (agent + bot only)", len(obs))
+	}
+	for _, o := range obs {
+		if o.Number == 2 {
+			t.Errorf("human-authored PR #2 leaked into escalation observations: %+v", o)
+		}
+	}
+}
+
+// Observations must carry FULLY-QUALIFIED repos: the escalation store keys on
+// them, and a bare "hive" beside a "kubestellar/hive" for the same PR would
+// split its attempt count across two ledger entries and defeat the breaker.
+func TestHivePRObservationsQualifiesRepos(t *testing.T) {
+	cfg := observationsTestConfig()
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{
+		{Repo: "hive", Number: 1, Author: "hive-bee"},
+		{Repo: "otherorg/console", Number: 2, Author: "hive-bee"},
+	}}}
+
+	obs := hivePRObservations(cfg, actionable)
+
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2", len(obs))
+	}
+	if obs[0].Repo != "kubestellar/hive" {
+		t.Errorf("bare repo = %q, want qualified %q", obs[0].Repo, "kubestellar/hive")
+	}
+	if obs[1].Repo != "otherorg/console" {
+		t.Errorf("already-qualified repo rewritten to %q, want untouched %q", obs[1].Repo, "otherorg/console")
+	}
+}
+
+// Red must mean "a required check failed" — CIStatus "failure" WITHOUT a named
+// failing check must not read as red (HasFailingRequiredCheck's
+// belt-and-suspenders guard), and the CI failure excerpt must ride along as
+// the fix agent's evidence.
+func TestHivePRObservationsRedRequiresFailingCheck(t *testing.T) {
+	cfg := observationsTestConfig()
+	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{
+		{Repo: "hive", Number: 1, Author: "hive-bee", HeadSHA: "aaa",
+			CIStatus: "failure", FailingChecks: []string{"build"}, CIFailureExcerpt: "compile error"},
+		{Repo: "hive", Number: 2, Author: "hive-bee", HeadSHA: "bbb", CIStatus: "failure"},
+		{Repo: "hive", Number: 3, Author: "hive-bee", HeadSHA: "ccc", CIStatus: "success"},
+	}}}
+
+	obs := hivePRObservations(cfg, actionable)
+
+	if len(obs) != 3 {
+		t.Fatalf("got %d observations, want 3", len(obs))
+	}
+	if !obs[0].Red || obs[0].Excerpt != "compile error" || obs[0].HeadSHA != "aaa" {
+		t.Errorf("red PR with failing check misprojected: %+v", obs[0])
+	}
+	if obs[1].Red {
+		t.Error("CIStatus failure without a named failing check must not read as red")
+	}
+	if obs[2].Red {
+		t.Error("green PR read as red")
+	}
+}
+
+// A nil enumeration yields nil — the eval cycle calls this before the first
+// successful GitHub pass.
+func TestHivePRObservationsNilActionable(t *testing.T) {
+	if obs := hivePRObservations(observationsTestConfig(), nil); obs != nil {
+		t.Errorf("hivePRObservations(nil) = %v, want nil", obs)
+	}
+}

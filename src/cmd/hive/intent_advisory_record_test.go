@@ -1,0 +1,91 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/kubestellar/hive/pkg/intent"
+)
+
+func newAdvisoryTestStore(t *testing.T) *beads.Store {
+	t.Helper()
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("beads.NewStore: %v", err)
+	}
+	return store
+}
+
+func misalignedVerdict() intent.AlignmentVerdict {
+	return intent.AlignmentVerdict{
+		Rationale: "diff exceeds linked issue scope",
+		DeterministicFindings: []intent.AlignmentFinding{
+			{Code: "unrelated-files", Status: intent.AlignmentStatusMisaligned,
+				Reason: "touches files outside the issue", Files: []string{"pkg/other/other.go"}},
+		},
+	}
+}
+
+// recordIntentAlignmentAdvisory must mint exactly ONE open advisory bead per
+// misaligned PR, carrying the alignment evidence in its notes — and a second
+// observation of the same PR must NOT mint a duplicate while the first is
+// still open, or every eval tick would pile advisories onto the same drift.
+func TestRecordIntentAlignmentAdvisoryCreatesAndDedupes(t *testing.T) {
+	store := newAdvisoryTestStore(t)
+	stores := map[string]*beads.Store{"intent": store}
+
+	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 42, misalignedVerdict(), restoreTestLogger())
+
+	all := store.List(beads.ListFilter{})
+	if len(all) != 1 {
+		t.Fatalf("got %d beads after first record, want 1", len(all))
+	}
+	b := all[0]
+	if b.Type != beads.TypeAdvisory {
+		t.Errorf("bead type = %q, want %q", b.Type, beads.TypeAdvisory)
+	}
+	if b.ExternalRef != "gh-kubestellar/hive#42" {
+		t.Errorf("external ref = %q, want %q", b.ExternalRef, "gh-kubestellar/hive#42")
+	}
+	if !strings.Contains(b.Notes, "diff exceeds linked issue scope") ||
+		!strings.Contains(b.Notes, "unrelated-files") {
+		t.Errorf("notes lack the alignment evidence: %q", b.Notes)
+	}
+
+	// Same PR again: the open advisory suppresses a duplicate.
+	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 42, misalignedVerdict(), restoreTestLogger())
+	if got := len(store.List(beads.ListFilter{})); got != 1 {
+		t.Errorf("got %d beads after re-record of the same PR, want 1 (no duplicate open advisory)", got)
+	}
+
+	// A DIFFERENT PR is a different drift and gets its own advisory.
+	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 43, misalignedVerdict(), restoreTestLogger())
+	if got := len(store.List(beads.ListFilter{})); got != 2 {
+		t.Errorf("got %d beads after recording a second PR, want 2", got)
+	}
+}
+
+// Store selection order: the dedicated "intent" store wins, then "quality",
+// then any non-nil store — and an all-nil or empty map is a silent no-op, so
+// a hive without bead stores can never crash the intent gate.
+func TestRecordIntentAlignmentAdvisoryStoreFallback(t *testing.T) {
+	intentStore := newAdvisoryTestStore(t)
+	qualityStore := newAdvisoryTestStore(t)
+
+	stores := map[string]*beads.Store{"intent": intentStore, "quality": qualityStore}
+	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 7, misalignedVerdict(), restoreTestLogger())
+	if len(intentStore.List(beads.ListFilter{})) != 1 || len(qualityStore.List(beads.ListFilter{})) != 0 {
+		t.Error("advisory not routed to the dedicated intent store")
+	}
+
+	fallback := map[string]*beads.Store{"intent": nil, "quality": qualityStore}
+	recordIntentAlignmentAdvisory(fallback, "kubestellar/hive", 8, misalignedVerdict(), restoreTestLogger())
+	if len(qualityStore.List(beads.ListFilter{})) != 1 {
+		t.Error("nil intent store did not fall back to the quality store")
+	}
+
+	// No usable store anywhere: must be a quiet no-op, not a panic.
+	recordIntentAlignmentAdvisory(map[string]*beads.Store{"x": nil}, "kubestellar/hive", 9, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(nil, "kubestellar/hive", 10, misalignedVerdict(), restoreTestLogger())
+}
