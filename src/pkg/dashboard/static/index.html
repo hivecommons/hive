@@ -8559,8 +8559,10 @@ function burnAreaChart() {
     // CSS-only via max-height), so a collapsed subsection keeps receiving fresh
     // data and shows current numbers the moment it is re-expanded. Defaults on
     // first visit: "cost per session" collapsed, "usage by sandbox" expanded.
+    // "cost by repo" starts collapsed because it is an INFERRED attribution
+    // whose caveats need reading before its numbers are acted on (#4836).
     const COST_SUB_LS_PREFIX = 'hive-cost-sub-';
-    const COST_SUB_DEFAULT_COLLAPSED = { session: true, sandbox: false };
+    const COST_SUB_DEFAULT_COLLAPSED = { session: true, sandbox: false, repo: true };
     function isCostSubCollapsed(key) {
       const v = localStorage.getItem(COST_SUB_LS_PREFIX + key);
       if (v === null) return !!COST_SUB_DEFAULT_COLLAPSED[key];
@@ -8857,6 +8859,16 @@ function burnAreaChart() {
         </div>
       </div>`;
 
+      // ── Estimated cost by repo (#4836 phase 3) ──
+      // An INFERRED attribution, not a measurement: tokens spent between two
+      // audited repo= events are billed to the repo named by the later event.
+      // Two buckets are mandatory and are rendered as real rows, never folded
+      // into the repos or hidden: `unattributed` (spend that cannot honestly be
+      // placed) and `backend_unsupported` (Copilot/bob — real spend with no
+      // intra-session timing to join against). A repo with no attributable cost
+      // shows "—", never "$0.00": those are different facts.
+      const repoTable = costRepoTableHtml(lastRepoCost);
+
       el.innerHTML = `<div class="cost-panel">
         <div class="cost-title cost-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-panel-body" data-action="toggleCostPanel" data-keydown-action="costHeaderKey" data-arg-types="e" data-keys="*" title="Collapse / expand the cost panel">
           <span class="cost-chevron" aria-hidden="true">▼</span>
@@ -8878,6 +8890,7 @@ function burnAreaChart() {
             <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
           </table>
           ${sandboxTable}
+          ${repoTable}
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}
@@ -8888,9 +8901,82 @@ function burnAreaChart() {
       applyCostSubCollapse();
     }
 
+    // ── Per-repo estimated cost (#4836 phase 3) ──
+    // Held outside renderCost so a transient /api/repo-cost failure leaves the
+    // last good table in place rather than blanking the section.
+    let lastRepoCost = null;
+
+    // Render a single row of the by-repo table. usd is a POINTER server-side:
+    // null means "no attributable cost", which is NOT $0.00 — a repo can be
+    // busy and still show — when its spend could not be placed in time. Render
+    // the two states differently or the operator will read absence as free.
+    function costRepoRowHtml(r, opts) {
+      const o = opts || {};
+      const usd = (r.usd === null || r.usd === undefined)
+        ? `<span class="cagents-zero" title="No cost could be attributed to this row. This is NOT $0.00 — it means unobserved, not free.">—</span>`
+        : (r.source === 'estimated_tier'
+            ? `<span title="tier estimate — at least one contributing model has no exact list price">~${fmtUSD(r.usd)}</span>`
+            : fmtUSD(r.usd));
+      const label = o.label
+        ? `<span title="${esc(o.title || '')}" style="color:var(--muted)">${esc(o.label)}</span>`
+        : esc(r.repo || 'unknown');
+      const agents = (r.agents || []).length
+        ? `<span class="cagents-badge" title="${esc((r.agents || []).join(', '))}">${(r.agents || []).length}</span>`
+        : `<span class="cagents-zero">—</span>`;
+      return `<tr${o.muted ? ' style="opacity:.85"' : ''}>
+        <td class="cmodel">${label}</td>
+        <td class="cnum" style="text-align:center">${agents}</td>
+        <td class="cnum">${fmtTokens(r.tokens)}</td>
+        <td class="cnum">${usd}</td>
+      </tr>`;
+    }
+
+    function costRepoTableHtml(rc) {
+      if (!rc || !rc.ready) return '';
+      const repos = rc.by_repo || [];
+      const rows = repos.map(r => costRepoRowHtml(r)).join('');
+      // The two mandatory buckets ALWAYS render, even at zero, so the table can
+      // never be mistaken for a complete picture of where the money went.
+      const unattr = costRepoRowHtml(rc.unattributed || { repo: 'unattributed', usd: null }, {
+        muted: true, label: 'unattributed',
+        title: "Tokens spent before an agent's first repo event, after its last, or by agents with no repo events at all. Never spread across repos."
+      });
+      const unsup = costRepoRowHtml(rc.backend_unsupported || { repo: 'backend_unsupported', usd: null }, {
+        muted: true, label: 'backend unsupported',
+        title: 'Copilot and bob record no per-message timing, so their spend cannot be placed against a repo. This spend is REAL — it is not missing, it is not attributable.'
+      });
+      const total = Number(rc.total_tokens) || 0;
+      const rate = total > 0 ? Math.round((Number(rc.attributed_tokens) || 0) / total * 100) : null;
+      const windowTxt = rc.window_hours
+        ? `${Math.round(rc.window_hours / 24)}d window`
+        : 'window unknown';
+      const oldest = rc.oldest_event_at
+        ? ` · oldest audited event ${esc(String(rc.oldest_event_at).slice(0, 10))}`
+        : '';
+      return `<div class="cost-subsection" data-cost-sub="repo">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-repo-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="repo" data-keys="*" title="Estimated cost attributed to each repo by joining audited repo events against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost by repo <span class="cost-badge est">inferred</span></div>
+        <div class="cost-sub-body" id="cost-sub-repo-body">
+        <div class="cost-subtitle">Claude sessions only. Cost is attributed by TIMING: tokens spent between two audited repo events are billed to the repo named by the later event. ${rate === null ? '' : `<strong>${rate}%</strong> of tokens attributable`} · ${windowTxt}${oldest}.</div>
+        <div class="cost-disclaimer" style="margin:4px 0 8px">Known bias — an agent that investigates repo A, finds nothing to file, then files on repo B bills <em>all</em> of A's investigation to B. That is this method's failure mode, not a rounding error: treat a repo's figure as an upper bound when a neighbouring repo shows activity but little cost. A row showing "—" means unobserved, not free. Not a bill.</div>
+        <table class="cost-table">
+          <thead><tr><th>repo</th><th style="text-align:center">sandboxes</th><th style="text-align:right">tokens</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="4" style="color:var(--muted)">no attributable repo cost yet</td></tr>'}${unattr}${unsup}</tbody>
+        </table>
+        </div>
+      </div>`;
+    }
+
+    async function fetchRepoCost() {
+      try {
+        const r = await fetch('/api/repo-cost');
+        if (!r.ok) return;
+        lastRepoCost = await r.json();
+      } catch (e) { /* transient — keep the last good attribution */ }
+    }
+
     async function fetchCost() {
       try {
-        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory()]);
+        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost()]);
         if (!resp.ok) return;
         const cost = await resp.json();
         renderCost(cost);

@@ -45,7 +45,7 @@ type SessionEntry struct {
 // never lost; consumers that need ordering must treat 0 as "unknown time" and
 // refuse to place it in an interval rather than sorting it to the front.
 type UsageEvent struct {
-	TimestampMs int64 `json:"ts_ms"`
+	TimestampMs int64  `json:"ts_ms"`
 	Model       string `json:"model,omitempty"`
 	// Coalesced counts how many raw per-message events this entry represents.
 	// It is 1 for an untouched event and >1 for a bucket produced by
