@@ -85,6 +85,16 @@ that status is the thing to check before treating a page as current behaviour:
   with its timestamp would move Copilot from "structurally impossible" to
   phase 3's existing join, in `pkg/tokens` only and off the request path.
 
+- [`hive tui` — a terminal dashboard for Hive](tui.md) — **design only.** The
+  accepted plan for the k9s-style terminal client tracked in #4907: scope,
+  the fixed architecture decisions, the default 2x2 pane layout, the keybinding
+  table, and the golden-file testing convention. Read it before picking up any
+  #4907 sub-issue, for two corrections it carries that the sub-issue bodies do
+  not: their `v2/...` paths are pre-#3996 spellings and map to `src/pkg/tui/...`,
+  and `dashboard/openapi.json` — which the epic names as the contract for every
+  client task — publishes 32 of the dashboard's 298 routes and **no write
+  operations at all**, so the four action tasks have no spec to build against.
+
 ## Adding a document here
 
 Add the page, then add a line above saying what a reader gets from it **and its
