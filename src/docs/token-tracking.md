@@ -29,6 +29,7 @@ The collector keeps the latest aggregate in memory and writes `/data/token-summa
 
 - `/api/status` includes token/cost fields used by the dashboard.
 - `/api/cost` returns estimated cost from token counts × the static price table plus native spend for gateways that report it (OpenRouter `/key`, LiteLLM `/key/info`). Estimated rows are labelled `estimated` or `unpriced`; native gateway rows are labelled `native`.
+- `/api/repo-activity` is phase 1 of per-repo cost attribution: it reports audited output counts per repo and per `(repo, agent)` from `repo=` audit entries, plus an explicit `unattributed` bucket for output events with no repo. It reports activity only, not dollars; cost must not be smeared across repos until timestamped token joins exist.
 - Cost estimates are not invoices. Subscription plans, self-hosted inference, negotiated rates, and provider billing semantics can differ from list prices.
 
 ## Hub rollups

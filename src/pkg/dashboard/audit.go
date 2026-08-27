@@ -2,10 +2,15 @@ package dashboard
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -173,14 +178,12 @@ func (a *AuditLog) LastUserActions() map[string]string {
 
 // OutputActionsSince reads the on-disk audit log (auditLogPath) and returns
 // every entry whose Action is in `actions` and whose timestamp is at or after
-// `since`. It reads the FILE, not the in-memory ring, because the ring is capped
-// at auditRingCap (500) and reset on restart — the activity collector needs the
-// full window (e.g. 12h across every repo on a busy hive), which only the
-// lumberjack-rotated file holds. Malformed lines and unparseable timestamps are
-// skipped. Rotated/compressed backups are NOT read: the collector persists its
-// own running totals to a sidecar (see activity_collector.go), so the current
-// file is sufficient for the recent window and the sidecar covers history beyond
-// rotation. A missing file returns an empty slice (clean first-boot).
+// `since`. It reads the FILES, not the in-memory ring, because the ring is
+// capped at auditRingCap (500) and reset on restart — cost-attribution activity
+// needs the full audit window across busy hives. Lumberjack rotated backups
+// adjacent to filePath are included, including compressed ".gz" backups.
+// Malformed lines and unparseable timestamps are skipped. A missing current file
+// returns an empty slice (clean first-boot).
 //
 // filePath is a parameter (defaulting to auditLogPath when "") so tests can
 // point it at a fixture without touching /data.
@@ -188,30 +191,81 @@ func (a *AuditLog) OutputActionsSince(since time.Time, actions map[string]bool, 
 	if filePath == "" {
 		filePath = auditLogPath
 	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil
-	}
 	var out []AuditEntry
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
+	for _, path := range auditLogFiles(filePath) {
+		data, err := readAuditLogFile(path)
+		if err != nil {
 			continue
 		}
-		var e AuditEntry
-		if json.Unmarshal(line, &e) != nil || e.Timestamp == "" {
-			continue
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			line = bytes.TrimSpace(line)
+			if len(line) == 0 {
+				continue
+			}
+			var e AuditEntry
+			if json.Unmarshal(line, &e) != nil || e.Timestamp == "" {
+				continue
+			}
+			if len(actions) > 0 && !actions[e.Action] {
+				continue
+			}
+			t, perr := time.Parse(time.RFC3339, e.Timestamp)
+			if perr != nil || t.Before(since) {
+				continue
+			}
+			out = append(out, e)
 		}
-		if len(actions) > 0 && !actions[e.Action] {
-			continue
-		}
-		t, perr := time.Parse(time.RFC3339, e.Timestamp)
-		if perr != nil || t.Before(since) {
-			continue
-		}
-		out = append(out, e)
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Timestamp < out[j].Timestamp })
 	return out
+}
+
+func auditLogFiles(filePath string) []string {
+	dir := filepath.Dir(filePath)
+	base := filepath.Base(filePath)
+	ext := filepath.Ext(base)
+	prefix := strings.TrimSuffix(base, ext)
+	patterns := []string{
+		filePath,
+		filePath + ".*",
+		filepath.Join(dir, prefix+"-*"+ext),
+		filepath.Join(dir, prefix+"-*"+ext+".gz"),
+	}
+	seen := map[string]bool{}
+	files := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, p := range matches {
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			files = append(files, p)
+		}
+	}
+	sort.Strings(files)
+	return files
+}
+
+func readAuditLogFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, err
+		}
+		defer gz.Close()
+		r = gz
+	}
+	return io.ReadAll(r)
 }
 
 func (a *AuditLog) Recent(n int) []AuditEntry {

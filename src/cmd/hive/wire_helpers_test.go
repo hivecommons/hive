@@ -23,14 +23,20 @@ func TestBuildRepoActivityWireMapsEveryStat(t *testing.T) {
 	at := func(i int) string { return fmt.Sprintf("2026-08-26T04:0%d:00Z", i) }
 	in := []dashboard.RepoActivity{
 		{
-			Repo:     "kubestellar/hive",
-			Issues:   dashboard.ActivityActionStat{Count: 1, NewestAt: at(0)},
-			PRs:      dashboard.ActivityActionStat{Count: 2, NewestAt: at(1)},
-			Comments: dashboard.ActivityActionStat{Count: 3, NewestAt: at(2)},
-			Merges:   dashboard.ActivityActionStat{Count: 4, NewestAt: at(3)},
-			Claims:   dashboard.ActivityActionStat{Count: 5, NewestAt: at(4)},
-			Reviews:  dashboard.ActivityActionStat{Count: 6, NewestAt: at(5)},
-			Advisory: dashboard.ActivityActionStat{Count: 7, NewestAt: at(6)},
+			Repo:       "kubestellar/hive",
+			Issues:     dashboard.ActivityActionStat{Count: 1, NewestAt: at(0)},
+			PRs:        dashboard.ActivityActionStat{Count: 2, NewestAt: at(1)},
+			Comments:   dashboard.ActivityActionStat{Count: 3, NewestAt: at(2)},
+			Merges:     dashboard.ActivityActionStat{Count: 4, NewestAt: at(3)},
+			Claims:     dashboard.ActivityActionStat{Count: 5, NewestAt: at(4)},
+			Reviews:    dashboard.ActivityActionStat{Count: 6, NewestAt: at(5)},
+			Advisory:   dashboard.ActivityActionStat{Count: 7, NewestAt: at(6)},
+			Reconciled: dashboard.ActivityActionStat{Count: 9, NewestAt: at(8)},
+			Agents: []dashboard.AgentRepoActivity{{
+				Agent:      "quality",
+				Issues:     dashboard.ActivityActionStat{Count: 8, NewestAt: at(7)},
+				Reconciled: dashboard.ActivityActionStat{Count: 10, NewestAt: at(9)},
+			}},
 		},
 		{Repo: "kubestellar/other"},
 	}
@@ -58,10 +64,14 @@ func TestBuildRepoActivityWireMapsEveryStat(t *testing.T) {
 		{"Claims", got.Claims.Count, 5, got.Claims.NewestAt, at(4)},
 		{"Reviews", got.Reviews.Count, 6, got.Reviews.NewestAt, at(5)},
 		{"Advisory", got.Advisory.Count, 7, got.Advisory.NewestAt, at(6)},
+		{"Reconciled", got.Reconciled.Count, 9, got.Reconciled.NewestAt, at(8)},
 	}
 	for _, c := range checks {
 		if c.count != c.wantCount {
 			t.Errorf("%s.Count = %d, want %d", c.name, c.count, c.wantCount)
+		}
+		if len(got.Agents) != 1 || got.Agents[0].Agent != "quality" || got.Agents[0].Issues.Count != 8 || got.Agents[0].Reconciled.Count != 10 {
+			t.Errorf("agent activity not mapped: %+v", got.Agents)
 		}
 		if c.newestAt != c.wantAt {
 			t.Errorf("%s.NewestAt = %q, want %q", c.name, c.newestAt, c.wantAt)

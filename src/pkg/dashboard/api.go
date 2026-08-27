@@ -93,6 +93,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/token-access", s.handleTokenAccess)
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
+	s.mux.HandleFunc("GET /api/repo-activity", s.handleRepoActivity)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
 	// #4298: "for every recent reset, how much of the budget had been used".
 	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)

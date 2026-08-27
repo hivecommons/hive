@@ -2499,6 +2499,7 @@ func main() {
 		// the heartbeat reads, so its merge-success signal reuses the existing
 		// 30-minute collect loop instead of issuing a second GitHub fetch.
 		FleetStats:            fleetStatsCollector,
+		Activity:              activityCollector,
 		BeadSynthesizer:       beadSynth,
 		BeadStores:            beadStores,
 		BeadStoreLoadFailures: beadStoreLoadFailures,
@@ -4876,15 +4877,31 @@ func buildRepoActivityWire(repos []dashboard.RepoActivity) []hub.RepoActivityWir
 	}
 	out := make([]hub.RepoActivityWire, 0, len(repos))
 	for _, r := range repos {
+		agents := make([]hub.AgentRepoActivityWire, 0, len(r.Agents))
+		for _, a := range r.Agents {
+			agents = append(agents, hub.AgentRepoActivityWire{
+				Agent:      a.Agent,
+				Issues:     stat(a.Issues),
+				PRs:        stat(a.PRs),
+				Comments:   stat(a.Comments),
+				Merges:     stat(a.Merges),
+				Claims:     stat(a.Claims),
+				Reviews:    stat(a.Reviews),
+				Advisory:   stat(a.Advisory),
+				Reconciled: stat(a.Reconciled),
+			})
+		}
 		out = append(out, hub.RepoActivityWire{
-			Repo:     r.Repo,
-			Issues:   stat(r.Issues),
-			PRs:      stat(r.PRs),
-			Comments: stat(r.Comments),
-			Merges:   stat(r.Merges),
-			Claims:   stat(r.Claims),
-			Reviews:  stat(r.Reviews),
-			Advisory: stat(r.Advisory),
+			Repo:       r.Repo,
+			Issues:     stat(r.Issues),
+			PRs:        stat(r.PRs),
+			Comments:   stat(r.Comments),
+			Merges:     stat(r.Merges),
+			Claims:     stat(r.Claims),
+			Reviews:    stat(r.Reviews),
+			Advisory:   stat(r.Advisory),
+			Reconciled: stat(r.Reconciled),
+			Agents:     agents,
 		})
 	}
 	return out

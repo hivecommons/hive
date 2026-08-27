@@ -51,11 +51,11 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		entry     RegistryEntry
-		rollup    agentFleetRollup
-		app       GitHubAppHealth
-		queued    int
+		name       string
+		entry      RegistryEntry
+		rollup     agentFleetRollup
+		app        GitHubAppHealth
+		queued     int
 		wantState  string
 		wantKind   string
 		wantReason string // substring match, "" = don't check
@@ -421,6 +421,10 @@ func TestSanitizeRepoActivity(t *testing.T) {
 		Repo:   "org/name",
 		Issues: ActivityStatWire{Count: -5, NewestAt: "not-a-time"},
 		PRs:    ActivityStatWire{Count: 3, NewestAt: "2026-08-22T10:00:00Z"},
+		Agents: []AgentRepoActivityWire{{
+			Agent:  " quality ",
+			Merges: ActivityStatWire{Count: 2, NewestAt: "2026-08-22T11:00:00Z"},
+		}, {Agent: "   "}},
 	}}
 	got := sanitizeRepoActivity(in)
 	if len(got) != 1 {
@@ -431,5 +435,8 @@ func TestSanitizeRepoActivity(t *testing.T) {
 	}
 	if got[0].PRs.Count != 3 || got[0].PRs.NewestAt == "" {
 		t.Errorf("good PR stat mangled: %+v", got[0].PRs)
+	}
+	if len(got[0].Agents) != 1 || got[0].Agents[0].Agent != "quality" || got[0].Agents[0].Merges.Count != 2 {
+		t.Errorf("agent activity not sanitized: %+v", got[0].Agents)
 	}
 }

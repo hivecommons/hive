@@ -43,20 +43,54 @@ func sanitizeRepoActivity(in []RepoActivityWire) []RepoActivityWire {
 		if repo == "" {
 			continue
 		}
+		agents := sanitizeAgentRepoActivity(r.Agents)
 		out = append(out, RepoActivityWire{
-			Repo:     repo,
-			Issues:   sanitizeStatWire(r.Issues),
-			PRs:      sanitizeStatWire(r.PRs),
-			Comments: sanitizeStatWire(r.Comments),
-			Merges:   sanitizeStatWire(r.Merges),
-			Claims:   sanitizeStatWire(r.Claims),
-			Reviews:  sanitizeStatWire(r.Reviews),
-			Advisory: sanitizeStatWire(r.Advisory),
+			Repo:       repo,
+			Issues:     sanitizeStatWire(r.Issues),
+			PRs:        sanitizeStatWire(r.PRs),
+			Comments:   sanitizeStatWire(r.Comments),
+			Merges:     sanitizeStatWire(r.Merges),
+			Claims:     sanitizeStatWire(r.Claims),
+			Reviews:    sanitizeStatWire(r.Reviews),
+			Advisory:   sanitizeStatWire(r.Advisory),
+			Reconciled: sanitizeStatWire(r.Reconciled),
+			Agents:     agents,
 		})
 	}
 	if len(out) == 0 {
 		// Every row was junk — treat as "no data" rather than an empty summary
 		// that would read as "reported zero output".
+		return nil
+	}
+	return out
+}
+
+func sanitizeAgentRepoActivity(in []AgentRepoActivityWire) []AgentRepoActivityWire {
+	if len(in) == 0 {
+		return nil
+	}
+	if len(in) > maxRepoActivityRepos {
+		in = in[:maxRepoActivityRepos]
+	}
+	out := make([]AgentRepoActivityWire, 0, len(in))
+	for _, a := range in {
+		agent := truncateReachRunes(sanitizeHeartbeatField(a.Agent), maxRepoNameRunes)
+		if agent == "" {
+			continue
+		}
+		out = append(out, AgentRepoActivityWire{
+			Agent:      agent,
+			Issues:     sanitizeStatWire(a.Issues),
+			PRs:        sanitizeStatWire(a.PRs),
+			Comments:   sanitizeStatWire(a.Comments),
+			Merges:     sanitizeStatWire(a.Merges),
+			Claims:     sanitizeStatWire(a.Claims),
+			Reviews:    sanitizeStatWire(a.Reviews),
+			Advisory:   sanitizeStatWire(a.Advisory),
+			Reconciled: sanitizeStatWire(a.Reconciled),
+		})
+	}
+	if len(out) == 0 {
 		return nil
 	}
 	return out
@@ -79,12 +113,26 @@ type ActivityStatWire struct {
 // RepoActivityWire is per-repo output activity over the collector's window.
 // Field set mirrors dashboard.RepoActivity.
 type RepoActivityWire struct {
-	Repo     string           `json:"repo"`
-	Issues   ActivityStatWire `json:"issues"`
-	PRs      ActivityStatWire `json:"prs"`
-	Comments ActivityStatWire `json:"comments"`
-	Merges   ActivityStatWire `json:"merges"`
-	Claims   ActivityStatWire `json:"claims"`
-	Reviews  ActivityStatWire `json:"reviews"`
-	Advisory ActivityStatWire `json:"advisory"`
+	Repo       string                  `json:"repo"`
+	Issues     ActivityStatWire        `json:"issues"`
+	PRs        ActivityStatWire        `json:"prs"`
+	Comments   ActivityStatWire        `json:"comments"`
+	Merges     ActivityStatWire        `json:"merges"`
+	Claims     ActivityStatWire        `json:"claims"`
+	Reviews    ActivityStatWire        `json:"reviews"`
+	Advisory   ActivityStatWire        `json:"advisory"`
+	Reconciled ActivityStatWire        `json:"reconciled"`
+	Agents     []AgentRepoActivityWire `json:"agents,omitempty"`
+}
+
+type AgentRepoActivityWire struct {
+	Agent      string           `json:"agent"`
+	Issues     ActivityStatWire `json:"issues"`
+	PRs        ActivityStatWire `json:"prs"`
+	Comments   ActivityStatWire `json:"comments"`
+	Merges     ActivityStatWire `json:"merges"`
+	Claims     ActivityStatWire `json:"claims"`
+	Reviews    ActivityStatWire `json:"reviews"`
+	Advisory   ActivityStatWire `json:"advisory"`
+	Reconciled ActivityStatWire `json:"reconciled"`
 }

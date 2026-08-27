@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"sync"
 	"time"
+
+	ghpkg "github.com/kubestellar/hive/pkg/github"
 )
 
 // activityCollectInterval is how often the spoke recomputes its per-repo output
@@ -30,13 +34,15 @@ const activityHealthWindowHours = 12
 // sync with pkg/github/attribution.go. Advisory is counted separately because it
 // is the L2 output signal.
 var activityOutputActions = map[string]bool{
-	"agent_issue_created":   true,
-	"agent_pr_created":      true,
-	"agent_comment_created": true,
-	"pr_merged":             true,
-	"agent_issue_claimed":   true,
-	"agent_pr_reviewed":     true,
-	"advisory_commented":    true,
+	ghpkg.AuditActionAgentIssueCreated:       true,
+	ghpkg.AuditActionAgentPRCreated:          true,
+	ghpkg.AuditActionAgentCommentCreated:     true,
+	ghpkg.AuditActionPRMerged:                true,
+	ghpkg.AuditActionIssueClaimed:            true,
+	ghpkg.AuditActionPRReviewed:              true,
+	ghpkg.AuditActionAdvisoryCommented:       true,
+	ghpkg.AuditActionHiveIssueCreated:        true,
+	ghpkg.AuditActionPRAttributionReconciled: true,
 }
 
 // ActivityActionStat is one action's count within the window plus the newest
@@ -49,22 +55,40 @@ type ActivityActionStat struct {
 
 // RepoActivity is per-repo output activity over the window.
 type RepoActivity struct {
-	Repo     string             `json:"repo"`
-	Issues   ActivityActionStat `json:"issues"`
-	PRs      ActivityActionStat `json:"prs"`
-	Comments ActivityActionStat `json:"comments"`
-	Merges   ActivityActionStat `json:"merges"`
-	Claims   ActivityActionStat `json:"claims"`
-	Reviews  ActivityActionStat `json:"reviews"`
-	Advisory ActivityActionStat `json:"advisory"`
+	Repo       string              `json:"repo"`
+	Issues     ActivityActionStat  `json:"issues"`
+	PRs        ActivityActionStat  `json:"prs"`
+	Comments   ActivityActionStat  `json:"comments"`
+	Merges     ActivityActionStat  `json:"merges"`
+	Claims     ActivityActionStat  `json:"claims"`
+	Reviews    ActivityActionStat  `json:"reviews"`
+	Advisory   ActivityActionStat  `json:"advisory"`
+	Reconciled ActivityActionStat  `json:"reconciled"`
+	Agents     []AgentRepoActivity `json:"agents,omitempty"`
+}
+
+// AgentRepoActivity is the same recorded-fact activity breakdown scoped to one
+// hive agent inside one repo. Agent is "unknown" only when an older/broken audit
+// line omitted both the typed Agent field and the detail's agent= pair.
+type AgentRepoActivity struct {
+	Agent      string             `json:"agent"`
+	Issues     ActivityActionStat `json:"issues"`
+	PRs        ActivityActionStat `json:"prs"`
+	Comments   ActivityActionStat `json:"comments"`
+	Merges     ActivityActionStat `json:"merges"`
+	Claims     ActivityActionStat `json:"claims"`
+	Reviews    ActivityActionStat `json:"reviews"`
+	Advisory   ActivityActionStat `json:"advisory"`
+	Reconciled ActivityActionStat `json:"reconciled"`
 }
 
 // ActivitySnapshot is the full per-hive activity summary the collector produces
 // and the heartbeat ships.
 type ActivitySnapshot struct {
-	Repos       []RepoActivity `json:"repos"`
-	WindowHours int            `json:"window_hours"`
-	CollectedAt time.Time      `json:"collected_at"`
+	Repos        []RepoActivity     `json:"repos"`
+	Unattributed ActivityActionStat `json:"unattributed"`
+	WindowHours  int                `json:"window_hours"`
+	CollectedAt  time.Time          `json:"collected_at"`
 }
 
 // auditReader is the subset of *AuditLog the collector needs, so it can be
@@ -181,6 +205,7 @@ func (ac *ActivityCollector) Start(ctx context.Context) {
 
 // repoRe extracts repo=<org/name> from an audit detail string ("k=v, k=v").
 var repoRe = regexp.MustCompile(`(?:^|[,\s])repo=([^,\s]+)`)
+var agentRe = regexp.MustCompile(`(?:^|[,\s])agent=([^,\s]+)`)
 
 // collect reads the window of output actions from the audit log and rebuilds the
 // per-repo summary.
@@ -190,16 +215,19 @@ func (ac *ActivityCollector) collect() {
 	entries := ac.audit.OutputActionsSince(since, activityOutputActions, ac.auditPath)
 
 	byRepo := map[string]*RepoActivity{}
+	byRepoAgent := map[string]map[string]*AgentRepoActivity{}
 	bump := func(stat *ActivityActionStat, ts string) {
 		stat.Count++
 		if ts > stat.NewestAt { // RFC3339 is lexically sortable
 			stat.NewestAt = ts
 		}
 	}
+	var unattributed ActivityActionStat
 	for _, e := range entries {
 		m := repoRe.FindStringSubmatch(e.Detail)
 		if m == nil {
-			continue // no repo → not attributable output (e.g. a lifecycle event)
+			bump(&unattributed, e.Timestamp)
+			continue
 		}
 		repo := m[1]
 		ra := byRepo[repo]
@@ -207,34 +235,72 @@ func (ac *ActivityCollector) collect() {
 			ra = &RepoActivity{Repo: repo}
 			byRepo[repo] = ra
 		}
+		agent := activityAgent(e)
+		agentMap := byRepoAgent[repo]
+		if agentMap == nil {
+			agentMap = map[string]*AgentRepoActivity{}
+			byRepoAgent[repo] = agentMap
+		}
+		aa := agentMap[agent]
+		if aa == nil {
+			aa = &AgentRepoActivity{Agent: agent}
+			agentMap[agent] = aa
+		}
 		switch e.Action {
-		case "agent_issue_created":
+		case ghpkg.AuditActionAgentIssueCreated, ghpkg.AuditActionHiveIssueCreated:
 			bump(&ra.Issues, e.Timestamp)
-		case "agent_pr_created":
+			bump(&aa.Issues, e.Timestamp)
+		case ghpkg.AuditActionAgentPRCreated:
 			bump(&ra.PRs, e.Timestamp)
-		case "agent_comment_created":
+			bump(&aa.PRs, e.Timestamp)
+		case ghpkg.AuditActionAgentCommentCreated:
 			bump(&ra.Comments, e.Timestamp)
-		case "pr_merged":
+			bump(&aa.Comments, e.Timestamp)
+		case ghpkg.AuditActionPRMerged:
 			bump(&ra.Merges, e.Timestamp)
-		case "agent_issue_claimed":
+			bump(&aa.Merges, e.Timestamp)
+		case ghpkg.AuditActionIssueClaimed:
 			bump(&ra.Claims, e.Timestamp)
-		case "agent_pr_reviewed":
+			bump(&aa.Claims, e.Timestamp)
+		case ghpkg.AuditActionPRReviewed:
 			bump(&ra.Reviews, e.Timestamp)
-		case "advisory_commented":
+			bump(&aa.Reviews, e.Timestamp)
+		case ghpkg.AuditActionAdvisoryCommented:
 			bump(&ra.Advisory, e.Timestamp)
+			bump(&aa.Advisory, e.Timestamp)
+		case ghpkg.AuditActionPRAttributionReconciled:
+			bump(&ra.Reconciled, e.Timestamp)
+			bump(&aa.Reconciled, e.Timestamp)
 		}
 	}
 	repos := make([]RepoActivity, 0, len(byRepo))
 	for _, ra := range byRepo {
+		agents := make([]AgentRepoActivity, 0, len(byRepoAgent[ra.Repo]))
+		for _, aa := range byRepoAgent[ra.Repo] {
+			agents = append(agents, *aa)
+		}
+		sort.Slice(agents, func(i, j int) bool { return agents[i].Agent < agents[j].Agent })
+		ra.Agents = agents
 		repos = append(repos, *ra)
 	}
+	sort.Slice(repos, func(i, j int) bool { return repos[i].Repo < repos[j].Repo })
 
 	ac.mu.Lock()
-	ac.snap = ActivitySnapshot{Repos: repos, WindowHours: activityHealthWindowHours, CollectedAt: now}
+	ac.snap = ActivitySnapshot{Repos: repos, Unattributed: unattributed, WindowHours: activityHealthWindowHours, CollectedAt: now}
 	ac.collectedAt = now
 	ac.ready = true
 	ac.persistLocked()
 	ac.mu.Unlock()
+}
+
+func activityAgent(e AuditEntry) string {
+	if e.Agent != "" {
+		return e.Agent
+	}
+	if m := agentRe.FindStringSubmatch(e.Detail); m != nil {
+		return m[1]
+	}
+	return "unknown"
 }
 
 // Snapshot returns the last computed summary and whether a collect has succeeded.
@@ -255,4 +321,28 @@ func (ac *ActivityCollector) CollectedAt() time.Time {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 	return ac.collectedAt
+}
+
+type repoActivityResponse struct {
+	Ready       bool             `json:"ready"`
+	Phase       string           `json:"phase"`
+	Snapshot    ActivitySnapshot `json:"snapshot"`
+	Limitations []string         `json:"limitations"`
+}
+
+func (s *Server) handleRepoActivity(w http.ResponseWriter, r *http.Request) {
+	var snap ActivitySnapshot
+	ready := false
+	if s.deps != nil && s.deps.Activity != nil {
+		snap, ready = s.deps.Activity.Snapshot()
+	}
+	jsonResponse(w, repoActivityResponse{
+		Ready:    ready,
+		Phase:    "phase_1_activity_only",
+		Snapshot: snap,
+		Limitations: []string{
+			"Counts are recorded audit facts only; no token cost is attributed in this phase.",
+			"Entries without repo= are reported as unattributed and are never spread across repos.",
+		},
+	})
 }

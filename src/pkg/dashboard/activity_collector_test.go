@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,6 +49,45 @@ func TestOutputActionsSince(t *testing.T) {
 	}
 }
 
+func TestOutputActionsSinceReadsRotatedCompressedBackups(t *testing.T) {
+	now := time.Now().UTC()
+	dir := t.TempDir()
+	current := writeAuditFixture(t, dir, []AuditEntry{
+		{Timestamp: rfc3339(now.Add(-1 * time.Hour)), Action: "agent_pr_created", Detail: "repo=o/current, number=1"},
+	})
+	rotated := filepath.Join(dir, "audit-2026-08-26T12-00-00.000.jsonl.gz")
+	f, err := os.Create(rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(f)
+	if err := json.NewEncoder(gz).Encode(AuditEntry{
+		Timestamp: rfc3339(now.Add(-2 * time.Hour)),
+		Action:    "agent_issue_created",
+		Detail:    "repo=o/rotated, number=2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := (&AuditLog{}).OutputActionsSince(now.Add(-24*time.Hour), activityOutputActions, current)
+	if len(got) != 2 {
+		t.Fatalf("want current + rotated entries, got %d: %+v", len(got), got)
+	}
+	seen := map[string]bool{}
+	for _, e := range got {
+		seen[e.Detail] = true
+	}
+	if !seen["repo=o/current, number=1"] || !seen["repo=o/rotated, number=2"] {
+		t.Fatalf("rotated/current details missing: %+v", seen)
+	}
+}
+
 // collect groups by repo + action with counts and newest timestamps, across
 // multiple repos — the multi-repo case that broke the hand-scraped counts.
 func TestActivityCollector_CountsPerRepo(t *testing.T) {
@@ -53,12 +95,13 @@ func TestActivityCollector_CountsPerRepo(t *testing.T) {
 	dir := t.TempDir()
 	newest := now.Add(-10 * time.Minute)
 	p := writeAuditFixture(t, dir, []AuditEntry{
-		{Timestamp: rfc3339(now.Add(-2 * time.Hour)), Action: "agent_issue_created", Detail: "repo=z/ui, number=1"},
-		{Timestamp: rfc3339(newest), Action: "agent_issue_created", Detail: "repo=z/ui, number=2"},
-		{Timestamp: rfc3339(now.Add(-1 * time.Hour)), Action: "agent_pr_created", Detail: "repo=z/api-server, number=9"},
-		{Timestamp: rfc3339(now.Add(-3 * time.Hour)), Action: "pr_merged", Detail: "repo=z/api-server, number=8"},
-		{Timestamp: rfc3339(now.Add(-4 * time.Hour)), Action: "agent_pr_reviewed", Detail: "repo=z/ui, number=5, state=approved"},
-		{Timestamp: rfc3339(now.Add(-5 * time.Hour)), Action: "agent_issue_claimed", Detail: "repo=z/ui-framework, number=3"},
+		{Timestamp: rfc3339(now.Add(-2 * time.Hour)), Action: "agent_issue_created", Detail: "repo=z/ui, number=1, agent=quality"},
+		{Timestamp: rfc3339(newest), Action: "agent_issue_created", Detail: "repo=z/ui, number=2", Agent: "docs"},
+		{Timestamp: rfc3339(now.Add(-1 * time.Hour)), Action: "agent_pr_created", Detail: "repo=z/api-server, number=9", Agent: "quality"},
+		{Timestamp: rfc3339(now.Add(-3 * time.Hour)), Action: "pr_merged", Detail: "repo=z/api-server, number=8", Agent: "governor"},
+		{Timestamp: rfc3339(now.Add(-4 * time.Hour)), Action: "agent_pr_reviewed", Detail: "repo=z/ui, number=5, state=approved", Agent: "reviewer"},
+		{Timestamp: rfc3339(now.Add(-5 * time.Hour)), Action: "agent_issue_claimed", Detail: "repo=z/ui-framework, number=3", Agent: "quality"},
+		{Timestamp: rfc3339(now.Add(-6 * time.Hour)), Action: "pr_attribution_reconciled", Detail: "repo=z/ui, number=6", Agent: "governor"},
 	})
 	ac := NewActivityCollector(&AuditLog{}, p, nil)
 	ac.nowFn = func() time.Time { return now }
@@ -83,6 +126,16 @@ func TestActivityCollector_CountsPerRepo(t *testing.T) {
 	if byRepo["z/ui"].Reviews.Count != 1 {
 		t.Errorf("z/ui reviews = %d, want 1", byRepo["z/ui"].Reviews.Count)
 	}
+	if byRepo["z/ui"].Reconciled.Count != 1 {
+		t.Errorf("z/ui reconciled = %d, want 1", byRepo["z/ui"].Reconciled.Count)
+	}
+	uiAgents := map[string]AgentRepoActivity{}
+	for _, a := range byRepo["z/ui"].Agents {
+		uiAgents[a.Agent] = a
+	}
+	if uiAgents["quality"].Issues.Count != 1 || uiAgents["docs"].Issues.Count != 1 || uiAgents["reviewer"].Reviews.Count != 1 {
+		t.Errorf("z/ui per-agent counts = %+v, want quality/docs issues and reviewer review", uiAgents)
+	}
 	if byRepo["z/api-server"].PRs.Count != 1 || byRepo["z/api-server"].Merges.Count != 1 {
 		t.Errorf("z/api-server prs/merges = %d/%d, want 1/1", byRepo["z/api-server"].PRs.Count, byRepo["z/api-server"].Merges.Count)
 	}
@@ -94,7 +147,8 @@ func TestActivityCollector_CountsPerRepo(t *testing.T) {
 	}
 }
 
-// Entries with no repo= are skipped (not attributable output).
+// Entries with no repo= stay out of repo rows and are reported explicitly as
+// unattributed rather than smeared across known repos.
 func TestActivityCollector_SkipsNoRepo(t *testing.T) {
 	now := time.Now().UTC()
 	dir := t.TempDir()
@@ -107,6 +161,9 @@ func TestActivityCollector_SkipsNoRepo(t *testing.T) {
 	snap, _ := ac.Snapshot()
 	if len(snap.Repos) != 0 {
 		t.Errorf("entry without repo= must be skipped, got %+v", snap.Repos)
+	}
+	if snap.Unattributed.Count != 1 {
+		t.Errorf("unattributed count = %d, want 1", snap.Unattributed.Count)
 	}
 }
 
@@ -145,5 +202,41 @@ func TestActivityCollector_NilAuditInert(t *testing.T) {
 	ac.Start(ctx) // must return immediately
 	if _, ok := ac.Snapshot(); ok {
 		t.Error("nil-audit collector must not be ready")
+	}
+}
+
+func TestHandleRepoActivityReportsPhaseOneHonesty(t *testing.T) {
+	now := time.Now().UTC()
+	dir := t.TempDir()
+	p := writeAuditFixture(t, dir, []AuditEntry{{
+		Timestamp: rfc3339(now.Add(-1 * time.Hour)),
+		Action:    "agent_pr_created",
+		Detail:    "repo=o/r, number=1",
+		Agent:     "quality",
+	}})
+	ac := NewActivityCollector(&AuditLog{}, p, nil)
+	ac.nowFn = func() time.Time { return now }
+	ac.collect()
+
+	s := NewServer(0, nil)
+	s.RegisterAPI(&Dependencies{Activity: ac})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/repo-activity", nil)
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp repoActivityResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Ready || resp.Phase != "phase_1_activity_only" {
+		t.Fatalf("ready/phase = %v/%q", resp.Ready, resp.Phase)
+	}
+	if len(resp.Snapshot.Repos) != 1 || len(resp.Snapshot.Repos[0].Agents) != 1 {
+		t.Fatalf("repo/agent activity missing: %+v", resp.Snapshot)
+	}
+	if len(resp.Limitations) == 0 {
+		t.Fatal("limitations must be explicit so activity is not mistaken for cost")
 	}
 }

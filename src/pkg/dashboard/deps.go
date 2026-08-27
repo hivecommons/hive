@@ -51,6 +51,7 @@ type Dependencies struct {
 	// Nil is safe: Snapshot() on a nil collector reports ready=false and the
 	// advisor leaves the signal at its conservative zero.
 	FleetStats      *FleetStatsCollector
+	Activity        *ActivityCollector
 	BeadSynthesizer *knowledge.BeadSynthesizer
 	BeadStores      map[string]*beads.Store
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
