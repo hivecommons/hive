@@ -85,7 +85,7 @@ func TestInlineAccessAvatarEscaping(t *testing.T) {
 		{"anchor title uses escAttr", `'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" '`},
 		// The inline face still carries the role in its tooltip, now built by the
 		// shared accessAvatarTitle helper (username — role, plus contact metadata).
-		{"inline face labels username and role via title helper", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),`},
+		{"inline face labels username and role via title helper", `? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)`},
 		{"access title helper carries username and role", `var lines = [uname + (role ? ' — ' + role : '')];`},
 		{"overflow chip title uses escAttr", `'<span title="' + escAttr(hiddenNames.join(', ')) + '" '`},
 		{"aria-label uses escAttr", `'<span class="hive-access-faces" aria-label="' + escAttr(label) + '" '`},
@@ -197,6 +197,30 @@ func TestHiveTableColumnCountUnchanged(t *testing.T) {
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML is missing %q — did the hive table gain or lose a column?", snippet)
+		}
+	}
+}
+
+// TestNonGitHubAvatarsNeverLinkToGitHub pins the reason the avatar sites stopped
+// calling linkedAvatar unconditionally (see TestAvatarSitesUseSharedHelper).
+//
+// A key like "ibmid:5500087VJB" is not a github.com login. Building an avatar
+// URL from it yields a 404 AND a profile link to whatever account happens to
+// occupy that URL shape — attributing a stranger's face and identity to an
+// internal user. Each site now branches on provider: GitHub keys keep the
+// linked github.com avatar, everything else renders the provider-stored avatar
+// or initials derived from the DISPLAY LABEL, never from the opaque subject.
+func TestNonGitHubAvatarsNeverLinkToGitHub(t *testing.T) {
+	for _, snippet := range []string{
+		// Inline per-hive faces branch before linking.
+		"var provider = a.provider || identityProviderFromKey(uname);",
+		// The non-GitHub arm seeds initials from the display label, not the key.
+		"userAvatar({display_name: a.display_label, avatar_url: a.avatar_url, github_username: uname},",
+		// The admin table makes the same distinction.
+		"var isGitHubUser = String(u.provider || 'github').toLowerCase() === 'github';",
+	} {
+		if !strings.Contains(dashboardHTML, snippet) {
+			t.Errorf("dashboardHTML is missing %q — a non-GitHub identity may be linking to github.com", snippet)
 		}
 	}
 }

@@ -382,7 +382,7 @@ func TestManageAccessProviderIcons(t *testing.T) {
 		`PROVIDER_ICON_SVG[provider] || '👤'`,
 		`(PROVIDER_EMOJI[provider] || '👤')`,
 		// Icons applied in both the existing rows and the Add User picker.
-		`providerIconHTML(identityProviderFromKey(u.username))`,
+		`providerIconHTML(provider)`,
 		`providerOptionEmoji(e.provider || identityProviderFromKey(e.id))`,
 	} {
 		if !strings.Contains(dashboardHTML, want) {

@@ -20,7 +20,12 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		name    string
 		snippet string
 	}{
-		{"inline per-hive faces", "return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX,"},
+		// GitHub keys still route through the shared helper; a non-GitHub key
+		// (ibmid/google/microsoft) has no github.com profile, so linkedAvatar
+		// would build a 404'ing image AND link to whatever account happens to
+		// occupy that URL shape. The guard's intent — no site hand-rolls an
+		// <img> — is unchanged; userAvatar is the other shared helper.
+		{"inline per-hive faces", "? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)"},
 		{"status-dot hover panel rows", "linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,"},
 		{"per-hive pending request rows", "var avatar = linkedAvatar(pr.username, LIST_AVATAR_PX, pr.username, 'margin-right:6px');"},
 		{"past requests table", "provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px')"},
@@ -31,7 +36,7 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		{"admin users table (github path)", "? linkedAvatar(u.github_username, TABLE_AVATAR_PX,"},
 		{"admin users table (oidc path)", ": userAvatar(u, TABLE_AVATAR_PX, 'margin-right:6px');"},
 		{"access modal pending requests", "var avatar = linkedAvatar(r.username, LIST_AVATAR_PX, r.username, 'margin-right:6px');"},
-		{"access modal access list", "var avatar = linkedAvatar(u.username, LIST_AVATAR_PX,"},
+		{"access modal access list", "? linkedAvatar(u.github_username, TABLE_AVATAR_PX,"},
 		{"nav bar viewer avatar", "avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,"},
 	}
 	for _, tc := range cases {
