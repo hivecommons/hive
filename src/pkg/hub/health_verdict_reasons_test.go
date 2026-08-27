@@ -148,13 +148,14 @@ func TestHiveHealthForReasons(t *testing.T) {
 		},
 		{
 			// Every problem is a dead/vanished session and nothing is alive:
-			// the familiar full-outage wording is preserved by the cause split.
-			name:   "L3 all problems dead — keeps no-agents-running wording",
+			// still name the restart remedy instead of falling through to the
+			// generic full-outage wording.
+			name:   "L3 all problems dead — names restart cause",
 			entry:  base(3),
-			rollup: agentFleetRollup{Expected: 2, Running: 0, Known: 2, Problems: 2, DeadOrGone: 2},
+			rollup: agentFleetRollup{Expected: 4, Running: 0, Known: 4, Problems: 4, DeadOrGone: 4},
 			app:    okApp(), queued: 3,
 			wantState:  HealthStateRed,
-			wantReason: "no agents running",
+			wantReason: "4 agent(s) down — restart needed",
 		},
 		{
 			// Katamari/ibm-aiops-orchestrator live shape: guide+supervisor are
@@ -334,6 +335,15 @@ func TestHiveHealth_LiveFleetCauseShapes(t *testing.T) {
 			agents:     []AgentSummary{dead("guide"), dead("supervisor"), working("quality"), working("scanner")},
 			wantState:  HealthStateRed,
 			wantReason: "2 agent(s) down — restart needed",
+		},
+		{
+			// Katamari/ibm-aiops-orchestrator can also have all four expected bob
+			// agents failed. That should keep the actionable restart cause instead
+			// of saying only that no agents are running.
+			name:       "all expected agents dead",
+			agents:     []AgentSummary{dead("guide"), dead("quality"), dead("scanner"), dead("supervisor")},
+			wantState:  HealthStateRed,
+			wantReason: "4 agent(s) down — restart needed",
 		},
 	}
 	for _, tc := range tests {

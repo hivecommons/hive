@@ -124,17 +124,11 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 				// actionable cause (operator re-login) instead of the generic
 				// count — the EPM/alchemy at-a-glance case.
 				v.Reason = fmt.Sprintf("%d agent(s) stuck at login — re-login needed", rollup.LoginStuck)
-			case rollup.DeadOrGone == rollup.Problems && rollup.Running == 0:
-				// Nothing alive at all: keep the familiar wording so a fully
-				// down hive reads the same as before the cause split.
-				v.Reason = "no agents running"
 			case rollup.DeadOrGone == rollup.Problems:
-				// Katamari/ibm-aiops-orchestrator live shape: guide+supervisor
-				// were failed/dead while quality+scanner still ran. The old
-				// Running==0 guard meant the cause fell through to generic
-				// "2 agent(s) blocked", hiding the restart remedy. When every
-				// problem is dead/gone, name that cause even if other agents in
-				// the hive are still healthy.
+				// Katamari/ibm-aiops-orchestrator live shapes: failed/dead agents
+				// need a restart whether the outage is partial or every expected
+				// agent is down. Name that cause instead of the generic "blocked"
+				// or "no agents running" wording.
 				v.Reason = fmt.Sprintf("%d agent(s) down — restart needed", rollup.DeadOrGone)
 			case rollup.IdleWithWork == rollup.Problems:
 				// Sessions are alive but every scheduled agent is sitting past
