@@ -9194,36 +9194,74 @@ func (m *Manager) RestartThenSendKick(ctx context.Context, name, message string)
 	return m.SendKick(name, message)
 }
 
-// cliProcessMarkers are substrings that identify a CLI process in its
-// /proc/<pid>/cmdline. The Claude CLI (and inference backends, which also use
-// it) runs as `claude` (often re-exec'd via node); copilot/gemini/goose/bob run
-// under their own names. Matching cmdline substrings catches the CLI regardless
-// of the interpreter the process reports as its comm name.
-var cliProcessMarkers = []string{
-	"claude",
-	"copilot",
-	"gemini",
-	"goose",
-	"bob",
-}
+// reapExclusions are cmdline substrings that must NEVER be SIGKILLed by the
+// marker sweep, even when the process carries this agent's HIVE_AGENT.
+//
+// Only tmux is listed, and it is defensive rather than observed: hive starts
+// the tmux server itself with exec.Command, which inherits hive's own
+// environment and therefore has no HIVE_AGENT — so it should never match. But
+// the server owns every pane for the agent (and, on a shared socket, for other
+// agents), so a single mis-match would take the fleet's panes down with it.
+// That asymmetry is worth one string compare.
+//
+// Matched as a SUBSTRING, deliberately: the exclusion should fire on
+// "/usr/bin/tmux" and "tmux -S /tmp/... attach" alike. It therefore also spares
+// an agent process that merely mentions tmux in its arguments. That is a
+// false NEGATIVE — one leaked process not reaped — which is the direction an
+// exclusion list should fail in.
+var reapExclusions = []string{"tmux"}
 
-// reapAgentCLI finds and SIGKILLs every CLI process belonging to the given
-// agent, matched by the HIVE_AGENT=<name> marker in /proc/<pid>/environ. This
-// marker is inlined into every launch command (buildEnvPrefix) and set on the
-// tmux session (ensureTmuxSession), so it uniquely identifies an agent's CLI
-// processes — unlike UID matching, which cannot distinguish agents that share
-// the dev UID (UID isolation disabled). Returns the number of processes killed.
+// procRoot is the /proc mount the reaper scans. A var (not const) so tests can
+// point it at a fake proc tree on non-Linux hosts; production value is "/proc"
+// and nothing on the launch path mutates it.
+var procRoot = "/proc"
+
+// reapKill is the kill syscall the marker sweep uses. A var (not a direct
+// syscall.Kill call) for the same reason procRoot is: it is the only way a test
+// can assert what the sweep DECIDED to signal, as opposed to what it managed to
+// signal. Those differ exactly where it matters — an unprivileged test cannot
+// kill PID 1, so a count-based assertion passes whether or not the guard that
+// skips init is present. Production never reassigns it.
+var reapKill = syscall.Kill
+
+// reapAgentCLI finds and SIGKILLs every process belonging to the given agent,
+// matched by the HIVE_AGENT=<name> marker in /proc/<pid>/environ. Returns the
+// number of processes killed.
 //
 // This is the single-CLI guarantee: before every (re)launch, any pre-existing
 // or leaked CLI for the agent is terminated, so an agent can never accumulate
 // concurrent claude processes on different models. tmux kill-session alone is
 // insufficient — a detached node/claude child can survive the session's SIGHUP
 // and keep hitting the gateway (403-flooding the pane on a stale model).
-// procRoot is the /proc mount the reaper scans. A var (not const) so tests can
-// point it at a fake proc tree on non-Linux hosts; production value is "/proc"
-// and nothing on the launch path mutates it.
-var procRoot = "/proc"
-
+//
+// #4924: IT ALSO REAPS THE CLI'S CHILDREN, and that is the point of the marker
+// being the only predicate. This used to require the cmdline to name a backend
+// binary (claude/copilot/gemini/goose/bob), which meant a process the agent
+// spawned — a poll loop, a dev server, a `sleep` — passed the env check and
+// failed the cmdline one, so it was skipped and outlived every task. Nothing
+// else collected it: killAgentProcesses does sweep non-CLI helpers, but it is
+// gated on agent.UID > 0 and so never runs on the contributor/workstation path
+// where UID isolation is off. That is precisely the deployment where a leaked
+// poller burns an operator's own rate limit indefinitely.
+//
+// WHY THE MARKER ALONE IS SAFE ENOUGH TO KILL ON. HIVE_AGENT reaches a process
+// two ways, and both mean "hive started this for this agent":
+//
+//   - inlined into the typed launch command (buildEnvPrefix), so the CLI and
+//     everything it forks inherit it;
+//   - set on the tmux session by ensureTmuxSession, AFTER it has created the
+//     session — so shells started in that session later inherit it.
+//
+// environHasMarker compares whole NUL-separated entries, so "scanner" cannot
+// match "scanner-2". The pane's own bash is NOT affected: ensureTmuxSession
+// creates the session (and therefore that shell) BEFORE it runs the
+// set-environment loop, so the shell never carries the marker — the same
+// ordering RelaunchBobAgentsAwaitingKey depends on and verified live.
+//
+// The one behaviour change worth stating plainly: a shell an operator opens
+// inside this agent's tmux session after launch DOES carry the marker and is
+// now reaped. That is judged acceptable because every caller is tearing the
+// agent down at that moment anyway (pre-launch, restart, stop).
 func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 	procPath := procRoot
 	marker := "HIVE_AGENT=" + agent.Name
@@ -9243,7 +9281,7 @@ func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 		if err != nil {
 			continue
 		}
-		if pid == os.Getpid() {
+		if reapSkipPID(pid, os.Getpid()) {
 			continue
 		}
 
@@ -9253,7 +9291,7 @@ func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 			continue
 		}
 		cmdline := strings.ReplaceAll(string(cmdlineRaw), "\x00", " ")
-		if !containsCLIMarker(cmdline) {
+		if reapExcluded(cmdline) {
 			continue
 		}
 
@@ -9267,7 +9305,7 @@ func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 			continue
 		}
 
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
+		if err := reapKill(pid, syscall.SIGKILL); err == nil {
 			killed++
 			m.logger.Info("reaped agent CLI process",
 				"agent", agent.Name, "pid", pid, "cmdline", truncateStr(cmdline, 120))
@@ -9279,9 +9317,25 @@ func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 	return killed
 }
 
-// containsCLIMarker reports whether a /proc cmdline names a known CLI binary.
-func containsCLIMarker(cmdline string) bool {
-	for _, marker := range cliProcessMarkers {
+// reapSkipPID reports pids the sweep must never signal, whatever their markers
+// say. Split out from the loop so the guard is directly testable: PID 1 cannot
+// be killed by an unprivileged test process anyway, so a test that only checked
+// the reaped COUNT would pass with or without this guard and prove nothing.
+func reapSkipPID(pid, self int) bool {
+	// Never signal ourselves.
+	if pid == self {
+		return true
+	}
+	// PID 1 can never be an agent process, and SIGKILLing it takes down the
+	// container (or the workstation's init). Guard explicitly rather than
+	// relying on init never carrying the marker.
+	return pid == 1
+}
+
+// reapExcluded reports whether a /proc cmdline names something the marker
+// sweep must leave alone.
+func reapExcluded(cmdline string) bool {
+	for _, marker := range reapExclusions {
 		if strings.Contains(cmdline, marker) {
 			return true
 		}

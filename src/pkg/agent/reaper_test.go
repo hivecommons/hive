@@ -10,24 +10,39 @@ import (
 	"github.com/kubestellar/hive/pkg/config"
 )
 
-func TestContainsCLIMarker(t *testing.T) {
+// TestReapExcluded pins the sweep's ONLY cmdline predicate.
+//
+// This replaces TestContainsCLIMarker, which asserted the inverse: that the
+// sweep matched only backend binaries. That allowlist is what let an agent's
+// spawned children survive every task (#4924) — a poll loop carries the agent's
+// HIVE_AGENT but is not named "claude", so it was skipped. The marker is the
+// authority now, and the only question a cmdline answers is whether the process
+// is tmux, which must never be signalled.
+func TestReapExcluded(t *testing.T) {
 	cases := []struct {
 		cmdline string
 		want    bool
 	}{
-		{"claude --model claude-opus-4.7 --dangerously-skip-permissions", true},
-		{"node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", true},
-		{"copilot --model gpt-5 --allow-all", true},
-		{"gemini --model gemini-2.5-pro", true},
-		{"goose run -s", true},
-		{"bob", true},
+		// tmux owns the panes; killing it takes them all down.
+		{"tmux new-session -d -s hive-scanner", true},
+		{"/usr/bin/tmux -S /tmp/tmux-2007/hive-scanner attach", true},
+
+		// Backend CLIs — reaped, as before.
+		{"claude --model claude-opus-4.7 --dangerously-skip-permissions", false},
+		{"node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", false},
+		{"copilot --model gpt-5 --allow-all", false},
+		{"bob", false},
+
+		// The #4924 cases: agent-spawned children that the old allowlist skipped.
+		{"/bin/bash -c until gh pr checks 4914; do sleep 60; done", false},
+		{"sleep 60", false},
+		{"node server.js", false},
 		{"/bin/bash -l", false},
-		{"tmux new-session -d -s hive-scanner", false},
 		{"", false},
 	}
 	for _, c := range cases {
-		if got := containsCLIMarker(c.cmdline); got != c.want {
-			t.Errorf("containsCLIMarker(%q) = %v, want %v", c.cmdline, got, c.want)
+		if got := reapExcluded(c.cmdline); got != c.want {
+			t.Errorf("reapExcluded(%q) = %v, want %v", c.cmdline, got, c.want)
 		}
 	}
 }

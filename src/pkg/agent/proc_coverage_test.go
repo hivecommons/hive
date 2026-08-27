@@ -54,8 +54,17 @@ func TestReapAgentCLI_FakeProc(t *testing.T) {
 	// A non-matching entry (different agent) that must be skipped.
 	writeProcEntry(t, root, pid+100000, "node\x00claude",
 		"HIVE_AGENT=other\x00", os.Getuid())
-	// A non-CLI entry that must be skipped by the cmdline marker check.
-	writeProcEntry(t, root, pid+200000, "/bin/bash\x00-l",
+	// #4924: a non-CLI process carrying THIS agent's marker — a child the agent
+	// spawned. It used to be skipped by the cmdline allowlist; it must now be
+	// reaped. A REAL child, because a fake pid makes syscall.Kill fail and the
+	// counter would not move whether the predicate matched or not — the test
+	// would pass either way and prove nothing.
+	child2 := exec.Command("sleep", "30")
+	if err := child2.Start(); err != nil {
+		t.Skipf("cannot start child: %v", err)
+	}
+	defer func() { _ = child2.Process.Kill(); _, _ = child2.Process.Wait() }()
+	writeProcEntry(t, root, child2.Process.Pid, "/bin/bash\x00-c\x00until gh pr checks; do sleep 60; done",
 		"HIVE_AGENT=scanner\x00", os.Getuid())
 	// A non-numeric dir entry (ignored).
 	os.MkdirAll(filepath.Join(root, "not-a-pid"), 0o755)
@@ -66,16 +75,19 @@ func TestReapAgentCLI_FakeProc(t *testing.T) {
 	m.mu.RUnlock()
 
 	killed := m.reapAgentCLI(agent)
-	if killed != 1 {
-		t.Errorf("expected 1 reaped process, got %d", killed)
+	if killed != 2 {
+		t.Errorf("expected 2 reaped processes (the CLI and its spawned child), got %d", killed)
 	}
 }
 
 func TestReapAgentCLI_FakeProcNoMatch(t *testing.T) {
 	root := t.TempDir()
 	withFakeProc(t, root)
-	// Only non-matching entries.
-	writeProcEntry(t, root, 424242, "/bin/bash", "HIVE_AGENT=scanner\x00", os.Getuid())
+	// Only entries for a DIFFERENT agent. Since #4924 the cmdline no longer
+	// narrows anything, so the agent marker is the whole test: "/bin/bash" with
+	// HIVE_AGENT=scanner would now be reaped, and this case has to key off the
+	// name mismatch instead to still mean something.
+	writeProcEntry(t, root, 424242, "/bin/bash", "HIVE_AGENT=other\x00", os.Getuid())
 	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, discardLogger(), ProjectContext{})
 	m.mu.RLock()
 	agent := m.agents["scanner"]

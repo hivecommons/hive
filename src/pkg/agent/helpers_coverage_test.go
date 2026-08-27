@@ -10,8 +10,8 @@ import (
 
 // ---------------------------------------------------------------------------
 // reapAgentCLI / killAgentProcesses — /proc-based; on non-Linux /proc is
-// absent so these exercise the ReadDir-error branch. containsCLIMarker and
-// environHasMarker are pure and always testable.
+// absent so these exercise the ReadDir-error branch. reapExcluded,
+// reapSkipPID and environHasMarker are pure and always testable.
 // ---------------------------------------------------------------------------
 
 func TestReapAgentCLI_NoProc(t *testing.T) {
