@@ -29,6 +29,18 @@ import (
 // probeTimeout bounds each CLI/HTTP headroom probe.
 const probeTimeout = 10 * time.Second
 
+// probeWaitDelay bounds how long exec.Cmd.Wait may block on the probe's I/O
+// pipes after the child is killed or the context expires. CLI probes spawn
+// processes (codex app-server, claude) that fork grandchildren which inherit
+// the stdout/stderr pipe write ends; killing the direct child then leaves the
+// pipe open, exec's copier goroutine never sees EOF, and a bare Wait blocks
+// FOREVER. Observed live on weavster: the watchdog's codex auth probe wedged
+// the main governor goroutine for 2.5h (no evals, no advisory digest — the
+// hub flagged the digest stale). WaitDelay is the stdlib's remedy: after the
+// delay Wait force-closes the pipes and returns ErrWaitDelay instead of
+// hanging.
+const probeWaitDelay = 5 * time.Second
+
 // pollInterval is how often the Manager re-probes provider headroom.
 const pollInterval = 5 * time.Minute
 
@@ -91,7 +103,11 @@ type Prober interface {
 func runCLI(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	// See probeWaitDelay: without this a grandchild holding the output pipe
+	// makes CombinedOutput block past the context timeout, indefinitely.
+	cmd.WaitDelay = probeWaitDelay
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s probe failed: %w", name, err)
 	}
@@ -266,6 +282,11 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout+5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "codex", "app-server")
+	// See probeWaitDelay: codex app-server forks helpers that inherit the
+	// stdout pipe, so the deferred Kill+Wait below blocked forever without
+	// this — wedging the caller (the watchdog tick on the main governor
+	// goroutine) and with it every eval and advisory-digest post.
+	cmd.WaitDelay = probeWaitDelay
 	// The hive main process runs with HOME=/home/dev, but codex auth state
 	// lives in the shared CLI home on the PVC (/data/home/.codex — the HOME
 	// the manager gives agent sessions). Point the app-server there when it
