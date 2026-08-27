@@ -58,6 +58,16 @@ var flexTimeFormats = []string{
 	"2006-01-02T15:04-07:00",
 	"2006-01-02T15:04:05",
 	"2006-01-02",
+	// Agents write beads through the bd CLI but occasionally hand-edit or
+	// template a human-format timestamp (observed live on torch-spyre:
+	// "2026-07-23 16:04 EDT"). Accept the common space-separated shapes so a
+	// well-meaning-but-wrong value still parses. time.Parse resolves a bare
+	// zone abbreviation to offset 0 when it isn't the local zone — hours-level
+	// imprecision, which beats the alternative below.
+	"2006-01-02 15:04:05 MST",
+	"2006-01-02 15:04 MST",
+	"2006-01-02 15:04:05",
+	"2006-01-02 15:04",
 }
 
 func (ft *flexTime) UnmarshalJSON(b []byte) error {
@@ -74,7 +84,18 @@ func (ft *flexTime) UnmarshalJSON(b []byte) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("parsing time %q: no matching format", s)
+	// FAIL-SOFT, deliberately. This unmarshals inside the store-wide
+	// json.Unmarshal of beads.json, so returning an error here poisons the
+	// ENTIRE agent ledger over one malformed field: the store is dropped from
+	// beadStores, the hive runs on a partial ledger for the life of the
+	// process, and the hub raises "N bead store(s) failed to load at startup"
+	// (observed live: torch-spyre ran degraded for a month over a single
+	// hand-written timestamp). A zero time is strictly less wrong — the bead
+	// stays visible with unknown age, and zero-CreatedAt beads simply sort
+	// oldest. Callers that must distinguish "absent" from "unparseable" can't
+	// anyway: both arrive as the zero value, same as the "" case above.
+	ft.Time = time.Time{}
+	return nil
 }
 
 func (ft flexTime) MarshalJSON() ([]byte, error) {

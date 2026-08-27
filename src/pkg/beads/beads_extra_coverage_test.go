@@ -94,10 +94,18 @@ func TestFlexTimeUnmarshalNotString(t *testing.T) {
 }
 
 func TestFlexTimeUnmarshalInvalid(t *testing.T) {
+	// An unparseable date string FAIL-SOFTS to the zero time instead of
+	// erroring: this unmarshal runs inside the store-wide json.Unmarshal of
+	// beads.json, so a hard error here poisoned an entire agent ledger over
+	// one malformed field (torch-spyre ran on a partial ledger for a month
+	// over a single hand-written "2026-07-23 16:04 EDT"). See
+	// flextime_failsoft_test.go for the full contract.
 	var ft flexTime
-	err := json.Unmarshal([]byte(`"not-a-date"`), &ft)
-	if err == nil {
-		t.Error("expected error for invalid date")
+	if err := json.Unmarshal([]byte(`"not-a-date"`), &ft); err != nil {
+		t.Errorf("invalid date must fail-soft, not error: %v", err)
+	}
+	if !ft.IsZero() {
+		t.Errorf("invalid date must land on the zero time, got %v", ft.Time)
 	}
 }
 
