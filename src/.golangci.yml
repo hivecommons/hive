@@ -33,7 +33,7 @@ linters:
     # So the gate starts with the linters that are already CLEAN or nearly so,
     # making it enforceable from day one. Each remaining linter is enabled in
     # its own PR after its findings are fixed — that ratchet is tracked in the
-    # follow-up issue referenced from the workflow.
+    # ratchet issue #4903.
     #
     # ineffassign (11) is the cheapest next rung; errcheck (579) is the most
     # valuable and the largest, and is worth splitting by package.
