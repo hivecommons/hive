@@ -20945,19 +20945,23 @@ const dashboardHTML = `<!DOCTYPE html>
             <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
             <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
           </select>
-          <!-- The date input is OPTIONAL and empty means permanent. It needs a
-               visible label because an empty type="date" renders as today's
-               date in the browser's own placeholder styling, which reads as a
-               value that has already been chosen rather than an empty field.
-               The label says which direction the date acts in; "(optional)"
-               says an empty field is a valid answer. A title tooltip alone is
-               not enough — it is invisible until hover and unavailable on
-               touch. -->
-          <label for="access-expiry" style="display:flex;flex-direction:column;gap:2px;flex:0 0 auto;font-size:0.7rem;color:var(--muted)">
-            <span>Expires <span style="opacity:0.75">(optional)</span></span>
-            <input id="access-expiry" type="date" title="Optional expiry — leave empty for permanent access. Access is revoked automatically after this date (UTC)."
-              style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-          </label>
+          <!-- A checkbox owns whether the new grant expires; the date input is
+               HIDDEN until it is checked.
+               An empty <input type="date"> cannot express "no expiry" — the
+               browser paints its own mm/dd/yyyy placeholder, so an untouched
+               field looks like a date the operator already chose. Adding a
+               label alone did not fix it: the control then showed a name and a
+               date that disagreed. Hiding the input when unchecked leaves
+               exactly one visible answer. -->
+          <span style="display:flex;align-items:center;gap:6px;flex:0 0 auto">
+            <input type="checkbox" id="access-expiry-enabled" onchange="toggleAddExpiryVisible()"
+              title="Off — access lasts until it is removed. On — pick the last day of access."
+              style="cursor:pointer;margin:0">
+            <label for="access-expiry-enabled" style="font-size:0.7rem;color:var(--muted);cursor:pointer;white-space:nowrap">Expires</label>
+            <input id="access-expiry" type="date" title="Access is revoked automatically after this date (UTC)."
+              style="display:none;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+            <span id="access-expiry-never" style="font-size:0.7rem;color:var(--text)">Never</span>
+          </span>
           <button onclick="addAccess()" class="btn-primary" style="flex:0 0 auto;padding:8px 16px;font-size:0.8rem">Add</button>
         </div>
         <div id="access-role-hint" style="margin-top:6px;font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
@@ -21469,21 +21473,34 @@ const dashboardHTML = `<!DOCTYPE html>
           // last valid day when set, and empty means permanent. Changing it
           // extends (or clears) the expiry; the last owner cannot be expired
           // for the same reason they cannot be removed or demoted.
-          // A bare date box next to a grant does not say which direction the
-          // date acts in, and an EMPTY type="date" still renders as today in
-          // the browser's placeholder — so a permanent grant looks like one
-          // expiring today. The prefix names the field, and when no expiry is
-          // set it reads "Never" so the permanent case states itself instead
-          // of being inferred from an apparently-filled box.
-          var expiryLabel = u.expires_at ?
-            '<span style="font-size:0.6rem;color:var(--muted)">Expires</span>' :
-            '<span style="font-size:0.6rem;color:var(--muted)" title="No expiry set — this grant is permanent until removed.">Expires: <span style="color:var(--text)">Never</span></span>';
+          // A checkbox owns whether this grant expires; the date input EXISTS
+          // only when it does.
+          //
+          // A bare <input type="date"> cannot express "no expiry": an empty one
+          // still paints the browser's mm/dd/yyyy placeholder, so a permanent
+          // grant and one expiring today look the same. Labelling it was not
+          // enough — the row then read "Expires: Never 08/27/2026", stating
+          // both answers at once and leaving the operator to guess which the
+          // system believed. Removing the control entirely when unchecked is
+          // the only version with exactly one visible answer.
+          var hasExpiry = !!u.expires_at;
+          var expiryToggleId = 'expcb-' + esc(u.username).replace(/[^A-Za-z0-9_-]/g, '_');
+          // Checking the box needs a date to submit; today would expire the
+          // grant immediately, so default to 30 days out and let the operator
+          // adjust. Unchecking sends '' — the API's existing "permanent".
           var expiryControl = isLastOwner ? '' :
-            '<span style="display:inline-flex;align-items:center;gap:4px">' + expiryLabel +
-            '<input type="date" class="access-expiry-input" value="' + esc(expiryToDateInput(u.expires_at)) + '"' +
-            ' onchange="changeAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.value)"' +
-            ' title="Optional expiry — empty means permanent. Access is revoked automatically after this date (UTC)."' +
-            ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:' + (u.expires_at ? 'var(--amber)' : 'var(--muted)') + '">' +
+            '<span style="display:inline-flex;align-items:center;gap:4px" title="' +
+              (hasExpiry ? 'Access is revoked automatically after this date (UTC).' : 'No expiry — this grant lasts until it is removed.') + '">' +
+            '<input type="checkbox" id="' + expiryToggleId + '"' + (hasExpiry ? ' checked' : '') +
+            ' onchange="toggleAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.checked)"' +
+            ' style="cursor:pointer;margin:0">' +
+            '<label for="' + expiryToggleId + '" style="font-size:0.6rem;color:var(--muted);cursor:pointer">Expires</label>' +
+            (hasExpiry ?
+              '<input type="date" class="access-expiry-input" value="' + esc(expiryToDateInput(u.expires_at)) + '"' +
+              ' onchange="changeAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.value)"' +
+              ' title="Access is revoked automatically after this date (UTC)."' +
+              ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--amber)">'
+              : '<span style="font-size:0.6rem;color:var(--text)">Never</span>') +
             '</span>';
           return '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;align-items:center;gap:4px;flex:1 1 240px;min-width:0">' + checkbox + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem;word-break:break-word">' + esc(u.username) + '</span>' +
@@ -21572,7 +21589,11 @@ const dashboardHTML = `<!DOCTYPE html>
         });
         if (!resp.ok) { var d = await resp.json(); hiveToast(d.error || 'Failed', 'error'); return; }
         document.getElementById('access-username').value = '';
-        document.getElementById('access-expiry').value = '';
+        // Reset the checkbox too, not just the date: clearing one without the
+        // other leaves the form claiming an expiry is set while submitting ''
+        // (permanent), which is the desync this control exists to prevent.
+        document.getElementById('access-expiry-enabled').checked = false;
+        toggleAddExpiryVisible();
         loadAccessList();
         loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
@@ -21581,6 +21602,45 @@ const dashboardHTML = `<!DOCTYPE html>
     /* changeAccessExpiry sets, extends, or clears (empty value) the expiry on
        an existing grant. The role is re-sent unchanged — the add endpoint
        upserts — and expires_at carries the new bound ("" = permanent). */
+    // toggleAddExpiryVisible shows the Add User date input only while the
+    // checkbox is on, and swaps in a literal "Never" while it is off, so the
+    // row always states one answer rather than showing a placeholder date the
+    // operator never chose.
+    function toggleAddExpiryVisible() {
+      var on = document.getElementById('access-expiry-enabled').checked;
+      var input = document.getElementById('access-expiry');
+      var never = document.getElementById('access-expiry-never');
+      input.style.display = on ? '' : 'none';
+      if (never) never.style.display = on ? 'none' : '';
+      if (on) {
+        // Seed a usable date so checking the box cannot submit an empty value
+        // (which the API reads as permanent — the opposite of what was asked).
+        if (!input.value) {
+          var d = new Date();
+          d.setDate(d.getDate() + defaultExpiryDays);
+          input.value = d.toISOString().slice(0, 10);
+        }
+      } else {
+        input.value = '';
+      }
+    }
+
+    // defaultExpiryDays is how far out the date lands when an operator turns
+    // expiry ON. It must not be 0: checking the box would then expire the
+    // grant the moment it was checked, which reads as the UI revoking access
+    // rather than scheduling it.
+    var defaultExpiryDays = 30;
+
+    // toggleAccessExpiry flips a grant between permanent and expiring.
+    // Unchecking sends '' — the API's existing "permanent" — and checking
+    // sends a real date, because the server cannot store "expires, date TBD".
+    async function toggleAccessExpiry(username, role, checked) {
+      if (!checked) { changeAccessExpiry(username, role, ''); return; }
+      var d = new Date();
+      d.setDate(d.getDate() + defaultExpiryDays);
+      changeAccessExpiry(username, role, d.toISOString().slice(0, 10));
+    }
+
     async function changeAccessExpiry(username, role, value) {
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access', {

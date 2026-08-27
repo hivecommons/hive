@@ -264,37 +264,48 @@ func TestAccessListIncludesExpiry(t *testing.T) {
 	}
 }
 
-// TestAccessExpiryFieldIsLabelled pins the VISIBLE label on the Manage Access
-// expiry controls.
+// TestAccessExpiryIsCheckboxGated pins the control that decides whether a grant
+// expires at all.
 //
-// An empty <input type="date"> is not blank on screen: browsers render their
-// own mm/dd/yyyy placeholder, which reads as a date that has already been
-// chosen. Without a label beside it, an operator cannot tell that the box is an
-// expiry, which direction it acts in, or that leaving it alone is a valid
-// answer meaning "permanent". A title tooltip does not cover this — it is
-// invisible until hover and unavailable on touch.
-//
-// The field is and must stay OPTIONAL: nothing pre-fills it, and addAccess
-// sends whatever is there, so empty means permanent.
-func TestAccessExpiryFieldIsLabelled(t *testing.T) {
-	// The Add User control carries a visible label naming the field and saying
-	// an empty value is allowed.
-	if !strings.Contains(dashboardHTML, `<label for="access-expiry"`) {
-		t.Error("the Add User expiry input has no visible <label> — a bare date box does not say it is an expiry")
+// An <input type="date"> cannot express "no expiry": an empty one still paints
+// the browser's own mm/dd/yyyy placeholder, so a permanent grant and one
+// expiring today look identical. Labelling the field was not enough — the row
+// then rendered "Expires: Never 08/27/2026", stating both answers at once. A
+// checkbox owns the state and the date input exists only when it is checked,
+// so exactly one answer is ever visible.
+func TestAccessExpiryIsCheckboxGated(t *testing.T) {
+	// Add User: a checkbox gates the date, and the date starts hidden.
+	if !strings.Contains(dashboardHTML, `id="access-expiry-enabled"`) {
+		t.Error("Add User has no expiry checkbox — a bare date input cannot express \"no expiry\"")
 	}
-	if !strings.Contains(dashboardHTML, "Expires <span style=\"opacity:0.75\">(optional)</span>") {
-		t.Error(`the Add User expiry label must say "Expires (optional)": the name gives the field meaning, "(optional)" says an empty field is a valid answer`)
+	if !strings.Contains(dashboardHTML, `id="access-expiry" type="date" title="Access is revoked automatically after this date (UTC)."`) {
+		t.Error("the Add User date input lost its title, or its markup moved")
+	}
+	if !strings.Contains(dashboardHTML, `style="display:none;padding:8px 12px`) {
+		t.Error("the Add User date input must start hidden — visible-but-empty is the placeholder bug this fixes")
+	}
+	if !strings.Contains(dashboardHTML, "function toggleAddExpiryVisible()") {
+		t.Error("toggleAddExpiryVisible is missing — the checkbox would not show or hide the date")
 	}
 
-	// Per-user rows: a grant with no expiry must SAY it is permanent rather
-	// than leaving the reader to infer it from a box that looks filled in.
-	if !strings.Contains(dashboardHTML, `Expires: <span style="color:var(--text)">Never</span>`) {
-		t.Error(`a grant with no expiry must render "Expires: Never" — otherwise a permanent grant is indistinguishable from one expiring today`)
+	// Per-user rows: same gate, and an unchecked row says "Never" in words
+	// rather than showing a date nobody chose.
+	if !strings.Contains(dashboardHTML, "function toggleAccessExpiry(") {
+		t.Error("toggleAccessExpiry is missing — row checkboxes could not flip a grant to permanent")
+	}
+	if !strings.Contains(dashboardHTML, `<span style="font-size:0.6rem;color:var(--text)">Never</span>`) {
+		t.Error(`a row with no expiry must render the word "Never" instead of a date input`)
 	}
 
-	// The input must not gain a default. A pre-filled expiry would silently
-	// convert every new grant into a temporary one.
-	if strings.Contains(dashboardHTML, `id="access-expiry" type="date" value=`) {
-		t.Error("the expiry input must not carry a default value — empty means permanent, and a default would make every new grant expire")
+	// Turning expiry ON must not submit today: that would revoke the grant at
+	// once, which reads as the UI cancelling access rather than scheduling it.
+	if !strings.Contains(dashboardHTML, "var defaultExpiryDays = 30;") {
+		t.Error("defaultExpiryDays must exist and be non-zero — checking the box otherwise expires the grant immediately")
+	}
+
+	// Adding a user must reset BOTH halves. Clearing the date but leaving the
+	// box checked would show an expiry while submitting '' (permanent).
+	if !strings.Contains(dashboardHTML, "document.getElementById('access-expiry-enabled').checked = false;") {
+		t.Error("addAccess must reset the expiry checkbox, not just the date, or the form desyncs from what it submits")
 	}
 }
