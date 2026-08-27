@@ -22,7 +22,7 @@ cd dashboard
 npm test
 ```
 
-The package only declares the Node test script; it is separate from the v2 Go test suite under `src/`.
+The package only declares the Node test script; it is separate from the Go test suite under `src/`.
 
 ## Editing guidance
 
