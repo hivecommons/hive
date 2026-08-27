@@ -1704,6 +1704,8 @@
     .config-overlay textarea,
     .config-overlay pre,
     .config-modal .config-pre,
+    .config-body [style*="overflow-y:auto"],
+    .config-body [style*="overflow-y: auto"],
     #prompt-template-editor,
     #prompt-template-preview {
       overscroll-behavior: contain;
@@ -18561,7 +18563,7 @@ function burnAreaChart() {
       const gen = (_configState.data && _configState.data.general) || {};
       const ps = gen.promptSource || {};
       return `
-        <div style="display:flex;flex-direction:column;height:100%">
+        <div style="display:flex;flex-direction:column;height:100%;min-height:0;overscroll-behavior:contain;overscroll-behavior-y:contain">
         <div id="${srcId}" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:10px;flex-shrink:0">
           <div style="font-size:0.7rem;font-weight:600;color:var(--text);margin-bottom:6px">Source files <span style="font-weight:400;color:var(--muted)">(edit these on your fork)</span></div>
         </div>
@@ -18885,7 +18887,7 @@ function burnAreaChart() {
       const opts = PROMPT_HISTORY_WINDOWS.map(function(w) {
         return '<option value="' + w.hours + '"' + (w.hours === selected ? ' selected' : '') + '>' + esc(w.label) + '</option>';
       }).join('');
-      return `<div style="display:flex;flex-direction:column;height:100%">
+      return `<div style="display:flex;flex-direction:column;height:100%;min-height:0;overscroll-behavior:contain;overscroll-behavior-y:contain">
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">Prompts sent to this agent — fully expanded, all variables resolved and pipeline data injected. Newest first.</p>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0">
           <label for="prompt-history-window" style="font-size:0.75rem;color:var(--muted)">Window</label>

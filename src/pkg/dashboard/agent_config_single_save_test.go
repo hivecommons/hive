@@ -117,6 +117,12 @@ func TestModalScrollContainment(t *testing.T) {
 		// The CSS rule covering the template editor + preview.
 		"#prompt-template-editor,",
 		"#prompt-template-preview {",
+		// Attribute selectors harden sibling tab/modal inline scrollers.
+		`.config-body [style*="overflow-y:auto"],`,
+		`.config-body [style*="overflow-y: auto"],`,
+		// The Prompt Template tab body itself is a flex column that can host
+		// nested scrollers without passing wheel/touch chains to the page.
+		"height:100%;min-height:0;overscroll-behavior:contain;overscroll-behavior-y:contain",
 		// Inline containment on the editor, preview, and variable picker, so
 		// the containment holds even if the element is restyled inline.
 		"resize:vertical;white-space:pre;tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain",
