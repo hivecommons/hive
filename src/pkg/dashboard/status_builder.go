@@ -295,6 +295,9 @@ func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
 
 	agents := make([]FrontendConfiguredAgent, 0, len(names))
 	for _, name := range names {
+		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			continue
+		}
 		agentCfg := cfg.Agents[name]
 		// Same resolution buildAgents uses: explicit per-agent Mode wins,
 		// otherwise the ACMM level default for this agent.
@@ -1426,8 +1429,18 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 }
 
 func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess) []FrontendCadence {
+	if cfg == nil {
+		return nil
+	}
+	acmmLevel := 0
+	if cfg.ACMMLevel != nil {
+		acmmLevel = *cfg.ACMMLevel
+	}
 	sortedNames := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
+		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			continue
+		}
 		sortedNames = append(sortedNames, name)
 	}
 	sort.Strings(sortedNames)

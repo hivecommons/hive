@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/config"
 )
 
@@ -544,6 +545,9 @@ func computeAgentRosterMismatch(level int, agents []AgentSummary) *agentRosterMi
 	for _, a := range agents {
 		name := strings.TrimSpace(a.Name)
 		if name == "" {
+			continue
+		}
+		if !agent.AgentAvailableAtACMMLevel(name, level) {
 			continue
 		}
 		actual[name] = struct{}{}

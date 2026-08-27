@@ -24,6 +24,76 @@ func TestSetAndGetACMMLevel(t *testing.T) {
 	}
 }
 
+func TestOperabilityAgentsRequireACMML5(t *testing.T) {
+	for _, name := range []string{"telemetry", "operations"} {
+		for level := 0; level < operabilityAgentMinACMMLevel; level++ {
+			if AgentAvailableAtACMMLevel(name, level) {
+				t.Fatalf("%s should be unavailable at L%d", name, level)
+			}
+		}
+		if !AgentAvailableAtACMMLevel(name, 5) || !AgentAvailableAtACMMLevel(name, 6) {
+			t.Fatalf("%s should be available at L5/L6", name)
+		}
+	}
+	if !AgentAvailableAtACMMLevel("scanner", 1) {
+		t.Fatal("non-operability agents must not be affected by the L5 gate")
+	}
+}
+
+func TestManagerDoesNotInstantiateOperabilityAgentsBelowL5(t *testing.T) {
+	cfgs := map[string]config.AgentConfig{
+		"scanner":    {Backend: "copilot"},
+		"telemetry":  {Backend: "copilot"},
+		"operations": {Backend: "copilot"},
+	}
+	m := NewManager(cfgs, slog.Default(), ProjectContext{ACMMLevel: 3})
+
+	if _, ok := m.agents["telemetry"]; ok {
+		t.Fatal("telemetry should not be instantiated below L5")
+	}
+	if _, ok := m.agents["operations"]; ok {
+		t.Fatal("operations should not be instantiated below L5")
+	}
+	if _, ok := m.agents["scanner"]; !ok {
+		t.Fatal("scanner should still be instantiated below L5")
+	}
+
+	m.AddAgent("telemetry", config.AgentConfig{Backend: "copilot"})
+	if _, ok := m.agents["telemetry"]; ok {
+		t.Fatal("AddAgent should respect the L5 operability gate")
+	}
+
+	m.SetACMMLevel(5)
+	m.AddAgent("telemetry", config.AgentConfig{Backend: "copilot"})
+	if _, ok := m.agents["telemetry"]; !ok {
+		t.Fatal("telemetry should be addable at L5")
+	}
+
+	m.SetACMMLevel(4)
+	if _, ok := m.agents["telemetry"]; ok {
+		t.Fatal("downgrading below L5 should remove instantiated telemetry")
+	}
+}
+
+func TestReconcileAgentsTreatsOperabilityAgentsAsAbsentBelowL5(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner":   {Backend: "copilot"},
+		"telemetry": {Backend: "copilot"},
+	}, slog.Default(), ProjectContext{ACMMLevel: 5})
+
+	if _, ok := m.agents["telemetry"]; !ok {
+		t.Fatal("telemetry should start present at L5")
+	}
+	m.SetACMMLevel(3)
+	m.ReconcileAgents(map[string]config.AgentConfig{
+		"scanner":   {Backend: "copilot"},
+		"telemetry": {Backend: "copilot"},
+	})
+	if _, ok := m.agents["telemetry"]; ok {
+		t.Fatal("reconcile below L5 should retire stale telemetry even if config still lists it")
+	}
+}
+
 func TestResolveAgentByName(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
 		"scanner": {ID: "scan-001", Backend: "claude"},

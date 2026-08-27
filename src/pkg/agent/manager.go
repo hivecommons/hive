@@ -1437,6 +1437,7 @@ func (m *Manager) SetACMMLevel(level int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.project.ACMMLevel = level
+	m.removeAgentsBelowACMMGateLocked(level)
 }
 
 func (m *Manager) GetACMMLevel() int {
@@ -1488,6 +1489,10 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	}
 
 	for name, cfg := range agents {
+		if !AgentAvailableAtACMMLevel(name, project.ACMMLevel) {
+			logger.Info("agent below ACMM gate; not instantiating", "agent", name, "level", project.ACMMLevel)
+			continue
+		}
 		agentID := cfg.ID
 		if agentID == "" {
 			agentID = name
@@ -1584,6 +1589,10 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
+	}
+	if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
+		m.mu.Unlock()
+		return fmt.Errorf("agent %s is not available below ACMM L5", name)
 	}
 
 	if agent.State == StateRunning {
@@ -4055,6 +4064,11 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
+		m.logger.Info("agent below ACMM gate; not adding", "agent", name, "level", m.project.ACMMLevel)
+		return
+	}
+
 	if _, exists := m.agents[name]; exists {
 		return
 	}
@@ -4092,6 +4106,21 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 	))
 }
 
+func (m *Manager) removeAgentsBelowACMMGateLocked(level int) {
+	for name, existing := range m.agents {
+		if AgentAvailableAtACMMLevel(name, level) {
+			continue
+		}
+		if existing.cancel != nil {
+			existing.cancel()
+		}
+		_ = m.tmuxCmd(existing, "kill-session", "-t", existing.tmuxSession).Run()
+		delete(m.idToName, existing.ID)
+		delete(m.agents, name)
+		m.logger.Info("audit: agent removed by ACMM gate", "name", name, "id", existing.ID, "level", level, "session", existing.tmuxSession)
+	}
+}
+
 // UpdateConfig updates the stored config for a running agent process so that
 // status builders (which read from AgentProcess.Config) reflect changes made
 // via the config dialog (which writes to the global Config.Agents map).
@@ -4115,8 +4144,13 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var added []string
+	allowedConfigs := make(map[string]config.AgentConfig, len(configs))
 
 	for name, cfg := range configs {
+		if !AgentAvailableAtACMMLevel(name, m.project.ACMMLevel) {
+			continue
+		}
+		allowedConfigs[name] = cfg
 		if existing, ok := m.agents[name]; ok {
 			delete(m.idToName, existing.ID)
 			existing.Config = cfg
@@ -4158,7 +4192,7 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 	}
 
 	for name, existing := range m.agents {
-		if _, ok := configs[name]; ok {
+		if _, ok := allowedConfigs[name]; ok {
 			continue
 		}
 		if existing.cancel != nil {

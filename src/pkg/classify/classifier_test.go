@@ -210,6 +210,11 @@ func TestClassify_OutreachLane(t *testing.T) {
 }
 
 func TestClassify_OperabilityLanes(t *testing.T) {
+	SetLanes([]LaneConfig{
+		{Name: "telemetry", Keywords: []string{"observability", "opentelemetry", "prometheus", "grafana", "tracing", "metrics", "structured-logging", "servicemonitor", "podmonitor"}},
+		{Name: "operations", Keywords: []string{"healthz", "readyz", "readiness", "slo-", "sli-", "service-level-objective", "service-level-indicator", "error-budget", "runbook", "incident-response", "rollback", "alerting"}},
+	})
+	defer SetLanes(nil)
 	tests := []struct {
 		title string
 		want  Lane
@@ -228,6 +233,18 @@ func TestClassify_OperabilityLanes(t *testing.T) {
 				t.Errorf("lane = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClassify_DefaultLanesExcludeOperabilityAgents(t *testing.T) {
+	SetLanes(nil)
+	for _, title := range []string{
+		"Add an OpenTelemetry collector configuration",
+		"Create a readiness runbook and rollback procedure",
+	} {
+		if got := Classify(makeIssue(title)).Lane; got != Lane("scanner") {
+			t.Fatalf("default lane for %q = %q, want scanner", title, got)
+		}
 	}
 }
 

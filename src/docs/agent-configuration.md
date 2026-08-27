@@ -418,7 +418,7 @@ The L5 roster is the canonical worked example — eleven agents, eight on the go
 
 At L5, every agent PR gets a `hold` label automatically. The system proposes; it does not merge autonomously.
 
-Telemetry and operations stay paused until an operator deliberately opts in. Their lane keywords are disjoint: telemetry owns instrumentation and observability terms, while operations owns health, SLO, runbook, incident, rollback, and alerting terms.
+Telemetry and operations are L5/L6-only agents. They stay absent below L5 and remain paused at L5/L6 until an operator deliberately opts in. Their lane keywords are disjoint: telemetry owns instrumentation and observability terms, while operations owns health, SLO, runbook, incident, rollback, and alerting terms.
 
 Configure that opt-in under **Settings → Project Observability**. This tab is
 for the managed project's target stack; the **Features** tab separately controls

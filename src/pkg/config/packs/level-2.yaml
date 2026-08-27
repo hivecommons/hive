@@ -1,8 +1,7 @@
 level: 2
 name: Advisory
 description: >
-  One-way feedback (formerly "Instructed"). Seven agents, including opt-in telemetry and operations,
-  produce advisory beads — findings visible on the dashboard and in a tracking
+  One-way feedback (formerly "Instructed"). Five agents produce advisory beads — findings visible on the dashboard and in a tracking
   issue. No GitHub issues or PRs created. Agents observe and report; humans
   decide what to act on.
 governor:
@@ -15,29 +14,21 @@ governor:
       guide: 4h
       scanner: 4h
       quality: 6h
-      telemetry: paused
-      operations: paused
     busy:
       supervisor: 5m
       guide: 4h
       scanner: 4h
       quality: 6h
-      telemetry: paused
-      operations: paused
     quiet:
       supervisor: 5m
       guide: 4h
       scanner: 4h
       quality: 6h
-      telemetry: paused
-      operations: paused
     idle:
       supervisor: 5m
       guide: 4h
       scanner: 4h
       quality: 6h
-      telemetry: paused
-      operations: paused
 agents:
   - name: supervisor
     display_name: Supervisor
@@ -147,37 +138,3 @@ agents:
       Heavy consumer of community wiki patterns. Produces ideation facts
       (feature proposals, architecture decisions, strategic direction) into
       the project KB layer.
-  - name: telemetry
-    display_name: telemetry
-    role: telemetry
-    description: Audits managed-project instrumentation and observability backends; reports findings only.
-    emoji: "📡"
-    color: "#00a8cc"
-    sort_order: 65
-    backend: copilot
-    model: claude-sonnet-4-6
-    bead_role: worker
-    mode: ADVISORY
-    kick_template: telemetry-advisory.md
-    include_repos: true
-    stale_timeout: 28800
-    lane_keywords: [observability, opentelemetry, prometheus, grafana, tracing, metrics, structured-logging, servicemonitor, podmonitor]
-    interactions: Reports instrumentation and telemetry gaps without changing repositories.
-    knowledge_use: Reads project stack and observability conventions from the knowledge base.
-  - name: operations
-    display_name: operations
-    role: operations
-    description: Audits managed-project health checks, SLOs, runbooks, alerts, and rollback practice; reports findings only.
-    emoji: "🚨"
-    color: "#d35400"
-    sort_order: 66
-    backend: copilot
-    model: claude-sonnet-4-6
-    bead_role: worker
-    mode: ADVISORY
-    kick_template: operations-advisory.md
-    include_repos: true
-    stale_timeout: 28800
-    lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
-    interactions: Reports operational-practice gaps without changing repositories.
-    knowledge_use: Reads reliability goals and operational conventions from the knowledge base.

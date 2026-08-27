@@ -1300,13 +1300,74 @@ func (s *Server) handleLifecycleTimeline(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	dto := s.LifecycleTimeline().Snapshot(limit, window)
+	store := s.LifecycleTimeline()
+	dto := store.Snapshot(limit, window)
+	if level := s.lifecycleACMMLevel(); level > 0 {
+		dto.Events = filterTimelineEventsByACMMLevel(dto.Events, level)
+		dto.Fleet = fleetHealthForTimelineEvents(store.Recent(0), window, level)
+	}
 	// Defensive nil-guard: Snapshot already guarantees a non-nil slice, but
 	// keep the endpoint's array-always contract explicit.
 	if dto.Events == nil {
 		dto.Events = []timeline.Event{}
 	}
 	jsonResponse(w, dto)
+}
+
+func (s *Server) lifecycleACMMLevel() int {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return 0
+	}
+	return detectACMMLevel(s.deps.Config)
+}
+
+func filterTimelineEventsByACMMLevel(events []timeline.Event, level int) []timeline.Event {
+	filtered := make([]timeline.Event, 0, len(events))
+	for _, event := range events {
+		if agent.AgentAvailableAtACMMLevel(event.Agent, level) {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func fleetHealthForTimelineEvents(events []timeline.Event, window time.Duration, level int) timeline.FleetHealth {
+	if window <= 0 {
+		window = timeline.DefaultFleetWindow
+	}
+	fh := timeline.FleetHealth{WindowMs: window.Milliseconds()}
+	cutoff := time.Now().Add(-window).UnixMilli()
+	merged := map[string]bool{}
+	blocked := map[string]bool{}
+	active := map[string]bool{}
+	for _, event := range events {
+		if event.At < cutoff || !agent.AgentAvailableAtACMMLevel(event.Agent, level) {
+			continue
+		}
+		fh.Events++
+		if event.IssueRef == "" {
+			continue
+		}
+		switch event.Kind {
+		case timeline.KindMerged:
+			merged[event.IssueRef] = true
+		case timeline.KindBlocked:
+			blocked[event.IssueRef] = true
+		default:
+			active[event.IssueRef] = true
+		}
+	}
+	for ref := range merged {
+		fh.Merged++
+		delete(active, ref)
+		delete(blocked, ref)
+	}
+	for ref := range blocked {
+		fh.Blocked++
+		delete(active, ref)
+	}
+	fh.InFlight = len(active)
+	return fh
 }
 
 func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {

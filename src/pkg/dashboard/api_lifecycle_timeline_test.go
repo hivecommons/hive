@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/kubestellar/hive/pkg/config"
 	"github.com/kubestellar/hive/pkg/timeline"
 )
 
@@ -77,6 +78,32 @@ func TestHandleLifecycleTimelineWithEvents(t *testing.T) {
 	}
 	if dto.Fleet.InFlight != 1 {
 		t.Fatalf("Fleet.InFlight = %d, want 1 (issue #2)", dto.Fleet.InFlight)
+	}
+}
+
+func TestHandleLifecycleTimelineFiltersOperabilityAgentsBelowL5(t *testing.T) {
+	resetLifecycleStore()
+	s := newTestServer()
+	level := 3
+	s.deps = &Dependencies{Config: &config.Config{ACMMLevel: &level}}
+	store := s.LifecycleTimeline()
+	store.Record(timeline.Event{IssueRef: "org/repo#1", Kind: timeline.KindKicked, Agent: "telemetry"})
+	store.Record(timeline.Event{IssueRef: "org/repo#2", Kind: timeline.KindKicked, Agent: "operations"})
+	store.Record(timeline.Event{IssueRef: "org/repo#3", Kind: timeline.KindKicked, Agent: "scanner"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lifecycle-timeline", nil)
+	rr := httptest.NewRecorder()
+	s.handleLifecycleTimeline(rr, req)
+
+	var dto timeline.TimelineDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(dto.Events) != 1 || dto.Events[0].Agent != "scanner" {
+		t.Fatalf("events = %+v, want only scanner event", dto.Events)
+	}
+	if dto.Fleet.Events != 1 || dto.Fleet.InFlight != 1 {
+		t.Fatalf("fleet = %+v, want one in-flight scanner event", dto.Fleet)
 	}
 }
 

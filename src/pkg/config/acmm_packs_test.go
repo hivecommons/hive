@@ -25,7 +25,7 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	packs := ACMMPacks()
 
 	expected := map[int]int{
-		1: 2, 2: 7, 3: 8, 4: 9, 5: 11, 6: 12,
+		1: 2, 2: 5, 3: 6, 4: 7, 5: 11, 6: 12,
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]
@@ -38,8 +38,8 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	}
 }
 
-func TestOperabilityAgentsArePausedInEveryGovernorMode(t *testing.T) {
-	for level := 2; level <= 6; level++ {
+func TestOperabilityAgentsArePausedInEveryGovernorModeAtEligibleLevels(t *testing.T) {
+	for level := 5; level <= 6; level++ {
 		pack, err := ACMMPackByLevel(level)
 		if err != nil {
 			t.Fatalf("load L%d pack: %v", level, err)

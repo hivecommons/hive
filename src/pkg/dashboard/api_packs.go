@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/config"
 	"github.com/kubestellar/hive/pkg/hooks"
 )
@@ -116,6 +117,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	if agentsDir == "" {
 		return nil, fmt.Errorf("agents_dir not configured")
 	}
+	s.deps.AgentMgr.SetACMMLevel(level)
+	removedByGate := s.removeAgentsUnavailableAtLevel(level, agentsDir)
 
 	var created []string
 	var skipped []string
@@ -218,6 +221,15 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			} else {
 				skipped = append(skipped, pa.Name)
 			}
+			if _, err := s.deps.AgentMgr.GetStatus(pa.Name); err != nil {
+				s.deps.AgentMgr.AddAgent(pa.Name, existing)
+				if !pa.OnDemand && existing.Enabled {
+					if err := s.deps.AgentMgr.Start(s.deps.Ctx, pa.Name); err != nil {
+						s.logger.Warn("failed to start reconciled agent", "agent", pa.Name, "error", err)
+					}
+				}
+				created = append(created, pa.Name)
+			}
 			continue
 		}
 
@@ -283,7 +295,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// path, switching between levels whose packs differ only in cadences (no new
 	// agent) kept the previous level's cadences — including a stale SURGE=pause —
 	// so the hive stopped kicking agents after a level switch.
-	isFirstApplyOrExpansion := len(created) > 0 || forceGovernor
+	isFirstApplyOrExpansion := len(created) > 0 || len(removedByGate) > 0 || forceGovernor
 	governorChanges := &GovernorChanges{}
 
 	if pack.Governor.EvalIntervalS > 0 && isFirstApplyOrExpansion {
@@ -357,7 +369,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		}
 	}
 
-	if len(created) > 0 {
+	if len(created) > 0 || len(removedByGate) > 0 {
 		s.reInitSubsystems()
 	}
 
@@ -382,7 +394,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// field report, so also list WHICH agents were tombstoned (deleted by the operator
 	// and NOT re-created) vs skipped (already present) — a grep by agent name against
 	// this single line answers "did the pack try to re-add the agent I removed?".
-	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "tombstoned_agents", tombstoned, "skipped_agents", skipped)
+	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "gate_removed", len(removedByGate), "tombstoned_agents", tombstoned, "skipped_agents", skipped)
 	if len(tombstoned) > 0 {
 		// Say it plainly in the log too: an operator reading "this level has 6
 		// agents but I see 4" needs the reason, not a silent gap.
@@ -410,6 +422,33 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		return result, fmt.Errorf("failed to persist %d pack agent(s): %s", len(createErrs), strings.Join(createErrs, "; "))
 	}
 	return result, nil
+}
+
+func (s *Server) removeAgentsUnavailableAtLevel(level int, agentsDir string) []string {
+	var removed []string
+	for name := range s.deps.Config.Agents {
+		if agent.AgentAvailableAtACMMLevel(name, level) {
+			continue
+		}
+		delete(s.deps.Config.Agents, name)
+		if agentsDir != "" {
+			if err := config.RemoveAgentFile(agentsDir, name); err != nil {
+				s.logger.Warn("failed to remove below-level agent overlay", "agent", name, "level", level, "error", err)
+			}
+		}
+		if s.deps.AgentMgr != nil {
+			s.deps.AgentMgr.RemoveAgent(name)
+		}
+		for modeName, mode := range s.deps.Config.Governor.Modes {
+			if mode.Cadences != nil {
+				delete(mode.Cadences, name)
+				s.deps.Config.Governor.Modes[modeName] = mode
+			}
+		}
+		removed = append(removed, name)
+	}
+	sort.Strings(removed)
+	return removed
 }
 
 func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {

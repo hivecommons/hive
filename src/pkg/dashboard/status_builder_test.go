@@ -45,6 +45,79 @@ func TestParseCadenceDuration(t *testing.T) {
 	}
 }
 
+func TestOperabilityAgentsHiddenFromDashboardBelowL5(t *testing.T) {
+	level := 3
+	cfg := &config.Config{
+		ACMMLevel: &level,
+		Agents: map[string]config.AgentConfig{
+			"scanner":    {Backend: "copilot", Enabled: true},
+			"telemetry":  {Backend: "copilot", Enabled: true},
+			"operations": {Backend: "copilot", Enabled: true},
+		},
+		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
+			"idle": {
+				Cadences: map[string]config.Cadence{
+					"scanner":    "4h",
+					"telemetry":  "4h",
+					"operations": "4h",
+				},
+			},
+		}},
+	}
+	statuses := map[string]*agent.AgentProcess{
+		"scanner":    {Name: "scanner", Config: cfg.Agents["scanner"]},
+		"telemetry":  {Name: "telemetry", Config: cfg.Agents["telemetry"]},
+		"operations": {Name: "operations", Config: cfg.Agents["operations"]},
+	}
+
+	if got := agentNamesFromConfigured(buildConfiguredAgents(cfg)); containsAny(got, "telemetry", "operations") {
+		t.Fatalf("configured agents below L5 = %v, want no telemetry/operations", got)
+	}
+	if got := agentNamesFromFrontend(buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})); containsAny(got, "telemetry", "operations") {
+		t.Fatalf("frontend agents below L5 = %v, want no telemetry/operations", got)
+	}
+	if got := agentNamesFromCadence(buildCadenceMatrix(cfg, statuses)); containsAny(got, "telemetry", "operations") {
+		t.Fatalf("cadence matrix below L5 = %v, want no telemetry/operations", got)
+	}
+}
+
+func agentNamesFromConfigured(in []FrontendConfiguredAgent) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		out = append(out, a.Name)
+	}
+	return out
+}
+
+func agentNamesFromFrontend(in []FrontendAgent) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		out = append(out, a.Name)
+	}
+	return out
+}
+
+func agentNamesFromCadence(in []FrontendCadence) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		out = append(out, a.Agent)
+	}
+	return out
+}
+
+func containsAny(names []string, needles ...string) bool {
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		seen[name] = true
+	}
+	for _, needle := range needles {
+		if seen[needle] {
+			return true
+		}
+	}
+	return false
+}
+
 func TestComputeNextKick(t *testing.T) {
 	// off cadence
 	result := computeNextKick(nil, "off")

@@ -117,6 +117,30 @@ func TestApplyPackReconcilesOrphanAgent(t *testing.T) {
 	}
 }
 
+func TestApplyPackRestartsEligibleOperabilityAgentsAfterDowngrade(t *testing.T) {
+	srv := newFullServer(t)
+	if _, err := srv.ApplyPack(5); err != nil {
+		t.Fatalf("ApplyPack(5): %v", err)
+	}
+	if _, err := srv.deps.AgentMgr.GetStatus("telemetry"); err != nil {
+		t.Fatalf("telemetry should be instantiated at L5: %v", err)
+	}
+
+	if _, err := srv.ApplyPack(3); err != nil {
+		t.Fatalf("ApplyPack(3): %v", err)
+	}
+	if _, err := srv.deps.AgentMgr.GetStatus("telemetry"); err == nil {
+		t.Fatal("telemetry should be retired below L5")
+	}
+
+	if _, err := srv.ApplyPack(5); err != nil {
+		t.Fatalf("ApplyPack(5) after downgrade: %v", err)
+	}
+	if _, err := srv.deps.AgentMgr.GetStatus("telemetry"); err != nil {
+		t.Fatalf("stale telemetry config should be re-instantiated at L5: %v", err)
+	}
+}
+
 // TestSetLevelFailsWhenRosterReconcileFails locks in the fix for the decoupling
 // bug: PUT /api/packs/level must NOT report success when the roster could not
 // be reconciled to the requested level. Previously it wrote acmm_level, then
