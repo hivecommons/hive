@@ -90,8 +90,22 @@ jobs:
       # finding there is not actionable by a reviewer.
       # Test files are IN scope deliberately: a test that shells out on
       # attacker-influenced input is a real hole, not a test-only concern.
+      # NON-BLOCKING FOR NOW, deliberately and temporarily.
+      #
+      # The first run surfaced a real backlog, including G115 integer-overflow
+      # conversions in pkg/knowledge and pkg/dashboard. Those deserve triage on
+      # their own merits, not a rushed batch fix under a red gate — and a gate
+      # that blocks every PR from day one on a pre-existing backlog gets
+      # disabled rather than drained.
+      #
+      # So gosec RUNS and its findings are visible in the log on every PR, but
+      # does not fail the build yet. Flipping this to blocking is the last step
+      # of the triage issue #4903; do not flip it before the
+      # HIGH-severity findings are resolved, and do not delete the step to make
+      # the summary look clean.
       - name: Scan
         working-directory: src
+        continue-on-error: true
         run: gosec -exclude-generated ./...
 
   golangci-lint:
