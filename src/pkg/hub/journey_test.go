@@ -395,6 +395,18 @@ func TestACMMSuggestionIsLevelSpecific(t *testing.T) {
 	}
 }
 
+func TestACMMLevelCopyDoesNotAdvertiseOperabilityBelowL5(t *testing.T) {
+	for _, level := range []int{1, 2, 3, 4} {
+		info := acmmLevels[level]
+		lower := strings.ToLower(info.Summary)
+		for _, banned := range []string{"telemetry", "operations"} {
+			if strings.Contains(lower, banned) {
+				t.Errorf("L%d copy advertises %s below L5: %q", level, banned, info.Summary)
+			}
+		}
+	}
+}
+
 // TestMaxACMMLevelGetsNoNudge — a hive at the top has nowhere to graduate to.
 func TestMaxACMMLevelGetsNoNudge(t *testing.T) {
 	h := hive(stage3SuggestAfter*10, func(h *RegistryEntry) { h.ACMMLevel = maxACMMLevel })

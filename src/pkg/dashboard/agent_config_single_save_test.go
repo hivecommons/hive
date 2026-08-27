@@ -122,12 +122,14 @@ func TestModalScrollContainment(t *testing.T) {
 		`.config-body [style*="overflow-y: auto"],`,
 		// The Prompt Template tab body itself is a flex column that can host
 		// nested scrollers without passing wheel/touch chains to the page.
-		"height:100%;min-height:0;overscroll-behavior:contain;overscroll-behavior-y:contain",
+		`id="prompt-template-tab" style="display:flex;flex-direction:column;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain`,
 		// Inline containment on the editor, preview, and variable picker, so
 		// the containment holds even if the element is restyled inline.
 		"resize:vertical;white-space:pre;tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain",
 		"display:none;flex:1;min-height:300px;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain",
 		"max-height:120px;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain",
+		`id="import-paste-input" rows="20" style="width:100%;font-family:var(--font-mono);font-size:0.75rem;resize:vertical;min-height:300px;overscroll-behavior:contain;overscroll-behavior-y:contain`,
+		`tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain">Loading...</textarea>`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q — modal scroll containment regressed (#2766)", snippet)
@@ -144,6 +146,19 @@ func TestModalScrollContainment(t *testing.T) {
 	}
 	if !strings.Contains(html[idx:idx+end], "overscroll-behavior: contain;") {
 		t.Error(".config-body rule is missing overscroll-behavior: contain — modal body scroll chains to the page")
+	}
+	for _, rule := range []string{".config-pre {", ".config-stats-list {"} {
+		idx := strings.Index(html, rule)
+		if idx < 0 {
+			t.Fatalf("index.html has no %s rule", rule)
+		}
+		end := strings.Index(html[idx:], "}")
+		if end < 0 {
+			t.Fatalf("%s rule is unterminated", rule)
+		}
+		if !strings.Contains(html[idx:idx+end], "overscroll-behavior: contain;") {
+			t.Errorf("%s rule is missing own-rule overscroll containment", rule)
+		}
 	}
 }
 

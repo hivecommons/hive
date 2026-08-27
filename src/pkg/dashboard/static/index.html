@@ -1791,7 +1791,11 @@
     /* compact stat-row inputs — size step re-declared after the input recipe */
     /* .btn-sm / .btn-danger / .btn-add — ghost/danger/secondary buttons (system recipe) */
     .btn-sm:disabled { opacity: 0.3; cursor: default; }
-    .config-stats-list { max-height: 400px; overflow-y: auto; padding-right: 12px; }
+    .config-stats-list {
+      max-height: 400px; overflow-y: auto; padding-right: 12px;
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
+    }
 
     .config-info {
       display: inline-flex; align-items: center; justify-content: center;
@@ -1846,6 +1850,8 @@
       border-radius: 6px; padding: 12px; font-size: 0.75rem;
       overflow-x: auto; white-space: pre-wrap; color: var(--muted);
       max-height: 300px; overflow-y: auto;
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
     }
     .config-pre-fill {
       max-height: calc(85vh - 220px); min-height: 200px;
@@ -15913,7 +15919,7 @@ function burnAreaChart() {
         '</div>' +
         '<div class="config-field" style="margin-bottom:12px">' +
           '<label>Or paste agent definition</label>' +
-          '<textarea id="import-paste-input" rows="20" style="width:100%;font-family:var(--font-mono);font-size:0.75rem;resize:vertical;min-height:300px" placeholder="apiVersion: hive.kubestellar.io/v1\nkind: AgentDefinition\n..."></textarea>' +
+          '<textarea id="import-paste-input" rows="20" style="width:100%;font-family:var(--font-mono);font-size:0.75rem;resize:vertical;min-height:300px;overscroll-behavior:contain;overscroll-behavior-y:contain" placeholder="apiVersion: hive.kubestellar.io/v1\nkind: AgentDefinition\n..."></textarea>' +
           '<div style="text-align:right;margin-top:6px"><button data-action="previewImportFromPaste" style="padding:6px 16px;border-radius:6px;cursor:pointer;font-weight:600;border:none;background:var(--cyan);color:var(--bg)">Preview</button></div>' +
         '</div>' +
         '<div id="import-preview" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:16px">' +
@@ -18563,7 +18569,7 @@ function burnAreaChart() {
       const gen = (_configState.data && _configState.data.general) || {};
       const ps = gen.promptSource || {};
       return `
-        <div style="display:flex;flex-direction:column;height:100%;min-height:0;overscroll-behavior:contain;overscroll-behavior-y:contain">
+        <div id="prompt-template-tab" style="display:flex;flex-direction:column;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
         <div id="${srcId}" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:10px;flex-shrink:0">
           <div style="font-size:0.7rem;font-weight:600;color:var(--text);margin-bottom:6px">Source files <span style="font-weight:400;color:var(--muted)">(edit these on your fork)</span></div>
         </div>
@@ -18751,13 +18757,13 @@ function burnAreaChart() {
           })
           .catch(function() {});
       }
-      return '<div style="display:flex;flex-direction:column;height:100%">'
+      return '<div style="display:flex;flex-direction:column;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">'
         + '<p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">Portable agent definition in YAML format. Use this to share agents across hive instances.</p>'
         + '<div style="display:flex;gap:6px;margin-bottom:8px;flex-shrink:0">'
         + '<button data-action="copyExportYaml" style="font-size:0.72rem;padding:4px 14px;border-radius:4px;cursor:pointer;font-weight:600;border:none;background:var(--cyan);color:var(--bg)">Copy to Clipboard</button>'
         + '<button data-action="downloadExportYaml" style="font-size:0.72rem;padding:4px 14px;border-radius:4px;cursor:pointer;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text)">Download YAML</button>'
         + '</div>'
-        + '<textarea id="' + yamlId + '" readonly style="flex:1;min-height:300px;font-family:var(--font-mono);font-size:0.75rem;padding:12px;background:var(--terminal-bg);color:var(--terminal-fg);border:1px solid var(--terminal-line);border-radius:6px;resize:vertical;white-space:pre;tab-size:2">Loading...</textarea>'
+        + '<textarea id="' + yamlId + '" readonly style="flex:1;min-height:300px;font-family:var(--font-mono);font-size:0.75rem;padding:12px;background:var(--terminal-bg);color:var(--terminal-fg);border:1px solid var(--terminal-line);border-radius:6px;resize:vertical;white-space:pre;tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain">Loading...</textarea>'
         + '</div>';
     }
 
@@ -18887,7 +18893,7 @@ function burnAreaChart() {
       const opts = PROMPT_HISTORY_WINDOWS.map(function(w) {
         return '<option value="' + w.hours + '"' + (w.hours === selected ? ' selected' : '') + '>' + esc(w.label) + '</option>';
       }).join('');
-      return `<div style="display:flex;flex-direction:column;height:100%;min-height:0;overscroll-behavior:contain;overscroll-behavior-y:contain">
+      return `<div style="display:flex;flex-direction:column;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">Prompts sent to this agent — fully expanded, all variables resolved and pipeline data injected. Newest first.</p>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0">
           <label for="prompt-history-window" style="font-size:0.75rem;color:var(--muted)">Window</label>

@@ -225,9 +225,9 @@ type acmmLevelInfo struct {
 // moving there entails. Kept in sync with src/pkg/config/packs/level-*.yaml.
 var acmmLevels = map[int]acmmLevelInfo{
 	1: {"Inception", "an interactive brainstorm agent turns ideas into structured facts and scaffolding, with every action human-approved"},
-	2: {"Advisory", "seven agents publish advisory findings, including opt-in telemetry and operations agents that start paused — still no GitHub writes"},
+	2: {"Advisory", "five agents publish advisory findings — still no GitHub writes"},
 	3: {"Quality-Gated", "the quality agent starts opening issues and hold-gated PRs about testing gaps, and ci-maintainer joins to watch build health — nothing merges without you"},
-	4: {"Security-Aware", "delivery agents file GitHub issues in their lanes and sec-check joins for vulnerabilities, while telemetry and operations remain advisory and paused"},
+	4: {"Security-Aware", "delivery agents file GitHub issues in their lanes and sec-check joins for vulnerabilities"},
 	5: {"Semi-Autonomous", "agents open hold-gated pull requests as well as issues; architect and strategist join, while telemetry and operations are available paused for deliberate opt-in"},
 	6: {"Fully Autonomous", "agents can auto-merge on green CI at the highest trust setting; outreach joins, while telemetry and operations remain paused until deliberately enabled"},
 }
