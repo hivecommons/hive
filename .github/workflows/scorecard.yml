@@ -4,7 +4,10 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   push:
-    branches: [ "dd", "main", "v4" ]
+    # NOTE: the reusable scorecard action only supports the repository default
+    # branch (v4); running on dd pushes fails structurally with
+    # "refs/heads/dd not supported with push event".
+    branches: [ "main", "v4" ]
   workflow_dispatch:
 
 permissions:
