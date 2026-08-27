@@ -739,6 +739,11 @@ type HeartbeatPayload struct {
 	RepoActivity            []RepoActivityWire `json:"repo_activity,omitempty"`
 	RepoActivityCollectedAt string             `json:"repo_activity_collected_at,omitempty"`
 	RepoActivityWindowHours int                `json:"repo_activity_window_hours,omitempty"`
+	// RepoActivityCountWindowHours is the lookback the per-repo counts were
+	// accumulated over. RepoActivityWindowHours above is the FRESHNESS window
+	// the health verdict uses; the two differ by 28x, so a rate computed
+	// against the freshness window overstates activity (#4860).
+	RepoActivityCountWindowHours int `json:"repo_activity_count_window_hours,omitempty"`
 
 	// --- Quadrant signals -------------------------------------------------
 	// Cheap, already-computed spoke metrics forwarded so the hub can score the

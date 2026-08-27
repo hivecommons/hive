@@ -244,3 +244,48 @@ func TestHandleRepoActivityReportsPhaseOneHonesty(t *testing.T) {
 		t.Fatal("limitations must be explicit so activity is not mistaken for cost")
 	}
 }
+
+// TestActivitySnapshotWindowsAreDistinct pins the two windows apart. window_hours
+// is the hub's FRESHNESS window; count_window_hours is the lookback Count was
+// accumulated over. #4860: the snapshot advertised only the 12h freshness value
+// while counting over 14d, so any consumer deriving a rate overstated activity
+// by 28x. Re-coupling them (or dropping count_window_hours) must fail here
+// rather than silently reappear as a wrong number on a cost row later.
+func TestActivitySnapshotWindowsAreDistinct(t *testing.T) {
+	now := time.Now().UTC()
+	dir := t.TempDir()
+	p := writeAuditFixture(t, dir, []AuditEntry{{
+		Timestamp: rfc3339(now.Add(-1 * time.Hour)),
+		Action:    "agent_pr_created",
+		Detail:    "repo=o/r, number=1",
+		Agent:     "quality",
+	}})
+	ac := NewActivityCollector(&AuditLog{}, p, nil)
+	ac.nowFn = func() time.Time { return now }
+	ac.collect()
+
+	snap, ready := ac.Snapshot()
+	if !ready {
+		t.Fatal("snapshot not ready")
+	}
+	if snap.WindowHours != activityHealthWindowHours {
+		t.Errorf("WindowHours = %d, want %d (the freshness window)",
+			snap.WindowHours, activityHealthWindowHours)
+	}
+	wantCount := int(activityWindow / time.Hour)
+	if snap.CountWindowHours != wantCount {
+		t.Errorf("CountWindowHours = %d, want %d (the accumulation window)",
+			snap.CountWindowHours, wantCount)
+	}
+	// The bug was reporting one value for both. If a future edit makes them
+	// equal, the 28x rate error is back and this is the signal.
+	if snap.CountWindowHours == snap.WindowHours {
+		t.Fatalf("count and freshness windows must stay distinct; both = %d", snap.WindowHours)
+	}
+	// The count window must cover the freshness window, or a "fresh" event
+	// could fall outside the counted range.
+	if snap.CountWindowHours < snap.WindowHours {
+		t.Fatalf("CountWindowHours (%d) must be >= WindowHours (%d)",
+			snap.CountWindowHours, snap.WindowHours)
+	}
+}

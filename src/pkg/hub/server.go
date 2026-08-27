@@ -325,9 +325,10 @@ type RegistryEntry struct {
 	// the last real summary. RepoActivityCollectedAt / RepoActivityWindowHours
 	// travel with it so the hub can age the summary and know the intended
 	// freshness window (see health_verdict.go).
-	RepoActivity            []RepoActivityWire `json:"repoActivity,omitempty"`
-	RepoActivityCollectedAt time.Time          `json:"repoActivityCollectedAt,omitempty"`
-	RepoActivityWindowHours int                `json:"repoActivityWindowHours,omitempty"`
+	RepoActivity                 []RepoActivityWire `json:"repoActivity,omitempty"`
+	RepoActivityCollectedAt      time.Time          `json:"repoActivityCollectedAt,omitempty"`
+	RepoActivityWindowHours      int                `json:"repoActivityWindowHours,omitempty"`
+	RepoActivityCountWindowHours int                `json:"repoActivityCountWindowHours,omitempty"`
 
 	// Quadrant signals reported by the spoke (nil = not reported). These back
 	// the per-hive quadrant score; see quadrant.go for how each is used and
@@ -1849,9 +1850,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Per-repo output activity (hive-health): sanitized/clamped, never the
 		// raw payload. The collected-at + window travel with it so the verdict
 		// can age the summary.
-		RepoActivity:            sanitizeRepoActivity(payload.RepoActivity),
-		RepoActivityCollectedAt: parseHeartbeatTime(payload.RepoActivityCollectedAt),
-		RepoActivityWindowHours: clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
+		RepoActivity:                 sanitizeRepoActivity(payload.RepoActivity),
+		RepoActivityCollectedAt:      parseHeartbeatTime(payload.RepoActivityCollectedAt),
+		RepoActivityWindowHours:      clampInt(payload.RepoActivityWindowHours, 0, repoActivityMaxWindowHours),
+		RepoActivityCountWindowHours: clampInt(payload.RepoActivityCountWindowHours, 0, repoActivityMaxWindowHours),
 	}
 
 	// Fleet error-rate history (#3995, phase 2c): fold this beat's rolling
@@ -2072,6 +2074,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				entry.RepoActivity = h.RepoActivity
 				entry.RepoActivityCollectedAt = h.RepoActivityCollectedAt
 				entry.RepoActivityWindowHours = h.RepoActivityWindowHours
+				entry.RepoActivityCountWindowHours = h.RepoActivityCountWindowHours
 			}
 			// Advisory post time survives a spoke restart — see
 			// carryAdvisoryPostTime for why that is the difference between a

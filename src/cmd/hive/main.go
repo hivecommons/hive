@@ -3546,9 +3546,11 @@ func main() {
 			var repoActivity []hub.RepoActivityWire
 			repoActivityCollectedAt := ""
 			repoActivityWindowHours := 0
+			repoActivityCountWindowHours := 0
 			if asnap, ok := activityCollector.Snapshot(); ok {
 				repoActivity = buildRepoActivityWire(asnap.Repos)
 				repoActivityWindowHours = asnap.WindowHours
+				repoActivityCountWindowHours = asnap.CountWindowHours
 				if t := activityCollector.CollectedAt(); !t.IsZero() {
 					repoActivityCollectedAt = t.UTC().Format(time.RFC3339)
 				}
@@ -3870,13 +3872,14 @@ func main() {
 					}
 					return hub.CollectClusterHealth(logger)
 				}(),
-				PRsMerged90d:            prsMerged,
-				PRsRejected90d:          prsRejected,
-				CVEsClosed:              cvesClosed,
-				FleetStatsCollectedAt:   fleetStatsCollectedAt,
-				RepoActivity:            repoActivity,
-				RepoActivityCollectedAt: repoActivityCollectedAt,
-				RepoActivityWindowHours: repoActivityWindowHours,
+				PRsMerged90d:                 prsMerged,
+				PRsRejected90d:               prsRejected,
+				CVEsClosed:                   cvesClosed,
+				FleetStatsCollectedAt:        fleetStatsCollectedAt,
+				RepoActivity:                 repoActivity,
+				RepoActivityCollectedAt:      repoActivityCollectedAt,
+				RepoActivityWindowHours:      repoActivityWindowHours,
+				RepoActivityCountWindowHours: repoActivityCountWindowHours,
 				// Report WHICH App key we hold, never the key. The hub compares
 				// this against its per-cluster key and pushes a correction only
 				// on a mismatch, so a spoke already holding the right key costs

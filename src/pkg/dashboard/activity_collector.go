@@ -28,6 +28,11 @@ const activityWindow = 14 * 24 * time.Hour
 
 // activityHealthWindowHours is advertised to the hub as the intended freshness
 // window (the hub still computes recency from NewestAt).
+//
+// This is NOT the window Count is accumulated over — that is activityWindow
+// (14d). The snapshot reports both: window_hours (this constant, freshness)
+// and count_window_hours (activityWindow). They are 28x apart, so a consumer
+// that divides Count by window_hours to get a rate overstates activity by 28x.
 const activityHealthWindowHours = 12
 
 // Audit action names the collector counts as OUTPUT to a work source. Kept in
@@ -87,8 +92,17 @@ type AgentRepoActivity struct {
 type ActivitySnapshot struct {
 	Repos        []RepoActivity     `json:"repos"`
 	Unattributed ActivityActionStat `json:"unattributed"`
-	WindowHours  int                `json:"window_hours"`
-	CollectedAt  time.Time          `json:"collected_at"`
+	// WindowHours is the FRESHNESS window the hub's health verdict uses. It is
+	// deliberately NOT the window Count was accumulated over — see
+	// CountWindowHours. Kept under its original name because the hub registry
+	// and heartbeat already carry this field with this meaning.
+	WindowHours int `json:"window_hours"`
+	// CountWindowHours is the lookback the per-repo Count values were actually
+	// accumulated over (activityWindow). A consumer deriving a RATE must divide
+	// by this, not by WindowHours: they differ by 28x, so using the freshness
+	// window would overstate activity by that factor.
+	CountWindowHours int       `json:"count_window_hours"`
+	CollectedAt      time.Time `json:"collected_at"`
 }
 
 // auditReader is the subset of *AuditLog the collector needs, so it can be
@@ -286,7 +300,7 @@ func (ac *ActivityCollector) collect() {
 	sort.Slice(repos, func(i, j int) bool { return repos[i].Repo < repos[j].Repo })
 
 	ac.mu.Lock()
-	ac.snap = ActivitySnapshot{Repos: repos, Unattributed: unattributed, WindowHours: activityHealthWindowHours, CollectedAt: now}
+	ac.snap = ActivitySnapshot{Repos: repos, Unattributed: unattributed, WindowHours: activityHealthWindowHours, CountWindowHours: int(activityWindow / time.Hour), CollectedAt: now}
 	ac.collectedAt = now
 	ac.ready = true
 	ac.persistLocked()
@@ -343,6 +357,8 @@ func (s *Server) handleRepoActivity(w http.ResponseWriter, r *http.Request) {
 		Limitations: []string{
 			"Counts are recorded audit facts only; no token cost is attributed in this phase.",
 			"Entries without repo= are reported as unattributed and are never spread across repos.",
+			"window_hours is the freshness window used by the hub health verdict; per-repo counts are accumulated over count_window_hours. Divide by count_window_hours for a rate — window_hours would overstate it by 28x.",
+			"Counts are bounded by audit-log retention: rotated and compressed backups are read, but only MaxBackups of them are kept, so a busy hive's effective lookback can be shorter than count_window_hours.",
 		},
 	})
 }
