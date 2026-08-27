@@ -445,4 +445,127 @@ if output="$(
   exit 1
 fi
 
-echo "contributor-agent codex contract tests passed"
+# ── claude host-state denials (#4918) ───────────────────────────────────
+#
+# The claude family runs permissions-bypassed on the operator's own host. #4918
+# is what that cost: an agent running an assigned repo's test suite issued
+# `rpm-ostree kargs --append-if-missing=...` against the operator's real
+# deployment, and was stopped only by lacking privilege. These cases pin the
+# denials that now sit on that path.
+
+claude_flags_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=claude \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+# The bypass flags stay — an unattended agent that stops to ask permission just
+# hangs — but the host-state denials ride alongside them.
+case "$claude_flags_output" in
+  *"backend_perm_flag=--dangerously-skip-permissions --permission-mode bypassPermissions --disallowed-tools "* ) ;;
+  *)
+    echo "expected claude to carry host-state denials by default; got:" >&2
+    echo "$claude_flags_output" >&2
+    exit 1
+    ;;
+esac
+# The command from the incident specifically.
+case "$claude_flags_output" in
+  *"Bash(rpm-ostree:*)"* ) ;;
+  *)
+    echo "expected claude denials to cover rpm-ostree, the command in #4918; got:" >&2
+    echo "$claude_flags_output" >&2
+    exit 1
+    ;;
+esac
+# rpm-ostree reached polkit without sudo, so escalation denials alone are not
+# the fix — but they must be there too, or `sudo rpm-ostree` walks around it.
+case "$claude_flags_output" in
+  *"Bash(sudo:*)"*"Bash(pkexec:*)"* ) ;;
+  *)
+    echo "expected claude denials to cover privilege escalation; got:" >&2
+    echo "$claude_flags_output" >&2
+    exit 1
+    ;;
+esac
+
+# THE WORD-SPLIT CONTRACT. agent-launch.sh does `read -r -a PERM_ARGS <<< "$PERM_FLAG"`,
+# so the pattern list must be ONE argv word. A space anywhere in it would arrive
+# as separate arguments and silently deny nothing — flag present, policy absent.
+claude_perm_line="$(printf '%s\n' "$claude_flags_output" | grep '^backend_perm_flag=' | head -1)"
+claude_perm_value="${claude_perm_line#backend_perm_flag=}"
+read -r -a claude_perm_args <<< "$claude_perm_value"
+if [[ "${#claude_perm_args[@]}" -ne 5 ]]; then
+  echo "expected claude perm flags to word-split into exactly 5 argv words; got ${#claude_perm_args[@]}:" >&2
+  printf '  [%s]\n' "${claude_perm_args[@]}" >&2
+  exit 1
+fi
+case "${claude_perm_args[4]}" in
+  *"Bash(rpm-ostree:*)"*"Bash(efibootmgr:*)"* ) ;;
+  *)
+    echo "expected the whole deny list to survive word-splitting as one argv word; got:" >&2
+    echo "  ${claude_perm_args[4]}" >&2
+    exit 1
+    ;;
+esac
+
+# litellm launches the claude binary, so it must be confined identically.
+# HIVE_LITELLM_ENDPOINT is required for this backend to resolve at all — without
+# it contributor-agent.sh errors out before it ever prints a flag string.
+litellm_flags_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_LITELLM_ENDPOINT="https://litellm.test:4000" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=litellm \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+case "$litellm_flags_output" in
+  *"Bash(rpm-ostree:*)"* ) ;;
+  *)
+    echo "expected litellm (which launches the claude binary) to carry the same denials; got:" >&2
+    echo "$litellm_flags_output" >&2
+    exit 1
+    ;;
+esac
+
+# The opt-out restores the pre-#4918 posture, and must drop the denials
+# entirely rather than leaving a dangling --disallowed-tools with no argument.
+claude_bypass_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE=1 \
+    HIVE_WORKSPACE_DIR="${WORK_DIR}/workspace" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=claude \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+case "$claude_bypass_output" in
+  *"backend_perm_flag=--dangerously-skip-permissions --permission-mode bypassPermissions"* ) ;;
+  *)
+    echo "expected the claude opt-out to restore the plain bypass posture; got:" >&2
+    echo "$claude_bypass_output" >&2
+    exit 1
+    ;;
+esac
+case "$claude_bypass_output" in
+  *"--disallowed-tools"* )
+    echo "claude opt-out must drop --disallowed-tools entirely; got:" >&2
+    echo "$claude_bypass_output" >&2
+    exit 1
+    ;;
+esac
+
+echo "contributor-agent codex + claude contract tests passed"

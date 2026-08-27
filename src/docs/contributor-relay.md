@@ -113,6 +113,15 @@ this, omits `--add-dir`, and warns on stderr rather than corrupting the argv;
 the sandbox posture still applies, but the workspace is not granted. Move the
 workspace to a path without spaces.
 
+Claude-family host-state denials: `claude` and `litellm` run permissions-bypassed
+on the contributor's own machine, so hive denies privilege escalation
+(`sudo`, `pkexec`, `doas`, `su`) and host boot/deployment tools (`rpm-ostree`,
+`bootc`, `ostree`, `grubby`, `bootctl`, `efibootmgr`) on that path — an agent
+running an assigned repo's test suite reached a contributor's bootloader
+otherwise (#4918). Repo work is unaffected. `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE=1`
+restores the old posture and is the claude analogue of the Codex bypass below;
+prefer leaving it unset.
+
 Codex config-key compatibility: `approvals_reviewer` is passed with `-c`, so it
 depends on the installed Codex release accepting that key. If a version rejects
 it at startup, set `HIVE_CODEX_APPROVALS_REVIEWER=` (empty) to drop the key

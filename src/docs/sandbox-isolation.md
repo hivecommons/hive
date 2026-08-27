@@ -2,7 +2,16 @@
 
 ## Threat model
 
-Hive agents are untrusted code executors: prompts, tool output, and cloned repositories can all contain hostile instructions. The safe target is therefore **no credentials in the agent sandbox** and a network policy that is as close to default-deny as the configured inference runtime allows. If an agent is compromised, it can only modify its mounted workspace; it cannot receive GitHub tokens or push directly.
+Hive agents are untrusted code executors: prompts, tool output, and cloned repositories can all contain hostile instructions. The safe target is therefore **no credentials in the agent sandbox** and a network policy that is as close to default-deny as the configured inference runtime allows.
+
+Two halves of that target hold differently, and the difference matters:
+
+- **Credentials and pushes are constrained on every path.** No agent receives a GitHub token or pushes directly; authorship goes through the App-gated `gh` wrapper and the push broker.
+- **Workspace confinement holds only on the sandbox path below.** "It can only modify its mounted workspace" is a property of the Podman sandbox, not of hive generally. On the default tmux path there is no container: the backend CLI runs as the operator's own user, on the operator's own host, with nothing scoping its filesystem access to the workspace.
+
+**#4918 is what that costs in practice, and it did not require a compromise.** An agent doing correct work on an assigned third-party repo ran that repo's own test suite; a latent defect in two of its tests let a hook escape its stubs and issue `rpm-ostree kargs --append-if-missing=...` against the operator's real deployment. Nothing was written, and the only reason is that the process happened to lack privilege. Benign behaviour was a sufficient precondition, so this is a routine exposure rather than an exceptional one.
+
+The claude-family launch path now carries host-state denials for exactly this class — privilege escalation (`sudo`, `pkexec`, `doas`, `su`) and the boot/deployment tools that reach polkit without needing escalation of their own (`rpm-ostree`, `bootc`, `ostree`, `grubby`, `bootctl`, `efibootmgr`), matching the workspace-write posture Codex has had since #3512. That is a floor, not a sandbox: it names commands rather than enforcing a boundary, and an agent still runs unconfined against everything not on the list. **Operators running hive on a machine they care about should enable the sandbox below.**
 
 ## Current wiring
 

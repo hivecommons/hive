@@ -2564,7 +2564,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// Deny ALL GitHub MCP write tools in EVERY mode: agents author via the
 			// App-gated gh wrapper, never as the user via the MCP. Mode governs the
 			// gh-wrapper/proxy layer only, not what the MCP may write.
-			launchCmd = base + claudeGitHubWriteDenyFlags
+			launchCmd = base + claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()
 		case "copilot":
 			// model arrives here already canonicalized by normalizeModelName
 			// (CanonicalizeCopilotModel: separator drift like claude-fable.5 is
@@ -7260,6 +7260,67 @@ const claudeGitHubWriteDenyFlags = " --disallowed-tools 'mcp__github__create_pul
 	" --disallowed-tools 'mcp__github__create_issue'" +
 	" --disallowed-tools 'mcp__github__update_issue'" +
 	" --disallowed-tools 'mcp__github__add_issue_comment'"
+
+// claudeHostStateDenyTools names the commands an agent editing a repo workspace
+// never needs and that reach the operator's own machine. It mirrors
+// CLAUDE_HOST_DENY_TOOLS in config/backends.conf so a pod agent and a relay
+// agent are confined identically — the same relay/pod parity bobLaunchCmd below
+// is written for.
+//
+// #4918: an agent doing correct work on an assigned third-party repo ran that
+// repo's test suite, a hook escaped its stubs, and `rpm-ostree kargs
+// --append-if-missing=...` was issued against the operator's real deployment.
+// It failed only because the process lacked privilege.
+//
+// rpm-ostree never invoked sudo — it asked polkit directly — so denying
+// escalation alone would not have stopped it. The host-state tools that reach
+// polkit on their own have to be named too.
+//
+// Comma-separated in ONE argv word: the shell path word-splits its flag string
+// (bin/agent-launch.sh), and keeping both paths on the identical spelling is
+// what makes them auditable as one policy.
+var claudeHostStateDenyTools = strings.Join([]string{
+	// Privilege escalation.
+	"Bash(sudo:*)", "Bash(pkexec:*)", "Bash(doas:*)", "Bash(su:*)",
+	// Host boot/deployment state — these need no escalation of their own.
+	"Bash(rpm-ostree:*)", "Bash(bootc:*)", "Bash(ostree:*)",
+	"Bash(grubby:*)", "Bash(bootctl:*)", "Bash(efibootmgr:*)",
+}, ",")
+
+// hostStateBypassEnv is the opt-out, named to match Codex's
+// HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX so the two read alike. An
+// operator who genuinely wants an agent to manage host state sets it and gets
+// the pre-#4918 posture back.
+const hostStateBypassEnv = "HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE"
+
+// claudeHostStateDenyFlags returns the --disallowed-tools fragment, or "" when
+// the operator has explicitly opted out.
+//
+// These are DENIALS, not a permission mode: a match is refused and the agent
+// carries on. Switching the mode instead would make the CLI prompt, and nobody
+// is attached to an unattended pane to answer it. Denials still apply under
+// --dangerously-skip-permissions, which is the same property
+// claudeGitHubWriteDenyFlags above already depends on.
+func claudeHostStateDenyFlags() string {
+	if hostStateBypassRequested(os.Getenv(hostStateBypassEnv)) {
+		return ""
+	}
+	return " --disallowed-tools '" + claudeHostStateDenyTools + "'"
+}
+
+// hostStateBypassRequested mirrors is_truthy() in config/backends.conf exactly.
+// The two launch paths must agree on what "on" means, or an operator who sets
+// the opt-out to "yes" gets a confined relay agent and an unconfined pod agent
+// from the same configuration — the worst outcome, because it looks like it
+// worked.
+func hostStateBypassRequested(value string) bool {
+	switch value {
+	case "1", "true", "TRUE", "yes", "YES", "on", "ON":
+		return true
+	default:
+		return false
+	}
+}
 
 // bobLaunchCmd builds bob's interactive launch command.
 //
