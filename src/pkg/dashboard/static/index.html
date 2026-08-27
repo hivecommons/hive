@@ -12086,6 +12086,39 @@ function burnAreaChart() {
       return avatarProfileLink(username, label, avatarImg(src, px, extraStyle));
     }
 
+    /* identityKeyProvider classifies a raw identity key by its prefix —
+       "google:…" → google, "ibmid:…" → ibmid, "microsoft:…"/"ms:…" →
+       microsoft, anything with no "provider:" prefix (a plain GitHub login,
+       or legacy "github:<login>") → github. Mirrors the hub dashboard's
+       identityProviderFromKey (pkg/hub/saas.go) so the two badges classify a
+       given key identically; kept as a separate copy because this file and
+       the hub dashboard are different bundles with no shared JS module. */
+    function identityKeyProvider(key) {
+      key = String(key || '');
+      if (key.indexOf('github.com/') === 0 || key.indexOf('github:') === 0) return 'github';
+      var m = key.match(/^([a-z][a-z0-9_-]*):/);
+      if (!m) return 'github';
+      return m[1] === 'ms' ? 'microsoft' : m[1];
+    }
+
+    /* accessRowAvatar renders the avatar for one authorized-users row. A
+       GitHub identity keeps the existing linked github.com avatar + profile
+       link. A non-GitHub identity (ibmid/google/microsoft) has no github.com
+       profile to link to — linking one anyway 404s and points at someone
+       else's account by coincidence of URL-shape — so it gets a plain,
+       unlinked initials tile instead. displayName (may be '') seeds the
+       initial; the raw key is the tooltip either way. */
+    function accessRowAvatar(key, displayName, px) {
+      var provider = identityKeyProvider(key);
+      var title = String(key || '') + (displayName ? ' (' + displayName : '') + (displayName ? ')' : '');
+      if (provider === 'github') return linkedAvatar(key, px, title, '', 'margin-right:6px');
+      var initial = esc((displayName || key || '?').trim().charAt(0).toUpperCase() || '?');
+      return '<span title="' + esc(title) + '" style="display:inline-flex;align-items:center;justify-content:center;' +
+        'width:' + px + 'px;height:' + px + 'px;border-radius:50%;margin-right:6px;flex:none;' +
+        'background:var(--line);color:var(--muted);font-size:' + Math.max(10, Math.round(px * 0.5)) + 'px;font-weight:600">' +
+        initial + '</span>';
+    }
+
     /* Rendered avatar sizes, in CSS pixels. The contributor cards and the
        leaderboard rows share a size because they are the same kind of roster;
        the Security tab's Access subsection allowlist is a denser config list. */
@@ -16319,10 +16352,22 @@ function burnAreaChart() {
         }
         listEl.innerHTML = users.map(function(u) {
           var roleCls = u.role === 'owner' ? 'role-owner' : u.role === 'merger' ? 'role-merger' : u.role === 'read-write' ? 'role-read-write' : 'role-read';
+          // u.username is the raw identity key (the actual auth key / allowlist
+          // match — NEVER altered here). u.display_name is an OPTIONAL cosmetic
+          // name the hub resolved (see AuthorizedUserNames); absent for a user
+          // who hasn't completed a login yet, or whose provider returned no
+          // name claim, in which case the raw key is shown exactly as before.
+          var hasName = !!(u.display_name && u.display_name !== u.username);
+          var primary = hasName ? u.display_name : u.username;
+          // The raw key stays reachable even when a friendly name is shown:
+          // the avatar title carries it always, and a muted secondary line
+          // shows it beside the name for support/debugging.
+          var secondary = hasName
+            ? '<span style="display:block;font-size:0.68rem;color:var(--muted);word-break:break-word" title="Auth key">' + esc(u.username) + '</span>'
+            : '';
           return '<div class="config-list-item" style="align-items:center;gap:8px">' +
-            linkedAvatar(u.username, ACCESS_LIST_AVATAR_PX,
-              String(u.username || '') + (u.role ? ' — ' + u.role : ''), '', '') +
-            '<span style="flex:1;font-size:0.85rem">' + esc(u.username) + '</span>' +
+            accessRowAvatar(u.username, u.display_name || '', ACCESS_LIST_AVATAR_PX) +
+            '<span style="flex:1;min-width:0;font-size:0.85rem" title="' + esc(u.username) + '">' + esc(primary) + secondary + '</span>' +
             '<span class="role-badge ' + roleCls + '" style="font-size:0.7rem">' + esc(u.role) + '</span>' +
             '</div>';
         }).join('');

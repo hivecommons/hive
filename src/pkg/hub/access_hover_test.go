@@ -18,11 +18,16 @@ func TestAccessForHive(t *testing.T) {
 
 	// includeNotes is irrelevant here (no user carries notes); false keeps the
 	// entries at their zero contact fields so the equality check below is exact.
+	// DisplayLabel/Provider are always populated now (#identity-display-names):
+	// none of these fixture users carry a DisplayName/Email/FullName/linked
+	// GitHub login, so DisplayLabel falls all the way back to the raw
+	// Username (provisionRequestUserIdentity's documented behavior) and
+	// Provider is "github" (a bare login with no provider prefix).
 	got := accessForHive("h1", users, false)
 	want := []HiveAccessEntry{
-		{Username: "owner1", Role: "owner"},
-		{Username: "adam", Role: "read-write"},
-		{Username: "zoe", Role: "read"},
+		{Username: "owner1", Role: "owner", DisplayLabel: "owner1", Provider: "github"},
+		{Username: "adam", Role: "read-write", DisplayLabel: "adam", Provider: "github"},
+		{Username: "zoe", Role: "read", DisplayLabel: "zoe", Provider: "github"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("accessForHive returned %d entries, want %d: %+v", len(got), len(want), got)

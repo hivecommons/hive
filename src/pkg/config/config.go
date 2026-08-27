@@ -3549,6 +3549,19 @@ type DashboardConfig struct {
 	// Populated on both hub-proxied hosted hives (for the Access view + hub
 	// Manage Access) and standalone direct-route spokes (for device-flow authz).
 	AuthorizedUsers []string `yaml:"authorized_users"`
+	// AuthorizedUserNames is an OPTIONAL, purely cosmetic map from an
+	// AuthorizedUsers entry's raw identity key (the same string before any
+	// ":role" suffix, e.g. "ibmid:5500087VJB" or a plain GitHub login) to a
+	// human-readable display name. It rides alongside AuthorizedUsers — never
+	// inside it — so the identity key used for allowlist matching and grants
+	// (AuthorizedRole, IsDirectRouteAuthzEnabled) is completely unaffected by
+	// this field's presence, absence, or content. Delivered by the hub in the
+	// same heartbeat beat as AuthorizedUsers (mirrors it 1:1) so the read-only
+	// Access tab can render "Jane Doe" instead of a raw IBMid/Google/Microsoft
+	// subject. A key with no entry here (or an empty value) simply has no known
+	// human name yet — the UI falls back to the raw key. omitempty/nil-safe:
+	// existing configs and hubs that never send this round-trip unchanged.
+	AuthorizedUserNames map[string]string `yaml:"authorized_user_names,omitempty"`
 	// HubProxied is true when this hive sits behind the hub's nginx auth-proxy,
 	// which authenticates every request and injects trusted X-Hive-User/X-Hive-Role
 	// headers (hub-reachable-cluster hosted hives). When true the hive TRUSTS those headers and

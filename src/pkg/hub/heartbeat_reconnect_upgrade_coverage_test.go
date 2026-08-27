@@ -98,7 +98,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		gotVisibility = &p
 		mu.Unlock()
 	})
-	onUsers := AuthorizedUsersCallback(func(u []string) {
+	onUsers := AuthorizedUsersCallback(func(u []string, names map[string]string) {
 		mu.Lock()
 		gotUsers = u
 		mu.Unlock()

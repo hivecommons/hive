@@ -2954,9 +2954,20 @@ func (s *Server) handleAuthorizedUsersList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	entries := s.deps.Config.Dashboard.AuthorizedUsers
+	// names is the purely cosmetic key→display-name companion delivered by the
+	// hub's heartbeat (AuthorizedUserNames). It is never consulted for
+	// authorization — only AuthorizedUsers (the raw key) is — so a nil/empty
+	// map here just means every row falls back to its raw key, exactly as
+	// before this field existed.
+	names := s.deps.Config.Dashboard.AuthorizedUserNames
 	type userView struct {
 		Username string `json:"username"`
 		Role     string `json:"role"`
+		// DisplayName is the human-readable name for Username, when the hub
+		// knows one (see AuthorizedUserNames). omitempty: absent means "no
+		// known name", and the UI must render Username (the raw identity key)
+		// instead — never blank, never "undefined".
+		DisplayName string `json:"display_name,omitempty"`
 	}
 	out := make([]userView, 0, len(entries))
 	for i, e := range entries {
@@ -2978,7 +2989,7 @@ func (s *Server) handleAuthorizedUsersList(w http.ResponseWriter, r *http.Reques
 				role = "read"
 			}
 		}
-		out = append(out, userView{Username: name, Role: role})
+		out = append(out, userView{Username: name, Role: role, DisplayName: strings.TrimSpace(names[name])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
 	jsonResponse(w, map[string]any{

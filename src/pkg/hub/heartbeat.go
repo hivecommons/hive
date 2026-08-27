@@ -1062,7 +1062,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// A non-nil slice (even empty) is an authoritative replacement of the
 		// spoke's allowlist; nil means the hub sent nothing, leave it alone.
 		if resp.AuthorizedUsers != nil && onAuthorizedUsers != nil {
-			onAuthorizedUsers(resp.AuthorizedUsers)
+			onAuthorizedUsers(resp.AuthorizedUsers, resp.AuthorizedUserNames)
 		}
 		// A non-nil ProjectConfig means the hub wants the spoke to adopt a newly
 		// claimed project (placeholder assignment); nil means leave it alone.
@@ -2213,6 +2213,18 @@ type HeartbeatResponse struct {
 	// changes propagate automatically. nil means "hub sent nothing" (leave the
 	// spoke's list unchanged); a non-nil (possibly empty) slice replaces it.
 	AuthorizedUsers []string `json:"authorized_users,omitempty"`
+	// AuthorizedUserNames is a PURELY COSMETIC companion to AuthorizedUsers: a
+	// map from each entry's raw identity key (never the "username:role" wire
+	// form — just the key before the ":role" suffix) to a human display name,
+	// so the spoke's read-only Access tab can show "Jane Doe" instead of a raw
+	// "ibmid:5500087VJB"/"google:1078…"/"microsoft:AAAA…" subject. It carries
+	// NO authority — the spoke's allowlist match (AuthorizedRole) reads only
+	// AuthorizedUsers/the key, and this map is never consulted for sign-in.
+	// Sent whenever AuthorizedUsers is (nil means "leave the spoke's copy
+	// unchanged", mirroring AuthorizedUsers' own nil semantics); a key absent
+	// here, or mapped to "", simply has no known name yet and the spoke falls
+	// back to the raw key.
+	AuthorizedUserNames map[string]string `json:"authorized_user_names,omitempty"`
 	// ProjectConfig is the claimed project's real org/repos/ACMM. The hub sets
 	// it (mirroring AuthorizedUsers) when a placeholder hive has been assigned
 	// to a user and the spoke is still reporting its old (placeholder) project.
@@ -2252,7 +2264,7 @@ type SwitchBranchCallback func(tag string)
 // access list ("username:role" entries) so the spoke can reconcile its
 // device-flow login allowlist with Manage Access grants. Used for
 // heartbeat-only clusters where the hub cannot push config over kubectl.
-type AuthorizedUsersCallback func(users []string)
+type AuthorizedUsersCallback func(users []string, names map[string]string)
 
 // GitHubAppConfigCallback is called when the hub delivers GitHub App config
 // via the heartbeat response (app ID, installation ID, private key).

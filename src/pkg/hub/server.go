@@ -2347,8 +2347,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// (which authorize their own logins) stay in sync with Manage Access grants.
 	// Only for hives the hub actually has a SaaS record for; a bare non-SaaS
 	// spoke gets nothing and keeps its own configured allowlist.
-	if authUsers := authorizedUsersForHiveID(payload.HiveID); authUsers != nil {
+	if authUsers, authNames := authorizedUsersAndNamesForHiveID(payload.HiveID); authUsers != nil {
 		resp.AuthorizedUsers = authUsers
+		resp.AuthorizedUserNames = authNames
 	}
 
 	// Deliver the claimed project's real org/repos/ACMM so a spoke that was

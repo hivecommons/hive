@@ -6642,15 +6642,39 @@ func (s *HubServer) handleLatestSHA(w http.ResponseWriter, r *http.Request) {
 // non-hosted spoke's own allowlist is left untouched. The owner is always
 // included as owner even if no explicit access record names them.
 func authorizedUsersForHiveID(hiveID string) []string {
+	users, _ := authorizedUsersAndNamesForHiveID(hiveID)
+	return users
+}
+
+// authorizedUsersAndNamesForHiveID does the shared work behind
+// authorizedUsersForHiveID and the heartbeat handler's AuthorizedUserNames
+// delivery: one roster scan producing both the authoritative "username:role"
+// allowlist and its cosmetic display-name companion, so the two can never
+// drift out of sync with each other (different key sets, different order) by
+// construction.
+//
+// The name map only gets an entry when provisionRequestUserIdentity resolves
+// to something FRIENDLIER than the raw key itself (source != "native") — an
+// entry with no known human name is simply absent, and the spoke's own
+// rendering falls back to the raw key exactly as it does today for a key with
+// no map entry at all.
+func authorizedUsersAndNamesForHiveID(hiveID string) ([]string, map[string]string) {
 	h := loadSaaSHive(hiveID)
 	if h == nil {
-		return nil
+		return nil, nil
 	}
 	out := make([]string, 0, 4)
+	names := make(map[string]string, 4)
 	seen := map[string]bool{}
+	addName := func(key string, u *SaaSUser) {
+		if id, source := provisionRequestUserIdentity(key, u, ""); source != "native" && id != key {
+			names[key] = id
+		}
+	}
 	if h.Owner != "" {
 		out = append(out, h.Owner+":owner")
 		seen[strings.ToLower(h.Owner)] = true
+		addName(h.Owner, loadSaaSUser(h.Owner))
 	}
 	for _, u := range listAllSaaSUsers() {
 		role, ok := u.Hives[hiveID]
@@ -6662,8 +6686,13 @@ func authorizedUsersForHiveID(hiveID string) []string {
 		}
 		out = append(out, u.GitHubUsername+":"+role)
 		seen[strings.ToLower(u.GitHubUsername)] = true
+		uu := u
+		addName(u.GitHubUsername, &uu)
 	}
-	return out
+	if len(names) == 0 {
+		return out, nil
+	}
+	return out, names
 }
 
 // HiveAccessEntry is one user's access to a hive.
@@ -6684,6 +6713,23 @@ type HiveAccessEntry struct {
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
+	// DisplayLabel is the human-facing name for this row, resolved with the
+	// SAME precedence provisionRequestUserIdentity uses everywhere else
+	// (linked GitHub login → recognizable GitHub login → email → DisplayName
+	// → FullName → raw key) — never a second, competing resolver. Username
+	// above stays the raw identity key throughout (the auth key / allowlist
+	// match, completely unchanged); DisplayLabel is presentation only. Always
+	// non-empty: it falls all the way back to Username, so the UI never has
+	// to special-case "no name known" beyond comparing the two strings.
+	DisplayLabel string `json:"display_label,omitempty"`
+	// Provider is the identity provider ("github"/"google"/"ibmid"/"microsoft"/…)
+	// so the row can show the right provider mark without re-deriving it from
+	// Username client-side. See grantableUserProvider.
+	Provider string `json:"provider,omitempty"`
+	// AvatarURL is the provider-stored avatar (Google/Microsoft picture claim)
+	// for a non-GitHub user; empty for a GitHub user, who keeps the derived
+	// github.com/<login>.png the UI already builds from Username.
+	AvatarURL string `json:"avatar_url,omitempty"`
 	// Engagement stats copied from the user's record so a co-member's My-Hives
 	// avatar hover can show the same logins / time-in-hive the admin Users card
 	// shows. Like Notes these are stats ABOUT a person, so they ride ONLY for a
@@ -6744,12 +6790,17 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 	access := make([]HiveAccessEntry, 0)
 	for _, u := range users {
 		if role, ok := u.Hives[hiveID]; ok {
+			uu := u
+			label, _ := provisionRequestUserIdentity(u.GitHubUsername, &uu, "")
 			entry := HiveAccessEntry{
-				Username:  u.GitHubUsername,
-				Role:      role,
-				ExpiresAt: u.HiveExpiry[hiveID],
-				FullName:  u.FullName,
-				SlackID:   u.SlackID,
+				Username:     u.GitHubUsername,
+				Role:         role,
+				ExpiresAt:    u.HiveExpiry[hiveID],
+				FullName:     u.FullName,
+				SlackID:      u.SlackID,
+				DisplayLabel: label,
+				Provider:     grantableUserProvider(&uu),
+				AvatarURL:    u.AvatarURL,
 				// Coarse last-active rides for every viewer of the row (see the
 				// field doc) — only the granular stats below stay admin-only.
 				LastActive: latestUserActivity(&u),
@@ -11280,7 +11331,15 @@ const dashboardHTML = `<!DOCTYPE html>
     function accessAvatarTitle(a) {
       var uname = String(a.username || '');
       var role = String(a.role || '');
+      // display_label is resolved hub-side (accessForHive) with the same
+      // precedence used everywhere else a friendly name is shown, and always
+      // falls back to the raw key — so it's only worth a separate first line
+      // when it's actually friendlier than uname itself. The raw key rides
+      // on every title regardless (first line), same as before this field
+      // existed.
+      var label = String(a.display_label || '');
       var lines = [uname + (role ? ' — ' + role : '')];
+      if (label && label !== uname) lines.splice(0, 0, label);
       // ("Logged into their hive now" is appended generically in avatarProfileLink
       // for EVERY avatar surface, so it is not added here — doing both would
       // double the line.)
@@ -11308,8 +11367,22 @@ const dashboardHTML = `<!DOCTYPE html>
     function inlineAccessAvatar(a) {
       var uname = String(a.username || '');
       var role = String(a.role || '');
-      return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
-        'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto');
+      var provider = a.provider || identityProviderFromKey(uname);
+      var extraStyle = 'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto';
+      // A non-GitHub key (ibmid/google/microsoft) has no github.com profile to
+      // link to — linkedAvatar would build a 404'ing image and a link to
+      // someone else's account by coincidence of URL-shape. userAvatar uses
+      // the provider-stored avatar_url when present, else initials derived
+      // from the real display label (never from the opaque provider:sub key).
+      var avatar = provider === 'github'
+        ? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)
+        : userAvatar({display_name: a.display_label, avatar_url: a.avatar_url, github_username: uname},
+            INLINE_ACCESS_AVATAR_PX, extraStyle);
+      if (provider === 'github') return avatar;
+      // userAvatar returns a bare <img> with no title/tooltip and no profile
+      // link (there is none to link to) — wrap it so the same rich tooltip
+      // accessAvatarTitle gives GitHub faces is not lost for everyone else.
+      return '<span title="' + escAttr(accessAvatarTitle(a)) + '" style="display:inline-block;line-height:0">' + avatar + '</span>';
     }
 
     /* Inline summary of the OTHER users on this hive, or '' when there are
@@ -21438,8 +21511,19 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         var ownerCount = users.filter(function(u) { return u.role === 'owner'; }).length;
         var rows = users.map(function(u) {
-          var avatar = linkedAvatar(u.username, LIST_AVATAR_PX,
-            String(u.username || '') + (u.role ? ' — ' + u.role : ''), 'margin-right:6px');
+          // u.username is the raw identity key — the actual auth key and
+          // allowlist match — and is NEVER altered for display. u.display_label
+          // is resolved hub-side (accessForHive → provisionRequestUserIdentity,
+          // the SAME precedence used everywhere else a friendly name is shown)
+          // and always falls back to u.username, so hasFriendlyName is exactly
+          // "the hub found something better than the raw key".
+          var provider = u.provider || identityProviderFromKey(u.username);
+          var hasFriendlyName = !!(u.display_label && u.display_label !== u.username);
+          var avatar = provider === 'github'
+            ? linkedAvatar(u.username, LIST_AVATAR_PX,
+                String(u.username || '') + (u.role ? ' — ' + u.role : ''), 'margin-right:6px')
+            : userAvatar({display_name: u.display_label, avatar_url: u.avatar_url, github_username: u.username},
+                LIST_AVATAR_PX, 'margin-right:6px');
           // The last owner can be neither removed nor demoted — doing so would
           // orphan the hive with no one able to manage access.
           var isLastOwner = (u.role === 'owner' && ownerCount <= 1);
@@ -21502,12 +21586,27 @@ const dashboardHTML = `<!DOCTYPE html>
               ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--amber)">'
               : '<span style="font-size:0.6rem;color:var(--text)">Never</span>') +
             '</span>';
-          return '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
-            '<div style="display:flex;align-items:center;gap:4px;flex:1 1 240px;min-width:0">' + checkbox + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem;word-break:break-word">' + esc(u.username) + '</span>' +
+          // Primary label: the resolved friendly name when the hub found one,
+          // else the raw key exactly as before. The raw key is NEVER hidden —
+          // it rides as a muted secondary line (and the avatar's title) any
+          // time a friendly name is shown, so support/debugging always has it
+          // one glance away. A GitHub user whose label is still the bare
+          // login keeps the existing async profile-name enrichment
+          // (.gh-display-name / enrichGhDisplayNames, #4145).
+          var primaryLabel = hasFriendlyName ? u.display_label : u.username;
+          var rawKeyLine = hasFriendlyName
+            ? '<span style="display:block;font-size:0.7rem;color:var(--muted);word-break:break-word" title="Auth key">' + esc(u.username) + '</span>'
+            : '';
+          var ghEnrichPlaceholder = (provider === 'github' && !hasFriendlyName)
             /* Empty placeholder the async GitHub profile lookup fills in
                (#4145): display name lands beside the username when it arrives,
                and stays empty on any failure — the login always renders first. */
-            '<span class="gh-display-name" data-gh-login="' + escAttr(u.username) + '" style="margin-left:6px;font-size:0.75rem;color:var(--muted)"></span></div>' +
+            ? '<span class="gh-display-name" data-gh-login="' + escAttr(u.username) + '" style="margin-left:6px;font-size:0.75rem;color:var(--muted)"></span>'
+            : '';
+          return '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="display:flex;align-items:center;gap:4px;flex:1 1 240px;min-width:0">' + checkbox + avatar + providerIconHTML(provider) +
+            '<span style="font-size:0.85rem;word-break:break-word;min-width:0" title="' + escAttr(u.username) + '">' + esc(primaryLabel) + rawKeyLine + '</span>' +
+            ghEnrichPlaceholder + '</div>' +
             '<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;flex:1 1 300px;min-width:0">' +
             lastActive +
             roleControl +

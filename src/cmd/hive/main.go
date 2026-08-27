@@ -4422,7 +4422,7 @@ func main() {
 				logger.Warn("branch switch via heartbeat failed", "tag", tag, "image", image, "error", err)
 				return
 			}
-		}), hub.AuthorizedUsersCallback(func(users []string) {
+		}), hub.AuthorizedUsersCallback(func(users []string, names map[string]string) {
 			// The hub delivered its authoritative access list. Reconcile our
 			// login allowlist so Manage Access grants take effect on this
 			// heartbeat-only spoke without any kubectl push. The dashboard reads
@@ -4433,6 +4433,11 @@ func main() {
 					"was", len(cfg.Dashboard.AuthorizedUsers), "now", len(users))
 				cfg.Dashboard.AuthorizedUsers = users
 			}
+			// AuthorizedUserNames is purely cosmetic (see its doc) — it never
+			// gates sign-in, so it's fine to just take whatever the hub sent
+			// (including nil, which means "no names known") without the
+			// same-value guard above.
+			cfg.Dashboard.AuthorizedUserNames = names
 		}), hub.ProjectConfigCallback(func(pc *hub.HeartbeatProjectConfig) {
 			// The hub assigned this (previously placeholder) hive a real project.
 			// Reconcile our running project config so agents work the claimed
