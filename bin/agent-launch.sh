@@ -202,6 +202,36 @@ if [[ "$BACKEND" == "copilot" ]]; then
   fi
 fi
 
+# SECURITY (#4045): the backend CLI re-exports live GitHub credentials into
+# the tool shells it spawns. The Copilot CLI authenticates from its own
+# persistent store (or COPILOT_GITHUB_TOKEN above) and sets GITHUB_TOKEN in
+# every shell it runs for the agent — after all launch-path scrubbing (#3931)
+# has already happened, so unsetting here cannot reach it. Observed live: a
+# wrapper-denied agent fell back to raw
+#   curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/...
+# and performed a repo write outside every gh-wrapper control.
+#
+# BASH_ENV is sourced by every NON-INTERACTIVE bash at startup — i.e. by each
+# tool shell the CLI spawns, INCLUDING ones the CLI hands an explicit
+# GITHUB_TOKEN in the spawn env — so the scrub runs inside the child, at the
+# only boundary that sees the backend's re-export. ENV covers interactive
+# POSIX-mode shells the same way. The CLI process itself is not a shell and
+# never sources this file, so its own auth (COPILOT_GITHUB_TOKEN, the
+# app_authored_prs GITHUB_TOKEN for the built-in GitHub MCP server) is
+# untouched: this changes what the AGENT'S SHELLS see, not what the backend
+# can do. gh-wrapper.sh and git-credential-hive.sh keep working — both
+# authenticate from HIVE_AGENT_TOKEN_CACHE (a path, deliberately not
+# scrubbed), never from inherited token env. Interactive shells get the same
+# scrub from the /etc/bash.bashrc guard installed by the Dockerfile.
+AGENT_ENV_SCRUB="${SCRIPT_DIR}/agent-env-scrub.sh"
+[[ -f "$AGENT_ENV_SCRUB" ]] || AGENT_ENV_SCRUB="/usr/local/bin/agent-env-scrub.sh"
+if [[ -f "$AGENT_ENV_SCRUB" ]]; then
+  export BASH_ENV="$AGENT_ENV_SCRUB"
+  export ENV="$AGENT_ENV_SCRUB"
+else
+  echo "[agent-launch] WARN: agent-env-scrub.sh not found — backend-exported GitHub tokens will be visible in agent tool shells (#4045)" >&2
+fi
+
 # Scrub GitHub token patterns and JWTs from stderr before writing to disk.
 scrub_tokens() {
   sed -u -E \

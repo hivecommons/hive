@@ -188,7 +188,7 @@ func TestHandleMyHivesWithSaaSHivesOnly(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	req := httptest.NewRequest("GET", "/my-hives", nil)
+	req := httptest.NewRequest("GET", "/fleet", nil)
 	req.Header.Set("Authorization", "Bearer ghp_myhives_saas")
 	w := httptest.NewRecorder()
 	srv.handleMyHives(w, req)
@@ -241,7 +241,7 @@ func TestHandleMyHivesWithErrorHive(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	req := httptest.NewRequest("GET", "/my-hives", nil)
+	req := httptest.NewRequest("GET", "/fleet", nil)
 	req.Header.Set("Authorization", "Bearer ghp_myhives_err")
 	w := httptest.NewRecorder()
 	srv.handleMyHives(w, req)
@@ -286,7 +286,7 @@ func TestHandleMyHivesAdminSeesAll(t *testing.T) {
 	}
 	srv.mu.Unlock()
 
-	req := httptest.NewRequest("GET", "/my-hives", nil)
+	req := httptest.NewRequest("GET", "/fleet", nil)
 	req.Header.Set("Authorization", "Bearer ghp_admin_all")
 	w := httptest.NewRecorder()
 	srv.handleMyHives(w, req)

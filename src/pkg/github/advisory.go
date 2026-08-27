@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -20,6 +21,30 @@ const (
 	advisoryLabelDesc = "Pinned advisory report from Hive agents"
 	advisoryLabelClr  = "0e8a16"
 )
+
+// IssuesDisabledError reports that the advisory issue cannot be created or
+// resolved because the target repo has its Issues feature turned off
+// (has_issues=false). GitHub disables Issues on forks by default, so this is
+// the common failure mode when a hive is pointed at a fork (#4329). It is a
+// distinct class from the 403 "Resource not accessible by integration"
+// App-permission failure: no amount of App reconfiguration fixes it, only a
+// repo-settings change (or repointing the hive) does, so the message names
+// that remedy.
+type IssuesDisabledError struct {
+	// Repo is the owner/name of the repo with Issues disabled.
+	Repo string
+	// Fork records whether the repo is a GitHub fork, the usual reason
+	// Issues are off.
+	Fork bool
+}
+
+func (e *IssuesDisabledError) Error() string {
+	why := "common on forks"
+	if e.Fork {
+		why = "it is a fork, and GitHub disables Issues on forks by default"
+	}
+	return fmt.Sprintf("Issues are disabled on %s (%s) — enable Issues in the repo's Settings > General > Features, or point the hive at the upstream repo", e.Repo, why)
+}
 
 // EnsureAdvisoryIssue finds or creates the pinned advisory issue for a repo.
 // Returns the issue number.
@@ -40,6 +65,21 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	if num > 0 {
 		c.logger.Info("found existing advisory issue", slog.String("repo", repo), slog.Int("number", num))
 		return num, nil
+	}
+
+	// Before attempting to create, check whether the repo can hold issues at
+	// all. A fork (or any repo with the Issues feature off) has no Issues tab:
+	// the create below would fail with a 410 that reads like an auth problem,
+	// and the fleet alert would blame the App. Name the real cause instead
+	// (#4329). A failed metadata probe fails OPEN — the create attempt then
+	// produces its own, real error.
+	if ghRepo, _, repoErr := c.client.Repositories.Get(ctx, owner, repo); repoErr == nil {
+		if ghRepo != nil && !ghRepo.GetHasIssues() {
+			return 0, &IssuesDisabledError{Repo: owner + "/" + repo, Fork: ghRepo.GetFork()}
+		}
+	} else {
+		c.logger.Warn("could not check repo has_issues before advisory issue create",
+			slog.String("repo", repo), slog.String("error", repoErr.Error()))
 	}
 
 	c.logger.Info("creating advisory issue", slog.String("repo", repo))
@@ -102,6 +142,15 @@ const (
 	// one audit pulse per ~50 minutes, enough to show the loop is alive without
 	// flooding the dashboard audit log.
 	advisoryDigestAuditInterval = 50
+	// advisoryDigestWriteThroughInterval bounds how many consecutive
+	// unchanged-digest cycles may be skipped before a real write is forced
+	// (#4818). A skipped cycle proves a PRIOR successful write, not current
+	// write permission, so without a periodic write-through a 403 regression
+	// (App loses issues:write, repo dropped from the installation) would stay
+	// invisible for as long as the digest stayed quiet. At ~one cycle a minute
+	// this forces roughly one real write per hour — enough to keep the
+	// App-banner logic honest while still eliminating ~98% of the no-op edits.
+	advisoryDigestWriteThroughInterval = 60
 )
 
 // PostAdvisoryDigest updates the existing digest comment on the advisory issue,
@@ -123,13 +172,49 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	digest = advisory.NeutralizeMentions(digest)
 	digest = truncateDigest(logscrub.ScrubString(digest))
 
-	commentID, existingDigest, err := c.findDigestCommentWithBody(ctx, owner, repoName, issueNum)
+	// Skip-if-unchanged guard (#4818): the digest is re-rendered ~once a
+	// minute, and at steady state the body is byte-identical cycle after
+	// cycle — rewriting the pinned comment anyway burned ~1,440 no-op GitHub
+	// writes/day. Hash the FINAL body (post-scrub, post-truncation — exactly
+	// the bytes that would go over the wire) and skip the whole forge
+	// round-trip when it matches the last body this process successfully
+	// wrote. Returning nil is deliberate: an unchanged skip is a HEALTHY
+	// cycle, so the caller's success path still advances the
+	// advisory-staleness freshness record (RecordAdvisoryPost). Three cases
+	// always write: the first post after process start (no hash yet), a
+	// changed body, and the periodic write-through that re-proves write
+	// permission (see advisoryDigestWriteThroughInterval).
+	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
+	digestHash := fmt.Sprintf("%x", sha256.Sum256([]byte(digest)))
+	c.advisoryMu.Lock()
+	if c.advisoryDigestSkips == nil {
+		c.advisoryDigestSkips = make(map[string]int)
+	}
+	if c.advisoryDigestHashes[key] == digestHash &&
+		c.advisoryDigestSkips[key] < advisoryDigestWriteThroughInterval-1 {
+		c.advisoryDigestSkips[key]++
+		skips := c.advisoryDigestSkips[key]
+		c.advisoryMu.Unlock()
+		c.logger.Debug("advisory digest unchanged — skipping forge write",
+			slog.String("repo", repo), slog.Int("issue", issueNum),
+			slog.Int("consecutive_skips", skips))
+		return nil
+	}
+	c.advisoryMu.Unlock()
+
+	commentID, existingDigest, err := c.findDigestComment(ctx, owner, repoName, issueNum)
 	if err != nil {
 		c.logger.Warn("could not search for existing digest comment, creating new", slog.String("error", err.Error()))
 	}
 
 	var author string
 	if commentID > 0 {
+		// dd semantic guard: the dd digest header carries a "generated at"
+		// timestamp that changes every render, so the in-process body hash
+		// above never matches. Compare against the LIVE comment with the
+		// timestamp line stripped and skip the edit when only the timestamp
+		// moved — returning nil keeps this a healthy cycle for the caller's
+		// freshness record, same as the hash-guard skip.
 		if advisoryDigestsSemanticallyEqual(existingDigest, digest) {
 			return nil
 		}
@@ -158,7 +243,15 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	if c.advisoryDigestPosts == nil {
 		c.advisoryDigestPosts = make(map[string]int)
 	}
-	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
+	if c.advisoryDigestHashes == nil {
+		c.advisoryDigestHashes = make(map[string]string)
+	}
+	// Record the hash only after a SUCCESSFUL write (errors returned above),
+	// so a failed edit keeps being retried every cycle rather than skipped as
+	// "already posted". Reset the skip streak: the write-through clock starts
+	// over from any real write.
+	c.advisoryDigestHashes[key] = digestHash
+	c.advisoryDigestSkips[key] = 0
 	c.advisoryDigestPosts[key]++
 	count := c.advisoryDigestPosts[key]
 	c.advisoryMu.Unlock()
@@ -238,12 +331,7 @@ func (c *Client) ensureAdvisoryLabel(ctx context.Context, owner, repo string, is
 	_, _, _ = c.client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, []string{advisoryLabelName})
 }
 
-func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issueNum int) (int, error) {
-	commentID, _, err := c.findDigestCommentWithBody(ctx, owner, repo, issueNum)
-	return commentID, err
-}
-
-func (c *Client) findDigestCommentWithBody(ctx context.Context, owner, repo string, issueNum int) (int, string, error) {
+func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issueNum int) (int, string, error) {
 	opts := &gh.IssueListCommentsOptions{
 		ListOptions: gh.ListOptions{PerPage: 50},
 	}
@@ -251,14 +339,53 @@ func (c *Client) findDigestCommentWithBody(ctx context.Context, owner, repo stri
 	if err != nil {
 		return 0, "", err
 	}
+	var botAuthored int64
+	var botAuthoredBody string
 	for _, comment := range comments {
-		if strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
+		if !strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
+			continue
+		}
+		if c.appAuth == nil {
+			// Token (PAT) client: historical prefix-only match. The credential
+			// may legitimately be the human who authored the comment, and
+			// authorship cannot be verified without an extra /user round trip.
 			return int(comment.GetID()), comment.GetBody(), nil
 		}
+		login := comment.GetUser().GetLogin()
+		if c.appBotLogin != "" && login == c.appBotLogin {
+			// Exactly our own bot comment — the one credential-safe choice.
+			return int(comment.GetID()), comment.GetBody(), nil
+		}
+		if strings.HasSuffix(login, "[bot]") || comment.GetUser().GetType() == "Bot" {
+			// Bot-authored but not provably ours (bot login unknown, or a slug
+			// mismatch between config and the real App). Remember the first as
+			// a fallback rather than skipping it: refusing our own comment on
+			// a misconfigured slug would create a duplicate every cycle.
+			if botAuthored == 0 {
+				botAuthored = comment.GetID()
+				botAuthoredBody = comment.GetBody()
+			}
+			continue
+		}
+		// A digest comment this App can never edit — e.g. one left behind by
+		// the removed user-token fallback (#1927), authored by a human. GitHub
+		// hard-forbids an App from editing a foreign-authored comment (403
+		// "Resource not accessible by integration") no matter what the
+		// installation grants, so adopting it wedges the digest forever
+		// (kalantar-msb/soft-reflective#1). Skip it; if no bot-authored digest
+		// comment exists a fresh App-authored one is created and every later
+		// cycle edits THAT one, so nothing is duplicated per cycle.
+		c.logger.Warn("skipping advisory digest comment not authored by this App — an installation token can never edit it",
+			slog.String("repo", owner+"/"+repo),
+			slog.Int("issue", issueNum),
+			slog.Int64("comment_id", comment.GetID()),
+			slog.String("author", login))
 	}
-	return 0, "", nil
+	return int(botAuthored), botAuthoredBody, nil
 }
 
+// advisoryDigestsSemanticallyEqual reports whether two digest bodies differ
+// only in the generated-at timestamp on the header line (dd digest format).
 func advisoryDigestsSemanticallyEqual(existing, next string) bool {
 	if existing == next {
 		return true
@@ -322,7 +449,7 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 		State:       "open",
 		Sort:        "created",
 		Direction:   "desc",
-		ListOptions: gh.ListOptions{PerPage: 50},
+		ListOptions: gh.ListOptions{PerPage: 50, Page: 1},
 	}
 	for page := 0; page < maxPagesToScan; page++ {
 		allIssues, _, scanErr := c.client.Issues.ListByRepo(ctx, owner, repo, listOpts)
@@ -344,5 +471,52 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 		}
 		listOpts.ListOptions.Page++
 	}
+
+	// Fallback 3: a CLOSED advisory issue is REUSED, not replaced (#4167).
+	// The issue says "do not close this issue", but people close it anyway —
+	// and creating a fresh one then splits the digest: the hive writes to the
+	// new issue while everyone who subscribed to the old one watches a comment
+	// that never updates again, which reads exactly like a wedged digest. So
+	// reopen the most recent closed one and keep posting to the URL people
+	// already follow. Only after this finds nothing does the caller create.
+	if num, ok := c.findClosedAdvisoryIssue(ctx, owner, repo); ok {
+		if _, _, err := c.client.Issues.Edit(ctx, owner, repo, num, &gh.IssueRequest{State: gh.Ptr("open")}); err != nil {
+			// Cannot reopen (permissions, locked). Report NOT-FOUND rather than
+			// the closed number: posting a digest to a closed issue would be
+			// invisible, and the caller's create path at least yields a live one.
+			c.logger.Warn("found closed advisory issue but could not reopen it",
+				slog.Int("number", num), slog.String("error", err.Error()))
+			return 0, nil
+		}
+		c.logger.Info("reopened closed advisory issue instead of creating a duplicate",
+			slog.String("repo", repo), slog.Int("number", num))
+		c.ensureAdvisoryLabel(ctx, owner, repo, num)
+		return num, nil
+	}
 	return 0, nil
+}
+
+// findClosedAdvisoryIssue returns the most recently updated CLOSED advisory
+// issue for a repo, if one exists. Split out from findAdvisoryIssue so the
+// "reuse the issue people already subscribe to" rule is testable on its own.
+func (c *Client) findClosedAdvisoryIssue(ctx context.Context, owner, repo string) (int, bool) {
+	opts := &gh.IssueListByRepoOptions{
+		State:       "closed",
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: 50, Page: 1},
+	}
+	issues, _, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+	if err != nil {
+		return 0, false
+	}
+	for _, issue := range issues {
+		if issue.IsPullRequest() {
+			continue
+		}
+		if issue.GetTitle() == advisoryTitle {
+			return issue.GetNumber(), true
+		}
+	}
+	return 0, false
 }

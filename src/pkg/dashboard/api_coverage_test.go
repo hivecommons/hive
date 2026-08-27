@@ -305,6 +305,9 @@ func TestHandleKnowledgeSubsList_WithKnowledge(t *testing.T) {
 }
 
 func TestHandleKnowledgeSubsAdd_WithKnowledge(t *testing.T) {
+	// L3: keep this hermetic — the subscription URL below must classify as
+	// public without an external DNS lookup.
+	stubPrivateURLResolver(t, "example.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 
@@ -326,6 +329,8 @@ func TestHandleKnowledgeSubsAdd_MissingURL(t *testing.T) {
 }
 
 func TestHandleKnowledgeSubsAdd_DefaultLayer(t *testing.T) {
+	// L3: keep this hermetic — see stubPrivateURLResolver.
+	stubPrivateURLResolver(t, "new.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 
@@ -337,6 +342,8 @@ func TestHandleKnowledgeSubsAdd_DefaultLayer(t *testing.T) {
 }
 
 func TestHandleKnowledgeSubsRemove_WithKnowledge(t *testing.T) {
+	// L3: keep this hermetic — see stubPrivateURLResolver.
+	stubPrivateURLResolver(t, "example.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 
@@ -758,15 +765,6 @@ func TestHandleTokens_NoCollector(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Tokens = nil
 	rec := doGet(s, "/api/tokens")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d", rec.Code)
-	}
-}
-
-func TestHandleIssueCosts_NoCollector(t *testing.T) {
-	s, deps := apiServer(t)
-	deps.Tokens = nil
-	rec := doGet(s, "/api/issue-costs")
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d", rec.Code)
 	}
@@ -2315,22 +2313,11 @@ func TestHandleTokens_EmptySummary(t *testing.T) {
 	}
 }
 
-// ---- handleIssueCosts with collector ----
-
-func TestHandleIssueCosts_WithCollector(t *testing.T) {
-	s, deps := apiServer(t)
-	tmpDir := t.TempDir()
-	collector := tokens.NewCollector(tmpDir, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
-	deps.Tokens = collector
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d", rec.Code)
-	}
-}
-
 // ---- handleKnowledgeSubsAdd with all fields ----
 
 func TestHandleKnowledgeSubsAdd_AllFields(t *testing.T) {
+	// L3: keep this hermetic — see stubPrivateURLResolver.
+	stubPrivateURLResolver(t, "example.com")
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 	rec := doPost(s, "/api/knowledge/subscriptions", map[string]string{
@@ -3608,14 +3595,6 @@ func TestHandlePin_EmptyValueFallback(t *testing.T) {
 	// Scanner exists in config but may not have a running process — GetStatus may fail
 	if rec.Code == http.StatusNotFound {
 		t.Error("should not be 404 for configured agent")
-	}
-}
-
-func TestHandleIssueCosts_NilTokens(t *testing.T) {
-	s, _ := apiServer(t)
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d", rec.Code)
 	}
 }
 

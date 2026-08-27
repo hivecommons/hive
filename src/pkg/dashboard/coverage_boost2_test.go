@@ -103,7 +103,7 @@ func TestHandleGovernorRepos_URLParsingRejected(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", w.Code)
 	}
-	want := "Repo target misconfigured: repo 'https://github.com/myorg/myrepo' is a URL — expected repo name only so the target resolves to org/repo. Fix in Governor Config → Repos."
+	want := "Repo target misconfigured: repo 'https://github.com/myorg/myrepo' is a URL — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos."
 	if !strings.Contains(w.Body.String(), want) {
 		t.Fatalf("body = %q, want %q", w.Body.String(), want)
 	}
@@ -130,7 +130,7 @@ func TestHandleStatusCarriesRepoTargetMisconfig(t *testing.T) {
 	if !got.RepoTargetMisconfigured {
 		t.Fatal("repoTargetMisconfigured = false, want true")
 	}
-	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."
+	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Settings → Repos."
 	if got.RepoTargetIssue != want {
 		t.Fatalf("repoTargetIssue = %q, want %q", got.RepoTargetIssue, want)
 	}

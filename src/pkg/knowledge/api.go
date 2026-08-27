@@ -14,6 +14,11 @@ import (
 
 const localKnowledgeDir = "/data/knowledge"
 
+// knowledgeBaseDir is the root for imported document metadata and document
+// vaults. Production uses localKnowledgeDir; tests override it for hermetic
+// temp-dir-backed ingestion.
+var knowledgeBaseDir = localKnowledgeDir
+
 // vaultsBaseDir is where user-created knowledge channels (vaults) are stored on
 // the spoke's data volume, one directory per channel. It mirrors the location the
 // bead synthesizer uses for its own vault. A var (not const) only so purge/create
@@ -554,11 +559,11 @@ func (k *KnowledgeAPI) RemoveSubscription(url string) error {
 
 // VaultInfo describes a connected Obsidian/file-based vault for the dashboard.
 type VaultInfo struct {
-	Name       string         `json:"name"`
-	RootDir    string         `json:"root_dir"`
-	Pages      int            `json:"pages"`
-	LastIndexed time.Time     `json:"last_indexed"`
-	TagCounts  map[string]int `json:"tag_counts,omitempty"`
+	Name        string         `json:"name"`
+	RootDir     string         `json:"root_dir"`
+	Pages       int            `json:"pages"`
+	LastIndexed time.Time      `json:"last_indexed"`
+	TagCounts   map[string]int `json:"tag_counts,omitempty"`
 }
 
 // ConnectVault adds a file-based vault (Obsidian, MindStudio export, or any
@@ -851,7 +856,7 @@ func (k *KnowledgeAPI) ImportDocument(ctx context.Context, config DocSourceConfi
 	k.mu.Unlock()
 
 	vaultDir := k.docVaultDir()
-	ds := NewDocumentSource(config, localKnowledgeDir, vaultDir, k.graphStore, k.logger, k.context7APIKey)
+	ds := NewDocumentSource(config, knowledgeBaseDir, vaultDir, k.graphStore, k.logger, k.context7APIKey)
 	meta, err := ds.Import(ctx)
 	if err != nil {
 		return nil, err
@@ -942,7 +947,7 @@ func (k *KnowledgeAPI) SearchContext7Libraries(ctx context.Context, query string
 // reloadDocuments scans the documents directory for previously imported
 // documents and restores them into memory from their metadata.json files.
 func (k *KnowledgeAPI) reloadDocuments() {
-	docsDir := filepath.Join(localKnowledgeDir, docStorageDir)
+	docsDir := filepath.Join(knowledgeBaseDir, docStorageDir)
 	entries, err := os.ReadDir(docsDir)
 	if err != nil {
 		return
@@ -1065,7 +1070,7 @@ func (k *KnowledgeAPI) docVaultDir() string {
 			return v.rootDir
 		}
 	}
-	return filepath.Join(localKnowledgeDir, "documents-vault")
+	return filepath.Join(knowledgeBaseDir, "documents-vault")
 }
 
 // ObsidianSyncRequest is the payload from the Obsidian Post Webhook plugin.
@@ -1132,9 +1137,9 @@ func (r *ObsidianSyncRequest) Vault() string {
 
 // ObsidianSyncResult describes the outcome of an Obsidian sync operation.
 type ObsidianSyncResult struct {
-	Slug    string    `json:"slug"`
-	Action  string    `json:"action"` // "created" or "updated"
-	Fact    Fact      `json:"fact"`
+	Slug   string `json:"slug"`
+	Action string `json:"action"` // "created" or "updated"
+	Fact   Fact   `json:"fact"`
 }
 
 // defaultObsidianConfidence is used when frontmatter omits a confidence value.

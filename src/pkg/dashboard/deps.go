@@ -14,23 +14,35 @@ import (
 	"github.com/kubestellar/hive/pkg/config"
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/kubestellar/hive/pkg/hooks"
 	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/kubestellar/hive/pkg/rotation"
 	"github.com/kubestellar/hive/pkg/scheduler"
 	"github.com/kubestellar/hive/pkg/tokens"
 )
 
 type Dependencies struct {
-	Config           *config.Config
-	AgentMgr         *agent.Manager
-	Governor         *governor.Governor
-	GHClient         *ghpkg.Client
-	GHAppAuth        *ghpkg.AppAuth
+	Config    *config.Config
+	AgentMgr  *agent.Manager
+	Governor  *governor.Governor
+	GHClient  *ghpkg.Client
+	GHAppAuth *ghpkg.AppAuth
+	// GHTokenScopes is the boot-time PAT scope probe result (see
+	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
+	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not
+	// OAuth scopes. github_auth reports it as a DETAIL on an otherwise-passing
+	// check: a narrow token still authenticates, so failing the check would
+	// misreport the fault — what is broken is a capability, not the auth.
+	GHTokenScopes    ghpkg.ScopeResult
 	Tokens           *tokens.Collector
 	Knowledge        *knowledge.KnowledgeAPI
 	Inception        *knowledge.InceptionEngine
 	Nous             *NousState
 	Scheduler        *scheduler.Scheduler
 	MetricsCollector *MetricsCollector
+	// RotationMgr is the provider-rotation manager (RFC #3958). Nil when
+	// rotation is disabled; the headroom endpoint then reports enabled=false.
+	RotationMgr *rotation.Manager
 	// FleetStats is the spoke's fleet-stat contribution collector (PRs
 	// merged/rejected over the trailing 90-day window, cached, refreshed on a
 	// 30-minute timer). The ACMM advisor derives its baseline merge-success
@@ -85,6 +97,7 @@ type Dependencies struct {
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
+	HookFire     func(context.Context, hooks.Payload)
 }
 
 type NousState struct {

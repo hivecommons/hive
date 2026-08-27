@@ -317,7 +317,7 @@ func TestProxyHTTPGraphQLReadBodyError(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// Send a POST to /graphql with Content-Length but then close before sending body
 	go func() {
@@ -349,7 +349,7 @@ func TestProxyHTTPGitPathUpstreamFail(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// Send a git receive-pack request (write op, allowed at ISSUES_AND_PRS)
 	go func() {
@@ -508,13 +508,6 @@ func TestStartInferenceTranslatorTranslationError(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	// Check if port is free
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort))
-	if err != nil {
-		t.Skipf("port %d not available: %v", InferenceTranslatePort, err)
-	}
-	ln.Close()
-
 	caCert, caX509, _ := generateCA()
 	p := &GitHubProxy{
 		caCert:     caCert,
@@ -526,10 +519,9 @@ func TestStartInferenceTranslatorTranslationError(t *testing.T) {
 	}
 	p.inference.Set("agent-bad-resp", &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test"})
 
-	go p.StartInferenceTranslator()
-	time.Sleep(200 * time.Millisecond)
-
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", InferenceTranslatePort)
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
+	baseURL := translator.URL
 
 	// Send request that will get an invalid JSON response from backend
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
@@ -615,7 +607,7 @@ func TestProxyHTTPSuccessfulRoundtrip(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// Request 1: allowed POST (comment on an existing issue). New issue
 	// creation is mediated by hive-open-issue.

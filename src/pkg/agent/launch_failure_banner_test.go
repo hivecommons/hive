@@ -88,6 +88,37 @@ func TestMissingBinaryLaunchAnnouncesInPane(t *testing.T) {
 	}
 }
 
+func TestLaunchFailureMessage_UnknownBackendDoesNotSuggestImageUpgrade(t *testing.T) {
+	m := &Manager{logger: discardLogger()}
+	msg := m.backendLaunchFailureMessage("openrouter", os.ErrNotExist)
+	for _, notWant := range []string{"hive image", "upgrade"} {
+		if strings.Contains(msg, notWant) {
+			t.Errorf("unknown-backend message %q must not suggest %q", msg, notWant)
+		}
+	}
+	for _, want := range []string{"openrouter", "not a supported CLI", "configured model gateway"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("unknown-backend message %q should contain %q", msg, want)
+		}
+	}
+}
+
+func TestLaunchFailureMessage_ConfiguredGatewayNamesClaudeCLI(t *testing.T) {
+	m := &Manager{logger: discardLogger()}
+	m.SetGatewayBackendChecker(func(backend string) bool {
+		return strings.EqualFold(backend, "openrouter")
+	})
+	msg := m.backendLaunchFailureMessage("OpenRouter", os.ErrNotExist)
+	for _, want := range []string{"OpenRouter", "claude CLI", "hive image"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("gateway missing-cli message %q should contain %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "OpenRouter CLI") {
+		t.Errorf("gateway missing-cli message %q must name claude, not an OpenRouter CLI", msg)
+	}
+}
+
 // TestBobMissingKeyLaunchAnnouncesInPane pins the loud half of the missing-key
 // branch: with the bob binary present but no key configured, the pane banner
 // must name the missing credential (BOBSHELL_API_KEY — the name, never a

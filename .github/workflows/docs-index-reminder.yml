@@ -1,0 +1,146 @@
+name: Docs Index Reminder
+
+# Why this exists
+#
+# src/docs/README.md is the index readers actually navigate from, and a page
+# that is not linked from it is, in practice, a page nobody finds. That gap
+# recurs the same way every time: a PR adds a doc, the index is not updated,
+# and nothing notices until an agent sweeps the directory by hand. #4617 was
+# one such sweep — it found six unlinked pages, and a re-sweep found eight.
+#
+# It is ADVISORY ON PURPOSE, and modelled deliberately on
+# changelog-reminder.yml (#4429, #4440). A hard gate would be wrong here: a
+# page can be legitimately unlinked for a while — a draft landing ahead of the
+# section that will hold it, or a doc indexed from a subdirectory README rather
+# than the top-level index — and failing those trains authors to add a
+# throwaway link just to make the check green, which is worse than the gap.
+#
+# It reports only pages THIS PR adds, never the pre-existing backlog: a
+# reminder that relists work the author did not create is noise, and noise is
+# how the previous convention died.
+#
+# Scope is deliberately the top level of src/docs/ only. src/docs/adr/ and any
+# other subdirectory carry their own README index and are linked from the
+# top-level index as a directory, so requiring each ADR to appear in the
+# top-level index would be a false positive by design.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  remind:
+    name: docs index reminder
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'copilot-swe-agent[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Find docs added by this PR that the index does not link
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          index='src/docs/README.md'
+          if [ ! -f "$index" ]; then
+            echo "no $index in this tree — nothing to check"
+            echo "missing=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Only files this PR ADDED, and only at the top level of src/docs/.
+          # Paginate: a missed page would silently skip a new doc.
+          added="$(gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | select(.status == "added") | .filename' 2>/dev/null \
+            | grep -E '^src/docs/[^/]+\.md$' || true)"
+
+          missing=''
+          for path in $added; do
+            base="$(basename "$path")"
+            [ "$base" = 'README.md' ] && continue
+            # Substring match on the filename is what a reader's link must
+            # contain, whether the entry is a relative link or a full URL.
+            grep -qF "$base" "$index" || missing="$missing $base"
+          done
+
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+
+      - name: Remind once
+        if: steps.check.outputs.missing != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          MISSING: ${{ steps.check.outputs.missing }}
+        run: |
+          # NOT `set -e`, for the reason recorded at length in
+          # changelog-reminder.yml: GITHUB_TOKEN is read-only on `pull_request`
+          # events from forks whatever `permissions:` asks for, so a comment
+          # POST 403s there, and `bash -e` would turn an advisory reminder into
+          # a red check on exactly the contributions least likely to know the
+          # convention.
+          set -uo pipefail
+
+          marker='<!-- docs-index-reminder -->'
+
+          list=''
+          for f in $MISSING; do
+            list="$list- \`$f\`
+          "
+          done
+
+          body_file="$(mktemp)"
+          cat > "$body_file" <<EOF
+          $marker
+          **Docs index:** this PR adds page(s) under \`src/docs/\` that
+          \`src/docs/README.md\` does not link:
+
+          $list
+          A page missing from the index is one readers do not find. Please add a
+          line in the section a reader would actually look in, matching the
+          format of its neighbours.
+
+          If the page is indexed from a subdirectory README, or is deliberately
+          unlisted for now, ignore this. It is a reminder, not a gate; it never
+          blocks a merge.
+          EOF
+          sed -i 's/^          //' "$body_file"
+
+          # Deliver somewhere that always works first — the job summary and a
+          # ::notice:: annotation need no write permission, so they reach fork
+          # PRs and same-repo branches identically.
+          {
+            printf '### Docs index reminder\n\n'
+            grep -v "^${marker}$" "$body_file"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "::notice title=Docs index reminder::New src/docs pages not linked from src/docs/README.md:${MISSING}. Not a gate."
+
+          if [ "${IS_FORK:-false}" = "true" ]; then
+            echo "fork PR — reminder delivered as a job summary and annotation instead of a comment"
+            exit 0
+          fi
+
+          # Only ever once. A failed dedupe READ must not skip the comment, and
+          # must not fail the job either.
+          if gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[].body' 2>/dev/null \
+              | grep -qF "$marker"; then
+            echo "already reminded"
+            exit 0
+          fi
+
+          if ! gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body_file"; then
+            echo "::notice::could not post the reminder as a PR comment; it is in this job's summary instead"
+          fi
+          exit 0

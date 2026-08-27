@@ -584,3 +584,225 @@ func TestFleetStatsLKG_PersistsAcrossReload(t *testing.T) {
 		t.Errorf("CollectedAt = %v, want %v", reloaded.FleetStatsLKG.CollectedAt, collectedAt)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Org dedupe of the org-scoped contribution counters.
+//
+// FleetStatsCollector counts AI-author PRs across a whole ORG, so every hive in
+// that org reports the org's entire output as its own. Summing them multiplies
+// one org's work by its hive count into a PUBLIC landing-page figure. These
+// tests pin that a group contributes once, and — the positive controls — that
+// dedupe does not simply collapse the whole fleet into one contribution.
+// ---------------------------------------------------------------------------
+
+// coHive builds a reporting hive in the given (org, ai-author) counting group.
+// Repos must be unique per hive or the eligibility gate skips it; they do not
+// affect the PR/CVE counters under test.
+func coHive(id, org, author string, merged int) RegistryEntry {
+	return RegistryEntry{
+		ID: id, IsPublic: true, Online: true, Org: org, AIAuthor: author,
+		Repos: []string{org + "/" + id}, PRsMerged90d: ptrInt(merged),
+		FleetStatsCollectedAt: time.Now(),
+	}
+}
+
+// TestFleetStatsCollapsesSameOrgCounts is the live bug: three hives in one org
+// each reported the org's whole 3746 merged PRs and the public total showed
+// 11238. It must show 3746.
+func TestFleetStatsCollapsesSameOrgCounts(t *testing.T) {
+	// The value measured on the live 62-hive fleet, reported identically by
+	// three hives sharing one org.
+	const sharedOrgMerged = 3746
+
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		coHive("h1", "acme", "ai-bot", sharedOrgMerged),
+		coHive("h2", "acme", "ai-bot", sharedOrgMerged),
+		coHive("h3", "acme", "ai-bot", sharedOrgMerged),
+	}
+
+	got := s.computeFleetStats()
+	if got.PRsMerged != sharedOrgMerged {
+		t.Errorf("PRsMerged = %d, want %d (one org's output counted once, not %d times)",
+			got.PRsMerged, sharedOrgMerged, len(s.registry.Hives))
+	}
+	// Positive control on the counterfactual: without dedupe this would be
+	// 11238, so the assertion above is actually testing something.
+	if got.PRsMerged == sharedOrgMerged*len(s.registry.Hives) {
+		t.Errorf("PRsMerged = %d, which is exactly the tripled value — dedupe did not run",
+			got.PRsMerged)
+	}
+	// Coverage counters stay per-hive: all three DID report, and collapsing
+	// them would understate how much of the fleet is collecting successfully.
+	if got.Reporting != 3 || got.Eligible != 3 {
+		t.Errorf("Reporting/Eligible = %d/%d, want 3/3 (coverage is per-hive, not per-org)",
+			got.Reporting, got.Eligible)
+	}
+}
+
+// TestFleetStatsSumsDistinctOrgsIndependently is the positive control for the
+// test above: a dedupe that collapsed EVERYTHING to one contribution would pass
+// the same-org test and be badly wrong. Different orgs, and same org with
+// different AI authors, are genuinely distinct work and must still add up.
+func TestFleetStatsSumsDistinctOrgsIndependently(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		coHive("h1", "acme", "ai-bot", 100),
+		coHive("h2", "globex", "ai-bot", 20),
+		// Same ORG as h1 but a different AI author — two teams in one org
+		// running different agents produce genuinely distinct output, so the
+		// group key is (org, author) and these must not collapse together.
+		coHive("h3", "acme", "other-bot", 3),
+	}
+
+	got := s.computeFleetStats()
+	if want := 123; got.PRsMerged != want {
+		t.Errorf("PRsMerged = %d, want %d (distinct (org, author) groups must sum independently)",
+			got.PRsMerged, want)
+	}
+}
+
+// TestFleetStatsGroupTakesMax pins that same-org hives whose collectors ran at
+// slightly different moments collapse to the LARGEST count, not the first seen
+// and not the smallest — over a fixed trailing window the freshest collect is
+// the largest, so the most complete measurement should stand rather than
+// collection order deciding the public number.
+func TestFleetStatsGroupTakesMax(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		coHive("h1", "acme", "ai-bot", 3740),
+		coHive("h2", "acme", "ai-bot", 3746),
+		coHive("h3", "acme", "ai-bot", 3742),
+	}
+
+	got := s.computeFleetStats()
+	if want := 3746; got.PRsMerged != want {
+		t.Errorf("PRsMerged = %d, want %d (group must collapse to its max)", got.PRsMerged, want)
+	}
+}
+
+// TestFleetStatsDedupeKeepsNilOutOfTotals guards the nil-vs-zero discipline the
+// *int counters exist for. A hive that never computed a counter must stay
+// invisible to it — dedupe must not materialize a group entry worth zero, and
+// must not let a nil sibling suppress a real value.
+func TestFleetStatsDedupeKeepsNilOutOfTotals(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		// Reports merged only; CVEs never computed.
+		coHive("h1", "acme", "ai-bot", 50),
+		// Same group, reports NOTHING for merged but does report CVEs. Its nil
+		// must not become a participating zero that could win the max, and its
+		// presence must not erase h1's 50.
+		{ID: "h2", IsPublic: true, Online: true, Org: "acme", AIAuthor: "ai-bot",
+			Repos: []string{"acme/r2"}, CVEsClosed: ptrInt(7),
+			FleetStatsCollectedAt: time.Now()},
+	}
+
+	got := s.computeFleetStats()
+	if got.PRsMerged != 50 {
+		t.Errorf("PRsMerged = %d, want 50 (a nil sibling must not suppress a real value)", got.PRsMerged)
+	}
+	if got.CVEsClosed != 7 {
+		t.Errorf("CVEsClosed = %d, want 7", got.CVEsClosed)
+	}
+	// Positive control: a group with NO reported value for a counter must
+	// contribute nothing to it rather than a fabricated zero. PRsRejected90d is
+	// nil on both hives here, so the total must be zero AND that zero must come
+	// from absence, which the Reporting pair distinguishes.
+	if got.PRsRejected != 0 {
+		t.Errorf("PRsRejected = %d, want 0 (neither hive reported it)", got.PRsRejected)
+	}
+	if got.Reporting != 2 {
+		t.Errorf("Reporting = %d, want 2 (both hives reported SOME counter)", got.Reporting)
+	}
+}
+
+// TestFleetStatsStaleGroupStillExcluded pins that dedupe did not smuggle a
+// stale count past the ageing rule. Staleness is evaluated PER HIVE before the
+// group is formed, so a group is represented by its FRESHEST surviving members
+// and a group with no fresh member contributes nothing at all.
+func TestFleetStatsStaleGroupStillExcluded(t *testing.T) {
+	stale := time.Now().Add(-2 * fleetStatsMaxAge)
+
+	t.Run("wholly stale group contributes nothing", func(t *testing.T) {
+		s := &HubServer{logger: slog.Default()}
+		h1 := coHive("h1", "acme", "ai-bot", 3746)
+		h1.FleetStatsCollectedAt = stale
+		h2 := coHive("h2", "acme", "ai-bot", 3746)
+		h2.FleetStatsCollectedAt = stale
+		s.registry.Hives = []RegistryEntry{h1, h2}
+
+		got := s.computeFleetStats()
+		if got.PRsMerged != 0 {
+			t.Errorf("PRsMerged = %d, want 0 (every member of the group is stale)", got.PRsMerged)
+		}
+		if got.Stale != 2 || got.Reporting != 0 {
+			t.Errorf("Stale/Reporting = %d/%d, want 2/0", got.Stale, got.Reporting)
+		}
+	})
+
+	// Positive control: one fresh member is enough to speak for the group, and
+	// a stale sibling's LARGER count must not ride in on the group's max — that
+	// is precisely how dedupe could have re-admitted aged-out data.
+	t.Run("fresh member represents group and stale sibling does not inflate it", func(t *testing.T) {
+		s := &HubServer{logger: slog.Default()}
+		fresh := coHive("h1", "acme", "ai-bot", 10)
+		aged := coHive("h2", "acme", "ai-bot", 999)
+		aged.FleetStatsCollectedAt = stale
+		s.registry.Hives = []RegistryEntry{fresh, aged}
+
+		got := s.computeFleetStats()
+		if got.PRsMerged != 10 {
+			t.Errorf("PRsMerged = %d, want 10 (stale sibling must not win the group max)", got.PRsMerged)
+		}
+		if got.Stale != 1 || got.Reporting != 1 {
+			t.Errorf("Stale/Reporting = %d/%d, want 1/1", got.Stale, got.Reporting)
+		}
+	})
+}
+
+// TestFleetStatsUngroupedHivesCountIndividually pins the safe default: a hive
+// whose org or AI author is unknown cannot be SHOWN to duplicate anyone, so it
+// counts on its own. Collapsing all unknowns into one bucket would silently
+// delete real work from the public total.
+func TestFleetStatsUngroupedHivesCountIndividually(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		// No AIAuthor -> ungrouped, even though the org matches.
+		{ID: "h1", IsPublic: true, Online: true, Org: "acme", Repos: []string{"acme/r1"},
+			PRsMerged90d: ptrInt(5), FleetStatsCollectedAt: time.Now()},
+		{ID: "h2", IsPublic: true, Online: true, Org: "acme", Repos: []string{"acme/r2"},
+			PRsMerged90d: ptrInt(7), FleetStatsCollectedAt: time.Now()},
+	}
+
+	got := s.computeFleetStats()
+	if want := 12; got.PRsMerged != want {
+		t.Errorf("PRsMerged = %d, want %d (unknown author means ungrouped, count each once)",
+			got.PRsMerged, want)
+	}
+}
+
+// TestFleetStatsDedupeAppliesToAllThreeCounters pins that the fix covers
+// PRsRejected90d and CVEsClosed too, not just the counter the bug was spotted
+// on. CVEsClosed has a different window (all-time, and a free-text "CVE-"
+// search) but it is collected by the same org-scoped query, so it multiplies
+// identically and is deduped identically.
+func TestFleetStatsDedupeAppliesToAllThreeCounters(t *testing.T) {
+	withAll := func(id string, merged, rejected, cves int) RegistryEntry {
+		e := coHive(id, "acme", "ai-bot", merged)
+		e.PRsRejected90d = ptrInt(rejected)
+		e.CVEsClosed = ptrInt(cves)
+		return e
+	}
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		withAll("h1", 100, 20, 5),
+		withAll("h2", 100, 20, 5),
+	}
+
+	got := s.computeFleetStats()
+	if got.PRsMerged != 100 || got.PRsRejected != 20 || got.CVEsClosed != 5 {
+		t.Errorf("merged/rejected/cves = %d/%d/%d, want 100/20/5 (all three counters dedupe)",
+			got.PRsMerged, got.PRsRejected, got.CVEsClosed)
+	}
+}

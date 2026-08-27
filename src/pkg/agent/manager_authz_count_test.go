@@ -268,7 +268,7 @@ func TestAuthorizeIssueOpenAllowsIssuesOnlyAgent(t *testing.T) {
 	m := testManager(4)
 	m.agents["scanner"] = &AgentProcess{Name: "scanner"}
 	m.uidMap = &UIDMap{BaseUID: testUIDBase, Agents: map[string]int{"scanner": testUIDBase}}
-	if err := m.AuthorizeIssueOpen("scanner", testUIDBase); err != nil {
+	if err := m.AuthorizeIssueOpen("scanner", testUIDBase, "issue"); err != nil {
 		t.Fatalf("AuthorizeIssueOpen() = %v, want nil for L4 scanner", err)
 	}
 }
@@ -277,7 +277,7 @@ func TestAuthorizeIssueOpenRejectsAdvisoryAndForgedRequests(t *testing.T) {
 	t.Run("advisory", func(t *testing.T) {
 		m := testManager(2)
 		m.agents["scanner"] = &AgentProcess{Name: "scanner"}
-		if err := m.AuthorizeIssueOpen("scanner", 0); err == nil || !strings.Contains(err.Error(), "cannot create issues") {
+		if err := m.AuthorizeIssueOpen("scanner", 0, "issue"); err == nil || !strings.Contains(err.Error(), "may not create issues") {
 			t.Fatalf("AuthorizeIssueOpen() = %v, want ACMM denial", err)
 		}
 	})
@@ -286,7 +286,7 @@ func TestAuthorizeIssueOpenRejectsAdvisoryAndForgedRequests(t *testing.T) {
 		m.agents["scanner"] = &AgentProcess{Name: "scanner"}
 		m.agents["quality"] = &AgentProcess{Name: "quality"}
 		m.uidMap = &UIDMap{BaseUID: testUIDBase, Agents: map[string]int{"scanner": testUIDBase, "quality": testUIDBase + 1}}
-		if err := m.AuthorizeIssueOpen("scanner", testUIDBase+1); err == nil || !strings.Contains(err.Error(), "quality") {
+		if err := m.AuthorizeIssueOpen("scanner", testUIDBase+1, "issue"); err == nil || !strings.Contains(err.Error(), "quality") {
 			t.Fatalf("AuthorizeIssueOpen() = %v, want forged UID denial", err)
 		}
 	})

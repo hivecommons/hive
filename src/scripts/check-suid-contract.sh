@@ -129,6 +129,43 @@ check "hive-launch launcher group is created" \
 check "dev is a member of hive-launch" \
   'useradd.*-G[[:space:]]+hive-launch'
 
+# 6. The image must strip every OTHER setuid/setgid bit (#3866, CWE-250/732).
+#
+# Checks 1-5 above are all about su-exec. They say nothing about what the BASE
+# IMAGE ships, and that is where the rest of the surface came from: node:26-slim
+# plus the passwd/util-linux packages leave eleven world-executable
+# setuid/setgid binaries in the image (chfn, chsh, gpasswd, mount, newgrp,
+# passwd, su, umount, chage, expiry, unix_chkpwd). Every one is reachable by an
+# agent UID — the population `chmod 4750 root:hive-launch` exists to exclude —
+# and the pod cannot neutralise them with no_new_privs, because
+# `allowPrivilegeEscalation: false` would disable su-exec too.
+#
+# So the Dockerfile strips them, and asserts its own result so the BUILD fails
+# if a future layer reintroduces one. These greps keep that step from being
+# quietly deleted; src/deploy/test_image_suid_inventory.sh is what proves it
+# actually works, by booting the image and reading the inventory back.
+check "image strips every setuid/setgid bit outside the su-exec helper (#3866)" \
+  'find[[:space:]]+/[[:space:]]+-xdev.*-perm[[:space:]]+-4000.*-perm[[:space:]]+-2000'
+check "the strip exempts only /usr/local/bin/su-exec" \
+  '!([[:space:]]+)-path[[:space:]]+/usr/local/bin/su-exec'
+check "the strip actually clears the bits (chmod -s)" \
+  'chmod[[:space:]]+-s'
+check "the build asserts the resulting inventory is the single expected helper" \
+  '-rwsr-x---[[:space:]]+root:hive-launch[[:space:]]+/usr/local/bin/su-exec'
+
+# The strip has to run AFTER the last layer that can install a setuid binary,
+# or a package added below it ships unstripped. Assert its position rather than
+# merely its presence.
+strip_line="$(grep -n -E '^RUN find / -xdev -type f .*-perm -4000' "$DOCKERFILE" | head -1 | cut -d: -f1)"
+last_install_line="$(grep -n -E '^RUN .*(apt-get install|npm install|pip3? install)' "$DOCKERFILE" | tail -1 | cut -d: -f1)"
+if [[ -n "$strip_line" && -n "$last_install_line" && "$strip_line" -gt "$last_install_line" ]]; then
+  echo "  ok: the setuid strip runs after the last install layer (line ${strip_line} > ${last_install_line})"
+else
+  echo "  FAIL: the setuid strip must run after every apt/npm/pip layer" \
+       "(strip at line ${strip_line:-none}, last install at line ${last_install_line:-none})"
+  fail=1
+fi
+
 # ── NET_ADMIN contract: NO file capability, ambient grant instead (#3760) ─────
 #
 # The hive process needs CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can

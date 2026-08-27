@@ -1,0 +1,50 @@
+# Starts hive-boot.target once the boot transaction is over (#4478).
+#
+# THIS UNIT IS WHAT KEEPS HIVE OFF THE BOOT'S CRITICAL PATH. It is the only
+# Hive unit wanted by default.target, and it is Type=exec: it counts as
+# started the moment its process is spawned, so its own start job costs the
+# boot transaction nothing. The process then waits for the manager to declare
+# startup finished (`is-system-running --wait` returns at exactly systemd's
+# FinishTimestamp, in every terminal state including `degraded` — hence the
+# `;` rather than `&&`) and enqueues hive-boot.target as a NEW transaction
+# with --no-block, so nothing ever re-enters the boot transaction.
+#
+# Measured in src/deploy/probe_boot_transaction_coupling.sh: a never-healthy
+# stand-in wired this way let the boot finish in +0.122s where the
+# WantedBy=default.target shape held it 20.188s of a 20s TimeoutStartSec —
+# while the unit still auto-started, still recorded Result=timeout on its own
+# start job (what `podman auto-update --rollback` reads, #4407), and
+# Restart=always still cycled it.
+#
+# ONE FILE, BOTH MANAGERS. $MANAGERPID is set for processes spawned by a
+# systemd USER instance and never by the system instance, so it is the
+# discriminator for which bus to talk to. In the user manager the wait returns
+# almost immediately — the user manager's own startup is what rootless Hive
+# already ran after — so rootless timing is unchanged. The `$$` below are
+# systemd escaping, not shell PIDs: the manager substitutes `$VAR`/`${VAR}` in
+# ExecStart before the shell ever runs, so every shell-level dollar has to be
+# written `$$` to survive to /bin/sh. Do not "simplify" them away — with a
+# single `$` the manager blanks the variables and the rootless gate talks to
+# the wrong bus.
+#
+# FAILS TOWARD THE OLD BEHAVIOUR. If `is-system-running --wait` is unavailable
+# (systemd < 232) or errors, the shell falls through to the start immediately,
+# which is exactly the pre-#4478 wiring: Hive starts, and at worst the boot
+# waits as it always did. A broken gate cannot lose the deployment, only the
+# decoupling.
+#
+# Install to /etc/systemd/system (rootful) or ~/.config/systemd/user
+# (rootless), then `systemctl [--user] enable hive-boot-gate.service`. Unlike
+# the generated hive.service this is a real unit file, so enabling it works
+# and is required: bin/hive-podman-lifecycle-probe.sh checks it.
+
+[Unit]
+Description=Start Hive after the boot transaction has settled
+Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
+
+[Service]
+Type=exec
+ExecStart=/bin/sh -c 'u=""; [ -n "$${MANAGERPID:-}" ] && u="--user"; systemctl $$u is-system-running --wait >/dev/null 2>&1; exec systemctl $$u start --no-block hive-boot.target'
+
+[Install]
+WantedBy=default.target

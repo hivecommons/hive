@@ -384,7 +384,7 @@ func TestProxyHTTPRepoFilterBlocked(t *testing.T) {
 	upstreamConn, proxyUpstream := net.Pipe()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// PATCH an existing issue in a repo not in the allowed list, then close so
 	// proxyHTTP sees EOF. Direct issue creation has its own stronger hard-deny
@@ -443,7 +443,7 @@ func TestProxyHTTPGitPath(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs, agent.AgentCapabilities{})
 
 	// Send a git-upload-pack request (allowed at advisory mode)
 	go func() {
@@ -841,7 +841,7 @@ func TestProxyHTTPMultipleRequests(t *testing.T) {
 	defer clientConn.Close()
 	defer upstreamConn.Close()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory)
+	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
 	// First: allowed GET
 	go func() {
@@ -1193,57 +1193,7 @@ func TestStartInferenceTranslator(t *testing.T) {
 	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test-model"}
 	p.inference.Set("test-agent", route)
 
-	// Create a handler that mirrors StartInferenceTranslator's logic but without blocking
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("x-api-key")
-		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
-
-		rt := p.inference.Get(agentName)
-		if rt == nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if r.Body != nil {
-			r.Body.Close()
-		}
-		if err != nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read request"}}`, http.StatusBadRequest)
-			return
-		}
-
-		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model, 0, "")
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
-			return
-		}
-
-		upstreamURL := strings.TrimRight(rt.Endpoint, "/") + "/v1/chat/completions"
-		upstreamReq, _ := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
-		upstreamReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(upstreamReq)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error"}`), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		respBody, _ := io.ReadAll(resp.Body)
-		translated, err := translateOpenAIResponseToAnthropic(respBody, rt.Model)
-		if err != nil {
-			http.Error(w, `{"type":"error"}`, http.StatusBadGateway)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(translated)
-	})
-
-	ts := httptest.NewServer(mux)
+	ts := httptest.NewServer(p.inferenceTranslatorHandler())
 	defer ts.Close()
 
 	// Test: no route for agent
@@ -1387,7 +1337,7 @@ func TestProxyHTTPGraphQLBlockedNonMutation(t *testing.T) {
 	defer upstreamConn.Close()
 
 	// Use mode below advisory to block even queries
-	go p.proxyHTTP(proxyClient, proxyUpstream, "blocked-agent", agent.AgentMode(-1))
+	go p.proxyHTTP(proxyClient, proxyUpstream, "blocked-agent", agent.AgentMode(-1), agent.AgentCapabilities{})
 
 	body := `{"query":"{ viewer { login } }"}`
 	fmt.Fprintf(clientConn, "POST /graphql HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: %d\r\n\r\n%s", len(body), body)

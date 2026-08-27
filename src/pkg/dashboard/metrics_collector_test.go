@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,4 +336,80 @@ func TestMetricsCollector_Start_CancelledContext(t *testing.T) {
 // encodeBase64ForTest is a helper for the test server to encode file contents.
 func encodeBase64ForTest(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+func TestMetricsCollector_CollectPRIssueCounts_NilClient(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	mc := &MetricsCollector{
+		repo:    "repo1",
+		logger:  logger,
+		metrics: make(map[string]any),
+	}
+	mc.collectPRIssueCounts(context.Background())
+	if got := mc.GetPRIssueCounts(); got != nil {
+		t.Errorf("GetPRIssueCounts() = %+v, want nil", got)
+	}
+}
+
+func TestMetricsCollector_CollectPRIssueCounts_EmptyRepo(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	mc := &MetricsCollector{
+		logger:  logger,
+		metrics: make(map[string]any),
+	}
+	mc.collectPRIssueCounts(context.Background())
+	if got := mc.GetPRIssueCounts(); got != nil {
+		t.Errorf("GetPRIssueCounts() = %+v, want nil", got)
+	}
+}
+
+func TestMetricsCollector_CollectPRIssueCounts_WithMock(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		total := 0
+		switch {
+		case strings.Contains(q, "type:pr"):
+			total = 8
+		case strings.Contains(q, "type:issue"):
+			total = 5
+		}
+		json.NewEncoder(w).Encode(map[string]any{"total_count": total, "items": []any{}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	mc := &MetricsCollector{
+		ghClient: ghpkg.NewClientForTest(srv.URL, "myorg", []string{"repo1"}, logger),
+		org:      "myorg",
+		repo:     "repo1",
+		logger:   logger,
+		metrics:  make(map[string]any),
+	}
+	mc.collectPRIssueCounts(context.Background())
+
+	got := mc.GetPRIssueCounts()
+	if got == nil {
+		t.Fatal("expected non-nil PR/issue counts")
+	}
+	if got.MergedPRs != 8 {
+		t.Errorf("MergedPRs = %d, want 8", got.MergedPRs)
+	}
+	if got.ClosedIssues != 5 {
+		t.Errorf("ClosedIssues = %d, want 5", got.ClosedIssues)
+	}
+}
+
+func TestMetricsCollector_PRIssueCounts_SaveAndLoadDisk(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	mc := &MetricsCollector{
+		logger:  logger,
+		metrics: make(map[string]any),
+	}
+	// savePRIssueCountsToDisk writes to /data/metrics/ which may fail in a
+	// sandboxed test environment (read-only fs); just verify it doesn't panic.
+	mc.savePRIssueCountsToDisk(&ghpkg.PRIssueCounts{MergedPRs: 3, ClosedIssues: 2, UpdatedAt: time.Now().UTC().Format(time.RFC3339)})
+	// loadPRIssueCountsFromDisk on a missing/inaccessible file should also not panic.
+	mc.loadPRIssueCountsFromDisk()
 }

@@ -36,6 +36,8 @@ func newSSOServer(t *testing.T, hubProxied bool, authToken string, authorized ..
 		s.deps.Config.Dashboard.AuthorizedUsers = authorized
 	}
 	t.Setenv("HIVE_HUB_SECRET", testHubSecret)
+	t.Setenv("HIVE_SSO_PUBLIC_KEY", "")
+	t.Setenv("HIVE_SSO_PUBLIC_KEY_PREV", "")
 	return s
 }
 

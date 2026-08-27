@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -16,7 +18,12 @@ func newVarServer(t *testing.T) *Server {
 		Agents:     map[string]config.AgentConfig{"scanner": {Backend: "copilot"}},
 		SourcePath: t.TempDir() + "/hive.yaml",
 	}
-	srv := NewServer(0, nil)
+	// A real (discarding) logger is required: RegisterAPI constructs a
+	// ContributeWSHub with the server's logger, and on a live hive host the
+	// hub's load* methods read existing /data/contributors state and log
+	// through it — a nil logger panics and fails the whole suite.
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{Config: cfg, RefreshFunc: func() {}, PersistFunc: func() {}, SkipReloadFunc: func() {}}
 	srv.RegisterAPI(srv.deps)
 	return srv

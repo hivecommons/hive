@@ -22,7 +22,7 @@ That is a complete, valid agent. Defaults fill in the rest at load time:
 - `clear_on_kick: true` — the session context is cleared before each kick
 - `id` and `role` default to the agent's name (`scanner`)
 - `bead_role: worker`, `beads_dir: /data/beads/scanner`
-- Well-known names (`scanner`, `ci-maintainer`, `architect`, `supervisor`, `sec-check`, `quality`, `guide`, `strategist`, `outreach`) also get a default emoji, color, aliases, and lane keywords, so a bare `scanner:` entry already shows up in the dashboard as 🔍 with sensible triage keywords.
+- Well-known names (`scanner`, `ci-maintainer`, `architect`, `supervisor`, `sec-check`, `quality`, `guide`, `strategist`, `outreach`, `telemetry`, `operations`) also get a default emoji, color, aliases, and lane keywords, so a bare `scanner:` entry already shows up in the dashboard as 🔍 with sensible triage keywords.
 
 You almost never write a full roster by hand: applying an ACMM level (below) generates one for you, and the dashboard edits it live.
 
@@ -55,7 +55,7 @@ Read the tree top to bottom and you can answer "who set this?" for any value:
 
 - **The platform owns the seed.** In Kubernetes, an init container re-copies the ConfigMap to `/etc/hive/hive.yaml` on every boot. The entrypoint then merges the dashboard overlay over it — but the ConfigMap stays authoritative for the hub/admin-managed keys (`acmm_level`, `hub.is_public`).
 - **You (via the dashboard) own the overlay.** Every dashboard save writes `/data/hive.yaml.dashboard`, so a LiteLLM endpoint or agent tweak survives pod restarts and upgrades.
-- **Secrets never enter YAML.** `hive.yaml` stores only env var *names* (`api_key_env`) and key file *paths* (`api_key_file`) — never key values. Values live in `/data/secrets/` (dashboard-entered) or `/secrets/` (Kubernetes Secret mounts). Because `Config.Save()` writes the whole config back to disk, a key value in YAML would be persisted in plaintext — so the code refuses the pattern entirely.
+- **Secrets never enter YAML.** `hive.yaml` stores only env var *names* (`api_key_env`) and key file *paths* (`api_key_file`, `governor.backup.key_file`) — never key values. Values live in `/data/secrets/` (dashboard-entered) or `/secrets/` (Kubernetes Secret mounts). Because `Config.Save()` writes the whole config back to disk, a key value in YAML would be persisted in plaintext — so the code refuses the pattern entirely.
 
 ## Anatomy of an agent
 
@@ -96,11 +96,16 @@ agents:
     enabled: true                # default true; set false to keep it configured but off
     mode: ISSUES_AND_PRS         # GitHub interaction tier: ADVISORY | ISSUES_ONLY |
                                  #   ISSUES_AND_PRS | ISSUES_PRS_MERGE
+    converse: true               # let this agent comment on issues/PRs and leave PR
+                                 #   reviews, INDEPENDENTLY of mode. Off by default.
+                                 #   See "Conversation is not a tier" below.
     bead_role: worker            # worker | supervisor (supervisors sort first,
                                  #   monitor the others); default worker
     kick_template: scanner-holdgated.md
                                  # named work-prompt template in the policies dir
-    include_repos: true          # append the project repo list to each kick (default true)
+    include_repos: true          # append the project repo list to each kick (default true).
+                                 #   Prompt text only — it authorizes repos, it does
+                                 #   NOT clone, mount, or provision anything on disk.
     on_demand: false             # true = never kicked by the governor timer;
                                  #   only triggered explicitly (e.g. inception)
     clear_on_kick: true          # default true; false keeps session context across kicks
@@ -112,6 +117,51 @@ agents:
     lane_keywords: [bug, triage, fix]   # routes matching issues into this agent's lane
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
 ```
+
+#### Conversation is not a tier
+
+`mode` is a ladder: each rung is a strict superset of the one below, from
+"observe only" up to "merge on green CI". `converse` is not on that ladder. It
+grants exactly two things — posting a comment on an issue or PR, and leaving a
+PR review — and nothing else moves.
+
+It exists because those two operations had nowhere sensible to sit
+([#4492](https://github.com/kubestellar/hive/issues/4492)). Commenting was
+bundled with `ISSUES_ONLY`, alongside creating issues, editing issue bodies and
+relabelling; leaving a PR review was bundled with `ISSUES_AND_PRS`, alongside
+pushing branches. Both bundles are wrong in both directions:
+
+- An **ADVISORY** agent that spots something on a thread could not reply. It
+  could only emit a bead nobody outside the hive ever sees.
+- Letting it reply meant promoting it to `ISSUES_ONLY`, which also handed it the
+  ability to rewrite issue bodies and relabel — and a reviewer who wanted
+  comment-only had no way to ask for it.
+
+With `converse` those are separable:
+
+| What you want | Configuration |
+|---|---|
+| An agent that observes and can reply, but files and edits nothing | `mode: ADVISORY` + `converse: true` |
+| An agent that files issues but never speaks on a thread | `mode: ISSUES_ONLY` (the default — `converse` is off) |
+| A merge-capable agent that also reviews at ADVISORY-level trust | not expressible; reviews come with `ISSUES_AND_PRS` anyway |
+
+**It only ever widens.** `converse` is checked *beside* the mode tier, not
+instead of it, so an agent already at a tier that permits an operation keeps it.
+Turning `converse` on can never take anything away, and it cannot reach anything
+the tier ladder does not already gate: issue creation, editing, relabelling,
+pushing, opening a PR and merging all stay exactly where they were. The
+hard-denied routes (direct PR creation, direct merge) are unreachable by any
+capability at all.
+
+**It is off everywhere by default**, at every ACMM level, so a hive that does
+not mention it behaves exactly as it did. The only way an agent starts talking
+is an operator writing `converse: true`.
+
+Enforcement is the MITM proxy, over both REST and GraphQL — which matters,
+because `gh issue comment` and `gh pr review` send GraphQL, not REST. On the
+GraphQL side the grant is evaluated over the *whole* document: a mutation that
+comments **and** edits an issue, or comments and merges, is not conversation and
+is refused at the tier the non-conversational half requires.
 
 For prompt file resolution and the complete built-in `${VAR}` reference, see
 [Policy and prompt templates](../policies/README.md).
@@ -167,9 +217,81 @@ Rounding out the schema — fields you will rarely touch:
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
 | `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
+| `explain_mode` | Ask the agent to report why it made each tool call: `off`, `brief`, `full`; see below | inherit the hive default |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style) | none |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
+
+## Explain mode (debugging agent behaviour)
+
+Agents are told to act, not narrate. Every policy carries an "Output Rules — Terse Mode" block, and on inference backends the agent manager appends an explicit `EXECUTE, DO NOT NARRATE` instruction to each kick. That rule earns its keep — weak models otherwise answer a kick with a plan for someone else to run instead of running it — but it also means that when an agent does the wrong thing, there is nothing in the log saying *why*.
+
+`explain_mode` buys that visibility back for one agent at a time, without relaxing the rule for anything else.
+
+| Mode | What the agent is asked to add | Cost |
+| --- | --- | --- |
+| `off` | Nothing. Identical to the behaviour before this option existed. | none |
+| `brief` | One `EXPLAIN:` line before each tool call, giving the reason for that specific call. | small, per tool call |
+| `full` | `brief`, plus a closing `EXPLAIN:` block: the goal as understood, the approach chosen, alternatives rejected and why, and what evidence would have changed the decision. | larger, per kick |
+
+```yaml
+agents:
+  scanner:
+    backend: claude
+    explain_mode: brief
+```
+
+### What it does and does not change
+
+- **The agent still acts.** The instruction states that tool execution remains the requirement and that a response containing only explanation is a failure. It is appended *after* the `EXECUTE, DO NOT NARRATE` block, so it reads as a qualification of that rule rather than a replacement for it.
+- **Terse mode is suspended on `EXPLAIN:` lines only.** A caveman-compressed explanation would be useless to the human reading it, but the agent's real output — log lines, bead titles, PR descriptions — keeps whatever compression you configured.
+- **It is per-kick, not a prompt edit.** Nothing in `src/policies/` or `examples/*/agents/*.md` changes, so toggling it does not alter any agent's actual instructions and does not require a redeploy.
+
+### Reading the explanation
+
+Explanation lands in the agent's ordinary log, tagged with the `EXPLAIN:` prefix. Agent logs are tmux pane scrapes, so there is no second channel to write to — but the prefix makes the split a read-time choice:
+
+| URL | Shows |
+| --- | --- |
+| `/api/agents/<name>/log` | The log as always: work and explanation interleaved. |
+| `/api/agents/<name>/log?explain=only` | Just the reasoning. |
+| `/api/agents/<name>/log?explain=hide` | The log as it would read with explanation off. |
+
+`grep EXPLAIN:` works the same way on a downloaded log.
+
+### Fleet-wide default
+
+To turn explanation on everywhere without editing each agent, set the hive-wide default. It lives in governor config, so it is settable from the dashboard:
+
+**Dashboard** — Settings → Governor → General → **Default explain mode**. The field also reports which mode is in force right now and where it came from, and takes effect on the next kick; no restart.
+
+**`hive.yaml`**
+
+```yaml
+governor:
+  explain_mode: brief   # off | brief | full — omit for "no hive default"
+```
+
+**Environment** — `HIVE_EXPLAIN_MODE=brief` on the deployment still works, as the fallback consulted when `governor.explain_mode` is unset. Prefer the config field: the env var is set on the deployment, which a hosted hive's owner has no access to.
+
+| `governor.explain_mode` | `HIVE_EXPLAIN_MODE` | Hive default |
+| --- | --- | --- |
+| unset | unset | `off` |
+| unset | `full` | `full` |
+| `brief` | `full` | `brief` — config wins |
+| `off` | `full` | `off` — an explicit `off` in config is a choice, not "unset" |
+
+The per-agent field is a tri-state, and the difference matters:
+
+| `explain_mode` | With a hive default of `full` | Meaning |
+| --- | --- | --- |
+| unset | `full` | Inherit the hive default. |
+| `off` | `off` | Explicit opt-out; a fleet-wide default does not override it. |
+| `brief` | `brief` | Explicit per-agent choice wins. |
+
+An unrecognized value in any of these places resolves to `off`, so a typo degrades to the previous behaviour rather than to a mode nobody asked for. Hive injects the *resolved* mode into each agent process as `HIVE_EXPLAIN_MODE`, so an agent's own skills and scripts can branch on it without re-deriving the precedence rules.
+
+Leave it off outside of debugging: the explanation is extra output tokens on every kick.
 
 ## Caveman prompt compression
 
@@ -182,7 +304,7 @@ Rounding out the schema — fields you will rarely touch:
 | `ultra` | Telegraphic compression. | High-volume lanes where compact summaries are more important than nuance. |
 | `wenyan` | Classical Chinese-style compression. | Specialized/experimental mode; use only when readers and downstream tools can tolerate it. |
 
-Implementation notes from v2 HEAD:
+Implementation notes:
 
 - Config validation accepts only `lite`, `full`, `ultra`, `wenyan`, or empty.
 - `claude`, `copilot`, and `gemini` are auto-wired before first message.
@@ -207,7 +329,7 @@ Implementation notes from v2 HEAD:
 
 Two rules of thumb:
 
-- **CLI methods are subscriptions.** You log in once per method from the dashboard, and every agent using that method shares the login.
+- **CLI methods are subscriptions.** You log in once per method from the dashboard, and every agent using that method shares the login. For `claude`, sharing is not instantaneous: the OAuth token is shared immediately through the per-agent home bridge, while the session identity (`~/.claude.json`, which is what decides whether the CLI shows a login menu) is adopted from an already-signed-in agent the next time each other agent launches or is restarted. So on a fresh install, expect the remaining agents to clear their 🔑 badge on their next start rather than the moment you finish logging in.
 - **Inference methods are endpoints.** You configure a base URL and a key *reference* (env var name or key-file path — the value goes in `/data/secrets/`, never in YAML). Agents on `vllm`/`llm-d`/`litellm` launch the Claude CLI routed through hive's inference translator, so there is no separate login.
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
@@ -229,7 +351,7 @@ Pin a model when reproducibility matters more than the governor's budget optimiz
 
 ## Cadences and the governor
 
-Agents don't schedule themselves. The **governor** evaluates the work queue every `eval_interval_s` (default 300s), computes a mode from queue depth — **idle → quiet → busy → surge** (default thresholds: quiet > 2, busy > 10, surge > 20; override with `threshold:`) — and kicks each agent on the cadence that mode assigns it:
+Agents don't schedule themselves. The **governor** evaluates the work queue every `eval_interval_s` (default 300s), computes a mode from queue depth — **idle → quiet → busy → surge** (default thresholds: quiet > 2, busy > 10, surge > 20 **per watched repo**; override with `threshold:`) — and kicks each agent on the cadence that mode assigns it:
 
 ```yaml
 governor:
@@ -250,6 +372,7 @@ governor:
       architect: pause     # "pause" stops kicks for this agent in this mode
 ```
 
+- **Thresholds scale with repo count.** The *default* thresholds above are per-repo bases, multiplied by `len(project.repos)` — so `surge` is 20 on a 1-repo hive and 780 on a 39-repo one, and the mode ladder means the same thing at any hive size. A `threshold:` you set yourself is used verbatim and never scaled. Tune the curve with `governor.threshold_scaling` (`linear` default, `sqrt`, `none`). See [Governor mode thresholds](governor-thresholds.md), which also covers the ACMM-pack interaction.
 - **Mutually exclusive modes.** Each per-agent, per-mode cadence is either an interval (`5m`, `2h`, `pause`) or a time-of-day schedule — never both. Config load and API writes reject mixed forms with a 400/error.
 - **Time-of-day schedules.** Use `times: ["HH:MM"]` with optional `days` (`mon` … `sun`) and a required IANA `tz`. The timezone is stored explicitly and displayed with the schedule; it does not float with the viewer.
 - **Advanced cron.** Power users can provide a constrained five-field cron expression plus `tz`. Hive evaluates these with robfig/cron and schedule-local timezone handling.
@@ -277,7 +400,7 @@ You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml`
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template` and `mode` are updated so the agent's *policy* matches the level. A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.
 
-The L5 roster is the canonical worked example — nine agents, eight on the governor timer plus one on demand:
+The L5 roster is the canonical worked example — eleven agents, eight on the governor timer, two opt-in agents paused in every governor mode, plus one on demand:
 
 | Agent | | Mode | Cadence (all governor modes) |
 |---|---|---|---|
@@ -289,9 +412,43 @@ The L5 roster is the canonical worked example — nine agents, eight on the gove
 | sec-check 🛡 | CVEs, vulnerabilities | ISSUES_AND_PRS | 4h |
 | architect 🏗 | RFCs, refactors | ISSUES_AND_PRS | 4h |
 | strategist 🧠 | cross-agent coordination | ISSUES_AND_PRS | 4h |
+| telemetry 📡 | managed-project instrumentation | ISSUES_AND_PRS | paused |
+| operations 🚨 | managed-project operational practice | ISSUES_AND_PRS | paused |
 | brainstorm 💡 | ideation | ADVISORY | on demand |
 
 At L5, every agent PR gets a `hold` label automatically. The system proposes; it does not merge autonomously.
+
+Telemetry and operations stay paused until an operator deliberately opts in. Their lane keywords are disjoint: telemetry owns instrumentation and observability terms, while operations owns health, SLO, runbook, incident, rollback, and alerting terms.
+
+Configure that opt-in under **Settings → Project Observability**. This tab is
+for the managed project's target stack; the **Features** tab separately controls
+Hive's own OpenTelemetry export. Selecting platforms persists them under
+`governor.project_observability`, and enabling an agent replaces its all-mode
+paused cadence with a conservative `24h` interval (which can then be tuned from
+the agent's Cadences tab).
+
+```yaml
+governor:
+  project_observability:
+    open_source: [opentelemetry, prometheus, grafana]
+    kube_native: [servicemonitor]
+    commercial: [honeycomb]
+    references:
+      honeycomb:
+        endpoint_env: OTEL_EXPORTER_OTLP_ENDPOINT
+        credential_secret: observability/honeycomb-key
+```
+
+Reference fields accept names only: an environment-variable name or a
+`secret-name/key` reference. Literal endpoints, tokens, and API keys are
+rejected. With no selected backend, the policies fail closed: agents may detect
+the existing stack and report recommendations, but may not add an exporter or
+new external data flow.
+
+After an initial telemetry advisory run, platforms mentioned in its findings are
+preselected as suggestions in the tab. They remain unsaved until an operator
+reviews them and clicks **Save**; after that, the persisted declaration governs
+future telemetry and operations work.
 
 ## Kick templates: what an agent is told to do
 
@@ -300,6 +457,36 @@ At L5, every agent PR gets a `hold` label automatically. The system proposes; it
 Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM pack's template for that agent at the current level; otherwise convention — `/data/agents/<name>/CLAUDE.md`, then `<name>.md` in the policies checkout, then the embedded default. Pack templates carry the level's policy in their names — `scanner-holdgated.md` is scanner-at-L5; the same scanner at L6 gets `scanner-automerge.md`.
 
 Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
+
+## Label policy: which issues agents may work
+
+There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:
+
+| Polarity | Config | Meaning |
+|---|---|---|
+| **Exempt (deny-list)** | `governor.labels.exempt` (+ permanent `hold`/`on-hold`/`hold/review`, `do-not-merge`) | "**Never** touch issues labeled with these." Everything else is eligible. This has always existed. |
+| **Required (allow-list)** | `project.issue_filter.require_labels` | "**Only** touch issues labeled with these." Empty = every issue is eligible. **This is what "only work approved issues" means.** |
+
+By default a hive treats **every open issue** in its repos as candidate work. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work; an exempt list cannot express that policy, because it can only name what to avoid, not demand a label be present.)
+
+```yaml
+project:
+  org: my-org
+  repos: [my-org/common]
+  issue_filter:
+    require_labels: [approved-for-agents]   # agents may ONLY work these issues
+```
+
+Semantics:
+
+- **Absent/empty `require_labels` = no gate** — existing hives are unchanged; there is no default-on filtering.
+- An issue must carry **at least one** required label to be eligible. Matching is case-insensitive and **exact** (a prefix like `approved-for-agents-maybe` does not satisfy `approved-for-agents` — prefix matching would over-admit through an approval gate).
+- **Exempt wins on conflict**: an issue carrying both an exempt label and a required label stays excluded. There is deliberately no separate `exclude_labels` field — the exempt list *is* the exclusion mechanism, applied first.
+- PRs and the Hold list are unaffected: open PRs are in-flight work, and held issues still appear under On Hold.
+
+Both polarities are enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and cannot be re-selected by a confused (or prompt-injected) agent re-listing the repo. Kick prompts additionally state the active require policy so agents know the list is intentionally short. Both lists are edited on the Labels tab; an active require gate is also noted read-only under **Repositories**, and hub-managed hives can receive `issue_filter` with their project config over the heartbeat.
+
+**Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
 ## When to add what
 
@@ -326,7 +513,7 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 - **[Architecture](architecture.md)** — process model, deterministic pipeline, governor loop, guardrails, and hub/spoke design.
 - **[Portable AgentDefinition format](../AGENT-DEFINITION.md)** — standalone YAML schema for agent imports, exports, and overlays.
 - **[Dashboard route and health checks](health-checks.md)** — listener probes and alert behavior for stuck sessions and restart loops.
-- **[Troubleshooting](../../docs/troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
+- **[Troubleshooting](troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
 - **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
 - **[Cross-cluster migration](cross-cluster-migration.md)** — the manual procedure for moving a hive (and its PVC state) between clusters.

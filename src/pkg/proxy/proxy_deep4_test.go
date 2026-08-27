@@ -5,24 +5,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestStartInferenceTranslatorActual calls the real StartInferenceTranslator
 // and sends requests to it. Port 18444 must be free.
 func TestStartInferenceTranslatorActual(t *testing.T) {
-	// Check if port is free
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort))
-	if err != nil {
-		t.Skipf("port %d not available: %v", InferenceTranslatePort, err)
-	}
-	ln.Close()
-
 	// Mock vLLM backend
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -72,15 +63,9 @@ func TestStartInferenceTranslatorActual(t *testing.T) {
 
 	p.inference.Set("agent1", &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test-model"})
 
-	// Start in background
-	go func() {
-		p.StartInferenceTranslator()
-	}()
-
-	// Wait for it to start
-	time.Sleep(200 * time.Millisecond)
-
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", InferenceTranslatePort)
+	translator := httptest.NewServer(p.inferenceTranslatorHandler())
+	defer translator.Close()
+	baseURL := translator.URL
 
 	// Test 1: no route
 	req1, _ := http.NewRequest("POST", baseURL+"/v1/messages",

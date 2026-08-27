@@ -308,8 +308,14 @@ func TestAgentEnvPairs_UID_NonInference_HOME(t *testing.T) {
 	pairs := m.agentEnvPairs(ap)
 	for _, p := range pairs {
 		if p.Key == "HOME" {
-			if p.Value != "/data/home" {
-				t.Errorf("non-inference UID agent HOME = %q, want /data/home", p.Value)
+			// #4596: per-UID interactive agents get a per-agent HOME under the
+			// shared home, so one agent's .claude.json rewrite can never sign
+			// out the fleet. Must match AgentHome exactly.
+			if want := AgentHome("scanner", 1001, "claude"); p.Value != want {
+				t.Errorf("non-inference UID agent HOME = %q, want %q", p.Value, want)
+			}
+			if p.Value != "/data/home/agents/scanner" {
+				t.Errorf("non-inference UID agent HOME = %q, want /data/home/agents/scanner", p.Value)
 			}
 			return
 		}
@@ -351,7 +357,7 @@ func TestSyncModeFiles_WritesCorrectMode(t *testing.T) {
 
 	m.SyncModeFiles(4)
 
-	data, err := os.ReadFile("/tmp/.hive-mode-scanner")
+	data, err := os.ReadFile(filepath.Join(agentStateDir, ".hive-mode-scanner"))
 	if err != nil {
 		t.Skipf("could not read mode file: %v", err)
 	}
@@ -1554,16 +1560,15 @@ func TestLoginPromptPatterns_HasExpectedEntries(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// readCoveragePreamble — write to actual metricsCachePath
+// readCoveragePreamble — redirected metricsCachePath
 // ---------------------------------------------------------------------------
 
 func TestReadCoveragePreamble_WithActualFile(t *testing.T) {
-	// Create the metrics cache directory and file at the actual path
-	dir := filepath.Dir(metricsCachePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Skipf("cannot create metrics dir: %v", err)
-	}
-	defer os.Remove(metricsCachePath)
+	dir := t.TempDir()
+	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
+	orig := metricsCachePath
+	metricsCachePath = cacheFile
+	t.Cleanup(func() { metricsCachePath = orig })
 
 	metrics := map[string]map[string]json.Number{
 		"ci-maintainer": {
@@ -1572,7 +1577,7 @@ func TestReadCoveragePreamble_WithActualFile(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(metrics)
-	if err := os.WriteFile(metricsCachePath, data, 0o644); err != nil {
+	if err := os.WriteFile(cacheFile, data, 0o644); err != nil {
 		t.Skipf("cannot write metrics file: %v", err)
 	}
 
@@ -1584,10 +1589,12 @@ func TestReadCoveragePreamble_WithActualFile(t *testing.T) {
 }
 
 func TestReadCoveragePreamble_InvalidJSON_AtPath(t *testing.T) {
-	dir := filepath.Dir(metricsCachePath)
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(metricsCachePath, []byte("not json"), 0o644)
-	defer os.Remove(metricsCachePath)
+	dir := t.TempDir()
+	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
+	orig := metricsCachePath
+	metricsCachePath = cacheFile
+	t.Cleanup(func() { metricsCachePath = orig })
+	os.WriteFile(cacheFile, []byte("not json"), 0o644)
 
 	m := &Manager{logger: discardLogger()}
 	got := m.readCoveragePreamble()
@@ -1597,14 +1604,16 @@ func TestReadCoveragePreamble_InvalidJSON_AtPath(t *testing.T) {
 }
 
 func TestReadCoveragePreamble_NoCIMaintainer(t *testing.T) {
-	dir := filepath.Dir(metricsCachePath)
-	os.MkdirAll(dir, 0o755)
+	dir := t.TempDir()
+	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
+	orig := metricsCachePath
+	metricsCachePath = cacheFile
+	t.Cleanup(func() { metricsCachePath = orig })
 	metrics := map[string]map[string]json.Number{
 		"other": {"coverage": json.Number("50")},
 	}
 	data, _ := json.Marshal(metrics)
-	os.WriteFile(metricsCachePath, data, 0o644)
-	defer os.Remove(metricsCachePath)
+	os.WriteFile(cacheFile, data, 0o644)
 
 	m := &Manager{logger: discardLogger()}
 	got := m.readCoveragePreamble()
@@ -1614,14 +1623,16 @@ func TestReadCoveragePreamble_NoCIMaintainer(t *testing.T) {
 }
 
 func TestReadCoveragePreamble_BadCoverage(t *testing.T) {
-	dir := filepath.Dir(metricsCachePath)
-	os.MkdirAll(dir, 0o755)
+	dir := t.TempDir()
+	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
+	orig := metricsCachePath
+	metricsCachePath = cacheFile
+	t.Cleanup(func() { metricsCachePath = orig })
 	metrics := map[string]map[string]json.Number{
 		"ci-maintainer": {"coverage": json.Number("not-a-number")},
 	}
 	data, _ := json.Marshal(metrics)
-	os.WriteFile(metricsCachePath, data, 0o644)
-	defer os.Remove(metricsCachePath)
+	os.WriteFile(cacheFile, data, 0o644)
 
 	m := &Manager{logger: discardLogger()}
 	got := m.readCoveragePreamble()
@@ -1631,18 +1642,18 @@ func TestReadCoveragePreamble_BadCoverage(t *testing.T) {
 }
 
 func TestReadCoveragePreamble_DefaultTarget(t *testing.T) {
-	dir := filepath.Dir(metricsCachePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Skipf("cannot create metrics dir: %v", err)
-	}
+	dir := t.TempDir()
+	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
+	orig := metricsCachePath
+	metricsCachePath = cacheFile
+	t.Cleanup(func() { metricsCachePath = orig })
 	metrics := map[string]map[string]json.Number{
 		"ci-maintainer": {"coverage": json.Number("80")},
 	}
 	data, _ := json.Marshal(metrics)
-	if err := os.WriteFile(metricsCachePath, data, 0o644); err != nil {
+	if err := os.WriteFile(cacheFile, data, 0o644); err != nil {
 		t.Skipf("cannot write metrics file: %v", err)
 	}
-	defer os.Remove(metricsCachePath)
 
 	m := &Manager{logger: discardLogger()}
 	got := m.readCoveragePreamble()
@@ -1784,13 +1795,18 @@ func TestClearExpiredTokens_ClearsAndPreservesOther(t *testing.T) {
 		t.Error("tokens should be empty after clear")
 	}
 
+	// Login IDENTITY survives a token clear: an expired token does not change
+	// who was logged in, and the interactive CLI refuses to treat a seeded
+	// token as a signed-in session without it — wiping identity here is what
+	// left agents at "Please use /login" over a perfectly valid restored token
+	// (kubestellar/hive, 2026-08-22).
 	users := result["loggedInUsers"].([]interface{})
-	if len(users) != 0 {
-		t.Error("loggedInUsers should be empty")
+	if len(users) != 1 || users[0] != "github.com" {
+		t.Errorf("loggedInUsers must be preserved across a token clear, got %v", users)
 	}
 
-	if _, ok := result["lastLoggedInUser"]; ok {
-		t.Error("lastLoggedInUser should be deleted")
+	if result["lastLoggedInUser"] != "github.com" {
+		t.Error("lastLoggedInUser must be preserved across a token clear")
 	}
 
 	if result["otherSetting"] != "keep-me" {

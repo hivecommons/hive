@@ -1,13 +1,16 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/hooks"
 )
 
 func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
@@ -42,16 +45,41 @@ func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
 
 // ApplyPackResult holds the outcome of applying an ACMM pack.
 type ApplyPackResult struct {
-	Name    string   `json:"name"`
-	Created []string `json:"created"`
-	Updated []string `json:"updated"`
-	Skipped []string `json:"skipped"`
-	Paused  []string `json:"paused"`
-	Resumed []string `json:"resumed"`
+	Name            string           `json:"name"`
+	Created         []string         `json:"created"`
+	Updated         []string         `json:"updated"`
+	Skipped         []string         `json:"skipped"`
+	Paused          []string         `json:"paused"`
+	Resumed         []string         `json:"resumed"`
+	GovernorChanges *GovernorChanges `json:"governor_changes,omitempty"`
 	// Tombstoned lists pack agents deliberately deleted by the operator and
 	// therefore NOT re-created. Surfaced so an under-full roster reads as an
 	// honored choice rather than an apply that quietly dropped agents.
 	Tombstoned []string `json:"tombstoned,omitempty"`
+}
+
+// GovernorChanges reports the governor settings a pack apply actually changed.
+// It captures old values before reconciliation, because a running governor can
+// retain its current ticker until the hive restarts.
+type GovernorChanges struct {
+	EvalIntervalS *GovernorIntervalChange `json:"eval_interval_s,omitempty"`
+	Cadences      []GovernorCadenceChange `json:"cadences,omitempty"`
+}
+
+type GovernorIntervalChange struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+type GovernorCadenceChange struct {
+	Mode  string `json:"mode"`
+	Agent string `json:"agent"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+}
+
+func (g *GovernorChanges) empty() bool {
+	return g == nil || (g.EvalIntervalS == nil && len(g.Cadences) == 0)
 }
 
 // ApplyPack applies the ACMM pack for the given level. It creates agents,
@@ -112,6 +140,7 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 	var tombstoned []string
 	var updated []string
 	var createErrs []string
+	governorChanges := &GovernorChanges{}
 	if err := s.mutateConfig(func(candidate *config.Config) error {
 		if forceLevel {
 			for name, agentConfig := range candidate.Agents {
@@ -255,6 +284,9 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		candidate.ACMMLevel = &level
 		isFirstApplyOrExpansion := len(created) > 0
 		if pack.Governor.EvalIntervalS > 0 && (forceLevel || isFirstApplyOrExpansion) {
+			if from := candidate.Governor.EvalIntervalS; from != pack.Governor.EvalIntervalS {
+				governorChanges.EvalIntervalS = &GovernorIntervalChange{From: from, To: pack.Governor.EvalIntervalS}
+			}
 			candidate.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
 		}
 		if candidate.Governor.Modes == nil {
@@ -262,6 +294,7 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		}
 		for modeName, agentCadences := range pack.Governor.Cadences {
 			mode := candidate.Governor.Modes[modeName]
+			previous := mode.Cadences
 			if forceLevel {
 				mode.Cadences = make(map[string]config.Cadence, len(agentCadences))
 			} else if mode.Cadences == nil {
@@ -269,6 +302,11 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 			}
 			for agentName, interval := range agentCadences {
 				if forceLevel || isFirstApplyOrExpansion {
+					if from := string(previous[agentName]); from != interval {
+						governorChanges.Cadences = append(governorChanges.Cadences, GovernorCadenceChange{
+							Mode: modeName, Agent: agentName, From: from, To: interval,
+						})
+					}
 					mode.Cadences[agentName] = config.Cadence(interval)
 				} else if _, exists := mode.Cadences[agentName]; !exists {
 					mode.Cadences[agentName] = config.Cadence(interval)
@@ -288,6 +326,13 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 			if forceLevel || isFirstApplyOrExpansion || !present {
 				mode.Threshold = threshold
 				candidate.Governor.Modes[modeName] = mode
+				// #4037: mark the set as pack-seeded so EffectiveThreshold
+				// treats these as per-repo BASES and scales them, instead of
+				// reading them as hand-tuned absolutes and disabling scaling on
+				// what is the normal path for a hive. Stamped only when a
+				// threshold is actually written, so a pure merge that changed
+				// nothing does not silently convert an operator's numbers.
+				candidate.Governor.ThresholdsSource = config.ThresholdSourcePack
 			}
 		}
 		return nil
@@ -315,6 +360,22 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 
 	s.persistOnly()
 	go s.refreshAsync()
+	sort.Slice(governorChanges.Cadences, func(i, j int) bool {
+		if governorChanges.Cadences[i].Mode == governorChanges.Cadences[j].Mode {
+			return governorChanges.Cadences[i].Agent < governorChanges.Cadences[j].Agent
+		}
+		return governorChanges.Cadences[i].Mode < governorChanges.Cadences[j].Mode
+	})
+	if !governorChanges.empty() {
+		logArgs := []any{"hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name}
+		if interval := governorChanges.EvalIntervalS; interval != nil {
+			logArgs = append(logArgs, "governor_eval_interval_s_from", interval.From, "governor_eval_interval_s_to", interval.To)
+		}
+		if len(governorChanges.Cadences) > 0 {
+			logArgs = append(logArgs, "cadence_changes", governorChanges.Cadences)
+		}
+		s.logger.Warn("ACMM pack changed governor settings", logArgs...)
+	}
 	// Observability (#2439): the counts alone ("tombstoned":0) were the tell in the
 	// field report, so also list WHICH agents were tombstoned (deleted by the operator
 	// and NOT re-created) vs skipped (already present) — a grep by agent name against
@@ -336,6 +397,9 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		Paused:     paused,
 		Resumed:    resumed,
 		Tombstoned: tombstoned,
+	}
+	if !governorChanges.empty() {
+		result.GovernorChanges = governorChanges
 	}
 	if len(createErrs) > 0 {
 		return result, fmt.Errorf("failed to persist %d pack agent(s): %s", len(createErrs), strings.Join(createErrs, "; "))
@@ -378,8 +442,10 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		"skipped": result.Skipped,
 		"paused":  result.Paused,
 		"resumed": result.Resumed,
-		// Pack agents skipped because the operator deleted them (tombstoned):
-		// always present so the UI can distinguish "none" from "not reported".
+		// Exact before/after values let the dashboard warn before a restart
+		// activates a different evaluation cadence.
+		"governor_changes": result.GovernorChanges,
+		// Empty unless the operator deleted one of this level's agents.
 		"tombstoned": result.Tombstoned,
 	})
 }
@@ -407,11 +473,17 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	defer s.levelMu.Unlock()
 
 	level := body.Level
+	prevLevel := detectACMMLevel(s.deps.Config)
 	s.deps.Config.ACMMLevel = &level
 	// Clear per-agent mode from the persisted config so the fsnotify watcher
 	// does not re-apply stale pack modes when it reloads the file. Without
 	// this, Config.Save → fsnotify reload → old mode restored → governor
 	// kick writes wrong mode file.
+	//
+	// Only Mode is cleared. Converse (#4492) is deliberately left alone: it is
+	// an orthogonal, level-independent operator choice, not a pack-seeded tier,
+	// so clearing it here would silently revoke an opt-in every time the level
+	// moved.
 	for name, ac := range s.deps.Config.Agents {
 		ac.Mode = ""
 		s.deps.Config.Agents[name] = ac
@@ -441,6 +513,12 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	paused, resumed := s.syncAgentVisibility(level)
+	s.deps.AgentMgr.SyncModeFiles(level)
+
+	s.persistOnly()
+	s.refreshAsync()
+
 	pack, packLookupErr := config.ACMMPackByLevel(level)
 	var packAgentNames []string
 	if packLookupErr == nil {
@@ -449,6 +527,35 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 				packAgentNames = append(packAgentNames, a.Name)
 			}
 		}
+		if len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 {
+			if s.deps.Config.Governor.Modes == nil {
+				s.deps.Config.Governor.Modes = make(map[string]config.ModeConfig)
+			}
+			for modeName, agentCadences := range pack.Governor.Cadences {
+				mode := s.deps.Config.Governor.Modes[modeName]
+				mode.Cadences = make(map[string]config.Cadence)
+				for agent, interval := range agentCadences {
+					mode.Cadences[agent] = config.Cadence(interval)
+				}
+				s.deps.Config.Governor.Modes[modeName] = mode
+			}
+			for modeName, threshold := range pack.Governor.Thresholds {
+				mode := s.deps.Config.Governor.Modes[modeName]
+				mode.Threshold = threshold
+				s.deps.Config.Governor.Modes[modeName] = mode
+				// #4037: same provenance stamp as the apply path above.
+				s.deps.Config.Governor.ThresholdsSource = config.ThresholdSourcePack
+			}
+			if pack.Governor.EvalIntervalS > 0 {
+				s.deps.Config.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
+			}
+		}
+	}
+
+	if packLookupErr == nil && (len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 || pack.Governor.EvalIntervalS > 0) {
+		if err := s.saveConfig(); err != nil {
+			s.logger.Error("failed to persist config after pack cadence update", "error", err)
+		}
 	}
 
 	var packUpdated []string
@@ -456,14 +563,23 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		packUpdated = packResult.Updated
 	}
 	s.auditFromRequest(r, "set_acmm_level", auditDetail("level", strconv.Itoa(body.Level)), "")
-	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(packResult.Paused), "resumed", len(packResult.Resumed), "packUpdated", packUpdated)
+	if s.deps != nil && s.deps.HookFire != nil && prevLevel != level {
+		s.deps.HookFire(context.Background(), hooks.Payload{
+			Transition: hooks.TransitionACMMLevelChange,
+			From:       strconv.Itoa(prevLevel),
+			To:         strconv.Itoa(level),
+			Actor:      requestUser(r),
+		})
+	}
+	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
 	jsonResponse(w, map[string]interface{}{
-		"ok":          true,
-		"level":       body.Level,
-		"packAgents":  packAgentNames,
-		"packUpdated": packUpdated,
-		"paused":      packResult.Paused,
-		"resumed":     packResult.Resumed,
+		"ok":               true,
+		"level":            body.Level,
+		"packAgents":       packAgentNames,
+		"packUpdated":      packUpdated,
+		"governor_changes": packResult.GovernorChanges,
+		"paused":           paused,
+		"resumed":          resumed,
 	})
 }
 
@@ -486,8 +602,7 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 
 	// Collect agents to resume and agents to pause.
 	var toResume []string
-	current := s.configSnapshot()
-	for name := range current.Agents {
+	for name := range s.deps.Config.Agents {
 		if packAgents[name] {
 			// On-demand agents (e.g. brainstorm) should never auto-resume;
 			// they are triggered explicitly by workflows like inception.

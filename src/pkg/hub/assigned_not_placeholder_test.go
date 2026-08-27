@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -57,6 +58,26 @@ func TestIsPlaceholderEntry_PrefixFallbackIntact(t *testing.T) {
 	h := MyHiveEntry{RegistryEntry: RegistryEntry{ID: "hosted-available-oke-13", Org: placeholderOrgPrefix + "oke-13"}}
 	if !isPlaceholderEntry(h) {
 		t.Fatal("bare pool-org slot no longer recognised as placeholder")
+	}
+}
+
+func TestMyHiveEntryUnassignedMirrorsPlaceholderEntry(t *testing.T) {
+	cases := []MyHiveEntry{
+		{RegistryEntry: RegistryEntry{ID: "hosted-available-oke-13", Org: placeholderOrgPrefix + "oke-13"}},
+		{RegistryEntry: RegistryEntry{ID: "hosted-reset", Org: "real-org"}, ProvStatus: statusAvailable},
+		{RegistryEntry: RegistryEntry{ID: "hosted-available-vllmd-14", Org: placeholderOrgPrefix + "vllmd-14"}, ProvStatus: statusAssigned},
+		{RegistryEntry: RegistryEntry{ID: "hosted-wedged", Org: placeholderOrgPrefix + "wedged"}, AssignedUnclaimed: true},
+	}
+	for _, h := range cases {
+		h.Unassigned = isPlaceholderEntry(h)
+		wire, err := json.Marshal(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hasField := strings.Contains(string(wire), `"unassigned":true`)
+		if hasField != isPlaceholderEntry(h) {
+			t.Fatalf("hive %s wire unassigned=%v, want %v (%s)", h.ID, hasField, isPlaceholderEntry(h), wire)
+		}
 	}
 }
 

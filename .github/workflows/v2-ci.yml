@@ -6,32 +6,65 @@ on:
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
+    #
+    # README.md and docs/** are in scope for the same reason (#4477): the
+    # default Docker Compose quick start lives in README.md and docs/, and the
+    # gate that asserts it works is below. Without these entries that gate would
+    # not run on the one change that can break it — which is how the quick start
+    # shipped broken twice over. src/docs/** already triggers this workflow via
+    # src/**, so this is the same rule applied to the docs outside src/.
     paths:
       - 'src/**'
       - 'bin/**'
+      - 'README.md'
+      - 'docs/**'
       - 'config/backends.conf'
       - 'dashboard/**'
       - 'examples/**'
       - '.gitattributes'
       - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/changelog-reminder.yml'
+      - '.github/workflows/docker.yml'
       - '.github/workflows/integrated-release.yml'
   pull_request:
     branches: [v2, v4, dd]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
+    #
+    # README.md and docs/** are in scope for the same reason (#4477): the
+    # default Docker Compose quick start lives in README.md and docs/, and the
+    # gate that asserts it works is below. Without these entries that gate would
+    # not run on the one change that can break it — which is how the quick start
+    # shipped broken twice over. src/docs/** already triggers this workflow via
+    # src/**, so this is the same rule applied to the docs outside src/.
     paths:
       - 'src/**'
       - 'bin/**'
+      - 'README.md'
+      - 'docs/**'
       - 'config/backends.conf'
       - 'dashboard/**'
       - 'examples/**'
       - '.gitattributes'
       - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/changelog-reminder.yml'
+      - '.github/workflows/docker.yml'
       - '.github/workflows/integrated-release.yml'
 
 permissions:
   contents: read
+
+# Cancel superseded PR runs only (#4623). A new push to a PR makes the
+# in-flight run's verdict irrelevant, so cancelling it is pure runner-minute
+# savings. Push-to-v4 (post-merge) runs must NEVER be cancelable: they feed
+# the docker publish gate and the coverage/monitoring surface — cancelling
+# one on a merge burst would silently skip a merged commit. Keying the
+# non-PR group on run_id gives every such run its own group, so they can
+# neither cancel each other nor queue behind one another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -88,6 +121,18 @@ jobs:
       - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
         run: bash deploy/test_entrypoint_netadmin_ambient.sh
 
+      # #4368: the entrypoint warns when the overlay's github.key_file names a
+      # PEM that is not on disk — and used to look only at /data/, while the
+      # provisioning template seeded /secrets/gh-app-key.pem for every App-using
+      # hive and created that Secret entry only for hives provisioned WITH an
+      # inline key. Four hives shipped naming a file that would never exist,
+      # under the one prefix the check skipped, so the detector written for
+      # exactly that symptom stayed silent and the fault first surfaced as
+      # github_auth: fail. EXECUTES the real merge block extracted from the
+      # shipped entrypoint, so a regression fails the PR rather than a hive.
+      - name: Entrypoint dangling key_file tests (#4368)
+        run: bash deploy/test_entrypoint_dangling_keyfile.sh
+
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
       # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
@@ -97,6 +142,22 @@ jobs:
       # quietly shipping a build that trusts whatever npm/Docker Hub serves.
       - name: Supply-chain pin guard
         run: bash deploy/test_supply_chain_pins.sh
+
+      # #4804: HEAD-only tagging made every completed build in a merge burst
+      # exit green without publishing anything. Exercise the real publisher
+      # against a fake registry and pin both halves of the replacement policy:
+      # immutable SHA tags are unconditional, while moving tags are monotonic.
+      - name: Docker release-tag publication policy (#4804)
+        run: bash scripts/test-publish-image-tags.sh
+
+      # #4206: the standalone stack's image references live in exactly one
+      # place, src/deploy/standalone-images.sh, so the Docker Compose assets
+      # and the Podman assets that land later cannot drift onto different
+      # images. Also blocks the retired v2-latest tag, which resolves to a
+      # different digest than the v4 channels, from coming back into any
+      # deployment asset. Pure string analysis: no registry is contacted.
+      - name: Standalone image-reference source of truth (#4206)
+        run: bash deploy/test_standalone_image_refs.sh
 
       # #3865: watchtower bind-mounted /var/run/docker.sock — the full daemon
       # API, including /exec, which reads the GitHub App private key out of the
@@ -109,6 +170,73 @@ jobs:
       - name: Docker-socket containment guard (#3865)
         run: bash deploy/test_watchtower_socket_contract.sh
 
+      # #4204: the socket guard above covers the auto-update profile, and the
+      # pin guard covers build inputs — but nothing asserted anything about the
+      # two services an operator actually runs. Each invariant here is
+      # invisible at runtime when it breaks: a stack that publishes 7681 still
+      # serves the dashboard, it just also serves an unauthenticated root shell
+      # into the credential-holding container; /data on a bind mount still runs
+      # and just loses agent state on the next recreate. This is also the
+      # snapshot the Podman runtime work (#4188) has to keep passing.
+      - name: Standalone service deployment contract (#4204)
+        run: bash deploy/test_standalone_service_contract.sh
+
+      # #4375: the guard above parses docker-compose.yaml and therefore cannot
+      # see a Quadlet unit at all. This is the same published-port boundary for
+      # src/deploy/quadlet/ — the gateway publishes 3001 and only 3001, nothing
+      # publishes 7681 on either side, hive and the gateway share one network,
+      # and the network leaves DisableDNS/Internal/IPv6 alone (an IPv6-enabled
+      # network is a measured egress bypass, since the forced-proxy gate has no
+      # ip6tables rules). The generator gate in quadlet-gate.yml checks that
+      # these units PARSE; this checks what they MEAN, which the generator
+      # exits 0 on. Pure text analysis: podman is not required.
+      - name: Quadlet published-port boundary (#4375)
+        run: bash deploy/test_quadlet_port_boundary.sh
+
+      # #4367: the Quadlet unit's HealthCmd= probes a port that lives in the
+      # OPERATOR's hive.yaml, and nothing at install time notices when the two
+      # disagree — the config parses, the generator exits 0, the container
+      # starts and is genuinely healthy on the other port, and Notify=healthy
+      # correctly holds the unit in `activating` until TimeoutStartSec=300
+      # expires and --rm deletes the evidence. Five minutes and no artifact for
+      # one wrong digit. Same shape as the guards above: invisible when it
+      # breaks, and no dry-run can catch it. Also asserts the install steps name
+      # files the repo actually TRACKS, which is the bug itself: the doc said
+      # `cp src/hive.yaml`, a gitignored path that exists only in a checkout
+      # where someone already followed the README.
+      - name: Quadlet config-coupling contract (#4367)
+        run: bash deploy/test_quadlet_config_contract.sh
+
+      # #4477: every guard above asserts what the deployment DESCRIPTIONS say.
+      # None of them read the instructions an operator is actually given, and
+      # the default quick start was broken twice over on its own terms: it wrote
+      # `.env` at the repo root, which `-f src/docker-compose.yaml` never reads
+      # (that command makes src/ the project directory), and it never set
+      # HIVE_DASHBOARD_TOKEN, which the dashboard's auth proxy refuses to start
+      # without. Both faults are silent — the PAT lands in a gitignored file
+      # nothing reads, and :3001 serves 503 from an upstream that never bound.
+      # This reads the required set out of deploy/quadlet/hive.env.example
+      # rather than restating it, and DISCOVERS the documents carrying a recipe
+      # rather than listing them, so a fourth copy of the quick start is gated
+      # the day it is written.
+      - name: Documented Compose quick start contract (#4477)
+        run: bash deploy/test_compose_quickstart_contract.sh
+
+      # #4404: every guard above looks at ONE runtime. test_standalone_service_
+      # contract.sh parses only docker-compose.yaml and says so in its own header
+      # ("This does NOT claim Docker/Podman parity"); the two Quadlet guards parse
+      # only the units. A property can hold in both and still DIFFER between them,
+      # which is what #4188 asked for: "a change to one runtime must fail CI if
+      # the other runtime's contract was unintentionally left stale". This
+      # compares the two deployment descriptions directly — images, environment,
+      # mounts and modes, published vs exposed ports, capabilities, health checks,
+      # persistence, network exposure, restart policy, labels — and fails on any
+      # divergence not in its exception table, where each entry carries a stated
+      # reason. Entries are swept in reverse too: an exception that no longer
+      # matches a real divergence is itself a failure, so the table cannot rot.
+      - name: Docker/Podman contract parity (#4404)
+        run: bash deploy/test_standalone_runtime_parity.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
@@ -118,6 +246,16 @@ jobs:
       - name: gh-wrapper gate tests
         working-directory: .
         run: bash bin/test_gh_wrapper_gates.sh
+
+      # #4289: git-credential-hive.sh is the fetch/clone AND push credential
+      # source for every agent. Its mode block used to exit 1 in ADVISORY/
+      # ISSUES_ONLY/NO_GITHUB modes, cutting off every git READ for advisory
+      # agents. This EXECUTES the helper and asserts `get` returns the scoped
+      # (contents:read-only) credential in those modes while the H3 refusals
+      # (no per-agent token, non-https) stay fail-closed.
+      - name: git-credential-hive helper tests (#4289)
+        working-directory: .
+        run: bash bin/test_git_credential_hive.sh
 
       # N14 (#3842): kick-agents.sh (the native/systemd-install path — no Go
       # AgentManager, no per-agent scoped token) used to instruct every kicked
@@ -130,6 +268,164 @@ jobs:
       - name: gh-auth native-install guard (#3842)
         working-directory: .
         run: bash bin/test_gh_auth_native_no_cat.sh
+
+      # #4045: agent CLI backends (observed live: Copilot CLI) re-export their
+      # own live GitHub credential as GITHUB_TOKEN into every tool shell they
+      # spawn — after all launch-path scrubbing — letting a wrapper-denied
+      # agent write to repos via raw curl, outside every gh-wrapper control.
+      # This EXECUTES shells the way a backend spawns them (token in the spawn
+      # env) and asserts the BASH_ENV scrub leaves them token-less, with
+      # positive controls that the probe can see a leak and that the wrapper
+      # still authenticates from the per-agent cache.
+      - name: agent shell token scrub (#4045)
+        working-directory: .
+        run: bash bin/test_agent_env_scrub.sh
+
+      # #4205: standalone deployment selection is explicit and fail-closed.
+      # Docker remains the default; selecting Podman must never fall back to
+      # Docker because the Podman binary is missing or a command fails.
+      - name: Standalone runtime selection contract (#4205)
+        working-directory: .
+        run: bash bin/test_hive_standalone_runtime.sh
+
+      # #4207: Podman preflight must diagnose engine/version, the connection it
+      # is actually talking to, root mode, and cgroup version BEFORE Hive
+      # invokes a lifecycle implementation — and must run only when Podman is
+      # explicitly selected, so Docker's default path is untouched. The stub
+      # engine lets the whole matrix (old versions, rootful, cgroup v1, remote,
+      # missing binary) run on a host with no Podman installed.
+      - name: Podman preflight contract (#4207)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight.sh
+
+      # #4210: rootless Podman/Buildah share one store with the operator's
+      # unrelated containers, Distroboxes, and builds, so Hive cleanup must
+      # select only Hive-labelled resources and the broad store-wide prune,
+      # reset, and remove-all forms are rejected outright. See
+      # src/docs/podman-ownership-cleanup.md. The test analyses arguments only:
+      # it contacts no engine and deletes nothing.
+      - name: Podman ownership and cleanup contract (#4210)
+        working-directory: .
+        run: bash bin/test_hive_podman_cleanup.sh
+
+      # #4326: #4210 defined the ownership contract but nothing performed a
+      # teardown through it, and a cleanup path that is defined but not
+      # implemented is the dangerous state — the guard only protects
+      # operations that go through it. This drives the teardown against a fake
+      # Podman whose store holds Hive's resources next to a Distrobox and an
+      # unrelated development container, asserts the unowned ones survive, and
+      # replays every command the teardown issued back through the #4210 guard.
+      - name: Podman teardown through the ownership contract (#4326)
+        working-directory: .
+        run: bash bin/test_hive_podman_teardown.sh
+
+      # #4209: SELinux labeling, configuration/secrets readability, and host
+      # port conflicts are the operator-facing Podman failures that surface
+      # only after `podman run` has started making changes. Every input is
+      # mocked, so the enforcing/permissive/disabled matrix runs on a runner
+      # with no SELinux and no Podman. The suite also asserts the remediation
+      # never proposes disabling SELinux or widening a secret, and that the
+      # deployment fixture is byte-identical after every run.
+      - name: Podman SELinux, mount, secret, and port preflight (#4209)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight_host.sh
+
+      # #4208's suite, wired here because its two siblings above already were
+      # and it was left out (#4363). Subordinate UID/GID delegation is the
+      # rootless prerequisite operators get wrong most often, and the suite
+      # asserts the remediation never edits /etc/subuid or /etc/subgid itself.
+      - name: Podman subordinate-ID, graphroot, and network preflight (#4208)
+        working-directory: .
+        run: bash bin/test_hive_podman_preflight_ids.sh
+
+      # #4377: the Quadlet lifecycle contract. A clean `systemctl stop` used to
+      # leave the unit `failed` (the entrypoint exits 143 on SIGTERM), and
+      # `SuccessExitStatus=143` only works paired with `Restart=always` — split
+      # them and an externally removed container stays down reporting success.
+      # The suite also pins that boot wiring is read from the generator output
+      # and lingering rather than from `is-enabled`, which reports `generated`
+      # for these units no matter what. Every input is mocked, so this runs on
+      # a runner with no Podman and no lingering user.
+      - name: Podman Quadlet lifecycle probe (#4377)
+        working-directory: .
+        run: bash bin/test_hive_podman_lifecycle_probe.sh
+
+      # #4490: the SELinux release qualification (#4337) read labels with bare
+      # `stat -c '%C'`, and under uutils coreutils — the default on the
+      # Fedora-atomic hosts that lane targets — that prints "unsupported for
+      # this operating system" to stdout with exit 0, so a healthy enforcing
+      # host was reported FAIL (2), ledger row included. The reader is now
+      # resolved by probing (src/deploy/selinux_label_reader.sh, shared with
+      # the AVC probe), and no reader means NOT QUALIFIABLE, never a verdict.
+      # The defect is in how the label is READ, so it reproduces on a runner
+      # with no SELinux at all — which is why this half can be CI while the
+      # qualification itself cannot (#4211).
+      - name: SELinux label reader is resolved, never assumed (#4490)
+        working-directory: .
+        run: bash src/deploy/test_selinux_label_reader.sh
+
+      # #4470: the one-command Podman installer, which is the only script in
+      # the family that WRITES to the host — so the suite is about what it
+      # cannot be allowed to do. It pins the two traps that justified scripting
+      # it: dashboard.port is READ out of the unit's HealthCmd rather than
+      # hardcoded (#4367 — driven with a unit probing an arbitrary port, which a
+      # script carrying a literal 3002 would fail), and the secrets command
+      # matches the root mode (#4359 — podman unshare rootless, chgrp rootful).
+      # It also holds that a second run cannot cost an operator their edited
+      # config or their keys, that the preflights are invoked with
+      # HIVE_DEPLOY_RUNTIME=podman (without it they exit 0 having checked
+      # nothing), and that "healthy" is never claimed on a unit still
+      # activating or a silent gateway. apt-get, dnf, git and docker sit on the
+      # test PATH as tripwires: this installer installs no packages and clones
+      # nothing. Every input is mocked, so it needs no podman, no systemd, and
+      # no privileges.
+      - name: Podman one-command installer (#4470)
+        working-directory: .
+        run: bash bin/test_hive_podman_setup.sh
+
+      # #4378: the deliberate manual update and rollback. The unit ships a
+      # FLOATING tag, so the pin that makes a rollback possible lives in a
+      # Quadlet drop-in; the suite holds the two properties that make it a
+      # rollback rather than a hope — that the pin written is always a digest
+      # (and the manifest LIST digest, not the per-architecture one `podman
+      # image inspect` hands back), and that `rollback` skips the entry that
+      # just failed instead of walking back into it. #4493 added the third:
+      # neither `rollback` nor `pin` may claim "serving" until the GATEWAY
+      # answers on its published port from the host — a failed update strands
+      # hive-gateway.service inactive (Requires= stopped it, and a restart of
+      # hive.service only cycles dependents that are active), so the suite
+      # holds that rollback starts the gateway and that a dead published port
+      # is an exit-78 finding, never a PASS. Every input is mocked, so
+      # this pulls nothing and restarts nothing.
+      - name: Podman Quadlet update and rollback (#4378)
+        working-directory: .
+        run: bash bin/test_hive_podman_update.sh
+
+      # The gh wrapper's AUTHOR GATE, distinct from the mode/allowlist/merge
+      # gates covered above. 33 executable cases from #3072 and #3096: a
+      # spoofed HIVE_AGENT, identity-lookup failure, the marker trust boundary,
+      # and a cached-env spoof. This is a security boundary that was running
+      # only when someone remembered to run it (#4363) — a regression in it
+      # would have landed green.
+      - name: gh-wrapper author-gate tests (#3072, #3096)
+        working-directory: .
+        run: bash bin/gh-wrapper.test.sh
+
+      - name: hive-open-issue helper tests
+        working-directory: .
+        run: bash bin/test_hive_open_issue.sh
+
+      - name: hive-review helper tests
+        working-directory: .
+        run: bash bin/test_hive_review.sh
+
+      # The guard that keeps the three steps above from being the last time
+      # anyone notices: it fails when a bin/ suite exists and nothing runs it.
+      # Each omission it catches is individually invisible, because nothing
+      # fails when a test file is simply never named.
+      - name: Every bin/ test suite is wired into something (#4363)
+        working-directory: .
+        run: bash bin/test_bin_suites_wired.sh
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -174,6 +470,56 @@ jobs:
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash src/deploy/test_contribute_k8s_workload.sh
+
+      # #4399: the browser terminal must say when it is NOT showing live output.
+      # The fix is a tmux FORMAT STRING, and a malformed one does not fail — it
+      # renders as garbage or leaves the literal `#{?...}` on screen. So this
+      # sets it on a scratch tmux server and reads back what tmux actually
+      # renders, in both the live and scrolled-back states, and reproduces the
+      # reported "halt" (a copy-mode pane stops following output, and survives
+      # closing the browser). Skips cleanly where tmux is absent.
+      - name: Terminal scrollback legibility (#4399)
+        working-directory: .
+        run: bash src/deploy/test_terminal_scrollback_status.sh
+
+      # #4593: the dashboard's per-agent terminal link carries the session as
+      # ?arg=hive-<agent>, which ttyd only forwards when started with -a
+      # (--url-arg). The credential branch added in #2178 REPLACED the variable
+      # that carried -a, so every hive with a dashboard token — i.e. effectively
+      # all of them — got a browser terminal that could not attach. A grep for
+      # "-a" passes on that bug, so this runs the real flag assembly out of
+      # entrypoint.sh with ttyd stubbed and asserts on the resulting argv, once
+      # per credential configuration. Skips the end-to-end half where tmux is
+      # absent.
+      - name: ttyd keeps --url-arg when credentialed (#4593)
+        working-directory: .
+        run: bash src/deploy/test_ttyd_url_arg.sh
+
+      # #4440: the changelog reminder promises it "always succeeds" and "never
+      # blocks a merge", and it did neither on a fork PR — GITHUB_TOKEN is
+      # read-only there, the comment POST 403s, and `bash -e` made that a red
+      # check on every external contribution. This EXTRACTS the real step script
+      # out of the workflow and runs it against a stub gh that 403s, because the
+      # bug was an exit status and a grep over the YAML would pass on a script
+      # that still dies on the first non-zero command.
+      - name: Changelog reminder never blocks a merge (#4440)
+        working-directory: .
+        run: bash src/deploy/test_changelog_reminder.sh
+
+      # #4408: `just contribute-move` relocates an already-registered
+      # contributor identity to a new machine. The properties that matter are
+      # not visible in the Justfile text — that the positional HIVE_HUB /
+      # HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID lists come out aligned and in
+      # the same order is a property of the loop, and bin/contributor-relay.sh
+      # pairs those lists by index (it refuses to start on a length mismatch and
+      # sends the wrong token to the wrong hive on a transposed one). Getting the
+      # partial-failure path wrong is worse: a reissued token cannot be
+      # reprinted, so dropping it locks the contributor out of that hive. This
+      # runs the real recipe against a fake hub with a stubbed gh and a
+      # throwaway HOME — no network, no real credential.
+      - name: Contributor identity relocation (#4408)
+        working-directory: .
+        run: bash src/deploy/test_contribute_move.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ubuntu-latest
@@ -267,7 +613,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       # Build a single-arch image the SAME way docker.yml builds the shipped
       # image — buildx (BuildKit), attestations OFF (provenance:false/sbom:false
@@ -390,7 +736,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0

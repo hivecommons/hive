@@ -1,10 +1,12 @@
 package tokens
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestScanBobSessions_RealSchema(t *testing.T) {
@@ -168,6 +170,86 @@ func TestScanBobSessions_PerMessageModel(t *testing.T) {
 	if agg.ByModel["premium"] != 450 {
 		t.Errorf("ByModel[premium] = %d, want 450", agg.ByModel["premium"])
 	}
+}
+
+func TestScanBobSessions_AttributesTrustedFolderAgent(t *testing.T) {
+	dir := t.TempDir()
+	agentPath := "/data/agents/sec-check"
+	projectHash := sha256.Sum256([]byte(agentPath))
+	hash := hexLower(projectHash[:])
+
+	trusted, _ := json.Marshal(map[string]string{agentPath: "TRUST_FOLDER"})
+	if err := os.WriteFile(filepath.Join(dir, "trustedFolders.json"), trusted, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chatDir := filepath.Join(dir, "tmp", hash, "chats")
+	if err := os.MkdirAll(chatDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sess := bobChatSession{
+		SessionID:   "agent-session",
+		LastUpdated: "2026-08-21T16:33:10.357Z",
+		Messages: []bobChatMessage{
+			{Type: "user", Content: "scan"},
+			{Type: "bob-shell", Content: "done", Model: "premium",
+				Tokens: &bobTokens{Input: 1000, Output: 50}},
+		},
+	}
+	data, _ := json.Marshal(sess)
+	if err := os.WriteFile(filepath.Join(chatDir, "session.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agg, err := ScanBobSessions(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.ByAgent["sec-check"] != 1050 {
+		t.Fatalf("ByAgent[sec-check] = %d, want 1050 (all agents must not collapse under bob)", agg.ByAgent["sec-check"])
+	}
+	if _, ok := agg.ByAgent["bob"]; ok {
+		t.Fatalf("unexpected fallback bob bucket: %+v", agg.ByAgent)
+	}
+	if len(agg.Sessions) != 1 || agg.Sessions[0].Agent != "sec-check" {
+		t.Fatalf("session agent = %+v, want sec-check", agg.Sessions)
+	}
+	wantLastActive := mustParseMillis(t, "2026-08-21T16:33:10.357Z")
+	if agg.Sessions[0].LastActive != wantLastActive {
+		t.Fatalf("LastActive = %d, want %d", agg.Sessions[0].LastActive, wantLastActive)
+	}
+	// No StartTime recorded — FirstActive falls back to LastUpdated.
+	if agg.Sessions[0].FirstActive != wantLastActive {
+		t.Fatalf("FirstActive = %d, want fallback to LastUpdated %d", agg.Sessions[0].FirstActive, wantLastActive)
+	}
+}
+
+// TestBobSessionFirstActive verifies FirstActive prefers the recorded
+// StartTime and falls back to LastUpdated, mirroring bobSessionLastActive.
+func TestBobSessionFirstActive(t *testing.T) {
+	if got := bobSessionFirstActive(nil); got != 0 {
+		t.Fatalf("nil session: got %d, want 0", got)
+	}
+	start := "2026-08-21T15:00:00.000Z"
+	end := "2026-08-21T16:33:10.357Z"
+	sess := &bobChatSession{StartTime: start, LastUpdated: end}
+	if got, want := bobSessionFirstActive(sess), mustParseMillis(t, start); got != want {
+		t.Fatalf("FirstActive = %d, want StartTime %d", got, want)
+	}
+	if got, want := bobSessionLastActive(sess), mustParseMillis(t, end); got != want {
+		t.Fatalf("LastActive = %d, want LastUpdated %d", got, want)
+	}
+	if got, want := bobSessionFirstActive(&bobChatSession{LastUpdated: end}), mustParseMillis(t, end); got != want {
+		t.Fatalf("FirstActive fallback = %d, want LastUpdated %d", got, want)
+	}
+}
+
+func mustParseMillis(t *testing.T, raw string) int64 {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts.UnixMilli()
 }
 
 func TestExtractBobSessionID(t *testing.T) {

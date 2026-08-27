@@ -54,11 +54,17 @@ func emptySharedPaths(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	origClaude, origCopilot := sharedClaudeCredentialPath, sharedCopilotConfigPath
+	origUserToken := copilotUserTokenProbePath
 	sharedClaudeCredentialPath = filepath.Join(dir, "absent-claude.json")
 	sharedCopilotConfigPath = filepath.Join(dir, "absent-copilot.json")
+	// The dashboard device-flow token at /data/copilot-user-token exists on a
+	// live hive host and short-circuits the copilot probe to "authenticated",
+	// so "no shared credentials" must redirect it too (#4585).
+	copilotUserTokenProbePath = filepath.Join(dir, "absent-copilot-user-token")
 	t.Cleanup(func() {
 		sharedClaudeCredentialPath = origClaude
 		sharedCopilotConfigPath = origCopilot
+		copilotUserTokenProbePath = origUserToken
 	})
 }
 
@@ -201,8 +207,8 @@ func TestAgentAuthPathConstructionUsesIsolatedHomes(t *testing.T) {
 	if got := AgentHome("writer", 0, "claude"); got != home {
 		t.Fatalf("uid 0 AgentHome = %q, want HOME %q", got, home)
 	}
-	if got := AgentHome("writer", 2001, "claude"); got != bobSharedHome {
-		t.Fatalf("claude agent home = %q, want shared home %q", got, bobSharedHome)
+	if got := AgentHome("writer", 2001, "claude"); got != interactiveHomePath("writer") {
+		t.Fatalf("claude agent home = %q, want per-agent home %q (#4596)", got, interactiveHomePath("writer"))
 	}
 	if got := AgentHome("writer", 2001, "litellm"); got != prefix+"writer" {
 		t.Fatalf("inference agent home = %q, want %q", got, prefix+"writer")
@@ -242,6 +248,10 @@ func TestAgentAuthPathConstructionUsesIsolatedHomes(t *testing.T) {
 // TestAgentAuthState_ClaudeCredentialFileMissingThenPresent.)
 func TestAgentAuthState_TruePositivePreserved(t *testing.T) {
 	emptySharedPaths(t)
+	// uid>0 resolves HOME to <sharedAgentHome>/agents/scanner — on a live hive
+	// host that is a REAL agent home holding real copilot credentials, so the
+	// per-agent probe must be pointed at a temp tree too (#4585).
+	withSharedAgentHome(t)
 	t.Setenv("HOME", t.TempDir())
 	m := &Manager{}
 
@@ -370,8 +380,8 @@ func TestAgentAuthState_BobAPIKeyGate(t *testing.T) {
 	if home := AgentHome("shared", 0, "claude"); home != "/data/home" {
 		t.Fatalf("fallback HOME = %q, want /data/home", home)
 	}
-	if home := AgentHome("claude-agent", 2001, "claude"); home != "/data/home" {
-		t.Fatalf("claude per-UID home = %q, want /data/home", home)
+	if home := AgentHome("claude-agent", 2001, "claude"); home != interactiveHomePath("claude-agent") {
+		t.Fatalf("claude per-UID home = %q, want %q (#4596 per-agent layout)", home, interactiveHomePath("claude-agent"))
 	}
 	if avail, known := m.AgentAuthState("custom", 0, "custom-backend", false, false); avail || known {
 		t.Fatalf("custom non-interactive backend: got (avail=%v, known=%v), want unknown", avail, known)
@@ -569,7 +579,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 		name:  "dir",
 		mode:  0o700 | os.ModeDir,
 		isDir: true,
-		sys:   &syscall.Stat_t{Uid: DevUID, Gid: NodeGID},
+		sys:   &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
 	}, logger)
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -586,7 +596,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	fixEntry(file, fakeFileInfo{
 		name: "file",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: DevUID, Gid: NodeGID},
+		sys:  &syscall.Stat_t{Uid: uint32(DevUID), Gid: uint32(NodeGID)},
 	}, logger)
 	info, err = os.Stat(file)
 	if err != nil {
@@ -600,7 +610,7 @@ func TestFixEntryWithSyntheticOwnership(t *testing.T) {
 	fixEntry(file, fakeFileInfo{
 		name: "other-owner",
 		mode: 0o600,
-		sys:  &syscall.Stat_t{Uid: uint32(DevUID + 100), Gid: NodeGID},
+		sys:  &syscall.Stat_t{Uid: uint32(DevUID + 100), Gid: uint32(NodeGID)},
 	}, logger)
 	fixEntry(file, fakeFileInfo{
 		name: "root-owned",

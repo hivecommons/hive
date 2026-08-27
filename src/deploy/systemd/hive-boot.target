@@ -1,0 +1,32 @@
+# The target the Hive Quadlet units are wanted by, instead of default.target
+# (#4478).
+#
+# WHY THIS EXISTS. `[Install] WantedBy=default.target` means two different
+# things depending on which manager reads it: in the user manager it is the
+# user's own default target, reached after the system boot has already
+# finished, but in the SYSTEM manager it is the boot transaction itself.
+# systemd does not declare a boot finished until every job in that transaction
+# is done, and Notify=healthy holds hive.service in `activating` until
+# /api/health answers — so a rootful Hive that never becomes healthy held the
+# boot for its whole TimeoutStartSec (measured: 20.188s of a 20s stand-in
+# timeout, src/deploy/probe_boot_transaction_coupling.sh). A monitoring
+# dashboard must not hold a host's boot hostage.
+#
+# This target is deliberately wanted by NOTHING at boot. It is started by
+# hive-boot-gate.service, which waits until the manager declares startup
+# finished and then enqueues this target as a new, separate transaction. The
+# boot never waits on Hive; Hive still starts on every boot.
+#
+# Ordering (`DefaultDependencies=`, `After=`) cannot do this — a start job in
+# the boot transaction delays the boot-finished timestamp regardless of when
+# it runs. Measured in the same probe.
+#
+# Install to /etc/systemd/system (rootful) or ~/.config/systemd/user
+# (rootless). There is nothing to enable for this file: the Quadlet generator
+# writes the hive-boot.target.wants/ symlinks from the [Install] sections of
+# hive.container and hive-gateway.container on every daemon-reload, and
+# hive-boot-gate.service names this target directly.
+
+[Unit]
+Description=Hive deployment (started after the boot transaction has settled)
+Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md

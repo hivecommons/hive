@@ -56,7 +56,10 @@ func TestBlockingPromptKey_KnownPrompts(t *testing.T) {
 		want    string
 	}{
 		{"codex directory trust", "codex", codexTrustPane, "1"},
-		{"copilot folder trust", "copilot", copilotTrustPane, "2"},
+		// "1" (session-only), NOT "2" (remember): remembering makes the CLI
+		// rewrite the shared config.json from its stale in-memory snapshot,
+		// stomping other agents' state — see blockingPrompts.
+		{"copilot folder trust", "copilot", copilotTrustPane, "1"},
 		{"codex update", "codex", codexUpdatePane, "3"},
 	}
 	for _, c := range cases {

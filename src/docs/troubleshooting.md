@@ -6,13 +6,12 @@ Start most investigations from the dashboard and the service logs, then drop to 
 
 ## Find the running service logs
 
-Docker Compose deployments define `hive` and `gateway` services in `src/docker-compose.yaml`. The Hive process healthcheck calls `http://127.0.0.1:3002/api/health`; the gateway publishes `3001` and proxies to Hive. Start with:
+Docker Compose deployments define `hive` and `gateway` services in `src/docker-compose.yaml`. The Hive process healthcheck calls **both** of the container's listeners — `http://127.0.0.1:3002/api/health` (the Go API) and `http://127.0.0.1:3001/api/health` (the Node auth proxy the gateway actually reaches). The gateway publishes `3001` and proxies to Hive. Start with:
 
 ```bash
-cd v2
-docker compose ps
-docker compose logs hive --tail=200
-docker compose logs gateway --tail=100
+docker compose -f src/docker-compose.yaml ps
+docker compose -f src/docker-compose.yaml logs hive --tail=200
+docker compose -f src/docker-compose.yaml logs gateway --tail=100
 ```
 
 Kubernetes deployments use namespace `hive`, Deployment `hive`, Service `hive`, and probes on `/api/health` and `/api/livez` in `src/deploy/k8s/deployment.yaml`:
@@ -22,6 +21,17 @@ kubectl -n hive get deploy,pod,svc,pvc
 kubectl -n hive logs deploy/hive --tail=200
 kubectl -n hive describe pod -l app.kubernetes.io/name=hive
 ```
+
+Podman (Quadlet) deployments run the same two containers as **systemd units**: `hive.service` and `hive-gateway.service`, generated from `src/deploy/quadlet/` (plus `hive-network.service` and `hive-data-volume.service`). Ask systemd first, not `podman logs`:
+
+```bash
+# rootless — drop --user for a rootful install
+systemctl --user status hive.service hive-gateway.service
+journalctl --user -u hive.service -n 200 --no-pager
+journalctl --user -u hive-gateway.service -n 100 --no-pager
+```
+
+**Why the unit and not the container.** `hive.container` sets `Notify=healthy`, so the unit stays in `activating` until `/api/health` answers — the unit's state, not the container's, is what tells you whether Hive is *serving*. And a start that times out is deleted: the generated `ExecStart` carries `--rm`, so a failed start leaves no container for `podman logs` to read, while the journal still holds why. `podman ps` / `podman logs hive` remain useful once the unit is `active`, for output the process wrote after it came up.
 
 The process also writes `hive.log` under the configured logs directory (default `/data/logs`, from `governor.logging.dir`, falling back to `data.logs_dir`), and tees the same lines to stdout — so `docker compose logs` / `kubectl logs` show everything the file does. The older per-agent `AGENT_LOG_FILE` heartbeat file from v1 is not used.
 
@@ -40,17 +50,27 @@ In Kubernetes, edit the ConfigMap/Secret source and restart the pod; dashboard e
 
 ## GitHub credentials are missing or invalid
 
-When no token or App credentials are usable, v2 starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main.go` depending on the state:
+When no token or App credentials are usable, Hive starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main.go` depending on the state:
 
 - `no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode`
 - `GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.`
 - `persisted user token is invalid or expired`
 
-Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md).
+Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls this the **Forge App** — the app for your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — under Governor Config → Forge App.
+
+## Hosted hive disappeared or its URL times out
+
+Hosted hives that never complete setup or go inactive are **reaped on a timer**: the hive vanishes from the hub's Usage view and the old `https://<id>.hive.kubestellar.io` URL times out permanently. This is expected reclamation, not an outage. Recovery:
+
+1. **Request a new hive** from the hub's `/get-started` wizard (hosted hub: `https://hive.kubestellar.io/get-started`, the **Request a hive** button). The old URL will not come back.
+2. **Install the Forge App immediately** on the new hive — the GitHub App on GitHub.com, or the same app on your GHE host for enterprise. See [GitHub App setup](github-app-setup.md) and the [getting-started guide's Step 0](getting-started.md#step-0--before-you-start-do-this-first).
+3. An installed Forge App plus regular heartbeats keeps the new hive from being reaped again.
+
+On GitHub Enterprise, a 404 from the install link usually means the hive is pointed at github.com instead of your GHE host (or vice versa) — check which source control host is configured under Governor Config → Forge App.
 
 ## Agents are stuck, paused, or need CLI login
 
-Agents run in tmux sessions named `hive-<agent>` managed by the v2 agent manager. There is no v1 `AGENT_READY_MARKER` or `bin/supervisor.sh` loop: the manager drives each agent by delivering a *kick* (its next work prompt) directly into the session and, once running, auto-dismisses the CLI's own startup consent screens.
+Agents run in tmux sessions named `hive-<agent>` managed by Hive's agent manager. There is no v1 `AGENT_READY_MARKER` or `bin/supervisor.sh` loop: the manager drives each agent by delivering a *kick* (its next work prompt) directly into the session and, once running, auto-dismisses the CLI's own startup consent screens.
 
 The login detector (`scanForLoginRequired` in `src/cmd/hive/main.go`) scans recent tmux pane output for the regexes in `governor.sensing.login_patterns`. On a match it logs `login required detected`, pauses the agent, and sends a high-priority notification telling you to attach to `hive-<agent>` and run that backend's login command.
 
@@ -109,6 +129,142 @@ Liveness is judged by the governor's in-process health check, so an agent that k
 1. **Read the work counts, not just liveness.** If an agent reports "Issues triaged: 0" cycle after cycle in the logs, that is the signal — `kubectl -n hive logs deploy/hive | grep <agent>` or attach to the session.
 2. **Cross-check an external surface.** Confirm the effect the agent is supposed to produce (a GitHub API query for the PRs/issues it claims to have handled) rather than trusting its self-reported state.
 
+## An agent says "Please run /login" but logging in changes nothing
+
+Check whether the same line carries **`API Error: 403`**. If it does, the agent is
+**already logged in** and `/login` cannot help.
+
+Claude Code prefixes *every* API error with its login hint, so an upstream refusal
+renders like this:
+
+```
+● Please run /login · API Error: 403 {"type":"error","error":{"type":"api_error",
+  "message":"inference backend returned 403: {"error":{"message":"team not allowed
+  to access model. This team can only access models=['gemini-2.5-pro',
+  'gcp/gemini-3.1-pro-preview', 'aws/claude-sonnet-4-6', ...]"}}
+```
+
+The status is the tell:
+
+| status | meaning | fix |
+| --- | --- | --- |
+| **401** | authentication — the caller is not identified | `/login` |
+| **403** | authorization — the caller *is* identified and is not permitted | not `/login` |
+
+The usual cause on an inference backend (`litellm`, `vllm`, `llm-d`) is that the
+agent's **model id does not match what the gateway entitles**, exactly. Read the
+allowed list out of the error and compare it character by character with the
+agent's configured model — separators and prefixes both matter:
+
+```
+configured:  claude-sonnet-4.6
+entitled:    aws/claude-sonnet-4-6
+                 ^^^^         ^
+```
+
+`.` versus `-`, and a missing `aws/` prefix, are each enough for a 403. For plain
+`vllm`/`llm-d` backends hive passes model ids through **verbatim** on purpose — the
+server is the only thing that knows its own naming — so fix drift there in the
+agent's `model:` setting.
+
+For **`litellm`** gateways this drift now self-heals
+([#4400](https://github.com/kubestellar/hive/issues/4400)): hive learns the key's
+entitled model set (from a key-info probe, or from the first team-scope 403 itself)
+and, when the configured id differs from **exactly one** entitled id only by
+separator (`.`/`-`), case, or provider-prefix drift, forwards that exact entitled id
+instead. The first request after a fresh start may still 403 (that 403 is what
+teaches the entitled set); subsequent requests resolve. An id that matches nothing —
+or matches more than one entitled id — is still sent verbatim, so correct the
+agent's `model:` setting to an id from the allowed list in that case.
+
+**Why one agent fails and another with "the same" model does not:** they are not the
+same string. Compare the two agents' configured `model:` values directly rather than
+the model each was *meant* to use — a single separator differs and only one of them
+matches the gateway. (Note the dashboard's model dropdown matches tolerantly, so both
+agents can *display* the same selection while their stored ids differ.)
+
+Before [#4400](https://github.com/kubestellar/hive/issues/4400) hive read that line as
+a login prompt: it badged the agent 🔑, and — because a valid token was on disk —
+auto-restarted it straight back into the same 403, which looked like the agent
+crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
+
+## The terminal looks frozen — no new output, and reopening it doesn't help
+
+You are almost certainly **scrolled back**, not looking at a halted agent.
+
+The browser terminal is a live `tmux` attach, and the mouse wheel scrolls by entering tmux's copy-mode. **While a pane is in copy-mode it stops following live output.** Copy-mode is state held by the tmux server, not the browser, so closing the tab and reopening it re-attaches to the same scrolled-back pane and still shows nothing new — which is what makes it look like the agent died.
+
+Look at the right-hand end of the status bar:
+
+```
+[SCROLLBACK 812/4837 lines back - not following live output - press q to resume]   now 14:22:07
+[live]                                                                             now 14:22:07
+```
+
+Press **`q`** (or `Esc`) to leave copy-mode and resume following output.
+
+**The timestamp there is a clock, not a content timestamp.** It is the time *now*, which is why it never lines up with any particular line of scrollback. The `812/4837 lines back` counter is your scroll position: how many lines back from live you are, out of the total retained history.
+
+**If you still see an unlabelled black-on-yellow box in the top-right of the pane** (e.g. `12:41 [812/4837]`), your hub predates the fix that hides it. That box is tmux's built-in copy-mode marker: the `[812/4837]` is the same scroll position, and the time next to it is the moment the **top visible line** was written — a reference point nothing on screen points at, which is why it never seems to correspond to the top or the bottom consistently. Current hubs hide that marker and carry the position, labelled, in the status bar instead.
+
+If the status bar shows `[live]` and output really has stopped, the agent is idle between kicks — check its next scheduled kick on the dashboard before assuming a fault.
+
+## The dashboard says the next kick is later, but the agent is visibly working now
+
+The agent-card **last kick** / **next kick** fields describe when work is *started*, not how long it runs. A kick sends one prompt into the agent's CLI; the resulting work pass then runs as long as it needs — often hours for a deep quality or scan pass. So an agent visibly busy at 01:47 with `last kick 8:12 PM` and `next kick 2:12 AM` is not off schedule: it is still working through the pass that began at 20:12. (These fields were labelled "last run" / "next run" before [#4399](https://github.com/kubestellar/hive/issues/4399), which invited exactly this misreading.)
+
+Every kick path — scheduled cadence, manual restart, crash-resume, CEL event triggers — records itself in `last kick` and the 🕘 *past kicks* archive, so a timestamp that has *not* moved is positive evidence that no new kick happened.
+
+## An agent runs, but not the way I expect — why did it do that?
+
+Agents are told to act, not narrate: every policy carries an "Output Rules —
+Terse Mode" block, and on inference backends the agent manager appends an
+explicit `EXECUTE, DO NOT NARRATE` instruction to each kick. That rule earns
+its keep — weak models otherwise answer a kick with a plan for someone else to
+run — but it means the log shows *what* an agent did and never *why*, which is
+the one thing you need when the behaviour is wrong rather than absent.
+
+**Turn on explain mode for that one agent.** It asks the agent to record the
+reason for each tool call without relaxing the rule for anything else:
+
+```yaml
+agents:
+  scanner:
+    backend: claude
+    explain_mode: brief     # off | brief | full
+```
+
+`brief` adds one `EXPLAIN:` line before each tool call. `full` adds a closing
+block covering the goal as understood, the approach chosen, and the
+alternatives rejected. To turn it on for every agent at once, set the hive-wide
+default in Settings → Governor → General (`governor.explain_mode` in
+`hive.yaml`); `HIVE_EXPLAIN_MODE` on the deployment is the fallback when that is
+unset. Either applies only to agents that leave the field unset.
+
+The explanation lands in the agent's ordinary log behind an `EXPLAIN:` prefix,
+so it is a read-time choice rather than a second stream:
+
+```sh
+# Just the reasoning
+curl -s "$HIVE/api/agents/<name>/log?explain=only"
+
+# The log as it would read with explanation off
+curl -s "$HIVE/api/agents/<name>/log?explain=hide"
+```
+
+`grep EXPLAIN:` works the same way on a log you have already downloaded.
+
+Two things worth knowing before you reach for it:
+
+- **It costs tokens on every kick**, which is why it is per-agent and off by
+  default. Turn it on for the agent you are debugging, not for the fleet.
+- **The agent still has to act.** A response containing only explanation is a
+  failure, and the prose-only watchdog still fires — explain mode does not
+  license narrating instead of working.
+
+Full reference, including the tri-state inheritance rules:
+[agent-configuration.md](agent-configuration.md#explain-mode-debugging-agent-behaviour).
+
 ## Switching an agent's model
 
 Model selection is a per-agent config field (`agent.<name>.model`), applied at **launch time** as the CLI's `--model` flag (`src/pkg/agent/manager.go`). There is no live in-session `/model` slash command sent over tmux; changing the model means changing the config and relaunching the agent. Do this through the supported paths, which handle the restart for you:
@@ -136,11 +292,95 @@ If API calls fail, check whether the request is going through the gateway on por
 Use the same endpoints as the probes:
 
 ```bash
-curl -fsS http://127.0.0.1:3002/api/health
+curl -fsS http://127.0.0.1:3002/api/health   # the Go API
+curl -fsS http://127.0.0.1:3001/api/health   # through the auth proxy — what the gateway reaches
 curl -fsS http://127.0.0.1:3002/api/livez
 ```
 
+Run both of the first two. They are the two halves of the container health probe, and they fail independently: a hive whose auth proxy refused to start answers the first and refuses the second ([#4476](https://github.com/kubestellar/hive/issues/4476)). Neither needs a credential — only mutating methods are authenticated.
+
 `/api/livez` is deliberately process-focused: the Kubernetes manifest notes that stale hub heartbeat state belongs in deeper health reporting and should not crash-loop a healthy pod.
+
+## Podman (Quadlet) deployments: failure modes Docker does not have
+
+These are specific to running Hive as systemd units. Everything else in this guide applies unchanged; the install-side counterpart is the **Traps** section of [podman-standalone-quadlet.md](podman-standalone-quadlet.md).
+
+Commands are shown rootless. For a rootful install drop `--user` from `systemctl`/`journalctl`, and read `%E/hive` as `/etc/hive` rather than `~/.config/hive`. The examples below use `$CONF` for that configuration directory:
+
+```bash
+CONF=~/.config/hive     # rootful: CONF=/etc/hive
+```
+
+### It will not start at all
+
+Run the preflights before reading anything else — they diagnose most of the causes, and they are read-only:
+
+```bash
+export HIVE_DEPLOY_RUNTIME=podman   # WITHOUT this they exit 0 having checked nothing
+bin/hive-podman-preflight.sh        # engine, root mode, cgroups
+bin/hive-podman-preflight-ids.sh    # subordinate IDs, graphroot, networking
+HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh   # SELinux labels, config, secrets, port 3001
+```
+
+Docker is the default runtime, so with `HIVE_DEPLOY_RUNTIME` unset all three print `Podman preflight: skipped` and return success — which reads exactly like a pass.
+
+### `systemctl start` hangs, then fails five minutes later
+
+The unit sits in `activating` for the whole `TimeoutStartSec` (300s for `hive.service`, 120s for the gateway) and then gives up. `Notify=healthy` is doing its job: it holds the unit until the healthcheck passes, so a healthcheck that will never pass costs the full budget in silence.
+
+The measured cause ([#4367](https://github.com/kubestellar/hive/issues/4367)) is a **port mismatch between the config and the unit's `HealthCmd`**: the unit's first probe is `http://127.0.0.1:3002/api/health`, while `src/hive.yaml.example` ships `dashboard.port: 3001` for local source runs. Install the example unchanged and Hive serves on 3001, the probe never answers, and `--rm` deletes the container that held the evidence.
+
+```bash
+grep -A1 '^dashboard:' "$CONF/hive.yaml"    # must be 3002, or absent (3002 is the default)
+journalctl --user -u hive.service -n 100 --no-pager
+```
+
+The other frequent cause is a missing `HIVE_DASHBOARD_TOKEN` in `%E/hive/hive.env`. The Node auth proxy refuses to start without one unless the hive is hub-hosted, and `Notify=healthy` turns that refusal into the same silent `activating` wait. The journal carries the `[SECURITY]` line:
+
+```bash
+journalctl -u hive.service | grep '\[SECURITY\]'
+```
+
+**This one used to look different, and older notes may still describe it that way.** Until [#4476](https://github.com/kubestellar/hive/issues/4476) the probe read the Go API alone, so `hive.service` went `active` with its container `healthy` while the proxy was dead; the only red arrived 120s later on `hive-gateway.service`, as an nginx `connect() failed (111: Connection refused)` naming neither the port nor the variable. The probe now covers both listeners, so the wait and the journal line are on the same unit.
+
+### `systemctl is-failed` says `activating`, not `failed`
+
+Do not key monitoring on `failed` for these units. Measured in [#4378](https://github.com/kubestellar/hive/issues/4378): `Restart=always` moves the unit from a `TimeoutStartSec` expiry straight to `activating/auto-restart` and into the next attempt, so `is-failed` reports `activating` at every point during a bad update and `ActiveState` never reaches `failed`. An alert keyed on `failed` does not fire.
+
+What does move is `Result=timeout` during the auto-restart window, and `NRestarts` climbing — though not immediately, so a single sample that reads `NRestarts=0` has not shown the unit is healthy:
+
+```bash
+systemctl --user show hive.service -p ActiveState -p SubState -p Result -p NRestarts
+```
+
+For boot persistence specifically, `systemctl is-enabled` is not evidence either — it reports `generated` regardless. Use `bin/hive-podman-lifecycle-probe.sh check`; see [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md).
+
+### `systemctl cat hive.service` does not show my drop-in
+
+Expected. Quadlet merges `hive.container.d/*.conf` into `hive.container` **before** generating the service, so `systemctl cat` prints the merged result and never names the drop-in file that produced it. To see what is actually in force, read the generated `ExecStart` and the drop-in directory separately:
+
+```bash
+systemctl --user cat hive.service | grep -m1 '^ExecStart='
+ls -l ~/.config/containers/systemd/hive.container.d/
+```
+
+This matters most when an image pin is not taking effect — [podman-quadlet-update-rollback.md](podman-quadlet-update-rollback.md) covers the pin, and `bin/hive-podman-update.sh status` prints the pinned digest, the running container's digest, and the unit state together.
+
+### SELinux denials on `/data` or the secrets directory
+
+On an enforcing host a mislabelled bind mount fails in ways that do not name SELinux — and a private-category denial records **no AVC at all**. The bind mounts carry `:Z` and the named volume deliberately carries **no** relabel suffix; adding `:Z` to the volume is the trap.
+
+Do not weaken SELinux to test the theory. The measured behaviour, including the restore, is in [podman-selinux-avc-evidence.md](podman-selinux-avc-evidence.md) and [podman-volume-persistence.md](podman-volume-persistence.md); `bin/hive-podman-preflight-host.sh` reports the labels and the secrets group-traverse check directly.
+
+### `tar: can't open '/backup/…': Permission denied` restoring or migrating an archive
+
+Rootless, and the archive was written by a root process — anything from Docker's daemon, or anything taken under `sudo`. The `:z` on the `/backup` mount is supposed to relabel it to `container_file_t`, but relabelling needs ownership or `CAP_FOWNER`, and a rootless user has neither over a root-owned file. Podman skips it without saying so and the container is denied. The file's mode is a red herring: it is usually `0644` and perfectly readable from your own shell.
+
+`sudo chown "$(id -u):$(id -g)" <archive>` and re-run the identical command. Not `chmod 777`, which changes nothing here, and not `setenforce 0`. Full mechanism and the Docker → Podman procedure it belongs to: [backup-restore.md](backup-restore.md#docker--podman-migration).
+
+### Auto-update rolled back, or is not updating
+
+Auto-update is opt-in and off by default. If it rolled back, the published image is bad and **will be retried on the next timer firing** — the unit's own state stays green throughout. If it reports success but changes nothing, a digest pin is probably in force. Both are covered in [podman-auto-update.md](podman-auto-update.md).
 
 ## Clean reset
 
@@ -148,13 +388,26 @@ There is no `uninstall.sh`/`install.sh` on the containerized runtime. To start f
 
 ```bash
 # Docker Compose (deletes the named /data volume — see Backup & restore first)
-docker compose down -v
-docker compose up -d
+docker compose -f src/docker-compose.yaml down -v
+docker compose -f src/docker-compose.yaml up -d
 
 # Kubernetes (deletes the PVC-backed state)
 kubectl -n hive delete deploy/hive
 kubectl -n hive delete pvc -l app.kubernetes.io/name=hive
 # then re-apply the manifests
+
+# Podman / Quadlet (rootless; drop --user for a rootful install)
+systemctl --user stop hive-gateway.service hive.service
+#  ⚠ DESTRUCTIVE — this line deletes all persisted Hive state. Everything
+#    else here is reversible; this is not. Back up FIRST (see below).
+podman volume rm hive-data
+systemctl --user start hive-gateway.service
 ```
 
+The Podman volume removal is the counterpart of `down -v`, and it is separated onto its own line for the same reason: stopping and starting the units is routine, and `podman volume rm hive-data` is not. `systemctl stop` alone does **not** delete the volume — the units can be stopped and started freely without losing state. To remove the units and every labelled resource as well, use [`bin/hive-podman-teardown.sh`](../../bin/hive-podman-teardown.sh), which selects by the `io.kubestellar.hive.*` ownership labels.
+
 `/data` holds the dashboard config overlay, persisted tokens, logs, and other state; deleting it discards dashboard edits and cached credentials. Back up first if you need any of it — see [Backup & restore](backup-restore.md).
+
+### "backup encryption key is not configured on this hive, so a backup would be unencrypted; refusing"
+
+Expected, and deliberate: the archive carries this hive's GitHub App private keys, so hive refuses to build one without a key. Set one in **Governor Config → Security → Backup → Set key** (`openssl rand -hex 32`) and retry — no deployment or cluster access is needed. `HIVE_BACKUP_KEY` on the deployment still works as a fallback for self-hosted hives. Escrow the key: it is not inside the archive, so a backup without it cannot be restored.

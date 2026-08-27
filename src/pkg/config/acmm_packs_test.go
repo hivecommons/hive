@@ -25,7 +25,7 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	packs := ACMMPacks()
 
 	expected := map[int]int{
-		1: 2, 2: 5, 3: 6, 4: 7, 5: 9, 6: 10,
+		1: 2, 2: 7, 3: 8, 4: 9, 5: 11, 6: 12,
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]
@@ -34,6 +34,36 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 		}
 		if len(p.Agents) != want {
 			t.Errorf("L%d (%s): expected %d agents, got %d", p.Level, p.Name, want, len(p.Agents))
+		}
+	}
+}
+
+func TestOperabilityAgentsArePausedInEveryGovernorMode(t *testing.T) {
+	for level := 2; level <= 6; level++ {
+		pack, err := ACMMPackByLevel(level)
+		if err != nil {
+			t.Fatalf("load L%d pack: %v", level, err)
+		}
+		for _, mode := range []string{"surge", "busy", "quiet", "idle"} {
+			for _, agent := range []string{"telemetry", "operations"} {
+				cadence := NewIntervalCadence(pack.Governor.Cadences[mode][agent])
+				if !cadence.IsPaused() {
+					t.Errorf("L%d %s %s cadence = %q, want paused", level, mode, agent, cadence)
+				}
+			}
+		}
+	}
+}
+
+func TestOperabilityAgentDefaults(t *testing.T) {
+	for _, name := range []string{"telemetry", "operations"} {
+		agent := AgentConfig{}
+		applyKnownAgentDefaults(name, &agent)
+		if agent.Emoji == "" || agent.Color == "" || len(agent.Aliases) == 0 || len(agent.LaneKeywords) == 0 || len(agent.DetectKeywords) == 0 {
+			t.Errorf("%s defaults incomplete: %#v", name, agent)
+		}
+		if agent.BeadRole != "worker" || agent.IncludeRepos == nil || !*agent.IncludeRepos {
+			t.Errorf("%s defaults = bead_role %q, include_repos %v", name, agent.BeadRole, agent.IncludeRepos)
 		}
 	}
 }

@@ -74,17 +74,28 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+	// Reject an explain_mode the config loader would reject. Without this, a bad
+	// value is written to the agent file here and only surfaces at the NEXT
+	// config load, as a load failure far from the request that caused it.
+	if !config.ValidateExplainMode(body.Agent.ExplainMode) {
+		jsonError(w, "explain_mode must be one of: off, brief, full (or empty to inherit the hive default)", http.StatusBadRequest)
 		return
 	}
-	if _, exists := current.Agents[body.Name]; exists {
+
+	// Same reasoning for caveman_mode: reject at the request rather than
+	// persisting a value the config loader would fail on later (#4531,
+	// flagged as a follow-up in #3897).
+	if !config.ValidateCavemanMode(body.Agent.CavemanMode) {
+		jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
+		return
+	}
+
+	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
 	}
 
-	agentsDir := current.Data.AgentsDir
+	agentsDir := s.deps.Config.Data.AgentsDir
 	if agentsDir == "" {
 		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
 		return
@@ -147,12 +158,7 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.PathValue("name")
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	agentCfg, ok := current.Agents[name]
+	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -167,7 +173,7 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentsDir := current.Data.AgentsDir
+	agentsDir := s.deps.Config.Data.AgentsDir
 	if agentsDir != "" {
 		if err := config.RemoveAgentFile(agentsDir, name); err != nil {
 			s.logger.Error("failed to remove agent file", "agent", name, "error", err)
@@ -176,18 +182,14 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; !exists {
-			return fmt.Errorf("agent %s no longer exists", name)
-		}
-		delete(candidate.Agents, name)
-		if err := candidate.ExpandAgentReplicas(); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to publish agent deletion: "+err.Error(), http.StatusInternalServerError)
+	delete(s.deps.Config.Agents, name)
+	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
 	}
 
 	// Record the deletion durably. Removing the overlay file above is not
@@ -378,17 +380,12 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	current := s.configSnapshot()
-	if current == nil {
-		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
-		return
-	}
-	if _, exists := current.Agents[name]; exists {
+	if _, exists := s.deps.Config.Agents[name]; exists {
 		jsonError(w, "agent already exists: "+name, http.StatusConflict)
 		return
 	}
 
-	agentsDir := current.Data.AgentsDir
+	agentsDir := s.deps.Config.Data.AgentsDir
 	if agentsDir == "" {
 		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
 		return

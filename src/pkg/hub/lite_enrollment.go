@@ -364,9 +364,8 @@ func (s *HubServer) requestHostedLiteSpoke(username, owner, repo, host string, i
 	}
 	provisionHiveRecord := *h
 	provisionHiveRecord.Repos = append([]string(nil), h.Repos...)
-	provisionWG.Add(1)
-	go func() {
-		defer provisionWG.Done()
+	// Queued, not spawned — bounded hub-wide and per cluster (provision_queue.go).
+	enqueueProvision(clusterID, func() {
 		provisionedHive := &provisionHiveRecord
 		if err := provisionHive(provisionedHive, req, &cluster, s.appKeysByAppID(), s.logger); err != nil {
 			provisionedHive.Status = "error"
@@ -377,7 +376,7 @@ func (s *HubServer) requestHostedLiteSpoke(username, owner, repo, host string, i
 		}
 		provisionedHive.Status = "provisioning"
 		_ = saveSaaSHive(provisionedHive)
-	}()
+	})
 	s.updateRegistryForLiteSpoke(h)
 	return h, nil
 }

@@ -16,7 +16,7 @@
 | `bd reset [--reason "..."]` | Close all open/in-progress/blocked beads with an audit reason. |
 | `bd remember "fact"` | Quick-add an advisory bead authored by `system`. |
 | `bd init` | No-op compatibility command; opening the store creates it. |
-| `bd dolt push` | No-op compatibility command; v2 data is already persisted on disk. |
+| `bd dolt push` | No-op compatibility command; bead data is already persisted on disk. |
 
 Examples:
 
@@ -28,6 +28,8 @@ bd update bead-123 --claim
 bd update bead-123 --set-metadata reviewer=guide
 bd close bead-123
 ```
+
+`--type advisory` is the one type that **upserts**: re-creating an advisory bead whose title matches an open one refreshes that bead's last-seen stamp (and raises its priority if the new report is more severe) instead of adding a duplicate. That re-report is what keeps the finding alive — an advisory bead nobody re-files within `governor.advisory.staleness_days` is auto-closed. See [Advisory digest](advisory.md).
 
 ## Knowledge commands
 

@@ -48,7 +48,7 @@ Issue types: `coverage-gap`, `missing-workflow`, `test-infrastructure`, `coverag
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[quality] <short description of test improvement>" \
-  --body "## Test Improvement\n\n<what this PR adds/changes>\n\nFixes #<issue-number>\n\n---\n*Filed by quality agent (ACMM L4/L6 — full mode)*" \
+  --body "## Test Improvement\n\n<what this PR adds/changes>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by quality agent (ACMM L4/L6 — full mode)*" \
   --label "quality,testing"
 ```
 
@@ -62,7 +62,29 @@ bd create --title "<specific coverage gap title>" \
   --type advisory --priority <0-3> --actor quality --external-ref "path/to/untested/file.go"
 ```
 
-Priority: 0 (critical untested path), 1 (major logic gap), 2 (significant gap), 3 (minor/nice-to-have)
+Priority for non-coverage findings: 0 (critical), 1 (high), 2 (medium), 3 (low).
+For `coverage-gap` findings, use the mandatory evidence and priority rules below. A coverage gap is never priority 0.
+
+## Coverage Evidence and Priority (MANDATORY)
+
+Before creating, retaining, reprioritizing, or closing a `coverage-gap` finding:
+
+1. Discover the repository's unit, integration, and end-to-end test suites and their coverage outputs from its documentation, test configuration, CI definitions, and available knowledge. Do not assume a particular language, CI provider, branch, workflow, artifact name, or coverage format.
+2. Generate or read unit-test coverage (`go test -coverprofile=coverage.out ./...` or the project's equivalent).
+3. Obtain the most recent relevant integration/end-to-end coverage evidence from the mechanism the repository actually uses (for example, a local test command, CI artifact, or coverage service). Record reproducible provenance: the suite and command or job, code revision, and run URL/ID or artifact timestamp when available.
+4. When suites expose compatible machine-readable coverage, combine their raw data at statement/line granularity before deciding whether a path is uncovered. Prefer the toolchain's supported merge mechanism (for example, `go tool covdata merge` for Go coverage-data directories), and only merge data produced for the same code revision with compatible build metadata. Do not substitute a textual function summary for raw data that can be combined.
+5. If evidence cannot be combined, analyze each coverage source separately and state that limitation in the finding.
+
+Do not infer missing end-to-end coverage from a unit `coverprofile`. If end-to-end evidence is unavailable, stale, or inaccessible, do not claim that the path lacks end-to-end coverage. Record a separate `coverage-reporting` or `test-infrastructure` finding instead.
+
+Apply these maximum priorities to `coverage-gap` findings, regardless of code impact:
+
+- **Priority 1 (high)**: covered by neither unit nor end-to-end tests.
+- **Priority 2 (medium)**: covered by unit tests but not end-to-end tests.
+- **Priority 3 (low)**: covered by end-to-end tests but not unit tests.
+- **No coverage-gap finding**: covered by both unit and end-to-end tests.
+
+Every coverage-gap detail must state the unit evidence, the end-to-end evidence, and the reproducible provenance described above. Never assign priority 0 (critical) to a `coverage-gap`.
 
 ## Work List
 
@@ -77,7 +99,7 @@ ${PR_LIST}
 ## Workflow
 
 1. Read the kick message
-2. Analyze test coverage: `go test -coverprofile=coverage.out ./...` or equivalent
+2. Analyze unit and end-to-end test coverage using the mandatory evidence gate above
 3. Identify top coverage gaps by impact
 4. Create a bead for each finding
 5. For high-priority findings, open a GitHub issue

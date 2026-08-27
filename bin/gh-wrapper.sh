@@ -31,6 +31,26 @@ REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
 CONTRIBUTOR_MODE_MARKER="/etc/hive/contributor-mode"
 
+# Trusted bot-identity file (#4044). Staff agents authenticate with GitHub App
+# INSTALLATION tokens (ghs_…), for which `gh api user` structurally 403s —
+# there is no user identity behind a server-to-server token — so the #3982
+# oracle can never resolve for them. The hive process, which MINTS every tier
+# token and therefore knows the App bot login ("<app-slug>[bot]"), writes that
+# login here alongside the per-agent token caches. The directory is owned by
+# dev and not writable by any agent UID, so — like CONTRIBUTOR_MODE_MARKER —
+# this is an image/runtime property the caller cannot forge. The path is a
+# CONSTANT for the same reason as #3249: an env-selected path would let an
+# agent point the identity check at a file it controls.
+#
+# HIVE_GH_WRAPPER_BOT_LOGIN_FILE is honored ONLY while the test harness's
+# HIVE_GH_WRAPPER_REAL_GH override is active, where it grants nothing: a caller
+# who can substitute the gh binary itself has already bypassed every gate this
+# identity feeds (see the REAL_GH comment above). Unset in production.
+BOT_LOGIN_FILE="/var/run/hive-metrics/agent-tokens/gh-bot-login"
+if [[ -n "${HIVE_GH_WRAPPER_REAL_GH:-}" && -n "${HIVE_GH_WRAPPER_BOT_LOGIN_FILE:-}" ]]; then
+  BOT_LOGIN_FILE="$HIVE_GH_WRAPPER_BOT_LOGIN_FILE"
+fi
+
 # Contributor mode is an image property, not a caller-controlled environment
 # toggle. Keep this path constant: an agent can set its own environment and must
 # not be able to redirect the trust check to an agent-writable marker (#3249).
@@ -67,17 +87,39 @@ if ! _contributor_mode; then
   # back to either would silently escalate every agent to full privilege and
   # defeat per-agent tier scoping. A missing scoped token must FAIL LOUD so the
   # operator fixes token delivery — it must never quietly escalate.
-  if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
+  # -r and -s as well as -f (#4043): an unreadable cache made the `cat` inside
+  # the `export` assignment fail with its status MASKED by export's own exit 0
+  # (so even `set -e` never saw it), and an empty pre-created cache (pod rolled,
+  # token not yet re-minted) passed -f outright — both exported an EMPTY
+  # GH_TOKEN and sent every gh call out UNAUTHENTICATED ("please run gh auth
+  # login"), instead of the fail-loud this gate promises.
+  if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" && -r "${HIVE_AGENT_TOKEN_CACHE}" && -s "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
     export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
+    # GHE spokes (github.ibm.com etc.): gh only reads GH_TOKEN for github.com;
+    # any other GH_HOST authenticates from GH_ENTERPRISE_TOKEN. Exporting both
+    # is harmless on github.com and makes the scoped token work on GHE — the
+    # missing export left every GHE gh call unauthenticated (401) even though
+    # token delivery itself worked (root-caused live 2026-08-20).
+    export GH_ENTERPRISE_TOKEN="$GH_TOKEN"
+    # Agents are non-interactive by definition: a gh command that would prompt
+    # (e.g. `gh issue create` with no --title after the agent's shell tool
+    # mangled a multiline command) hung until the tool timeout and read as a
+    # network failure. Fail loud and instant instead.
+    export GH_PROMPT_DISABLED=1
   else
-    echo "⛔ BLOCKED: per-agent scoped GitHub token not available (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
+    echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
     echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
     echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
     exit 1
   fi
-  printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
+  # The group wraps the append so a failed REDIRECTION is silenced too: `>> f
+  # 2>/dev/null` only mutes the printf, and when the log's directory is not
+  # writable by the agent UID the shell's own "Permission denied" line leaked
+  # into stderr on EVERY gh call, priming agents to read later denials as
+  # permission errors (#4043).
+  { printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HIVE_AGENT:-unknown}" "$(id -u)" "$*" \
-    >> "$TOKEN_ACCESS_LOG" 2>/dev/null || true
+    >> "$TOKEN_ACCESS_LOG"; } 2>/dev/null || true
 fi
 
 # Contributor mode — extra restrictions for remote contributor agents
@@ -189,19 +231,31 @@ for arg in "${args[@]}"; do
   esac
 done
 
-# ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840, F6/F7 residual) ────────────────
+# ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840 F6/F7 residual; added in #3854) ─
 #
-# Everything below this point is a DENYLIST: each gate names a specific thing an
-# agent must not do (`pr merge`, `issue create`, mutating `gh api`, ...) and the
-# script ends in a bare `exec "$REAL_GH" "$@"`. So any subcommand nobody thought
-# to enumerate reached real GitHub with the App token attached. That is the same
-# failure shape as the mode `case` with no default arm (fixed in ce9d19aa):
-# unenumerated input takes the permissive branch.
+# WHAT THIS GATE IS (read this before touching `_gh_surface_allowed`):
+# `_gh_surface_allowed` below is a deny-by-default ALLOWLIST, not a denylist.
+# A subcommand/action pair reaches real `gh` only if it is EXPLICITLY named in
+# the `case` arms; anything unenumerated is rejected. Removing an arm therefore
+# BLOCKS a verb, and the way to permit a new verb is to ADD an arm — never to
+# "add it to a deny list". Do not restructure this into a denylist: that is the
+# exact bug #3854 fixed, and audit finding L1 (2026-08-17 security review)
+# flagged the stale wording here for misleading a future maintainer into
+# weakening the gate.
 #
-# This was not theoretical. Against the stub harness, on v4 @ c9ea2cc8, EVERY
-# one of these reached gh with rc=0 — including in NO_GITHUB mode, the most
-# restrictive mode there is, because the mode gates only ever inspect
-# `subcmd = issue|pr`:
+# WHY (historical, pre-#3854): every gate FURTHER BELOW this block is still a
+# denylist — each names a specific thing an agent must not do (`pr merge`,
+# `issue create`, mutating `gh api`, ...) and the script ends in a bare
+# `exec "$REAL_GH" "$@"`. Before this allowlist existed, any subcommand nobody
+# thought to enumerate reached real GitHub with the App token attached. That is
+# the same failure shape as the mode `case` with no default arm (fixed in
+# ce9d19aa): unenumerated input takes the permissive branch.
+#
+# This was not theoretical. Against the stub harness, on v4 @ c9ea2cc8 (i.e.
+# BEFORE the allowlist below landed in #3854), EVERY one of these reached gh
+# with rc=0 — including in NO_GITHUB mode, the most restrictive mode there is,
+# because the mode gates only ever inspect `subcmd = issue|pr`. All of them are
+# rejected today because none is on the allowlist:
 #
 #   NO_GITHUB     gh auth token                 → reached gh  (exfiltrates the token)
 #   NO_GITHUB     gh secret set FOO --body bar  → reached gh  (writes Actions secrets)
@@ -311,7 +365,18 @@ _extract_author() {
 }
 
 # Resolve the authenticated GitHub login. Initialize the cache internally so a
-# caller-controlled environment cannot seed a trusted identity.
+# caller-controlled environment cannot seed a trusted identity (#3982).
+#
+# Two oracles, both unspoofable by the agent (#4044):
+#   1. The trusted bot-identity file — written by the hive process (which mints
+#      the tier tokens) into a directory no agent UID can write. This is the
+#      ONLY oracle that can work for staff agents: their App installation
+#      tokens have no /user identity, so `gh api user` 403s unconditionally.
+#   2. `gh api user` — the server-side identity of the token itself. Works for
+#      user tokens (contributor mode) and remains the fallback whenever the
+#      file is absent, so the contributor path is unchanged.
+# A caller-writable path or environment variable must never be consulted:
+# fail-closed is preserved when NEITHER oracle resolves.
 HIVE_AUTH_LOGIN_CACHED=""
 _resolve_self_login() {
   if [[ -n "$HIVE_AUTH_LOGIN_CACHED" ]]; then
@@ -319,9 +384,16 @@ _resolve_self_login() {
     return 0
   fi
 
-  local login
-  if ! login="$("$REAL_GH" api user --jq '.login' 2>/dev/null)"; then
-    return 1
+  local login=""
+  if ! _contributor_mode && [[ -f "$BOT_LOGIN_FILE" && -r "$BOT_LOGIN_FILE" ]]; then
+    # Single-line file; strip whitespace/newline. An empty or unreadable file
+    # falls through to the API oracle (and from there to fail-closed).
+    login="$(tr -d '[:space:]' < "$BOT_LOGIN_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -z "$login" ]]; then
+    if ! login="$("$REAL_GH" api user --jq '.login' 2>/dev/null)"; then
+      return 1
+    fi
   fi
   if [[ -z "$login" ]]; then
     return 1
@@ -361,10 +433,43 @@ _author_matches_login() {
 if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" ]; then
   if author_value="$(_extract_author)" && [[ -n "$author_value" ]]; then
     if [[ "$author_value" = "@me" ]]; then
-      : # GitHub resolves @me server-side to the authenticated token identity.
+      # GitHub resolves @me server-side ONLY for user tokens. An App
+      # installation token has no user identity, so for staff agents @me is
+      # rejected by the API itself and there would be NO working self-listing
+      # form at all (#4044). Map @me to the trusted resolved identity for
+      # staff agents; contributor mode keeps the server-side resolution.
+      if ! _contributor_mode; then
+        if ! _resolve_self_login >/dev/null; then
+          echo "⛔ BLOCKED: gh $subcmd list --author @me cannot work with an App installation token (it has no /user identity, #4044)," >&2
+          echo "and no trusted identity is available to substitute: ${BOT_LOGIN_FILE} is missing/empty and 'gh api user' did not resolve." >&2
+          echo "The hive writes that file when it mints agent tokens — report this to the operator so identity delivery is repaired." >&2
+          exit 1
+        fi
+        _atme_rewritten=()
+        _atme_expect=false
+        for _atme_arg in "${args[@]}"; do
+          if [[ "$_atme_expect" = true ]]; then
+            _atme_expect=false
+            [[ "$_atme_arg" = "@me" ]] && _atme_arg="$HIVE_AUTH_LOGIN_CACHED"
+          else
+            case "$_atme_arg" in
+              --author|-A) _atme_expect=true ;;
+              --author=@me) _atme_arg="--author=${HIVE_AUTH_LOGIN_CACHED}" ;;
+              -A=@me) _atme_arg="-A=${HIVE_AUTH_LOGIN_CACHED}" ;;
+              -A@me) _atme_arg="-A${HIVE_AUTH_LOGIN_CACHED}" ;;
+            esac
+          fi
+          _atme_rewritten+=("$_atme_arg")
+        done
+        args=("${_atme_rewritten[@]}")
+        # The wrapper's tail executes `exec "$REAL_GH" "$@"` — rewrite the
+        # positional parameters too, or the substitution would never ship.
+        set -- "${args[@]}"
+      fi
     elif ! _resolve_self_login >/dev/null; then
       echo "⛔ BLOCKED: gh $subcmd list --author requires authenticated GitHub identity." >&2
-      echo "Could not resolve the current token identity with 'gh api user --jq .login'." >&2
+      echo "Could not resolve the current token identity: no trusted identity file at ${BOT_LOGIN_FILE} (written by the hive when it mints agent tokens)" >&2
+      echo "and 'gh api user --jq .login' did not resolve (expected for App installation tokens, which have no /user identity)." >&2
       exit 1
     elif _author_matches_login "$author_value" "$HIVE_AUTH_LOGIN_CACHED"; then
       : # Match: authenticated login, case-insensitive, with optional [bot] suffix.
@@ -377,8 +482,19 @@ if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" 
   elif _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
   else
-    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents." >&2
-    echo "Read /var/run/hive-metrics/actionable.json instead." >&2
+    # Root-caused in a live hive (2026-08-20): agents read this two-line
+    # message as "all gh $subcmd commands are blocked" and silently skipped
+    # `gh issue create` / PR creation for confirmed findings, and the single
+    # hardcoded path pointed at a file that (a) does not exist on the
+    # container-hosted model (which writes /data/last-actionable.json) and
+    # (b) sits outside the agent CLI's workspace sandbox for file-read tools.
+    # Be explicit: only LIST/enumeration is blocked, writes remain allowed,
+    # and point at whichever work-queue snapshot actually exists here.
+    _actionable_hint="/var/run/hive-metrics/actionable.json"
+    [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
+    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents — but ONLY listing/enumeration is blocked." >&2
+    echo "Write commands like 'gh issue create' and PR creation via 'hive-open-pr' are still ALLOWED — do not skip them because of this message." >&2
+    echo "For the pre-filtered issue/PR queue, read ${_actionable_hint} (use a shell command like 'cat', not a workspace file-read tool)." >&2
     exit 1
   fi
 fi
@@ -788,9 +904,15 @@ if [[ -n "$AGENT_NAME" ]]; then
   fi
 
   # Ensure labels exist on the repo (cached per-session to avoid repeated API calls).
-  LABEL_CACHE="/tmp/.hive-labels-ensured"
+  #
+  # The cache MUST be keyed per target repo (#4043): a single global flag meant
+  # whichever repo an agent touched first got the labels created, and every
+  # other repo was skipped for the life of the pod — leaving the injected
+  # hive/<id> label missing there, which made every `gh pr edit`/`gh issue edit`
+  # on those repos fail with "'hive/<id>' not found". Verified live on a fleet
+  # owner's hive: only the first-touched repos carried the current label.
+  LABEL_CACHE_BASE="/tmp/.hive-labels-ensured"
   _ensure_labels() {
-    [[ -f "$LABEL_CACHE" ]] && return 0
     local repo_flag=""
     for arg in "${args[@]}"; do
       case "$arg" in
@@ -800,13 +922,18 @@ if [[ -n "$AGENT_NAME" ]]; then
       esac
     done
     [[ "$repo_flag" = "next" ]] && repo_flag=""
+    # owner/repo → owner_repo; repo names are [A-Za-z0-9_.-] so '/' is the only
+    # separator to neutralize. No --repo means "current directory's repo" —
+    # cache that under its own key rather than sharing one with named repos.
+    local cache="${LABEL_CACHE_BASE}-${repo_flag//\//_}"
+    [[ -f "$cache" ]] && return 0
     local rf=""
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
     "$REAL_GH" label create "agent/${AGENT_DISPLAY_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
     if [[ -n "$HIVE_INSTANCE_ID" ]]; then
       "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
     fi
-    touch "$LABEL_CACHE"
+    touch "$cache"
   }
 
   # Extract issue/PR number and repo from args (for post-action labeling).
@@ -824,22 +951,85 @@ if [[ -n "$AGENT_NAME" ]]; then
         *) [[ -z "$item_num" ]] && item_num="$arg" ;;
       esac
     done
+    # Explicit success: the loop's last iteration is often `[[ -z set ]] && …`
+    # (a trailing positional like a --body value), which evaluates false. Under
+    # `set -e` that non-zero return killed the whole wrapper — comments with a
+    # trailing free-text arg died with a silent exit 1.
+    return 0
   }
 
   case "$subcmd/$action" in
     issue/create|pr/create)
-      _ensure_labels
       _inject_identity
-      "$REAL_GH" "${args[@]}" --label "$LABELS_CSV"
-      rc=$?
+      # ── Relay issue creation through the hive (issue-request watcher) ──
+      # The direct path rode the agent's shell tool: one GHE secondary-rate-
+      # limit stall, network blip, or mangled multiline command and the
+      # finding was silently lost (root-caused live 2026-08-21: sec-check's
+      # creates timed out mid-flight, repeatedly, and survived only as beads).
+      # hive-open-issue writes a request file (milliseconds, no network); the
+      # hive creates the issue server-side with the App token — retried with
+      # backoff, deduped by exact open-issue title, and gated by the SAME
+      # CanCreateIssues mode check + UID forge-resistance as this wrapper.
+      # Mode gates (NO_GITHUB/ADVISORY capture) have already run above, so an
+      # advisory agent's finding still lands in the digest, never the queue.
+      # Contributors are EXEMPT (they file under their own identity), mirroring
+      # the hive-open-pr redirect.
+      if [ "$subcmd" = "issue" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        exec hive-open-issue "${args[@]}" --label "$LABELS_CSV"
+      fi
+      _ensure_labels
+      # `|| rc=$?` (not `cmd; rc=$?`): this script runs under `set -e`, so a
+      # bare failing gh exited the wrapper BEFORE rc was ever read — the
+      # unlabeled retry below was dead code, and a missing injected label
+      # failed the whole create (#4043). gh resolves label names before
+      # mutating, so the retry cannot double-create.
+      rc=0
+      "$REAL_GH" "${args[@]}" --label "$LABELS_CSV" || rc=$?
       if [ $rc -ne 0 ]; then
         exec "$REAL_GH" "${args[@]}"
       fi
       exit $rc
       ;;
     issue/edit|pr/edit)
+      # ── Issue self-claim → hive/claimed-by-<agent> label ──
+      # An App bot cannot be a GitHub assignee (Issues.AddAssignees silently
+      # drops it), so `gh issue edit <n> --add-assignee @me` would be a no-op —
+      # the agent thinks it claimed the issue but nothing is recorded. Relay it
+      # to hive-open-issue claim, which applies a visible, AUDITED
+      # hive/claimed-by-<agent> label (agent_issue_claimed). Only for a plain
+      # self-claim on an issue; anything else falls through to the label path.
+      if [ "$subcmd" = "issue" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        _claim_self=false
+        _prev_arg=""
+        for a in "${args[@]}"; do
+          case "$a" in
+            --add-assignee=@me|--add-assignee=@self) _claim_self=true ;;
+            @me|@self) [ "$_prev_arg" = "--add-assignee" ] && _claim_self=true ;;
+          esac
+          _prev_arg="$a"
+        done
+        if $_claim_self; then
+          _extract_item
+          if [ -n "$item_num" ]; then
+            _claim_repo=""
+            [ -n "$item_repo" ] && _claim_repo="--repo $item_repo"
+            exec hive-open-issue claim $_claim_repo "$item_num"
+          fi
+        fi
+      fi
       _ensure_labels
-      exec "$REAL_GH" "$@" --add-label "$LABELS_CSV"
+      # Label injection is provenance metadata, not a security gate. gh applies
+      # an edit atomically, so a missing label (repo not yet ensured, create
+      # denied, label deleted) failed the ENTIRE edit with "'<label>' not found"
+      # — agents read that as a permissions failure and route around the wrapper
+      # (#4043). Mirror the create arm: try labeled, retry unlabeled on failure.
+      # `|| rc=$?` keeps the retry alive under `set -e` (see create arm above).
+      rc=0
+      "$REAL_GH" "$@" --add-label "$LABELS_CSV" || rc=$?
+      if [ $rc -ne 0 ]; then
+        exec "$REAL_GH" "$@"
+      fi
+      exit $rc
       ;;
     pr/merge)
       _ensure_labels
@@ -851,10 +1041,31 @@ if [[ -n "$AGENT_NAME" ]]; then
       fi
       exec "$REAL_GH" "$@"
       ;;
-    issue/comment|pr/comment|pr/review)
-      _ensure_labels
+    pr/review)
+      _inject_identity
+      # ── Relay reviews through the hive (review-request watcher) ──
+      # A direct `gh pr review` lands under the agent's own shell token, is
+      # never audited, and so PR-review activity is invisible to the hive-health
+      # output signal. hive-review writes a request file the hive submits with
+      # the App token and records as agent_pr_reviewed — same rationale as
+      # issue/create, and gated by the SAME per-agent authorization + UID
+      # forge-resistance. Contributors are EXEMPT (they review under their own
+      # identity), mirroring the hive-open-pr / hive-open-issue redirects.
+      if ! _contributor_mode && command -v hive-review >/dev/null 2>&1; then
+        exec hive-review "${args[@]}"
+      fi
+      # No relay available: fall through to real gh so a review is never lost.
+      exec "$REAL_GH" "$@"
+      ;;
+    issue/comment|pr/comment)
       _inject_identity
       _extract_item
+      # ── Relay comments through the hive (same rationale as issue/create) ──
+      # A lost review/triage comment is a lost work product.
+      if [ "$action" = "comment" ] && ! _contributor_mode && command -v hive-open-issue >/dev/null 2>&1; then
+        exec hive-open-issue comment "${args[@]}"
+      fi
+      _ensure_labels
       "$REAL_GH" "${args[@]}"
       exit_code=$?
       if [[ $exit_code -eq 0 && -n "$item_num" ]]; then

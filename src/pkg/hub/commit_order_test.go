@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,9 @@ import (
 // ============================================================
 
 // resetCommitOrderState clears the ancestry cache/in-flight maps and restores
-// the real compare fetcher after the test. All fetcher writes happen under
+// the suite-default compare fetcher (the offline TestMain stub — the real
+// network fetcher is never active during tests) after the test. All fetcher
+// writes happen under
 // commitOrderMu — the mutex commitAtOrAheadOfTarget captures the var under —
 // so a background resolve leaked from another test can never race them.
 func resetCommitOrderState(t *testing.T) {
@@ -340,5 +343,62 @@ func TestTriggerAutoUpgradesClearsSurpassedManualTarget(t *testing.T) {
 	}
 	if armed {
 		t.Error("expected stale heartbeat fallback drained, not re-armed")
+	}
+}
+
+// The production compare fetcher's HTTP behaviour, exercised directly against
+// a local server. TestMain replaces the fetchCommitCompareStatus var with an
+// offline stub for the whole suite (background resolves must never reach the
+// real GitHub API from unit tests), so this is the one place the real
+// implementation runs — via the realFetchCommitCompareStatus handle captured
+// before the swap.
+func TestFetchCommitCompareStatusHTTP(t *testing.T) {
+	if realFetchCommitCompareStatus == nil {
+		t.Fatal("TestMain did not capture the real compare fetcher")
+	}
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+		wantErr bool
+	}{
+		{"ahead", func(w http.ResponseWriter, r *http.Request) {
+			if !strings.Contains(r.URL.Path, "/repos/kubestellar/hive/compare/aaaaaaa...bbbbbbb") {
+				t.Errorf("unexpected compare path %s", r.URL.Path)
+			}
+			w.Write([]byte(`{"status":"ahead"}`))
+		}, "ahead", false},
+		{"non-200", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}, "", true},
+		{"empty status", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{}`))
+		}, "", true},
+		{"bad json", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{`))
+		}, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			oldBase := githubAPIBase
+			githubAPIBase = srv.URL
+			defer func() { githubAPIBase = oldBase }()
+
+			status, err := realFetchCommitCompareStatus("aaaaaaa", "bbbbbbb", slog.Default())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got status %q", status)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if status != tc.want {
+				t.Errorf("status = %q, want %q", status, tc.want)
+			}
+		})
 	}
 }

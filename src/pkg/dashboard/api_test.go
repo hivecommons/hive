@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,8 +20,17 @@ import (
 
 // ---------- helpers ----------
 
+func isolateDashboardState(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	oldUserTokenPath := userTokenPath
+	userTokenPath = filepath.Join(dir, "gh-user-token")
+	t.Cleanup(func() { userTokenPath = oldUserTokenPath })
+}
+
 func testDeps(t *testing.T) *Dependencies {
 	t.Helper()
+	isolateDashboardState(t)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	cfg := &config.Config{
@@ -272,14 +282,6 @@ func TestHandleTokens_NilCollector(t *testing.T) {
 	result := decodeJSON(t, rec)
 	if result["status"] != "no_collector" {
 		t.Errorf("expected no_collector status, got %v", result["status"])
-	}
-}
-
-func TestHandleIssueCosts_NilCollector(t *testing.T) {
-	s, _ := apiServer(t)
-	rec := doGet(s, "/api/issue-costs")
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
 	}
 }
 

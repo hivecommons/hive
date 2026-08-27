@@ -148,9 +148,12 @@ var oidcSpecs = []oidcProviderSpec{
 		defaultIssuer: "", // tenant-specific (IBM App ID / w3id): must set _ISSUER
 		envPrefix:     "HIVE_HUB_OIDC_IBMID",
 		scopes:        []string{"openid", "email", "profile"},
-		// IBMid's discovery does not list "sub"; "uid" is the stable IBMid serial.
-		// Confirmed against the live IBMid discovery claims_supported (uid present,
-		// sub absent). Overridable via HIVE_HUB_OIDC_IBMID_SUBJECT_CLAIM.
+		// IBMid's discovery claims_supported lists "uid" (the stable IBMid serial)
+		// and not "sub" — but claims_supported describes userinfo, not the
+		// id_token, which per OIDC Core always carries `sub`. Prefer "uid" when
+		// the id_token includes it; the verifier falls back to the standard "sub"
+		// when it does not (see verifyIDToken). Overridable via
+		// HIVE_HUB_OIDC_IBMID_SUBJECT_CLAIM.
 		subjectClaim: "uid",
 	},
 	{

@@ -1,4 +1,5 @@
 import express from 'express';
+import httpBase from 'http';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import path from 'path';
 import fs from 'fs';
@@ -151,8 +152,9 @@ const SESSION_PUBLIC_KEYS = sessionPublicKeys();
 // Boot-time "am I hub-hosted?" signal. Either the injected session key (modern)
 // or a master secret (legacy) proves hosted mode, where identity comes from the
 // hub cookie rather than a shared dashboard token.
-// N2: either key proves hosted mode. A freshly provisioned spoke may hold only
-// the public key once HIVE_SESSION_KEY is dropped after the rollout.
+// N2: either key proves hosted mode. Hosted provisioning no longer injects
+// HIVE_SESSION_KEY at all (issue #3234), so a spoke provisioned or reconciled
+// after that change holds only the public key — hence checking both.
 //
 // ROTATION: this deliberately keys off SESSION_PUBLIC_KEY — the PRIMARY key —
 // exactly as before, NOT off SESSION_PUBLIC_KEYS. Two reasons, both about not
@@ -174,7 +176,8 @@ const SNAPSHOT_FRAME_ANCESTORS_FALLBACK = parseSnapshotFrameAncestors(process.en
 // HIVE_ID is this spoke's own hive identity, injected by the hub at provision
 // time (mirrors the HIVE_ID env the Go dashboard reads). It is the anchor for
 // per-hive terminal authorization: a hub-user cookie is authenticated hub-wide
-// (the `hive_hub_user` cookie is scoped to .hive.kubestellar.io, so ANY hive's
+// (the `hive_hub_user` cookie is scoped to .kubestellar.io — widened from
+// .hive.kubestellar.io for sibling-product SSO, hive#4171 — so ANY hive's
 // domain receives it), so the signature check alone proves only "some hub user",
 // never "a user allowed on THIS hive".
 const HIVE_ID = process.env.HIVE_ID || '';
@@ -781,13 +784,14 @@ async function snapshotFrameAncestors() {
 //   script-src-elem 'self' cdn + sha256 hashes — inline <script> ELEMENTS,
 //     CLOSED: only this proxy's own inline scripts (the SPA document's) can
 //     execute; an injected inline <script> matches no hash and is blocked.
-//   script-src-attr 'unsafe-inline' — the SPA's ~426 inline on*= handler
-//     attributes, STAGED behind an event-delegation refactor (#3848). Hashes
-//     and nonces do not exist for attributes.
-//   script-src (fallback) keeps 'self' 'unsafe-inline' UNCHANGED for pre-CSP3
-//     browsers, and must never carry the hashes: a hash there makes hash-aware
-//     browsers ignore 'unsafe-inline' in the same directive, blanking the UI
-//     on browsers that know hashes but not -elem/-attr (Firefox < 108).
+//   script-src-attr 'none' — inline on*= handler attributes, CLOSED by the
+//     #3848 event-delegation refactor: the SPA and Go-generated HTML use
+//     data-action / data-* dispatch, so no handler attribute remains and an
+//     injected one never executes.
+//   script-src (fallback) is 'self' (+ cdn) for pre-CSP3 browsers —
+//     'unsafe-inline' dropped with #3848 — and must never carry the hashes: a
+//     hash there makes hash-aware browsers ignore 'unsafe-inline' in the same
+//     directive on browsers that know hashes but not -elem/-attr (Firefox < 108).
 //
 // Hashes are computed from the exact index.html bytes this proxy serves —
 // lazily, because the dashboard file can be built after startup (see
@@ -832,9 +836,9 @@ app.use(async (req, res, next) => {
   const scriptDirectives = isUpstreamDocPath(req.path)
     ? ["script-src 'self' 'unsafe-inline' https://cdn.redoc.ly"]
     : [
-        "script-src 'self' 'unsafe-inline' https://cdn.redoc.ly",
+        "script-src 'self' https://cdn.redoc.ly",
         `script-src-elem ${["'self'", 'https://cdn.redoc.ly', ...spaScriptElemHashes()].join(' ')}`,
-        "script-src-attr 'unsafe-inline'",
+        "script-src-attr 'none'",
       ];
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
@@ -926,9 +930,45 @@ app.get('/api-docs', (_req, res) => {
 
 app.use('/api', apiProxy);
 
+// GitHub App setup callback. After the operator installs the App, GitHub
+// redirects their browser to /gh-setup?installation_id=...&setup_action=...,
+// and the Go API's GET /gh-setup handler verifies the installation with the
+// App key and persists installation_id. This route was missing here: the
+// request fell through to the SPA fallback below, the dashboard rendered at
+// the /gh-setup URL, and the documented setup flow silently did nothing on
+// every gateway deployment — the operator had to find and paste the
+// installation ID by hand. Proxy it to the Go API exactly like /api.
+app.use('/gh-setup', createProxyMiddleware({
+  target: GO_API_URL,
+  changeOrigin: true,
+  // The express mount strips the /gh-setup prefix (same as /api above);
+  // re-prepend it, collapsing the bare "/" express leaves before a query
+  // string so the Go mux pattern "GET /gh-setup" still matches.
+  pathRewrite: (p) => '/gh-setup' + p.replace(/^\/(?=\?|$)/, ''),
+  on: {
+    error(err, req, res) {
+      console.error(`[gh-setup-proxy] ${req.method} ${req.url} → ${err.message}`);
+      if (res.writeHead) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('GitHub App setup endpoint unavailable');
+      }
+    },
+  },
+}));
+
 const ttydProxy = createProxyMiddleware({
   target: TTYD_URL,
   changeOrigin: true,
+  // ttyd (libwebsockets) serves ONE request per TCP connection and hangs up
+  // on any reuse. Without an explicit agent, httpxy (the proxy engine) pools
+  // upstream sockets in its own keepAlive:true default agents, so the
+  // browser's basic-auth flow — an unauthenticated request answered 401,
+  // then an authenticated retry — deterministically rode a dead pooled
+  // socket and surfaced as 502 "Terminal unavailable" with the CORRECT
+  // password. A non-pooling agent gives every request a fresh connection;
+  // pooling buys nothing here anyway, because the endpoint's real traffic
+  // is a single long-lived websocket.
+  agent: new httpBase.Agent({ keepAlive: false }),
   pathRewrite: (p) => p.replace(/^\/terminal/, '') || '/',
   on: {
     error(err, req, res) {

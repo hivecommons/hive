@@ -106,21 +106,17 @@ func TestCheckAndRestartCrashedAgents_InferenceHealthy(t *testing.T) {
 // TestCheckAndRestartCrashedAgents_ConsentStuck: an inference agent parked on a
 // consent screen is not restarted but goes through the consent-stuck path.
 func TestCheckAndRestartCrashedAgents_ConsentStuck(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
 	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "vllm"}}, discardLogger(), ProjectContext{})
+	origExists := tmuxSessionExists
+	tmuxSessionExists = func(*Manager, *AgentProcess) bool { return true }
+	t.Cleanup(func() { tmuxSessionExists = origExists })
+
 	m.mu.RLock()
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
-	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
-		t.Skipf("cannot create tmux session: %v", err)
+	m.visiblePaneCapture = func(*AgentProcess) string {
+		return "Bypass Permissions mode\n❯ 1. No, exit\nEnter to confirm\n"
 	}
-	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
-	// Render a consent screen: title + default negative option + ❯ menu line.
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": Bypass Permissions mode No, exit").Run()
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
-	time.Sleep(400 * time.Millisecond)
 
 	old := time.Now().Add(-2 * time.Minute)
 	m.mu.Lock()
@@ -131,5 +127,8 @@ func TestCheckAndRestartCrashedAgents_ConsentStuck(t *testing.T) {
 	restarted := m.CheckAndRestartCrashedAgents(context.Background())
 	if len(restarted) != 0 {
 		t.Errorf("consent-stuck agent should not restart, got %v", restarted)
+	}
+	if agent.consentSeenAt.IsZero() {
+		t.Error("consent-stuck path should record when the screen was first observed")
 	}
 }

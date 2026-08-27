@@ -359,17 +359,35 @@ func gitHubLooksPlaceholder(gh GitHubConfig) bool {
 	return containsFold(gh.KeyFile, "PLACEHOLDER")
 }
 
-// DanglingKeyFile reports whether gh names a PVC key file that does not exist.
+// DanglingKeyFile reports whether gh names a key file, in either of the two
+// locations a hive's App key is ever delivered to, that does not exist.
 // The entrypoint warns rather than fails here, because the alternative is a
 // silent 401 loop against GitHub. Surfaced through provenance so the condition
 // is visible without reading pod logs.
+//
+// BOTH prefixes, not just the PVC (#4368). /secrets is the provisioning mount,
+// and the provisioning template used to seed key_file=/secrets/gh-app-key.pem
+// for every App-using hive while creating that Secret entry only for hives
+// provisioned with an inline private key. Four hives shipped naming a file that
+// would never exist — under the one prefix this predicate did not look at, so
+// the detector written for precisely that symptom returned false for every one
+// of them. A path outside both prefixes is an operator's own location and is
+// left alone: they are entitled to keep a key somewhere this build has never
+// heard of.
 func DanglingKeyFile(gh GitHubConfig) bool {
-	const pvcPrefix = "/data/"
-	if len(gh.KeyFile) < len(pvcPrefix) || gh.KeyFile[:len(pvcPrefix)] != pvcPrefix {
+	if !hasPrefix(gh.KeyFile, "/data/") && !hasPrefix(gh.KeyFile, "/secrets/") {
 		return false
 	}
 	_, err := os.Stat(gh.KeyFile)
 	return os.IsNotExist(err)
+}
+
+// hasPrefix is strings.HasPrefix, spelled out because this file imports only
+// log and os — the same reason the original code compared the prefix by slice
+// rather than calling into strings. Length-checked first, so a KeyFile shorter
+// than the prefix returns false instead of panicking on the slice.
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // containsFold reports whether s contains substr, ASCII case-insensitively.

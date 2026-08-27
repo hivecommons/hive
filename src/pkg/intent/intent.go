@@ -48,7 +48,7 @@ const (
 	AlignmentStatusUnclear    = "unclear"
 )
 
-const linkedIssuePattern = `(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+(?:(?:([\w.-]+/[\w.-]+)#)|#)(\d+)\b`
+const linkedIssuePattern = `(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?|refs?|part\s+of|related\s+to)\s+(?:(?:([\w.-]+/[\w.-]+)#)|#)(\d+)\b`
 
 var linkedIssueRE = regexp.MustCompile(linkedIssuePattern)
 

@@ -121,7 +121,7 @@ func TestMethodSwitchRedirectFiresWithoutConfiguredGateway(t *testing.T) {
 		{"switch redirect requires a keyed gateway for key-requiring kinds", "if (!gw || (!gw.hasKey && GATEWAY_KEY_REQUIRED_METHODS.includes(backend))) {"},
 		{"cache short-circuit needs actual models", "if (cached && !cached.fallback && cached.models && cached.models.length) return;"},
 		{"keyless gateway names the reason", "'The ' + backend + ' gateway has no API key'"},
-		{"a rejected gateway-method switch routes to the form", "dismissToast(toast, `No ${backend} gateway configured — opening Governor Config → Model Gateways`, 'info');"},
+		{"a rejected gateway-method switch routes to the form", "dismissToast(toast, `No ${backend} gateway configured — opening Settings → Model Gateways`, 'info');"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

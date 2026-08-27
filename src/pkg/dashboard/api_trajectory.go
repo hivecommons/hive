@@ -54,7 +54,7 @@ func (s *Server) handleGovernorTrajectory(w http.ResponseWriter, r *http.Request
 		s.logger.Error("failed to persist config after trajectory update", "error", err)
 	}
 	// Clear any legacy "not configured" banner alert. The half-configured
-	// state is surfaced inline in Governor Config → General instead of the
+	// state is surfaced inline in Settings → General instead of the
 	// top banner (see ReconcileTrajectoryAlert).
 	s.ReconcileTrajectoryAlert(&s.deps.Config.Governor)
 	s.auditFromRequest(r, "config_governor_trajectory", auditDetail("section", "trajectory"), "")
@@ -81,7 +81,7 @@ const TrajectoryNotConfiguredAlertID = "trajectory-not-configured"
 // state never pauses or breaks a working agent.
 //
 // The half-configured state is still surfaced, just not as a top-of-page
-// warning: Governor Config → General shows an amber "On — no reviewer endpoint
+// warning: Settings → General shows an amber "On — no reviewer endpoint
 // (not running)" status chip plus a "Resolved: none — reviewer will not run"
 // hint next to the endpoint field, and Getting Started → More to explore
 // mentions the feature as an advanced capability.

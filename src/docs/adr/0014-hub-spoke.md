@@ -1,6 +1,6 @@
 # ADR-0014: Hub/spoke fleet over heartbeat callbacks
 
-Status: Accepted (retroactive)
+Status: Accepted (back-filled)
 
 ## Context
 
@@ -32,6 +32,8 @@ contributor's machine; the hub sees trust tier, task counts, and current task
 metadata, not the user's credential material.
 
 ## Consequences
+
+Rationale not recorded beyond the implementation, linked code, and cited design notes.
 
 The fleet works through firewalls and NAT because all routine control flows ride
 spoke-initiated HTTP. Operators get one registry, fleet-stats surface, and

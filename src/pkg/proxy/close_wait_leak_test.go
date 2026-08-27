@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/agent"
 )
 
 // Regressions for issue #3875: the hive process leaked CLOSE_WAIT sockets to
@@ -46,7 +48,7 @@ func shortenBodyStall(t *testing.T, d time.Duration) {
 func runProxyHTTP(p *GitHubProxy, client, upstream net.Conn) chan struct{} {
 	returned := make(chan struct{})
 	go func() {
-		p.proxyHTTP(client, upstream, internalCallerName, 0)
+		p.proxyHTTP(client, upstream, internalCallerName, 0, agent.AgentCapabilities{})
 		close(returned)
 	}()
 	return returned

@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -289,7 +290,7 @@ func TestF10_MintingHasFlippedToV3(t *testing.T) {
 	mkUser(t, "alice")
 
 	rec := httptest.NewRecorder()
-	if !s.mintSessionCookies(rec, "github:alice") {
+	if !s.mintSessionCookies(rec, httptest.NewRequest(http.MethodGet, "https://hive.kubestellar.io/login", nil), "github:alice") {
 		t.Fatal("mintSessionCookies failed")
 	}
 	var value string

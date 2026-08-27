@@ -287,9 +287,12 @@ func TestCovF_HandlePlukEvent(t *testing.T) {
 	}
 
 	// raw_output during capture with a bd create question line -> buffered.
+	// #4285: the payload key is "line". This case used to pass "message", which
+	// the handler also read, so the arm ran on an empty string and this test
+	// covered the line without exercising anything.
 	w.handlePlukEvent(plukEvent{
 		Type: "raw_output",
-		Data: map[string]string{"message": `bd create --title "Who are the users?" --actor brainstorm`},
+		Data: map[string]string{"line": `bd create --title "Who are the users?" --actor brainstorm`},
 	})
 
 	// state_change to working then idle.

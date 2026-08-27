@@ -1,6 +1,8 @@
 /hive
 *.exe
 hive.yaml
+.env
+.env.*
 secrets/
 src/coverage.out
 /bin/

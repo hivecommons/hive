@@ -40,6 +40,7 @@ func TestBuildAgentMessageWithKickTemplate(t *testing.T) {
 }
 
 func TestBuildAgentMessageWithPromptTemplate(t *testing.T) {
+	redirectPolicySeams(t)
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, "examples", "kubestellar", "agents")
 	os.MkdirAll(agentsDir, 0755)
@@ -66,6 +67,7 @@ func TestBuildAgentMessageWithPromptTemplate(t *testing.T) {
 }
 
 func TestBuildAgentMessageWithACMMPackTemplate(t *testing.T) {
+	redirectPolicySeams(t)
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, "examples", "kubestellar", "agents")
 	os.MkdirAll(agentsDir, 0755)
@@ -94,6 +96,7 @@ func TestBuildAgentMessageWithACMMPackTemplate(t *testing.T) {
 }
 
 func TestLoadNamedTemplateFromLocalDir(t *testing.T) {
+	redirectPolicySeams(t)
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, "examples", "kubestellar", "agents")
 	os.MkdirAll(agentsDir, 0755)
@@ -125,6 +128,7 @@ func TestLoadNamedTemplateNotFound(t *testing.T) {
 }
 
 func TestLoadPromptTemplateFromLocalDir(t *testing.T) {
+	redirectPolicySeams(t)
 	dir := t.TempDir()
 	agentsDir := filepath.Join(dir, "examples", "kubestellar", "agents")
 	os.MkdirAll(agentsDir, 0755)

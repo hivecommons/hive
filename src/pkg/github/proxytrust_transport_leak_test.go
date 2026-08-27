@@ -36,8 +36,19 @@ func TestProxyTrustingHTTPClient_SharesTransport(t *testing.T) {
 	if c1 == c2 {
 		t.Fatal("clients must be per-call wrappers (they carry per-call timeouts)")
 	}
-	if c1.Transport != c2.Transport {
-		t.Fatal("mint clients must share ONE transport — a transport per call orphans a socket per call (#3875)")
+	// Each client gets its own slow-start wrapper (cheap, stateless beyond the
+	// shared pacing ledger); the SOCKET-POOL guarantee (#3875) lives on the
+	// wrapper's INNER transport, which must be one shared instance.
+	s1, ok1 := c1.Transport.(*slowStartTransport)
+	s2, ok2 := c2.Transport.(*slowStartTransport)
+	if !ok1 || !ok2 {
+		t.Fatalf("transport types = %T / %T, want *slowStartTransport wrappers", c1.Transport, c2.Transport)
+	}
+	if s1.inner != s2.inner {
+		t.Fatal("mint clients must share ONE inner transport — a transport per call orphans a socket per call (#3875)")
+	}
+	if s1.state != s2.state {
+		t.Fatal("slow-start pacing state must be shared — per-client state would let the retry herd stampede in aggregate")
 	}
 }
 

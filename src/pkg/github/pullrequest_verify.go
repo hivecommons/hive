@@ -59,6 +59,16 @@ type PRVerification struct {
 	Author string
 	// BaseRepo is the resolved PR base repo "owner/repo" (best-effort, for logging).
 	BaseRepo string
+	// Merged reports whether GitHub says the PR is MERGED (not merely open or
+	// closed). Verification deliberately does not require it — a reported PR
+	// that exists, targets the right repo and has the right author still earns
+	// the completion cooldown while review is pending — so callers that need
+	// "a fix actually landed" must check this field explicitly.
+	Merged bool
+	// Title is the PR's own title as GitHub reports it. Callers must use this
+	// rather than the assignment's issue title when they mean "what did this PR
+	// say it does".
+	Title string
 }
 
 // VerifyReportedPR checks a client-reported PR URL against GitHub server-side
@@ -112,7 +122,9 @@ func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expe
 
 	author := safeGetLogin(pr.GetUser())
 	baseRepo := pr.GetBase().GetRepo().GetFullName() // "owner/repo"
-	v := PRVerification{Author: author, BaseRepo: baseRepo}
+	// Merged/Title are recorded even on the negative paths below: they describe
+	// the PR that was looked up, not the verdict.
+	v := PRVerification{Author: author, BaseRepo: baseRepo, Merged: pr.GetMerged(), Title: pr.GetTitle()}
 
 	if !prBaseRepoMatches(baseRepo, expectedRepo) {
 		v.Reason = fmt.Sprintf("PR base repo %q does not match assigned repo %q", baseRepo, expectedRepo)

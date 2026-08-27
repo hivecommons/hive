@@ -104,11 +104,13 @@ What that looks like when misconfigured:
 
 ### Per-hive derived keys
 
-Every spoke uses keys derived per hive from the hub master secret. The hub reconciles six env vars onto **hosted** spoke Deployments automatically (a 15-minute sweep):
+Every spoke uses keys derived per hive from the hub master secret. The hub reconciles five env vars onto **hosted** spoke Deployments automatically (a 15-minute sweep):
 
-`HIVE_HEARTBEAT_KEY`, `HIVE_SESSION_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_SESSION_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`
+`HIVE_HEARTBEAT_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_SESSION_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`
 
-**Self-hosted spokes are never touched by that sweep** — and do not need to be. Every resolver falls back to deriving the same domain-separated key from `HIVE_HUB_SECRET` + `HIVE_ID`, so a self-hosted spoke that sets those two is byte-identical to a hub-injected one. Setting the six vars explicitly is the least-privilege alternative (the spoke then never holds the master).
+**Self-hosted spokes are never touched by that sweep** — and do not need to be. Every resolver falls back to deriving the same domain-separated key from `HIVE_HUB_SECRET` + `HIVE_ID`, so a self-hosted spoke that sets those two is byte-identical to a hub-injected one. Setting the five vars explicitly is the least-privilege alternative (the spoke then never holds the master).
+
+The symmetric `HIVE_SESSION_KEY` that used to sit alongside `HIVE_SESSION_PUBLIC_KEY` is gone (issue [#3234](https://github.com/kubestellar/hive/issues/3234)): every lane that ever verified against it — the legacy HMAC cookie lane ([#3725](https://github.com/kubestellar/hive/pull/3725)), the terminal-key fall-through, and the Node proxy's copy — was already deleted, so shipping it at all was unjustified secret exposure. The sweep now actively **strips** it from any Deployment still carrying one, rather than merely no longer adding it.
 
 Two gotchas:
 
@@ -140,6 +142,9 @@ The entrypoint installs an iptables REDIRECT of all outbound `:443` through the 
 
 - The hive/proxy process runs as user `dev` (UID 1001); each agent runs as its own UID from `HIVE_UID_BASE=2001` upward.
 - `su-exec` is mode **4750 `root:hive-launch`** — only root and members of the pinned `hive-launch` group (GID 1002) can exec it. This closes the earlier world-executable-setuid hole where any agent UID could become root in the pod. `HIVE_LAUNCH_GID=1002` is part of the deployment contract: Kubernetes `fsGroup` and Secret `defaultMode: 0440` rely on the numeric GID, and it must stay in sync across `src/deploy/k8s/*.yaml` and hub provisioning.
+- **`su-exec` is the only setuid binary in the image.** The 4750 mode above restricts the helper Hive ships; it says nothing about the ones the base image ships, and `node:26-slim` (Debian 13) plus the `passwd`/`util-linux` packages leave eleven behind — `chfn`, `chsh`, `gpasswd`, `mount`, `newgrp`, `passwd`, `su`, `umount` (setuid root) and `chage`, `expiry`, `unix_chkpwd` (setgid shadow). All eleven were **world-executable**, so every agent UID could exec them: the same class of surface the 4750 mode exists to remove, sitting next to it. Nothing in Hive uses any of them — the entrypoint creates agent accounts with `useradd`/`groupadd`/`usermod` while still root, and every privilege hop goes through `gosu` (as root) or `su-exec` (as `dev`) — so `src/Dockerfile` strips the bits after the last install layer and **fails the build** if the resulting inventory is anything but `4750 root:hive-launch /usr/local/bin/su-exec`. Only a non-root caller needs a setuid bit, so root keeps full use of `mount`/`su`/`passwd`.
+- **Why the image, and not `allowPrivilegeEscalation: false`.** Setting it would set the kernel's `no_new_privs` bit, which disables *all* setuid binaries — including `su-exec`, which would break agent launch outright. So `no_new_privs` stays off by necessity, and a setuid-root exec from an agent UID would land in a bounding set that still holds `SETUID`, `SETGID` and `DAC_OVERRIDE` — enough to read the MITM CA key whatever mode its directory carries. Removing the binaries is the only lever the deployment leaves. Enforced by `src/scripts/check-suid-contract.sh` (static, every PR) and `src/deploy/test_image_suid_inventory.sh` (boots the image and reads the inventory back; also run against the real built image in `docker.yml`).
+- The MITM CA certificate is readable at `/data/proxy-ca.pem` so agent clients can trust forged certificates, but the CA private key is stored at `/data/.hive/proxy-ca-key.pem` in a `0700` directory with mode `0600`. It is never intentionally kept directly under the shared, agent-writable `/data` namespace. A legacy `/data/proxy-ca-key.pem` causes the old CA pair to be discarded on startup, because its key may already have been copied.
 
 ### Supply chain
 

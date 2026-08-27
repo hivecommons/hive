@@ -307,6 +307,53 @@ func (s *Server) contributeMetricsStore() *metricsStore {
 	return s.contributeMetrics
 }
 
+// TasksCompleted7d sums the hourly tasks_done ring into the single number the
+// hub's quadrant scorer wants. The 168 buckets stay local deliberately: shipping
+// them every two minutes on the heartbeat to reconstruct one integer on the hub
+// would be pure waste.
+//
+// ok is false when this Server has no metrics store yet, which is NOT the same
+// as a hive with no contributors — the latter is a real, reportable zero. It
+// deliberately does NOT go through contributeMetricsStore(), because that
+// accessor lazily CREATES the store and reads the PVC; the heartbeat is a
+// read-only observer and must not conjure a store as a side effect of watching.
+func (s *Server) TasksCompleted7d() (int, bool) {
+	if s == nil {
+		return 0, false
+	}
+	// Racing the sync.Once is fine: a nil here just means "not built yet", and
+	// the next beat (two minutes later) picks it up.
+	store := s.contributeMetrics
+	if store == nil {
+		return 0, false
+	}
+	return store.tasksCompleted7d()
+}
+
+// tasksCompleted7d sums the tasks_done ring. Reports ok=false only when the
+// store holds no measurement at all — never rolled up AND nothing restored from
+// the PVC — so that a genuine zero (contributors connected, none finished
+// anything) stays distinguishable from "this spoke has not measured yet".
+//
+// A store that restored history from disk is reportable even before its first
+// rollup: load() leaves seededTotals false, but the restored buckets are real
+// past measurements. The seed guard only protects the FIRST live bucket from
+// booking a whole cumulative total as one hour's work (see rollup), and it does
+// that by seeding baselines before any delta is computed — so no unseeded
+// partial can reach the ring in the first place.
+func (m *metricsStore) tasksCompleted7d() (int, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.seededTotals && len(m.tasksDone) == 0 {
+		return 0, false
+	}
+	total := 0
+	for _, n := range m.tasksDone {
+		total += n
+	}
+	return total, true
+}
+
 // sampleMetricsInputs reads the live values the rollup buckets: the admitted
 // ready-work queue length, the connected clanker count, and each contributor's
 // cumulative completion total. All reads are cheap and side-effect-free.

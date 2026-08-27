@@ -350,13 +350,15 @@ func TestProvisionRequestCRUD(t *testing.T) {
 	defer cleanup()
 
 	pr := &ProvisionRequest{
-		Username:    "prov-user",
-		Org:         "myorg",
-		Repos:       "repo1",
-		PrimaryRepo: "repo1",
-		ACMMLevel:   2,
-		RequestedAt: "2024-01-01T00:00:00Z",
-		Status:      provisionStatusPending,
+		Username:     "prov-user",
+		UserID:       "prov-login",
+		UserIDSource: "github",
+		Org:          "myorg",
+		Repos:        "repo1",
+		PrimaryRepo:  "repo1",
+		ACMMLevel:    2,
+		RequestedAt:  "2024-01-01T00:00:00Z",
+		Status:       provisionStatusPending,
 	}
 	if err := saveProvisionRequest(pr); err != nil {
 		t.Fatalf("saveProvisionRequest: %v", err)
@@ -368,6 +370,12 @@ func TestProvisionRequestCRUD(t *testing.T) {
 	}
 	if loaded.Org != "myorg" {
 		t.Errorf("org = %q", loaded.Org)
+	}
+	if loaded.UserID != "prov-login" {
+		t.Errorf("user_id = %q, want %q", loaded.UserID, "prov-login")
+	}
+	if loaded.UserIDSource != "github" {
+		t.Errorf("user_id_source = %q, want %q", loaded.UserIDSource, "github")
 	}
 
 	// List
@@ -529,7 +537,7 @@ func TestHandleMyHivesWithFilesystem(t *testing.T) {
 	}
 	srv.mu.Unlock()
 
-	req := httptest.NewRequest("GET", "/my-hives", nil)
+	req := httptest.NewRequest("GET", "/fleet", nil)
 	req.Header.Set("Authorization", "Bearer ghp_myhives_fs")
 	w := httptest.NewRecorder()
 	srv.handleMyHives(w, req)
@@ -1561,9 +1569,9 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 	savedBranches := latestSHAByBranch
 	savedMsgs := commitMsgBySHA
 	latestSHAByBranch = map[string]branchSHAInfo{
-		"v2":         {SHA: "aaa1111", Message: "v2 commit"},
-		"v3":         {SHA: "bbb2222", Message: "v3 commit"},
-		"old-branch": {SHA: "ccc3333", Message: "untracked commit"},
+		"v2":          {SHA: "aaa1111", Message: "v2 commit"},
+		"live-branch": {SHA: "bbb2222", Message: "live branch commit"},
+		"old-branch":  {SHA: "ccc3333", Message: "untracked commit"},
 	}
 	commitMsgBySHA = map[string]string{}
 	latestSHAMu.Unlock()
@@ -1579,21 +1587,22 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 		t.Fatalf("persistLatestSHAs did not write %s: %v", latestSHAsPath, err)
 	}
 
-	// Simulate a hub restart with a partially failed initial fetch: only v3
+	// Simulate a hub restart with a partially failed initial fetch: only live-branch
 	// was fetched live; v2's fetch was rate-limited so its entry is missing.
+	trackedForTest := []string{"v2", "live-branch"}
 	latestSHAMu.Lock()
 	latestSHAByBranch = map[string]branchSHAInfo{
-		"v3": {SHA: "ddd4444", Message: "newer v3 commit"},
+		"live-branch": {SHA: "ddd4444", Message: "newer live branch commit"},
 	}
 	latestSHAMu.Unlock()
 
-	loadPersistedSHAs(slog.Default(), trackedBranches)
+	loadPersistedSHAs(slog.Default(), trackedForTest)
 
 	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
 		t.Errorf("v2 SHA not restored from disk: got %q, want aaa1111", got)
 	}
-	if got := getLatestSHAForBranch("v3"); got != "ddd4444" {
-		t.Errorf("live v3 SHA was overwritten by persisted value: got %q, want ddd4444", got)
+	if got := getLatestSHAForBranch("live-branch"); got != "ddd4444" {
+		t.Errorf("live branch SHA was overwritten by persisted value: got %q, want ddd4444", got)
 	}
 	if got := getLatestSHAForBranch("old-branch"); got != "" {
 		t.Errorf("untracked branch restored from disk: got %q, want empty", got)
@@ -1610,7 +1619,7 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 	latestSHAByBranch = map[string]branchSHAInfo{}
 	latestSHAMu.Unlock()
 	persistLatestSHAs(slog.Default())
-	loadPersistedSHAs(slog.Default(), trackedBranches)
+	loadPersistedSHAs(slog.Default(), trackedForTest)
 	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
 		t.Errorf("empty persist clobbered file: v2 = %q, want aaa1111", got)
 	}
@@ -1622,9 +1631,43 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 	latestSHAMu.Lock()
 	latestSHAByBranch = map[string]branchSHAInfo{}
 	latestSHAMu.Unlock()
-	loadPersistedSHAs(slog.Default(), trackedBranches)
+	loadPersistedSHAs(slog.Default(), trackedForTest)
 	if got := getLatestSHAForBranch("v2"); got != "" {
 		t.Errorf("corrupt file should restore nothing, got v2 = %q", got)
+	}
+}
+
+func TestRetiredV3IsNotAlwaysTracked(t *testing.T) {
+	for _, branch := range trackedBranches {
+		if branch == "v3" {
+			t.Fatal("retired v3 branch must not be in the always-tracked hub image list")
+		}
+	}
+}
+
+func TestTrackedBranchListFiltersRetiredV3(t *testing.T) {
+	imageBranchMu.Lock()
+	savedCache := imageBranchCache
+	savedCachedAt := imageBranchCachedAt
+	imageBranchCache = []string{"v3", "mk"}
+	imageBranchCachedAt = time.Now()
+	imageBranchMu.Unlock()
+	defer func() {
+		imageBranchMu.Lock()
+		imageBranchCache = savedCache
+		imageBranchCachedAt = savedCachedAt
+		imageBranchMu.Unlock()
+	}()
+
+	s := &HubServer{registry: Registry{Hives: []RegistryEntry{
+		{GitBranch: "v3"},
+		{GitBranch: "v2"},
+	}}}
+	got := s.trackedBranchList()
+	for _, branch := range got {
+		if branch == "v3" {
+			t.Fatalf("trackedBranchList() = %v, includes retired v3", got)
+		}
 	}
 }
 

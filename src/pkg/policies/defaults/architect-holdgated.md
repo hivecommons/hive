@@ -51,7 +51,7 @@ gh issue create --repo "$HIVE_REPO" \
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[architect] refactor: <short description>" \
-  --body "## Refactor\n\n<what this changes structurally and why>\n\nFixes #<issue-number>\n\n---\n*Filed by architect agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## Refactor\n\n<what this changes structurally and why>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by architect agent (ACMM L5 — hold-gated mode). Hold-gated: human review required.*" \
   --label "architecture,hold"
 ```
 

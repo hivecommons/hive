@@ -22,22 +22,34 @@ func TestNewCollector(t *testing.T) {
 	}
 }
 
+// A nil logger must never panic — the failure mode is nasty because it only
+// fires on hosts where the snapshot file EXISTS (loadSnapshot logs on a
+// successful restore), i.e. live hive hosts but not clean CI runners (#4664).
+// This test recreates exactly that environment: nil logger + a real snapshot
+// at the persist path, then forces the lazy load via Summary.
+func TestNewCollector_NilLoggerSafeOnSnapshotLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token-summary.json")
+	if err := os.WriteFile(path, []byte(`{"session_count":3,"total_tokens":42}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewCollector("/tmp/nonexistent-sessions", nil)
+	if c.logger == nil {
+		t.Fatal("NewCollector must default a nil logger, got nil")
+	}
+	c.SetPersistPath(path)
+
+	summary := c.Summary() // triggers loadSnapshot's success-path logging
+	if summary == nil || summary.TotalTokens != 42 {
+		t.Errorf("Summary = %+v, want restored snapshot with TotalTokens=42", summary)
+	}
+}
+
 func TestCollector_Summary_Initially(t *testing.T) {
 	c := NewCollectorWithPersistPath(filepath.Join(t.TempDir(), "missing-sessions"), filepath.Join(t.TempDir(), "missing-summary.json"), testLogger())
 	summary := c.Summary()
 	if summary != nil {
 		t.Errorf("expected nil summary initially, got %v", summary)
-	}
-}
-
-func TestCollector_IssueCosts(t *testing.T) {
-	c := NewCollector("/tmp/test-sessions", testLogger())
-	costs := c.IssueCosts()
-	if costs == nil {
-		t.Fatal("expected non-nil costs map")
-	}
-	if len(costs) != 0 {
-		t.Errorf("expected empty costs map, got %d entries", len(costs))
 	}
 }
 
@@ -217,28 +229,6 @@ func TestCollector_Start(t *testing.T) {
 	summary := c.Summary()
 	if summary == nil {
 		t.Fatal("expected non-nil summary after Start")
-	}
-}
-
-func TestCollector_IssueCosts_WithData(t *testing.T) {
-	c := NewCollector("/tmp/nonexistent", testLogger())
-	c.mu.Lock()
-	c.issueCosts["repo1#1"] = 500
-	c.issueCosts["repo1#2"] = 1000
-	c.mu.Unlock()
-
-	costs := c.IssueCosts()
-	if costs["repo1#1"] != 500 {
-		t.Errorf("issue cost = %d", costs["repo1#1"])
-	}
-	if costs["repo1#2"] != 1000 {
-		t.Errorf("issue cost = %d", costs["repo1#2"])
-	}
-	// Verify it's a copy
-	costs["repo1#1"] = 999
-	original := c.IssueCosts()
-	if original["repo1#1"] != 500 {
-		t.Error("IssueCosts should return a copy")
 	}
 }
 

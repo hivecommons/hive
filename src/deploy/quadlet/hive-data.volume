@@ -1,0 +1,52 @@
+# Hive's persistent state volume (#4354).
+#
+# Everything Hive must keep across a restart lives in /data: the bead ledger,
+# agent working state, and the proxy CA it generates on first boot. The Docker
+# Compose stack calls the same volume `hive-data`; this is the Podman half of
+# that, and the two are deliberately separate volumes on separate engines
+# rather than a shared one.
+#
+# VolumeName= is set explicitly so the volume is `hive-data` rather than the
+# `systemd-hive-data` Quadlet would otherwise derive. An operator who has to
+# `podman volume inspect` it during an incident should find the name the
+# documentation uses.
+#
+# WHAT THIS VOLUME GUARANTEES is characterised in
+# src/docs/podman-volume-persistence.md (#4376), measured on an enforcing host.
+# The short version, because one line of it constrains how this unit may be
+# edited:
+#
+#   Podman labels a named volume `container_file_t:s0` at create time — the
+#   type a container can read and write, with NO MCS category. That is what
+#   lets a RECREATED container read the data: every container gets a fresh
+#   category, and the generated ExecStart carries --rm, so the container is
+#   deleted on every stop and the volume is the only thing that persists.
+#
+# So do NOT add `:z` or `:Z` to the Volume= line that mounts this volume in
+# hive.container. `:Z` stamps a private category on the contents, and the next
+# mount without the flag is denied — silently, because a category denial
+# records no AVC at all (#4357 finding 3). Measured, with the restore, in the
+# doc above. The bind mounts in hive.container are the opposite case and do
+# need `:Z`; a named volume is already labelled and a host path is not.
+
+[Unit]
+Description=Hive persistent state volume
+
+[Volume]
+VolumeName=hive-data
+
+# The #4210 ownership labels, matching hive_podman_labels in
+# bin/hive-podman-cleanup.sh — bin/hive-podman-teardown.sh (#4343) selects by
+# these and nothing else, so a volume without them would survive every
+# teardown. The instance label is the contract's default, as in
+# hive.container.
+Label=io.kubestellar.hive.owned=true
+Label=io.kubestellar.hive.component=hive
+Label=io.kubestellar.hive.instance=default
+Label=io.kubestellar.hive.runtime=podman
+
+[Install]
+# NOT default.target (#4478): the whole stack is wanted by hive-boot.target,
+# started by hive-boot-gate.service after the boot settles. hive.service also
+# Requires= this unit, so it is created whenever Hive starts by any path.
+WantedBy=hive-boot.target

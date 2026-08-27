@@ -1,0 +1,189 @@
+name: Podman arm64 Lane
+
+# The arm64 image pull and service-startup lane (#4336), lane 3 of the map in
+# src/docs/podman-ci-runner-map.md (#4211).
+#
+# Every Podman result before this one is amd64 only — #4199 and #4200 both
+# record arm64 as unproven. This lane closes that on the two questions #4188
+# actually asks of arm64: does the published arm64 image come down, and does
+# the service start from it.
+#
+# SCOPE, AND THE FAILURE MODE IT AVOIDS. #4211 names a duplicated full matrix
+# as the thing not to build here: the probe it ran found the two architectures
+# capability-identical, so re-running the egress-gate cases on arm64 doubles
+# cost for coverage that result says will not diverge. The gate lives on the
+# amd64 lanes — #4334 rootless, #4335 rootful. This lane runs four checks and
+# no more:
+#
+#   manifest   the tag advertises a linux/arm64 image
+#   pull       that image comes down and really is arm64
+#   exec       /usr/local/bin/hive runs
+#   startup    the container answers GET /api/health
+#
+# The probe runs the container with HIVE_PROXY_ADVISORY_OK=true so the egress
+# gate is taken OUT of the picture rather than quietly re-measured here.
+# Without it the entrypoint fails closed with exit 77 and nothing about startup
+# would be tested at all. If the architectures ever DO diverge, that is the
+# signal to widen this lane — not a reason to widen it now.
+#
+# WHY PULL RATHER THAN BUILD. #4188 asks for "build/pull plus startup", and the
+# arm64 BUILD is already a per-push gate: .github/workflows/docker.yml builds
+# linux/arm64 on this same runner label on every branch and asserts the
+# embedded commit matches the built SHA. What no lane covered is the other
+# half — that the published arm64 artifact pulls under Podman and starts. So
+# this lane pulls, and per #4336's stop condition it does NOT build an image ad
+# hoc: a missing arm64 manifest is reported and fails the job, because the fix
+# for that belongs in the publisher, not in a lane papering over it.
+#
+# A MISSING arm64 MANIFEST IS A FAILURE, NOT A SKIP. An arm64 lane that steps
+# aside when the arm64 image is absent reports green while proving nothing —
+# and "arm64 is unproven" is the exact condition this lane exists to end.
+#
+# Safety boundaries, from the map: contents: read and nothing more, no secrets,
+# no pull_request_target, no engine socket mounted. The probe pulls into a
+# throwaway store with a private graphroot and runroot, so nothing touches the
+# runner's default Podman storage, and it removes only the container it
+# created, by name.
+#
+# No path filters, on purpose. #4339 is what a guard scoped into silence looks
+# like. The cost here is one image pull and one container.
+
+on:
+  push:
+    branches:
+      - dd
+      - v2
+      - v4
+  pull_request:
+    branches:
+      - dd
+      - v2
+      - v4
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Image to probe (default ghcr.io/kubestellar/hive:v4-latest)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podman-arm64-lane-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arm64-probe:
+    name: arm64 image pull and service startup
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Assert the environment, do not assume it. Podman is preinstalled on
+      # this runner image, so there is no setup step — which is exactly why the
+      # architecture and the Podman stack have to be checked: a runner-image or
+      # label change is silent, and an arm64 lane that quietly started running
+      # on amd64 would still go green while measuring nothing new.
+      #
+      # AC: runtime and network backend are printed for comparison against the
+      # amd64 lanes. #4211's claim is that the two architectures are
+      # capability-identical; these are the fields that claim would be
+      # falsified by, so they are reported on every run rather than assumed to
+      # still hold.
+      - name: Assert the arm64 Podman stack this lane depends on
+        env:
+          RECORDED_PODMAN: '5.8.4'
+        run: |
+          # shellcheck disable=SC2016 # the --format strings stay single-quoted:
+          # those are Go template braces for Podman, not shell expansions.
+          set -euo pipefail
+
+          if ! command -v podman >/dev/null 2>&1; then
+            echo "::error::podman is not installed on this runner; #4211 recorded it preinstalled at /usr/local/bin/podman on ubuntu-24.04-arm"
+            exit 1
+          fi
+
+          version="$(podman info --format '{{.Version.Version}}')"
+          arch="$(podman info --format '{{.Host.Arch}}')"
+          rootless="$(podman info --format '{{.Host.Security.Rootless}}')"
+          cgroups="$(podman info --format '{{.Host.CgroupsVersion}}')"
+          runtime="$(podman info --format '{{.Host.OCIRuntime.Name}}')"
+          backend="$(podman info --format '{{.Host.NetworkBackend}}')"
+          rootlessnet="$(podman info --format '{{.Host.RootlessNetworkCmd}}')"
+
+          printf 'podman       %s (%s)\n' "$version" "$(command -v podman)"
+          printf 'arch         %s (uname %s)\n' "$arch" "$(uname -m)"
+          printf 'rootless     %s\n' "$rootless"
+          printf 'cgroups      %s\n' "$cgroups"
+          printf 'runtime      %s\n' "$runtime"
+          printf 'backend      %s / %s\n' "$backend" "$rootlessnet"
+
+          # THE assertion of this lane. Everything below is only interesting
+          # because it happens on arm64.
+          if [ "$arch" != "arm64" ]; then
+            echo "::error::podman reports arch=${arch}; this lane must run on arm64 (the amd64 coverage is #4334/#4335)"
+            exit 1
+          fi
+
+          if [ "$version" != "$RECORDED_PODMAN" ]; then
+            echo "::notice::runner Podman is ${version}; src/docs/podman-ci-runner-map.md recorded ${RECORDED_PODMAN} on both architectures. Re-check the map if this lane starts behaving differently."
+          fi
+
+          {
+            printf '### arm64 Podman lane environment\n\n'
+            printf '| | |\n| --- | --- |\n'
+            printf '| Podman | `%s` (map recorded `%s`) |\n' "$version" "$RECORDED_PODMAN"
+            printf '| Architecture | `%s` |\n' "$arch"
+            printf '| Root mode | rootless=`%s` |\n' "$rootless"
+            printf '| cgroups | `%s` |\n' "$cgroups"
+            printf '| OCI runtime | `%s` |\n' "$runtime"
+            printf '| Network backend | `%s` / `%s` |\n' "$backend" "$rootlessnet"
+            printf '| Runner | `%s`, image `%s` |\n' "$RUNNER_OS" "${ImageVersion:-unknown}"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # The probe's exit status is the result. 0 means the arm64 image pulled
+      # and the service started; 1 means one of the four checks failed — a
+      # missing arm64 manifest lands here rather than skipping; 78 means a
+      # prerequisite was missing, which is a broken lane rather than a passing
+      # one and must be just as loud.
+      #
+      # There is deliberately no continue-on-error and no `|| true`.
+      - name: arm64 image pull and service startup (#4336)
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -uo pipefail
+
+          args=""
+          if [ -n "${IMAGE:-}" ]; then
+            args="--image ${IMAGE}"
+          fi
+
+          # The runner invokes this with `bash -e`, so errexit has to come off
+          # deliberately: the probe's exit status IS the result and has to
+          # survive to the diagnosis below.
+          set +e
+          # shellcheck disable=SC2086 # args is a deliberate optional flag pair
+          bash src/deploy/probe_arm64_image_startup.sh $args
+          status=$?
+          set -e
+
+          case "$status" in
+            0)
+              echo "::notice::the arm64 image pulled and the service started"
+              printf '\n✅ The published arm64 image pulled, `/usr/local/bin/hive` ran, and the service answered `GET /api/health`.\n' >>"$GITHUB_STEP_SUMMARY"
+              ;;
+            78)
+              echo "::error::the probe could not run — a prerequisite is missing (EX_CONFIG). A lane that cannot run is not a lane that passed."
+              printf '\n❌ Prerequisite missing (exit 78). See the log for which one.\n' >>"$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::error::the arm64 pull/startup lane failed (exit ${status})"
+              printf '\n❌ The arm64 pull/startup lane failed (exit %s).\n' "$status" >>"$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+
+          exit "$status"

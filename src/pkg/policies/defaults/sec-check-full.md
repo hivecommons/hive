@@ -49,7 +49,7 @@ gh issue create --repo "$HIVE_REPO" \
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[sec-check] fix: <short description>" \
-  --body "## Security Fix\n\n<what this changes and why>\n\nFixes #<issue-number>\n\n---\n*Filed by sec-check agent (ACMM L6 — full mode)*" \
+  --body "## Security Fix\n\n<what this changes and why>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by sec-check agent (ACMM L6 — full mode)*" \
   --label "security"
 ```
 

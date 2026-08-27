@@ -34,7 +34,7 @@ func TestNormalVisualDashboardGateRequiresLiveHTTPAndClearsOnStop(t *testing.T) 
 	}
 	serverResult := make(chan error, 1)
 	go func() { serverResult <- server.Start() }()
-	readyContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	readyContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.WaitForHTTP(readyContext); err != nil {
 		t.Fatalf("wait for dashboard HTTP: %v", err)

@@ -29,6 +29,7 @@ func TestNewAgentSummary_AllFields(t *testing.T) {
 		SessionMissing: true,
 		StartedAt:      started,
 		LastActivityAt: lastAct,
+		KickInterval:   4 * time.Hour,
 	}
 	as := NewAgentSummary("scanner", "running", "auto", act)
 	if as.Name != "scanner" {
@@ -54,6 +55,9 @@ func TestNewAgentSummary_AllFields(t *testing.T) {
 	}
 	if as.LastActivityAt != "2026-01-15T11:00:00Z" {
 		t.Errorf("LastActivityAt = %q, want 2026-01-15T11:00:00Z", as.LastActivityAt)
+	}
+	if as.KickIntervalSec != int64((4 * time.Hour / time.Second)) {
+		t.Errorf("KickIntervalSec = %d, want 14400", as.KickIntervalSec)
 	}
 }
 

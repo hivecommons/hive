@@ -346,6 +346,16 @@ func TestLoadOrGenerateCA_Roundtrip(t *testing.T) {
 	if _, err := os.Stat(caKeyPath); err != nil {
 		t.Errorf("CA key not written: %v", err)
 	}
+	if info, err := os.Stat(filepath.Dir(caKeyPath)); err != nil {
+		t.Fatalf("CA key directory not written: %v", err)
+	} else if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("CA key directory mode = %o, want 700", got)
+	}
+	if info, err := os.Stat(caKeyPath); err != nil {
+		t.Fatalf("stat CA key: %v", err)
+	} else if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("CA key mode = %o, want 600", got)
+	}
 
 	// Second call — should reload from disk (same serial)
 	tlsCert2, x509Cert2, err := loadOrGenerateCA(logger)

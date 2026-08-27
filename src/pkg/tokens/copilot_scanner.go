@@ -181,6 +181,13 @@ func parseCopilotSessionFile(path string) (*SessionSummary, error) {
 			continue
 		}
 
+		// Session start time: the earliest event with a parseable timestamp.
+		if summary.FirstActive == 0 {
+			if ts := parseTimestampToUnixMilli(evt.Timestamp); ts > 0 {
+				summary.FirstActive = ts
+			}
+		}
+
 		switch evt.Type {
 		case "session.start":
 			var start copilotSessionStart

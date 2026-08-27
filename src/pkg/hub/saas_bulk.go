@@ -61,7 +61,10 @@ const (
 	// enable action keeps meaning INSTANT so existing muscle memory and any
 	// existing API callers are unchanged.
 	bulkActionDailyAutoUpgrade = "daily-auto-upgrade"
-	bulkActionSwitchBranch     = "switch-branch"
+	// bulkActionWeeklyAutoUpgrade enables auto-upgrade in weekly mode
+	// (Tuesday at 1pm ET — see AutoUpgradeModeWeekly).
+	bulkActionWeeklyAutoUpgrade = "weekly-auto-upgrade"
+	bulkActionSwitchBranch      = "switch-branch"
 )
 
 // BulkHiveRequest is the body of POST /api/saas/hives/bulk.
@@ -286,6 +289,8 @@ func (s *HubServer) applyBulkAction(action, branch, id, username string) BulkHiv
 		return s.bulkSetAutoUpgrade(h, id, username, true, AutoUpgradeModeInstant)
 	case bulkActionDailyAutoUpgrade:
 		return s.bulkSetAutoUpgrade(h, id, username, true, AutoUpgradeModeDaily)
+	case bulkActionWeeklyAutoUpgrade:
+		return s.bulkSetAutoUpgrade(h, id, username, true, AutoUpgradeModeWeekly)
 	case bulkActionDisableAutoUpgrade:
 		return s.bulkSetAutoUpgrade(h, id, username, false, AutoUpgradeModeInstant)
 	case bulkActionSwitchBranch:

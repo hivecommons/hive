@@ -1,0 +1,45 @@
+# RBAC that lets the base `hive` ServiceAccount be admitted under the
+# `hive-netadmin` SCC. SCC access is granted via the `use` verb on the named
+# SCC resource; the SCC's own users/groups lists stay empty so this RBAC is the
+# single place the grant is visible and revocable.
+#
+# Both objects require cluster-admin to apply (ClusterRole is cluster-scoped,
+# and binding an SCC is a privilege escalation only an admin can perform).
+#
+# Naming matches the managed fleet's out-of-band pattern: SCC `hive-netadmin`,
+# RoleBinding `hive-netadmin-scc`.
+#
+# The subject is the SA the base actually uses: deployment.yaml sets
+# `serviceAccountName: hive` (defined in dashboard-route-rbac.yaml) — NOT
+# `hive-sa`.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hive-netadmin-scc
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - hive-netadmin
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-netadmin-scc
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hive-netadmin-scc
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive

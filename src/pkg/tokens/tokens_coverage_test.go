@@ -40,41 +40,6 @@ func TestSetCopilotSessionsDir(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SeedIssueCosts
-// ---------------------------------------------------------------------------
-
-func TestSeedIssueCosts(t *testing.T) {
-	c := NewCollector(t.TempDir(), discardLogger())
-
-	costs := map[string]int64{
-		"#100": 5000,
-		"#200": 12000,
-	}
-	c.SeedIssueCosts(costs)
-
-	got := c.IssueCosts()
-	if got["#100"] != 5000 {
-		t.Errorf("#100 cost = %d, want 5000", got["#100"])
-	}
-	if got["#200"] != 12000 {
-		t.Errorf("#200 cost = %d, want 12000", got["#200"])
-	}
-}
-
-func TestIssueCosts_ReturnsCopy(t *testing.T) {
-	c := NewCollector(t.TempDir(), discardLogger())
-	c.SeedIssueCosts(map[string]int64{"#1": 100})
-
-	got := c.IssueCosts()
-	got["#1"] = 999 // mutate copy
-
-	got2 := c.IssueCosts()
-	if got2["#1"] != 100 {
-		t.Error("IssueCosts should return a copy, not internal map")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // loadSnapshot / saveSnapshot
 // ---------------------------------------------------------------------------
 
@@ -94,7 +59,6 @@ func TestLoadSnapshot_ValidFile(t *testing.T) {
 	c := &Collector{
 		persistPath: path,
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	c.loadSnapshot()
 
@@ -110,7 +74,6 @@ func TestLoadSnapshot_EmptyPath(t *testing.T) {
 	c := &Collector{
 		persistPath: "",
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	c.loadSnapshot() // should be no-op
 	if c.latest != nil {
@@ -122,7 +85,6 @@ func TestLoadSnapshot_MissingFile(t *testing.T) {
 	c := &Collector{
 		persistPath: "/nonexistent/path/snapshot.json",
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	c.loadSnapshot() // should be no-op (file doesn't exist)
 	if c.latest != nil {
@@ -138,7 +100,6 @@ func TestLoadSnapshot_InvalidJSON(t *testing.T) {
 	c := &Collector{
 		persistPath: path,
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	c.loadSnapshot()
 	if c.latest != nil {
@@ -156,7 +117,6 @@ func TestLoadSnapshot_NilMapsInitialized(t *testing.T) {
 	c := &Collector{
 		persistPath: path,
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	c.loadSnapshot()
 
@@ -184,7 +144,6 @@ func TestSaveSnapshot_WritesFile(t *testing.T) {
 	c := &Collector{
 		persistPath: path,
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 
 	agg := &AggregateSummary{
@@ -213,7 +172,6 @@ func TestSaveSnapshot_EmptyPath(t *testing.T) {
 	c := &Collector{
 		persistPath: "",
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	// Should be no-op
 	c.saveSnapshot(&AggregateSummary{})
@@ -223,7 +181,6 @@ func TestSaveSnapshot_NilAgg(t *testing.T) {
 	c := &Collector{
 		persistPath: "/tmp/test-snapshot.json",
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	// Should be no-op
 	c.saveSnapshot(nil)
@@ -233,7 +190,6 @@ func TestSaveSnapshot_BadDir(t *testing.T) {
 	c := &Collector{
 		persistPath: "/nonexistent/dir/snapshot.json",
 		logger:      discardLogger(),
-		issueCosts:  make(map[string]int64),
 	}
 	// Should log warning but not panic
 	c.saveSnapshot(&AggregateSummary{TotalTokens: 100})

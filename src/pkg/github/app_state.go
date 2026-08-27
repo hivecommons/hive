@@ -87,6 +87,25 @@ const (
 	// installation (or, if using "all repositories", approve any pending
 	// permission update).
 	AppStateWriteForbidden
+
+	// AppStateRepoNotCovered (#4360) means the App authenticated on the right
+	// account and the installation is healthy, but one or more of the repos
+	// this hive is configured to work on are not in the installation's
+	// selected repositories.
+	//
+	// It is the DETERMINISTIC form of what AppStateWriteForbidden infers. That
+	// state is reached after a real write returns 403, for whichever single
+	// repo something happened to touch; this one is established up front, for
+	// every configured repo, by comparing project.repos against
+	// GET /installation/repositories. Where the two agree, prefer this one:
+	// it names every affected repo rather than the first one to fail, and it
+	// does not have to guess, because GitHub answers 404 — not 403 — for a
+	// repo an installation cannot see, which is indistinguishable from the
+	// repo not existing.
+	//
+	// USER-ACTIONABLE (by an org owner): tick the repo in the App
+	// installation's repository access.
+	AppStateRepoNotCovered
 )
 
 // String returns the stable wire token for a state. These tokens cross the
@@ -110,6 +129,8 @@ func (s AppAuthState) String() string {
 		return "no-app-assigned"
 	case AppStateWriteForbidden:
 		return "write-forbidden"
+	case AppStateRepoNotCovered:
+		return "repo-not-covered"
 	default:
 		return "unknown"
 	}
@@ -127,7 +148,8 @@ func (s AppAuthState) OperatorActionable() bool {
 // this state themselves. Only these states justify a "do something" banner.
 func (s AppAuthState) UserActionable() bool {
 	switch s {
-	case AppStateNotInstalled, AppStateWrongInstallation, AppStateInsufficientPerms, AppStateWriteForbidden:
+	case AppStateNotInstalled, AppStateWrongInstallation, AppStateInsufficientPerms,
+		AppStateWriteForbidden, AppStateRepoNotCovered:
 		return true
 	default:
 		return false
@@ -153,6 +175,8 @@ func ParseAppAuthState(s string) AppAuthState {
 		return AppStateKeyInvalid
 	case "no-app-assigned":
 		return AppStateNoAppAssigned
+	case "repo-not-covered":
+		return AppStateRepoNotCovered
 	case "write-forbidden":
 		return AppStateWriteForbidden
 	default:
@@ -262,6 +286,15 @@ type AppAuthDiagnosis struct {
 	// Only AppStateWriteForbidden (#2353) populates it, so the banner can name
 	// the exact repo the operator must add to the App installation.
 	Repo string
+	// Repos, when set, are the configured repositories the installation does
+	// not cover, in "owner/name" form. Only AppStateRepoNotCovered (#4360)
+	// populates it, so the banner can name every repo that needs ticking
+	// rather than only the first one to fail a write.
+	Repos []string
+	// APIURL is the GitHub API base this hive talks to. Carried so copy can
+	// build a web link that is correct on GitHub Enterprise too, instead of
+	// hardcoding github.com.
+	APIURL string
 	// Err is the underlying error, for logs. Never rendered to a user
 	// verbatim, because it can carry raw API text.
 	Err error
@@ -301,6 +334,7 @@ func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, key
 		return d
 	}
 	d.InstallationID = a.InstallationID()
+	d.APIURL = a.APIURL()
 
 	// Cheap pre-flight: if we were given key locations and none of them holds
 	// content, the key is missing. No API call needed.
@@ -425,6 +459,26 @@ func (d AppAuthDiagnosis) Message() string {
 			"but a write to %s returned 403 (Resource not accessible by integration). The most likely cause is that "+
 			"%s is not included in the App installation's selected repositories — add it to the installation "+
 			"(or, if a permission update is pending, approve it) at the app installation settings page.", owner, repo, repo)
+
+	case AppStateRepoNotCovered:
+		// #4360. Everything about the credentials is fine: right App, right
+		// org, valid key, healthy installation. The only thing wrong is which
+		// repositories that installation was ticked for. Say exactly that, and
+		// name them — the previous signal for this shape ("the key has not
+		// reached this spoke") pointed at a re-upload that could not possibly
+		// help.
+		repos := strings.Join(d.Repos, ", ")
+		if repos == "" {
+			repos = "one or more configured repositories"
+		}
+		msg := fmt.Sprintf("The GitHub App is installed and authenticated for '%s', but its installation does not include: %s. "+
+			"Nothing is wrong with the App, the organization, or the private key — these repositories are simply not "+
+			"ticked in the installation's repository access, so every call against them returns 404. "+
+			"Add them under the org's App configuration (Settings → Applications → Configure → Repository access).", owner, repos)
+		if link := d.InstallationSettingsURL(); link != "" {
+			msg += " " + link
+		}
+		return msg
 
 	default:
 		return "Could not verify this hive's GitHub App credentials. This is usually transient — " +

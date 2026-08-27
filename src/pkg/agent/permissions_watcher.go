@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -12,13 +13,20 @@ import (
 const (
 	// PermissionFixInterval is how often the watcher scans for wrong ownership.
 	PermissionFixInterval = 10 * time.Second
+)
 
+// DevUID and NodeGID are package variables (not constants) so the test suite
+// can point the permission fixer at fixture trees owned by the test user
+// instead of the live /data agent identities (#4685, #4693).
+var (
 	// DevUID is the uid of the "dev" user that agents run as.
 	DevUID = 1001
 
 	// NodeGID is the gid of the "node" group shared by all agent users.
 	NodeGID = 1000
+)
 
+const (
 	// DirPerms is the minimum permission bits required on directories (u+rwx, g+rwx).
 	// Group access is essential because agents run as different users sharing the node group.
 	DirPerms = 0o770
@@ -51,6 +59,13 @@ const (
 // A var (not const) so tests can point the scan at a writable temp pattern,
 // matching WatchedHomeDirs/SharedRepoParent. Production value is unchanged.
 var ModeFileGlob = "/tmp/.hive-mode-*"
+
+// CapsFileGlob matches the per-agent capability files (/tmp/.hive-caps-<agent>,
+// #4492). They are repaired by the same scan and under the same rules as the
+// mode files: written by the hive uid, read on the enforcement path, and
+// world-readable so a future out-of-process reader (the shell wrappers already
+// read the mode file this way) is not locked out by a narrow umask.
+var CapsFileGlob = "/tmp/.hive-caps-*"
 
 // modeFileReadBits is `a+r` — the read access every mode-file consumer needs.
 // ORed into the existing perms, never narrowing owner bits, so an
@@ -127,6 +142,79 @@ var SharedRepoParent = "/data/home"
 // fixPermissions / fixEntry. Production value is unchanged.
 var GooseLogsDir = "/data/home/.local/state/goose/logs/cli"
 
+// maxDedupedWarnKeys bounds the failure-dedupe map. The watcher walks agent
+// workspaces whose contents churn, so without a cap a long-lived pod with many
+// transient unfixable entries would grow the map forever. Hitting the cap
+// resets it, which at worst re-logs each still-failing path once at WARN.
+const maxDedupedWarnKeys = 4096
+
+// warnDeduper suppresses repeats of an identical per-path repair failure.
+//
+// The watcher's failure arms fire on EVERY tick for a condition the watcher
+// itself cannot clear: an entry it lacks permission to chown/chmod (EPERM
+// after the entrypoint's privilege drop) triggers the same warning every
+// PermissionFixInterval, indefinitely — six WARN lines every 10 seconds
+// dominated a healthy standalone Hive's log (#4488). The deduper keeps the
+// first failure per (operation, path) at WARN and demotes identical repeats
+// to DEBUG. The entry is cleared when the repair succeeds or the path stops
+// needing one, so a NEW failure on the same path warns again; a failure whose
+// error text changes also warns again, because it is new information.
+type warnDeduper struct {
+	mu   sync.Mutex
+	seen map[string]string // (op + "\x00" + path) -> last error text
+}
+
+// shouldWarn records the failure and reports whether it is new (first time
+// this key failed, or the error text changed since last time).
+func (d *warnDeduper) shouldWarn(key, errText string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.seen == nil || len(d.seen) >= maxDedupedWarnKeys {
+		d.seen = make(map[string]string)
+	}
+	if prev, ok := d.seen[key]; ok && prev == errText {
+		return false
+	}
+	d.seen[key] = errText
+	return true
+}
+
+// clear forgets a key so the next failure on it warns at WARN again. Called
+// when a repair succeeds or the path no longer needs one — the condition
+// changed, so a future failure is a new finding, not a repeat.
+func (d *warnDeduper) clear(key string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.seen, key)
+}
+
+// dedupeKey builds the (operation, path) key. The op is part of the key so a
+// path failing both chown and chmod gets one WARN for each distinct problem.
+func dedupeKey(op, path string) string { return op + "\x00" + path }
+
+// permWarnDedupe is the watcher's shared dedupe state. Package-level because
+// fixEntry keeps its (path, fi, logger) signature; reset by tests via
+// resetPermWarnDedupe.
+var permWarnDedupe = &warnDeduper{}
+
+// resetPermWarnDedupe restores pristine dedupe state. Tests only.
+func resetPermWarnDedupe() { permWarnDedupe = &warnDeduper{} }
+
+// warnDeduped logs a repair failure: WARN the first time this op fails on
+// this path with this error, DEBUG on identical repeats. The message text is
+// unchanged from the pre-dedupe watcher so operator greps keep working.
+func warnDeduped(logger *slog.Logger, op, msg, path string, err error) {
+	if permWarnDedupe.shouldWarn(dedupeKey(op, path), err.Error()) {
+		logger.Warn(msg,
+			"path", path,
+			"error", err,
+			"note", "identical repeats logged at debug until this changes",
+		)
+		return
+	}
+	logger.Debug(msg, "path", path, "error", err)
+}
+
 // StartPermissionsWatcher runs a background goroutine that periodically
 // scans WatchedHomeDirs and fixes files/directories that were created
 // with wrong ownership (e.g., root-owned by Copilot CLI).
@@ -159,18 +247,15 @@ func ensureWatchedDirs(logger *slog.Logger) {
 	allDirs := append([]string{GooseLogsDir}, WatchedHomeDirs...)
 	for _, dir := range allDirs {
 		if err := os.MkdirAll(dir, DirPerms|0o070); err != nil {
-			logger.Warn("permissions watcher: failed to create directory",
-				"path", dir,
-				"error", err,
-			)
+			warnDeduped(logger, "mkdir", "permissions watcher: failed to create directory", dir, err)
 			continue
 		}
+		permWarnDedupe.clear(dedupeKey("mkdir", dir))
 		// Always set ownership on the top-level dir at startup.
 		if err := os.Chown(dir, DevUID, NodeGID); err != nil {
-			logger.Warn("permissions watcher: failed to chown directory",
-				"path", dir,
-				"error", err,
-			)
+			warnDeduped(logger, "chown watched dir", "permissions watcher: failed to chown directory", dir, err)
+		} else {
+			permWarnDedupe.clear(dedupeKey("chown watched dir", dir))
 		}
 	}
 }
@@ -272,12 +357,14 @@ func fixPermissions(logger *slog.Logger) {
 // the pathname cannot be swapped between the check and the chmod (CWE-59 /
 // CWE-367 — the same descriptor discipline writeAgentStateFile follows, #3175).
 func fixModeFiles(logger *slog.Logger) {
-	paths, err := filepath.Glob(ModeFileGlob)
-	if err != nil {
-		return
-	}
-	for _, path := range paths {
-		fixModeFile(path, logger)
+	for _, glob := range []string{ModeFileGlob, CapsFileGlob} {
+		paths, err := filepath.Glob(glob)
+		if err != nil {
+			continue
+		}
+		for _, path := range paths {
+			fixModeFile(path, logger)
+		}
 	}
 }
 
@@ -299,18 +386,28 @@ func fixModeFile(path string, logger *slog.Logger) {
 	}
 	perm := fi.Mode().Perm()
 	if perm&modeFileReadBits == modeFileReadBits {
+		permWarnDedupe.clear(dedupeKey("chmod mode file", path))
 		return
 	}
 	newPerm := perm | modeFileReadBits
 	if err := f.Chmod(newPerm); err != nil {
-		logger.Warn("permissions watcher: chmod mode file failed; agents cannot read their GitHub mode and gh/pushes will be blocked",
-			"path", path,
-			"old_mode", perm.String(),
-			"want_mode", newPerm.String(),
-			"error", err,
-		)
+		if permWarnDedupe.shouldWarn(dedupeKey("chmod mode file", path), err.Error()) {
+			logger.Warn("permissions watcher: chmod mode file failed; agents cannot read their GitHub mode and gh/pushes will be blocked",
+				"path", path,
+				"old_mode", perm.String(),
+				"want_mode", newPerm.String(),
+				"error", err,
+				"note", "identical repeats logged at debug until this changes",
+			)
+		} else {
+			logger.Debug("permissions watcher: chmod mode file failed",
+				"path", path,
+				"error", err,
+			)
+		}
 		return
 	}
+	permWarnDedupe.clear(dedupeKey("chmod mode file", path))
 	logger.Info("permissions watcher: fixed mode file permissions",
 		"path", path,
 		"old_mode", perm.String(),
@@ -346,6 +443,10 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		// Dedicated hive-<agent> worktrees are not owned by the unprivileged
 		// dashboard process. Traversing them is safe, but chown attempts are not:
 		// they create unbounded EPERM log and filesystem churn on every tick.
+		// A previously failing path now owned by an agent identity is healthy
+		// again — drop its recorded failure so a later regression on the same
+		// path warns fresh instead of being deduped to DEBUG.
+		permWarnDedupe.clear(dedupeKey("chown", path))
 		return
 	}
 
@@ -362,11 +463,9 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	}
 	if needsChown {
 		if err := os.Chown(path, newUID, NodeGID); err != nil {
-			logger.Warn("permissions watcher: chown failed",
-				"path", path,
-				"error", err,
-			)
+			warnDeduped(logger, "chown", "permissions watcher: chown failed", path, err)
 		} else {
+			permWarnDedupe.clear(dedupeKey("chown", path))
 			logger.Warn("permissions watcher: fixed ownership",
 				"path", path,
 				"was_uid", uid,
@@ -375,6 +474,10 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 				"new_gid", NodeGID,
 			)
 		}
+	} else {
+		// Ownership is correct (or was fixed externally): forget any recorded
+		// failure so a future regression on this path warns at WARN again.
+		permWarnDedupe.clear(dedupeKey("chown", path))
 	}
 
 	mode := fi.Mode()
@@ -383,34 +486,34 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		if mode.Perm()&DirPerms != DirPerms {
 			newMode := mode.Perm() | DirPerms
 			if err := os.Chmod(path, newMode); err != nil {
-				logger.Warn("permissions watcher: chmod dir failed",
-					"path", path,
-					"error", err,
-				)
+				warnDeduped(logger, "chmod dir", "permissions watcher: chmod dir failed", path, err)
 			} else {
+				permWarnDedupe.clear(dedupeKey("chmod dir", path))
 				logger.Warn("permissions watcher: fixed directory permissions",
 					"path", path,
 					"old_mode", mode.Perm().String(),
 					"new_mode", newMode.String(),
 				)
 			}
+		} else {
+			permWarnDedupe.clear(dedupeKey("chmod dir", path))
 		}
 	} else {
 		// Regular files need u+rw to be readable/writable.
 		if mode.Perm()&FilePerms != FilePerms {
 			newMode := mode.Perm() | FilePerms
 			if err := os.Chmod(path, newMode); err != nil {
-				logger.Warn("permissions watcher: chmod file failed",
-					"path", path,
-					"error", err,
-				)
+				warnDeduped(logger, "chmod file", "permissions watcher: chmod file failed", path, err)
 			} else {
+				permWarnDedupe.clear(dedupeKey("chmod file", path))
 				logger.Warn("permissions watcher: fixed file permissions",
 					"path", path,
 					"old_mode", mode.Perm().String(),
 					"new_mode", newMode.String(),
 				)
 			}
+		} else {
+			permWarnDedupe.clear(dedupeKey("chmod file", path))
 		}
 	}
 }
@@ -437,18 +540,28 @@ func fixBobStateDirGroupWrite(path string, mode os.FileMode, logger *slog.Logger
 	// Nothing to do when the group already has all of r/w/x — this keeps an
 	// already-remediated (>= 0770) dir untouched and the walk idempotent.
 	if perm&bobStateDirGroupRWX == bobStateDirGroupRWX {
+		permWarnDedupe.clear(dedupeKey("chmod bob state dir", path))
 		return
 	}
 	newPerm := perm | bobStateDirGroupRWX
 	if err := os.Chmod(path, newPerm); err != nil {
-		logger.Error("permissions watcher: chmod bob state dir failed; bob will keep reporting 'error saving your latest settings changes' and run degraded",
-			"path", path,
-			"old_mode", perm.String(),
-			"want_mode", newPerm.String(),
-			"error", err,
-		)
+		if permWarnDedupe.shouldWarn(dedupeKey("chmod bob state dir", path), err.Error()) {
+			logger.Error("permissions watcher: chmod bob state dir failed; bob will keep reporting 'error saving your latest settings changes' and run degraded",
+				"path", path,
+				"old_mode", perm.String(),
+				"want_mode", newPerm.String(),
+				"error", err,
+				"note", "identical repeats logged at debug until this changes",
+			)
+		} else {
+			logger.Debug("permissions watcher: chmod bob state dir failed",
+				"path", path,
+				"error", err,
+			)
+		}
 		return
 	}
+	permWarnDedupe.clear(dedupeKey("chmod bob state dir", path))
 	logger.Info("permissions watcher: fixed bob state dir permissions",
 		"path", path,
 		"old_mode", perm.String(),

@@ -721,3 +721,68 @@ func TestCollectFromDir_ByAgentAndByModelSums(t *testing.T) {
 		t.Errorf("TotalTokens = %d, want 220", agg.TotalTokens)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// parseSessionFile timestamps → FirstActive/LastActive (#4835)
+// ---------------------------------------------------------------------------
+
+func TestParseSessionFile_LastActiveFromMaxTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	// Deliberately out of order: the newest event is NOT the last line. The
+	// bracket must come from min/max timestamps, not line position.
+	content := strings.Join([]string{
+		`{"role":"user","message":"hi","timestamp":"2026-08-26T10:00:00Z"}`,
+		`{"role":"assistant","model":"gpt-4","input_tokens":10,"output_tokens":5,"timestamp":"2026-08-26T12:00:00Z"}`,
+		`{"role":"assistant","input_tokens":1,"output_tokens":1,"timestamp":"2026-08-26T11:00:00Z"}`,
+	}, "\n") + "\n"
+	path := writeFile(t, dir, "sess-ts.jsonl", content)
+
+	sum, err := parseSessionFile(path, nil)
+	if err != nil {
+		t.Fatalf("parseSessionFile: %v", err)
+	}
+	wantLast := parseTimestampToUnixMilli("2026-08-26T12:00:00Z")
+	wantFirst := parseTimestampToUnixMilli("2026-08-26T10:00:00Z")
+	if sum.LastActive != wantLast {
+		t.Errorf("LastActive = %d, want %d (max timestamp, not last line)", sum.LastActive, wantLast)
+	}
+	if sum.FirstActive != wantFirst {
+		t.Errorf("FirstActive = %d, want %d (min timestamp)", sum.FirstActive, wantFirst)
+	}
+}
+
+func TestParseSessionFile_TimestampsAbsentOrUnparseable(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Join([]string{
+		`{"role":"user","message":"hi"}`,
+		`{"role":"assistant","model":"m","input_tokens":10,"output_tokens":5,"timestamp":"not-a-time"}`,
+		`{"role":"assistant","input_tokens":1,"output_tokens":1,"timestamp":""}`,
+	}, "\n") + "\n"
+	path := writeFile(t, dir, "sess-nots.jsonl", content)
+
+	sum, err := parseSessionFile(path, nil)
+	if err != nil {
+		t.Fatalf("parseSessionFile: %v", err)
+	}
+	if sum.LastActive != 0 || sum.FirstActive != 0 {
+		t.Errorf("First/LastActive = %d/%d, want 0/0 when no entry has a parseable timestamp", sum.FirstActive, sum.LastActive)
+	}
+}
+
+func TestParseSessionFile_SingleTimestampBracketsBothEnds(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Join([]string{
+		`{"role":"user","message":"hi"}`,
+		`{"role":"assistant","model":"m","input_tokens":10,"output_tokens":5,"timestamp":"2026-08-26T09:30:00Z"}`,
+	}, "\n") + "\n"
+	path := writeFile(t, dir, "sess-onets.jsonl", content)
+
+	sum, err := parseSessionFile(path, nil)
+	if err != nil {
+		t.Fatalf("parseSessionFile: %v", err)
+	}
+	want := parseTimestampToUnixMilli("2026-08-26T09:30:00Z")
+	if sum.FirstActive != want || sum.LastActive != want {
+		t.Errorf("First/LastActive = %d/%d, want both %d", sum.FirstActive, sum.LastActive, want)
+	}
+}

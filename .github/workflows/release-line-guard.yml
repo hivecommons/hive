@@ -1,0 +1,62 @@
+name: Release Line Guard
+
+# Guards the release-line carry-forward (#4405).
+#
+# Nine workflows pin their push/pull_request triggers to a hand-maintained list
+# of version-branch names. That list has already gone stale once: when mainline
+# moved from v2 to v4, podman-contract.yml was left naming `v2` alone and
+# stopped running entirely (#4339). Not red — absent, which is the one failure
+# mode a guard cannot have. This asserts every one of those lists against the
+# single source of truth in .github/release-lines.yml, so cutting `v5` becomes
+# one edit that CI enforces rather than nine edits nobody is reminded to make.
+#
+# It also covers the same names where they are hand-written OUTSIDE a trigger:
+# docker.yml's `LONG_LIVED` GHCR push policy (#4462). A stale list there is
+# worse than a skipped workflow, because it is green — the image keeps building
+# on the new release line and simply never publishes `<branch>-latest`.
+#
+# TRIGGERS ON EVERY BRANCH ON PURPOSE. A guard against branch-pinned workflows
+# must not itself be branch-pinned, or it is #4339 one level up — hence the
+# `'**'` here and the `unpinned` entry for this file in the manifest, which the
+# guard checks on itself.
+#
+# The path filter is safe in a way a branch filter would not be: this invariant
+# can only be broken by editing a workflow, the manifest, or the checker, and
+# all three are matched below.
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/**'
+      - '.github/release-lines.yml'
+      - 'src/scripts/check-release-lines.sh'
+      - 'src/scripts/test-release-lines-guard.sh'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/**'
+      - '.github/release-lines.yml'
+      - 'src/scripts/check-release-lines.sh'
+      - 'src/scripts/test-release-lines-guard.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-lines-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Self-test first: it proves the checker still FAILS on a stale
+      # allow-list. A checker that has quietly stopped detecting anything would
+      # otherwise pass the step below for the wrong reason.
+      - name: Prove the guard still catches a stale allow-list
+        run: src/scripts/test-release-lines-guard.sh
+
+      - name: Check workflow branch filters against .github/release-lines.yml
+        run: src/scripts/check-release-lines.sh

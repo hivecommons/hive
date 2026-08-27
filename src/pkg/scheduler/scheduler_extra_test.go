@@ -196,6 +196,27 @@ func TestBuildReposSection_Extra(t *testing.T) {
 	}
 }
 
+// TestBuildReposSection_ScopeNotProvisioning covers #4464: the repos section is
+// what `include_repos: true` puts in a kick, and a guide agent read it as a
+// promise that the repos were on disk — reporting "Repository worktree not
+// provisioned for guide agent despite include_repos=true configuration" as an
+// infrastructure blocker, which then sat in the operator's advisory digest.
+// Nothing provisions a per-agent worktree, so the section must say what the
+// list is and is not, and must say that an absent checkout is not a fault.
+func TestBuildReposSection_ScopeNotProvisioning(t *testing.T) {
+	section := newScheduler().buildReposSection()
+	for _, want := range []string{
+		"AUTHORIZATION SCOPE",
+		"per-agent git worktree",
+		"clone one yourself",
+		"NOT an infrastructure fault",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("repos section missing %q — an agent can still read the list as a provisioning promise:\n%s", want, section)
+		}
+	}
+}
+
 func TestBuildReposSection_FullPaths(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{

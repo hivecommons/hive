@@ -20,6 +20,7 @@ import (
 	"github.com/kubestellar/hive/pkg/policies"
 	"github.com/kubestellar/hive/pkg/promptsrc"
 	"github.com/kubestellar/hive/pkg/resolve"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
 
 type Scheduler struct {
@@ -127,15 +128,27 @@ func (s *Scheduler) GetLastActionable() *github.ActionableResult {
 // always uses the fixed /data/policies path that handleAgentPromptSave writes to.
 var userSavedPolicyDir = "/data/policies"
 
+// agentHomeDir is where per-agent homes live on a hive host; the per-agent
+// CLAUDE.md (<agentHomeDir>/<name>/CLAUDE.md) is checked first by
+// loadPromptTemplate. It is a var (not a const) only so tests can point it at
+// a temp dir; production always uses the fixed /data/agents path.
+var agentHomeDir = "/data/agents"
+
+// clonedPoliciesDir is the root of the git-cloned policies repo checkout on a
+// hive host (…/<root>/examples/kubestellar/agents/). Like userSavedPolicyDir,
+// it is a var only so tests can point it at a temp dir; production always
+// uses /data/policies.
+var clonedPoliciesDir = "/data/policies"
+
 // loadPromptTemplate searches standard paths for an agent's policy template.
 // It checks on-disk paths first, then falls back to embedded default policies.
 func (s *Scheduler) loadPromptTemplate(agentName string) string {
 	paths := []string{
-		fmt.Sprintf("/data/agents/%s/CLAUDE.md", agentName),
+		fmt.Sprintf("%s/%s/CLAUDE.md", agentHomeDir, agentName),
 		// User-saved override from the dashboard prompt editor wins over the
 		// git-cloned examples copy and embedded defaults (#3239).
 		fmt.Sprintf("%s/%s.md", userSavedPolicyDir, agentName),
-		fmt.Sprintf("/data/policies/examples/kubestellar/agents/%s.md", agentName),
+		fmt.Sprintf("%s/examples/kubestellar/agents/%s.md", clonedPoliciesDir, agentName),
 	}
 	if s.cfg.Policies.LocalDir != "" {
 		paths = append(paths,
@@ -164,7 +177,7 @@ func (s *Scheduler) loadNamedTemplate(templateName string) string {
 		// agent has a kick_template set (e.g. quality-advisory.md at ACMM L2) the
 		// edit lands here and must be picked up on the next kick.
 		fmt.Sprintf("%s/%s", userSavedPolicyDir, templateName),
-		fmt.Sprintf("/data/policies/examples/kubestellar/agents/%s", templateName),
+		fmt.Sprintf("%s/examples/kubestellar/agents/%s", clonedPoliciesDir, templateName),
 	}
 	if s.cfg.Policies.LocalDir != "" {
 		paths = append(paths,
@@ -269,6 +282,7 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 		"PROJECT_AI_AUTHOR":     lit(s.cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":    lit(reposList),
 		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
+		"PROJECT_OBSERVABILITY": lit(s.cfg.Governor.ProjectObservability.PromptSection()),
 		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
 		"HIVE_ID":               lit(s.cfg.HiveID),
 		"AGENT_LIST":            lit(agentList),
@@ -292,11 +306,34 @@ func (s *Scheduler) formatIssueList(issues []github.Issue) string {
 	return out
 }
 
-func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bool) {
-	if len(issues) == 0 {
-		return "(none)", false
+// issueFilterNotice renders the operator's project.issue_filter as prompt text,
+// or "" when no filter is configured. The filter is ENFORCED upstream at
+// enumeration (github.Client.fetchIssues) — filtered issues never reach any
+// kick — so this notice is informational: it tells agents WHY the list may
+// look smaller than the repo's open issues and not to go hunting for the rest.
+// It is prepended to every issue list (${ISSUE_LIST} in kick templates and the
+// hardcoded builders alike) so no agent is ever told to look at excluded
+// issues.
+func (s *Scheduler) issueFilterNotice() string {
+	f := s.cfg.Project.IssueFilter
+	if f.IsZero() {
+		return ""
 	}
 	var b strings.Builder
+	b.WriteString("ISSUE FILTER (operator policy — already enforced; the issue list below reflects it):\n")
+	b.WriteString(fmt.Sprintf("  Agents may ONLY work issues carrying at least one of these labels: %s\n",
+		strings.Join(f.RequireLabels, ", ")))
+	b.WriteString("  ⛔ Do NOT pick up, plan, or open PRs for issues outside this list, even if you find them by listing the repo yourself.\n")
+	return b.String()
+}
+
+func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bool) {
+	notice := s.issueFilterNotice()
+	if len(issues) == 0 {
+		return notice + "(none)", false
+	}
+	var b strings.Builder
+	b.WriteString(notice)
 	shown := 0
 	failClosed := false
 	for _, issue := range issues {
@@ -317,8 +354,8 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		}
 		labels, labelsFailClosed := s.enforceLabelsWithPolicy(issue.Labels)
 		failClosed = failClosed || labelsFailClosed
-		b.WriteString(fmt.Sprintf("  %dm %s#%d [%s] %s\n",
-			issue.AgeMinutes, issue.Repo, issue.Number,
+		b.WriteString(fmt.Sprintf("  %dm %s [%s] %s\n",
+			issue.AgeMinutes, issueDisplayRef(issue),
 			strings.Join(labels, ","), title))
 		shown++
 	}
@@ -429,17 +466,49 @@ func issueRefsForAgent(agentName string, issues []github.Issue) []string {
 	refs := make([]string, 0, len(agentIssues))
 	seen := make(map[string]bool, len(agentIssues))
 	for _, issue := range agentIssues {
-		if issue.Repo == "" || issue.Number <= 0 {
-			continue
-		}
-		ref := fmt.Sprintf("%s#%d", issue.Repo, issue.Number)
-		if seen[ref] {
+		// One canonical key implementation (kubestellar/hive#4245). The old
+		// `Number <= 0` skip dropped every Linear and Jira item on the floor:
+		// they reach here with Number == 0, so no non-GitHub work was ever
+		// referenced in an internal-agent kick at all. issueKey keeps
+		// GitHub-backed refs byte-identical "repo#number" and gives external
+		// work its own "repo!EXT-1" identity instead of a shared "repo#0".
+		ref := issueKey(issue)
+		if ref == "" || seen[ref] {
 			continue
 		}
 		seen[ref] = true
 		refs = append(refs, ref)
 	}
 	return refs
+}
+
+// issueKey is the scheduler's single entry point to the canonical work
+// identity. It delegates to pkg/worksource so the scheduler cannot drift into a
+// second key format — the parity test in scheduler_worksource_identity_test.go
+// pins that it produces exactly what worksource.Ref.Key() does.
+func issueKey(issue github.Issue) string {
+	return worksource.Ref{
+		SourceType: issue.SourceType,
+		Repo:       issue.Repo,
+		ExternalID: issue.ExternalID,
+		Number:     issue.Number,
+		URL:        issue.URL,
+	}.Key()
+}
+
+// issueDisplayRef is the human-facing form written into kick message bodies:
+// "owner/repo#42" for GitHub-backed work, "owner/repo!ENG-123" for a
+// string-keyed source. It exists so no rendering site formats "%s#%d" directly
+// and prints "owner/repo#0" for an item that simply has no issue number.
+//
+// It falls back to the bare repo when an item carries no usable identity at
+// all, which keeps a malformed enumeration readable in the message rather than
+// rendering a key nothing can match.
+func issueDisplayRef(issue github.Issue) string {
+	if key := issueKey(issue); key != "" {
+		return key
+	}
+	return issue.Repo
 }
 
 // BuildAgentMessageFromLastActionable builds a kick message for the named
@@ -478,17 +547,66 @@ func (s *Scheduler) buildReposSection() string {
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
+	// SCOPE vs PROVISIONING (#4464). This list is what `include_repos: true`
+	// puts in a kick, and agents have read it as a promise that the repos are
+	// on disk: a guide agent found its workspace directory empty, concluded
+	// "no git worktree has been provisioned despite include_repos=true", and
+	// filed it as an infrastructure blocker that then sat in the operator's
+	// advisory digest. There is no such provisioning step — nothing in the
+	// hive materialises a per-agent worktree from this list — so the kick has
+	// to say so, in the same section that produces the impression. Getting a
+	// checkout is an ordinary thing an agent does for itself, not a fault.
+	b.WriteString(fmt.Sprintf("ℹ️ This list is an AUTHORIZATION SCOPE, not a checkout: it does not put any repo on disk, and nothing provisions a per-agent git worktree from it. If you need files rather than the GitHub API and have no checkout, clone one yourself: git clone %s/<org>/<repo> /tmp/<repo>. An absent checkout is a normal state to handle, NOT an infrastructure fault — do not file a finding about a missing worktree or unprovisioned repo workspace.\n", strings.TrimRight(host, "/")))
+	// Multi-repo projects: the agent workdir is never a checkout of anything
+	// but the PRIMARY repo, and the shipped templates' examples say --repo
+	// "$HIVE_REPO" (primary). Without an explicit rotation instruction agents lock onto
+	// the primary repo forever and the other project repos are never
+	// touched (root-caused on a live 3-repo hive: sec-check scanned only
+	// the primary across every session). The kick is the one place every
+	// agent/template combination sees, so the instruction lives here.
+	if len(s.cfg.Project.Repos) > 1 {
+		primary := s.cfg.Project.PrimaryRepo
+		if primary == "" {
+			primary = s.cfg.Project.Repos[0]
+		}
+		b.WriteString(fmt.Sprintf(`🔁 MULTI-REPO COVERAGE — REQUIRED: this project has %d authorized repos; ALL of them are in scope, not just the primary (%s).
+Your workdir is, at most, a checkout of the primary repo — never of the others. Each session, pick the authorized repo you have LEAST RECENTLY covered (check your beads and the [<your-role>] issues you previously filed in each repo) and work THAT repo this session:
+  - If it is not your workdir repo, clone it first: git clone %s/<org>/<repo> /tmp/<repo> && cd /tmp/<repo>
+  - Pass the chosen repo EXPLICITLY to every gh command: --repo "<org>/<repo>" (do not rely on $HIVE_REPO, which always names the primary repo).
+  - $HIVE_REPOS lists every authorized repo, comma-separated.
+⛔ Do NOT default to the primary repo every session — repos you never visit accumulate unseen problems.
+`, len(s.cfg.Project.Repos), org+"/"+primary, strings.TrimRight(host, "/")))
+	}
 	return b.String()
 }
 
 const maxIssuesPerKick = 100
 
+const (
+	holdGatedACMMMinLevel = 3
+	holdGatedACMMMaxLevel = 5
+)
+
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
-func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
-	if actionable == nil {
-		actionable = &github.ActionableResult{}
-	}
+func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) (message string) {
+	// Hold-gated PRs are deliberately absent from actionable.PRs: fetchPRs moves
+	// them into actionable.Hold as soon as it sees the hold label. Wrap every
+	// resolution path here so config templates, repo-sourced prompts, embedded
+	// defaults, hardcoded fallbacks, scheduled kicks, and manual kicks all see
+	// the same occupied-ground preflight. A template-only fix would leave stale
+	// operator overrides vulnerable indefinitely (kubestellar/hive#4744).
+	defer func() {
+		message = s.addHeldPRCoordination(agentName, actionable, message)
+		// Fix-before-new: an agent with red PRs of its own must see them —
+		// with the CI evidence — ahead of any new work. Injected at the same
+		// post-resolution seam as the held-PR preflight so no template path
+		// can omit it (kubestellar/hive#4744): observed live on
+		// kubestellar/console (2026-08-26), ten red split-PRs each had exactly
+		// one commit — kicks kept spawning NEW PRs while the reaper's
+		// re-engagements aged every red SHA to its cap unfixed.
+		message = s.addRedPRFixFirst(agentName, message)
+	}()
 
 	baseName := s.cfg.BaseAgentName(agentName)
 	// 0. GitHub-sourced prompt: if the agent declares a prompt_source, resolve it
@@ -576,11 +694,234 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	}
 }
 
+// addHeldPRCoordination makes open, human-review-gated work visible before a
+// PR-capable agent chooses its next target. These PRs cannot ride ${PR_LIST}:
+// the hold gate intentionally removes them from the actionable PR population.
+// The section is injected outside policy-template resolution so a customized
+// or remotely sourced policy cannot accidentally omit the coordination fact.
+func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.ActionableResult, message string) string {
+	if message == "" || !s.isHoldGatedPRAgent(agentName) {
+		return message
+	}
+	claims, failClosed := s.formatHeldPRClaimsWithPolicy(actionable)
+	if failClosed {
+		if s.logger != nil {
+			s.logger.Warn("ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
+		}
+		return ""
+	}
+
+	section := `## Open hold-gated PR coordination — mandatory preflight
+
+The PRs below are open and awaiting human review. Their files, functions, and
+tracking-issue clusters are occupied ground even when they have been waiting
+for hours. Review latency is not abandonment.
+
+OPEN HOLD-GATED PRs:
+` + claims + `
+
+Before choosing work:
+1. Compare your intended files, functions, and tracker cluster with every
+   plausibly related PR above.
+2. Inspect any plausible overlap with ` + "`gh pr view <number> --repo <repo> --json title,body,files`" + `
+   and, when needed, ` + "`gh pr diff <number> --repo <repo>`" + `. The supplied list is the
+   authoritative open-PR snapshot; do not run ` + "`gh pr list`" + ` to rebuild it.
+3. If another PR already covers any intended ground, choose a disjoint cluster
+   or stand down. If the snapshot says additional PRs were omitted, stand down:
+   unseen occupied ground cannot be proven disjoint. Do not write a second
+   implementation and do not remove hold.
+4. Make each new PR title and body name the exact files/functions/cluster it
+   claims so the next kick can make the same comparison.
+
+`
+	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
+		return message[:newline+1] + "\n" + section + message[newline+1:]
+	}
+	return section + message
+}
+
+func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
+	if s.cfg == nil || s.cfg.ACMMLevel == nil || *s.cfg.ACMMLevel < holdGatedACMMMinLevel || *s.cfg.ACMMLevel > holdGatedACMMMaxLevel {
+		return false
+	}
+	baseName := s.cfg.BaseAgentName(agentName)
+	agentCfg, ok := s.cfg.Agents[agentName]
+	if !ok {
+		agentCfg, ok = s.cfg.Agents[baseName]
+	}
+	if !ok {
+		return false
+	}
+	mode := agentCfg.Mode
+	if agentCfg.Tools != nil {
+		if effective := agentCfg.Tools.EffectiveMode(); effective != "" {
+			mode = effective
+		}
+	}
+	return mode == "ISSUES_AND_PRS" || mode == "ISSUES_PRS_MERGE"
+}
+
+// isPRCapableAgent reports whether the agent's effective mode lets it push
+// branches / open PRs at all. Advisory-only agents can never repair a red PR,
+// so the fix-before-new section would be noise for them.
+func (s *Scheduler) isPRCapableAgent(agentName string) bool {
+	if s.cfg == nil {
+		return false
+	}
+	agentCfg, ok := s.cfg.Agents[agentName]
+	if !ok {
+		agentCfg, ok = s.cfg.Agents[s.cfg.BaseAgentName(agentName)]
+	}
+	if !ok {
+		return false
+	}
+	mode := agentCfg.Mode
+	if agentCfg.Tools != nil {
+		if effective := agentCfg.Tools.EffectiveMode(); effective != "" {
+			mode = effective
+		}
+	}
+	return mode == "ISSUES_AND_PRS" || mode == "ISSUES_PRS_MERGE"
+}
+
+// redPRFixMaxDetailed bounds how many red PRs get a full evidence entry in one
+// kick; the rest are summarized so a pathological backlog cannot flood the
+// prompt. redPRFixExcerptRunes bounds the per-PR CI evidence excerpt.
+const (
+	redPRFixMaxDetailed  = 5
+	redPRFixExcerptRunes = 400
+)
+
+// addRedPRFixFirst prepends a fix-before-new section listing the agent's OWN
+// red-CI PRs, with the failing checks and the raw CI evidence, right below the
+// kick header. It reads ci-failing.json (written by writeMergeEligible each
+// eval tick), which attributes each PR to the agent whose relay request opened
+// it. Unattributed rows default to scanner — the fleet's primary PR creator.
+// Escalated (needs-human) PRs are never listed: they belong to a human.
+func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
+	if message == "" || !s.isPRCapableAgent(agentName) {
+		return message
+	}
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		return message
+	}
+	section := formatRedPRFixData(data, s.cfg.BaseAgentName(agentName))
+	if section == "" {
+		return message
+	}
+	// Insert directly after the "[agent:x]" header line when present, so the
+	// section is the first thing the agent reads; otherwise prefix.
+	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
+		return message[:idx+1] + section + message[idx+1:]
+	}
+	return section + message
+}
+
+// formatRedPRFixData renders the fix-before-new section for one agent from
+// raw ci-failing.json bytes. Empty result means the agent has no open,
+// non-escalated red PRs.
+func formatRedPRFixData(data []byte, agent string) string {
+	type ciFailingRow struct {
+		Number        int      `json:"number"`
+		Repo          string   `json:"repo"`
+		Title         string   `json:"title"`
+		Agent         string   `json:"agent"`
+		FailingChecks []string `json:"failing_checks"`
+		Excerpt       string   `json:"excerpt"`
+		Escalated     bool     `json:"escalated"`
+	}
+	var payload struct {
+		Items []ciFailingRow `json:"ci_failing"`
+	}
+	if json.Unmarshal(data, &payload) != nil {
+		return ""
+	}
+	var mine []ciFailingRow
+	for _, pr := range payload.Items {
+		if pr.Escalated {
+			continue // needs-human: hands off for agents
+		}
+		owner := pr.Agent
+		if owner == "" {
+			owner = "scanner"
+		}
+		if owner != agent {
+			continue
+		}
+		mine = append(mine, pr)
+	}
+	if len(mine) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI (%d)\n\n", len(mine)))
+	b.WriteString("These PRs are YOURS and they are red. Repairing them comes BEFORE claiming\n")
+	b.WriteString("new issues or opening ANY new PR. For each one:\n")
+	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
+	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR. Do NOT leave these\n")
+	b.WriteString("for a later cycle — every kick will re-list them until they are green.\n\n")
+	for i, pr := range mine {
+		if i >= redPRFixMaxDetailed {
+			b.WriteString(fmt.Sprintf("  … and %d more (full list: %s)\n", len(mine)-i, ciFailingPath))
+			break
+		}
+		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		if len(pr.FailingChecks) > 0 {
+			b.WriteString(fmt.Sprintf("    failing: %s\n", strings.Join(pr.FailingChecks, ", ")))
+		}
+		if excerpt := strings.TrimSpace(pr.Excerpt); excerpt != "" {
+			if runes := []rune(excerpt); len(runes) > redPRFixExcerptRunes {
+				excerpt = string(runes[:redPRFixExcerptRunes]) + "…"
+			}
+			b.WriteString("    evidence: " + strings.ReplaceAll(excerpt, "\n", "\n              ") + "\n")
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableResult) (string, bool) {
+	if actionable == nil {
+		return "  (none)", false
+	}
+	var b strings.Builder
+	shown := 0
+	omitted := 0
+	failClosed := false
+	for _, item := range actionable.Hold.Items {
+		if item.Type != "pr" {
+			continue
+		}
+		if shown >= maxIssuesPerKick {
+			omitted++
+			continue
+		}
+		title, verdict := s.enforceIssueTextVerdict(item.Title)
+		failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
+		const maxHeldPRTitleRunes = 70
+		if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
+			title = string(runes[:maxHeldPRTitleRunes])
+		}
+		b.WriteString(fmt.Sprintf("  %s#%d %s\n", item.Repo, item.Number, title))
+		shown++
+	}
+	if omitted > 0 {
+		b.WriteString(fmt.Sprintf("  ... %d additional open held PRs omitted; STAND DOWN this kick\n", omitted))
+	}
+	if shown == 0 {
+		return "  (none)", failClosed
+	}
+	return strings.TrimSuffix(b.String(), "\n"), failClosed
+}
+
 func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *github.ActionableResult) string {
 	var b strings.Builder
 
 	b.WriteString("[agent:scanner]\n")
 	b.WriteString(fmt.Sprintf("YOUR WORK LIST (pre-filtered — hold/ADOPTERS/drafts excluded, classified):\n"))
+	b.WriteString(s.issueFilterNotice())
 
 	scannerIssues := issues
 
@@ -603,8 +944,8 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if runes := []rune(title); len(runes) > maxTitleRunes {
 			title = string(runes[:maxTitleRunes])
 		}
-		b.WriteString(fmt.Sprintf("  %dm %s#%d [%s/%s] [%s] %s%s\n",
-			issue.AgeMinutes, issue.Repo, issue.Number,
+		b.WriteString(fmt.Sprintf("  %dm %s [%s/%s] [%s] %s%s\n",
+			issue.AgeMinutes, issueDisplayRef(issue),
 			tier, issue.ModelRec,
 			strings.Join(issue.Labels, ","),
 			title, tracker))
@@ -648,7 +989,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("\nWORKFLOW:\n")
 	b.WriteString("  1. Check beads (`bd list --status open`) for context from previous cycles\n")
-	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure `Fixes #<issue>` in body. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
+	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure the PR body cites the issue it addresses: `Fixes #<issue>` only if this PR fully resolves it; if `<issue>` is an epic or multi-phase tracker and this PR completes just one phase, use `Refs #<issue>` or `Part of #<issue>` instead — those keywords do not auto-close on merge. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
 	b.WriteString("  3. Fix blockers — find the ONE fix that unblocks the most PRs/issues. Clone, fix, push, merge.\n")
 	b.WriteString("  4. Crank quick fixes — launch background agents using the Agent tool (run_in_background: true) to fix remaining issues in parallel. One PR per issue, move fast.\n")
 
@@ -694,8 +1035,8 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 	return b.String()
 }
 
-const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
-const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
+var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
+var ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 func (s *Scheduler) buildMergeEligibleList() string {
 	data, err := os.ReadFile(mergeEligiblePath)
@@ -799,17 +1140,16 @@ func (s *Scheduler) ghAuthInstructions() string {
   'git commit' an explicit --author: let the App identity stand.
 - To OPEN A PULL REQUEST, use ` + "`hive-open-pr`" + ` — the hive opens it with the
   App token so it is authored by the App bot ("<slug>[bot]"), never the login user:
-    hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body with Fixes #N>"
+    hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body citing the issue>"
+  Cite the issue correctly: ` + "`Fixes #N`" + ` / ` + "`Closes #N`" + ` ONLY if this PR is the
+  final phase and fully resolves issue N — those keywords auto-close it on
+  merge. If N is an epic or multi-phase tracker and this PR completes only
+  part of it, use ` + "`Refs #N`" + ` or ` + "`Part of #N`" + ` instead (non-closing), so the
+  tracker stays open until every listed phase actually lands.
   Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
   or raw 'gh pr create' — those author the PR as the Copilot login user. 'gh pr create'
   is auto-redirected to hive-open-pr, but prefer calling hive-open-pr directly.
   (Push your branch first; hive-open-pr requests the PR, the hive opens it within ~10s.)
-- To OPEN AN ISSUE, use ` + "`hive-open-issue`" + ` so Hive performs exact retry
-  deduplication and cross-checks active managed Visual Hive findings before any
-  GitHub write:
-    hive-open-issue --repo <org>/<repo> --title "<title>" --body "<body>" --label <label>
-  Raw REST/GraphQL and GitHub MCP create_issue calls are blocked. Never re-file
-  an existing work-list issue; comment on or act from its canonical issue.
 - git push / git fetch: run them normally. A credential helper supplies the
   App-scoped push token automatically. Do NOT export GH_TOKEN for git and do
   NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).
@@ -847,12 +1187,13 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 	baseName := s.cfg.BaseAgentName(agentName)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[agent:%s]\n", agentName))
+	b.WriteString(s.issueFilterNotice())
 
 	agentIssues := filterByLane(issues, baseName)
 	if len(agentIssues) > 0 {
 		b.WriteString(fmt.Sprintf("Work items (%d):\n", len(agentIssues)))
 		for _, issue := range agentIssues {
-			b.WriteString(fmt.Sprintf("  %s#%d %s\n", issue.Repo, issue.Number, issue.Title))
+			b.WriteString(fmt.Sprintf("  %s %s\n", issueDisplayRef(issue), issue.Title))
 		}
 	}
 
@@ -887,8 +1228,8 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 			if runes := []rune(title); len(runes) > maxTitleRunes {
 				title = string(runes[:maxTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d [%s] %s\n",
-				issue.Repo, issue.Number,
+			b.WriteString(fmt.Sprintf("  %s [%s] %s\n",
+				issueDisplayRef(issue),
 				strings.Join(issue.Labels, ","),
 				title))
 			shown++
@@ -945,8 +1286,8 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 			if runes := []rune(title); len(runes) > maxTitleRunes {
 				title = string(runes[:maxTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d [%s] %s\n",
-				issue.Repo, issue.Number,
+			b.WriteString(fmt.Sprintf("  %s [%s] %s\n",
+				issueDisplayRef(issue),
 				strings.Join(issue.Labels, ","),
 				title))
 			shown++
@@ -1074,7 +1415,10 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
 // and returns a formatted section for injection into the kick message.
 func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
-	if len(issues) == 0 {
+	s.mu.RLock()
+	primer := s.primer
+	s.mu.RUnlock()
+	if primer == nil || len(issues) == 0 {
 		return ""
 	}
 
@@ -1088,7 +1432,14 @@ func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
 		return ""
 	}
-	return s.primeKnowledgeKeywords(keywords)
+
+	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
+	primed := primer.Prime(context.Background(), nil, keywords)
+	result := primed.FormatForPrompt()
+	if result != "" {
+		s.logger.Info("knowledge primer: injecting facts into kick", "facts", len(primed.Facts), "chars", len(result))
+	}
+	return result
 }
 
 func (s *Scheduler) primeKnowledgeKeywords(keywords []string) string {

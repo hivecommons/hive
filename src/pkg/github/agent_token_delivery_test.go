@@ -271,3 +271,69 @@ func TestWriteAgentToken_MissingPreCreatedFileWarnsAccurately(t *testing.T) {
 		t.Errorf("degraded-path file mode %o is readable beyond the owner", info.Mode().Perm())
 	}
 }
+
+// TestWriteAgentToken_PublishesTrustedBotIdentityFile is the delivery half of
+// the #4044 fix: staff agents authenticate with App installation tokens, for
+// which `gh api user` structurally 403s, so gh-wrapper.sh's author gate can
+// only learn "who am I" from a file this process writes out-of-band of the
+// agent. Every mint must publish the bot login next to the token caches,
+// world-readable (it is public metadata) in a directory agents cannot write.
+func TestWriteAgentToken_PublishesTrustedBotIdentityFile(t *testing.T) {
+	const wantLogin = "test-app[bot]"
+	auth, _, closeFn := newFakeAppAuth(t, "ghs-identity")
+	defer closeFn()
+	useTempCacheDir(t)
+	auth.SetBotLogin(wantLogin)
+
+	if err := auth.WriteAgentToken(context.Background(), "guide", "advisor", 2001); err != nil {
+		t.Fatalf("WriteAgentToken: %v", err)
+	}
+
+	data, err := os.ReadFile(BotLoginFilePath())
+	if err != nil {
+		t.Fatalf("trusted bot-identity file was not published: %v", err)
+	}
+	if string(data) != wantLogin {
+		t.Errorf("bot-identity file content = %q, want %q", string(data), wantLogin)
+	}
+
+	info, err := os.Stat(BotLoginFilePath())
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm() != botLoginFilePerms {
+		t.Errorf("bot-identity file mode = %o, want %o (agents must be able to READ it; the dir denies writes)", info.Mode().Perm(), botLoginFilePerms)
+	}
+
+	// A rotated slug (config refresh reinits the client) must replace the file.
+	const rotatedLogin = "rotated-app[bot]"
+	auth.SetBotLogin(rotatedLogin)
+	if err := auth.WriteAgentToken(context.Background(), "guide", "advisor", 2001); err != nil {
+		t.Fatalf("WriteAgentToken after rotation: %v", err)
+	}
+	data, err = os.ReadFile(BotLoginFilePath())
+	if err != nil {
+		t.Fatalf("re-reading bot-identity file: %v", err)
+	}
+	if string(data) != rotatedLogin {
+		t.Errorf("bot-identity file after rotation = %q, want %q", string(data), rotatedLogin)
+	}
+}
+
+// TestWriteAgentToken_NoBotLoginPublishesNothing pins the App-less/unusable-App
+// posture: with no bot login recorded (cfg.GitHub.BotLogin() returns "" when
+// HasUsableApp() is false), no identity file may appear — the wrapper's author
+// gate must stay fail-closed rather than trusting an empty identity — and
+// token delivery itself must be unaffected.
+func TestWriteAgentToken_NoBotLoginPublishesNothing(t *testing.T) {
+	auth, _, closeFn := newFakeAppAuth(t, "ghs-no-identity")
+	defer closeFn()
+	useTempCacheDir(t)
+
+	if err := auth.WriteAgentToken(context.Background(), "guide", "advisor", 2001); err != nil {
+		t.Fatalf("WriteAgentToken: %v", err)
+	}
+	if _, err := os.Stat(BotLoginFilePath()); !os.IsNotExist(err) {
+		t.Errorf("bot-identity file must not exist without a bot login (stat err = %v)", err)
+	}
+}

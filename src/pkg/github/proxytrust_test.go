@@ -157,9 +157,15 @@ func TestProxyTrustingHTTPClient_UsesPool(t *testing.T) {
 	if client.Timeout != mintClientTimeout {
 		t.Errorf("timeout = %v want %v", client.Timeout, mintClientTimeout)
 	}
-	tr, ok := client.Transport.(*http.Transport)
+	// The transport is now wrapped by the slow-start pacer (see slowstart.go);
+	// the proxy-trust guarantee lives on its INNER transport.
+	ss, ok := client.Transport.(*slowStartTransport)
 	if !ok {
-		t.Fatalf("transport type = %T", client.Transport)
+		t.Fatalf("transport type = %T, want *slowStartTransport wrapper", client.Transport)
+	}
+	tr, ok := ss.inner.(*http.Transport)
+	if !ok {
+		t.Fatalf("inner transport type = %T", ss.inner)
 	}
 	if tr.TLSClientConfig == nil || tr.TLSClientConfig.RootCAs == nil {
 		t.Fatal("expected RootCAs pool to be set on the mint client")

@@ -15,15 +15,19 @@ import (
 //
 // bob derives its state dir as path.join(os.homedir(), ".bob") and agents run
 // with HOME=/data/home, which is root-created — so the watcher must own it.
+//
+// It checks productionWatchedHomeDirs — the snapshot TestMain takes before
+// pointing WatchedHomeDirs into the hermetic temp tree — so the pin stays on
+// the production default, not the test override.
 func TestWatchedHomeDirsIncludesBob(t *testing.T) {
 	const bobStateDir = "/data/home/.bob"
-	for _, dir := range WatchedHomeDirs {
+	for _, dir := range productionWatchedHomeDirs {
 		if dir == bobStateDir {
 			return
 		}
 	}
 	t.Fatalf("WatchedHomeDirs must contain %q so bob can create its state dir; got %v",
-		bobStateDir, WatchedHomeDirs)
+		bobStateDir, productionWatchedHomeDirs)
 }
 
 // TestPermissionsWatcher_BobNestedTree covers the nested case explicitly: bob

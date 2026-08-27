@@ -572,3 +572,43 @@ func (s *HubServer) handleHiveTimeline(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"events": events})
 }
+
+// handleAccessLog serves GET /api/saas/hives/{id}/access-log — the
+// permission-change audit trail shown in the Manage Access dialog (#4148).
+//
+// It is a filtered VIEW over the same append-only timeline store that
+// records every grant, role change, removal, request approval/denial and
+// ownership transfer: no separate log is kept, so the two can never
+// disagree. Entries carry actor + timestamp and are immutable once written
+// (the store only ever appends; pruning is oldest-first at the retention
+// cap).
+//
+// Authorization matches the Manage Access endpoints themselves
+// (handleAccessList et al): the hive's owner — creator, granted owner role,
+// or hub admin — may read it. This is deliberately WIDER than
+// handleHiveTimeline's creator-only rule, because anyone who can change
+// permissions must be able to audit permission changes.
+func (s *HubServer) handleAccessLog(w http.ResponseWriter, r *http.Request) {
+	hiveID := r.PathValue("id")
+	username := s.getAuthUser(r)
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if !userIsHiveOwner(username, h) {
+		http.Error(w, `{"error":"only the owner can view the access audit log"}`, http.StatusForbidden)
+		return
+	}
+	all := s.timeline.recent(hiveID, timelineMaxEvents)
+	events := make([]TimelineEvent, 0, len(all))
+	for _, ev := range all {
+		// Ownership transfers change who holds the top permission, so they
+		// belong in a permission-change audit alongside access events.
+		if ev.Kind == TimelineAccess || ev.Kind == TimelineOwnership {
+			events = append(events, ev)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"events": events})
+}

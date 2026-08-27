@@ -2,17 +2,21 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
-// This file is the invocation-attribution trail for artifacts Hive creates on
-// GitHub: agent PRs and issues opened by request watchers, plus Hive-owned
-// advisory and dashboard ACMM-gap issues. It exists because
+// This file is the invocation-attribution trail for artifacts the hive itself
+// creates on GitHub: agent PRs opened by the PR-request watcher and issues the
+// hive creates (advisory issue, dashboard ACMM-gap issues). It exists because
 // an operator looking at an agent-authored PR previously had no way to answer
 // "which backend/model produced this?" — the App-bot author is deterministic
 // by design, so the invocation metadata must be recorded separately.
@@ -41,9 +45,12 @@ const (
 	// AuditActionAgentPRCreated is the audit action recorded when the
 	// PR-request watcher opens a PR on an agent's behalf.
 	AuditActionAgentPRCreated = "agent_pr_created"
-	// AuditActionAgentIssueCreated is recorded when the issue-request watcher
-	// creates or reuses an issue on an agent's behalf.
+	// AuditActionAgentIssueCreated is the audit action recorded when the
+	// issue-request watcher creates an issue on an agent's behalf.
 	AuditActionAgentIssueCreated = "agent_issue_created"
+	// AuditActionAgentCommentCreated is the audit action recorded when the
+	// issue-request watcher posts an issue/PR comment on an agent's behalf.
+	AuditActionAgentCommentCreated = "agent_comment_created"
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"
@@ -56,6 +63,26 @@ const (
 	// is refreshed (EditComment) roughly once a minute; those updates are NOT
 	// audited — only the initial creation, a once-per-issue event.
 	AuditActionAdvisoryCommented = "advisory_commented"
+	// AuditActionPRAttributionReconciled is the audit action recorded when the
+	// hub appends a missing attribution trailer to an ALREADY-EXISTING PR
+	// (ReconcilePRAttribution). It is deliberately NOT AuditActionAgentPRCreated:
+	// the hive did not create these PRs — a contributor's relay did, under the
+	// contributor's own identity — and the audit log's create→merge loop (issue
+	// created → PR created → PR merged) would otherwise count every reconciled
+	// contributor PR as a hive PR creation that never happened.
+	AuditActionPRAttributionReconciled = "pr_attribution_reconciled"
+	// AuditActionIssueClaimed is recorded when an agent claims an issue — the
+	// issue-request watcher applies a `hive/claimed-by-<agent>` label (App bots
+	// cannot be GitHub assignees, so ownership is signaled by a namespaced label
+	// rather than an assignee). It is a countable "this agent took work" signal
+	// on the activity trail.
+	AuditActionIssueClaimed = "agent_issue_claimed"
+	// AuditActionPRReviewed is recorded when the hive submits a PR review as the
+	// App bot: the review-request watcher on an agent's behalf, or the governor's
+	// own auto-merge APPROVE (QueuePRAutoMerge). Detail carries state=
+	// (approved|changes_requested|commented). This makes reviews a first-class
+	// audited activity instead of an invisible agent-CLI write.
+	AuditActionPRReviewed = "agent_pr_reviewed"
 )
 
 // System "agent" names recorded for creations no single coding agent
@@ -99,6 +126,9 @@ type InvocationMeta struct {
 	// Model is the model REQUESTED at launch. For backends that self-select
 	// (bob), this is honestly "auto" — see RequestedModel.
 	Model string
+	// Effort is the reasoning effort (e.g. "low", "medium", "high", "minimal")
+	// requested at launch for backends that support it. Omitted when empty.
+	Effort string
 	// Tool is the display name for the version field (e.g. "bobshell"); the
 	// trailer renders it as "<tool>=<version>".
 	Tool string
@@ -123,6 +153,7 @@ func (m InvocationMeta) pairs() []string {
 	add("agent", m.Agent)
 	add("backend", m.Backend)
 	add("model", m.Model)
+	add("effort", m.Effort)
 	if ver := strings.TrimSpace(m.ToolVersion); ver != "" {
 		tool := strings.TrimSpace(m.Tool)
 		if tool == "" {
@@ -347,6 +378,68 @@ func (c *Client) recordCreationAudit(action string, m InvocationMeta, extra ...s
 		audit(action, detail, m.Agent)
 		return
 	}
+	if c.logger == nil {
+		return // no sink and no logger (e.g. a bare test client) — nothing to do
+	}
 	c.logger.Info("attribution audit (no audit sink wired yet)",
 		slog.String("action", action), slog.String("detail", detail), slog.String("agent", m.Agent))
+}
+
+// ReconcilePRAttribution ensures the PR at prURL carries an attribution trailer
+// matching meta, appending one via the GitHub API if missing. It is idempotent:
+// if the body already contains the trailer prefix, it no-ops without editing.
+//
+// The audit entry is written ONLY when an edit actually lands. That differs from
+// the CREATION path (pr_request_watcher), which audits unconditionally, and the
+// difference is deliberate: there, a PR is created whether or not the visible
+// trailer is enabled, so there is always a real event to record. Here, a
+// disabled toggle / an already-trailered body / a failed API call all mean the
+// hive did NOTHING, and recording "reconciled=true" for those would put events
+// in the audit log that never happened.
+func (c *Client) ReconcilePRAttribution(ctx context.Context, prURL string, meta InvocationMeta) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	ref, err := ParsePRURL(prURL)
+	if err != nil {
+		return fmt.Errorf("reconcile attribution: invalid PR URL %q: %w", prURL, err)
+	}
+
+	if !c.attributionTrailerOn() {
+		return nil
+	}
+
+	pr, _, err := c.client.PullRequests.Get(ctx, ref.Owner, ref.Repo, ref.Number)
+	if err != nil {
+		return fmt.Errorf("reconcile attribution: get PR %s#%d: %w", ref.FullName(), ref.Number, err)
+	}
+	if pr == nil {
+		return fmt.Errorf("reconcile attribution: PR %s#%d not found", ref.FullName(), ref.Number)
+	}
+
+	body := pr.GetBody()
+	newBody := AppendTrailer(body, meta)
+	if newBody == body {
+		// Already has trailer, or meta is empty: nothing to do.
+		return nil
+	}
+
+	_, _, err = c.client.PullRequests.Edit(ctx, ref.Owner, ref.Repo, ref.Number, &gh.PullRequest{
+		Body: gh.Ptr(newBody),
+	})
+	if err != nil {
+		return fmt.Errorf("reconcile attribution: edit PR %s#%d: %w", ref.FullName(), ref.Number, err)
+	}
+	c.recordCreationAudit(AuditActionPRAttributionReconciled, meta,
+		"repo", ref.FullName(),
+		"number", strconv.Itoa(ref.Number),
+		"url", prURL,
+		"reconciled", "true",
+	)
+	c.logger.Info("ReconcilePRAttribution: appended attribution trailer to PR",
+		slog.String("repo", ref.FullName()),
+		slog.Int("number", ref.Number),
+		slog.String("trailer", meta.Trailer()),
+	)
+	return nil
 }

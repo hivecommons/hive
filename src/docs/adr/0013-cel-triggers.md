@@ -1,6 +1,6 @@
 # ADR-0013: CEL triggers over normalized forge events
 
-Status: Accepted (retroactive)
+Status: Accepted (back-filled)
 
 ## Context
 
@@ -27,6 +27,8 @@ names before the governor unions them with existing built-in triggers
 ([config wiring](../../pkg/celtrigger/wire.go)).
 
 ## Consequences
+
+Rationale not recorded beyond the implementation, linked code, and cited design notes.
 
 Operators can add declarative, forge-neutral trigger policy without changing Go
 code, and bad rules fail closed before they can crash a running fleet. The same

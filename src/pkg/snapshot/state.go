@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/watchdog"
 )
 
 const maxStateAge = 7 * 24 * time.Hour
@@ -29,11 +30,15 @@ type PersistedState struct {
 	// current budget window (see governor.BudgetInfo.WindowBaseline).
 	BudgetWindowBaseline int64            `json:"budget_window_baseline,omitempty"`
 	KickHistory          []GovKickEntry   `json:"kick_history,omitempty"`
-	IssueCosts           map[string]int64 `json:"issue_costs,omitempty"`
 	LastEval             time.Time        `json:"last_eval,omitempty"`
 	ACMMLevel            *int             `json:"acmm_level,omitempty"`
 	ConfigOverrides      *ConfigOverrides `json:"config_overrides,omitempty"`
 	Breaker              *BreakerState    `json:"breaker,omitempty"`
+	// Watchdog persists the RFC #4665 reconciler's per-agent backoff /
+	// crash-loop / condition state, so a pod restart neither forgets an
+	// escalated crash loop nor replays a backoff ladder from the top
+	// (RFC open question 2: the state rides the existing state file).
+	Watchdog map[string]watchdog.PersistedAgent `json:"watchdog,omitempty"`
 }
 
 // BreakerState persists the fleet breaker so an engaged kill-switch survives
@@ -70,10 +75,14 @@ type ConfigOverrides struct {
 }
 
 type AgentState struct {
-	Paused          bool             `json:"paused"`
-	PausedAt        *time.Time       `json:"paused_at,omitempty"`
-	PausedReason    string           `json:"paused_reason,omitempty"`
-	PausedTrigger   string           `json:"paused_trigger,omitempty"`
+	Paused        bool       `json:"paused"`
+	PausedAt      *time.Time `json:"paused_at,omitempty"`
+	PausedReason  string     `json:"paused_reason,omitempty"`
+	PausedTrigger string     `json:"paused_trigger,omitempty"`
+	// PausedBy is the acting user behind the pause when one is known (the
+	// authenticated dashboard user); empty for system-initiated pauses.
+	// Persisted so pause provenance survives restarts (#4041).
+	PausedBy        string           `json:"paused_by,omitempty"`
 	PinnedCLI       string           `json:"pinned_cli,omitempty"`
 	PinnedModel     string           `json:"pinned_model,omitempty"`
 	ModelOverride   string           `json:"model_override,omitempty"`

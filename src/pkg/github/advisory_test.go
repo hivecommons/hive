@@ -251,7 +251,7 @@ func TestFindDigestComment_Found(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, org, []string{repo})
-	id, err := c.findDigestComment(context.Background(), org, repo, 10)
+	id, _, err := c.findDigestComment(context.Background(), org, repo, 10)
 	if err != nil {
 		t.Fatalf("findDigestComment: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestFindDigestComment_NotFound(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, org, []string{repo})
-	id, err := c.findDigestComment(context.Background(), org, repo, 10)
+	id, _, err := c.findDigestComment(context.Background(), org, repo, 10)
 	if err != nil {
 		t.Fatalf("findDigestComment: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestFindDigestComment_Error(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, org, []string{repo})
-	_, err := c.findDigestComment(context.Background(), org, repo, 10)
+	_, _, err := c.findDigestComment(context.Background(), org, repo, 10)
 	if err == nil {
 		t.Error("expected error for API failure")
 	}

@@ -19,6 +19,10 @@ func setupWSTest(t *testing.T) (*Server, *httptest.Server) {
 	tmpDir := t.TempDir()
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", filepath.Join(tmpDir, "contributors"))
 	t.Setenv("HIVE_FEDERATION_REGISTRY_PATH", filepath.Join(tmpDir, "federation", "registry.json"))
+	redirectContributeWSDisk(t, filepath.Join(tmpDir, "ws-state"))
+	oldLedgerPersistence := taskLedgerPersistenceEnabled
+	taskLedgerPersistenceEnabled = false
+	t.Cleanup(func() { taskLedgerPersistenceEnabled = oldLedgerPersistence })
 
 	s := NewServer(0, slog.Default())
 	s.registerContributeRoutes()

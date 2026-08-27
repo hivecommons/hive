@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -274,10 +275,36 @@ func (k KubectlSpokeCollector) Collect(logger *slog.Logger) ([]SpokeConfig, erro
 	return out, nil
 }
 
+// spokeNamespacePattern is the exact shape of a spoke namespace: the
+// hive-hosted- prefix followed by a DNS-1123 label remainder. Anything else
+// (empty ID, path separators, uppercase, another prefix) is rejected.
+var spokeNamespacePattern = regexp.MustCompile(`^` + spokeNamespacePrefix + `[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// validateSpokeNamespace asserts that an exec/pod-read target namespace lies
+// inside the hive-hosted-* tree the backup is authorised to touch.
+func validateSpokeNamespace(ns string) error {
+	if !strings.HasPrefix(ns, spokeNamespacePrefix) || !spokeNamespacePattern.MatchString(ns) {
+		return fmt.Errorf("exec target namespace %q does not match expected prefix %q", ns, spokeNamespacePrefix)
+	}
+	return nil
+}
+
 // collectOne captures a single spoke, tolerating failure.
 func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logger *slog.Logger) SpokeConfig {
 	sc := SpokeConfig{ID: id, Cluster: target.ID, Files: map[string][]byte{}}
 	ns := spokeNamespacePrefix + id
+
+	// Defence in depth for the cluster-wide pods/exec grant (issue #4062).
+	// RBAC cannot say "only namespaces matching hive-hosted-*", so the binary
+	// asserts it here: a hive ID that is empty or carries separators could
+	// otherwise steer an exec at a namespace outside the spoke tree. This
+	// guard holds even where the optional Kyverno overlay is absent or its
+	// webhook is unavailable (it fails open by design).
+	if err := validateSpokeNamespace(ns); err != nil {
+		sc.Err = err.Error()
+		logger.Error("backup: refusing exec outside spoke namespace tree", "hive", id, "err", sc.Err)
+		return sc
+	}
 
 	// Select only Running pods. Namespaces frequently retain Evicted/Failed
 	// pods alongside a healthy one, and an unfiltered .items[0] can select a

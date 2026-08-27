@@ -4,17 +4,16 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-  # The floor is only meaningful if it runs BEFORE code lands. Without this the
-  # gate was hourly-only, so a PR could drop a package below its floor and merge
-  # green — which is exactly what happened in #2350.
+  # No pull_request trigger anymore (#4112). The pre-merge half of this gate —
+  # added in #2350's aftermath and moved to v4 in #3903 — now lives in
+  # v2-tests.yml's `coverage` job, which parses the coverprofile emitted by the
+  # SAME sharded `go test -short -race -count=1` run that gates the PR, so PRs
+  # run the test suite exactly once instead of twice. This workflow remains the
+  # scheduled hourly monitor for the v4 branch, including the
+  # create-issue-on-coverage-drop machinery below.
   #
-  # v4 added here (#3903): development moved to v4 and this filter still said
-  # v2, so the pre-merge half of the gate had silently stopped covering every PR
-  # that actually lands. `src/**` is the Go module directory on BOTH branches —
-  # it is the module path, not the branch name — so the path filter is unchanged.
-  pull_request:
-    branches: [v2, v4]
-    paths: ['src/**']
+  # KEEP THE FLOORS IN SYNC: PKG_THRESHOLD below is duplicated in
+  # v2-tests.yml's coverage job; a floor change must land in both.
 
 permissions:
   contents: read
@@ -52,16 +51,23 @@ jobs:
       # escalation, forge, mint, planning, timeline, agentparse, outputschema),
       # so every one of them had never been subject to any floor.
       #
-      # On `pull_request` we must NOT pin a branch: a fixed `ref:` makes the
-      # runner do `git checkout --force -B <branch> refs/remotes/origin/<branch>`
-      # and measure the BASE branch, so the gate reports the base's numbers no
-      # matter what the PR changes. That made the gate simultaneously useless
-      # and misleading — a PR that fixed coverage still failed, and a PR that
-      # broke it would still have passed. Leaving `ref` empty checks out the PR
-      # merge commit, which is the code that is actually about to land.
+      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin explicitly
+      # to the branch whose floor this gate reports on hourly.
+      #
+      # That branch is now v4 (#3903). It was v2, and v2 is sunset — the fleet
+      # runs v4 and v2 is no longer a merge target, so the gate was measuring a
+      # branch nobody can fix. The practical effect was worse than "stale
+      # numbers": v4 carries 14 packages that do not exist on v2 at all
+      # (ioscan, sandbox, intent, pushbroker, tracing, review, retro,
+      # escalation, forge, mint, planning, timeline, agentparse, outputschema),
+      # so every one of them had never been subject to any floor.
+      #
+      # (This workflow no longer runs on pull_request — the pre-merge floor
+      # check lives in v2-tests.yml now, see #4112 — so the ref can be pinned
+      # unconditionally.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.ref || 'v4' }}
+          ref: 'v4'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -77,7 +83,7 @@ jobs:
         id: cover
         continue-on-error: true
         run: |
-          go test ./pkg/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
+          go test ./pkg/... ./cmd/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
             2>&1 | tee race-run.log
           exit "${PIPESTATUS[0]}"
 
@@ -97,10 +103,13 @@ jobs:
           # floor so the gate still catches regressions below their real ceiling,
           # rather than blocking forever on untestable code. Raise these toward 90
           # as seams are added; do not add new entries without justification here.
+          #
+          # KEEP IN SYNC with the copy of this map in v2-tests.yml's coverage
+          # job (the pre-merge half of this gate, #4112).
           declare -A PKG_THRESHOLD=(
-            [dashboard]=78   # ~20% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
+            [dashboard]=82   # ~17% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
-            [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
+            [agent]=82       # dd measures 83.6%: specialist dispatch code beyond v4's 89 floor (see dd section below)
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
             #
@@ -121,20 +130,67 @@ jobs:
             # Raise these toward 90 as tests land; never raise one to paper over
             # a drop. A package that improves should have its floor moved up in
             # the same PR, so the ratchet only turns one way.
-            [intent]=65
-            [sandbox]=67
-            [ioscan]=71
-            [pushbroker]=72
-            [tracing]=76
+            #
+            # ── Ratchet turned for #4570 ─────────────────────────────────────
+            # sandbox/ioscan/pushbroker: tests added in the same PR, so the
+            #   floors move with the gain (67.6→98.5, 71.0→97.1, 72.8→100.0).
+            # intent/tracing/dashboard: NO code change — these had drifted far
+            #   above floors recorded at d89121f5 and were no longer catching
+            #   anything. Re-measured on v4 at cd8aee5d and moved up to what
+            #   they actually hold, with ~1 point of headroom.
+            # scheduler (90.4) and escalation (93.2) now clear the 90% default
+            #   and no longer need an entry at all.
+            [intent]=87
+            [tracing]=85
             [review]=80
             [retro]=82
-            [github]=88
+            [github]=80      # dd measures 81.5%: mediated-issue relay code beyond v4's 88 floor (see dd section below)
             [hivectl]=88
             [knowledge]=89
-            [scheduler]=89
-            [escalation]=89
             [proxy]=89
+            [ioscan]=96
+            [sandbox]=98
+            [pushbroker]=99
+
+            # ── ./cmd/... floors (#4701) ─────────────────────────────────────
+            # CI never ran ./cmd/... at all before #4701 — four cmd/bd tests
+            # were merged already-failing and stayed red undetected. cmd keys
+            # are prefixed ("cmd/<name>") so cmd/hivectl can never collide with
+            # pkg/hivectl's floor. Recorded just below what v4 measures after
+            # #4700/#4719 so the ratchet can turn as CLI tests land.
+            [cmd/bd]=58       # 60.4% after #4700's kb-CLI tests
+            [cmd/hive]=17     # 18.8% after #4719's merge-authz tests; bulk is main()/run-loop wiring
+            [cmd/apiproxy]=13 # 14.7%
+            [cmd/hive-backup]=68 # 71.1% after #4736's CLI entry-point tests
+
+            # ── dd (Visual Hive) package floors, recorded at the v4→dd sync ──
+            # These packages exist only on the dd branch and predate this
+            # gate; floors are recorded ~1 point below what dd measures on the
+            # sync head so the ratchet catches regressions from here. Raise
+            # toward 90 as tests land on dd. The agent/github entries above
+            # are also lowered on dd only, because dd adds specialist and
+            # mediated-issue code the shared v4 tests do not cover.
+            [automation]=84    # 85.7%
+            [beads]=76         # 77.8%
+            [checkpoint]=65    # 66.7%
+            [hivemcp]=65       # 66.3%
+            [hostedbootstrap]=72 # 73.0%
+            [hostedcontrol]=69 # 70.2%
+            [hostedstate]=77   # 78.4%
+            [hostedstatus]=72  # 73.5%
+            [integrated]=65    # 66.9%
+            [repair]=71        # 72.9%
+            [visualhive]=78    # 79.6%
+            [controller]=69    # 70.4% (pkg/visualhive/controller)
+            [normalservice]=74 # 75.9% (pkg/visualhive/normalservice)
           )
+
+          # Thin flag-parsing mains with no test files, wrapping packages the
+          # gate already floors (pkg/hivectl at 88, pkg/hubbackup at the 90
+          # default). Exempt from the NO TEST FILES hard failure by name so any
+          # NEW untested cmd package still fails the gate. Remove an entry the
+          # moment its package gains a test file.
+          UNTESTED_CMD_MAINS='cmd/hivectl'
 
           # Capture the full `go test -cover` output ONCE, then classify every
           # line. The previous version piped through `grep '^ok'`, which silently
@@ -146,12 +202,24 @@ jobs:
           # Both were therefore incapable of failing the gate, so adding a
           # package with zero tests was the one guaranteed way to stay green.
           # They are now hard failures in their own right.
-          go test -cover ./pkg/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+          go test -cover ./pkg/... ./cmd/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+
+          # Floor-map key for a package import path: cmd packages are keyed
+          # with a "cmd/" prefix so cmd/hivectl can never resolve to
+          # pkg/hivectl's floor (#4701); everything else keeps the historical
+          # bare-basename key.
+          floor_key() {
+            case "$1" in
+              */cmd/*) echo "cmd/${1##*/}" ;;
+              *)       echo "${1##*/}" ;;
+            esac
+          }
 
           while IFS= read -r line; do
             case "$line" in
               ok*)
-                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                pkgpath=$(echo "$line" | awk '{print $2}')
+                pkg=$(floor_key "$pkgpath")
                 pct=$(echo "$line" | grep -o '[0-9]*\.[0-9]*%' | tr -d '%')
                 if [ -z "$pct" ]; then continue; fi
                 int_pct=$(echo "$pct" | cut -d. -f1)
@@ -162,17 +230,26 @@ jobs:
                 REPORT="${REPORT}${pkg}: ${pct}%\n"
                 ;;
               FAIL*)
-                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                pkgpath=$(echo "$line" | awk '{print $2}')
                 # Ignore the bare trailing "FAIL" summary line, which has no pkg.
-                if [ -n "$pkg" ] && [ "$pkg" != "FAIL" ]; then
+                if [ -n "$pkgpath" ] && [ "$pkgpath" != "FAIL" ]; then
+                  pkg=$(floor_key "$pkgpath")
                   BROKEN="${BROKEN}${pkg}: TESTS FAILING\n"
                   REPORT="${REPORT}${pkg}: FAIL\n"
                 fi
                 ;;
               \?*)
-                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
-                BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
-                REPORT="${REPORT}${pkg}: no tests\n"
+                pkgpath=$(echo "$line" | awk '{print $2}')
+                pkg=$(floor_key "$pkgpath")
+                case " $UNTESTED_CMD_MAINS " in
+                  *" $pkg "*)
+                    REPORT="${REPORT}${pkg}: no tests (exempt thin main)\n"
+                    ;;
+                  *)
+                    BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
+                    REPORT="${REPORT}${pkg}: no tests\n"
+                    ;;
+                esac
                 ;;
             esac
           done < cover-run.log

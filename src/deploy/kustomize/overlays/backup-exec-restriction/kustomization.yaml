@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Optional hardening overlay — backup pods/exec namespace restriction.
+#
+# This is a POLICY-ONLY overlay: it contains the Kyverno ClusterPolicy and
+# nothing else. It deliberately does NOT include ../../../k8s, because that
+# base does not carry the backup CronJob/RBAC (src/deploy/k8s/backup-cronjob.yaml
+# is applied separately), so pulling it in would have shipped unrelated hub
+# manifests while still missing the very workload this policy constrains.
+#
+# Apply the backup CronJob first, then this overlay:
+#   kubectl apply -f src/deploy/k8s/backup-cronjob.yaml
+#   kubectl apply -k src/deploy/kustomize/overlays/backup-exec-restriction
+#
+# Requires Kyverno >= 1.11. See kyverno-backup-exec-restriction.yaml for full
+# background and instructions (issue #4062).
+
+resources:
+  - kyverno-backup-exec-restriction.yaml

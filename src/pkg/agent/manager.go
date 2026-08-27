@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -29,6 +30,7 @@ import (
 	"github.com/kubestellar/hive/pkg/pushbroker"
 	"github.com/kubestellar/hive/pkg/sandbox"
 	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/kubestellar/hive/pkg/watchdog"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -48,11 +50,15 @@ type KickRecord struct {
 	Snippet   string    `json:"snippet"`
 }
 
+// paneCaptureSleep is a pacing var, not a const, for the same reason as the
+// pacing block near deliverStartupKick: the pkg/agent TestMain shrinks it so
+// the suite fits the default `go test` timeout. Production value unchanged.
+var paneCaptureSleep = 500 * time.Millisecond
+
 const (
 	outputBufferCapacity = 500
 	kickHistoryCapacity  = 50
 	tmuxCaptureLines     = 2000
-	paneCaptureSleep     = 500 * time.Millisecond
 	proxyListenPort      = 18443
 	proxyCACertPath      = "/data/proxy-ca.pem"
 
@@ -106,6 +112,104 @@ const (
 	// whenever -x is given, so it is pinned here rather than left to the 24-row
 	// default.
 	defaultTmuxPaneHeight = 50
+
+	// tmuxStatusRight is the status line agent tmux sessions carry (#4399).
+	//
+	// THE PROBLEM IT SOLVES. Two things sat in the top-right of the browser
+	// terminal and neither said what it was:
+	//
+	//   * tmux's DEFAULT status-right is a live WALL CLOCK
+	//     (`"#{=21:pane_title}" %H:%M %d-%b-%y`). An operator reasonably read it
+	//     as a timestamp OF THE CONTENT and tried to line it up with the
+	//     scrollback — which can never work, because it is simply the time now.
+	//   * copy-mode draws a black-on-yellow `[position/total]` counter (tmux's
+	//     `mode-style bg=yellow,fg=black`). That is the only on-screen hint that
+	//     the pane is scrolled back, and it looks like a line counter, not a
+	//     warning.
+	//
+	// And copy-mode is the important state: while a pane is in it the pane
+	// STOPS FOLLOWING LIVE OUTPUT. #3694 deliberately turned mouse mode on so
+	// the wheel scrolls history, which means an operator reaches that state by
+	// doing the most natural thing in a terminal. Worse, copy-mode is PANE
+	// state held by the tmux server, so closing the browser tab and reopening
+	// it re-attaches to a pane that is still frozen — exactly the "no more
+	// output appeared, and reopening showed no more output" report in #4399.
+	//
+	// So: say which state the pane is in, and label the clock as the current
+	// time rather than leaving it to be misread as a content timestamp.
+	// Deliberately plain ASCII with no `#[...]` style blocks — style specs are
+	// comma-separated and a comma inside a `#{?...}` branch has to be escaped,
+	// which is exactly the kind of format-string subtlety that renders as
+	// garbage instead of failing loudly.
+	//
+	// The SCROLLBACK branch also carries the scroll position
+	// (`#{scroll_position}/#{history_size} lines back`) because the wheel
+	// rebind below hides tmux's own black-on-yellow marker — this is where
+	// that information now lives, with a label.
+	//
+	// THE THIRD STATE (#4681). The two branches above are not exhaustive, and
+	// the gap swallowed the position indicator entirely for the panes that
+	// matter most. The wheel rebind below only enters copy-mode when the
+	// running program has NOT grabbed the mouse:
+	//
+	//	if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -eH'
+	//
+	// Every agent CLI is a full-screen TUI that turns mouse reporting ON, so
+	// `mouse_any_flag` is 1 and the wheel is forwarded to the APPLICATION. The
+	// pane therefore never enters copy-mode, `pane_in_mode` stays 0, and the
+	// status line reported a bare `[live]` however far back the operator had
+	// scrolled inside the agent's own buffer. Combined with the `-H` that hides
+	// tmux's native `HH:MM [pos/total]` marker, that left no position and no
+	// content timestamp anywhere on screen — #4681's "I never saw an indication
+	// of my scroll position or timestamp", and why it read as a regression:
+	// before `-H` the native marker was at least SOMETIMES there.
+	//
+	// tmux genuinely cannot report a position here — the scrollback being moved
+	// belongs to the application, not to the pane — so this says exactly that
+	// instead of claiming `[live]`. Naming the reason is the point: `[live]`
+	// asserts the viewport is at the bottom of live output, which is false and
+	// unfalsifiable from the operator's side.
+	//
+	// The `#,` is an ESCAPED COMMA. tmux splits `#{?cond,a,b}` on unescaped
+	// commas, so prose commas inside a branch must be written `#,` or the
+	// branch silently truncates at the comma.
+	tmuxStatusRight = "#{?pane_in_mode,[SCROLLBACK #{scroll_position}/#{history_size} lines back - not following live output - press q to resume] ,#{?mouse_any_flag,[live - this app handles its own scrolling#, so tmux has no line position] ,[live] }}now %H:%M:%S "
+
+	// tmuxStatusRightLength bounds how many columns status-right may occupy.
+	// tmux's DEFAULT is 40, which silently truncated the message above to
+	// "[SCROLLBACK - not following live outp…" — losing both the "press q to
+	// resume" instruction and the labelled clock. The truncation is invisible
+	// to `display-message -p` (which expands the format without applying the
+	// length limit), which is how it escaped the original #4439 render test;
+	// the test now renders through a real attached client. 140 comfortably
+	// fits the longest expansion (position counters included) with headroom.
+	tmuxStatusRightLength = 140
+
+	// tmuxStatusInterval is how often (seconds) tmux redraws the status line.
+	// tmux's default is 15s, which would leave the SCROLLBACK marker above up
+	// to 15 seconds stale — long enough for an operator to scroll, see nothing
+	// change, and conclude the terminal is broken.
+	tmuxStatusInterval = 2
+
+	// tmuxWheelBindingKey/...Cond/...Then/...Else rebind the mouse wheel's
+	// copy-mode entry (#4399). tmux's default WheelUpPane binding is
+	//
+	//   if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } { copy-mode -e }
+	//
+	// and plain `copy-mode` draws tmux's built-in black-on-yellow marker in
+	// the pane's top-right: `<time> [position/total]`, where <time> is the
+	// WRITE TIME OF THE TOP VISIBLE LINE (tmux window-copy.c, gl->time) — a
+	// reference point no operator could be expected to guess, and the exact
+	// "timestamp whose reference point is unintelligible" reported in #4399.
+	// The rebind is byte-for-byte tmux's default with `-H` added (hide the
+	// marker; tmux >= 3.2), because the same information now appears LABELLED
+	// in the status line above. Bound server-wide on the agent's own private
+	// tmux server (each agent runs its own socket under its own UID), so no
+	// operator tmux is touched.
+	tmuxWheelBindingKey  = "WheelUpPane"
+	tmuxWheelBindingCond = "#{||:#{pane_in_mode},#{mouse_any_flag}}"
+	tmuxWheelBindingThen = "send-keys -M"
+	tmuxWheelBindingElse = "copy-mode -eH"
 )
 
 var defaultTmuxSocket string
@@ -119,18 +223,26 @@ var defaultTmuxSocket string
 const BreakerTrigger = "fleet-breaker"
 
 type AgentProcess struct {
-	Name              string
-	ID                string
-	Config            config.AgentConfig
-	State             ProcessState
-	PID               int
-	UID               int
-	StartedAt         *time.Time
-	LastKick          *time.Time
-	Paused            bool
-	PausedAt          time.Time
-	PausedReason      string
-	PausedTrigger     string
+	Name          string
+	ID            string
+	Config        config.AgentConfig
+	State         ProcessState
+	PID           int
+	UID           int
+	StartedAt     *time.Time
+	LastKick      *time.Time
+	Paused        bool
+	PausedAt      time.Time
+	PausedReason  string
+	PausedTrigger string
+	// PausedBy is the acting user behind the pause when one is known — the
+	// authenticated dashboard user for a dashboard-api pause, empty for
+	// system-initiated pauses (login-detector, fleet-breaker, acmm-pack).
+	// It exists because trigger+reason alone made a deliberate owner
+	// quiesce indistinguishable from a malfunction days later (#4041): the
+	// audit log had the actor, but nothing the UI or the fleet view reads
+	// carried it.
+	PausedBy          string
 	PinnedCLI         string
 	PinnedModel       string
 	ModelOverride     string
@@ -161,7 +273,28 @@ type AgentProcess struct {
 	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
 	LastError         string    // captured from bare copilot diagnostic launch
 	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
-	NeedsLogin        bool      // true when pane shows a login prompt
+	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
+	// not clear the login prompt. The restart is a falsifiable theory — "a valid
+	// token exists, the agent just has not picked it up yet" — and this is what
+	// makes it falsifiable: it is incremented when such a restart is issued and
+	// reset the moment the pane stops showing a login prompt. Once the theory
+	// has failed tokenRestartMaxAttempts times the restart stops firing, because
+	// something the restart cannot reach is holding the agent at the prompt
+	// (#4596: the credential is valid but $HOME/.claude.json carries no
+	// signed-in identity). Written only by this agent's pane poller, like
+	// lastTokenRestart beside it.
+	tokenRestartAttempts int
+	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
+	// a single time rather than every poll (~3s). Cleared alongside the counter.
+	tokenRestartGaveUp bool
+	NeedsLogin         bool // true when pane shows a login prompt
+	QuotaExhausted     bool // true when pane shows provider/monthly quota exhaustion
+	// WatchdogConditions is the k8s-style observed-health condition set the
+	// watchdog reconciler publishes for this agent (RFC #4665): Ready /
+	// Authenticated / Producing with lastTransitionTime + reason. Written by
+	// the reconciler via SetConditions, read by snapshot() for the dashboard.
+	// Guarded by paneMu, like the poller-written observation fields beside it.
+	WatchdogConditions []watchdog.Condition
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -177,10 +310,23 @@ type AgentProcess struct {
 	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
 	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
 	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
-	launchGen          int       // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
-	actionNudgeSent    bool      // no-action watchdog: at most one action nudge per kick
-	ActionNudges       int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
+	// is the cooldown anchor — the poller runs every 3s and the error text stays
+	// on screen after the nudge is typed, so without it one incident would fire
+	// a nudge per tick. transientNudgesThisKick is the per-kick cap; both it and
+	// the cooldown reset on the next kick.
+	lastTransientNudge      time.Time
+	transientNudgesThisKick int
+	TransientNudges         int // total transient-API-error nudges sent (surfaced to the dashboard)
+	launchGen               int // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks      int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	// kickLogPending is true while the current tmux session holds kick output
+	// that has not yet been archived to a per-kick log file (see
+	// kick_logs.go). Set after every kick delivery; cleared when the
+	// scrollback is archived (next kick, restart, shutdown). Guarded by m.mu.
+	kickLogPending  bool
+	actionNudgeSent bool // no-action watchdog: at most one action nudge per kick
+	ActionNudges    int  // total prose-only-response action nudges sent (surfaced to the dashboard)
 	// sandboxResumeAfterCancel is set when an operator resumes a paused
 	// sandbox agent while the canceled sandbox goroutine is still draining.
 	// The completion handler then turns the expected cancellation into Idle
@@ -231,6 +377,14 @@ type ProjectContext struct {
 	ACMMLevel       int
 	PRsAllowed      bool
 	PolicyDir       string
+	// GHHost is the bare hostname of the source forge when it is NOT public
+	// github.com (e.g. "github.ibm.com" for a GHE spoke), derived from the
+	// configured github.api_url. Exported to agents as GH_HOST so the gh CLI
+	// targets the right host — without it every agent gh call went to
+	// api.github.com where the project's repos do not exist (root-caused live
+	// 2026-08-20: the security agent's issue/PR creation failed silently on
+	// every GHE-hosted hive). Empty ⇒ public github.com, nothing exported.
+	GHHost string
 	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
 	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
@@ -246,6 +400,25 @@ func (p ProjectContext) PrimaryRepo() string {
 		return strings.TrimPrefix(p.Repos[0], p.Org+"/")
 	}
 	return ""
+}
+
+// PauseCausation is hook causation metadata carried in agent pause/resume
+// events without making pkg/agent import pkg/hooks.
+type PauseCausation struct {
+	Depth            int
+	HookName         string
+	OriginTransition string
+}
+
+// PauseTransitionEvent describes a durable agent pause/resume transition.
+type PauseTransitionEvent struct {
+	Agent     string
+	Paused    bool
+	Trigger   string
+	Reason    string
+	By        string
+	Causation PauseCausation
+	At        time.Time
 }
 
 type Manager struct {
@@ -292,6 +465,18 @@ type Manager struct {
 	// spoke. An atomic read is lock-free and safe from any lock context.
 	bobAPIKeyResolver atomic.Pointer[func() string]
 
+	// explainModeDefaultResolver returns the hive-wide default explain mode
+	// (governor.explain_mode, falling back to HIVE_EXPLAIN_MODE) at KICK and
+	// LAUNCH time rather than at boot, so an operator who turns explanation on
+	// from the dashboard while debugging sees it on the next kick instead of
+	// after a restart. Returns "" when no resolver was injected (tests / bare
+	// setups), which leaves resolveExplainMode on its env-only path.
+	//
+	// Same atomic.Pointer discipline and same deadlock reasoning as
+	// bobAPIKeyResolver above: it is read from deliverKickLocked and
+	// agentEnvPairs, both of which already hold m.mu.
+	explainModeDefaultResolver atomic.Pointer[func() string]
+
 	// bobKeySourceResolver reports WHERE the key was found ("file:<path>" or
 	// "env:<NAME>"), never the value. The launch path needs the PATH so it can
 	// verify the file is readable by the AGENT UID — the hive process can read
@@ -307,6 +492,14 @@ type Manager struct {
 	// this is an injected interface rather than a direct pkg/dashboard import,
 	// and why it is an atomic.Pointer rather than m.mu-guarded state.
 	auditSink atomic.Pointer[AuditSink]
+
+	// kickObserver, when set, receives kick lifecycle events ("kick-delivered",
+	// "kick-log-archived") for external progress surfaces — the Linear
+	// AgentActivity emitter (RFC #4492 Part 2) is the first consumer. Same
+	// atomic.Pointer discipline as auditSink: both notification sites run under
+	// m.mu, so the pointer must be readable from a locked context, and the
+	// observer is always invoked on its own goroutine. See kick_observer.go.
+	kickObserver atomic.Pointer[func(agentName, event, detail string)]
 
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
@@ -337,6 +530,7 @@ type Manager struct {
 	// m.mu (heartbeat AllStatuses, SendKick, terminal ResolveAgent) — the
 	// same failure class as the mint-issuer deadlock fixed in ca5f0f00.
 	persistPauseCallback func(name string, paused bool)
+	pauseObserver        atomic.Pointer[func(PauseTransitionEvent)]
 
 	// breakerEngaged and breakerPaused hold the fleet-breaker's state, guarded
 	// by m.mu. When an operator throws the breaker, EngageBreaker pauses every
@@ -359,17 +553,35 @@ type Manager struct {
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
-	sandboxConfig        config.AgentSandboxConfig
-	sandboxLauncher      sandbox.Launcher
-	sandboxRunner        sandboxCommandRunner
-	sandboxPushMinter    pushbroker.TokenMinter
-	sandboxPRClient      PRCreator
-	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+	// deadSessionRecoveryOwnedElsewhere is set when the watchdog reconciler
+	// owns restarting missing-session / bare-pane agents (RFC #4665), so this
+	// manager's crash loop observes those two conditions without restarting
+	// them. Guarded by m.mu, like the agent map it gates work over.
+	deadSessionRecoveryOwnedElsewhere bool
+	sandboxConfig                     config.AgentSandboxConfig
+	sandboxLauncher                   sandbox.Launcher
+	sandboxRunner                     sandboxCommandRunner
+	sandboxPushMinter                 pushbroker.TokenMinter
+	sandboxPRClient                   PRCreator
+	sandboxAuditCallback              atomic.Pointer[func(agent, action, detail string)]
 
+	paneCapture          func(agent *AgentProcess) string
 	visiblePaneCapture   func(agent *AgentProcess) string
+	sessionAttached      func(agent *AgentProcess) bool
+	sendLiteralForAgent  func(agent *AgentProcess, text string)
 	sendKeysForAgent     func(agent *AgentProcess, keys ...string)
 	promptDismissSleep   func(time.Duration)
 	promptDismissTimeout time.Duration
+
+	// Per-kick durable log archiving (#4296, #4295) — see kick_logs.go.
+	// kickLogDir/kickLogRetention/kickLogMaxBytes are resolved once in
+	// NewManager from env overrides; captureFullLogFn and clearHistoryFn are
+	// test seams over the tmux capture-pane / clear-history subprocesses.
+	kickLogDir       string
+	kickLogRetention int
+	kickLogMaxBytes  int64
+	captureFullLogFn func(agent *AgentProcess) (string, error)
+	clearHistoryFn   func(agent *AgentProcess)
 }
 
 // SetPersistPauseCallback wires a function that persists an agent's paused
@@ -379,6 +591,25 @@ func (m *Manager) SetPersistPauseCallback(fn func(name string, paused bool)) {
 	m.mu.Lock()
 	m.persistPauseCallback = fn
 	m.mu.Unlock()
+}
+
+// SetPauseTransitionObserver wires a post-persistence observer for agent
+// pause/resume transitions. The observer runs asynchronously.
+func (m *Manager) SetPauseTransitionObserver(fn func(PauseTransitionEvent)) {
+	if fn == nil {
+		m.pauseObserver.Store(nil)
+		return
+	}
+	m.pauseObserver.Store(&fn)
+}
+
+func (m *Manager) emitPauseTransition(event PauseTransitionEvent) {
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	if fn := m.pauseObserver.Load(); fn != nil && *fn != nil {
+		go (*fn)(event)
+	}
 }
 
 // SetRecordPromptCallback wires a function that persists a delivered kick
@@ -560,6 +791,30 @@ func (m *Manager) bobAPIKey() string {
 	return (*fnp)()
 }
 
+// SetExplainModeDefaultResolver injects the resolver for the hive-wide default
+// explain mode. Called from main.go with a closure over the live config, so a
+// default changed from the dashboard applies to the next kick without a
+// restart. A nil fn clears it, restoring the env-only fallback.
+func (m *Manager) SetExplainModeDefaultResolver(fn func() string) {
+	// Atomic store — no m.mu — so explainModeDefault can be read lock-free from
+	// the kick and launch paths (see explainModeDefaultResolver docs).
+	if fn == nil {
+		m.explainModeDefaultResolver.Store(nil)
+		return
+	}
+	m.explainModeDefaultResolver.Store(&fn)
+}
+
+// explainModeDefault returns the hive-wide default explain mode, or "" when no
+// resolver was injected. Safe to call while holding m.mu.
+func (m *Manager) explainModeDefault() string {
+	fnp := m.explainModeDefaultResolver.Load()
+	if fnp == nil || *fnp == nil {
+		return ""
+	}
+	return (*fnp)()
+}
+
 // SetBobKeySourceResolver injects the resolver reporting WHERE the bob key was
 // found. The returned string is safe to log ("file:<path>" / "env:<NAME>") and
 // never contains the key value.
@@ -656,6 +911,20 @@ var agentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
 // agentTokenCachePerms restricts a per-agent credential file to owner-only.
 const agentTokenCachePerms = 0o600
 
+// agentStateDir is the directory holding the per-agent runtime state files:
+// .hive-mode-<name> / .hive-caps-<name> (the enforcement files gh-wrapper.sh
+// and the proxy read) and .hive-bootstrap-<name>.txt (the goose bootstrap
+// prompt, cat'ed by a launch command built from this same value, so writer and
+// reader can never disagree).
+//
+// A var (not const) as a TEST SEAM, matching the
+// ModeFileGlob/CapsFileGlob/SharedRepoParent convention: a test suite running
+// on a host that also runs a live hive must never write the live enforcement
+// files under /tmp — rewriting /tmp/.hive-mode-<agent> from a test would
+// change a REAL agent's GitHub enforcement mode (#4737/#4738). TestMain points
+// this at the per-run temp tree. Production value is unchanged.
+var agentStateDir = "/tmp"
+
 // AgentMintTokenCachePath returns the per-agent mint-token cache file path. It
 // sits beside the GitHub App token cache but is a distinct file so the two
 // credentials never collide — an agent reads the App token for GitHub and the
@@ -721,13 +990,57 @@ func writeAgentCredFile(path, token string, agentUID int) error {
 	return nil
 }
 
-const agentTokenRefreshInterval = 40 * time.Minute
+const (
+	// defaultAgentTokenRefreshInterval is how often per-agent scoped token
+	// cache files are rewritten. Installation tokens expire after 1 hour;
+	// refreshing at 40-minute intervals keeps a valid token on disk with a
+	// 20-minute safety margin.
+	defaultAgentTokenRefreshInterval = 40 * time.Minute
+	// AgentTokenRefreshIntervalEnv overrides the refresh interval with a Go
+	// duration string (e.g. "30m"). Invalid or non-positive values fall back
+	// to the default.
+	AgentTokenRefreshIntervalEnv = "HIVE_AGENT_TOKEN_REFRESH_INTERVAL"
+
+	// defaultCredentialWatchdogInterval is how often the credential watchdog
+	// checks that each in-use backend's durable credential file still exists
+	// and is usable. It is a slow health check (a missing/expired credential is
+	// a standing condition until an operator re-logs in, not a fast-moving one),
+	// so a coarse interval keeps the Audit Log signal-not-noise while still
+	// catching a post-upgrade-roll loss within a few minutes.
+	defaultCredentialWatchdogInterval = 5 * time.Minute
+	// CredentialWatchdogIntervalEnv overrides the watchdog interval with a Go
+	// duration string. Invalid or non-positive values fall back to the default;
+	// a value of "0" does NOT disable the watchdog (use the parse-failure path
+	// only for overrides) — disabling is intentionally not offered so the
+	// safety net cannot be silently turned off.
+	CredentialWatchdogIntervalEnv = "HIVE_CREDENTIAL_WATCHDOG_INTERVAL"
+)
+
+// agentTokenRefreshInterval resolves the per-agent token refresh interval
+// from AgentTokenRefreshIntervalEnv, falling back to the default.
+func agentTokenRefreshInterval() time.Duration {
+	if v := os.Getenv(AgentTokenRefreshIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultAgentTokenRefreshInterval
+}
 
 // StartAgentTokenRefresh refreshes per-agent scoped tokens for all running
 // agents on a timer. Tokens expire after 1 hour; this refreshes at 40-minute
-// intervals so there's always a valid token on disk.
+// intervals (configurable via HIVE_AGENT_TOKEN_REFRESH_INTERVAL) so there's
+// always a valid token on disk.
+//
+// Safe to start even before an App auth is wired: refreshAgentTokens no-ops
+// while m.appAuth is nil, so hives whose GitHub App credentials arrive AFTER
+// boot (heartbeat delivery, config API reinit, config reload) start refreshing
+// as soon as SetAppAuth is called. Previously this loop was only started when
+// the App was configured at boot, so hosted spokes never refreshed per-agent
+// caches: agent sessions outlived their token, `gh` 401'd and printed
+// "gh auth login", and the login-detector auto-paused the agent.
 func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
-	ticker := time.NewTicker(agentTokenRefreshInterval)
+	ticker := time.NewTicker(agentTokenRefreshInterval())
 	defer ticker.Stop()
 	for {
 		select {
@@ -737,6 +1050,355 @@ func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
 			m.refreshAgentTokens(ctx)
 		}
 	}
+}
+
+// credentialWatchdogInterval resolves the watchdog interval from
+// CredentialWatchdogIntervalEnv, falling back to the default.
+func credentialWatchdogInterval() time.Duration {
+	if v := os.Getenv(CredentialWatchdogIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultCredentialWatchdogInterval
+}
+
+// credentialWatch describes one CLI backend whose usable credential lives in a
+// durable file on the hive PVC that the hive relies on but does NOT itself keep
+// alive. Only backends of this shape belong here: bob resolves its key at
+// launch and fails loudly, and gemini/codex/goose/pi/inference backends keep
+// their creds under the agent's own $HOME (or do no CLI login at all), so there
+// is no hive-managed file for a presence check to watch.
+//
+// probe reports (ok, reason): ok=true means the credential is usable; when
+// false, reason is a short human string ("missing" / "invalid or expired") for
+// the audit detail and log. It must only stat/parse the file — never emit,
+// mutate, or return token material.
+type credentialWatch struct {
+	backend     string
+	path        string
+	auditAction string
+	probe       func(path string) (ok bool, reason string)
+}
+
+// copilotTokenUsable reports whether the durable Copilot device-flow token file
+// is present and non-empty. It reads only the file's presence and size — never
+// its contents.
+func copilotTokenUsable(path string) (bool, string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return false, "missing"
+	}
+	return true, ""
+}
+
+// claudeTokenUsable reports whether the Claude credentials file holds a valid,
+// non-expired token. Unlike copilot's, a Claude credential can be PRESENT but
+// unusable (expired), so a bare presence check is insufficient — it delegates
+// to claude.HasValidToken, which parses the file and checks expiry. It
+// distinguishes an absent file ("missing") from a present-but-stale one
+// ("invalid or expired") for a more actionable alert.
+func claudeTokenUsable(path string) (bool, string) {
+	if _, err := os.Stat(path); err != nil {
+		return false, "missing"
+	}
+	if !claude.HasValidToken(path) {
+		return false, "invalid or expired"
+	}
+	return true, ""
+}
+
+// credentialWatches is the set of durable-credential files the watchdog guards,
+// keyed by backend. Adding a new CLI backend of the same shape is a one-line
+// entry here — nothing else in the loop changes.
+func credentialWatches() []credentialWatch {
+	return []credentialWatch{
+		{backend: "copilot", path: copilotUserTokenWatchPath, auditAction: AuditCopilotTokenMissing, probe: copilotTokenUsable},
+		{backend: "claude", path: claude.CredentialsPath, auditAction: AuditClaudeTokenMissing, probe: claudeTokenUsable},
+	}
+}
+
+// StartCredentialWatchdog periodically verifies that each in-use CLI backend's
+// durable credential file (Copilot device-flow token, Claude OAuth credentials)
+// is present and usable, and emits an audit event + logs a warning when it is
+// not. It is a SAFETY NET, not a fixer: it never reads, writes, or otherwise
+// touches token material (recovery is an operator dashboard device-flow login,
+// per the manual-login rule). It exists because the loudest failure mode we
+// see is silent: a fresh agent pod after an upgrade roll finds no durable
+// credential, every agent CLI hangs at its login prompt, and — absent this —
+// the only signal is agents quietly ceasing work for hours. Turning that into
+// an immediate, queryable Audit Log entry is the whole point.
+//
+// Gating: each backend's check only fires when at least one configured agent
+// uses that backend. A Claude-only hive never alerts on a missing Copilot
+// token, and vice versa; gateway/inference-only hives alert on neither.
+//
+// Safe to start unconditionally at boot: like StartAgentTokenRefresh it tracks
+// live state each tick rather than a boot-time snapshot, so a hive that gains
+// or loses a backend via config reload is evaluated correctly.
+func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
+	ticker := time.NewTicker(credentialWatchdogInterval())
+	defer ticker.Stop()
+	// Per-backend transition tracker so we log/audit on TRANSITIONS (usable ->
+	// unusable and back) rather than every tick — a standing condition would
+	// otherwise flood the Audit Log at the tick rate.
+	lastUnusable := make(map[string]bool)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, w := range credentialWatches() {
+				m.evalCredentialWatch(w, lastUnusable)
+			}
+		}
+	}
+}
+
+// defaultCopilotSessionRefreshInterval is how often the Copilot session-token
+// refresh loop ensures the CLI's config.json copilotTokens map is populated
+// from the durable user token. Chosen well under the ~hour that a stored token
+// stays fresh so an emptied map is re-seeded long before an agent next reads
+// it, and low-cost (a small file read + conditional write) so a tight interval
+// is cheap.
+const defaultCopilotSessionRefreshInterval = 10 * time.Minute
+
+// CopilotSessionRefreshIntervalEnv overrides the interval with a Go duration.
+const CopilotSessionRefreshIntervalEnv = "HIVE_COPILOT_SESSION_REFRESH_INTERVAL"
+
+func copilotSessionRefreshInterval() time.Duration {
+	if v := os.Getenv(CopilotSessionRefreshIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultCopilotSessionRefreshInterval
+}
+
+// StartCopilotSessionRefresh keeps the Copilot CLI's config.json copilotTokens
+// map populated from the durable user token, so agents never sit stuck at
+// "Please use /login" while a VALID token exists.
+//
+// The failure it fixes: clearExpiredTokens (on an auth-error diagnostic) and a
+// config rewrite on an upgrade roll leave copilotTokens EMPTY, and CLI 1.0.78
+// does NOT re-populate it from the injected COPILOT_GITHUB_TOKEN on its own —
+// it just prompts /login. A restart does not help (it re-reads the empty map).
+// Every roll churns fresh agent pods, so absent this the whole hive can go dark
+// on Copilot with a perfectly good token sitting on disk.
+//
+// It is NOT a login: it never runs a device flow and never mints or fetches a
+// token. It only re-uses the token the operator already provided (m.copilotAuth‐
+// Token / the durable file), writing it into the store the CLI reads. When the
+// hive holds no Copilot token it does nothing — recovery there is still the
+// operator's manual dashboard login.
+//
+// Gating: only runs on hives with a copilot-backend agent. Only writes when the
+// store is EMPTY (or absent) — it never overwrites a token the CLI itself wrote
+// and is still using, so it can't clobber a live session.
+func (m *Manager) StartCopilotSessionRefresh(ctx context.Context) {
+	// Run once shortly after start rather than waiting a full interval for the
+	// first tick. Spokes that roll faster than the interval (ks/hive rolls every
+	// ~15-30m) would otherwise seldom reach the first tick before the pod dies,
+	// so a promote/seed could be perpetually deferred. The short settle delay
+	// lets the agents' CLIs write their config.json first, so a login done just
+	// before/at boot is visible to the promote path. Bounded by ctx so a fast
+	// shutdown does not block.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(copilotSessionRefreshStartDelay()):
+		m.refreshCopilotSessionToken()
+	}
+
+	ticker := time.NewTicker(copilotSessionRefreshInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.refreshCopilotSessionToken()
+		}
+	}
+}
+
+// copilotSessionRefreshStartDelay is how long to wait after boot before the
+// first session-token reconcile, giving agent CLIs time to write config.json.
+// Env-overridable (HIVE_COPILOT_SESSION_REFRESH_START_DELAY) mainly so tests
+// can drive it to near-zero.
+const defaultCopilotSessionRefreshStartDelay = 30 * time.Second
+
+// CopilotSessionRefreshStartDelayEnv overrides the start delay with a Go
+// duration. Non-positive/invalid values fall back to the default.
+const CopilotSessionRefreshStartDelayEnv = "HIVE_COPILOT_SESSION_REFRESH_START_DELAY"
+
+func copilotSessionRefreshStartDelay() time.Duration {
+	if v := os.Getenv(CopilotSessionRefreshStartDelayEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return defaultCopilotSessionRefreshStartDelay
+}
+
+// refreshCopilotSessionToken keeps the Copilot credential in sync between the
+// CLI's config.json copilotTokens map and the hive's durable store, in BOTH
+// directions, on a copilot-backend hive. One tick's work; safe from the timer
+// or ad hoc.
+//
+//   - PROMOTE (config → durable): if the CLI has a token (someone logged in
+//     INSIDE an agent with /login) but the hive's in-memory/durable token is
+//     missing or stale, mirror the CLI's token to the durable file +
+//     SetCopilotToken. This makes an in-agent login as durable as a dashboard
+//     login — it survives rolls and arms the seed direction below — closing the
+//     gap where a local /login unstuck agents now but was lost on the next roll.
+//   - SEED (durable → config): if the CLI's map is EMPTY but the hive holds a
+//     token, restore it so the CLI is not left stuck at /login (the #4494 case).
+//
+// It never runs a device flow and never mints a token; it only mirrors a token
+// that already exists. The manual-login rule is intact.
+func (m *Manager) refreshCopilotSessionToken() {
+	if !m.backendInUse("copilot") {
+		return
+	}
+	m.syncCopilotToken(sharedCopilotConfigPath, CopilotUserTokenPath)
+}
+
+// copilotSyncAction names what one syncCopilotToken call did, for logging and
+// deterministic tests.
+type copilotSyncAction int
+
+const (
+	copilotSyncNoop    copilotSyncAction = iota
+	copilotSyncPromote                   // config token mirrored to the durable store
+	copilotSyncSeed                      // durable token restored into an empty config
+)
+
+// syncCopilotToken reconciles the CLI's config.json copilotTokens map with the
+// hive's durable/in-memory token, in both directions. Parameterized on both
+// paths so it is testable without touching /data. See refreshCopilotSessionToken
+// for the promote/seed rationale.
+func (m *Manager) syncCopilotToken(configPath, durablePath string) copilotSyncAction {
+	m.mu.RLock()
+	held := strings.TrimSpace(m.copilotAuthToken)
+	m.mu.RUnlock()
+
+	if copilotCredentialFileHasTokens(configPath) {
+		// PROMOTE: the CLI has a token; mirror it to the durable store unless the
+		// hive already holds exactly it.
+		cliTok := extractCopilotToken(configPath)
+		if cliTok == "" || cliTok == held {
+			return copilotSyncNoop
+		}
+		if err := writeDurableCopilotToken(durablePath, cliTok); err != nil {
+			m.logger.Warn("copilot session refresh: failed to promote CLI token to durable file",
+				"path", durablePath, "error", err)
+			return copilotSyncNoop
+		}
+		m.SetCopilotToken(cliTok)
+		m.logger.Info("copilot session refresh: promoted in-agent login token to the durable store",
+			"path", durablePath)
+		return copilotSyncPromote
+	}
+
+	// SEED: the CLI map is empty; restore from the held token so agents are not
+	// left stuck at /login.
+	if held == "" {
+		// Genuinely logged out — the StartCredentialWatchdog alert covers this;
+		// recovery is a manual login.
+		return copilotSyncNoop
+	}
+	if err := restoreCopilotTokens(configPath, held); err != nil {
+		m.logger.Warn("copilot session refresh: failed to restore copilotTokens",
+			"path", configPath, "error", err)
+		return copilotSyncNoop
+	}
+	m.logger.Info("copilot session refresh: re-seeded empty copilotTokens from durable user token",
+		"path", configPath)
+	return copilotSyncSeed
+}
+
+// evalCredentialWatch runs one backend's probe (only if that backend is in
+// use) and emits a transition-edge log + audit event. lastUnusable carries the
+// previous observation per backend across ticks.
+func (m *Manager) evalCredentialWatch(w credentialWatch, lastUnusable map[string]bool) {
+	if !m.backendInUse(w.backend) {
+		// Not in use: nothing to watch. Reset the tracker so a later config
+		// change that adds this backend with a bad credential alerts on its
+		// first miss rather than being masked as "no transition".
+		delete(lastUnusable, w.backend)
+		return
+	}
+	ok, reason := w.probe(w.path)
+	unusable := !ok
+	if unusable && !lastUnusable[w.backend] {
+		m.logger.Warn("credential watchdog: durable credential unusable",
+			"backend", w.backend,
+			"path", w.path,
+			"reason", reason,
+			"impact", "agents on this backend hang at login; new pods cannot start work",
+			"recovery", "operator dashboard device-flow login")
+		m.audit(w.auditAction, "", auditFields(
+			"outcome", reason,
+			"backend", w.backend,
+			"path", w.path,
+			"trigger", "watchdog",
+		))
+	} else if !unusable && lastUnusable[w.backend] {
+		m.logger.Info("credential watchdog: durable credential restored",
+			"backend", w.backend, "path", w.path)
+	}
+	lastUnusable[w.backend] = unusable
+}
+
+// backendInUse reports whether any configured agent runs on the named backend
+// (honoring a runtime BackendOverride).
+func (m *Manager) backendInUse(backend string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.agents {
+		if effectiveBackend(a) == backend {
+			return true
+		}
+	}
+	return false
+}
+
+// RefreshAgentTokens immediately rewrites every running agent's per-agent
+// scoped token cache. Called when GitHub App auth is wired late (heartbeat
+// delivery, config API reinit, config reload) so agents that were already
+// running get a valid cache right away instead of waiting for the next tick.
+func (m *Manager) RefreshAgentTokens(ctx context.Context) {
+	m.refreshAgentTokens(ctx)
+}
+
+// RefreshAgentTokenFor re-mints and re-caches the scoped token for a single
+// agent, using the same tier logic as launch. Used by the login-detector to
+// attempt a token re-cache before pausing: the likeliest cause of a `gh`
+// "gh auth login" prompt on an App-authenticated hive is an expired cached
+// token, so refreshing it means a subsequent Resume works immediately.
+// Returns an error when the agent is unknown, has no UID, or no App auth is
+// wired.
+func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
+	m.mu.RLock()
+	auth := m.appAuth
+	agent, ok := m.agents[name]
+	m.mu.RUnlock()
+
+	if auth == nil {
+		return fmt.Errorf("no github app auth wired")
+	}
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	if agent.UID <= 0 {
+		return fmt.Errorf("agent %s has no dedicated UID", name)
+	}
+	tier := m.agentMode(agent).TokenTier()
+	if err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
+		return fmt.Errorf("re-caching scoped token for %s: %w", name, err)
+	}
+	return nil
 }
 
 func (m *Manager) refreshAgentTokens(ctx context.Context) {
@@ -838,6 +1500,8 @@ func newManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 }
 
 func newManagerWithUIDMap(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext, workDir, copilotToken, claudeToken string, uidMap *UIDMap) *Manager {
+	kickLogDir, kickLogRetention, kickLogMaxBytes := kickLogSettingsFromEnv()
+
 	m := &Manager{
 		agents:             make(map[string]*AgentProcess),
 		idToName:           make(map[string]string),
@@ -849,6 +1513,9 @@ func newManagerWithUIDMap(agents map[string]config.AgentConfig, logger *slog.Log
 		copilotAuthToken:   copilotToken,
 		claudeAuthToken:    claudeToken,
 		uidMap:             uidMap,
+		kickLogDir:         kickLogDir,
+		kickLogRetention:   kickLogRetention,
+		kickLogMaxBytes:    kickLogMaxBytes,
 	}
 
 	for name, cfg := range agents {
@@ -1053,13 +1720,32 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// (kellyaa: her litellm-routed agents un-paused while the copilot
 		// strategist stayed paused, which is what exposed this).
 		operatorPaused := agent.Config.Paused || agent.PausedTrigger == "dashboard-api"
-		if IsInferenceBackend(backend) && !operatorPaused {
+		// A login-detector pause describes a LIVE pane condition ("a login
+		// prompt is on screen right now") that cannot outlive the pane — after
+		// a restart/pod roll there is no pane, so restoring the pause just
+		// strands the agent forever with nothing left to re-evaluate it
+		// (kubestellar/hive, 2026-08-22: four copilot agents stayed
+		// persisted-paused across every roll). Drop it on startup and let the
+		// agent launch; if the condition still holds, the detector re-pauses
+		// within one tick — and with PaneShowsBlockingPrompt it now only
+		// pauses for REAL login prompts. Keyed strictly on the trigger so an
+		// operator pause (dashboard-api / hand-set Config.Paused without a
+		// system trigger) is never touched — the kellyaa regression above is
+		// exactly what happens when this distinction is dropped.
+		loginDetectorPaused := agent.PausedTrigger == "login-detector"
+		if (IsInferenceBackend(backend) && !operatorPaused) || loginDetectorPaused {
 			// agent.Paused is an m.mu-guarded field; brief re-lock around the
 			// write so it stays atomic against AllStatuses()/setters.
 			m.mu.Lock()
 			agent.Paused = false
+			if loginDetectorPaused {
+				// The system pause persisted Config.Paused; clear it so the
+				// launch below isn't re-blocked and a later save doesn't
+				// re-persist a pause nobody owns anymore.
+				agent.Config.Paused = false
+			}
 			m.mu.Unlock()
-			m.logger.Info("auto-unpaused inference agent (transient pause, not operator)", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
+			m.logger.Info("auto-unpaused transiently paused agent on startup", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
 		} else {
 			m.mu.Lock()
 			agent.State = StatePaused
@@ -1175,8 +1861,29 @@ func tmuxPaneWidth() int {
 func newSessionCommands(session, dir string) []string {
 	return []string{
 		"set-option", "-g", "history-limit", strconv.Itoa(tmuxHistoryLimit()), ";",
+		// #4399: set the status line BEFORE new-session so the pane carries it
+		// from its first frame. Global (-g) rather than per-session because each
+		// agent runs on its own tmux socket under its own UID
+		// (/tmp/tmux-2007/hive-scanner), so "global" is scoped to that one
+		// agent's server — and a global set also reaches panes created later in
+		// the session, which a per-session set would not.
+		"set-option", "-g", "status-right", tmuxStatusRight, ";",
+		// #4399 follow-up: tmux truncates status-right to status-right-length,
+		// whose DEFAULT is 40 columns — which cut the message above off at
+		// "[SCROLLBACK - not following live outp". Must be raised or the label
+		// ships truncated.
+		"set-option", "-g", "status-right-length", strconv.Itoa(tmuxStatusRightLength), ";",
+		"set-option", "-g", "status-interval", strconv.Itoa(tmuxStatusInterval), ";",
 		"new-session", "-d", "-s", session, "-c", dir,
-		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight),
+		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight), ";",
+		// #4399: hide tmux's unlabelled black-on-yellow copy-mode marker (its
+		// "<top-line write time> [pos/total]" is what the issue could not
+		// parse) — the labelled status line above carries the position now.
+		// AFTER new-session on purpose: bind-key is server-wide and reaches
+		// wheel events whenever it runs, but if a pre-3.2 tmux rejects the
+		// `-H` flag the session itself must already exist.
+		"bind-key", "-n", tmuxWheelBindingKey,
+		"if-shell", "-F", tmuxWheelBindingCond, tmuxWheelBindingThen, tmuxWheelBindingElse,
 	}
 }
 
@@ -1295,6 +2002,9 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if launchBackend == codexBackend {
 			m.setupCodexHome(agent)
 		}
+		// Provision the per-agent interactive HOME (#4596): directory, shared-
+		// state bridges, signed-in Claude session adoption, legacy tmp sweep.
+		m.setupInteractiveHome(agent, launchBackend)
 	}
 
 	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
@@ -1376,12 +2086,22 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if agent.BackendOverride != "" {
 			backend = agent.BackendOverride
 		}
-		if backend == "" || IsInferenceBackend(backend) {
+		if backend == "" || m.routableBackend(backend) {
 			backend = "claude"
 		}
-		pipePaneCmd := fmt.Sprintf("%s watch %s --cli=%s", plukPath, agent.tmuxSession, backend)
+		logFile, err := ensurePlukLogFile(plukRunDir, agent.tmuxSession)
+		if err != nil {
+			// Non-fatal, and deliberately not a reason to skip the attach: the
+			// shell's own `>>` will still create the file. It may land 0600 under
+			// a tight umask, which costs peer readability but not the agent's own
+			// logging, and that is strictly better than no publisher at all.
+			m.logger.Warn("pluk log file setup failed; peer agents may not be able to read this session's log",
+				"agent", agent.Name, "error", err)
+			logFile = plukSessionLogPath(plukRunDir, agent.tmuxSession)
+		}
+		pipePaneCmd := plukPipePaneCmd(plukPath, agent.tmuxSession, backend, logFile)
 		_ = m.tmuxCmd(agent, "pipe-pane", "-t", agent.tmuxSession, "-o", pipePaneCmd).Run()
-		m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend)
+		m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend, "log", logFile)
 	}
 
 	return nil
@@ -1661,18 +2381,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if agent.specialistReady {
 		binary, err = m.specialistBackendBinary(agent)
 	} else {
-		// A configured model-gateway NAME (e.g. "watsonx-supervisor") is a valid
-		// backend that config.ValidateBackend accepts, but backendBinary only knows
-		// the static CLIBackends/InferenceBackends lists — so a named gateway would
-		// fail here with "unknown backend" even though the test passed (#3302). Every
-		// gateway is OpenAI-compatible and launches the SAME claude CLI pointed at
-		// hive's translator via ANTHROPIC_BASE_URL (identical to InferenceBackends),
-		// so resolve a routable gateway backend to the claude binary directly.
-		resolveBackend := backend
-		if m.routableBackend(backend) {
-			resolveBackend = "claude"
-		}
-		binary, err = backendBinary(resolveBackend)
+		binary, err = m.backendBinary(backend)
 	}
 	if err != nil {
 		agent.State = StateFailed
@@ -1682,9 +2391,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// before this), so without a banner the pane is a silent bare shell —
 		// the operator attaches and sees a prompt, not a failure. Say which
 		// binary was attempted, that it is missing, and what to do.
-		m.announceLaunchFailureInPane(agent, fmt.Sprintf(
-			"backend %s did not launch: %v. The CLI for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend.",
-			backend, err))
+		m.announceLaunchFailureInPane(agent, m.backendLaunchFailureMessage(backend, err))
 		return nil
 	}
 
@@ -1754,7 +2461,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		model = agent.ModelOverride
 	}
 	modelIn := model
-	model = normalizeModelName(model, backend)
+	isInference := m.routableBackend(backend)
+	model = normalizeModelNameForBackend(model, backend, isInference)
 
 	bootstrapPrompt := agent.BootstrapOverride
 	if agent.specialistReady {
@@ -1772,9 +2480,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	agent.LaunchedMode = mode
 	agent.HasLaunched = true
 
-	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
-	// and route API traffic through the proxy to the self-hosted endpoint.
-	isInference := m.routableBackend(backend)
+	// Inference backends and configured gateway names use Claude Code as the CLI
+	// tool and route API traffic through the proxy to the selected endpoint.
 	if isInference {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
@@ -1818,7 +2525,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// gh-wrapper/proxy layer only, not what the MCP may write.
 			launchCmd = base + claudeGitHubWriteDenyFlags
 		case "copilot":
-			// model is passed verbatim to `copilot --model %s`. It may be a
+			// model arrives here already canonicalized by normalizeModelName
+			// (CanonicalizeCopilotModel: separator drift like claude-fable.5 is
+			// normalized to the CLI-accepted claude-fable-5, #4262) and is then
+			// passed as-is to `copilot --model %s`. It may be a
 			// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
 			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
 			// per task. Nothing here assumes a concrete id, so the sentinel flows
@@ -1905,6 +2615,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		now := time.Now()
 		agent.LastKick = &now
 		agent.LastKickMessage = bootstrapPrompt
+		agent.kickLogPending = true
 		snippet := bootstrapPrompt
 		const maxBootstrapSnippet = 200
 		snippet = truncateStr(snippet, maxBootstrapSnippet)
@@ -1922,7 +2633,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// deliverStartupKick above, so no /tmp/.hive-bootstrap-<name>.txt is
 		// written for them. bob used to land here and get a file nothing ever
 		// read; that dead write is gone with the deferral above.
-		promptFile := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
+		promptFile := filepath.Join(agentStateDir, fmt.Sprintf(".hive-bootstrap-%s.txt", agent.Name))
 		// N15: owner-only + O_NOFOLLOW (see writeAgentStateFile).
 		if err := writeAgentStateFile(promptFile, []byte(bootstrapPrompt)); err != nil {
 			m.logger.Warn("failed to write bootstrap prompt", "name", agent.Name, "error", err)
@@ -1935,7 +2646,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// Without bootstrap, use a minimal --text prompt so goose output is
 	// visible to tmux capture-pane (--instructions - uses hidden TUI).
 	if backend == "goose" && bootstrapPrompt == "" {
-		minimalPrompt := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
+		minimalPrompt := filepath.Join(agentStateDir, fmt.Sprintf(".hive-bootstrap-%s.txt", agent.Name))
 		if err := writeAgentStateFile(minimalPrompt, []byte("You are an AI agent. Wait for instructions from the supervisor.")); err != nil {
 			m.logger.Warn("failed to write minimal bootstrap prompt", "name", agent.Name, "error", err)
 		}
@@ -1985,6 +2696,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 
 	m.fixSharedConfigPerms(agent)
+
+	// NOTE on Copilot's "Confirm folder trust" modal (≥1.0.78): #4563 tried to
+	// pre-seed config.json trusted_folders here so it never appears. That does
+	// NOT work — the shared config is rewritten wholesale by every running CLI
+	// from its own stale in-memory snapshot, so seeded entries are stomped
+	// within minutes (traced live 2026-08-22). The modal is instead answered
+	// session-only ("1. Yes") by watchForTrustPromptForAgent, which now runs
+	// for the agent's whole lifetime, and the login-detector stands down while
+	// the modal is on screen (PaneShowsBlockingPrompt).
 
 	// Re-apply SECRET env vars before every launch. ensureTmuxSession sets the
 	// full env via tmux set-environment, but it returns early when the session
@@ -2093,7 +2813,9 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 		return
 	}
 
-	home := "/data/home"
+	// AgentHome so caveman's ~/.claude / ~/.copilot writes land in the same
+	// HOME the agent's CLI runs with (per-agent layout, bridged to shared).
+	home := AgentHome(agent.Name, agent.UID, backend)
 	if agent.UID == 0 {
 		home = os.Getenv("HOME")
 		if home == "" {
@@ -2103,9 +2825,52 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 
 	m.logger.Info("installing caveman", "agent", agent.Name, "backend", backend, "mode", mode)
 
+	// The installer must run AS THE AGENT USER, not as the hive user. Caveman
+	// spawns the backend's own CLI (`claude plugin list` / `plugin install`,
+	// caveman bin/install.js), and Claude Code rewrites $HOME/.claude.json
+	// wholesale on every invocation. Run as the hive user with the agent's
+	// HOME, that CLI cannot read the agent-owned 0600 session file, treats
+	// the home as a fresh install, and replaces the signed-in session with a
+	// blank skeleton — the agent drops to the login menu on its next start.
+	// This is the #4596 wholesale-rewrite clobber reintroduced from inside
+	// the manager, through the per-agent home layout that #4619 built to end
+	// it. su-exec here matches every other command that touches the per-agent
+	// HOME (tmuxCmd, setupCodexHome).
+	userSpec := ""
+	if agent.UID > 0 {
+		userSpec = m.agentExecUserSpec(agent)
+	}
+	argv := cavemanInstallArgv(backend, mode, userSpec)
+	if argv == nil {
+		m.logger.Info("caveman not supported for backend", "backend", backend)
+		return
+	}
+
+	agentDir := filepath.Join("/data/agents", agent.Name)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = agentDir
+	npmCache := cavemanNpmCachePath(agentDir, agent.UID)
+	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+npmCache)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		m.logger.Warn("caveman install failed", "agent", agent.Name, "error", err, "output", string(out))
+	}
+}
+
+// cavemanInstallArgv builds the argv for a backend's caveman installer, or
+// nil for backends caveman does not support. A non-empty userSpec prefixes
+// the command with su-exec so the whole install — including the backend CLIs
+// caveman spawns — runs as the agent user (see installCavemanForAgent for
+// why that is load-bearing).
+func cavemanInstallArgv(backend, mode, userSpec string) []string {
 	// Pinned: unpinned HEAD broke every install on 2026-07-27 when upstream
 	// removed the --mode flag. Bump deliberately, after checking `--help`.
-	const cavemanRef = "github:JuliusBrussee/caveman#0d95a81d35a9"
+	// v1.9.1 IS commit 0d95a81d35a9 — the SHA form is deliberately not used
+	// because the `skills` CLI clones with `git clone --branch <ref>`, and
+	// git cannot clone a bare SHA as a branch ("Could not find remote branch
+	// 0d95a81d35a9"), which broke every install on a live hive. Tags clone
+	// cleanly; bump the tag, never a raw SHA.
+	const cavemanRef = "github:JuliusBrussee/caveman#v1.9.1"
+	const skillsRef = "JuliusBrussee/caveman#v1.9.1"
 	// Upstream replaced `--mode full|minimal` with `--all` / `--minimal`
 	// (--all = hooks + init).
 	modeFlag := "--all"
@@ -2113,35 +2878,57 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 		modeFlag = "--minimal"
 	}
 
-	var cmd *exec.Cmd
+	var argv []string
 	switch backend {
 	case "claude":
-		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "claude", modeFlag)
+		argv = []string{"npx", "-y", cavemanRef, "--", "--only", "claude", modeFlag}
 	case "copilot":
-		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "copilot", "--with-init", modeFlag)
+		argv = []string{"npx", "-y", cavemanRef, "--", "--only", "copilot", "--with-init", modeFlag}
 	case "gemini":
-		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag)
+		argv = []string{"npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag}
 	case "goose":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "goose")
+		argv = []string{"npx", "-y", "skills", "add", skillsRef, "-a", "goose", "-y"}
 	case "codex":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "codex")
+		argv = []string{"npx", "-y", "skills", "add", skillsRef, "-a", "codex", "-y"}
 	case "aider":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "aider-desk")
+		argv = []string{"npx", "-y", "skills", "add", skillsRef, "-a", "aider-desk", "-y"}
 	default:
-		m.logger.Info("caveman not supported for backend", "backend", backend)
-		return
+		return nil
 	}
+	if userSpec != "" {
+		argv = append([]string{"su-exec", userSpec}, argv...)
+	}
+	return argv
+}
 
-	cmd.Dir = filepath.Join("/data/agents", agent.Name)
-	// The shared npm cache under /data/home accumulates content-addressed
-	// entries owned by whichever agent UID wrote them first; npx run as the
-	// hive user then fails with EACCES on those shards and the agent launches
-	// without its proxy. A per-agent cache can never collide across UIDs.
-	npmCache := filepath.Join("/data/agents", agent.Name, ".npm-caveman-cache")
-	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+npmCache)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		m.logger.Warn("caveman install failed", "agent", agent.Name, "error", err, "output", string(out))
+// cavemanNpmCachePath returns the npm cache dir for an agent's caveman
+// install. The shared npm cache under /data/home accumulates
+// content-addressed entries owned by whichever UID wrote them first; npx
+// then fails with EACCES on those shards and the agent launches without its
+// proxy. A per-agent cache can never collide across UIDs.
+//
+// Caches written before the install ran as the agent user are owned by the
+// hive user, and npm EACCESes on them the same way — so a cache owned by
+// another UID is removed (best-effort; the hive user owns the old one and
+// can), and one that cannot be removed is sidestepped with a per-UID path
+// rather than allowed to fail the install.
+func cavemanNpmCachePath(agentDir string, uid int) string {
+	cache := filepath.Join(agentDir, ".npm-caveman-cache")
+	if uid <= 0 {
+		return cache
 	}
+	info, err := os.Stat(cache)
+	if err != nil {
+		return cache
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) == uid {
+		return cache
+	}
+	if err := os.RemoveAll(cache); err == nil {
+		return cache
+	}
+	return fmt.Sprintf("%s-u%d", cache, uid)
 }
 
 // samePaneCapture reports whether two pane captures are identical line for
@@ -2167,6 +2954,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	defer ticker.Stop()
 
 	var prevLines []string
+	loginStreak := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -2188,7 +2976,29 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				continue
 			}
 
-			showsLogin := paneShowsLoginPrompt(filtered)
+			// Match login prompts against the pane TAIL only: a prompt the CLI
+			// is genuinely stuck at sits at the bottom of the pane, while the
+			// two false-positive classes that plagued this check — login-ish
+			// phrases inside ECHOED KICK TEXT (agent policies discuss auth) and
+			// the CLI's transient startup "/login" flash during its auth
+			// handshake — live in scrollback or vanish within a poll or two.
+			tailStart := len(filtered) - loginPromptTailLines
+			if tailStart < 0 {
+				tailStart = 0
+			}
+			tail := filtered[tailStart:]
+			showsLogin := paneShowsLoginPrompt(tail)
+			quotaExhausted := paneShowsQuotaExhausted(tail)
+			if showsLogin {
+				loginStreak++
+			} else {
+				loginStreak = 0
+				// The prompt cleared, so a future "token appeared, nudge it"
+				// restart is a fresh theory rather than a repeat of one that
+				// already failed. Reset both halves of the cap together.
+				agent.tokenRestartAttempts = 0
+				agent.tokenRestartGaveUp = false
+			}
 
 			agent.paneMu.Lock()
 			// Advance the activity clock only when the pane actually changed.
@@ -2202,20 +3012,63 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			}
 			agent.lastPaneCapture = filtered
 			agent.NeedsLogin = showsLogin
+			agent.QuotaExhausted = quotaExhausted
 			agent.paneMu.Unlock()
 
 			// Auto-restart agents stuck on the login prompt when a valid
 			// token exists in the shared config.json. This handles the case
 			// where a user authenticates via one agent's terminal and other
 			// agents don't pick up the new token automatically.
-			if showsLogin && configHasTokens() {
-				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
-				if sinceLastRestart >= float64(tokenRestartCooldownSec) {
+			//
+			// THREE guards, each traced to a live failure (kubestellar/hive,
+			// 2026-08-22, scanner restart_count=28 with every kick destroyed):
+			//   1. loginStreak: the login line must persist across consecutive
+			//      polls (~9s). The CLI flashes "Please use /login" during its
+			//      startup auth handshake even when the seeded token is about
+			//      to be accepted; one-poll sightings restarted HEALTHY agents.
+			//   2. Kick grace: never restart within tokenRestartKickGrace of a
+			//      delivered kick — the restart at 02:28:00 landed the same
+			//      second as a 14KB scan prompt and destroyed it. A stuck-at-
+			//      login agent that was kicked long ago restarts after the
+			//      grace expires; delivered work is never killed mid-scan.
+			//   3. The existing cooldown.
+			if showsLogin && loginStreak >= loginStreakRestartMin && configHasTokens() {
+				m.mu.RLock()
+				lastKick := agent.LastKick
+				m.mu.RUnlock()
+				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
+					continue
+				}
+				// GUARD 4 (#4596): the restart theory must not be retried
+				// forever. decideTokenRestart owns the attempt accounting so
+				// the rule is unit-testable without a tmux pane.
+				switch agent.decideTokenRestart(time.Now()) {
+				case tokenRestartGiveUp:
+					if !agent.tokenRestartGaveUp {
+						agent.tokenRestartGaveUp = true
+						diag := m.diagnoseStuckLogin(agent)
+						agent.LastError = diag
+						m.logger.Warn("giving up on token-triggered restart: the agent is still at a login prompt",
+							"agent", agent.Name,
+							"attempts", agent.tokenRestartAttempts,
+							"diagnosis", diag,
+						)
+					}
+					// Deliberately NOT `continue`: this disables only the
+					// token-triggered restart. The TLS-error and hung-CLI
+					// detectors further down stay live, so an agent that is
+					// both stuck at a login prompt and hitting a transient
+					// network failure is still recovered by the detector that
+					// can actually help.
+				case tokenRestartWait:
+					// Cooldown has not elapsed; fall through to the other
+					// pane detectors below, exactly as before.
+				case tokenRestartFire:
 					m.logger.Info("auto-restarting agent after token detected in shared config",
 						"agent", agent.Name,
-						"cooldown_elapsed_sec", int(sinceLastRestart),
+						"attempt", agent.tokenRestartAttempts,
+						"max_attempts", tokenRestartMaxAttempts,
 					)
-					agent.lastTokenRestart = time.Now()
 					go func() {
 						if err := m.Restart(ctx, agent.Name); err != nil {
 							m.logger.Warn("token-triggered restart failed",
@@ -2259,6 +3112,19 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 					}()
 					return
 				}
+			}
+
+			// #4697: a RETRYABLE API failure leaves the CLI alive at its idle
+			// prompt with the response truncated, where it waits for the next
+			// scheduled kick. Unlike the restart above, the fix is to type at
+			// the session that is already holding the context.
+			//
+			// `filtered` is scrollback, so it is used only as a cheap gate —
+			// no match means no tmux exec. The decision itself is made on the
+			// VISIBLE pane, because a matched line in scrollback is usually an
+			// error the agent already recovered from.
+			if paneShowsTransientAPIError(filtered) {
+				m.nudgeIfTransientAPIError(agent, m.captureVisiblePaneForAgent(agent))
 			}
 
 			// Detect copilot hung: if running long enough with no CLI prompt,
@@ -2334,12 +3200,21 @@ type blockingPrompt struct {
 var blockingPrompts = []blockingPrompt{
 	{
 		backend: "copilot",
-		// Copilot: "Confirm folder trust" → 2. Yes, and remember for future
-		// sessions. Remembering is what stops it recurring on every restart.
+		// Copilot: "Confirm folder trust" → 1. Yes (THIS SESSION ONLY).
+		//
+		// Deliberately NOT "2. Yes, and remember": remembering makes the CLI
+		// rewrite the SHARED ~/.copilot/config.json from its own in-memory
+		// snapshot, which stomps every other agent's state in that file — traced
+		// live on kubestellar/hive (2026-08-22): each agent's "remember" wiped
+		// the others' trustedFolders entries, and one stale rewrite resurrected
+		// a dead token over the operator's fresh login, which is why re-logins
+		// never stuck. Session-only trust writes NOTHING; the watcher now runs
+		// for the agent's whole lifetime, so every (re)launch gets re-answered
+		// and persistence is unnecessary.
 		match: func(p string) bool {
 			return strings.Contains(p, "Confirm folder trust") || strings.Contains(p, "Do you trust the files")
 		},
-		key:   "2",
+		key:   "1",
 		label: "copilot folder trust",
 	},
 	{
@@ -2423,6 +3298,17 @@ func blockingPromptKey(backend, pane string) (key, label string, ok bool) {
 	return "", "", false
 }
 
+// PaneShowsBlockingPrompt reports whether the pane is currently sitting on a
+// known startup-blocking modal (folder trust, codex update, …) for the given
+// backend. The login-detector uses it to stand down: a trust-wedged pane is
+// NOT a login problem, and pausing the agent for it kills the very watcher
+// that would answer the prompt — the deadlock that kept kubestellar/hive's
+// copilot agents "sitting at login prompt" through every re-login (2026-08-22).
+func PaneShowsBlockingPrompt(backend, pane string) bool {
+	_, _, ok := blockingPromptKey(backend, pane)
+	return ok
+}
+
 // paneHasBlockingPrompt reports whether ANY known blocking prompt is on the
 // pane, regardless of backend. Used by the readiness gate, which does not know
 // the backend; the patterns are specific enough that a false positive only
@@ -2472,33 +3358,45 @@ const codexUpdatePromptLabel = "codex update prompt"
 // Originally this handled only Copilot's folder-trust dialog. It covers codex's
 // trust and update menus too, because those block startup exactly the same way
 // and the update menu's default answer is actively destructive.
+// Trust-prompt watcher pacing. Vars, not consts, so the pkg/agent TestMain can
+// shrink them (see the pacing block near deliverStartupKick). Production
+// values unchanged; shared by both watchForTrustPrompt variants.
+var (
+	trustPollInterval = 2 * time.Second
+	trustMaxWait      = 120 * time.Second
+	trustCooldown     = 3 * time.Second
+	// trustReanswerAfter is how long a prompt must have been answered before
+	// the same prompt may be answered again. Short enough that a CLI which
+	// restarts inside the pane (crash loop, /login relaunch) is unwedged on
+	// its next appearance; long enough that the menu still rendering for a
+	// beat after the keystroke is never double-typed (the original failure:
+	// a second poll matched the fading menu and typed the option again — by
+	// then the CLI was at its input prompt, so the digit was submitted as a
+	// user message and answered, burning tokens).
+	trustReanswerAfter = 60 * time.Second
+)
+
 func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.Context) {
-	const (
-		trustPollInterval = 2 * time.Second
-		trustMaxWait      = 120 * time.Second
-		trustCooldown     = 3 * time.Second
-	)
-	deadline := time.After(trustMaxWait)
+	// No deadline: the watcher runs for the agent's whole lifetime (ctx is the
+	// per-launch context). The old 120s window assumed the trust prompt only
+	// appears at startup, but Copilot ≥1.0.78 can render it later than that on
+	// a slow first start — and an unanswered prompt wedges the agent, which the
+	// login-detector then misreads as "needs login" (live on kubestellar/hive,
+	// 2026-08-22). A 2s poll of an in-memory pane capture is too cheap to need
+	// a deadline.
 	ticker := time.NewTicker(trustPollInterval)
 	defer ticker.Stop()
 
-	// A prompt is answered at most ONCE. The pane keeps rendering the menu for
-	// a beat after the keystroke, so a second poll matched it again and typed
-	// the option a second time — by then the CLI was at its input prompt, so
-	// "3" was submitted as a user message and answered ("Three."), burning
-	// tokens and polluting the conversation.
-	answered := make(map[string]bool, len(blockingPrompts))
+	answeredAt := make(map[string]time.Time, len(blockingPrompts))
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-deadline:
-			return
 		case <-ticker.C:
 			output := m.captureTmuxPaneForAgent(agent)
-			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && !answered[label] {
-				answered[label] = true
+			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
+				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected
 				// and Enter alone answers it (agy). Typing a digit there would
@@ -2520,11 +3418,6 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 // watchForTrustPrompt monitors a tmux session for Copilot's "Confirm folder trust"
 // prompt and auto-selects "Yes, and remember for future sessions" (option 2).
 func (m *Manager) watchForTrustPrompt(session string, ctx context.Context) {
-	const (
-		trustPollInterval = 2 * time.Second
-		trustMaxWait      = 120 * time.Second
-		trustCooldown     = 3 * time.Second
-	)
 	deadline := time.After(trustMaxWait)
 	ticker := time.NewTicker(trustPollInterval)
 	defer ticker.Stop()
@@ -2596,6 +3489,11 @@ func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
 
 // findACMMFragments returns paths to ACMM policy files the agent should read.
 // Order: base.md (shared rules) then l<N>.md (level-specific).
+var acmmFragmentFallbackDirs = []string{
+	"/data/policies/examples/acmm",
+	"/opt/hive/examples/acmm",
+}
+
 func (m *Manager) findACMMFragments() []string {
 	level := m.project.ACMMLevel
 	if level <= 0 {
@@ -2608,11 +3506,7 @@ func (m *Manager) findACMMFragments() []string {
 		policiesRoot = "/data/policies"
 	}
 
-	acmmDirs := []string{
-		filepath.Join(policiesRoot, "examples", "acmm"),
-		"/data/policies/examples/acmm",
-		"/opt/hive/examples/acmm",
-	}
+	acmmDirs := append([]string{filepath.Join(policiesRoot, "examples", "acmm")}, acmmFragmentFallbackDirs...)
 
 	var acmmDir string
 	for _, d := range acmmDirs {
@@ -2858,12 +3752,17 @@ func (m *Manager) logOutputSignals(agent, line string) {
 }
 
 // Blocked-action thrash breaker: an agent that keeps hammering a policy wall
-// (e.g. git push in ADVISORY mode, blocked every ~3s by git-credential-hive)
-// burns model tokens indefinitely with zero possible output — observed live
-// 2026-08-04 on a hosted L2 hive whose guide agent retried a blocked push
-// every 3 seconds. The hub, not the model, breaks the loop: thrashThreshold
-// blocked-action lines within thrashWindow pauses the session (visible,
-// reversible, stops governor kicks) with the reason spelled out.
+// (e.g. a push with no per-agent token, blocked every ~3s by
+// git-credential-hive, or a proxy hard-deny) burns model tokens indefinitely
+// with zero possible output — observed live 2026-08-04 on a hosted L2 hive
+// whose guide agent retried a blocked push every 3 seconds. (Since #4289,
+// ADVISORY-mode pushes are no longer blocked by the credential helper — the
+// read-only token is served and GitHub rejects the push with 403 — but the
+// helper still emits "git push blocked:" for unknown-UID and missing-token
+// failures, which this breaker continues to catch.) The hub, not the model,
+// breaks the loop: thrashThreshold blocked-action lines within thrashWindow
+// pauses the session (visible, reversible, stops governor kicks) with the
+// reason spelled out.
 const (
 	thrashWindow    = 60 * time.Second
 	thrashThreshold = 5
@@ -3227,6 +4126,9 @@ func (m *Manager) tmuxRawCmd(args ...string) *exec.Cmd {
 // captureTmuxPaneForAgent captures pane content using the agent's tmux socket.
 // Includes scrollback for diff-based output signal detection.
 func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
+	if m.paneCapture != nil {
+		return m.paneCapture(agent)
+	}
 	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p",
 		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
 	out, err := cmd.Output()
@@ -3260,16 +4162,7 @@ func (m *Manager) CaptureFullLog(name string) (string, error) {
 	if agent.tmuxSession == "" {
 		return "", fmt.Errorf("agent %s has no active session", name)
 	}
-	// -S -<n>: start n lines back into history; -E -: through the last visible
-	// line; -J: join wrapped lines so copied text is not hard-wrapped at the
-	// pane width; -p: print to stdout. -1: keep the tail behaviour bounded.
-	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
-		"-S", fmt.Sprintf("-%d", fullLogCaptureLines), "-E", "-")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("capturing pane for %s: %w", name, err)
-	}
-	return string(out), nil
+	return m.captureScrollbackForAgent(agent)
 }
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
@@ -3283,6 +4176,24 @@ func (m *Manager) captureVisiblePaneForAgent(agent *AgentProcess) string {
 		return ""
 	}
 	return string(out)
+}
+
+func (m *Manager) tmuxSessionHasAttachedClientForAgent(agent *AgentProcess) bool {
+	if m.sessionAttached != nil {
+		return m.sessionAttached(agent)
+	}
+	if agent == nil || agent.tmuxSession == "" {
+		return true
+	}
+	out, err := m.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession, "#{session_attached}").Output()
+	if err != nil {
+		return true
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return true
+	}
+	return n > 0
 }
 
 func (m *Manager) Stop(name string) error {
@@ -3467,10 +4378,45 @@ type inferencePaneCheck struct {
 	pane string
 }
 
+// deadSessionRecoveryOwner renders the owner for the log line, so an operator
+// reading "agent tmux session missing" can tell at a glance whether this loop
+// is about to restart it or whether the watchdog's bounded ladder has it.
+func deadSessionRecoveryOwner(ownedElsewhere bool) string {
+	if ownedElsewhere {
+		return "watchdog"
+	}
+	return "crash-loop"
+}
+
+// SetDeadSessionRecoveryOwner declares whether some other component owns
+// restarting agents whose tmux session is missing or whose pane has gone bare
+// (RFC #4665). When owned elsewhere, CheckAndRestartCrashedAgents observes and
+// logs those two conditions but does not restart them.
+//
+// The transfer exists because this loop restarts on every eval tick with no
+// backoff and no cap, while the watchdog counts the same failures toward a
+// bounded ladder and a crash-loop pause. Both running meant the ladder
+// throttled nothing: the manager re-restarted an unfixable agent at tick rate
+// while the watchdog merely counted. One owner, one bounded ladder.
+//
+// Only those two conditions move. Consent-screen dismissal and the inference
+// stall nudge are NOT restarts, are not conditions the watchdog classifies,
+// and keep running here unconditionally — including for agents whose restart
+// this loop no longer performs.
+func (m *Manager) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deadSessionRecoveryOwnedElsewhere = ownedElsewhere
+}
+
 // CheckAndRestartCrashedAgents checks all running agents for crashed CLI
 // processes (bare shell prompt with no child process) and restarts them.
 // Returns the names of agents that were successfully restarted so the
 // caller can send them a kick with their prompt template.
+//
+// When SetDeadSessionRecoveryOwner(true) has been called, the restart half is
+// the watchdog's; this loop still observes and logs, and still performs the
+// consent/stall work that is nobody else's.
 func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	m.mu.RLock()
 	var crashed []string
@@ -3499,8 +4445,13 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"session", agent.tmuxSession,
 				"restart_count", agent.RestartCount,
 				"uptime_seconds", int(uptimeSeconds),
+				"recovery_owner", deadSessionRecoveryOwner(m.deadSessionRecoveryOwnedElsewhere),
 			)
-			crashed = append(crashed, name)
+			if !m.deadSessionRecoveryOwnedElsewhere {
+				crashed = append(crashed, name)
+			}
+			// Either way there is no session to capture a pane from, so the
+			// consent/stall checks below cannot run for this agent.
 			continue
 		}
 		pane := m.captureVisiblePaneForAgent(agent)
@@ -3529,9 +4480,15 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"session", agent.tmuxSession,
 				"restart_count", agent.RestartCount,
 				"uptime_seconds", int(uptimeSeconds),
+				"recovery_owner", deadSessionRecoveryOwner(m.deadSessionRecoveryOwnedElsewhere),
 			)
-			crashed = append(crashed, name)
-			continue
+			if !m.deadSessionRecoveryOwnedElsewhere {
+				crashed = append(crashed, name)
+				continue
+			}
+			// Recovery is the watchdog's, but a bare pane is still a live
+			// session: fall through so the consent/stall checks below — which
+			// are nobody else's job — still run for this agent.
 		}
 		// An inference agent parked on a consent screen has a live CLI, so
 		// it is not "crashed" — but it is stuck. Restarting would loop back
@@ -3850,6 +4807,11 @@ func (m *Manager) sendKick(name string, message string, specialistTaskID string)
 // (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
 // this function does no readiness checking of its own.
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
+	// Archive the PREVIOUS kick's scrollback and clear the history before any
+	// input touches the pane, so each archived kick log is cleanly delimited
+	// (#4296). Must be the first thing this function does.
+	m.rotateKickLogOnKickLocked(agent)
+
 	// Clear stale input before kick. Goose 1.37 and Codex 0.144 exit an idle
 	// interactive session on ^C, so only line-clear is safe for those backends.
 	backend := effectiveBackend(agent)
@@ -3876,9 +4838,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Append an action-forcing block here — where the effective backend is
 	// knowable — instead of editing the kick templates, which are shared
 	// with commercial CLI backends that do not need it.
-	if IsInferenceBackend(effectiveBackend(agent)) {
-		message += "\n\n" + inferenceKickActionSuffix
-	}
+	message = kickMessageWithSuffixes(message,
+		IsInferenceBackend(effectiveBackend(agent)),
+		resolveExplainMode(agent.Config, m.explainModeDefault()))
 
 	// Send message in chunks (400 rune max per chunk, rune-safe)
 	runes := []rune(message)
@@ -3997,6 +4959,9 @@ func (m *Manager) recordKickLocked(agent *AgentProcess, message, trigger string)
 	agent.LastKickMessage = message
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
+	// The session now holds this kick's output; the next rotation point
+	// (kick, restart, shutdown) must archive it before it is destroyed.
+	agent.kickLogPending = true
 
 	// Arm the post-kick watchdog for inference agents: the watcher loop
 	// sends a "continue" nudge if the pane freezes at an idle prompt, and
@@ -4004,6 +4969,14 @@ func (m *Manager) recordKickLocked(agent *AgentProcess, message, trigger string)
 	if IsInferenceBackend(effectiveBackend(agent)) {
 		m.recordInferenceKick(agent, now)
 	}
+	// #4697: a new kick is a new incident, so the transient-API-error budget
+	// starts over. Reset for EVERY backend, not just inference ones — this is
+	// the CLI-backend watchdog's only per-kick anchor, and leaving a spent
+	// budget in place would make one bad kick window silence the nudge for the
+	// life of the process. Clearing the cooldown too lets a fresh kick that
+	// fails immediately be recovered without waiting it out.
+	agent.transientNudgesThisKick = 0
+	agent.lastTransientNudge = time.Time{}
 
 	snippet := message
 	const maxSnippetLen = 120
@@ -4030,6 +5003,8 @@ func (m *Manager) recordKickLocked(agent *AgentProcess, message, trigger string)
 	// only carry a truncated preview, which is not enough to answer "what was
 	// my agent asked to do?".
 	m.recordPrompt(agent.Name, trigger, message)
+
+	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, trigger)
 }
 
 func (m *Manager) agentSandboxEnabledLocked(agent *AgentProcess) bool {
@@ -4262,6 +5237,10 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 
 // tmuxSendLiteralForAgent sends text using the agent's tmux socket.
 func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
+	if m.sendLiteralForAgent != nil {
+		m.sendLiteralForAgent(agent, text)
+		return
+	}
 	_ = m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
 }
 
@@ -4578,6 +5557,109 @@ const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
 	"a plan and stop. Begin immediately by running your first command. " +
 	"Every response that contains no tool execution is a failure."
 
+// explainKickSuffixBrief and explainKickSuffixFull are appended to a kick when
+// the agent's resolved explain mode is brief/full (#3887).
+//
+// The terseness instruction they sit next to has a real rationale — agents told
+// to explain themselves narrate INSTEAD of acting, which is why every policy
+// carries "Output Rules — Terse Mode" and why inferenceKickActionSuffix exists
+// at all. Relaxing that outright would trade one debugging problem for a worse
+// one, so these blocks are written to preserve it:
+//
+//   - Acting first is restated as the hard requirement, and an explanation with
+//     no tool call is named as a failure, so the block cannot be read as
+//     permission to reply with prose. This matters most on the inference
+//     backends, where both suffixes are present.
+//   - Explanation is confined to lines carrying config.ExplainLinePrefix, so it
+//     is separable from the agent's real output at read time instead of being
+//     interleaved into it (see handleAgentFullLog's explain filter).
+//   - Terse mode is suspended ONLY on those prefixed lines. Compressing the
+//     explanation to caveman-speak would defeat the point of asking for it,
+//     while leaving terse mode in force everywhere else keeps the agent's
+//     actual output — logs, bead titles, PR bodies — exactly as it was.
+//
+// Appended per-kick rather than baked into the policy files because the option
+// is per-agent and toggleable at runtime; editing prompts would make it a
+// fleet-wide, redeploy-gated behavior change, which the issue explicitly did
+// not want.
+const explainKickSuffixBrief = "EXPLAIN MODE (brief) — DEBUGGING AID, NOT A LICENCE TO NARRATE: " +
+	"Do the work exactly as you otherwise would; tool execution is still the " +
+	"requirement and a response that only explains is a failure. In addition, " +
+	"before each tool call emit ONE line starting with " + config.ExplainLinePrefix +
+	" giving your reason for that specific call (what you expect it to show or " +
+	"change). Keep every other line unchanged. Terse-mode output rules are " +
+	"suspended on " + config.ExplainLinePrefix + " lines only — write those in " +
+	"plain, complete sentences so a human debugging you can read them."
+
+const explainKickSuffixFull = explainKickSuffixBrief +
+	" Additionally, when the work for this kick is finished, emit a closing " +
+	"block of " + config.ExplainLinePrefix + " lines covering: the goal as you " +
+	"understood it, the approach you chose, the alternatives you considered and " +
+	"why you rejected them, and what evidence would have changed your decision. " +
+	"This block comes AFTER the work, never instead of it."
+
+// kickMessageWithSuffixes composes the message actually typed into an agent's
+// CLI from the caller's kick text plus the backend/mode-dependent suffixes.
+//
+// Split out of deliverKickLocked so the composition — in particular the ORDER
+// of the two suffixes — is testable without a tmux session. On an inference
+// backend both apply, and the action-forcing block must be read first: the
+// explain block then reads as a qualification of "execute, do not narrate"
+// rather than as a later instruction overriding it.
+func kickMessageWithSuffixes(message string, isInference bool, explainMode string) string {
+	if isInference {
+		message += "\n\n" + inferenceKickActionSuffix
+	}
+	if suffix := explainKickSuffix(explainMode); suffix != "" {
+		message += "\n\n" + suffix
+	}
+	return message
+}
+
+// explainKickSuffix returns the kick suffix for a resolved explain mode, or ""
+// when explanation is off. Modes are resolved by resolveExplainMode, so an
+// unknown value here is treated as off rather than defaulted to a mode.
+func explainKickSuffix(mode string) string {
+	switch mode {
+	case config.ExplainModeBrief:
+		return explainKickSuffixBrief
+	case config.ExplainModeFull:
+		return explainKickSuffixFull
+	default:
+		return ""
+	}
+}
+
+// resolveExplainMode returns the explain mode in force for an agent, given the
+// hive-wide default already resolved by the caller (see Manager.explainModeDefault).
+//
+// Precedence, and the tri-state is the point: an explicit per-agent value —
+// INCLUDING "off" — always wins, so an operator who turned explanation on
+// fleet-wide does not force it onto an agent that opted out. Only an unset
+// agent inherits the hive default. An invalid value in either place resolves to
+// off, so a typo degrades to today's behavior rather than to an unexpected mode.
+//
+// hiveDefault is "" only when no resolver was injected (tests, bare setups);
+// the env var is read here so that path keeps behaving as it did before the
+// governor.explain_mode setting existed (#4712). When a resolver IS wired,
+// config.GovernorConfig.ResolveExplainModeDefault has already applied the
+// config-over-env precedence and never returns "".
+func resolveExplainMode(cfg config.AgentConfig, hiveDefault string) string {
+	mode := cfg.ExplainMode
+	if mode == "" {
+		mode = strings.TrimSpace(hiveDefault)
+	}
+	if mode == "" {
+		mode = strings.TrimSpace(os.Getenv(config.ExplainModeEnvVar))
+	}
+	switch mode {
+	case config.ExplainModeBrief, config.ExplainModeFull:
+		return mode
+	default:
+		return config.ExplainModeOff
+	}
+}
+
 const (
 	// inferenceKickStallTimeout is how long after a kick an unchanged, idle
 	// pane counts as a stalled kick (message swallowed without a response).
@@ -4585,6 +5667,32 @@ const (
 	// inferenceStallNudgeMessage is the literal message typed into the CLI to
 	// unstick a stalled kick.
 	inferenceStallNudgeMessage = "continue"
+	// transientAPIErrorNudgeMessage is typed into a CLI agent that dropped back
+	// to its idle prompt after a retryable API failure (#4697).
+	//
+	// "try again", not the "continue" above, because the two situations differ:
+	// a stalled kick was never consumed, so "continue" means "get on with it",
+	// while here a request FAILED mid-flight and the work needs re-attempting.
+	// "try again" is also the exact wording an operator used on the live pane
+	// in #4697, which recovered the agent every time — no reason to ship an
+	// untested synonym in place of the phrase with evidence behind it.
+	transientAPIErrorNudgeMessage = "try again"
+	// transientAPIErrorNudgeCooldown is the minimum gap between two nudges for
+	// the same agent. The error line remains on screen after the nudge is
+	// typed, so the next poll still matches; this is what stops a single
+	// incident from firing every 3s until the pane scrolls.
+	transientAPIErrorNudgeCooldown = 90 * time.Second
+	// transientAPIErrorMaxNudgesPerKick caps how many times one kick window may
+	// be nudged. A connection that fails three times in a row is not a blip the
+	// hive can type its way out of; past the cap the agent surfaces LastError
+	// and waits for an operator instead of nudging forever.
+	transientAPIErrorMaxNudgesPerKick = 3
+	// transientAPIErrorTailLines is how much of the VISIBLE pane is examined.
+	// Scrollback is deliberately excluded: an error the agent already recovered
+	// from stays in history forever, and matching it there would re-nudge a
+	// working agent. Sized to cover the error block plus the idle prompt under
+	// it without reaching back into the previous response.
+	transientAPIErrorTailLines = 12
 	// cliInputPromptMarker is the CLI's idle input prompt indicator.
 	cliInputPromptMarker = "❯"
 	// inferenceActionNudgeGrace is the minimum time after a kick before the
@@ -4646,12 +5754,53 @@ var expandedToolCallMarkers = []string{
 // The no-action watchdog compares the count after a kick against the count
 // recorded at kick delivery: scrollback keeps markers from work done before
 // the kick, so only an increase proves the model executed tools since.
+//
+// EXPLAIN lines are stripped first (#3887). toolSummaryRe matches ENGLISH
+// PHRASES — "read 3 files", "running 2 shell commands" — because that is how
+// the CLI renders its own collapsed tool summaries. An agent in explain mode is
+// asked to state, in plain English, what it is about to do, so it writes
+// exactly those phrases as narration:
+//
+//	EXPLAIN: reading 3 files under pkg/agent to find the kick handler.
+//
+// That counts as a tool marker, the watchdog concludes "real tool activity
+// since the kick", and the prose-only action nudge never fires — on precisely
+// the agents an operator turned explanation ON to debug, which is the worst
+// possible time to silently lose the check. Narration about a tool is not tool
+// execution, so an explanation line contributes nothing to the count.
+//
+// The whole line is dropped rather than just the prefix: a "⎿" or "⏺ Bash("
+// quoted INSIDE an explanation is the agent describing a tool call, not making
+// one.
 func countToolMarkers(pane string) int {
+	pane = stripExplainLines(pane)
 	n := len(toolSummaryRe.FindAllStringIndex(pane, -1))
 	for _, marker := range expandedToolCallMarkers {
 		n += strings.Count(pane, marker)
 	}
 	return n
+}
+
+// stripExplainLines removes the agent's explanation lines from captured pane
+// content, so pane analysis sees only what the agent actually did.
+//
+// Matching is on the TRIMMED line, mirroring the read-time filter in
+// pkg/dashboard (filterExplainLines): the CLI indents assistant output, so
+// anchoring at column 0 would miss every real line. Returns the input unchanged
+// when nothing matches, which is every pane on a hive with explain mode off.
+func stripExplainLines(pane string) string {
+	if !strings.Contains(pane, config.ExplainLinePrefix) {
+		return pane
+	}
+	lines := strings.Split(pane, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), config.ExplainLinePrefix) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // paneShowsActiveWork reports whether the CLI is mid-response: either the
@@ -4660,6 +5809,18 @@ func countToolMarkers(pane string) int {
 // the input box stays rendered while a response streams.
 func paneShowsActiveWork(pane string) bool {
 	return strings.Contains(pane, cliWorkingMarker) || strings.Contains(pane, cliActiveCounterMarker)
+}
+
+func paneShowsEmptyInputPrompt(pane string) bool {
+	lines := strings.Split(pane, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		return line == cliInputPromptMarker
+	}
+	return false
 }
 
 // paneContentHash returns a short stable hash of pane content, used to detect
@@ -4760,6 +5921,96 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 	m.tmuxSendEntersForAgent(agent)
 }
 
+// nudgeIfTransientAPIError recovers a CLI agent that a retryable API failure
+// left parked at its idle prompt (#4697).
+//
+// THE GAP THIS FILLS. Every neighbouring recovery path deliberately excludes
+// this case: the crash watcher wants a dead process and the CLI is alive; the
+// fatal-network restart (paneShowsFatalNetworkError) is copilot-only and would
+// be the wrong medicine anyway, since a restart throws away the very context
+// that makes recovery cheap; the login detector wants a login prompt; #4400 and
+// #4583 handle errors retrying CANNOT fix. And nudgeIfKickStalled — the one
+// piece that already types "continue" at a frozen pane — is armed only from
+// recordInferenceKick, which sits behind an IsInferenceBackend guard, so CLI
+// backends never arm it. The result was an agent that is healthy,
+// authenticated, under quota, mid-task and one Enter from resuming, sitting
+// idle until the next scheduled kick hours later.
+//
+// pane must be the VISIBLE pane, not scrollback — see transientAPIErrorTailLines.
+//
+// Every precondition is a refusal to nudge something that is not stuck:
+//
+//   - inference backends are skipped: nudgeIfKickStalled already covers them,
+//     and two watchdogs typing at one pane would race;
+//   - paneShowsActiveWork or a missing idle prompt means the CLI is streaming
+//     or mid-retry (Claude Code retries some failures itself, rendering a
+//     countdown) — interrupting that would CAUSE the stall it is meant to fix;
+//   - an authorization or quota failure on screen is re-checked here even
+//     though the pattern list excludes both, because Claude Code prefixes every
+//     API failure with the same "API Error:" chrome and a nudge into a wall
+//     burns tokens to no effect.
+func (m *Manager) nudgeIfTransientAPIError(agent *AgentProcess, pane string) {
+	// Inference backends have their own watchdog; see the doc comment.
+	if IsInferenceBackend(effectiveBackend(agent)) {
+		return
+	}
+	tail := paneTail(pane, transientAPIErrorTailLines)
+	if tail == "" {
+		return
+	}
+	// Mid-response or mid-retry: leave it alone.
+	if paneShowsActiveWork(tail) || !paneShowsEmptyInputPrompt(tail) {
+		return
+	}
+	lines := strings.Split(tail, "\n")
+	if !paneShowsTransientAPIError(lines) {
+		return
+	}
+	// Guardrails: never nudge an error a retry cannot clear.
+	if paneShowsQuotaExhausted(lines) {
+		return
+	}
+	for _, line := range lines {
+		if lineShowsUpstreamAuthorizationError(line) {
+			return
+		}
+	}
+	if m.tmuxSessionHasAttachedClientForAgent(agent) {
+		return
+	}
+
+	now := time.Now()
+	m.mu.Lock()
+	if now.Sub(agent.lastTransientNudge) < transientAPIErrorNudgeCooldown {
+		m.mu.Unlock()
+		return
+	}
+	if agent.transientNudgesThisKick >= transientAPIErrorMaxNudgesPerKick {
+		// Past the cap the failure is an operator problem. Surface it once —
+		// re-stamping LastError every poll would hide whatever else the agent
+		// reports — and stop typing.
+		if agent.LastError == "" {
+			agent.LastError = "repeated transient API errors; nudges exhausted"
+		}
+		m.mu.Unlock()
+		return
+	}
+	agent.lastTransientNudge = now
+	agent.transientNudgesThisKick++
+	agent.TransientNudges++
+	attempt, total := agent.transientNudgesThisKick, agent.TransientNudges
+	m.mu.Unlock()
+
+	m.logger.Warn("CLI agent idle after a transient API error, sending retry nudge",
+		"name", agent.Name,
+		"attempt", attempt,
+		"max_per_kick", transientAPIErrorMaxNudgesPerKick,
+		"total_nudges", total)
+	m.tmuxSendLiteralForAgent(agent, transientAPIErrorNudgeMessage)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
+}
+
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
 func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 	for i := 0; i < enterCount; i++ {
@@ -4797,11 +6048,28 @@ func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
 }
 
 const (
+	enterCount = 3
+	chunkSize  = 400
+	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
+	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
+	// crash. It matches the production cliReadyTimeout (60s) so a still-booting
+	// CLI is never restarted underneath itself, which would spawn a second
+	// concurrent CLI.
+	cliBootGraceSeconds = 60
+)
+
+// Pacing seams (#4717/#4693/#4688). These are package VARS, not consts, so the
+// pkg/agent TestMain can shrink them for the whole suite: they accumulate to
+// well over the default 10m `go test` timeout when 440 tests pay production
+// pacing (1-3s sleeps, 60-120s poll deadlines) against stub CLIs that render
+// instantly. Production values are unchanged — nothing outside TestMain may
+// mutate them. Relationships the values encode (bobInputHandlerSettleDelay
+// distinct from every tmux-pacing delay, and far below inputPromptTimeout) are
+// pinned by TestBobSettleDelay_* and must be preserved by any test override.
+var (
 	clearBeforeKickDelay    = 2 * time.Second
-	enterCount              = 3
 	enterDelay              = 300 * time.Millisecond
 	textToEnterDelay        = 1 * time.Second
-	chunkSize               = 400
 	chunkDelay              = 1 * time.Second
 	staleCheckDelay         = 1 * time.Second
 	cliReadyPollInterval    = 2 * time.Second
@@ -4826,11 +6094,11 @@ const (
 	// costs one agent a few seconds once per launch while under-waiting
 	// silently loses the bootstrap prompt entirely.
 	bobInputHandlerSettleDelay = 3 * time.Second
-	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
-	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
-	// crash. It matches cliReadyTimeout (60s) so a still-booting CLI is never
-	// restarted underneath itself, which would spawn a second concurrent CLI.
-	cliBootGraceSeconds = 60
+	// sessionReadyDelay is how long a freshly created tmux session's shell is
+	// given to initialize before the launch command is typed into it. Without
+	// it, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the shell isn't
+	// ready to process command substitution yet.
+	sessionReadyDelay = 2 * time.Second
 )
 
 func (m *Manager) SeedLastKick(name string, t time.Time) {
@@ -4921,38 +6189,45 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	copy(pane, a.lastPaneCapture)
 	// NeedsLogin and LastPaneChange are written by the pane poller under paneMu.
 	needsLogin := a.NeedsLogin
+	quotaExhausted := a.QuotaExhausted
 	lastPaneChange := a.LastPaneChange
+	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
+	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
 	return AgentProcess{
-		Name:            a.Name,
-		ID:              a.ID,
-		Config:          a.Config,
-		State:           a.State,
-		PID:             a.PID,
-		UID:             a.UID,
-		StartedAt:       a.StartedAt,
-		LastKick:        a.LastKick,
-		Paused:          a.Paused,
-		PausedAt:        a.PausedAt,
-		PausedReason:    a.PausedReason,
-		PausedTrigger:   a.PausedTrigger,
-		PinnedCLI:       a.PinnedCLI,
-		PinnedModel:     a.PinnedModel,
-		ModelOverride:   a.ModelOverride,
-		BackendOverride: a.BackendOverride,
-		RestartCount:    a.RestartCount,
-		KickHistory:     history,
-		LastKickMessage: a.LastKickMessage,
-		NeedsLogin:      needsLogin,
-		LastPaneChange:  lastPaneChange,
-		StallNudges:     a.StallNudges,
-		ActionNudges:    a.ActionNudges,
-		HasLaunched:     a.HasLaunched,
-		LaunchedMode:    a.LaunchedMode,
-		tmuxSession:     a.tmuxSession,
-		tmuxSocket:      a.tmuxSocket,
-		OutputBuffer:    a.OutputBuffer,
-		lastPaneCapture: pane,
+		Name:               a.Name,
+		ID:                 a.ID,
+		Config:             a.Config,
+		State:              a.State,
+		PID:                a.PID,
+		UID:                a.UID,
+		StartedAt:          a.StartedAt,
+		LastKick:           a.LastKick,
+		Paused:             a.Paused,
+		PausedAt:           a.PausedAt,
+		PausedReason:       a.PausedReason,
+		PausedTrigger:      a.PausedTrigger,
+		PausedBy:           a.PausedBy,
+		PinnedCLI:          a.PinnedCLI,
+		PinnedModel:        a.PinnedModel,
+		ModelOverride:      a.ModelOverride,
+		BackendOverride:    a.BackendOverride,
+		RestartCount:       a.RestartCount,
+		KickHistory:        history,
+		LastKickMessage:    a.LastKickMessage,
+		NeedsLogin:         needsLogin,
+		QuotaExhausted:     quotaExhausted,
+		LastPaneChange:     lastPaneChange,
+		WatchdogConditions: conds,
+		StallNudges:        a.StallNudges,
+		ActionNudges:       a.ActionNudges,
+		TransientNudges:    a.TransientNudges,
+		HasLaunched:        a.HasLaunched,
+		LaunchedMode:       a.LaunchedMode,
+		tmuxSession:        a.tmuxSession,
+		tmuxSocket:         a.tmuxSocket,
+		OutputBuffer:       a.OutputBuffer,
+		lastPaneCapture:    pane,
 	}
 }
 
@@ -5131,9 +6406,9 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 
 // backendBinaryAliases names the backends whose binary is NOT simply the
 // backend name. Only genuine aliases belong here: every other CLI backend is
-// derived from config.CLIBackends by identity, and every model-gateway backend
-// from config.InferenceBackends. Keeping this map to aliases only is what makes
-// the accept-then-fail class of bug structurally impossible — see backendBinary.
+// derived from config.CLIBackends by identity, and every routable model-gateway
+// backend is resolved by Manager.backendBinaryName. Keeping this map to aliases
+// only is what makes the accept-then-fail class of bug structurally impossible.
 var backendBinaryAliases = map[string]string{
 	// pi was previously aliased to "goose", which made every pi-configured
 	// agent exec the goose CLI instead of pi (the backend launch command
@@ -5141,10 +6416,10 @@ var backendBinaryAliases = map[string]string{
 	// (config.CLIBackends includes "pi"), so identity mapping applies.
 }
 
-// backendBinaryName maps an agent backend to the NAME of the CLI binary that is
-// exec'd for it, without touching the filesystem. Split out from backendBinary
-// so the "every supported backend resolves" invariant can be tested without
-// requiring each CLI to be installed on the test machine.
+// backendBinaryName maps a config-independent agent backend to the NAME of the
+// CLI binary that is exec'd for it, without touching the filesystem. Split out
+// from backendBinary so the "every supported backend resolves" invariant can be
+// tested without requiring each CLI to be installed on the test machine.
 //
 // Both canonical lists are derived rather than written out here:
 //
@@ -5190,6 +6465,19 @@ func backendCommand(backend string) (string, bool) {
 	return binary, true
 }
 
+// backendBinaryName resolves both config-independent backends and live
+// configured gateway names. A gateway name validates via Manager.routableBackend,
+// so the launch path must use the same predicate and route it through claude.
+func (m *Manager) backendBinaryName(backend string) (string, error) {
+	if binary, err := backendBinaryName(backend); err == nil {
+		return binary, nil
+	}
+	if m != nil && m.routableBackend(backend) {
+		return "claude", nil
+	}
+	return "", fmt.Errorf("unknown backend: %s", backend)
+}
+
 // backendBinary resolves an agent backend to the absolute path of the CLI
 // binary that is actually exec'd for it.
 func backendBinary(backend string) (string, error) {
@@ -5204,6 +6492,32 @@ func backendBinary(backend string) (string, error) {
 	}
 
 	return path, nil
+}
+
+func (m *Manager) backendBinary(backend string) (string, error) {
+	binary, err := m.backendBinaryName(backend)
+	if err != nil {
+		return "", err
+	}
+
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return "", fmt.Errorf("backend %s binary %s not found in PATH: %w", backend, binary, err)
+	}
+
+	return path, nil
+}
+
+func (m *Manager) backendLaunchFailureMessage(backend string, err error) string {
+	binary, nameErr := m.backendBinaryName(backend)
+	if nameErr != nil {
+		return fmt.Sprintf(
+			"backend %s did not launch: %v. This backend is not a supported CLI, built-in inference backend, or configured model gateway; switch this agent to a supported backend or configure a matching model gateway.",
+			backend, err)
+	}
+	return fmt.Sprintf(
+		"backend %s did not launch: %v. The %s CLI required for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend.",
+		backend, err, binary)
 }
 
 // sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)
@@ -5226,7 +6540,35 @@ const (
 	// is the constant it should replace.
 	agyDefaultEffort = "low"
 
-	tokenRestartCooldownSec    = 60  // minimum seconds between token-triggered restarts per agent
+	tokenRestartCooldownSec = 60 // minimum seconds between token-triggered restarts per agent
+	// loginPromptTailLines bounds the pane region the login-prompt detector
+	// reads: a prompt the CLI is stuck at sits at the pane bottom, while
+	// echoed kick text and startup flashes live in scrollback (see the poller).
+	loginPromptTailLines = 15
+	// loginStreakRestartMin is how many consecutive polls (~3s apart) must see
+	// the login prompt before a token-triggered restart may fire — filters the
+	// CLI's transient startup "/login" flash.
+	loginStreakRestartMin = 3
+	// tokenRestartMaxAttempts bounds CONSECUTIVE token-triggered restarts that
+	// fail to clear the login prompt.
+	//
+	// The three guards above answer WHEN to restart; none of them answered HOW
+	// MANY TIMES, so a restart that could never work was retried forever at the
+	// cooldown interval. #4596 is precisely that shape: the shared credential is
+	// valid (so configHasTokens() is true) while $HOME/.claude.json has lost its
+	// oauthAccount (so the CLI shows the login menu regardless), and each
+	// restart re-launched a CLI that rewrote the same contended file and asked
+	// again. Restarts are not free — they destroy in-flight work, which is the
+	// failure the kick grace above was added for.
+	//
+	// Three is deliberately generous: one restart genuinely does fix the case
+	// this feature was built for (an operator authenticates in one agent's
+	// terminal and the others need a nudge), so the cap only engages on a
+	// theory that has now failed repeatedly.
+	tokenRestartMaxAttempts = 3
+	// tokenRestartKickGrace suppresses token-triggered restarts after a kick
+	// delivery so the restart can never destroy just-delivered work.
+	tokenRestartKickGrace      = 10 * time.Minute
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
 	tlsErrorRestartCooldownSec = 120 // minimum seconds between TLS-error-triggered restarts per agent
 )
@@ -5234,6 +6576,15 @@ const (
 // CopilotUserTokenPath is where the dashboard's device-flow login persists
 // the Copilot OAuth token; injected into agents as COPILOT_GITHUB_TOKEN.
 const CopilotUserTokenPath = "/data/copilot-user-token"
+
+var copilotUserTokenWatchPath = CopilotUserTokenPath
+
+// copilotUserTokenProbePath is the same location as consulted by the
+// AgentAuthState file probe. A var (not the const directly) purely as a TEST
+// SEAM, matching sharedCopilotConfigPath above: on a live hive host the real
+// /data/copilot-user-token exists, and a probe that cannot be redirected makes
+// every "no copilot credentials" test assert against production login state.
+var copilotUserTokenProbePath = CopilotUserTokenPath
 
 // loginPromptPatterns are substrings that indicate an agent is stuck on a
 // login/authentication screen (Copilot text prompts, Claude Code OAuth flow,
@@ -5280,6 +6631,60 @@ func paneShowsFatalNetworkError(lines []string) bool {
 			if strings.Contains(line, pat) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// transientAPIErrorPatterns are substrings of API failures that a plain retry
+// fixes (#4697). They are the OPPOSITE of fatalNetworkErrorPatterns above: the
+// CLI survives, drops back to its idle prompt with the response truncated, and
+// stays there until the next scheduled kick — which can be hours away. The
+// session is alive with full context, so the remedy is a nudge, not a restart.
+//
+// Membership is deliberately narrow. Every pattern here must be an error where
+// REPEATING THE SAME REQUEST CAN SUCCEED:
+//
+//   - a dropped/timed-out connection — the request never completed;
+//   - 5xx and "overloaded" — the upstream failed this attempt, not this caller.
+//
+// Errors a retry cannot fix must NOT be listed, because nudging them loops the
+// agent against a wall: 403/model-refusal (#4400) and quota exhaustion (#4583)
+// are both excluded here AND re-checked at the call site via
+// lineShowsUpstreamAuthorizationError / paneShowsQuotaExhausted, since Claude
+// Code renders every API failure under the same "API Error:" prefix and a
+// substring match alone cannot tell them apart.
+var transientAPIErrorPatterns = []string{
+	// The shape reported in #4697, observed repeatedly on a claude-backend
+	// agent: the response is cut off mid-stream and the CLI returns to ❯.
+	"connection lost mid-response",
+	"connection error",
+	"request timed out",
+	"overloaded_error",
+}
+
+// 500/502/503/529 are retryable upstream failures; match them as whole tokens
+// only, so unrelated request IDs or token counts under the same API-error chrome
+// do not trip the watchdog.
+var transientAPIErrorStatusRe = regexp.MustCompile(`\b(?:500|502|503|529)\b`)
+
+// paneShowsTransientAPIError reports whether any line carries a retryable API
+// failure. Pure over its input so the decision is table-testable without tmux;
+// the call site supplies the VISIBLE pane tail rather than scrollback, so an
+// error the agent already recovered from does not read as current.
+func paneShowsTransientAPIError(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "api error:") {
+			continue
+		}
+		for _, pat := range transientAPIErrorPatterns {
+			if strings.Contains(lower, pat) {
+				return true
+			}
+		}
+		if transientAPIErrorStatusRe.MatchString(line) {
+			return true
 		}
 	}
 	return false
@@ -5335,7 +6740,25 @@ func copilotCredentialFileHasTokens(path string) bool {
 		if !ok {
 			return false
 		}
-		return len(tokensMap) > 0
+		// Count only USABLE tokens. The CLI masks a token it refuses to use
+		// (foreign/expired) as a literal run of asterisks; a config holding
+		// only masked entries must read as empty so the sync takes the SEED
+		// path (restore the valid durable token) instead of the PROMOTE path
+		// — promoting would overwrite the durable file with "******" and
+		// destroy the one good credential (seen live on the EPM hive).
+		for _, v := range tokensMap {
+			switch t := v.(type) {
+			case string:
+				if copilotTokenValueUsable(t) {
+					return true
+				}
+			case map[string]interface{}:
+				if s, ok := t["token"].(string); ok && copilotTokenValueUsable(s) {
+					return true
+				}
+			}
+		}
+		return false
 	}
 	// apps.json / hosts.json shape: host -> {oauth_token: ...}
 	if strings.HasSuffix(path, "apps.json") || strings.HasSuffix(path, "hosts.json") {
@@ -5352,35 +6775,250 @@ func copilotCredentialFileHasTokens(path string) bool {
 	return false
 }
 
-// clearExpiredTokens removes stored copilot tokens from config.json.
-// An expired gho_ token causes copilot to hang during auth through the
-// MITM proxy instead of falling through to the /login prompt.
-func clearExpiredTokens() error {
-	data, err := os.ReadFile(sharedCopilotConfigPath)
+// copilotConfigHeader is the two-line // preamble the Copilot CLI writes atop
+// its JSONC config.json. We preserve it byte-for-byte on every rewrite so the
+// file keeps reading as the CLI's own managed file rather than a foreign one.
+const copilotConfigHeader = "// User settings belong in settings.json.\n// This file is managed automatically.\n"
+
+// readCopilotConfig loads config.json, strips the CLI's // comment lines, and
+// unmarshals the remainder. A read error (including a missing file) is returned
+// to the caller — clearExpiredTokens relies on that to no-op when there is no
+// config to clear; restoreCopilotTokens handles the missing-file case itself by
+// starting from an empty map.
+func readCopilotConfig(path string) (map[string]interface{}, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var cleaned []byte
 	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
 			continue
 		}
 		cleaned = append(cleaned, []byte(line+"\n")...)
 	}
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(cleaned, &cfg); err != nil {
-		return err
+		return nil, err
 	}
-	cfg["copilotTokens"] = map[string]interface{}{}
-	cfg["loggedInUsers"] = []interface{}{}
-	delete(cfg, "lastLoggedInUser")
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+	return cfg, nil
+}
+
+// writeCopilotConfig marshals cfg back to config.json with the CLI's // header
+// preserved and the CLI-expected mode. Written via a temp file + rename so a
+// concurrent CLI read never sees a half-written file.
+func writeCopilotConfig(path string, cfg map[string]interface{}) error {
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	content := "// User settings belong in settings.json.\n// This file is managed automatically.\n" + string(out)
-	return os.WriteFile(sharedCopilotConfigPath, []byte(content), sharedConfigDesiredMode)
+	content := copilotConfigHeader + string(out)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), sharedConfigDesiredMode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// clearExpiredTokens removes stored copilot tokens from config.json.
+// An expired gho_ token causes copilot to hang during auth through the
+// MITM proxy instead of falling through to the /login prompt.
+//
+// The login IDENTITY (loggedInUsers / lastLoggedInUser) is deliberately
+// PRESERVED: an expired token does not change who was logged in, and the
+// interactive CLI refuses to consider itself signed in without an identity —
+// a later restoreCopilotTokens seed of a perfectly valid token still showed
+// "Please use /login" because this function had wiped the identity alongside
+// the token (kubestellar/hive, 2026-08-22).
+func clearExpiredTokens() error {
+	cfg, err := readCopilotConfig(sharedCopilotConfigPath)
+	if err != nil {
+		return err
+	}
+	cfg["copilotTokens"] = map[string]interface{}{}
+	return writeCopilotConfig(sharedCopilotConfigPath, cfg)
+}
+
+// restoreCopilotTokens writes token into config.json's copilotTokens map so the
+// Copilot CLI has a usable credential without an interactive /login.
+//
+// This closes the loop that leaves agents stuck at "Please use /login" while a
+// VALID user token exists: clearExpiredTokens (and a config rewrite on roll)
+// leave copilotTokens EMPTY, and CLI 1.0.78 does NOT re-populate it from the
+// injected COPILOT_GITHUB_TOKEN on its own — it just prompts /login. Seeding
+// copilotTokens from the durable user token gives the CLI the credential it
+// would otherwise wait for a human to supply. It never performs a device-flow
+// login (that stays the operator's manual path); it only re-uses a token the
+// operator already provided.
+//
+// The token is stored under the "github.com" host key in the object shape the
+// CLI reads ({"github.com":{"token":"…"}}) — the same shape the credential
+// reader (copilotCredentialFileHasTokens) already accepts. A blank token is a
+// no-op (nothing to restore); use clearExpiredTokens to empty the map.
+func restoreCopilotTokens(path, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	cfg, err := readCopilotConfig(path)
+	if err != nil {
+		// A missing/unreadable config is not fatal here: we are writing the
+		// token store fresh. A malformed-but-present file returns a non-IsNot‐
+		// Exist error we still honor rather than clobbering unknown content.
+		if !os.IsNotExist(err) {
+			return err
+		}
+		cfg = map[string]interface{}{}
+	}
+	// When the config still carries a VALID login identity (preserved by
+	// clearExpiredTokens), store the token under the "<host>:<login>" key a
+	// real /login writes, so the interactive CLI recognizes the seeded
+	// credential as a signed-in session rather than showing "Please use
+	// /login" over a valid token. The CLI has written lastLoggedInUser in two
+	// shapes across versions — a bare "https://github.com:user" string and a
+	// {"host":…,"login":…} object (the shape observed in a working 1.0.78
+	// config) — accept both.
+	//
+	// With no valid identity on file (missing, or junk inherited from the
+	// shared config's polluted lineage), resolve the token's TRUE owner from
+	// the GitHub API and write the full canonical identity. This makes the
+	// seed self-sufficient: whatever garbage the file has decayed into, a
+	// valid token always produces a signed-in config. Only when the lookup
+	// itself fails (offline, revoked token) fall back to the legacy host-keyed
+	// object shape — no worse than before.
+	if key := copilotIdentityKey(cfg["lastLoggedInUser"]); key != "" {
+		cfg["copilotTokens"] = map[string]interface{}{key: token}
+	} else if login := githubTokenLogin(token); login != "" {
+		identity := map[string]interface{}{"host": "https://github.com", "login": login}
+		cfg["copilotTokens"] = map[string]interface{}{"https://github.com:" + login: token}
+		cfg["lastLoggedInUser"] = identity
+		cfg["loggedInUsers"] = []interface{}{identity}
+	} else {
+		cfg["copilotTokens"] = map[string]interface{}{
+			"github.com": map[string]interface{}{"token": token},
+		}
+	}
+	return writeCopilotConfig(path, cfg)
+}
+
+// githubTokenLogin resolves the GitHub login that owns token via GET /user, or
+// "" on any failure. Short-timeout, one call — used only on the rare seed path
+// where the config lacks a valid identity. Overridable in tests.
+var githubTokenLogin = func(token string) string {
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var body struct {
+		Login string `json:"login"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.Login)
+}
+
+// copilotIdentityKey renders a lastLoggedInUser value — string or
+// {"host","login"} object — as the "<host>:<login>" copilotTokens key the CLI
+// uses for a signed-in session, or "" when there is no usable identity.
+//
+// VALIDATION is the point, not just shape conversion: the shared config's
+// lineage accumulates junk identities (a bare "github.com" string was observed
+// live — kubestellar/hive, 2026-08-22 — inherited from stale rewrites), and a
+// junk identity keyed a seeded VALID token under a key the CLI rejects, leaving
+// every agent at "Please use /login" over working credentials. Only a
+// "https://<host>:<login>" string (scheme + host + login = at least two
+// colons) or a {host,login} object whose host looks like a URL qualifies.
+func copilotIdentityKey(v interface{}) string {
+	switch id := v.(type) {
+	case string:
+		s := strings.TrimSpace(id)
+		if strings.HasPrefix(s, "http") && strings.Count(s, ":") >= 2 {
+			return s
+		}
+	case map[string]interface{}:
+		host, _ := id["host"].(string)
+		login, _ := id["login"].(string)
+		if strings.HasPrefix(strings.TrimSpace(host), "http") && strings.TrimSpace(login) != "" {
+			return host + ":" + login
+		}
+	}
+	return ""
+}
+
+// extractCopilotToken pulls the first usable token string out of a config.json
+// copilotTokens map, or "" when there is none. The Copilot CLI stores entries
+// in two shapes across versions/login routes — a bare string
+// ({"host:user":"gho_…"}) and an object ({"github.com":{"token":"gho_…"}}) —
+// and this accepts both. It is the inverse of restoreCopilotTokens: the reader
+// side of promoting a CLI-written token back to the hive's durable store.
+func extractCopilotToken(path string) string {
+	cfg, err := readCopilotConfig(path)
+	if err != nil {
+		return ""
+	}
+	tokens, ok := cfg["copilotTokens"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	for _, v := range tokens {
+		switch t := v.(type) {
+		case string:
+			if s := strings.TrimSpace(t); copilotTokenValueUsable(s) {
+				return s
+			}
+		case map[string]interface{}:
+			if s, ok := t["token"].(string); ok {
+				if s = strings.TrimSpace(s); copilotTokenValueUsable(s) {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// copilotTokenValueUsable reports whether a copilotTokens value is a real
+// credential. The CLI redacts tokens it has rejected by rewriting them as a
+// run of asterisks ("******"); treating that placeholder as a token let the
+// promote path mirror garbage over the durable user token.
+func copilotTokenValueUsable(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	return strings.ContainsFunc(s, func(r rune) bool { return r != '*' })
+}
+
+// writeDurableCopilotToken persists token to durablePath via a temp file +
+// rename, matching the dashboard login's saveCopilotToken write. The production
+// caller passes CopilotUserTokenPath — the file that survives upgrade rolls and
+// that the hive reads at boot into m.copilotAuthToken; the path is a parameter
+// so tests can target a temp file.
+func writeDurableCopilotToken(durablePath, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	tmp := durablePath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, durablePath)
 }
 
 // cliReadyIndicators prove copilot finished startup.
@@ -5437,8 +7075,102 @@ func lineHasLoginDirective(line string) bool {
 	return false
 }
 
+// modelRefusalPatterns are upstream MODEL-ENTITLEMENT refusals: the caller is
+// authenticated, and the model it asked for is not one this account may use.
+// Observed verbatim from a LiteLLM gateway in #4400:
+//
+//	team not allowed to access model. This team can only access
+//	models=['gemini-2.5-pro', ..., 'aws/claude-sonnet-4-6', ...]
+//
+// Kept as text as well as the status check below because not every gateway
+// surfaces an HTTP status through the CLI's error line.
+var modelRefusalPatterns = []string{
+	"not allowed to access model",
+	"team not allowed to access",
+}
+
+// lineShowsUpstreamAuthorizationError reports whether a line carries an
+// upstream failure that LOGGING IN CANNOT FIX (#4400).
+//
+// The distinction is the HTTP status, and it is not a nicety:
+//
+//	401  authentication — the caller is not identified. /login is the fix.
+//	403  authorization  — the caller IS identified and is not permitted.
+//	                      /login changes nothing; the request itself is the
+//	                      problem.
+//
+// Keying on the status rather than on one gateway's wording keeps this working
+// for gateways that phrase the refusal differently, and keeps 401 — a genuine
+// logged-out signal — detected exactly as before.
+func lineShowsUpstreamAuthorizationError(line string) bool {
+	if strings.Contains(line, "API Error: 403") {
+		return true
+	}
+	lower := strings.ToLower(line)
+	for _, pat := range modelRefusalPatterns {
+		if strings.Contains(lower, pat) {
+			return true
+		}
+	}
+	return false
+}
+
+var quotaExhaustionPatterns = []string{
+	"exceeded your monthly quota",
+	"used all your copilot free chat requests",
+	"budget_exceeded",
+	"budget has been exceeded",
+	"provider spending limit reached",
+	"refused the request on a spending limit",
+	"gone over your budget allowance",
+	"bobcoins",
+}
+
+var quotaExhaustionStatusPattern = regexp.MustCompile(`\b\d+(?:\.\d+)?/\d+(?:\.\d+)?\s*\(0%\)\s*\|`)
+
+func paneShowsQuotaExhausted(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		for _, pat := range quotaExhaustionPatterns {
+			if strings.Contains(lower, pat) {
+				return true
+			}
+		}
+		if quotaExhaustionStatusPattern.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// paneShowsLoginPrompt returns true if any line in the pane output matches a
+// known login/authentication prompt pattern.
+//
+// #4400: a line that ALSO carries an upstream authorization failure is skipped,
+// because Claude Code prefixes EVERY API error with its login hint. A hive
+// whose gateway refused the configured model rendered
+//
+//	● Please run /login · API Error: 403 {"...":"team not allowed to access
+//	  model. This team can only access models=[... 'aws/claude-sonnet-4-6' ...]"}
+//
+// on an agent that was fully logged in. That matched "Please run /login", so
+// the agent was badged as needing login AND auto-restarted by the poller's
+// `showsLogin && configHasTokens()` branch — restarting into the same 403 every
+// time, which is what the reporter saw as the agent "keeps crashing". The
+// operator was pointed at the one action that could not help, while the real
+// cause — a model id the gateway does not entitle — was sitting in the same
+// line.
+//
+// This is the same shape as lineHasLoginDirective's existing guard: that one
+// exists so "POST /login returns 302" is not read as a login screen. Claude
+// Code's error decoration is the same class of false positive.
 func paneShowsLoginPrompt(lines []string) bool {
 	for _, line := range lines {
+		// An upstream authorization failure is not a login prompt, whatever
+		// the CLI decorated it with.
+		if lineShowsUpstreamAuthorizationError(line) || paneShowsQuotaExhausted([]string{line}) {
+			continue
+		}
 		if lineHasLoginDirective(line) {
 			return true
 		}
@@ -5451,7 +7183,10 @@ func paneShowsLoginPrompt(lines []string) bool {
 	return false
 }
 
-const (
+// Diagnostic pacing. Vars, not consts, so the pkg/agent TestMain can shrink
+// them (see the pacing block near deliverStartupKick). Production values
+// unchanged.
+var (
 	diagnosticTimeoutSec = 20
 	diagnosticPollSec    = 2
 )
@@ -5537,11 +7272,30 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 				continue
 			}
 			if matchesAuthError(output) {
-				m.logger.Warn("diagnostic: auth error detected, clearing token",
-					"agent", agent.Name, "output_snippet", truncateStr(output, 200))
 				agent.LastError = "auth token expired or invalid"
-				if err := clearExpiredTokens(); err != nil {
-					m.logger.Warn("diagnostic: failed to clear tokens", "error", err)
+				// Prefer to RESTORE the stored token over merely clearing it: an
+				// empty copilotTokens leaves CLI 1.0.78 stuck at /login (it does
+				// not re-populate from the injected env token), and every roll
+				// re-hits this. If we hold a durable user token, seed it so the
+				// relaunch below comes up authenticated; otherwise fall back to
+				// the historical clear (which lets the CLI reach /login instead
+				// of hanging on the MITM proxy on a stale token).
+				m.mu.RLock()
+				userTok := m.copilotAuthToken
+				m.mu.RUnlock()
+				if strings.TrimSpace(userTok) != "" {
+					m.logger.Warn("diagnostic: auth error detected, restoring token from durable user token",
+						"agent", agent.Name, "output_snippet", truncateStr(output, 200))
+					if err := restoreCopilotTokens(sharedCopilotConfigPath, userTok); err != nil {
+						m.logger.Warn("diagnostic: failed to restore tokens, clearing instead", "error", err)
+						_ = clearExpiredTokens()
+					}
+				} else {
+					m.logger.Warn("diagnostic: auth error detected, clearing token (no durable token to restore)",
+						"agent", agent.Name, "output_snippet", truncateStr(output, 200))
+					if err := clearExpiredTokens(); err != nil {
+						m.logger.Warn("diagnostic: failed to clear tokens", "error", err)
+					}
 				}
 			} else if paneShowsCLIReady(strings.Split(output, "\n")) {
 				m.logger.Info("diagnostic: copilot started successfully in bare mode", "agent", agent.Name)
@@ -5746,8 +7500,10 @@ const claudeGitHubWriteDenyFlags = " --disallowed-tools 'mcp__github__create_pul
 //
 // No --model is passed, and that is load-bearing. bob auto-selects its own
 // model, and hive's normalizeModelName rewrites a trailing -<digits> to
-// .<digits> for every backend except claude/inference, so a configured
-// `claude-sonnet-4-6` reached bob as `claude-sonnet-4.6` — an id bob's backend
+// .<digits> for every backend except claude/copilot/inference (copilot uses
+// alias-based canonicalization instead, see CanonicalizeCopilotModel), so a
+// configured `claude-sonnet-4-6` reached bob as `claude-sonnet-4.6` — an id
+// bob's backend
 // does not know. Its model config came back undefined and every prompt died
 // with "🛑 Cannot read properties of undefined (reading 'maxTokens')". Verified
 // live: the same bob with no --model runs inference successfully.
@@ -6076,15 +7832,28 @@ func (m *Manager) ensureWorldWritable(root string) {
 
 // normalizeModelName converts YAML-friendly model names to the format each
 // CLI backend expects. Claude CLI uses hyphens (claude-opus-4-7), while
-// Copilot and other backends use dots (claude-opus-4.7).
+// gemini/goose/agy-style backends use dots (claude-opus-4.7).
 //
-// Self-hosted inference backends (vllm, llm-d, litellm) are the outbound
-// gateway model id verbatim — the string must match an entitled model on the
-// gateway EXACTLY (prefixes like "Azure/", dots vs hyphens, case). Rewriting
-// it (e.g. "Azure/gpt-4" -> "Azure/gpt.4", "gpt-4o-2024-08-06" ->
-// "gpt-4o-2024-08.06") produces a model the team is not entitled to and the
-// gateway 403s ("team not allowed to access model") even for entitled models.
-// So never normalize inference model names — pass them through untouched.
+// copilot does NOT take the blind trailing-digits dot-rewrite below: the
+// Copilot CLI's --model nomenclature mixes separators per model family
+// (claude-fable-5 is DASHED, claude-opus-4.6 is DOTTED), so the rewrite
+// corrupted every dashed-family id — verified live, copilot CLI v1.0.78
+// rejected the rewritten `claude-fable.5` ("is not available") and fell back
+// to a different model (#4262). copilot instead uses the alias-based
+// CanonicalizeCopilotModel (copilot_models.go), which normalizes separator
+// drift against the known CLI-accepted list in both directions and passes
+// unknown ids through verbatim. Applied here — at launch time — so an
+// already-stored bad id self-corrects on existing spokes without operator
+// action.
+//
+// Self-hosted inference backends (vllm, llm-d, litellm) and configured gateway
+// names are the outbound gateway model id verbatim — the string must match an
+// entitled model on the gateway EXACTLY (prefixes like "Azure/", dots vs
+// hyphens, case). Rewriting it (e.g. "Azure/gpt-4" -> "Azure/gpt.4",
+// "gpt-4o-2024-08-06" -> "gpt-4o-2024-08.06") produces a model the team is not
+// entitled to and the gateway 403s ("team not allowed to access model") even
+// for entitled models. So never normalize inference model names — pass them
+// through untouched.
 //
 // bob is likewise excluded. bobLaunchCmd passes no --model at all (bob
 // auto-selects), so this is defense-in-depth rather than the fix: the value is
@@ -6094,9 +7863,12 @@ func (m *Manager) ensureWorldWritable(root string) {
 // undefined (reading 'maxTokens')". Leaving it unrewritten keeps logs honest
 // about what was configured and stops the corrupted id from being handed to a
 // future bob consumer.
-func normalizeModelName(model, backend string) string {
-	if backend == "claude" || backend == bobBackend || IsInferenceBackend(backend) {
+func normalizeModelNameForBackend(model, backend string, inferenceRoutable bool) string {
+	if backend == "claude" || backend == bobBackend || inferenceRoutable {
 		return model
+	}
+	if backend == "copilot" {
+		return CanonicalizeCopilotModel(model)
 	}
 	idx := strings.LastIndex(model, "-")
 	if idx < 0 || idx == len(model)-1 {
@@ -6114,6 +7886,10 @@ func normalizeModelName(model, backend string) string {
 		return model[:idx] + "." + suffix
 	}
 	return model
+}
+
+func normalizeModelName(model, backend string) string {
+	return normalizeModelNameForBackend(model, backend, IsInferenceBackend(backend))
 }
 
 // ClearAllModeOverrides clears the per-agent Config.Mode for all agents so that
@@ -6504,6 +8280,37 @@ func (m *Manager) SyncModeFiles(level int) {
 		if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
+		// The capability file rides the same sync (#4492). It is level-independent
+		// today, but writing it here is what makes a `converse` change take effect
+		// on the next reconcile instead of only at the next agent launch.
+		caps := DefaultCapabilities(mode, level)
+		if agent.Config.Converse != nil {
+			caps.Converse = *agent.Config.Converse
+		}
+		m.writeAgentCapsFile(name, caps)
+	}
+}
+
+// agentCapabilities returns the ORTHOGONAL capabilities for a given agent
+// (#4492). Unlike agentMode there is no per-level default table: `converse` is
+// opt-in everywhere, so an agent whose config says nothing gets the zero value
+// and behaves exactly as it did before capabilities existed.
+func (m *Manager) agentCapabilities(agent *AgentProcess) AgentCapabilities {
+	caps := DefaultCapabilities(m.agentMode(agent), m.project.ACMMLevel)
+	if agent.Config.Converse != nil {
+		caps.Converse = *agent.Config.Converse
+	}
+	return caps
+}
+
+// writeAgentCapsFile persists the capability set the proxy reads on the request
+// path. It is written for EVERY agent, including those with no capabilities, so
+// a cleared `converse` actually revokes: leaving a stale file behind would keep
+// granting the capability after the operator turned it off.
+func (m *Manager) writeAgentCapsFile(name string, caps AgentCapabilities) {
+	capsFile := filepath.Join(agentStateDir, ".hive-caps-"+name)
+	if err := writeAgentStateFile(capsFile, []byte(caps.String())); err != nil {
+		m.logger.Warn("caps file write failed", "file", capsFile, "error", err)
 	}
 }
 
@@ -6612,11 +8419,14 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 	return nil
 }
 
-// AuthorizeIssueOpen applies the same UID forge-resistance as AuthorizePROpen,
-// but uses the narrower CanCreateIssues capability. The issue-request watcher
-// is the only ordinary-agent issue creation path, so this check cannot be
-// bypassed by choosing a different CLI or MCP client.
-func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int) error {
+// AuthorizeIssueOpen enforces the policy for the issue-request watcher,
+// mirroring AuthorizePROpen with the mode gates that govern the direct gh
+// paths: "issue" requests need CanCreateIssues() (mode >= ISSUES_ONLY);
+// "comment" and "claim" requests need the same (commenting and claiming an
+// issue are both issue-writes under the same tier). The same UID
+// forge-resistance applies: the request file's owner must BE the claimed
+// agent. A nil manager or unknown agent is denied.
+func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int, kind string) error {
 	if strings.TrimSpace(agentName) == "" {
 		return fmt.Errorf("no agent named in the request")
 	}
@@ -6636,7 +8446,7 @@ func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int) error {
 		return fmt.Errorf("unknown agent %q", agentName)
 	}
 	if !m.agentMode(agent).CanCreateIssues() {
-		return fmt.Errorf("agent %q cannot create issues at this ACMM level (mode %s)",
+		return fmt.Errorf("agent %q may not create issues or comments at this ACMM level (mode %s)",
 			agentName, m.agentMode(agent).String())
 	}
 	return nil
@@ -6678,25 +8488,79 @@ func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
 	return nil
 }
 
-// InvocationMetadata reports the effective backend and model the hive invokes
-// for the named agent, accounting for runtime overrides — the launch-time
-// truth the invocation-attribution trail records (see pkg/github/attribution
+// AgentCapabilities reports whether the named agent is ABLE — at the hive's
+// current ACMM level and the agent's effective mode — to create issues, open
+// PRs, and merge PRs. These are the EXACT gates AuthorizePROpen (CanPush) and
+// AuthorizeMerge (CanMerge) enforce, so a hub capability badge derived from
+// these can never claim a capability the merge/PR relay would actually refuse.
+// ok=false when the agent is unknown to the manager (the caller then reports
+// "unknown", not a false negative). Read-only under RLock.
+func (m *Manager) AgentCapabilities(agentName string) (canOpenIssue, canOpenPR, canMerge, ok bool) {
+	m.mu.RLock()
+	agent, exists := m.agents[agentName]
+	m.mu.RUnlock()
+	if !exists || agent == nil {
+		return false, false, false, false
+	}
+	mode := m.agentMode(agent)
+	return mode.CanCreateIssues(), mode.CanPush(), mode.CanMerge(), true
+}
+
+// EffectiveBackend reports the named agent's effective backend, honoring any
+// runtime BackendOverride (see effectiveBackend). ok=false when the agent is
+// unknown. Read-only under RLock — a small exported wrapper so callers outside
+// the package (the heartbeat builder) need not reach into unexported state.
+func (m *Manager) EffectiveBackend(agentName string) (backend string, ok bool) {
+	m.mu.RLock()
+	agent, exists := m.agents[agentName]
+	m.mu.RUnlock()
+	if !exists || agent == nil {
+		return "", false
+	}
+	return effectiveBackend(agent), true
+}
+
+// InvocationMetadata reports the effective backend, model, and reasoning effort
+// the hive invokes for the named agent, accounting for runtime overrides — the
+// launch-time truth the invocation-attribution trail records (see pkg/github/attribution
 // .go). ok=false when the agent is unknown to the manager (the caller then
 // falls back to static config). Read-only under RLock; called from the
 // PR-request watcher goroutine, never from the launch path.
-func (m *Manager) InvocationMetadata(agentName string) (backend, model string, ok bool) {
+func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort string, ok bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	agent, exists := m.agents[agentName]
 	if !exists {
-		return "", "", false
+		return "", "", "", false
 	}
 	backend = effectiveBackend(agent)
 	model = agent.Config.Model
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
-	return backend, model, true
+	return backend, model, ResolveReasoningEffort(backend, model), true
+}
+
+// ResolveReasoningEffort reports the reasoning effort the hive actually launches
+// a given backend/model pair with. Exported because the attribution trail is
+// resolved in TWO places — Manager.InvocationMetadata above for a running agent,
+// and cmd/hive's fallback that reads straight from config when the Manager does
+// not know the agent — and both must give the same answer.
+//
+// Before this existed the fallback carried its own hardcoded "low", so changing
+// agyDefaultEffort here would have left cmd/hive silently stamping PRs with an
+// effort agy was no longer being launched with. An attribution trail that
+// misreports is worse than one that says nothing.
+//
+// agy is the only backend with a rule: it REQUIRES --effort whenever --model is
+// given (without it agy ignores the model outright), and it is given no --effort
+// at all when no model is set. Every other backend takes its effort from its own
+// config, which the hive does not resolve here, so the honest answer is "".
+func ResolveReasoningEffort(backend, model string) string {
+	if backend == "agy" && model != "" {
+		return agyDefaultEffort
+	}
+	return ""
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.
@@ -6828,6 +8692,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
+	m.writeAgentCapsFile(agent.Name, m.agentCapabilities(agent))
 	// Plain proxy URL without userinfo — Claude Code's native binary fails
 	// to open a socket when the URL contains username:password@ (FailedToOpenSocket).
 	// Agent identification uses UID-based /proc/net/tcp lookup instead of
@@ -6845,7 +8710,33 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if advisory := os.Getenv("HIVE_ADVISORY_ISSUE"); advisory != "" {
 		vars = append(vars, agentEnvPair{"HIVE_ADVISORY_ISSUE", advisory, false})
 	}
-	if IsInferenceBackend(backend) {
+	// HIVE_REPO / HIVE_REPOS: the shipped policy templates instruct agents to
+	// run `gh issue create --repo "$HIVE_REPO"`, but nothing ever exported it
+	// to hosted agents (only the OSS scheduler set a hardcoded "<org>/hive").
+	// Root-caused on a live hosted hive (2026-08-20): the sec-check agent saw
+	// HIVE_REPO unset, fell back to the git remote of its own workdir, and
+	// silently scanned only the primary repo — the other project repos were
+	// never touched. Export the primary repo and the full project repo list so
+	// templates and agents can target every configured repo.
+	if m.project.Org != "" && len(m.project.Repos) != 0 {
+		primary := m.project.PrimaryRepo()
+		if primary == "" {
+			primary = m.project.Repos[0]
+		}
+		vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
+		full := make([]string, len(m.project.Repos))
+		for i, r := range m.project.Repos {
+			full[i] = m.project.Org + "/" + r
+		}
+		vars = append(vars, agentEnvPair{"HIVE_REPOS", strings.Join(full, ","), false})
+	}
+	// GH_HOST: point the gh CLI at the configured forge host for GHE spokes.
+	// See ProjectContext.GHHost. The gh wrapper pairs this with
+	// GH_ENTERPRISE_TOKEN so the per-agent scoped token authenticates there.
+	if m.project.GHHost != "" {
+		vars = append(vars, agentEnvPair{"GH_HOST", m.project.GHHost, false})
+	}
+	if m.routableBackend(backend) {
 		const inferenceTranslatePort = 18444
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
@@ -6922,6 +8813,12 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if agent.Config.CavemanMode != "" {
 		vars = append(vars, agentEnvPair{"HIVE_CAVEMAN_MODE", agent.Config.CavemanMode, false})
 	}
+	// Export the RESOLVED explain mode, not the raw config value, so an agent's
+	// skills and helper scripts see the same answer the kick suffix acted on
+	// (including inheritance from the hive-wide default and the off fallback for
+	// an invalid value). Always exported, off included, so a script can branch on
+	// it without having to re-derive the precedence rules itself.
+	vars = append(vars, agentEnvPair{config.ExplainModeEnvVar, resolveExplainMode(agent.Config, m.explainModeDefault()), false})
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
@@ -6930,11 +8827,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		}
 	}
 	if agent.UID > 0 {
-		home := "/data/home"
-		if IsInferenceBackend(backend) {
-			home = inferenceHomePath(agent.Name)
-		}
-		vars = append(vars, agentEnvPair{"HOME", home, false})
+		// Per-UID agents get a per-agent HOME (#4596) — AgentHome is the single
+		// source of truth so the auth probe and this export can never diverge.
+		vars = append(vars, agentEnvPair{"HOME", AgentHome(agent.Name, agent.UID, backend), false})
 
 		// Under the per-agent-UID layout the global npm prefix is owned by the
 		// image's build user, so the Claude Code CLI's self-updater fails on
@@ -7022,7 +8917,24 @@ func (m *Manager) KillSession(name string) error {
 	return nil
 }
 
+// Pause pauses an agent with no attributed acting user — the right call for
+// system-initiated pauses (login-detector, fleet-breaker, acmm-pack, state
+// restore of a pause whose actor is unknown). A pause performed on behalf of
+// a person goes through PauseBy so provenance survives (#4041).
 func (m *Manager) Pause(name, trigger, reason string) error {
+	return m.PauseBy(name, trigger, reason, "")
+}
+
+// PauseBy pauses an agent and records WHO asked for it. `by` is the acting
+// user (the authenticated dashboard user for a dashboard-api pause); empty
+// means "no human actor" — never fabricate one.
+func (m *Manager) PauseBy(name, trigger, reason, by string) error {
+	return m.PauseByCause(name, trigger, reason, by, PauseCausation{})
+}
+
+// PauseByCause is PauseBy plus hook causation metadata for the post-commit
+// agent_paused emitter. Non-hook callers should use PauseBy/Pause.
+func (m *Manager) PauseByCause(name, trigger, reason, by string, cause PauseCausation) error {
 	m.mu.Lock()
 
 	agent, ok := m.agents[name]
@@ -7035,6 +8947,7 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	agent.PausedAt = time.Now()
 	agent.PausedReason = reason
 	agent.PausedTrigger = trigger
+	agent.PausedBy = by
 	if agent.State == StateRunning {
 		if agent.cancel != nil {
 			agent.cancel()
@@ -7055,9 +8968,11 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 		"name", name,
 		"trigger", trigger,
 		"reason", reason,
+		"by", by,
 		"backend", agent.Config.Backend,
 		"restart_count", agent.RestartCount,
 	)
+	pausedAt := agent.PausedAt
 	m.audit(AuditAgentPaused, name, auditFields(
 		"outcome", "success",
 		"backend", agent.effectiveBackend(),
@@ -7070,16 +8985,26 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	if persistPause != nil {
 		persistPause(name, true)
 	}
+	m.emitPauseTransition(PauseTransitionEvent{
+		Agent:     name,
+		Paused:    true,
+		Trigger:   trigger,
+		Reason:    reason,
+		By:        by,
+		Causation: cause,
+		At:        pausedAt,
+	})
 	return nil
 }
 
-func (m *Manager) SeedPauseState(name string, pausedAt time.Time, trigger, reason string) {
+func (m *Manager) SeedPauseState(name string, pausedAt time.Time, trigger, reason, by string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if agent, ok := m.agents[name]; ok {
 		agent.PausedAt = pausedAt
 		agent.PausedTrigger = trigger
 		agent.PausedReason = reason
+		agent.PausedBy = by
 	}
 }
 
@@ -7105,11 +9030,18 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		// re-enter the manager, and m.mu is a non-reentrant RWMutex —
 		// invoking it here with the lock held deadlocks Resume and wedges
 		// everything queued behind m.mu (see persistPauseCallback docs).
+		defer m.emitPauseTransition(PauseTransitionEvent{
+			Agent:   name,
+			Paused:  false,
+			Trigger: trigger,
+			Reason:  reason,
+		})
 		defer persistPause(name, false)
 	}
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
+	agent.PausedBy = ""
 	needsRelaunch := agent.State == StatePaused
 	if m.agentSandboxEnabledLocked(agent) {
 		if needsRelaunch {
@@ -7366,6 +9298,13 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 		}
 	}
 
+	// Archive the outgoing session's kick output before the session is killed
+	// below — kill-session destroys the scrollback (#4295/#4296).
+	if agent.kickLogPending {
+		m.archiveKickLogLocked(agent, "restart")
+		agent.kickLogPending = false
+	}
+
 	// Terminate the agent's CLI process(es) before recreating the session.
 	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
 	// not UID isolation is enabled. killAgentProcesses (UID-based) is only safe
@@ -7404,7 +9343,6 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// Without this, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the
 	// shell isn't ready to process command substitution yet.
 	// Released the lock before sleeping so other manager operations aren't blocked.
-	const sessionReadyDelay = 2 * time.Second
 	time.Sleep(sessionReadyDelay)
 
 	m.mu.Lock()
@@ -7667,6 +9605,23 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 }
 
 func (m *Manager) Restart(ctx context.Context, name string) error {
+	// Detach from the caller's cancellation. Restart is routinely invoked from
+	// goroutines whose OWN context is the per-launch agentCtx this function is
+	// about to cancel (pollTmuxOutputForAgent's token-detected and TLS-error
+	// restarts): agent.cancel() below kills that parent, so the relaunch's new
+	// WithCancel context was born dead — launchInTmux still typed the CLI, but
+	// pollTmuxOutputForAgent and watchForTrustPromptForAgent exited instantly,
+	// leaving every restarted agent with NO pane monitors. Live signature
+	// (kubestellar/hive, 2026-08-22): exactly one auto-answered trust prompt
+	// per agent per pod boot, then wedged panes forever after the first
+	// token-detected restart. A relaunch must never be aborted by the
+	// cancellation of the launch it replaces. (Nil-guarded: WithoutCancel
+	// panics on a nil parent, and callers pass nil for "no context".)
+	if ctx == nil {
+		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -7680,6 +9635,14 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 		if agent.cancel != nil {
 			agent.cancel()
 		}
+	}
+
+	// Archive the outgoing session's kick output BEFORE anything below kills
+	// the CLI or the session — kill-session destroys the scrollback and with
+	// it the only record of the previous run (#4295/#4296).
+	if agent.kickLogPending {
+		m.archiveKickLogLocked(agent, "restart")
+		agent.kickLogPending = false
 	}
 
 	// Terminate the agent's CLI process(es) before recreating the session.
@@ -7846,6 +9809,15 @@ func (m *Manager) SetModelOverride(name, model string) error {
 	agent, ok := m.agents[name]
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
+	}
+
+	// Store the CLI-accepted spelling for copilot so the persisted selection,
+	// the dropdown preselect, and auto-heal all agree on one canonical id
+	// (separator drift like claude-fable.5 vs claude-fable-5, #4262). Launch
+	// re-applies the same canonicalization, so even ids stored before this
+	// existed self-correct there.
+	if agent.effectiveBackend() == "copilot" {
+		model = CanonicalizeCopilotModel(model)
 	}
 
 	// A pin blocks the governor's auto-selection, never a user's explicit

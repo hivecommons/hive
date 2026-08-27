@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,6 +212,7 @@ func TestAgentEnvPairs_InferenceCov(t *testing.T) {
 	for _, p := range pairs {
 		found[p.Key] = p.Value
 	}
+
 	if found["ANTHROPIC_API_KEY"] != "sk-hive-cxa" {
 		t.Errorf("inference should set ANTHROPIC_API_KEY, got %q", found["ANTHROPIC_API_KEY"])
 	}
@@ -222,6 +224,32 @@ func TestAgentEnvPairs_InferenceCov(t *testing.T) {
 	}
 	if _, ok := found["COPILOT_GITHUB_TOKEN"]; !ok {
 		t.Error("copilot token should be present as a secret pair")
+	}
+}
+
+func TestAgentEnvPairs_ConfiguredGatewayGetsTranslatorEnv(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"guide": {Backend: "OpenRouter", Model: "anthropic/claude-opus-4.8"},
+	}, discardLogger(), ProjectContext{})
+	m.SetGatewayBackendChecker(func(backend string) bool {
+		return strings.EqualFold(backend, "openrouter")
+	})
+	m.mu.RLock()
+	agent := m.agents["guide"]
+	m.mu.RUnlock()
+
+	found := map[string]string{}
+	for _, p := range m.agentEnvPairs(agent) {
+		found[p.Key] = p.Value
+	}
+	if found["ANTHROPIC_API_KEY"] != "sk-hive-guide" {
+		t.Errorf("gateway backend should set ANTHROPIC_API_KEY, got %q", found["ANTHROPIC_API_KEY"])
+	}
+	if _, ok := found["ANTHROPIC_BASE_URL"]; !ok {
+		t.Error("gateway backend should set ANTHROPIC_BASE_URL")
+	}
+	if found["NO_PROXY"] == "" {
+		t.Error("gateway backend should set NO_PROXY")
 	}
 }
 

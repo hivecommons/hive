@@ -76,11 +76,48 @@ subjects:
 # exec'ing into it. Spoke namespaces are created dynamically, so this cannot
 # be narrowed to per-namespace RoleBindings from a static manifest; that is
 # the only reason a ClusterRole remains at all.
+#
+# SECURITY (issue #4062, CWE-269): pods/exec: create is cluster-wide here.
+# Kubernetes RBAC has no wildcard-namespace syntax, so we cannot express
+# "only exec in hive-hosted-* namespaces" directly. The backup binary
+# (pkg/hubbackup/collect.go) ONLY targets namespaces of the form
+# hive-hosted-<id> derived from hub-registry.json, so the application-level
+# behaviour is already restricted.
+#
+# The RBAC surface is wider than the application needs, however. A compromised
+# backup pod (e.g. via supply-chain attack on the image) could exec into pods
+# in ANY namespace. Operators who want enforcement at the admission layer can
+# apply the optional Kyverno policy overlay:
+#
+#   src/deploy/kustomize/overlays/backup-exec-restriction/
+#
+# That overlay deploys a ClusterPolicy that admits Pod/exec CONNECT requests
+# from this ServiceAccount only when the target namespace starts with
+# "hive-hosted-". See the overlay's README for prerequisites (Kyverno ≥ 1.11).
+#
+# Known limitations of the current posture — read before assuming this is a
+# hard security boundary:
+#
+#   1. "pods: get,list" below REMAINS cluster-wide and is NOT constrained by
+#      the Kyverno overlay (which covers pods/exec only). A compromised backup
+#      pod can therefore still enumerate pod names/specs fleet-wide. That is a
+#      reconnaissance vector, not an execution one, and shrinking it has the
+#      same dynamic-namespace problem as exec.
+#   2. The primary namespace control is APPLICATION-LEVEL: collectOne() in
+#      pkg/hubbackup/collect.go rejects any target namespace that does not
+#      match ^hive-hosted-<dns-label>$ before it spawns kubectl exec. It is
+#      compiled into the binary and cannot be disabled by cluster state, but it
+#      does not survive image compromise — it is defence-in-depth.
+#   3. The Kyverno overlay is OPTIONAL hardening for Kyverno 1.11+ clusters and
+#      deliberately uses failurePolicy: Ignore (fail-open), so a Kyverno outage
+#      cannot block cluster-wide exec. It consequently does not enforce during
+#      such an outage.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: hive-hub-backup
 rules:
+  # NOTE (issue #4062): cluster-wide pod reads. See limitation (1) above.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]

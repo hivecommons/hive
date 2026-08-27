@@ -120,6 +120,8 @@ var defaultLanes = []LaneConfig{
 	{Name: "ci-maintainer", Keywords: []string{"workflow-failure", "ci-failure", "nightly", "coverage", "regression", "ga4", "analytics"}},
 	{Name: "outreach", Keywords: []string{"adopters", "outreach", "community", "engagement"}},
 	{Name: "quality", Keywords: []string{"test-gap", "test-strategy", "test-coverage", "test-scaffold", "untested", "missing-tests"}},
+	{Name: "telemetry", Keywords: []string{"observability", "opentelemetry", "prometheus", "grafana", "tracing", "metrics", "structured-logging", "servicemonitor", "podmonitor"}},
+	{Name: "operations", Keywords: []string{"healthz", "readyz", "readiness", "slo-", "sli-", "service-level-objective", "service-level-indicator", "error-budget", "runbook", "incident-response", "rollback", "alerting"}},
 }
 
 var lanesMu sync.RWMutex

@@ -18,7 +18,6 @@ services:
       - "3001:3001"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
-      - gateway-upstream:/etc/nginx/upstream
     depends_on:
       hive:
         condition: service_healthy
@@ -29,7 +28,20 @@ services:
       retries: 3
 
   hive:
-    image: ghcr.io/kubestellar/hive:v2-latest
+    # Image references for the standalone stack come from ONE source of truth,
+    # src/deploy/standalone-images.sh, so the Docker and Podman assets cannot
+    # drift apart. src/deploy/test_standalone_image_refs.sh fails the build if
+    # this line stops agreeing with it.
+    #
+    # Bumped off the retired `v2-latest` (#4206). That tag belonged to the v2
+    # branch and resolves to a different, older digest than the v4 channels;
+    # src/docs/operator-reference.md already told operators not to use it for
+    # new deployments and flagged this default as pending a bump, and
+    # src/deploy/k8s/backup-cronjob.yaml made the same move for the same reason
+    # (#3709). `stable` is the operator-blessed release channel; pin a digest
+    # here instead (`ghcr.io/kubestellar/hive@sha256:...`) for full
+    # reproducibility.
+    image: ghcr.io/kubestellar/hive:stable
     build:
       context: ..
       dockerfile: src/Dockerfile
@@ -48,17 +60,43 @@ services:
       - ./hive.yaml:/etc/hive/hive.yaml
       - hive-data:/data
       - ./secrets:/secrets:ro
+    # PARITY (#4404): this list and the variable names in
+    # deploy/quadlet/hive.env.example are asserted to be the SAME SET by
+    # deploy/test_standalone_runtime_parity.sh. The Quadlet unit reads its
+    # environment through an opaque `EnvironmentFile=`, so a variable added here
+    # and nowhere else used to reach Docker and silently never reach Podman.
+    # Add to both, or to neither.
     environment:
       - HIVE_GITHUB_TOKEN=${HIVE_GITHUB_TOKEN}
       - HIVE_DASHBOARD_TOKEN=${HIVE_DASHBOARD_TOKEN}
-      - NTFY_SERVER=${NTFY_SERVER}
-      - NTFY_TOPIC=${NTFY_TOPIC}
+      # `:-` on the two OPTIONAL variables and deliberately not on the two
+      # tokens above (#4477). Compose warns once per command for every `${VAR}`
+      # it cannot resolve, and ntfy is off by default, so an ordinary quick
+      # start printed two permanent warnings that mean nothing — training the
+      # operator to skim past the line that says a variable is unset. That line
+      # is the ONLY signal Compose gives when the env file is not being read at
+      # all, which is how the quick start's `.env` sat unread at the repo root.
+      # Give a default to what is genuinely optional; leave the tokens bare so
+      # their warning still means something.
+      - NTFY_SERVER=${NTFY_SERVER:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
       - HIVE_LEVEL=${HIVE_LEVEL:-}
       - HIVE_REPO=${HIVE_REPO:-}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - LINEAR_CLIENT_ID=${LINEAR_CLIENT_ID:-}
+      - LINEAR_CLIENT_SECRET=${LINEAR_CLIENT_SECRET:-}
+      - LINEAR_WEBHOOK_SECRET=${LINEAR_WEBHOOK_SECRET:-}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+    # BOTH LISTENERS, not just the Go API (#4476). 3002 is the Go API; 3001 is
+    # the Node auth proxy that deploy/nginx.conf points `upstream hive_api` at,
+    # so 3001 is what the gateway and every operator reach. Probing 3002 alone
+    # reported this container `healthy` for the whole two minutes a missing
+    # HIVE_DASHBOARD_TOKEN kept the proxy from binding 3001. CMD-SHELL because
+    # `&&` is the shell's; the Quadlet unit runs the identical string, which
+    # deploy/test_standalone_runtime_parity.sh asserts.
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3002/api/health"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -173,4 +211,3 @@ networks:
 
 volumes:
   hive-data:
-  gateway-upstream:

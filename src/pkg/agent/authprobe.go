@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kubestellar/hive/pkg/claude"
@@ -75,17 +76,25 @@ func BackendRequiresInteractiveAuth(backend string) bool {
 // exactly what buildAgentEnv exports as HOME on the launch path, so the auth
 // probe reads the same filesystem location the CLI writes to. Agents with no
 // allocated UID (UID == 0) run as the hive user out of the process HOME.
+//
+// Per-UID interactive agents get a PER-AGENT home (#4596 — the shared
+// /data/home let any agent's atomic .claude.json rewrite sign out the whole
+// fleet); inference agents keep their /tmp-based per-agent home; the
+// HIVE_SHARED_AGENT_HOME=1 escape hatch restores the legacy shared layout.
 func AgentHome(agentName string, uid int, backend string) string {
 	if uid <= 0 {
 		if h := os.Getenv("HOME"); h != "" {
 			return h
 		}
-		return "/data/home"
+		return sharedAgentHome
 	}
 	if IsInferenceBackend(backend) {
 		return inferenceHomePath(agentName)
 	}
-	return "/data/home"
+	if sharedAgentHomeForced() {
+		return sharedAgentHome
+	}
+	return interactiveHomePath(agentName)
 }
 
 // agentClaudeCredentialPaths returns the .credentials.json locations to try for
@@ -109,6 +118,70 @@ func containsPath(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// ClaudeCredentialCandidatePaths returns every .credentials.json worth trying
+// for a BACKEND-level "is claude authenticated on this hive?" question —
+// per-UID agent homes first, the shared legacy path last.
+//
+// It exists so that question has exactly ONE answer (#4699). The per-UID fix
+// this file's header describes was applied here and NOT to the dashboard's
+// model-discovery probe, which kept stat'ing only the shared path. On a hive
+// where the two disagree the operator sees a self-contradicting UI: the agent
+// card reads "✓ logged in" from this probe while every model in the dropdown
+// reads "(common alias, unverified)" from that one. Both now resolve paths
+// through this function, so they cannot drift apart again.
+//
+// Backend-level, so ANY agent's fresh token answers it: a model catalog is a
+// property of the provider, not of the agent that asked. Ordering is
+// deterministic (agents sorted by name) because m.agents iterates randomly and
+// a probe that consulted a different credential on each call would be
+// untestable and would make an expired token an intermittent failure.
+//
+// A nil Manager yields the shared path alone, which is the pre-per-UID
+// behavior — callers without an agent manager are no worse off than before.
+func (m *Manager) ClaudeCredentialCandidatePaths() []string {
+	if m == nil {
+		return []string{sharedClaudeCredentialPath}
+	}
+
+	type agentRef struct {
+		name    string
+		backend string
+		uid     int
+	}
+	m.mu.RLock()
+	refs := make([]agentRef, 0, len(m.agents))
+	for name, proc := range m.agents {
+		if proc == nil {
+			continue
+		}
+		backend := proc.Config.Backend
+		if proc.BackendOverride != "" {
+			backend = proc.BackendOverride
+		}
+		if backend != "claude" {
+			continue
+		}
+		refs = append(refs, agentRef{name: name, backend: backend, uid: proc.UID})
+	}
+	m.mu.RUnlock()
+	sort.Slice(refs, func(i, j int) bool { return refs[i].name < refs[j].name })
+
+	paths := []string{}
+	for _, r := range refs {
+		for _, p := range agentClaudeCredentialPaths(r.name, r.uid, r.backend) {
+			if !containsPath(paths, p) {
+				paths = append(paths, p)
+			}
+		}
+	}
+	// Always reachable even with no claude agents registered: a hive that has
+	// not started its agents yet still has a shared login worth checking.
+	if !containsPath(paths, sharedClaudeCredentialPath) {
+		paths = append(paths, sharedClaudeCredentialPath)
+	}
+	return paths
 }
 
 // agentCopilotConfigPaths returns the Copilot credential locations to try for
@@ -243,7 +316,7 @@ func (m *Manager) AgentAuthState(agentName string, uid int, backend string, runn
 		if tok != "" {
 			return true, true
 		}
-		if _, err := os.Stat(CopilotUserTokenPath); err == nil {
+		if _, err := os.Stat(copilotUserTokenProbePath); err == nil {
 			return true, true
 		}
 		for _, p := range agentCopilotConfigPaths(agentName, uid, backend) {

@@ -236,6 +236,15 @@ func TestEvidence(t *testing.T) {
 	if !LinkedIssueInBody("Fixes #2803") || !LinkedIssueInBody("Closes kubestellar/hive#2803") {
 		t.Fatal("expected closing issue refs to be detected")
 	}
+	for _, body := range []string{"Refs #2803", "Ref #2803", "Part of #2803", "Related to kubestellar/hive#2803"} {
+		if !LinkedIssueInBody(body) {
+			t.Fatalf("expected non-closing issue ref %q to be detected", body)
+		}
+		ev := Evidence{LinkedIssue: LinkedIssueInBody(body)}
+		if !ev.LinkedIssue {
+			t.Fatalf("expected LinkedIssue true for %q", body)
+		}
+	}
 	store, err := beads.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

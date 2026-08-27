@@ -177,11 +177,16 @@ func TestFindACMMFragmentsBaseOnly(t *testing.T) {
 }
 
 func TestFindACMMFragmentsNoDir(t *testing.T) {
+	orig := acmmFragmentFallbackDirs
+	acmmFragmentFallbackDirs = nil
+	t.Cleanup(func() { acmmFragmentFallbackDirs = orig })
+
+	policyDir := filepath.Join(t.TempDir(), "policies", "agents")
 	m := &Manager{
 		logger: slog.Default(),
 		project: ProjectContext{
 			ACMMLevel: 3,
-			PolicyDir: "/nonexistent/policies/agents",
+			PolicyDir: policyDir,
 		},
 	}
 
@@ -295,11 +300,14 @@ func TestLogOutputSignalsLong(t *testing.T) {
 }
 
 func TestReadCoveragePreamble(t *testing.T) {
+	orig := metricsCachePath
+	metricsCachePath = filepath.Join(t.TempDir(), "missing-agent-metrics-cache.json")
+	t.Cleanup(func() { metricsCachePath = orig })
+
 	m := &Manager{logger: slog.Default()}
 	got := m.readCoveragePreamble()
-	// File doesn't exist at /data/metrics/... — should return empty
 	if got != "" {
-		t.Logf("coverage preamble: %q (may exist on this machine)", got)
+		t.Fatalf("missing coverage metrics should return empty, got %q", got)
 	}
 }
 
@@ -506,7 +514,7 @@ func TestSyncModeFilesLevel3(t *testing.T) {
 	m.SyncModeFiles(3)
 
 	// Check mode files were written
-	scannerMode, _ := os.ReadFile("/tmp/.hive-mode-scanner")
+	scannerMode, _ := os.ReadFile(filepath.Join(agentStateDir, ".hive-mode-scanner"))
 	_ = scannerMode
 }
 

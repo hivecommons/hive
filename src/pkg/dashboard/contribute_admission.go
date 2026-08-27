@@ -1,14 +1,74 @@
 package dashboard
 
 import (
+	"strings"
+
 	"github.com/kubestellar/hive/pkg/convergence"
 	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
+
+const blockedWorkflowLabel = "blocked"
+
+// hasBlockedWorkflowLabel reports whether a candidate carries the canonical
+// external-dependency overlay. A blocked item is not contributor work until
+// its dependency is cleared, so this gate is enforced in both ReadyQueue and
+// selectTask rather than relying only on the enumerator's refresh.
+func hasBlockedWorkflowLabel(labels []string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), blockedWorkflowLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+func blockedWorkflowAdmissionDecision() contributorAdmissionDecision {
+	return contributorAdmissionDecision{
+		reason: contributorAdmissionReasonWorkflowBlocked,
+		convergence: convergence.Decision{
+			Reason: contributorAdmissionReasonWorkflowBlocked,
+		},
+	}
+}
 
 type contributorAdmissionCandidate struct {
 	repoFull string
 	repoName string
 	number   int
+	// ref is the candidate's canonical, source-aware identity
+	// (kubestellar/hive#4245). repoFull/repoName/number remain for the
+	// GitHub-only observers below, which can act on nothing else; ref is what
+	// every identity-keyed surface (hold, cooldown, active, order, task key)
+	// uses, so a Linear or Jira candidate is no longer indistinguishable from
+	// every other zero-numbered item.
+	//
+	// A zero ref means the caller predates source-aware identity; isGitHubBacked
+	// falls back to the number so such a caller behaves exactly as before.
+	ref worksource.Ref
+	// dependsOn is populated by non-GitHub work-source adapters. It is kept on
+	// the candidate rather than inserted into the durable bead ledger: the
+	// external source remains authoritative and every sweep re-evaluates its
+	// current edge snapshot through the same convergence evaluator.
+	dependsOn []ghpkg.IssueDependency
+	labels    []string
+}
+
+// isGitHubBacked reports whether this candidate may be handed to the two
+// deliberately GitHub-only observers: the open-PR claim ledger and the legacy
+// bead dependency gate.
+//
+// Both accept a repository plus a POSITIVE issue number and can infer nothing
+// from an external work item. Passing them a Linear or Jira candidate would
+// mean synthesising "#0", which either matches an unrelated record or invents
+// one — so such a candidate SKIPS both observers instead. That is a deliberate
+// scope boundary, not a gap: GitHub is the first operational observer here, not
+// the identity ontology.
+func (c contributorAdmissionCandidate) isGitHubBacked() bool {
+	if c.ref != (worksource.Ref{}) {
+		return c.ref.IsGitHubIssue()
+	}
+	return c.repoFull != "" && c.number > 0
 }
 
 type contributorAdmissionDecision struct {
@@ -24,6 +84,9 @@ type contributorAdmissionDecision struct {
 
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
+	// contributorAdmissionReasonWorkflowBlocked: the canonical workflow state
+	// says the work is waiting on an external dependency or human input.
+	contributorAdmissionReasonWorkflowBlocked = "workflow_blocked"
 	// contributorAdmissionReasonDependencyBlocked: a declared dependency is
 	// established as NOT satisfied.
 	contributorAdmissionReasonDependencyBlocked = "dependency_blocked"
@@ -44,10 +107,23 @@ const (
 // that forgets to thread one through gets the right answer rather than
 // accidentally skipping the dependency gate.
 //
-// Gate order is deliberate: the open-PR claim is checked first because it is the
-// cheapest and most specific "someone is already on it" signal, and short-
-// circuiting it keeps its existing log line and reason unchanged.
+// Gate order is deliberate for GitHub-backed work: the open-PR claim is checked
+// first because it is the cheapest and most specific "someone is already on
+// it" signal. External work bypasses that GitHub-only observer and evaluates
+// the source-native dependency edges carried by its enumeration snapshot.
 func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributorAdmissionSweep, candidate contributorAdmissionCandidate) contributorAdmissionDecision {
+	if hasBlockedWorkflowLabel(candidate.labels) {
+		return blockedWorkflowAdmissionDecision()
+	}
+
+	// isGitHubBacked remains the hard boundary around BOTH legacy observers: the
+	// PR-claim ledger and bead identity lookup still see only real issue numbers.
+	// External work takes a parallel convergence path over the adapter-provided
+	// source edges; with no edges it is admitted just as it was before #4730.
+	if !candidate.isGitHubBacked() {
+		return admissionDecisionFromConvergence(convergence.Evaluate(observeExternalDependencies(candidate)))
+	}
+
 	claim, claimed := h.issueClaimedByOpenPR(candidate.repoFull, candidate.repoName, candidate.number)
 	if claimed {
 		return contributorAdmissionDecision{
@@ -63,7 +139,10 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 	if sweep == nil {
 		sweep = h.newAdmissionSweep()
 	}
-	decision := convergence.Evaluate(h.observeCandidateDependencies(sweep, candidate))
+	return admissionDecisionFromConvergence(convergence.Evaluate(h.observeCandidateDependencies(sweep, candidate)))
+}
+
+func admissionDecisionFromConvergence(decision convergence.Decision) contributorAdmissionDecision {
 	if !decision.Admitted {
 		reason := contributorAdmissionReasonDependencyBlocked
 		if decision.Reason != convergence.ReasonWaitingForDependency {
@@ -72,6 +151,30 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 		return contributorAdmissionDecision{reason: reason, convergence: decision}
 	}
 	return contributorAdmissionDecision{admitted: true, convergence: decision}
+}
+
+func observeExternalDependencies(candidate contributorAdmissionCandidate) convergence.Observation {
+	obs := convergence.Observation{
+		Subject:  convergence.Subject{WorkKey: candidate.ref.Key()},
+		Found:    true,
+		RecordID: candidate.ref.Key(),
+	}
+	for _, edge := range candidate.dependsOn {
+		status := convergence.ConditionFalse
+		detail := "external dependency is still open"
+		if edge.Resolved {
+			status = convergence.ConditionTrue
+			detail = "external dependency is resolved"
+		}
+		if _, ok := worksource.ParseKey(edge.Key); !ok {
+			status = convergence.ConditionUnknown
+			detail = "external dependency has no canonical work identity"
+		}
+		obs.Dependencies = append(obs.Dependencies, convergence.Dependency{
+			ID: edge.Key, Status: status, Detail: detail,
+		})
+	}
+	return obs
 }
 
 // issueClaimedByOpenPR reports whether ANY open PR already claims to fix the

@@ -84,7 +84,28 @@ Pre-built images are published by [`.github/workflows/docker.yml`](../../.github
 
 PR and short-lived branch builds compile the image as a CI gate but only long-lived branches push tags, and only `v4` moves the release channels. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 
-> **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` may still reference it until its default is bumped.)
+> **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`src/docker-compose.yaml` was bumped off it in #4206; standalone image references now come from one source of truth, [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh).)
+
+### One source of truth for standalone assets
+
+Standalone deployment assets do not carry their own image references. They take
+them from [`src/deploy/standalone-images.sh`](../deploy/standalone-images.sh),
+which names the Hive, gateway, and auto-update-profile images in fully
+qualified form. Change a reference there rather than in an individual asset.
+
+Fully qualified is deliberate: `podman auto-update` refuses a short name, and
+Podman's Quadlet generator warns on one, so a reference that resolves through
+the host's `unqualified-search-registries` is not portable across the two
+runtimes. Docker may still spell the same image without the `docker.io/`
+prefix — the contract test compares the normalized forms, so the two spellings
+are equal as long as they name the same image. Digest pins are carried through
+unchanged and are checked for as well.
+
+[`src/deploy/test_standalone_image_refs.sh`](../deploy/test_standalone_image_refs.sh)
+runs in CI and fails the build when an asset stops agreeing with that file,
+when a digest pin is dropped, or when the retired `v2-latest` tag reappears. It
+already covers the Podman asset paths, so drift detection switches on by itself
+when those assets land.
 
 ### Choosing a tag
 
@@ -113,6 +134,16 @@ To relate an image to source, compare the `<git-short-sha>` tag published by the
 
 - Agent cadences are evaluated from persisted state: the last-kick map lives in `/data/hive-state.json` and is honored across pod restarts — a Deployment roll does **not** re-kick every cadenced agent at boot ([#3817](https://github.com/kubestellar/hive/pull/3817)). A fresh install (no persisted state) still kicks every cadenced agent on the first eval. There is no global default interval; a zero/absent interval means the agent is never cadence-kicked.
 - The governor token budget uses a rolling window of `governor.budget.period_days` (default 7 days), with a soft warning at `governor.budget.critical_pct` (default 90%). When spend reaches the limit, kicks are suppressed for all agents except those explicitly budget-exempt.
+- The **provider** spending limit is a separate signal from the token budget above ([#4294](https://github.com/kubestellar/hive/issues/4294)): the token budget counts what the hive spends, while this is the inference gateway refusing to spend more money — a LiteLLM key past its daily dollar cap, a project out of quota, an account out of credit. It is detected from the gateway's own error body (never from a bare 429, which stays on the ordinary retry path), raises an error-level dashboard alert naming the limit that was hit, and withholds every agent kick while it is in force. It does **not** pause agents: pause state stays a human decision.
+- Recovery from a provider spending limit is automatic, via a probe. Withholding kicks also withholds the inference calls that would reveal the provider is serving again, so the hive suppresses only while the last refusal is recent and then lets a single kick through to test the gateway; the probe re-arms suppression the moment it is released, so at most one probe run flies per interval. A still-clipped key refuses the probe and suppression resumes for another interval; once the provider's window resets the probe succeeds, normal kicking resumes with no operator action, and a one-time recovery notification is sent (the entering notification is likewise sent once per clip, not once per cycle). Tune with `governor.provider_budget.probe_interval_s` (default 1800 — 30 minutes):
+
+```yaml
+governor:
+  provider_budget:
+    probe_interval_s: 1800
+```
+
+  Lower it to resume sooner after a reset at the cost of a rebuffed run per probe; raise it to waste less while noticing later.
 
 ## Fleet breaker
 
@@ -163,9 +194,9 @@ installation instead of broadening the PAT.
 
 | Name | Purpose |
 |---|---|
-| `HIVE_GITHUB_TOKEN` | Main PAT fallback when `github.token` is empty; also used for token identity/fleet stats fallback. |
+| `HIVE_GITHUB_TOKEN` | Main PAT fallback when `github.token` is empty; also used for token identity/fleet stats fallback. Wrong-scope tokens fail with generic 403s at request time — see [github-app-setup.md](github-app-setup.md#personal-access-token-pat-scopes) for the required scopes per ACMM tier. |
 | `GH_APP_KEY_FILE` | GitHub App private-key path fallback when `github.key_file` is empty. |
-| `HIVE_DASHBOARD_TOKEN` | Shared dashboard/API token fallback for `dashboard.auth_token`. |
+| `HIVE_DASHBOARD_TOKEN` | Shared dashboard/API token fallback for `dashboard.auth_token`. Any non-empty string is accepted with no strength check — generate one with `openssl rand -hex 32`; see [env-vars.md](env-vars.md#generating-and-rotating-hive_dashboard_token). |
 
 ### Hosted-spoke and fleet metadata
 

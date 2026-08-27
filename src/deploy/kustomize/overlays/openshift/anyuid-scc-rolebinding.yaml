@@ -13,7 +13,11 @@
 # Verify after apply:
 #   oc -n hive get pod -l app.kubernetes.io/name=hive \
 #     -o jsonpath='{.items[0].metadata.annotations.openshift\.io/scc}'
-#   # MUST print "anyuid" — "restricted-v2" means this binding did not take.
+#   # "restricted-v2" means this binding did not take. Note: because the base
+#   # deployment also ADDS capabilities (which anyuid forbids), on a correctly
+#   # set-up cluster the pod is actually admitted by the `hive-netadmin` SCC
+#   # from ../openshift-netadmin — the annotation then prints "hive-netadmin",
+#   # and this anyuid binding is redundant-but-harmless.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

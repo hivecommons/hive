@@ -48,6 +48,13 @@ const (
 	// Idleness ALONE is never reported — see queuedWorkForInactivity.
 	inactiveAgentIdleThreshold = 45 * time.Minute
 
+	// inactiveAgentCadenceSlack is added to a spoke-reported governor cadence
+	// before calling a scheduled agent idle. This preserves genuine faults
+	// (missed cadence + queued work) while keeping healthy interval agents
+	// quiet between kicks; flashsystems/ess showed 2h/4h cadences with fresh
+	// next-run/advisory data but panes quiet longer than 45 minutes by design.
+	inactiveAgentCadenceSlack = 30 * time.Minute
+
 	// inactiveAgentMinQueued is how much actionable work must be waiting
 	// before an idle agent is called a problem. A hive with an empty queue is
 	// SUPPOSED to have idle agents; reporting those would light the facet on
@@ -159,6 +166,13 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 	if onDemand || queuedWork < inactiveAgentMinQueued {
 		return agentInactiveNone
 	}
+	if !legacyAgent(a) && !agentCanDrainQueuedWork(a) {
+		// Advisory-only agents (katamari/ibm-aiops-orchestrator at L2) cannot
+		// drain queued issues/PRs by design. Their health is the advisory
+		// stream's freshness; counting backlog against a write-incapable agent
+		// turns a healthy fresh digest into "idle with work queued".
+		return agentInactiveNone
+	}
 	lastActivity, activityOK := parseAgentTime(a.LastActivityAt)
 	if !activityOK {
 		// The spoke has never observed a pane change for this agent. That is
@@ -167,10 +181,28 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 		// every agent on every hive that has not upgraded yet.
 		return agentInactiveNone
 	}
-	if now.Sub(lastActivity) >= inactiveAgentIdleThreshold {
+	if now.Sub(lastActivity) >= idleThresholdForAgent(a) {
 		return agentInactiveIdleWithWork
 	}
 	return agentInactiveNone
+}
+
+func agentCanDrainQueuedWork(a AgentSummary) bool {
+	return a.CanOpenIssue || a.CanOpenPR || a.CanMerge
+}
+
+func idleThresholdForAgent(a AgentSummary) time.Duration {
+	threshold := inactiveAgentIdleThreshold
+	if a.KickIntervalSec <= 0 {
+		// Legacy or non-interval spokes do not provide cadence evidence, so the
+		// historical 45-minute rule remains the only safe signal the hub has.
+		return threshold
+	}
+	cadenceThreshold := time.Duration(a.KickIntervalSec)*time.Second + inactiveAgentCadenceSlack
+	if cadenceThreshold > threshold {
+		return cadenceThreshold
+	}
+	return threshold
 }
 
 // Wire values for the agent fields the classifier reads. Named so a typo
@@ -187,7 +219,16 @@ const (
 // UNKNOWN. A future timestamp is clock skew, not activity, and must not be
 // read as either fresh or stale.
 func parseAgentTime(s string) (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
+	t, err := time.Parse(time.RFC3339, s)
+	if err == nil {
+		return t, true
+	}
+	// Compact wire variant seen live from spokes ("2026-08-22T024118Z" — time
+	// colons stripped). RFC3339-only parsing silently returned !ok for every
+	// such timestamp, which defeated the needs-login grace check and let
+	// login-wedged agents (EPM, alchemy-logging) read as healthy fleet-wide.
+	t, err = time.Parse("2006-01-02T150405Z", s)
 	if err != nil {
 		return time.Time{}, false
 	}

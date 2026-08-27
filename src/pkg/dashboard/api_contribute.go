@@ -180,6 +180,7 @@ type ContributorProfile struct {
 	PreferredRole     string `json:"preferred_role,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	AvatarURL         string `json:"avatar_url,omitempty"`
 	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
 	// who invited this person via a trusted invite link (issue #2598). It is
@@ -695,14 +696,16 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 		color string
 		count int
 	}
+	// Tier colors route through the palette tokens so the light ramp reaches
+	// them (#4560); each token's dark value is the exact hex this table used.
 	tierStats := []tierStat{
-		{"Active", "#3fb950", activeCount},
-		{"Newcomer", "#d29922", tierCounts["newcomer"]},
-		{"Contributor", "#58a6ff", tierCounts["contributor"]},
-		{"Trusted", "#3fb950", tierCounts["trusted"]},
-		{"Merger", "#f778ba", tierCounts["merger"]},
-		{"Advisor", "#bc8cff", tierCounts["advisor"]},
-		{"Revoked", "#f85149", tierCounts["revoked"]},
+		{"Active", "var(--cc-green)", activeCount},
+		{"Newcomer", "var(--cc-amber)", tierCounts["newcomer"]},
+		{"Contributor", "var(--cc-accent)", tierCounts["contributor"]},
+		{"Trusted", "var(--cc-green)", tierCounts["trusted"]},
+		{"Merger", "var(--cc-pink)", tierCounts["merger"]},
+		{"Advisor", "var(--cc-purple)", tierCounts["advisor"]},
+		{"Revoked", "var(--cc-red)", tierCounts["revoked"]},
 	}
 	var tierBoxes strings.Builder
 	for _, ts := range tierStats {
@@ -772,7 +775,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
 			}
 		} else {
-			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
+			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" data-action="dismiss-parent">Dismiss</button></div>`
 		}
 	}
 
@@ -805,6 +808,18 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	var page bytes.Buffer
 	fmt.Fprintf(&page, strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
+<!-- #4549 theme FOUC guard. Runs BEFORE the stylesheet below is parsed, so a
+     visitor who pinned a theme never sees a frame of the other one. Kept to the
+     single attribute write on purpose: everything else about the control (the
+     button label, persistence, the cycle) lives in the deferred block at the
+     foot of the document, because none of it affects the first paint. An inline
+     script element is fine under CSP — applyDocumentScriptSrcElem stamps a
+     sha256 for every inline script in the finished document (csp_script_src.go);
+     it is inline on*= ATTRIBUTES that are forbidden (ADR-0016), which is why the
+     button dispatches through data-action instead of onclick. -->
+<script>
+(function(){try{var t=localStorage.getItem('hive.contribute.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 <style>
 /* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
    dossier hero name + rank designation (.dz-heroname / .dz-rankpill .rank-name). */
@@ -822,8 +837,13 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
    :root[data-theme="light"] hook — so a future in-page toggle can force it
    (the toggle itself is out of scope). data-theme="dark" always wins back to
    dark even under a light OS preference. Values are Primer-light neutrals so the
-   surface blends with the surrounding Docusaurus docs chrome. */
+   surface blends with the surrounding Docusaurus docs chrome.
+   #4549: each block also declares color-scheme, which is what tells the browser
+   how to paint the chrome CSS cannot reach — the <select> popups on the
+   onboarding tab, scrollbars, and the focus ring. Without it a forced-light page
+   still drops a black dropdown over a white form. */
 :root{
+  color-scheme:dark;
   --cc-bg:#0d1117;
   --cc-bg-deep:#010409;
   --cc-surface:#161b22;
@@ -835,12 +855,16 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-muted-2:#6e7681;
   --cc-code-bg:#0d1117;
   --cc-accent:#58a6ff;
+  --cc-accent-2:#79c0ff;
   --cc-accent-fg:#1f6feb;
   --cc-green:#3fb950;
   --cc-amber:#d29922;
   --cc-red:#f85149;
+  --cc-pink:#f778ba;
+  --cc-purple:#bc8cff;
 }
 @media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  color-scheme:light;
   --cc-bg:#ffffff;
   --cc-bg-deep:#f6f8fa;
   --cc-surface:#f6f8fa;
@@ -852,12 +876,16 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-muted-2:#7d858e;
   --cc-code-bg:#eff1f3;
   --cc-accent:#0969da;
+  --cc-accent-2:#0550ae;
   --cc-accent-fg:#0969da;
   --cc-green:#1a7f37;
   --cc-amber:#9a6700;
   --cc-red:#cf222e;
+  --cc-pink:#bf3989;
+  --cc-purple:#8250df;
 }}
 :root[data-theme="light"]{
+  color-scheme:light;
   --cc-bg:#ffffff;
   --cc-bg-deep:#f6f8fa;
   --cc-surface:#f6f8fa;
@@ -869,10 +897,13 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
   --cc-muted-2:#7d858e;
   --cc-code-bg:#eff1f3;
   --cc-accent:#0969da;
+  --cc-accent-2:#0550ae;
   --cc-accent-fg:#0969da;
   --cc-green:#1a7f37;
   --cc-amber:#9a6700;
   --cc-red:#cf222e;
+  --cc-pink:#bf3989;
+  --cc-purple:#8250df;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--cc-bg);color:var(--cc-text);margin:0;min-height:100vh}
@@ -883,10 +914,10 @@ h1{font-size:2rem;margin-bottom:8px}
 .subtitle{color:var(--cc-muted);font-size:1.1rem;margin-bottom:32px}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:24px}
 .stat{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:14px 8px;text-align:center}
-.stat-num{font-size:1.5rem;font-weight:700;color:#58a6ff}
+.stat-num{font-size:1.5rem;font-weight:700;color:var(--cc-accent)}
 .stat-label{font-size:.7rem;color:var(--cc-muted);margin-top:4px}
 .steps{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:24px;margin-top:24px}
-.steps h3{margin-top:0;color:#58a6ff}
+.steps h3{margin-top:0;color:var(--cc-accent)}
 .steps ol{padding-left:20px;line-height:2}
 code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .how{margin-top:32px}
@@ -897,7 +928,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tier-table th{color:var(--cc-muted);font-weight:600}
 .feed-header{padding:20px 20px 12px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:8px}
 .feed-header h3{font-size:.95rem;color:var(--cc-text)}
-.feed-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
+.feed-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
 @keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:.4}}
 .feed-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
 .feed-scroll{flex:1;overflow-y:auto;padding:0}
@@ -906,28 +937,38 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .feed-entry:hover{background:rgba(88,166,255,.04)}
 .feed-text{flex:1;min-width:0}
 .feed-time{color:var(--cc-muted);font-size:.75rem;white-space:nowrap;flex-shrink:0}
-.feed-role{color:#58a6ff;font-weight:500}
+.feed-role{color:var(--cc-accent);font-weight:500}
 .feed-cli{color:var(--cc-muted);font-size:.8rem}
 .feed-empty{padding:40px 20px;text-align:center;color:var(--cc-muted);font-size:.85rem}
 @media(max-width:768px){.page{flex-direction:column}.sidebar{border-left:none;border-top:1px solid var(--cc-border);max-width:none;max-height:300px}}
 /* Management & Operations tab chrome — additive, does not touch onboarding content */
-.page-tabs{display:flex;gap:2px;background:var(--cc-surface);border-bottom:1px solid var(--cc-border);padding:0 48px}
+/* #4537 follow-up: five tabs at 14px 20px plus 96px of gutters are ~700px, so
+   between 600px (where the phone breakpoint's wrap kicks in) and ~700px the bar
+   still overflowed the document and the trailing tabs were unreachable. Wrap in
+   the base rule — a no-op at any width where the tabs fit on one line. */
+.page-tabs{display:flex;flex-wrap:wrap;gap:2px;background:var(--cc-surface);border-bottom:1px solid var(--cc-border);padding:0 48px}
 .page-tab{background:none;border:none;color:var(--cc-muted);font-size:.95rem;font-weight:500;padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
 .page-tab:hover{color:var(--cc-text)}
-.page-tab.active{color:var(--cc-text);border-bottom-color:#58a6ff}
+.page-tab.active{color:var(--cc-text);border-bottom-color:var(--cc-accent)}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .ops{padding:40px 48px;overflow-y:auto}
 .ops h1{font-size:1.7rem;margin-bottom:6px}
-.ops-grid{display:grid;grid-template-columns:340px 1fr;gap:20px;margin-top:24px}
-@media(max-width:900px){.ops-grid{grid-template-columns:1fr}}
+/* #4537: minmax(0,1fr), not 1fr. A 1fr track's automatic minimum is min-content,
+   and the cards it holds contain white-space:nowrap text (.cc-q-title, .cc-army,
+   the clanker sub-lines), so the track resolved to the widest unbreakable line
+   and the whole panel outgrew .ops. The explicit 0 minimum lets the track shrink
+   to the viewport and hands the overflow back to the ellipsis/wrapping the cards
+   already declare. */
+.ops-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;margin-top:24px}
+@media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr)}}
 .ops-card{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:0;overflow:hidden}
 .ops-card-head{padding:16px 20px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--cc-text);margin:0}
 .ops-card-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
 .ops-filters{display:flex;gap:4px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2);flex-wrap:wrap}
 .ops-filter{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-muted);font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
-.ops-filter.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.ops-filter.active{background:#1f6feb;border-color:var(--cc-accent-fg);color:#fff}
 .work-list{max-height:520px;overflow-y:auto}
 .work-item{padding:14px 20px;border-bottom:1px solid var(--cc-border-2);cursor:pointer}
 .work-item:hover{background:rgba(88,166,255,.04)}
@@ -940,18 +981,18 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    a small external-link glyph — so it reads as an obvious "open on GitHub"
    action, not decoration. Inherits the host element's font (monospace repo#num,
    or inline log text) so it drops into any of those contexts unchanged. */
-.cc-issue-link{display:inline-flex;align-items:center;gap:3px;color:#58a6ff;text-decoration:none;font:inherit;border-radius:4px;transition:color .15s}
-.cc-issue-link:hover,.cc-issue-link:focus-visible{color:#79c0ff;text-decoration:underline}
-.cc-issue-link:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+.cc-issue-link{display:inline-flex;align-items:center;gap:3px;color:var(--cc-accent);text-decoration:none;font:inherit;border-radius:4px;transition:color .15s}
+.cc-issue-link:hover,.cc-issue-link:focus-visible{color:var(--cc-accent-2);text-decoration:underline}
+.cc-issue-link:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
 .cc-issue-link-ic{flex-shrink:0;opacity:.85}
 .cc-issue-link:hover .cc-issue-link-ic{opacity:1}
 .work-title{font-size:.9rem;color:var(--cc-text);margin:2px 0 6px}
 .work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:var(--cc-muted)}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
-.pill-progress{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
-.pill-review{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
-.pill-passed{background:rgba(63,185,80,.12);color:#3fb950;border-color:rgba(63,185,80,.3)}
-.pill-blocked{background:rgba(248,81,73,.12);color:#f85149;border-color:rgba(248,81,73,.3)}
+.pill-progress{background:rgba(88,166,255,.12);color:var(--cc-accent);border-color:rgba(88,166,255,.3)}
+.pill-review{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
+.pill-passed{background:rgba(63,185,80,.12);color:var(--cc-green);border-color:rgba(63,185,80,.3)}
+.pill-blocked{background:rgba(248,81,73,.12);color:var(--cc-red);border-color:rgba(248,81,73,.3)}
 .pill-idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* #2574 (follow-up): the Connected-clankers card is a NARROW column. The old
    layout put the multi-line identity text (.clanker-main) and the inline
@@ -965,7 +1006,14 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    horizontally with the multi-line text. Long repo paths in .clanker-sub wrap
    (overflow-wrap:anywhere) rather than pushing into anything. align-items:start
    keeps the dot/avatar top-aligned with the first text line. */
-.clanker-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2)}
+/* #4537: the first two tracks are SIZED, not auto. .admin-actions below spans
+   1/-1, and a spanning item's min-content contribution is distributed into the
+   spanned tracks that can take it — the third is minmax(0,1fr) with a fixed 0
+   minimum and absorbs none, so both auto tracks grew until the row was wider
+   than its card. The dot and the avatar are 8px and 28px at every width, so
+   naming those widths is what auto already resolved to when nothing spanned;
+   it just leaves nothing for the spanning row to inflate. */
+.clanker-row{display:grid;grid-template-columns:8px 28px minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2)}
 /* The trailing controls / timestamp: full-width line beneath the identity. It is
    always the LAST grid child, so grid-column:1/-1 drops it below regardless of
    whether it's .admin-actions or the .feed-time fallback. */
@@ -976,11 +1024,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-sub{font-size:.74rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
 /* Row is align-items:start (grid), so nudge the small dot down to sit level with
    the username's first line instead of the very top of the row. */
-.clanker-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex-shrink:0;margin-top:7px}
+.clanker-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);flex-shrink:0;margin-top:7px}
 .clanker-dot.stale{background:var(--cc-muted)}
 .pipeline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0}
 .pipe-node{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:8px 14px;font-size:.82rem;color:var(--cc-text)}
-.pipe-node .lgtm{color:#3fb950;font-size:.72rem}
+.pipe-node .lgtm{color:var(--cc-green);font-size:.72rem}
 .pipe-arrow{color:var(--cc-muted)}
 .policy-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--cc-border-2);font-size:.85rem}
 .policy-row:last-child{border-bottom:none}
@@ -992,7 +1040,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
    accent border, professional not loud. Readability preserved. */
 .lb-row--me{background:rgba(31,111,235,.09);box-shadow:inset 3px 0 0 0 #1f6feb}
-.lb-you{display:inline-block;margin-left:8px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.3);border-radius:999px;padding:1px 7px;vertical-align:middle}
+.lb-you{display:inline-block;margin-left:8px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-accent);background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.3);border-radius:999px;padding:1px 7px;vertical-align:middle}
 .lb-head{color:var(--cc-muted);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:var(--cc-bg)}
 .lb-rank{color:var(--cc-muted);font-variant-numeric:tabular-nums}
 .lb-name{color:var(--cc-text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1018,7 +1066,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid var(--cc-border);background:var(--cc-bg);color:var(--cc-muted);text-transform:capitalize;white-space:nowrap}
 .tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
 .tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
-.tier-badge.tier-merger{border-color:rgba(247,120,186,.42);background:rgba(247,120,186,.10);color:#f778ba}
+.tier-badge.tier-merger{border-color:rgba(247,120,186,.42);background:rgba(247,120,186,.10);color:var(--cc-pink)}
 .tier-badge.tier-trusted{border-color:rgba(201,162,39,.40);background:rgba(201,162,39,.08);color:#c9a94a}
 .tier-badge.tier-contributor{border-color:rgba(110,163,201,.38);background:rgba(110,163,201,.08);color:#6ea3c9}
 .tier-badge.tier-newcomer{border-color:var(--cc-border);background:var(--cc-bg);color:var(--cc-muted)}
@@ -1042,17 +1090,17 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    The popover is an absolutely-positioned card toggled open by JS (aria-expanded),
    anchored to the wrapper so it sits just under the glyph. */
 .info-affordance{position:relative;display:inline-flex;align-items:center}
-.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:#6e7681;cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
-.info-btn:hover,.info-btn:focus{color:#58a6ff;outline:none}
-.info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:#c9d1d9;font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
+.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:var(--cc-muted-2);cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
+.info-btn:hover,.info-btn:focus{color:var(--cc-accent);outline:none}
+.info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:var(--cc-text-2);font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
 .info-pop[hidden]{display:none}
-.info-pop h4{margin:0 0 4px;font-size:.76rem;color:#e6edf3;font-weight:600}
+.info-pop h4{margin:0 0 4px;font-size:.76rem;color:var(--cc-text);font-weight:600}
 .info-pop ul{margin:4px 0 0;padding-left:16px}
 .info-pop li{margin:2px 0}
-.info-pop code{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:0 3px;font-size:.7rem}
-.custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:#58a6ff}
+.info-pop code{background:var(--cc-surface);border:1px solid var(--cc-border-2);border-radius:4px;padding:0 3px;font-size:.7rem}
+.custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:var(--cc-accent)}
 .custom-css-pop{width:min(320px,calc(100vw - 32px));z-index:10002}
-.custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
+.custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text-2);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
 /* Compact tier badge inline next to a connected clanker's identity. */
 .tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
 .tier-badge.tier-inline::before{width:6px;height:6px}
@@ -1103,9 +1151,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .dz-rankpill .rank-sub{font-size:.64rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cc-muted);margin-top:4px}
 /* Livebar strip along the bottom of the plate — only when a task is live. */
 .dz-livebar{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 26px 12px;border-top:1px solid var(--cc-border-2);background:color-mix(in srgb,var(--cc-bg-deep) 40%%,transparent);font-size:.74rem;color:var(--cc-text-2)}
-.dz-livebar .dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex:none}
+.dz-livebar .dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);flex:none}
 @media(prefers-reduced-motion:no-preference){.dz-livebar .dot{animation:dzpulse 2s infinite}@keyframes dzpulse{50%%{opacity:.35}}}
-.dz-livebar .live-tag{font-weight:700;font-size:.68rem;letter-spacing:.06em;color:#3fb950}
+.dz-livebar .live-tag{font-weight:700;font-size:.68rem;letter-spacing:.06em;color:var(--cc-green)}
 .dz-livebar .live-dim{color:var(--cc-muted);font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.7rem}
 /* Founding mark: real registration order only (first twenty), never faked. */
 .me-founding{display:inline-block;margin-top:8px;padding:2px 9px;border-radius:999px;font-size:.64rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--me-accent);border:1px solid var(--me-accent);background:var(--me-accent-soft)}
@@ -1162,7 +1210,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-hive{display:flex;align-items:center;gap:10px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:10px 14px;font-size:.82rem;color:var(--cc-text-2)}
 .me-hive__name{font-size:.82rem;font-weight:700;letter-spacing:.03em;color:var(--cc-text);flex:1;text-transform:uppercase}
 .me-hive__rel{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:var(--me-accent-soft);color:var(--me-accent)}
-.me-hive__rel--owner{background:rgba(210,153,34,.16);color:#d29922}
+.me-hive__rel--owner{background:rgba(210,153,34,.16);color:var(--cc-amber)}
 .me-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
 .me-share{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;font-size:.85rem;font-weight:600;text-decoration:none;background:var(--me-accent);color:var(--cc-bg);border:1px solid var(--me-accent);cursor:pointer;font-family:inherit}
 .me-share:hover{filter:brightness(1.08)}
@@ -1266,7 +1314,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-note{color:var(--cc-muted-2);font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:var(--cc-bg);padding:1px 6px;border-radius:4px}
 .prompt-preview{margin-top:10px;border-top:1px solid var(--cc-border-2);padding-top:8px}
-.prompt-preview summary{cursor:pointer;color:#58a6ff;font-size:.78rem;list-style:none}
+.prompt-preview summary{cursor:pointer;color:var(--cc-accent);font-size:.78rem;list-style:none}
 .prompt-preview summary::-webkit-details-marker{display:none}
 .prompt-preview summary::before{content:'\25B8 ';color:var(--cc-muted)}
 .prompt-preview[open] summary::before{content:'\25BE '}
@@ -1277,13 +1325,13 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    Management & Operations tab. Owner/read-write only; a read viewer never sees them. */
 .ops-admin{display:none}
 .ops-admin.enabled{display:block}
-.admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:#d29922;border:1px solid rgba(210,153,34,.3);margin-left:auto}
+.admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:var(--cc-amber);border:1px solid rgba(210,153,34,.3);margin-left:auto}
 .admin-body{padding:16px 20px}
 .admin-toggle{display:flex;align-items:center;gap:10px;padding:8px 0}
 .admin-switch{width:38px;height:20px;border-radius:999px;background:var(--cc-border);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
 .admin-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%%;background:var(--cc-text);transition:left .15s}
 .admin-switch.on{background:#1f6feb}
-.admin-switch.on.danger{background:#f85149}
+.admin-switch.on.danger{background:var(--cc-red)}
 .admin-switch.on::after{left:20px}
 .admin-toggle-label{font-size:.85rem;color:var(--cc-text)}
 .admin-toggle-sub{font-size:.74rem;color:var(--cc-muted)}
@@ -1295,7 +1343,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
 .admin-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:var(--cc-text-2);border:1px solid var(--cc-border)}
 .admin-chip .x{cursor:pointer;opacity:.7}
-.admin-chip .x:hover{opacity:1;color:#f85149}
+.admin-chip .x:hover{opacity:1;color:var(--cc-red)}
 .admin-addrow{display:flex;gap:4px}
 .admin-addrow input{flex:1;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font-size:.78rem;padding:5px 8px;font-family:inherit}
 .admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
@@ -1316,7 +1364,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-tier__head{display:flex;align-items:center;gap:8px;min-width:0}
 .admin-tier__name{font-size:.8rem;color:var(--cc-text);text-transform:capitalize}
 .admin-tier input{width:100%%;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.78rem;padding:4px 6px;outline:none;text-align:right}
-.admin-tier input:focus{border-color:#1f6feb}
+.admin-tier input:focus{border-color:var(--cc-accent-fg)}
 .admin-tier input:disabled{opacity:.45}
 .admin-tier__col{font-size:.62rem;color:var(--cc-muted-2);text-align:right;text-transform:uppercase;letter-spacing:.03em}
 .admin-tier--head{border-bottom:1px solid var(--cc-border);padding-bottom:4px}
@@ -1326,14 +1374,21 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-actions{display:flex;gap:6px;flex-wrap:wrap}
 .admin-act{background:var(--cc-border-2);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
 .admin-act:hover{border-color:var(--cc-muted)}
-.admin-act.danger:hover{border-color:#f85149;color:#f85149}
+.admin-act.danger:hover{border-color:var(--cc-red);color:var(--cc-red)}
 .admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .agent-role-grants{display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%%;font-size:.7rem;color:var(--cc-muted)}
 .agent-role-grants__label{font-weight:600;color:var(--cc-text-2)}
-.clanker-act-as{display:inline-flex;align-items:center;gap:4px;color:var(--cc-muted);font-size:.72rem}
-.agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:#79c0ff}
+/* #4537: a flex item defaults to min-width:auto, so this one held the literal
+   "Acting as" plus a <select> whose intrinsic width is its widest option
+   ("none (general work)") and refused to shrink — .admin-actions' flex-wrap had
+   nothing it was allowed to break, so the whole line ran off the card. */
+.clanker-act-as{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px;min-width:0;max-width:100%%;color:var(--cc-muted);font-size:.72rem}
+/* The tier and acting-as controls ARE the <select> (class on the element), which
+   is why the .admin-act select descendant rule above never matched them. */
+select.admin-act{min-width:0;max-width:100%%}
+.agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:var(--cc-accent-2)}
 .agent-role-chip button{border:none;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:1;opacity:.75;font:inherit}
-.agent-role-chip button:hover{opacity:1;color:#f85149}
+.agent-role-chip button:hover{opacity:1;color:var(--cc-red)}
 .agent-role-add{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .admin-modal-back{display:none;position:fixed;inset:0;background:rgba(1,4,9,.7);z-index:1000;align-items:center;justify-content:center}
 .admin-modal-back.show{display:flex}
@@ -1342,17 +1397,17 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-modal p{font-size:.85rem;color:var(--cc-muted);line-height:1.5;margin:0 0 18px}
 .admin-modal-btns{display:flex;gap:8px;justify-content:flex-end}
 .admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid var(--cc-border);background:var(--cc-border-2);color:var(--cc-text-2)}
-.admin-modal-btns button.confirm{background:#da3633;border-color:#f85149;color:#fff}
+.admin-modal-btns button.confirm{background:#da3633;border-color:var(--cc-red);color:#fff}
 .admin-note{color:var(--cc-muted-2);font-size:.76rem;margin-top:10px;line-height:1.5}
 /* ── Operations command center — live SSE-driven queue / travel / dev-log /
    achievements / army framing. Subtle-professional motion only; degrades to the
    existing poll when SSE is unavailable. Additive, read-only. ─────────────── */
-.cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:#3fb950}
-.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
-.cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:#d29922}
+.cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:var(--cc-green)}
+.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
+.cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:var(--cc-amber)}
 /* Polling (stale) dot: a very slow, gentle breathe rather than the brisk live
    pulse — signals "still watching, just on the calmer poll cadence". */
-.cc-live.stale .cc-live-dot{background:#d29922;animation:cc-slowpulse 2.8s ease-in-out infinite}
+.cc-live.stale .cc-live-dot{background:var(--cc-amber);animation:cc-slowpulse 2.8s ease-in-out infinite}
 @keyframes cc-slowpulse{0%%,100%%{opacity:1}50%%{opacity:.45}}
 @media(prefers-reduced-motion:reduce){.cc-live .cc-live-dot,.cc-live.stale .cc-live-dot{animation:none!important}}
 /* Ready-work queue play/pause — the SAME contribute_suspended control as the
@@ -1369,7 +1424,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    pair off-center inside the circle. */
 .queue-suspend-btn svg{display:block;width:12px;height:12px;fill:currentColor}
 .queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:var(--cc-text-2)}
-.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:#f85149;background:rgba(248,81,73,.08)}
+.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:var(--cc-red);background:rgba(248,81,73,.08)}
 .queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
 .queue-suspend-btn:disabled{opacity:.5;cursor:not-allowed}
 /* Army roster header line under the clanker card */
@@ -1377,8 +1432,8 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-army b{color:var(--cc-text);font-weight:600}
 .cc-army-stat{display:inline-flex;align-items:center;gap:5px}
 .cc-army-stat .dot{width:7px;height:7px;border-radius:50%%}
-.cc-army-stat.working .dot{background:#58a6ff}
-.cc-army-stat.reviewing .dot{background:#d29922}
+.cc-army-stat.working .dot{background:var(--cc-accent)}
+.cc-army-stat.reviewing .dot{background:var(--cc-amber)}
 .cc-army-stat.idle .dot{background:var(--cc-muted)}
 /* Clanker rows: enter pop-in / leave fade so the roster feels alive */
 @keyframes cc-popin{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
@@ -1389,8 +1444,8 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 @keyframes cc-landing{0%%{box-shadow:0 0 0 0 rgba(88,166,255,.5)}100%%{box-shadow:0 0 0 6px rgba(88,166,255,0)}}
 .clanker-row.cc-landing{animation:cc-landing .8s ease}
 .clanker-status{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;margin-left:6px;border:1px solid transparent}
-.clanker-status.working{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
-.clanker-status.reviewing{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
+.clanker-status.working{background:rgba(88,166,255,.12);color:var(--cc-accent);border-color:rgba(88,166,255,.3)}
+.clanker-status.reviewing{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
 .clanker-status.idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
@@ -1416,7 +1471,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .cc-q-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cc-q-labels{display:flex;flex-wrap:wrap;gap:4px}
-.cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;flex-shrink:0;padding-top:2px}
+.cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-accent);flex-shrink:0;padding-top:2px}
 .cc-q-item.cc-leaving{animation:cc-fadeout .45s ease forwards}
 /* FLIP glide for operator drag-reorder: items that changed slot are given an
    inverse transform (see ccFlipQueue) then eased back to translateY(0). Subtle —
@@ -1432,7 +1487,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-search-ic{color:var(--cc-muted-2);font-size:.85rem;flex-shrink:0;line-height:1}
 .cc-q-search input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.82rem;padding:6px 10px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-q-search input::placeholder{color:var(--cc-muted-2)}
-.cc-q-search input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-q-search input:focus{border-color:var(--cc-accent-fg);box-shadow:0 0 0 3px rgba(31,111,235,.25)}
 .cc-q-search-clear{background:none;border:none;color:var(--cc-muted-2);cursor:pointer;font-size:1rem;line-height:1;padding:2px 4px;display:none}
 .cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
 .cc-q-search-clear:hover{color:var(--cc-text-2)}
@@ -1450,7 +1505,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-interests-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
 .cc-interests-empty{font-size:.72rem;color:var(--cc-muted-2)}
 .cc-interests-empty code{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:4px;padding:0 4px;font-size:.9em}
-.cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:var(--cc-green);border:1px solid rgba(46,160,67,.3)}
 .cc-interest-x{cursor:pointer;opacity:.7;font-size:.95rem;line-height:1}
 .cc-interest-x:hover{opacity:1}
 /* #2677: read-only mirror of a contributor's OWN label interests, shown on their
@@ -1458,15 +1513,15 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    the .cc-interest-chip visual (same green affinity color) in a compact, non-
    interactive line so an owner gets a fleet-wide view without editing anything
    here — editing stays contributor-owned via My label interests above. */
-.clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
-.clanker-interests-label{color:#6e7681}
-.clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:var(--cc-muted-2)}
+.clanker-interests-label{color:var(--cc-muted-2)}
+.clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:var(--cc-green);border:1px solid rgba(46,160,67,.3)}
 /* #2547 peer compatibility: the hub-vs-client protocol comparison, rendered ONLY
    when the versions actually differ so a healthy fleet stays quiet. Amber (not
    red) on purpose — a drifted peer is still fully served; this is a notice, not
    an error state, and must not read as "this clanker is broken/blocked". */
-.clanker-proto{margin-top:3px;font-size:.68rem;color:#d29922}
-.clanker-proto.incompatible{color:#f85149}
+.clanker-proto{margin-top:3px;font-size:.68rem;color:var(--cc-amber)}
+.clanker-proto.incompatible{color:var(--cc-red)}
 /* #2637 owner roster: an OWNER-facing aggregate of which labels connected
    contributors subscribe to, and who — so the owner can label matching issues to
    route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
@@ -1475,21 +1530,21 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .label-affinity-title{font-size:.82rem;font-weight:600;color:var(--cc-text-2)}
 .label-affinity-body{display:flex;flex-direction:column;gap:7px}
 .affinity-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:.78rem}
-.affinity-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3);flex-shrink:0}
-.affinity-count{font-weight:700;color:#3fb950;font-size:.7rem}
+.affinity-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:var(--cc-green);border:1px solid rgba(46,160,67,.3);flex-shrink:0}
+.affinity-count{font-weight:700;color:var(--cc-green);font-size:.7rem}
 .affinity-who{color:var(--cc-muted);word-break:break-word}
 .affinity-empty{font-size:.74rem;color:var(--cc-muted-2);line-height:1.5}
 .cc-interests-add{display:flex;gap:6px}
 .cc-interests-add input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-interests-add input::placeholder{color:var(--cc-muted-2)}
-.cc-interests-add input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-interests-add input:focus{border-color:var(--cc-accent-fg);box-shadow:0 0 0 3px rgba(31,111,235,.25)}
 .cc-interests-add button{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text-2);cursor:pointer;font:inherit;font-size:.78rem;padding:5px 12px}
-.cc-interests-add button:hover{border-color:#3fb950;color:#3fb950}
+.cc-interests-add button:hover{border-color:var(--cc-green);color:var(--cc-green)}
 /* A queue row matching one of the viewer's label interests: a soft green rail on
    the leading edge + faint tint. Never hides the row — pure emphasis. */
 .cc-q-item.cc-q-mine{background:rgba(46,160,67,.06);box-shadow:inset 3px 0 0 0 #2ea043}
 .cc-q-item.cc-q-mine:first-child{background:rgba(46,160,67,.1)}
-.cc-q-mine-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#3fb950;background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+.cc-q-mine-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-green);background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* Per-row "⋯" context affordance — owner/read-write only (rendered only when
    adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
 .cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
@@ -1512,23 +1567,23 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    belt-and-braces fallback for engines that don't honour color-scheme on the
    control; the field itself flips with the (#2612) light/dark tokens. */
 .cc-q-moverow input[type=number]{width:56px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:4px 6px;outline:none;color-scheme:light dark}
-.cc-q-moverow input:focus{border-color:#1f6feb}
+.cc-q-moverow input:focus{border-color:var(--cc-accent-fg)}
 .cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
 .cc-q-moverow button:hover{background:#388bfd}
 /* Optional hold-reason field (#queue-hold-reason) in the ⋯ menu — a compact inline
    note the operator can fill before Hold. Empty is fine (holding without a note). */
 .cc-q-holdreason{padding:2px 9px 7px}
-.cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.76rem;padding:4px 7px;outline:none;color-scheme:dark}
-.cc-q-holdreason-input:focus{border-color:#1f6feb}
+.cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.76rem;padding:4px 7px;outline:none}
+.cc-q-holdreason-input:focus{border-color:var(--cc-accent-fg)}
 /* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
    not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
-.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#d29922;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-amber);background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
    least one held issue and the viewer is owner/read-write (JS-toggled display). */
-.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:#d29922;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
+.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:var(--cc-amber);background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
 .queue-resume-all-btn:hover{background:rgba(210,153,34,.2)}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
@@ -1536,22 +1591,22 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .opp-list{padding:2px 0}
 .opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2)}
 .opp-item:last-child{border-bottom:none}
-.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.14)}
-.opp-heat.warm{background:#d29922;box-shadow:0 0 0 3px rgba(210,153,34,.14)}
+.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:var(--cc-green);box-shadow:0 0 0 3px rgba(63,185,80,.14)}
+.opp-heat.warm{background:var(--cc-amber);box-shadow:0 0 0 3px rgba(210,153,34,.14)}
 .opp-heat.cool{background:var(--cc-muted-2);box-shadow:none}
 .opp-body{flex:1;min-width:0}
 .opp-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .opp-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .opp-reason{font-size:.7rem;color:var(--cc-muted-2)}
 .opp-add{flex-shrink:0;align-self:center;background:none;border:1px solid var(--cc-border);color:var(--cc-text-2);font:inherit;font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:7px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
-.opp-add:hover{border-color:#1f6feb;color:#fff;background:rgba(31,111,235,.15)}
+.opp-add:hover{border-color:var(--cc-accent-fg);color:#fff;background:rgba(31,111,235,.15)}
 .opp-add:disabled{opacity:.55;cursor:default;border-color:var(--cc-border);color:var(--cc-muted);background:none}
 /* ── End-of-queue + hive-settings (#2595) — turn a short queue into an intentional,
    reassuring moment: a calm "all caught up" marker, the managed-queue rate limits
    presented readably, and the viewer's own daily quota. Sober, ranked-family styling. */
 .cc-q-end{padding:18px 20px 6px;text-align:center}
 .cc-q-end-badge{display:inline-flex;align-items:center;gap:8px;font-size:.82rem;color:var(--cc-muted);background:var(--cc-bg);border:1px solid var(--cc-border-2);border-radius:999px;padding:7px 16px}
-.cc-q-end-badge .cc-q-end-ic{color:#3fb950;font-size:.95rem;line-height:1}
+.cc-q-end-badge .cc-q-end-ic{color:var(--cc-green);font-size:.95rem;line-height:1}
 .hive-settings{margin:14px 20px 4px;background:var(--cc-bg);border:1px solid var(--cc-border-2);border-radius:10px;padding:14px 16px}
 .hive-settings h4{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-muted)}
 .hive-settings p.hs-lead{margin:0 0 10px;font-size:.82rem;color:var(--cc-text-2);line-height:1.5}
@@ -1559,8 +1614,8 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .hs-tier{flex:1 1 130px;min-width:120px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;padding:9px 11px}
 .hs-tier__name{font-size:.72rem;font-weight:600;text-transform:capitalize;color:var(--cc-text);display:flex;align-items:center;gap:6px}
 .hs-tier__lim{font-size:.74rem;color:var(--cc-muted);margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.hs-tier.is-you{border-color:#1f6feb;box-shadow:0 0 0 2px rgba(31,111,235,.18)}
-.hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff}
+.hs-tier.is-you{border-color:var(--cc-accent-fg);box-shadow:0 0 0 2px rgba(31,111,235,.18)}
+.hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-accent)}
 /* Daily quota widget — a slim progress meter, calm. Used at end-of-queue AND on
    the Me card. Fill width is set inline from the REAL used/limit ratio. */
 .quota{margin-top:12px}
@@ -1606,10 +1661,10 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-log-ic{flex-shrink:0}
 .cc-log-body{flex:1;min-width:0;color:var(--cc-text-2);line-height:1.45}
 .cc-log-body b{color:var(--cc-text)}
-.cc-log-body .who{color:#58a6ff;font-weight:600}
+.cc-log-body .who{color:var(--cc-accent);font-weight:600}
 .cc-log-body .ref{color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
-.cc-log-body a.ref.cc-issue-link{color:#58a6ff}
-.cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:#79c0ff}
+.cc-log-body a.ref.cc-issue-link{color:var(--cc-accent)}
+.cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:var(--cc-accent-2)}
 .cc-log-time{flex-shrink:0;color:var(--cc-muted-2);font-size:.72rem;white-space:nowrap;padding-top:1px}
 /* Achievement pops — tasteful badge toast, top-right, debounced */
 .cc-ach-wrap{position:fixed;top:16px;right:16px;z-index:1150;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -1619,7 +1674,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 @keyframes cc-ach-out{to{opacity:0;transform:translateX(24px)}}
 .cc-ach-ic{font-size:1.3rem;flex-shrink:0}
 .cc-ach-txt{min-width:0}
-.cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#d29922}
+.cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--cc-amber)}
 .cc-ach-s{font-size:.82rem;color:var(--cc-text);margin-top:1px}
 /* ── Operations two-region shell: MAIN area + full-height DEV-LOG RAIL ──────────
    The main area flexes to fill remaining width; the rail is a fixed-width panel
@@ -1670,10 +1725,10 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    theme-consistent with the dark palette, reduced-motion safe. */
 .client-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:4px 0 20px}
 .client-tile{display:flex;align-items:flex-start;gap:9px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:var(--cc-text);font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
-.client-tile:hover{border-color:#58a6ff;background:#1b2230}
+.client-tile:hover{border-color:var(--cc-accent);background:#1b2230}
 .client-tile:active{transform:translateY(1px)}
-.client-tile:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
-.client-tile.sel{border-color:#58a6ff;background:rgba(88,166,255,.10);box-shadow:inset 0 0 0 1px rgba(88,166,255,.35)}
+.client-tile:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
+.client-tile.sel{border-color:var(--cc-accent);background:rgba(88,166,255,.10);box-shadow:inset 0 0 0 1px rgba(88,166,255,.35)}
 .client-tile .ct-emblem{width:24px;height:24px;flex:0 0 24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--cc-bg);overflow:hidden}
 .client-tile .ct-emblem svg{width:18px;height:18px;display:block}
 .client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
@@ -1687,10 +1742,10 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .openin-row.show{display:flex}
 .openin-row .oi-body{min-width:0;font-size:.8rem;color:var(--cc-muted);line-height:1.4}
 .openin-row .oi-body strong{color:var(--cc-text)}
-.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:#58a6ff;text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
-.openin-link:hover{border-color:#58a6ff}
+.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-accent);text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
+.openin-link:hover{border-color:var(--cc-accent)}
 .openin-link svg{width:14px;height:14px}
-.oi-note{color:#d29922;font-weight:600}
+.oi-note{color:var(--cc-amber);font-weight:600}
 /* Customizable, copy-pasteable per-client PROMPT (kept in an editable block the
    contributor can read/tweak, NOT compressed into a URL). Additive to the shell
    command copy block above it. */
@@ -1698,7 +1753,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .prompt-block h4{margin:0 0 6px;font-size:.82rem;color:var(--cc-text);font-weight:600}
 .prompt-block p.pb-sub{margin:0 0 10px;color:var(--cc-muted);font-size:.76rem;line-height:1.4}
 .prompt-block textarea{width:100%%;min-height:118px;resize:vertical;background:var(--cc-bg-deep);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5}
-.prompt-block textarea:focus{outline:none;border-color:#58a6ff}
+.prompt-block textarea:focus{outline:none;border-color:var(--cc-accent)}
 .pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
@@ -1774,6 +1829,8 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 :root:not([data-theme="dark"]) .pill-review,:root:not([data-theme="dark"]) .clanker-status.reviewing{background:rgba(154,103,0,.12);color:var(--cc-amber);border-color:rgba(154,103,0,.30)}
 :root:not([data-theme="dark"]) .pill-passed{background:rgba(26,127,55,.12);color:var(--cc-green);border-color:rgba(26,127,55,.30)}
 :root:not([data-theme="dark"]) .pill-blocked{background:rgba(207,34,46,.10);color:var(--cc-red);border-color:rgba(207,34,46,.30)}
+:root:not([data-theme="dark"]) .cc-live{background:rgba(26,127,55,.08);border-color:rgba(26,127,55,.30);color:#116329}
+:root:not([data-theme="dark"]) .cc-live.stale{background:rgba(154,103,0,.08);border-color:rgba(154,103,0,.30);color:#7d4e00}
 }
 :root[data-theme="light"] .ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,var(--cc-border-2) 0%%,var(--cc-surface) 100%%)}
 :root[data-theme="light"] .cc-ach{background:var(--cc-surface)}
@@ -1784,6 +1841,8 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 :root[data-theme="light"] .pill-review,:root[data-theme="light"] .clanker-status.reviewing{background:rgba(154,103,0,.12);color:var(--cc-amber);border-color:rgba(154,103,0,.30)}
 :root[data-theme="light"] .pill-passed{background:rgba(26,127,55,.12);color:var(--cc-green);border-color:rgba(26,127,55,.30)}
 :root[data-theme="light"] .pill-blocked{background:rgba(207,34,46,.10);color:var(--cc-red);border-color:rgba(207,34,46,.30)}
+:root[data-theme="light"] .cc-live{background:rgba(26,127,55,.08);border-color:rgba(26,127,55,.30);color:#116329}
+:root[data-theme="light"] .cc-live.stale{background:rgba(154,103,0,.08);border-color:rgba(154,103,0,.30);color:#7d4e00}
 /* ── (#2612 part d) Conservative de-crowd: small uniform breathing room on the
    densest grids (the onboarding stat row and the Operations cards). No card
    removed, no structural/layout change — just a touch more gap/padding so the
@@ -1796,7 +1855,98 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .lb-custom-style-note code{color:var(--cc-accent)}
 .lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
 .lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
+/* ── #4549 Theme control ─────────────────────────────────────────────────────
+   The light ramp above has existed since #2612 but was reachable only if the
+   visitor's OS already asked for it — there was no in-page selector and no
+   stored preference, so a visitor on a dark-set device could not get light and
+   a visitor on a light-set device could not pin dark. This is that selector.
+   It writes :root[data-theme], the hook the ramp already keys on, so no palette
+   work rides along.
+   auto is the ABSENCE of the attribute, not a resolved value: a visitor who
+   never touches the control keeps exactly today's behaviour, and one who
+   returns to auto starts following their OS again live, including a change
+   made while the page is open.
+   The bar is now .page-chrome (tabs + control); .page-tabs keeps its class,
+   role=tablist and its own children unchanged, and hands the surface/border it
+   used to paint up to the wrapper so the two sit in one continuous bar. The
+   control deliberately does NOT go inside the tablist — a non-tab child of a
+   role=tablist is announced as a stray tab. */
+.page-chrome{display:flex;align-items:stretch;background:var(--cc-surface);border-bottom:1px solid var(--cc-border)}
+.page-chrome>.page-tabs{flex:1 1 auto;min-width:0;background:none;border-bottom:none}
+.theme-toggle{flex:0 0 auto;align-self:center;display:inline-flex;align-items:center;gap:6px;margin:0 48px 0 12px;padding:5px 11px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:999px;color:var(--cc-muted);font-family:inherit;font-size:.76rem;line-height:1;cursor:pointer}
+.theme-toggle:hover{color:var(--cc-text);border-color:var(--cc-muted)}
+.theme-toggle:focus-visible{outline:2px solid var(--cc-accent);outline-offset:2px}
+.theme-toggle__glyph{font-size:.92rem;line-height:1}
+/* The swap must not animate. The sheet puts transitions on tiles, buttons, the
+   ops rail and the quota bar; letting every one of them run at once turns a
+   theme change into a half-second wobble across the whole page. ccApplyTheme
+   sets this for one frame around the attribute write. Independent of the
+   prefers-reduced-motion blocks: this suppresses a transition nobody asked for
+   on ANY setting, rather than honouring a stated preference. */
+:root.cc-theme-switching *,:root.cc-theme-switching *::before,:root.cc-theme-switching *::after{transition:none!important;animation:none!important}
+/* ── #4537 Phone portrait (~390 CSS px). The page had breakpoints at 900/860/768/
+   560/520 and then nothing, so an iPhone in portrait fell off the right edge.
+   Four compounding causes, fixed here plus two structural ones above
+   (.clanker-row track sizing, .clanker-act-as shrinkability):
+
+   1. .page-tabs could neither wrap nor scroll. Five tabs at 14px 20px come to
+      roughly 600px, plus 96px of gutters — about 700px against 390px — so the
+      bar overflowed the document and "Management" onward were unreachable.
+   2. .ops / .main set only overflow-y:auto, which makes the computed
+      overflow-x auto as well. That turns the panel into a scroll container
+      clipping at its padding box, i.e. flush with the screen edge, which is why
+      the cut looked like the display rather than a card border. Naming the
+      horizontal axis makes that deliberate instead of inherited.
+   3. padding:40px 48px at every width spends a quarter of the screen on
+      gutters, leaving ~294px of content column.
+   4. .lb-row's seven tracks are ~470px of fixed widths before gaps or padding.
+
+   Kept as one block at the end of the sheet so the phone overrides win on
+   source order without inflating specificity. It stays ahead of the %%s custom
+   CSS slot below, so an operator's own stylesheet still has the last word. */
+@media(max-width:600px){
+  /* Wrap rather than scroll: a horizontal scroller with no visible scrollbar
+     hides the trailing tabs just as effectively as the overflow did. Wrapping
+     puts all five on screen and tappable. */
+  .page-tabs{flex-wrap:wrap;padding:0 16px}
+  .page-chrome{flex-wrap:wrap}
+  .theme-toggle{margin:0 16px 6px auto}
+  .page-tab{flex:0 0 auto;padding:12px 12px;font-size:.88rem}
+
+  /* Gutters back to something a phone can spare, and the horizontal axis stated
+     outright. The overflow sources are fixed above, so hidden is a backstop
+     against a stray wide child, not the thing holding the layout together. */
+  .main,.ops{padding:28px 16px;overflow-x:hidden}
+
+  /* The army roster is a nowrap flex row of four labels; let it wrap. */
+  .cc-army{flex-wrap:wrap;gap:6px 14px}
+
+  /* Slightly tighter card-internal gutters on the densest rows. */
+  .clanker-row,.lb-row,.cc-q-item,.cc-tg-item,.cc-tg-head{padding-left:14px;padding-right:14px}
+
+  /* Leaderboard: 56px/1fr/120px/70px/70px/80px/72px cannot fit, so the seven cells reflow
+     onto three lines — rank + contributor, then tier + the three counts, then
+     the sparkline — instead of scrolling sideways. Placement is by child
+     position because .lb-head and the body rows emit the same seven children in
+     the same order, so the header keeps sitting over the column it labels. The
+     stat tracks stay fixed rem widths for exactly that reason: auto would size
+     per row and the header would drift out of alignment with the numbers. */
+  .lb-row{grid-template-columns:2.1rem minmax(0,1fr) 3.2rem 3.2rem 3.4rem;column-gap:6px;row-gap:4px}
+  .lb-row>:nth-child(1){grid-column:1;grid-row:1}
+  .lb-row>:nth-child(2){grid-column:2/-1;grid-row:1}
+  .lb-row>:nth-child(3){grid-column:1/3;grid-row:2}
+  .lb-row>:nth-child(4){grid-column:3;grid-row:2}
+  .lb-row>:nth-child(5){grid-column:4;grid-row:2}
+  .lb-row>:nth-child(6){grid-column:5;grid-row:2}
+  .lb-row>:nth-child(7){grid-column:1/-1;grid-row:3;text-align:left}
+  /* The uppercase, letter-spaced header labels are the widest thing in the stat
+     tracks; drop them a notch so "Findings" fits 3.4rem. */
+  .lb-head .lb-stat,.lb-head .lb-rank{font-size:.6rem}
+  .lb-spark{justify-content:flex-start}
+  .lb-trend{padding-left:14px;padding-right:14px}
+}
 </style>%s</head><body>
+<div class="page-chrome">
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
@@ -1804,15 +1954,17 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 <button class="page-tab" role="tab" id="ptab-leaderboard" aria-selected="false" data-panel="tab-leaderboard">Leaderboard</button>
 <button class="page-tab" role="tab" id="ptab-profile" aria-selected="false" data-panel="tab-profile">Profile</button>
 </div>
+<button type="button" class="theme-toggle" id="cc-theme-toggle" data-action="cycle-theme" data-theme-mode="auto" title="Theme: Auto &mdash; follows your system appearance" aria-label="Theme: Auto (follows your system appearance). Activate for Light."><span class="theme-toggle__glyph" aria-hidden="true">&#9680;</span><span class="theme-toggle__text">Auto</span></button>
+</div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
 <div class="page">
 <div class="main">
 <h1>🐝 Contribute to %s</h1>
 <div id="invite-banner" class="invite-banner" hidden role="status"></div>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
-<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
+<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:var(--cc-text)">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
 <div class="stat-row">
-<div class="stat"><div class="stat-num" style="color:#58a6ff">%d</div><div class="stat-label">Total</div></div>
+<div class="stat"><div class="stat-num" style="color:var(--cc-accent)">%d</div><div class="stat-label">Total</div></div>
 %s
 </div>
 <div class="steps">
@@ -1821,7 +1973,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
      JS from the CLIENTS metadata (inline SVG emblems, all CSP-safe). Clicking a
      tile drives the existing #cli-select below, so the copy-block logic is
      unchanged. Falls back gracefully: the plain selector still works if JS is off. -->
-<p style="color:#8b949e;margin:0 0 8px;font-size:.9rem">Find your tool:</p>
+<p style="color:var(--cc-muted);margin:0 0 8px;font-size:.9rem">Find your tool:</p>
 <div id="client-tiles" class="client-tiles" role="listbox" aria-label="Choose your CLI tool"></div>
 <!-- "Open in <tool>" ONBOARDING affordance. Only shown for a client with a real,
      vendor-documented deep-link scheme. It opens a chat in the vendor's own app to
@@ -1833,16 +1985,16 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 </div>
 <div style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">OS:</label>
-<select id="os-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">OS:</label>
+<select id="os-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="macos" selected>macOS</option>
 <option value="linux">Linux</option>
 <option value="windows">Windows</option>
 </select>
 </span>
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">Choose your CLI:</label>
-<select id="cli-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">Choose your CLI:</label>
+<select id="cli-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
 <option value="codex" data-install="npm i -g @openai/codex" data-host-install="npm i -g @openai/codex\ncodex login --device-auth   # or export CODEX_API_KEY / OPENAI_API_KEY for API-key mode" data-model-flag="--model" data-default-model="" data-env="# Optional: Codex reasoning effort — the relay passes it as -c model_reasoning_effort.\n# export AGENT_REASONING_EFFORT=high">OpenAI Codex</option>
 <option value="copilot" data-install="" data-host-install="npm install -g @github/copilot # uses your existing gh auth" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
@@ -1859,16 +2011,16 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 </select>
 </span>
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">Mode:</label>
-<select id="mode-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">Mode:</label>
+<select id="mode-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="containerized">Containerized (recommended)</option>
 <option value="host">Host (non-containerized)</option>
 <option value="kubernetes">Kubernetes (cluster)</option>
 </select>
 </span>
 <span id="runtime-group" style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
-<label style="font-size:.9rem;color:#8b949e">Runtime:</label>
-<select id="runtime-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<label style="font-size:.9rem;color:var(--cc-muted)">Runtime:</label>
+<select id="runtime-select" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="">Auto-detect</option>
 <option value="docker">Docker</option>
 <option value="podman">Podman</option>
@@ -1876,32 +2028,32 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 </span>
 </div>
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
-<label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
-<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" oninput="updateCmds()">
+<label style="font-size:.9rem;color:var(--cc-muted)">Model (optional):</label>
+<input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:var(--cc-surface);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" data-input-action="updateCmds">
 </div>
 <!-- #2549 Kubernetes-mode note. Hidden except in Kubernetes mode. States the two
      honest constraints up front: only headless-capable backends run in a cluster
      (a headless pod has no TTY), and the credential stored in the cluster Secret
      is a long-lived personal token that is more exposed than a laptop file, with
      the per-task credential boundary tracked in #2537. -->
-<div id="k8s-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
-<strong style="color:#e6edf3">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
-<span style="color:#8b949e">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
+<div id="k8s-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
+<span style="color:var(--cc-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2537</a> and is not solved by this path.</span>
 </div>
 <!-- Host-only note. Shown for backends the containerized/Kubernetes paths cannot
      run, so the mode flip to Host is explained rather than mysterious: "other"
      has no image, and agy's Google sign-in is interactive with no API-key mode,
      so no unattended container can hold a session. -->
-<div id="hostonly-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
-<strong style="color:#e6edf3">This backend runs on your host, not in a container.</strong> The mode selector has been switched to <strong>Host</strong> for you. <strong>Antigravity (agy)</strong> signs in through an interactive Google OAuth flow &mdash; a browser URL plus a pasted code, with no API-key mode &mdash; so a container or pod has no session to inherit, and the contributor image does not ship the binary. Run <code>agy</code> once to sign in, then start the relay on the host. Its print mode (<code>agy -p</code>) is verified, so headless host runs work; Kubernetes does not.
+<div id="hostonly-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">This backend runs on your host, not in a container.</strong> The mode selector has been switched to <strong>Host</strong> for you. <strong>Antigravity (agy)</strong> signs in through an interactive Google OAuth flow &mdash; a browser URL plus a pasted code, with no API-key mode &mdash; so a container or pod has no session to inherit, and the contributor image does not ship the binary. Run <code>agy</code> once to sign in, then start the relay on the host. Its print mode (<code>agy -p</code>) is verified, so headless host runs work; Kubernetes does not.
 </div>
-<div id="multi-hub-note" style="margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
-<strong style="color:#e6edf3">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:#58a6ff">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:#58a6ff">#2846</a>.
+<div id="multi-hub-note" style="margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
+<strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
 </div>
-<p style="color:#8b949e;margin-bottom:8px">Copy and paste these commands to get started:</p>
-<div style="margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;position:relative">
+<p style="color:var(--cc-muted);margin-bottom:8px">Copy and paste these commands to get started:</p>
+<div style="margin-top:16px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:16px;position:relative">
 <button id="copy-btn" style="position:absolute;top:8px;right:8px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.75rem">Copy</button>
-<pre id="copy-cmds" style="color:#e6edf3;font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
+<pre id="copy-cmds" style="color:var(--cc-text);font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
 # Use the OS / CLI / Mode / Runtime selectors above to customize.
 brew install just gh
 git clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive
@@ -1976,6 +2128,9 @@ function isHostOnly(c){return HOST_ONLY_BACKENDS.indexOf(c)>=0;}
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
+// Event delegation (#3848): replaces the former inline oninput= attribute so
+// CSP script-src-attr can be 'none'.
+if(modelInput){modelInput.addEventListener('input',updateCmds);}
 function update(){
 var os=osSel.value;
 var prereq=prereqByOS[os]||prereqByOS.macos;
@@ -2202,10 +2357,10 @@ update();  // initial paint: copy block + branded UI in sync from first load
 })();
 </script>
 </div>
-<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/v2/src/docs/podman-rootless-ci.md" target="_blank" style="color:#58a6ff">docs/podman-rootless-ci.md</a>.</p>
-<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:var(--cc-accent)">docs/podman-rootless-ci.md</a>.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:var(--cc-accent)">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
+<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-accent);text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
 </div>
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
@@ -2241,7 +2396,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:#e6edf3">Operations</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--cc-text)">Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -2267,7 +2422,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div><div class="admin-toggle-label">Task cooldown</div><div class="admin-toggle-sub">After a task completes with a verified PR, keep that issue out of the queue for the period below. Off = no cooldown gating. Failure quarantine is separate and always on.</div></div>
 </div>
 <div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
-<label>Cooldown period (hours) <span style="color:#6e7681">— 168 = one week (default). Range 1&ndash;8760.</span></label>
+<label>Cooldown period (hours) <span style="color:var(--cc-muted-2)">— 168 = one week (default). Range 1&ndash;8760.</span></label>
 <input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
 <!-- Live tally of issues currently within their cooldown window (#2649 companion),
      hydrated by ccRenderCooldownCount from the fleet payload. Hidden when 0. -->
@@ -2275,7 +2430,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 
 <hr class="admin-hr">
-<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Admission filters</h3>
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Admission filters</h3>
 <p class="ops-note" style="margin-top:0">The queue-shaping levers. Deny (default) skips matches; Allow serves only matches.</p>
 
 <div class="admin-field" id="admin-filter-titles"></div>
@@ -2283,19 +2438,19 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field" id="admin-filter-labels"></div>
 
 <div class="admin-field">
-<label>Allowed models <span style="color:#6e7681">— wildcards (*) and /regex/. Empty = allow all.</span></label>
+<label>Allowed models <span style="color:var(--cc-muted-2)">— wildcards (*) and /regex/. Empty = allow all.</span></label>
 <div class="admin-chips" id="admin-allow-models"></div>
 <div class="admin-addrow"><input type="text" id="admin-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\d/"><button type="button" id="admin-add-model">Add</button></div>
 <div class="admin-toggle" style="padding-top:8px"><div class="admin-switch" id="admin-reject-switch" data-key="contribute_reject_unknown_models"></div><div class="admin-toggle-sub">Reject unknown models at connect time (only when the allowlist is non-empty).</div></div>
 </div>
 
 <hr class="admin-hr">
-<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Repos for Contribute</h3>
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Repos for Contribute</h3>
 <p class="ops-note" style="margin-top:0">Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p>
 <div id="admin-repos"></div>
 
 <hr class="admin-hr">
-<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Tier access &amp; rate limits</h3>
+<h3 style="font-size:.9rem;color:var(--cc-text);margin:0 0 4px">Tier access &amp; rate limits</h3>
 <p class="ops-note" style="margin-top:0">Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p>
 <div id="admin-tiers"></div>
 
@@ -2313,7 +2468,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
 <div class="ops">
 <h1>Operations</h1>
-<p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:#e6edf3">Management</strong> tab.</p>
+<p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:var(--cc-text)">Management</strong> tab.</p>
 
 <!-- Two-region shell: a MAIN area (fleet / pipeline / queue / my-work) beside a
      dedicated full-height DEV-LOG RAIL (chat/notifications-panel style). The rail is
@@ -2329,7 +2484,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected clankers, last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
-  <span style="color:#e6edf3;font-weight:600">Your army</span>
+  <span style="color:var(--cc-text);font-weight:600">Your army</span>
   <span class="cc-army-stat working"><span class="dot"></span><b id="cc-army-working">0</b>&nbsp;working</span>
   <span class="cc-army-stat reviewing"><span class="dot"></span><b id="cc-army-reviewing">0</b>&nbsp;reviewing</span>
   <span class="cc-army-stat idle"><span class="dot"></span><b id="cc-army-idle">0</b>&nbsp;idle</span>
@@ -2555,6 +2710,89 @@ It clears automatically when the period elapses. An operator can shorten or disa
     <span>Report an issue with this page</span>
   </a>
 </footer>
+<script>
+(function(){
+// ── Event delegation (#3848) ─────────────────────────────────────────────────
+// Replaces former inline on*= handler attributes so CSP script-src-attr can be
+// 'none'. Behaviors are keyed off data-* attributes:
+//   data-action="dismiss-parent"  → remove the button's parent element
+//   data-action="cycle-theme"     → advance the theme selector (#4549)
+//   data-hide-on-error="1"        → hide <img> whose load failed
+//   data-select-on-click="1"      → select input contents on click
+//   data-stop-prop="1"            → stop click/mousedown propagating to parents
+
+// ── Theme selector (#4549) ───────────────────────────────────────────────────
+// Three states cycled in this order. "auto" means the attribute is ABSENT, not
+// resolved to a value: the sheet already follows prefers-color-scheme when no
+// data-theme is set, so removing it hands control back to the OS live. Resolving
+// auto to a concrete value here would freeze the page against an OS change made
+// while it is open, which is the one thing the default must not do.
+// The <head> guard already applied the stored value before first paint; this
+// block owns the label, the persistence and the cycle, none of which the first
+// paint needs. The storage key is deliberately NOT the one static/index.html's
+// own toggle uses: that surface keys off a body class and this one off
+// :root[data-theme], so a shared key would have each surface writing a value the
+// other cannot read. TestContributeThemeKeyDoesNotCollideWithDashboard pins that.
+var CC_THEME_KEY='hive.contribute.theme';
+var CC_THEME_ORDER=['auto','light','dark'];
+var CC_THEME_UI={
+  auto:{glyph:'\u25D0',text:'Auto',hint:'follows your system appearance'},
+  light:{glyph:'\u2600',text:'Light',hint:'forced light'},
+  dark:{glyph:'\u263E',text:'Dark',hint:'forced dark'}
+};
+// Any value that is not a pinned theme reads as auto, so a corrupt or foreign
+// entry degrades to the default rather than to a broken attribute. Private-mode
+// Safari throws on localStorage access, hence the try around every touch.
+function ccReadTheme(){try{var v=localStorage.getItem(CC_THEME_KEY);return(v==='light'||v==='dark')?v:'auto';}catch(e){return 'auto';}}
+function ccApplyTheme(mode,persist){
+  var r=document.documentElement;
+  r.classList.add('cc-theme-switching');
+  if(mode==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',mode);
+  if(persist){try{if(mode==='auto')localStorage.removeItem(CC_THEME_KEY);else localStorage.setItem(CC_THEME_KEY,mode);}catch(e){}}
+  var btn=document.getElementById('cc-theme-toggle');
+  if(btn){
+    var ui=CC_THEME_UI[mode]||CC_THEME_UI.auto;
+    var next=CC_THEME_UI[CC_THEME_ORDER[(CC_THEME_ORDER.indexOf(mode)+1)%%CC_THEME_ORDER.length]]||CC_THEME_UI.auto;
+    var g=btn.querySelector('.theme-toggle__glyph');if(g)g.textContent=ui.glyph;
+    var t=btn.querySelector('.theme-toggle__text');if(t)t.textContent=ui.text;
+    btn.setAttribute('data-theme-mode',mode);
+    btn.setAttribute('title','Theme: '+ui.text+' \u2014 '+ui.hint);
+    // Name the CURRENT state and what activating does, since the control is a
+    // cycle rather than a two-way switch — aria-pressed cannot express three.
+    btn.setAttribute('aria-label','Theme: '+ui.text+' ('+ui.hint+'). Activate for '+next.text+'.');
+  }
+  // Drop the no-transition guard once the swapped frame is painted. rAF does not
+  // fire in a background tab, so the timeout is the floor that guarantees the
+  // class can never stick and freeze every transition on the page.
+  var clear=function(){r.classList.remove('cc-theme-switching');};
+  if(window.requestAnimationFrame)requestAnimationFrame(function(){requestAnimationFrame(clear);});
+  setTimeout(clear,150);
+}
+function ccCycleTheme(){ccApplyTheme(CC_THEME_ORDER[(CC_THEME_ORDER.indexOf(ccReadTheme())+1)%%CC_THEME_ORDER.length],true);}
+// Sync the button's label with whatever the head guard already applied. Runs
+// with persist=false so merely loading the page never writes storage.
+ccApplyTheme(ccReadTheme(),false);
+
+document.addEventListener('click',function(e){
+  if(!e.target.closest)return;
+  var d=e.target.closest('[data-action="dismiss-parent"]');
+  if(d&&d.parentElement){d.parentElement.remove();return;}
+  var th=e.target.closest('[data-action="cycle-theme"]');
+  if(th){ccCycleTheme();return;}
+  var s=e.target.closest('[data-select-on-click]');
+  if(s&&s.select){s.select();}
+});
+document.addEventListener('error',function(e){
+  var t=e.target;
+  if(t&&t.getAttribute&&t.getAttribute('data-hide-on-error')){t.style.visibility='hidden';}
+},true);
+['click','mousedown'].forEach(function(type){
+  document.addEventListener(type,function(e){
+    if(e.target.closest&&e.target.closest('[data-stop-prop]')){e.stopPropagation();}
+  },true);
+});
+})();
+</script>
 <script>
 (function(){
 // ── Init-order hoist (fixes the #2603/#2604/#2606 merge-interleaving regression) ──
@@ -3104,7 +3342,7 @@ function meCollaborators(p){
     var occ=(c.occasions>1)?(' · '+c.occasions+' occasions'):'';
     out+='<a class="dz-collab" href="/contribute/dossier/'+encodeURIComponent(c.username)+'">'
       +'<img class="dz-collab__av" src="https://github.com/'+encodeURIComponent(c.username)+'.png" alt="" '
-        +'onerror="this.style.visibility=\'hidden\'">'
+        +'data-hide-on-error="1">'
       +'<span class="dz-collab__body"><span class="dz-collab__name">'+esc(c.username)+'</span>'
       +'<span class="dz-collab__how">'+esc(how)+esc(occ)+'</span></span></a>';
   }
@@ -3298,7 +3536,7 @@ function renderMeCard(mount,p){
   +'<section class="dz-identity" aria-label="Identity">'
   +'<div class="me-emblem" style="--a1:'+em.a1+';--a2:'+em.a2+';--p1:'+em.p1+';--p2:'+em.p2+'"></div>'
   +'<div class="dz-identity-inner">'
-  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'"></div>'
+  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" data-hide-on-error="1"></div>'
   +'<div class="dz-namebloc">'+callsign+'<h1 class="dz-heroname">'+esc(p.github_username)+'</h1>'+desig+founding+'</div>'
   +'<div class="dz-rankpill"><div class="rank-name">'+esc(rankMeta[0])+'</div><div class="rank-sub">trust · '+esc(tier)+'</div></div>'
   +'</div>'+livebar+'</section>'
@@ -3345,7 +3583,7 @@ function renderMeCard(mount,p){
       +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
       +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
       +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
-      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
+      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" data-select-on-click="1">'
       +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. Allowed: custom properties, attribute and pseudo selectors, <code>calc()</code>/<code>clamp()</code>/gradients, and <code>@media</code>, <code>@supports</code>, <code>@container</code>, <code>@keyframes</code>. <code>@font-face</code> is kept only with same-origin or <code>data:</code> sources. Removed: <code>@import</code>, external <code>url()</code> fetches, CSS escapes, and legacy executable CSS. Add <code>&amp;report=1</code> to the style API URL for sanitizer details. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
     +'</div>'
     +meInviteSection(p)
@@ -3708,7 +3946,7 @@ function ccIssueLinkHTML(item,label,extraClass){
   var url=ccIssueURL(item);
   if(!url)return '<span class="'+(extraClass||'')+'">'+esc(label)+'</span>';
   return '<a class="cc-issue-link '+(extraClass||'')+'" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" '+
-    'title="Open on GitHub" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">'+
+    'title="Open on GitHub" data-stop-prop="1">'+
     esc(label)+
     '<svg class="cc-issue-link-ic" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'+
     '<path fill="currentColor" d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z"/>'+
@@ -4857,7 +5095,14 @@ function ccInitInterestsEditor(){
   }).catch(function(){});
 }
 
-function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
+// ccQueueKey is the identity the operator's HOLD and REORDER controls persist,
+// so it must be the server's canonical key (kubestellar/hive#4245). The server
+// now sends it as q.key: "owner/repo#42" for GitHub-backed work (unchanged) and
+// "owner/repo!ENG-123" for a string-keyed source. The fallback keeps rows from a
+// pre-#4245 server working; without the q.key preference an external item
+// produced "owner/repo#" — a key the server can never match, so holding or
+// reordering it silently did nothing.
+function ccQueueKey(q){return q.key||((q.repo||'')+'#'+(q.number||''));}
 
 // ccQueueSearch is the current VIEW filter text (lower-cased). It changes only what
 // is SHOWN — never the persisted order. Empty = show all. The reorder ACTIONS below
@@ -4972,10 +5217,13 @@ function ccRenderQueue(flip){
     // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
     // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
     // and simply omitted when no PR is linked — never blocks the queue render.
-    var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
+    // PR links are a GitHub-only observer: an item with no issue number has no
+    // GitHub issue for a PR to close, so it gets no badge rather than a lookup
+    // on a fabricated key (kubestellar/hive#4245).
+    var prBadge=q.number?ccPRBadgeHTML((q.repo||'')+'#'+q.number):'';
     var enterCls=isNewQ?' cc-q-enter':'';
     return '<div class="cc-q-item'+mineCls+heldCls+enterCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,ccQueueKey(q))+mineTag+heldTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
   // Adopt the freshly-painted key set so the NEXT render only pops-in new arrivals.
@@ -5471,23 +5719,51 @@ function ccTaskRefLink(task){
   if(!m)return '<span class="ref">'+esc(task)+'</span>';
   return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
 }
+// ccFormatLoadout renders one contributor's loadout suffix -- the SHARED
+// formatter for both Live Activity views (the Operations rail via ccNarrate and
+// the Onboarding feed below), so the two cannot drift apart again.
+//
+//   via codex CLI with gpt-5.6-terra (high)   -- everything known
+//   via codex CLI with gpt-5.6-terra          -- no effort
+//   via codex CLI (high)                      -- effort but no model
+//   via codex CLI                             -- backend only
+//   (empty)                                   -- no backend: nothing to say
+//
+// Effort is rendered INDEPENDENTLY of model: a contributor can set
+// AGENT_REASONING_EFFORT without AGENT_MODEL (codex then runs its default model
+// at that effort), and nesting the effort inside the model branch would drop
+// exactly the value this view exists to surface. Every branch is guarded, so a
+// bare '()' or a dangling 'with' can never be emitted.
+function ccFormatLoadout(e,cls){
+  if(!e||!e.cli)return '';
+  var m=e.model?esc(e.model):'';
+  var ef=e.effort?esc(e.effort):'';
+  var text='via '+esc(e.cli)+' CLI';
+  if(m)text+=' with '+m;
+  if(ef)text+=' ('+ef+')';
+  return ' <span class="'+(cls||'feed-cli')+'">'+text+'</span>';
+}
+window.ccFormatLoadout=ccFormatLoadout;
+window.esc=esc;
+
 function ccNarrate(e){
   var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
   var ic=icons[e.action]||'⚡';
   var who='<span class="who">'+esc(e.username||'someone')+'</span>';
   var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
   var pickedRef=e.task?' '+ccTaskRefLink(e.task):'';
+  var loadout=ccFormatLoadout(e,'ref');
   var body;
   switch(e.action){
-    case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
+    case 'joined': body=who+' entered the hive'; break;
     case 'left': body=who+' left the hive'; break;
     case 'picked up': body=who+' grabbed'+pickedRef; break;
-    case 'completed': body=who+' completed'+ref; break;
-    case 'failed': body=who+' hit a snag on'+ref; break;
+    case 'completed': body=who+' completed'+(e.task?' '+ccTaskRefLink(e.task):''); break;
+    case 'failed': body=who+' hit a snag on'+(e.task?' '+ccTaskRefLink(e.task):''); break;
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
     default: body=who+' '+esc(e.action)+ref;
   }
-  return {ic:ic,body:body,ts:e.timestamp};
+  return {ic:ic,body:body+loadout,ts:e.timestamp};
 }
 function ccRenderLog(){
   var el=document.getElementById('cc-log');if(!el)return;
@@ -5916,6 +6192,23 @@ window.addEventListener('scroll',function(){ccCloseQueueMenus();},true);
 </script>
 <script>
 let prevCount=0;
+// ── Cross-block helper resolution ────────────────────────────────────────────
+// esc() and ccFormatLoadout() are declared inside the OPERATIONS script block's
+// IIFE, so they are not in scope here; they reach this block only through the
+// window.* republish at the end of that IIFE. A BARE cross-IIFE reference is
+// exactly the shape that "threw ReferenceError on every dossier render" (see the
+// ccProjectName note at the top of that IIFE), and it fails closed: if that IIFE
+// ever throws before the republish -- it has regressed that way three times
+// (#2603/#2604/#2606) -- the reference throws, poll()'s catch swallows it, and
+// this feed silently freezes on a 3s loop with nothing in the console.
+// Resolve through window with REAL local fallbacks instead, so the worst case is
+// a feed that loses the loadout suffix rather than one that stops updating. The
+// esc fallback is a genuine escaper, never a pass-through: falling back to no
+// escaping would turn a rendering failure into an injection bug.
+const feedEsc=(typeof window!=='undefined'&&window.esc)||function(s){return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');};
+const feedLoadout=(typeof window!=='undefined'&&window.ccFormatLoadout)||function(){return '';};
 async function poll(){try{
 const[statusRes,actRes]=await Promise.all([fetch('/api/contribute/status'),fetch('/api/contribute/activity')]);
 const status=await statusRes.json();
@@ -5932,11 +6225,11 @@ const icons={joined:'🟢',left:'🔴','picked up':'🔧',completed:'✅',failed
 const verbs={joined:'entered the hive',left:'left the hive','picked up':'picked up','completed':'completed','failed':'failed'};
 const icon=icons[e.action]||'⚡';
 const verb=verbs[e.action]||e.action;
-const taskInfo=e.task?' <span class="feed-cli">'+e.task+'</span>':'';
-const role=e.role?' as <span class="feed-role">'+e.role+'</span>':'';
-const cliModel=e.cli?(e.model?' <span class="feed-cli">via '+e.cli+' CLI with '+e.model+'</span>':' <span class="feed-cli">via '+e.cli+' CLI</span>'):'';
+const taskInfo=e.task?' <span class="feed-cli">'+feedEsc(e.task)+'</span>':'';
+const role=e.role?' as <span class="feed-role">'+feedEsc(e.role)+'</span>':'';
+const cliModel=feedLoadout(e,'feed-cli');
 return '<div class="feed-entry"'+(i===0&&isNew?' style="background:rgba(63,185,80,.08)"':'')+'>'+
-'<div class="feed-text">'+icon+' <b>'+e.username+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
+'<div class="feed-text">'+icon+' <b>'+feedEsc(e.username)+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
 '<span class="feed-time">'+t+' '+tz+'</span></div>'
 }).join('');
 if(f.innerHTML!==html){f.innerHTML=html;if(isNew)f.scrollTop=0;}
@@ -5955,14 +6248,14 @@ poll();setInterval(poll,3000);
 <div class="admin-modal-btns"><button type="button" id="admin-confirm-cancel">Cancel</button><button type="button" class="confirm" id="admin-confirm-ok">Confirm</button></div>
 </div>
 </div>
-<div style="margin-top:40px;padding:16px 0;border-top:1px solid #30363d;font-size:.75rem;color:#8b949e;display:flex;align-items:center;gap:8px">
+<div style="margin-top:40px;padding:16px 0;border-top:1px solid var(--cc-border);font-size:.75rem;color:var(--cc-muted);display:flex;align-items:center;gap:8px">
   <span id="hive-version">loading...</span>
 </div>
 <script>
 fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   var el=document.getElementById('hive-version');
   var dot=d.behind?'\u{1F7E1}':'\u{1F7E2}';
-  el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
+  el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:var(--cc-amber)">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
 </body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
@@ -6389,10 +6682,21 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 // the SSE "hello" frame carries, so the queue renders even if the stream drops.
 func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 	queue := []ReadyQueueItem{}
+	resp := map[string]any{}
 	if s.contributeHub != nil {
-		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
+		// One snapshot serves the queue and — only when the convergence toggle
+		// is in shadow mode (#4246, default off) — the additive withheld /
+		// coverage diagnostics from the SAME sweep. With the toggle off the
+		// response is exactly the pre-diagnostics payload.
+		diag := s.convergenceDiagnosticsEnabled()
+		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, diag)
+		queue = snap.queue
+		if diag {
+			resp["withheld"] = snap.withheld
+			resp["admission_coverage"] = snap.coverage
+		}
 	}
-	resp := map[string]any{"queue": queue}
+	resp["queue"] = queue
 	// Label-affinity (#2637): if we can identify the viewer server-side and they
 	// have declared label interests, personalise THIS response — tag matching
 	// issues and float them to the front for them. Soft signal only: nothing is
@@ -7825,15 +8129,37 @@ func validateGitHubToken(token, apiURL string) string {
 }
 
 // handleAPIv1 wraps contribute API endpoints with GitHub token auth.
-// Accepts Authorization: Bearer <gh-personal-access-token>.
+//
+// Authentication accepts BOTH the bearer scheme (hosted clients) and the legacy
+// "token <pat>" scheme that `gh auth token` users and older hive CLIs send, so
+// upgrading a hive never breaks existing scripts. Credentials in the query
+// string (?token=) are NOT supported: query strings land in ingress and access
+// logs.
+//
+// Authorization: every /api/v1 path except /api/v1/me is gated on the hive's
+// authorized-users allowlist. The contributor data behind these reads
+// (knowledge base, contributor roster, activity feed) is hive-private, so a
+// merely-authenticated GitHub user must not be able to read it. /api/v1/me is
+// exempt because it only ever returns the caller's own profile.
 func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if strings.HasPrefix(token, "Bearer ") {
-		token = token[7:]
-	} else if strings.HasPrefix(token, "token ") {
-		token = token[6:]
-	} else {
-		token = r.URL.Query().Get("token")
+	// Defense in depth: strip any client-supplied identity headers up front so no
+	// downstream handler can ever observe a client-forged identity on this route.
+	r.Header.Del("X-Hive-User")
+	r.Header.Del("X-Hive-Role")
+	r.Header.Del(ownerRoleVerifiedHeader)
+
+	var token string
+	if auth := strings.Fields(r.Header.Get("Authorization")); len(auth) == 2 {
+		// Both schemes carry a GitHub PAT; "token" is kept for compatibility.
+		if strings.EqualFold(auth[0], "Bearer") || strings.EqualFold(auth[0], "token") {
+			token = auth[1]
+		}
+	}
+	if token == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
+		return
 	}
 
 	username := validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
@@ -7842,6 +8168,15 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
 		return
+	}
+
+	// Require allowlist authorization for every path except /api/v1/me, which is
+	// self-scoped. Fail closed: an empty allowlist authorizes nobody.
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/me") {
+		if _, ok := s.deps.Config.Dashboard.AuthorizedRole(username); !ok {
+			jsonError(w, "forbidden: not authorized for this endpoint", http.StatusForbidden)
+			return
+		}
 	}
 
 	subpath := strings.TrimPrefix(r.URL.Path, "/api/v1")
@@ -7878,9 +8213,42 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`{"error":"Not registered as a contributor. Run: just contribute-setup"}`))
 	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me"]}`))
+		if !strings.HasPrefix(subpath, "/prs/") || !strings.HasSuffix(subpath, "/queue-automerge") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")
+		if len(parts) != 4 || parts[3] != "queue-automerge" {
+			jsonError(w, "Unknown endpoint", http.StatusNotFound)
+			return
+		}
+		// queue-automerge mutates merge state, so it must never be reachable via
+		// GET (or any other safe method) — that would let a link or image tag
+		// trigger a merge and bypass the write gate.
+		if r.Method != http.MethodPost {
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		role, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
+		if !ok {
+			jsonError(w, "merger or owner access required", http.StatusForbidden)
+			return
+		}
+		// Identity and role are resolved server-side from the validated token and
+		// hive allowlist. Overwrite any client-supplied headers before reusing the
+		// dashboard queue handler and its repo, self-review, and exact-head guards.
+		r.Header.Set("X-Hive-User", username)
+		r.Header.Set("X-Hive-Role", role)
+		r.Header.Del(ownerRoleVerifiedHeader)
+		if isOwnerRole(role) {
+			r.Header.Set(ownerRoleVerifiedHeader, "true")
+		}
+		r.SetPathValue("owner", parts[0])
+		r.SetPathValue("repo", parts[1])
+		r.SetPathValue("number", parts[2])
+		s.handleQueuePRAutoMerge(w, r)
 	}
 }
 
@@ -7905,16 +8273,16 @@ func (s *Server) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;padding:40px;max-width:900px;margin:0 auto}
 h1{margin-bottom:8px;font-size:1.8rem}
 .subtitle{color:#8b949e;margin-bottom:32px}
-h2{margin-top:32px;margin-bottom:12px;color:#58a6ff;font-size:1.2rem}
+h2{margin-top:32px;margin-bottom:12px;color:var(--cc-accent);font-size:1.2rem}
 .endpoint{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:12px}
-.method{color:#3fb950;font-weight:bold;margin-right:8px}
-.path{color:#58a6ff;font-family:monospace}
+.method{color:var(--cc-green);font-weight:bold;margin-right:8px}
+.path{color:var(--cc-accent);font-family:monospace}
 .desc{color:#8b949e;margin-top:4px;font-size:0.9rem}
 pre{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:12px;overflow-x:auto;font-size:0.85rem;color:#e6edf3}
 code{font-family:'SF Mono',monospace;font-size:0.85rem}
 .token-box{background:#161b22;border:1px solid #f0883e;border-radius:8px;padding:16px;margin:16px 0}
 .token-box h3{color:#f0883e;margin-bottom:8px}
-a{color:#58a6ff}
+a{color:var(--cc-accent)}
 </style></head><body>
 <h1>🐝 Hive API</h1>
 <p class="subtitle">Authenticated access to the contributor API</p>

@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +36,13 @@ const (
 	proxyListenPort        = 18443
 	InferenceTranslatePort = 18444
 	modeFilePrefix         = "/tmp/.hive-mode-"
+	// capsFilePrefix holds the per-agent ORTHOGONAL capability set (#4492) — the
+	// tokens agent.AgentCapabilities.String() writes. Deliberately a SECOND file
+	// rather than a richer format in the mode file: bin/gh-wrapper.sh reads
+	// /tmp/.hive-mode-<agent> under `set -e` and expects a bare mode string, so
+	// changing that content would break every gh call on every hive.
+	// A missing or empty file means no capabilities, which is the default.
+	capsFilePrefix         = "/tmp/.hive-caps-"
 	maxViolationLog        = 1000
 	maxGitHubWriteBodyScan = 2 << 20
 
@@ -129,11 +137,14 @@ func warnSockMarkOnce(mark int, err error) {
 }
 
 // CACertPath and caKeyPath are the PVC locations of the persisted MITM CA.
+// The certificate is intentionally in /data because agents need to trust it.
+// The private key is kept in a dedicated owner-only directory: /data contains
+// agent-readable state and must not be treated as a suitable secret directory.
 // They are vars rather than consts solely so tests can redirect the CA
 // read/write to a temporary directory; production never reassigns them.
 var (
 	CACertPath = "/data/proxy-ca.pem"
-	caKeyPath  = "/data/proxy-ca-key.pem"
+	caKeyPath  = "/data/.hive/proxy-ca-key.pem"
 )
 
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
@@ -175,6 +186,12 @@ type GitHubProxy struct {
 	// quiet. It latches only after inferenceAuthFailureThreshold failures and
 	// clears on the next success (self-heal). Never nil after NewGitHubProxy.
 	inferenceAuth *inferenceAuthState
+	// inferenceBudget tracks PROVIDER spending-limit refusals (a LiteLLM key
+	// past its daily dollar cap, a project out of quota). Distinct from
+	// inferenceAuth (a rejected key) and from the hive's own token budget in
+	// pkg/governor (denominated in tokens, blind to what the gateway charges).
+	// See inference_budget.go (kubestellar/hive#4294).
+	inferenceBudget *inferenceBudgetState
 
 	// tokenSink records per-agent token usage for bare-mode inference
 	// agents, whose usage the file-scanning token collector cannot see
@@ -269,6 +286,7 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		inference:       newInferenceRouter(),
 		entitlements:    newEntitlementStore(),
 		inferenceAuth:   &inferenceAuthState{},
+		inferenceBudget: &inferenceBudgetState{},
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -445,8 +463,8 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		return
 	}
 
-	if !IsGitHubHost(host) || !NeedsMITM(host) {
-		// Non-GitHub or non-API GitHub host: tunnel directly. SO_MARK the socket
+	if !NeedsInspection(host) {
+		// Non-inspected host: tunnel directly. SO_MARK the socket
 		// so the forced-egress redirect exempts this proxy-originated dial.
 		upstream, err := markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
 		if err != nil {
@@ -461,6 +479,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 
 	mode := readAgentMode(agentName)
+	caps := readAgentCaps(agentName)
 
 	// MITM: forge a cert, TLS-wrap the client, connect to real upstream.
 	tlsCert, err := p.forgeCert(host)
@@ -491,7 +510,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer upstreamConn.Close()
 
-	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode)
+	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
 }
 
 const tlsClientHelloMaxSize = 4096
@@ -782,21 +801,17 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 		return
 	}
 
-	// Non-GitHub hosts: tunnel without inspection.
-	if !IsGitHubHost(host) {
-		p.tunnelDirect(conn, r)
-		return
-	}
-
-	// github.com doesn't need MITM — OAuth device flow and git smart HTTP
-	// are handled by CLI --deny-tool flags. Only api.github.com needs
+	// Hosts we do not inspect: tunnel without interception. github.com is in
+	// this set — its OAuth device flow and git smart HTTP are handled by CLI
+	// --deny-tool flags. api.github.com and api.linear.app are not: both need
 	// request-level inspection for ACMM enforcement.
-	if !NeedsMITM(host) {
+	if !NeedsInspection(host) {
 		p.tunnelDirect(conn, r)
 		return
 	}
 
 	mode := readAgentMode(agentName)
+	caps := readAgentCaps(agentName)
 
 	// Tell client the tunnel is established.
 	if _, err := fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
@@ -843,7 +858,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	defer upstreamConn.Close()
 
 	// Proxy HTTP requests, inspecting each one.
-	p.proxyHTTP(tlsClientConn, upstreamConn, agentName, mode)
+	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
 }
 
 // proxyHTTP reads HTTP requests from the client, checks them against
@@ -861,7 +876,22 @@ func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
 	p.logger.Warn(msg, attrs...)
 }
 
-func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName string, mode agent.AgentMode) {
+// proxyHTTP relays a MITM'd GitHub connection with ACMM enforcement applied.
+// It is proxyHTTPHost with the GitHub host implied, which is what every
+// pre-existing caller means.
+func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) {
+	p.proxyHTTPHost(client, upstream, "", agentName, mode, caps)
+}
+
+// proxyHTTPHost is proxyHTTP with the terminated host carried through, so the
+// request loop can pick the right rule engine (#4492 F).
+//
+// The host is threaded rather than inferred from the request because a MITM'd
+// request line is a path, not an absolute URL — by this point the only record
+// of which host the TLS session was forged for is the CONNECT that opened it.
+// An empty host means GitHub, preserving every existing call site verbatim.
+func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host string, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) {
+	isLinear := IsLinearHost(host)
 	clientBuf := newBufferedConn(client)
 
 	for {
@@ -884,7 +914,23 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 		blocked := false
 		blockReason := ""
 
-		if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
+		if isLinear && agentName == internalCallerName {
+			// The hive's OWN Linear traffic — the read path #4178 shipped
+			// (backlog enumeration in pkg/worksource/linear.go) and, later,
+			// the OAuth/webhook plumbing. ACMM governs AGENT autonomy, so the
+			// control plane is exempt here exactly as it is for GitHub below.
+			// This branch must precede the enforcement one: without it, adding
+			// Linear to NeedsMITM would newly gate hive-originated reads that
+			// have always been ungated, breaking enumeration rather than
+			// restricting an agent.
+		} else if isLinear {
+			// Linear is a single POST /graphql for everything, so the
+			// (method, path) rule table cannot classify it and the GitHub
+			// GraphQL classifier is the wrong posture — it ends in a
+			// permissive default, backed by the REST table. Linear has no
+			// table underneath. See linear_rules.go.
+			blocked, blockReason = p.enforceLinear(req, agentName, mode, caps)
+		} else if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, graphQLBodyLimit))
 			if req.Body != nil {
 				req.Body.Close()
@@ -894,7 +940,7 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			allowed, isMutation := GraphQLAllowed(mode, body)
+			allowed, isMutation := GraphQLAllowedCaps(mode, caps, body)
 			if !allowed {
 				blocked = true
 				if msg, denied := GraphQLDeniedMessage(body); denied {
@@ -912,7 +958,7 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			// autonomy. Its control-plane calls (App token mint, heartbeat)
 			// must not be gated as if they were agent writes. Repo-filter and
 			// canary-egress checks below still apply.
-		} else if !AllowedByMode(mode, req.Method, req.URL.Path) {
+		} else if !AllowedByModeCaps(mode, caps, req.Method, req.URL.Path) {
 			blocked = true
 			// An unidentified agent is silently treated as ADVISORY, which turns
 			// a permissions bug into an indistinguishable "policy denial". Say so
@@ -1079,6 +1125,65 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 		return "ioscan canary leak", p.canaryFailClosed, true
 	}
 	return "", false, false
+}
+
+// enforceLinear applies ACMM to one request on a MITM'd api.linear.app
+// connection and returns whether it is blocked, with an agent-facing reason.
+//
+// The request body is read (bounded), inspected, and restored so an allowed
+// request forwards byte-identically.
+//
+// NOTHING from the body is logged or surfaced in the 403. Linear documents
+// carry issue and comment content in the query and, in variables, potentially
+// tokens; the operation NAMES are schema identifiers rather than user content,
+// so those are what makes a denial debuggable without leaking the payload.
+func (p *GitHubProxy) enforceLinear(req *http.Request, agentName string, mode agent.AgentMode, caps agent.AgentCapabilities) (bool, string) {
+	// Linear exposes exactly one endpoint. Anything else on this host is not a
+	// shape this gate understands, so it is refused rather than forwarded.
+	if req.Method != http.MethodPost || !IsLinearGraphQLPath(req.URL.Path) {
+		return true, "linear: only POST " + linearGraphQLPath + " is permitted"
+	}
+
+	// Read one byte past the limit so hitting the cap is detectable: a body
+	// that exactly fills the buffer is indistinguishable from a truncated one
+	// otherwise, and truncation must deny.
+	body, readErr := io.ReadAll(io.LimitReader(req.Body, linearBodyLimit+1))
+	if req.Body != nil {
+		req.Body.Close()
+	}
+	truncated := len(body) > linearBodyLimit
+	if truncated {
+		body = body[:linearBodyLimit]
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+
+	if readErr != nil {
+		// Fail closed: a body we could not fully read is a body we could not
+		// classify.
+		p.logger.Warn("linear: request body read failed — denying", "agent", agentName)
+		return true, "linear: request body unreadable"
+	}
+
+	decision := LinearGraphQLAllowed(mode, caps, body, truncated)
+	if decision.Allowed {
+		return false, ""
+	}
+
+	// Operations may be empty when the document could not be classified at
+	// all, which is itself the useful signal.
+	p.logger.Warn("linear: blocked GraphQL request",
+		"agent", agentName,
+		"mode", mode.String(),
+		"operations", strings.Join(decision.Operations, ","),
+		"reason", decision.Reason,
+		"mutation", decision.IsMutation)
+
+	reason := "linear: " + decision.Reason
+	if len(decision.Operations) > 0 {
+		reason += " (" + strings.Join(decision.Operations, ",") + ")"
+	}
+	return true, reason
 }
 
 func githubWriteBodyMayLeak(method, path string) bool {
@@ -1277,6 +1382,21 @@ func extractAgentName(r *http.Request) string {
 }
 
 // readAgentMode reads the mode from the hot-reloadable mode file.
+// readAgentCaps loads the agent's orthogonal capability set (#4492) from
+// /tmp/.hive-caps-<agent>. Every failure path returns the zero value — no
+// capabilities — so an unreadable, missing or malformed file degrades toward
+// the tier check alone, which is the deny direction.
+func readAgentCaps(agentName string) agent.AgentCapabilities {
+	if agentName == "" {
+		return agent.AgentCapabilities{}
+	}
+	data, err := os.ReadFile(capsFilePrefix + agentName)
+	if err != nil {
+		return agent.AgentCapabilities{}
+	}
+	return agent.ParseCapabilities(strings.TrimSpace(string(data)))
+}
+
 func readAgentMode(agentName string) agent.AgentMode {
 	if agentName == "" {
 		return agent.ModeAdvisory
@@ -1446,6 +1566,16 @@ func loadOrGenerateCA(logger *slog.Logger) (tls.Certificate, *x509.Certificate, 
 		return tls.Certificate{}, nil, fmt.Errorf("marshal CA key: %w", err)
 	}
 	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: caKeyDER})
+	// The parent directory is created with owner-only permissions before the
+	// key is written. /data itself is intentionally group-writable for agent
+	// workspaces, so 0600 on a file directly under /data is not sufficient:
+	// an agent could replace or race the path before the proxy opens it.
+	if err := os.MkdirAll(filepath.Dir(caKeyPath), 0700); err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("create CA key directory: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(caKeyPath), 0700); err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("restrict CA key directory: %w", err)
+	}
 	if err := os.WriteFile(caKeyPath, caKeyPEM, 0600); err != nil {
 		return tls.Certificate{}, nil, fmt.Errorf("write CA key to %s: %w", caKeyPath, err)
 	}
@@ -1573,6 +1703,20 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "status", status)
 	}
 
+	// PROVIDER SPEND REBUFF (#4294). Checked before the 403/entitlement branch
+	// below because that branch returns early for every non-403, which would
+	// skip the 429/400 statuses a budget refusal actually arrives on.
+	//
+	// Requires the body to name spend, so an ordinary 429 throttle keeps
+	// flowing to the existing transient-retry path untouched.
+	if p.inferenceBudget != nil && isInferenceBudgetRebuff(status, body) {
+		msg := inferenceBudgetMessage(route.Backend, status, truncateBytes(body, 200))
+		p.inferenceBudget.recordRebuff(msg, time.Now())
+		p.logger.Error("inference backend refused on a spending limit",
+			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint,
+			"status", status, "cause", msg)
+	}
+
 	if route.Backend != "litellm" || status != http.StatusForbidden {
 		return
 	}
@@ -1585,6 +1729,41 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 		"agent", agentName, "endpoint", route.Endpoint, "count", len(entitled), "model", route.Model)
 }
 
+// routeWithEntitledModel returns the route to actually forward with: when the
+// gateway's entitled model set is known (key-info probe or a prior team-scope
+// 403) and the route's stored model differs from an entitled id only by
+// provider-prefix / dot-hyphen spelling drift, a COPY of the route carrying
+// the exact entitled id is returned. LiteLLM matches the request model string
+// verbatim, so without this a stored copilot-spelled id (e.g.
+// "claude-sonnet-4.6" vs entitled "aws/claude-sonnet-4-6") 403s on every call
+// forever (#4400) — while the dashboard's tolerant preselect matcher shows the
+// agent on a perfectly valid model. Self-healing: the first 403 teaches the
+// entitled set (recordInferenceError), so the next request resolves.
+//
+// The stored route is never mutated: the rewrite is per-request, so a
+// key/team change that re-entitles the verbatim id takes effect immediately,
+// and concurrent requests race on nothing. Unknown entitlements, verbatim
+// matches, and ambiguous candidates all pass the route through unchanged.
+func (p *GitHubProxy) routeWithEntitledModel(route *InferenceRoute, agentName string) *InferenceRoute {
+	if route == nil || route.Backend != "litellm" || p.entitlements == nil {
+		return route
+	}
+	entitled, _, known := p.EntitledModels(route.Endpoint)
+	if !known {
+		return route
+	}
+	resolved, ok := resolveEntitledModelID(entitled, route.Model)
+	if !ok {
+		return route
+	}
+	p.logger.Info("inference model resolved to entitled gateway id",
+		"agent", agentName, "endpoint", route.Endpoint,
+		"configured", route.Model, "resolved", resolved)
+	rewritten := *route
+	rewritten.Model = resolved
+	return &rewritten
+}
+
 // recordInferenceSuccess records a successful inference call so a previously
 // latched auth-failure signal clears — the self-heal for the inference-auth
 // health signal. Called from every inference forward path on a 2xx response.
@@ -1593,6 +1772,14 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 func (p *GitHubProxy) recordInferenceSuccess() {
 	if p.inferenceAuth != nil {
 		p.inferenceAuth.recordSuccess()
+	}
+	// Self-heal for the spend rebuff (#4294): whenever the provider's window
+	// resets — hive neither knows nor assumes the schedule; the field report's
+	// gateway rolled over at the key's creation time of day, not at midnight
+	// (see #4294) — the first call that succeeds takes the hive out of the
+	// suppressed state with no operator action.
+	if p.inferenceBudget != nil {
+		p.inferenceBudget.recordSuccess()
 	}
 }
 
@@ -1609,6 +1796,24 @@ func (p *GitHubProxy) InferenceAuthError() (errMsg string, since time.Time) {
 	return p.inferenceAuth.snapshot()
 }
 
+// InferenceBudgetExceeded reports the current provider spending-limit signal:
+// a non-empty log-safe cause, when it first latched, when the most recent
+// rebuff arrived, and how many rebuffs have been observed since — all
+// zero-valued while the provider is serving normally.
+//
+// Callers use a non-empty cause as "this hive cannot buy inference right now",
+// which is a reason to stop kicking agents and to tell the operator, NOT a
+// reason to retry in a few minutes. lastRebuff is what bounds that: because
+// withholding kicks also withholds the calls that would clear the latch,
+// callers suppress only while lastRebuff is fresh and send a probe once it is
+// stale (see inference_budget.go). Safe on a nil receiver/tracker.
+func (p *GitHubProxy) InferenceBudgetExceeded() (errMsg string, since, lastRebuff time.Time, rebuffs int) {
+	if p == nil || p.inferenceBudget == nil {
+		return "", time.Time{}, time.Time{}, 0
+	}
+	return p.inferenceBudget.snapshot()
+}
+
 // ClearInferenceRoute removes an agent's inference backend override.
 func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
 	p.inference.Clear(agentName)
@@ -1619,7 +1824,7 @@ func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
 // Messages API requests and translates+forwards them to the configured
 // inference backend. Agents use ANTHROPIC_BASE_URL=http://127.0.0.1:18444
 // to reach this server instead of api.anthropic.com.
-func (p *GitHubProxy) StartInferenceTranslator() error {
+func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -1640,6 +1845,7 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
 			return
 		}
+		route = p.routeWithEntitledModel(route, agentName)
 
 		body, err := io.ReadAll(r.Body)
 		if r.Body != nil {
@@ -1784,9 +1990,15 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 		w.Write(translated)
 	})
 
+	return mux
+}
+
+// StartInferenceTranslator runs the Anthropic-compatible inference translator
+// on the fixed local port used by agents.
+func (p *GitHubProxy) StartInferenceTranslator() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort)
 	p.logger.Info("inference translation server starting", "addr", addr)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{Addr: addr, Handler: p.inferenceTranslatorHandler()}
 	return server.ListenAndServe()
 }
 
@@ -1836,6 +2048,7 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // handleInferenceRequest translates a single Anthropic API request and
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
+	route = p.routeWithEntitledModel(route, agentName)
 	conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
 	conn.SetReadDeadline(time.Time{})

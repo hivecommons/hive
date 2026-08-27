@@ -144,3 +144,14 @@ func TestBackupResponseIsNotCacheable(t *testing.T) {
 		t.Errorf("X-Hive-Backup-Encrypted = %q", enc)
 	}
 }
+
+// mustDecodeBackupTestKey returns the raw bytes of backupTestKey, so a test
+// can prove an archive really was sealed with the configured key.
+func mustDecodeBackupTestKey(t *testing.T) []byte {
+	t.Helper()
+	k, err := hex.DecodeString(backupTestKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
