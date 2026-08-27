@@ -42,6 +42,15 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Fixed
 
+- Agent config **Prompt Template** tab scroll no longer chains into the
+  dashboard behind the modal ([#4850](https://github.com/kubestellar/hive/issues/4850)):
+  the tab wrapper is now its own contained scroller (`overflow-y:auto` +
+  `overscroll-behavior:contain`, with `min-height:0` so the flex child can
+  actually engage), and the same containment is applied to sibling tab panes
+  in the same dialog (Export YAML, Import paste, Prior Prompts shell) plus
+  the `.config-pre` / `.config-stats-list` CSS rules so they do not depend
+  solely on a multi-selector list that can be reorganized later. Nested
+  editor/preview/variable-picker containment from #2766 is unchanged.
 - The canonical `blocked` workflow overlay now stays out of the contributor
   queue: the actionable-work enumerator, ReadyQueue, live contributor
   assignment, and internal kick projection all withhold it. Work waiting on
