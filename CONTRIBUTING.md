@@ -77,6 +77,31 @@ See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) for the end-t
 - Do not commit secrets, generated credentials, or local runtime state.
 - For documentation changes, verify every command, path, and branch name you mention.
 
+## Test policy
+
+**A change to behavior must come with a test that would fail without it.** This
+is the project's standing expectation, not a per-PR negotiation.
+
+- **Bug fixes** add a test that reproduces the bug — one that fails on the
+  parent commit and passes on the fix. A fix whose test passes either way has
+  not demonstrated it fixes anything.
+- **New functionality** adds tests covering its normal path and the failure
+  modes a caller can actually hit.
+- **Security-relevant changes** assert the invariant, not the implementation.
+  A test that merely calls a guard proves nothing; it must fail when the guard
+  is removed.
+- **Tests are in scope for review.** A test asserting the wrong thing is worse
+  than no test, because it reports green while the behavior is broken.
+
+Where a test is genuinely impractical — a change that only affects real cloud
+infrastructure, or a docs-only edit — say so in the PR body and explain what
+you did to verify it instead. "Tests not practical" without that explanation is
+a reason for a reviewer to push back.
+
+Static analysis runs in CI (`go vet`, `golangci-lint`, `gosec`, and
+`govulncheck`; see [`.github/workflows/go-security-analysis.yml`](.github/workflows/go-security-analysis.yml)).
+Fix findings rather than suppressing them; when a suppression is genuinely
+right, comment why at the suppression site.
 
 ## Optional git hooks
 

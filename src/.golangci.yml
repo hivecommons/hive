@@ -1,0 +1,53 @@
+# golangci-lint configuration for the Hive Go module.
+#
+# Starting posture is DELIBERATELY CONSERVATIVE. A first lint run over a mature
+# ~1,280-test-file codebase typically produces hundreds of findings; enabling
+# everything at once yields a red gate nobody can land through, which ends with
+# the gate being disabled rather than the findings being fixed. The linters
+# below are the ones whose findings are almost always real defects, so the gate
+# starts green-able and can be tightened deliberately.
+#
+# To tighten: enable one linter, fix its findings in their own PR, then commit
+# the config change alongside. Do NOT enable several at once.
+
+version: "2"
+
+run:
+  timeout: 5m
+  # Tests are in scope: this repo's tests assert security invariants, so a
+  # broken test is a broken guard.
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # The `go vet` set, so this gate supersedes rather than duplicates the
+    # existing Vet step in v2-ci.yml.
+    - govet
+    # Unchecked errors. Highest-value linter here: an ignored error on a
+    # credential write or a config save is exactly the silent-failure class
+    # this project keeps finding in review.
+    - errcheck
+    # Obviously-dead or unreachable code.
+    - staticcheck
+    # Unused declarations — catches a helper left behind after a refactor,
+    # which is how dead security guards accumulate.
+    - unused
+    # Suspicious constructs the compiler accepts.
+    - ineffassign
+    # Misspellings in identifiers and comments; cheap and non-controversial.
+    - misspell
+
+  exclusions:
+    generated: lax
+    rules:
+      # Table-driven tests legitimately shadow err inside subtests.
+      - path: _test\.go
+        linters: [errcheck]
+
+issues:
+  # Report every occurrence. The defaults (50 per linter, 3 per identical
+  # issue) hide the true size of a problem, which matters when deciding
+  # whether a finding class is worth fixing or excluding.
+  max-issues-per-linter: 0
+  max-same-issues: 0
