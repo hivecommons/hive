@@ -23,32 +23,24 @@ governor:
       scanner: 4h
       ci-maintainer: 4h
       quality: 2h
-      telemetry: paused
-      operations: paused
       guide: 4h
     busy:
       supervisor: 5m
       scanner: 4h
       ci-maintainer: 4h
       quality: 2h
-      telemetry: paused
-      operations: paused
       guide: 4h
     quiet:
       supervisor: 5m
       scanner: 4h
       ci-maintainer: 4h
       quality: 2h
-      telemetry: paused
-      operations: paused
       guide: 4h
     idle:
       supervisor: 5m
       scanner: 4h
       ci-maintainer: 4h
       quality: 2h
-      telemetry: paused
-      operations: paused
       guide: 4h
 agents:
 - name: supervisor
@@ -206,37 +198,3 @@ agents:
 
     '
   clear_on_kick: true
-- name: telemetry
-  display_name: telemetry
-  role: telemetry
-  description: Audits managed-project instrumentation and observability backends; reports findings only.
-  emoji: 📡
-  color: '#00a8cc'
-  sort_order: 65
-  backend: copilot
-  model: claude-sonnet-4-6
-  bead_role: worker
-  mode: ADVISORY
-  kick_template: telemetry-advisory.md
-  include_repos: true
-  stale_timeout: 28800
-  lane_keywords: [observability, opentelemetry, prometheus, grafana, tracing, metrics, structured-logging, servicemonitor, podmonitor]
-  interactions: Reports instrumentation and telemetry gaps without changing repositories.
-  knowledge_use: Reads project stack and observability conventions from the knowledge base.
-- name: operations
-  display_name: operations
-  role: operations
-  description: Audits managed-project health checks, SLOs, runbooks, alerts, and rollback practice; reports findings only.
-  emoji: 🚨
-  color: '#d35400'
-  sort_order: 66
-  backend: copilot
-  model: claude-sonnet-4-6
-  bead_role: worker
-  mode: ADVISORY
-  kick_template: operations-advisory.md
-  include_repos: true
-  stale_timeout: 28800
-  lane_keywords: [healthz, readyz, readiness, slo-, sli-, service-level-objective, service-level-indicator, error-budget, runbook, incident-response, rollback, alerting]
-  interactions: Reports operational-practice gaps without changing repositories.
-  knowledge_use: Reads reliability goals and operational conventions from the knowledge base.

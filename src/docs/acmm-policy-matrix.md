@@ -27,7 +27,7 @@ A single interactive advisor helps with repo setup and architecture decisions. G
 | guide | advisory | `guide-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L2 — Advisory (Instructed) (7 agents)
+### L2 — Advisory (Instructed) (5 agents)
 
 Agents observe and report findings as advisory beads on the dashboard and tracking issue. No GitHub issues or PRs created. Humans decide what to act on.
 
@@ -37,11 +37,9 @@ Agents observe and report findings as advisory beads on the dashboard and tracki
 | scanner | advisory | `scanner-advisory.md` |
 | quality | advisory | `quality-advisory.md` |
 | guide | advisory | `guide-advisory.md` |
-| telemetry (paused) | advisory | `telemetry-advisory.md` |
-| operations (paused) | advisory | `operations-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L3 — Quality-Gated (Measured) (8 agents)
+### L3 — Quality-Gated (Measured) (6 agents)
 
 Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI workflows. All other agents remain advisory. CI-maintainer joins to monitor build health. Key artifact: measurement infrastructure.
 
@@ -52,13 +50,11 @@ Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI w
 | ci-maintainer | advisory | `ci-maintainer-advisory.md` |
 | **quality** | **holdgated** | `quality-holdgated.md` |
 | guide | advisory | `guide-advisory.md` |
-| telemetry (paused) | advisory | `telemetry-advisory.md` |
-| operations (paused) | advisory | `operations-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L4 — Security-Aware (Adaptive) (9 agents)
+### L4 — Security-Aware (Adaptive) (7 agents)
 
-Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vulnerabilities. Telemetry and operations remain advisory and paused. Only Quality, sec-check, and ci-maintainer may open PRs. Security agent joins.
+Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vulnerabilities. Only Quality, sec-check, and ci-maintainer may open PRs. Security agent joins.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -68,8 +64,6 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 | **quality** | **holdgated** | `quality-holdgated.md` |
 | guide | measured | `guide-issues.md` |
 | **sec-check** | **holdgated** | `sec-check-holdgated.md` |
-| telemetry (paused) | advisory | `telemetry-advisory.md` |
-| operations (paused) | advisory | `operations-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
 ### L5 — Semi-Autonomous (Semi-Automated) (11 agents)
@@ -121,7 +115,7 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.
 5. **Knowledge priming works at all levels.** The `${KNOWLEDGE}` template variable injects relevant facts from git sources and wiki layers regardless of the agent's mode.
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.
-7. **Telemetry and operations are opt-in.** They are present from L2 onward but use a paused cadence in every governor mode. At L2–L4 they report findings only; at L5–L6 they may open issues and PRs but never merge.
+7. **Telemetry and operations are L5+ opt-in agents.** They are absent from L1–L4. At L5–L6 they use a paused cadence in every governor mode and may open issues and PRs, but never merge.
 
 ## Changing a hive's ACMM level
 

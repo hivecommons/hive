@@ -25,7 +25,7 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	packs := ACMMPacks()
 
 	expected := map[int]int{
-		1: 2, 2: 7, 3: 8, 4: 9, 5: 11, 6: 12,
+		1: 2, 2: 5, 3: 6, 4: 7, 5: 11, 6: 12,
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]
@@ -38,14 +38,40 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	}
 }
 
-func TestOperabilityAgentsArePausedInEveryGovernorMode(t *testing.T) {
-	for level := 2; level <= 6; level++ {
+func TestOperabilityAgentsExistOnlyAtL5AndL6(t *testing.T) {
+	for level := 1; level <= 4; level++ {
 		pack, err := ACMMPackByLevel(level)
 		if err != nil {
 			t.Fatalf("load L%d pack: %v", level, err)
 		}
+		for _, agent := range pack.Agents {
+			if agent.Name == "telemetry" || agent.Name == "operations" {
+				t.Errorf("L%d unexpectedly includes L5+ agent %q", level, agent.Name)
+			}
+		}
+		for mode, cadences := range pack.Governor.Cadences {
+			for _, agent := range []string{"telemetry", "operations"} {
+				if _, exists := cadences[agent]; exists {
+					t.Errorf("L%d %s unexpectedly defines cadence for L5+ agent %q", level, mode, agent)
+				}
+			}
+		}
+	}
+
+	for level := 5; level <= 6; level++ {
+		pack, err := ACMMPackByLevel(level)
+		if err != nil {
+			t.Fatalf("load L%d pack: %v", level, err)
+		}
+		present := map[string]bool{}
+		for _, agent := range pack.Agents {
+			present[agent.Name] = true
+		}
 		for _, mode := range []string{"surge", "busy", "quiet", "idle"} {
 			for _, agent := range []string{"telemetry", "operations"} {
+				if !present[agent] {
+					t.Errorf("L%d is missing operability agent %q", level, agent)
+				}
 				cadence := NewIntervalCadence(pack.Governor.Cadences[mode][agent])
 				if !cadence.IsPaused() {
 					t.Errorf("L%d %s %s cadence = %q, want paused", level, mode, agent, cadence)
