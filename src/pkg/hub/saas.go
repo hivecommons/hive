@@ -20945,8 +20945,19 @@ const dashboardHTML = `<!DOCTYPE html>
             <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
             <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
           </select>
-          <input id="access-expiry" type="date" title="Optional expiry — leave empty for permanent access. Access is revoked automatically after this date (UTC)."
-            style="flex:0 0 auto;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+          <!-- The date input is OPTIONAL and empty means permanent. It needs a
+               visible label because an empty type="date" renders as today's
+               date in the browser's own placeholder styling, which reads as a
+               value that has already been chosen rather than an empty field.
+               The label says which direction the date acts in; "(optional)"
+               says an empty field is a valid answer. A title tooltip alone is
+               not enough — it is invisible until hover and unavailable on
+               touch. -->
+          <label for="access-expiry" style="display:flex;flex-direction:column;gap:2px;flex:0 0 auto;font-size:0.7rem;color:var(--muted)">
+            <span>Expires <span style="opacity:0.75">(optional)</span></span>
+            <input id="access-expiry" type="date" title="Optional expiry — leave empty for permanent access. Access is revoked automatically after this date (UTC)."
+              style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+          </label>
           <button onclick="addAccess()" class="btn-primary" style="flex:0 0 auto;padding:8px 16px;font-size:0.8rem">Add</button>
         </div>
         <div id="access-role-hint" style="margin-top:6px;font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
@@ -21458,11 +21469,22 @@ const dashboardHTML = `<!DOCTYPE html>
           // last valid day when set, and empty means permanent. Changing it
           // extends (or clears) the expiry; the last owner cannot be expired
           // for the same reason they cannot be removed or demoted.
+          // A bare date box next to a grant does not say which direction the
+          // date acts in, and an EMPTY type="date" still renders as today in
+          // the browser's placeholder — so a permanent grant looks like one
+          // expiring today. The prefix names the field, and when no expiry is
+          // set it reads "Never" so the permanent case states itself instead
+          // of being inferred from an apparently-filled box.
+          var expiryLabel = u.expires_at ?
+            '<span style="font-size:0.6rem;color:var(--muted)">Expires</span>' :
+            '<span style="font-size:0.6rem;color:var(--muted)" title="No expiry set — this grant is permanent until removed.">Expires: <span style="color:var(--text)">Never</span></span>';
           var expiryControl = isLastOwner ? '' :
+            '<span style="display:inline-flex;align-items:center;gap:4px">' + expiryLabel +
             '<input type="date" class="access-expiry-input" value="' + esc(expiryToDateInput(u.expires_at)) + '"' +
             ' onchange="changeAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.value)"' +
             ' title="Optional expiry — empty means permanent. Access is revoked automatically after this date (UTC)."' +
-            ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:' + (u.expires_at ? 'var(--amber)' : 'var(--muted)') + '">';
+            ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:' + (u.expires_at ? 'var(--amber)' : 'var(--muted)') + '">' +
+            '</span>';
           return '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;align-items:center;gap:4px;flex:1 1 240px;min-width:0">' + checkbox + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem;word-break:break-word">' + esc(u.username) + '</span>' +
             /* Empty placeholder the async GitHub profile lookup fills in

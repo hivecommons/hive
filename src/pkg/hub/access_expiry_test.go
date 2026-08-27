@@ -263,3 +263,38 @@ func TestAccessListIncludesExpiry(t *testing.T) {
 		t.Errorf("ExpiresAt = %q, want %q", access[0].ExpiresAt, future)
 	}
 }
+
+// TestAccessExpiryFieldIsLabelled pins the VISIBLE label on the Manage Access
+// expiry controls.
+//
+// An empty <input type="date"> is not blank on screen: browsers render their
+// own mm/dd/yyyy placeholder, which reads as a date that has already been
+// chosen. Without a label beside it, an operator cannot tell that the box is an
+// expiry, which direction it acts in, or that leaving it alone is a valid
+// answer meaning "permanent". A title tooltip does not cover this — it is
+// invisible until hover and unavailable on touch.
+//
+// The field is and must stay OPTIONAL: nothing pre-fills it, and addAccess
+// sends whatever is there, so empty means permanent.
+func TestAccessExpiryFieldIsLabelled(t *testing.T) {
+	// The Add User control carries a visible label naming the field and saying
+	// an empty value is allowed.
+	if !strings.Contains(dashboardHTML, `<label for="access-expiry"`) {
+		t.Error("the Add User expiry input has no visible <label> — a bare date box does not say it is an expiry")
+	}
+	if !strings.Contains(dashboardHTML, "Expires <span style=\"opacity:0.75\">(optional)</span>") {
+		t.Error(`the Add User expiry label must say "Expires (optional)": the name gives the field meaning, "(optional)" says an empty field is a valid answer`)
+	}
+
+	// Per-user rows: a grant with no expiry must SAY it is permanent rather
+	// than leaving the reader to infer it from a box that looks filled in.
+	if !strings.Contains(dashboardHTML, `Expires: <span style="color:var(--text)">Never</span>`) {
+		t.Error(`a grant with no expiry must render "Expires: Never" — otherwise a permanent grant is indistinguishable from one expiring today`)
+	}
+
+	// The input must not gain a default. A pre-filled expiry would silently
+	// convert every new grant into a temporary one.
+	if strings.Contains(dashboardHTML, `id="access-expiry" type="date" value=`) {
+		t.Error("the expiry input must not carry a default value — empty means permanent, and a default would make every new grant expire")
+	}
+}
