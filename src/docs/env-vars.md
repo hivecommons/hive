@@ -242,6 +242,24 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `SLACK_WEBHOOK` | No | none | Slack incoming webhook for top-level script notifications. |
 | `DISCORD_WEBHOOK` | No | none | Discord webhook for top-level script notifications. |
 
+## Credly badge integration (proposed — not implemented)
+
+> **No code reads these variables.** The Credly integration is a design
+> ([Credly badges](credly-badges.md)); Hive ships only the contributor-card
+> placeholder and the milestone mapping. There are no live Credly API calls,
+> credentials, or badge issuance. Setting these today has **no effect**.
+
+They are listed here so the central reference does not appear to contradict
+`credly-badges.md`, and so the names are reserved. Treat the table as a design
+record until the feature ships — at which point these rows move into the
+sections above and gain real defaults.
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_CREDLY_ORG_ID` | n/a — proposed | none | Credly issuing organization id. |
+| `HIVE_CREDLY_API_TOKEN` | n/a — proposed | none | Credly Issuer API token. A live issuing credential when the feature ships: supply it by environment or secret reference only, never in `hive.yaml` and never committed. Until then, unset leaves the card in placeholder mode. |
+| `HIVE_CREDLY_TEMPLATES` | n/a — proposed | none | JSON map of milestone id → Credly badge template id. |
+
 ## Keeping this reference current
 
 The code is authoritative and this table is hand-maintained, so it drifts unless
@@ -267,6 +285,13 @@ What each column means:
 
 Add the row to the section matching the component that reads the variable, and
 run the searches below to confirm nothing else was missed.
+
+One exception to "the code is authoritative": a **proposed** variable that no
+code reads yet may be listed, but only in a section explicitly marked as such
+(see [Credly badge integration](#credly-badge-integration-proposed--not-implemented)).
+The marking is the whole point — an operator must never set a variable from this
+file and have it silently do nothing. When the feature ships, move those rows
+into the section for the component that reads them.
 
 ## Verification commands
 

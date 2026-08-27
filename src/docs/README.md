@@ -19,6 +19,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Cross-cluster migration](https://github.com/kubestellar/hive/blob/v4/src/docs/cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
 - [v2 → v4 migration](migration-v2-v4.md) — upgrading a v2 deployment: the config is compatible unmodified, and what actually changes is the image tag, the published `7681` port, and the Compose/Kubernetes security settings.
 - [Dashboard route and health checks](https://github.com/kubestellar/hive/blob/v4/src/docs/health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
+- [Agent self-healing watchdog](agent-watchdog.md) — liveness and readiness reconciliation for launched agents: liveness classification, restart backoff, crash-loop escalation, the auth probe that refuses to restart into dead credentials, and the `conditions` array on `/api/agents`. Ships in `mode: observe`, which audits the restarts it would have made without making them.
 - [Network and port requirements](https://github.com/kubestellar/hive/blob/v4/src/docs/network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
 - [TLS, HTTPS, and certificates](https://github.com/kubestellar/hive/blob/v4/src/docs/tls-setup.md) — termination patterns and certificate ownership.
 - [Security notes](https://github.com/kubestellar/hive/blob/v4/src/docs/security.md) — log scrubbing and secret redaction guarantees/limits.
