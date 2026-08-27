@@ -248,6 +248,36 @@ func TestRepoCostReportsWindow(t *testing.T) {
 	}
 }
 
+// TestRepoCostEventsCountOnlyRealClosers asserts that `events` is evidence, not
+// decoration: it counts the DISTINCT audited events that actually closed an
+// interval carrying usage. An agent's first event closes nothing (the leading
+// interval is never attributed) and events closing empty intervals are not
+// evidence of spend — counting either would overstate the support behind a
+// dollar figure.
+func TestRepoCostEventsCountOnlyRealClosers(t *testing.T) {
+	now := time.Now().UTC()
+	base := now.Add(-24 * time.Hour)
+
+	summary := &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{
+		// Only ONE usage event, closing at the event at +20.
+		rcSession("s1", "scanner", rcUsage(rcTime(base, 15), 100, 0)),
+	}}
+	entries := []AuditEntry{
+		rcEvent(rcTime(base, 10), "scanner", "org/repo-a"), // first event: closes nothing
+		rcEvent(rcTime(base, 20), "scanner", "org/repo-a"), // closes the interval with usage
+		rcEvent(rcTime(base, 30), "scanner", "org/repo-a"), // closes an EMPTY interval
+	}
+
+	resp := computeRepoCost(summary, entries, now)
+	a := findRepo(t, resp, "org/repo-a")
+	if a.Events != 1 {
+		t.Fatalf("Events = %d, want 1 (only the event that closed a non-empty interval)", a.Events)
+	}
+	if a.Tokens != 100 {
+		t.Fatalf("Tokens = %d, want 100", a.Tokens)
+	}
+}
+
 // TestRepoCostTierPricingIsTagged: hard requirement #4 — a model priced from the
 // coarse tier fallback must not be presented with the same confidence as an
 // exact list price.

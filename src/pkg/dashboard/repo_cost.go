@@ -53,6 +53,7 @@ package dashboard
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/kubestellar/hive/pkg/tokens"
@@ -90,7 +91,13 @@ type repoCostEntry struct {
 	CacheRead   int64  `json:"cache_read"`
 	CacheCreate int64  `json:"cache_create"`
 	Tokens      int64  `json:"tokens"`
-	// Events is how many audited repo= events closed an interval for this repo.
+	// Events is how many DISTINCT audited repo= events actually closed an
+	// interval that carried usage for this repo — the evidence behind the
+	// figure. It deliberately does NOT count every audited event mentioning
+	// the repo: an agent's first event closes nothing (the leading interval is
+	// never attributed), and events that closed only empty intervals are not
+	// evidence of spend. Counting those would overstate the support for a
+	// dollar figure.
 	Events int `json:"events"`
 	// Agents lists the agents that contributed, sorted, so an operator can see
 	// which sandbox drove the cost.
@@ -163,14 +170,28 @@ type repoUsagePoint struct {
 type repoCostAccumulator struct {
 	usd                                   float64
 	input, output, cacheRead, cacheCreate int64
-	events                                int
 	agents                                map[string]bool
 	// anyTier records that at least one contributing model was priced from the
 	// coarse tier fallback rather than an exact list price.
 	anyTier bool
+	// closers holds each distinct audited event that closed a non-empty
+	// interval for this repo, keyed agent+timestamp so two agents filing at
+	// the same instant are two pieces of evidence, not one. Events counts real
+	// evidence rather than every event that merely names the repo.
+	closers map[string]bool
 	// touched distinguishes "no cost attributed" from "zero cost attributed",
 	// which is what lets USD stay nil and the UI render an honest "—".
 	touched bool
+}
+
+// noteCloser records that a specific audited event closed a non-empty interval
+// for this bucket. Called only from the attributed path — the two mandatory
+// buckets have no closing events by definition.
+func (a *repoCostAccumulator) noteCloser(agent string, tsMs int64) {
+	if a.closers == nil {
+		a.closers = map[string]bool{}
+	}
+	a.closers[agent+"@"+strconv.FormatInt(tsMs, 10)] = true
 }
 
 func (a *repoCostAccumulator) add(p repoUsagePoint) {
@@ -200,7 +221,7 @@ func (a *repoCostAccumulator) entry(name string) repoCostEntry {
 		CacheRead:   a.cacheRead,
 		CacheCreate: a.cacheCreate,
 		Tokens:      a.input + a.output + a.cacheRead + a.cacheCreate,
-		Events:      a.events,
+		Events:      len(a.closers),
 		Source:      "estimated",
 	}
 	if a.anyTier {
@@ -312,27 +333,20 @@ func computeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 			}
 			p := repoUsagePoint{tsMs: u.TimestampMs, agent: sess.Agent, model: model, usage: u}
 
-			repo, ok := attributeRepo(events, u.TimestampMs, windowStartMs)
+			closer, ok := attributeRepo(events, u.TimestampMs, windowStartMs)
 			if !ok {
 				unattributed.add(p)
 				continue
 			}
-			acc := byRepo[repo]
+			acc := byRepo[closer.repo]
 			if acc == nil {
 				acc = &repoCostAccumulator{}
-				byRepo[repo] = acc
+				byRepo[closer.repo] = acc
 			}
 			acc.add(p)
-		}
-	}
-
-	// Count how many audited events actually closed an interval for each repo,
-	// so the UI can show the evidence behind a figure.
-	for _, ev := range byAgentEvents {
-		for _, e := range ev {
-			if acc := byRepo[e.repo]; acc != nil {
-				acc.events++
-			}
+			// Only an event that closed an interval carrying real usage counts
+			// as evidence behind this repo's figure.
+			acc.noteCloser(sess.Agent, closer.tsMs)
 		}
 	}
 
@@ -380,26 +394,26 @@ func computeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 // case: usage before an agent's first event DOES find a closing event, so it
 // would be billed to the first repo. That is exactly the behaviour #4836
 // forbids, so it is excluded explicitly below.
-func attributeRepo(events []repoAuditEvent, tsMs, windowStartMs int64) (string, bool) {
+func attributeRepo(events []repoAuditEvent, tsMs, windowStartMs int64) (repoAuditEvent, bool) {
 	if tsMs == 0 || len(events) == 0 {
-		return "", false
+		return repoAuditEvent{}, false
 	}
 	if tsMs < windowStartMs {
-		return "", false
+		return repoAuditEvent{}, false
 	}
 	// Never attribute the leading interval: usage that precedes an agent's
 	// FIRST audited event has no opening event, so the span it belongs to is
 	// unbounded and may predate the log entirely.
 	if tsMs <= events[0].tsMs {
-		return "", false
+		return repoAuditEvent{}, false
 	}
 	// First event at or after tsMs closes the interval.
 	i := sort.Search(len(events), func(i int) bool { return events[i].tsMs >= tsMs })
 	if i >= len(events) {
 		// Trailing usage with nothing filed after it.
-		return "", false
+		return repoAuditEvent{}, false
 	}
-	return events[i].repo, true
+	return events[i], true
 }
 
 // handleRepoCost serves GET /api/repo-cost.
