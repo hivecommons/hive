@@ -1,0 +1,57 @@
+name: Image Attestation Guard
+
+# Guards the #3760 fix: build-push-action attaches provenance/SBOM
+# attestations by DEFAULT, and doing so forces the pushed per-arch digest into
+# an OCI image *index* instead of a plain image manifest. That index form is
+# what let a `COPY --from=builder` layer ship an overlayfs metacopy redirect
+# for /usr/local/bin/hive — containerd/k3s and rootless podman present that
+# redirect as non-executable at the image path until copy-up, so every hive
+# pulling such an image crash-looped at boot on a bare EPERM. docker.yml
+# explains this in full next to each `provenance: false` / `sbom: false`
+# pair; this workflow is the automated version of "read the comment before
+# reverting these two lines".
+#
+# TRIGGERS ON EVERY BRANCH ON PURPOSE, same reasoning as release-line-guard.yml
+# (#4339): a guard against a workflow regression must not itself be
+# branch-pinned, and the path filter below is what keeps it cheap.
+#
+# Release SBOMs (added in the same change that added this guard) are
+# deliberately NOT part of this workflow — release.yml's SBOM step runs
+# against an already-published image digest and produces a standalone file
+# attached to the GitHub Release, never an in-image attestation. See
+# src/docs/releases.md, "Software bill of materials (SBOM)".
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/docker.yml'
+      - 'src/scripts/check-no-image-attestations.sh'
+      - 'src/scripts/test-no-image-attestations-guard.sh'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/docker.yml'
+      - 'src/scripts/check-no-image-attestations.sh'
+      - 'src/scripts/test-no-image-attestations-guard.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-image-attestations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Self-test first: proves the checker still CATCHES a reverted
+      # provenance/sbom flag, so the pass below is not a checker that has
+      # quietly stopped detecting anything.
+      - name: Prove the guard still catches a reverted attestation flag
+        run: src/scripts/test-no-image-attestations-guard.sh
+
+      - name: Check docker.yml keeps image attestations off (#3760)
+        run: src/scripts/check-no-image-attestations.sh

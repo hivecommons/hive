@@ -1,0 +1,323 @@
+name: Tagged Release
+
+# Cuts a tagged, immutable release with NO human step in the normal path — the
+# operator asked for releases to be "part of the CI's job automatically so we
+# do not have to do it manually ever" and "a natural part of the hive's
+# maturity". See src/docs/releases.md for the full contract; this header is
+# the short version.
+#
+# TRIGGER: `workflow_run` on "Build and Push Docker Image" (docker.yml)
+# completing successfully on branch v4. NOT a tag push — there is no tag until
+# THIS workflow creates one. Chaining off docker.yml rather than a parallel
+# `push: branches: [v4]` trigger means this workflow only ever runs after the
+# continuous-delivery images for that exact commit are already published,
+# which is also the digest this workflow retags — it can never race ahead of
+# or duplicate that build.
+#
+# DECISION: src/scripts/derive-release-version.sh reads CHANGELOG.md's
+# `## Unreleased` section (already the human-curated, PR-time judgment call
+# for "is this release-worthy", not an emoji-prefix guess — see the script's
+# own header for why that signal was rejected) and infers release=false
+# (nothing under Unreleased => most merges) or release=true plus a
+# major/minor/patch bump from which subsection headers are present. A
+# CHANGELOG.md `<!-- release: none|major|minor|patch -->` marker is the human
+# escape hatch when inference would be wrong.
+#
+# IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
+# dated section) is what empties Unreleased, which re-triggers docker.yml on
+# push, which re-triggers this workflow — and on that second pass Unreleased
+# is empty, derive-release-version.sh returns release=false, and the workflow
+# is a no-op. It never chases its own tail. `concurrency` below additionally
+# serializes any two overlapping runs so two merges landing close together
+# cannot race two tags for two different commits — imagetools create (via
+# publish-image-tags.sh's monotonic run-number guard, same as docker.yml)
+# never regresses a moving tag, and the immutable version tag is refused
+# outright if it already exists (a re-run after a partial failure is a safe
+# no-op, not a duplicate release).
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
+
+concurrency:
+  group: tagged-release-v4
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  decide:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'v4' &&
+      github.event.workflow_run.event != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.derive.outputs.release }}
+      version: ${{ steps.derive.outputs.version }}
+      bump: ${{ steps.derive.outputs.bump }}
+      sha: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout the commit docker.yml just built
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0 # full history + tags: derive-release-version.sh reads `git tag`
+
+      - name: Derive whether this merge warrants a release
+        id: derive
+        run: src/scripts/derive-release-version.sh
+
+  release:
+    needs: decide
+    if: needs.decide.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.decide.outputs.version }}
+      SHA: ${{ needs.decide.outputs.sha }}
+    steps:
+      - name: Checkout the commit docker.yml just built
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      # Refuse outright rather than silently no-op, so a logic bug that
+      # recomputes an already-released version is loud. The normal
+      # idempotency path (Unreleased already emptied => release=false) never
+      # reaches this step at all; reaching it with an existing tag means
+      # something upstream disagrees with git's own tag list, which is worth
+      # failing on rather than quietly walking past.
+      - name: Refuse to reuse an existing tag
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "::error::tag v${VERSION} already exists — refusing to re-release. If this is an unexpected repeat, investigate before re-running." >&2
+            exit 1
+          fi
+
+      - name: Sanity-check the derived version is well-formed semver
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::derived version '${VERSION}' is not MAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # REUSE, NOT REBUILD: docker.yml already built and pushed this exact
+      # commit's multi-arch images (that success is why this workflow is
+      # running at all — see the workflow_run trigger). `imagetools create`
+      # retags the already-published short-SHA digest as the immutable
+      # version tag without touching a Dockerfile, a builder, or a single byte
+      # of image content — the published v3.1.0 image is byte-identical to
+      # the v4-latest / <sha> image docker.yml just pushed for this commit.
+      # This is the same primitive src/scripts/publish-image-tags.sh uses for
+      # the moving tags, applied here for one additional immutable tag per
+      # image. A build-time VERSION ldflag is intentionally NOT used to
+      # rebuild these images — see docker.yml's freshness-guard step, which
+      # already proved the pushed digest's embedded commit matches this exact
+      # SHA; rebuilding here would only reintroduce the risk that guard
+      # exists to eliminate.
+      - name: Tag immutable version images
+        run: |
+          set -euo pipefail
+          short="${SHA:0:7}"
+          for image in hive hive-contributor hive-hub; do
+            src="ghcr.io/kubestellar/${image}:${short}"
+            dst="ghcr.io/kubestellar/${image}:v${VERSION}"
+            echo "Tagging ${dst} from ${src}"
+            docker buildx imagetools create -t "$dst" "$src"
+          done
+
+      # "A release labelled differently from what it reports is worse than no
+      # release" (the operator's framing). Because this workflow retags rather
+      # than rebuilds (see above), there is no fresh --version output to check
+      # against the tag the way docker.yml's freshness guard checks a commit
+      # hash — the binary inside ghcr.io/kubestellar/hive:v${VERSION} was
+      # built by an ordinary docker.yml run that never received a VERSION
+      # build-arg, so today it always reports the "0.0.0-dev" fallback (see
+      # cmd/hive/main.go and src/docs/releases.md, "What still blocks cutting
+      # a real release"). Asserting equality here would therefore fail every
+      # release until that gap closes, which is the wrong failure mode for a
+      # tagging step. What this DOES assert: the image actually pulls, runs,
+      # and answers --version at all (the tag is not silently pointing at
+      # nothing), and it logs the mismatch plainly rather than the workflow
+      # implying an equality check happened that it did not.
+      - name: Confirm the newly tagged image runs, and report its embedded version
+        run: |
+          set -euo pipefail
+          img="ghcr.io/kubestellar/hive:v${VERSION}"
+          docker pull "$img"
+          reported="$(docker run --rm --entrypoint /usr/local/bin/hive "$img" --version)"
+          echo "image reports: ${reported}"
+          if [[ "$reported" == "hive ${VERSION} "* ]]; then
+            echo "Embedded version matches the release tag."
+          else
+            echo "::warning::v${VERSION} is tagged but the image's --version output does not embed that string (reports: ${reported}). This is the known gap in src/docs/releases.md — the image was built by an ordinary docker.yml run with no VERSION build-arg. The GHCR TAG is still correct and immutable; only the binary's self-report is stale."
+          fi
+
+      # NOT stable/candidate/edge. Channel promotion is deliberate, separate
+      # policy (src/docs/release-channels.md) and this workflow must never
+      # silently couple a version tag to it.
+      - name: Confirm channel tags were not touched
+        run: |
+          echo "This workflow only ever writes vX.Y.Z tags. stable/candidate/edge are owned exclusively by docker.yml's merge jobs on every push to v4, independent of whether a release was cut here."
+
+      # SBOM: a standalone release ARTIFACT, not an in-image attestation.
+      #
+      # docker.yml sets `provenance: false` / `sbom: false` on every
+      # build-push-action step on purpose (#3760, guarded by
+      # image-attestation-guard.yml): an attestation can only be carried by an
+      # OCI image *index*, and that index form is what let a `COPY --from`
+      # layer ship an overlayfs metacopy redirect for /usr/local/bin/hive,
+      # which containerd/k3s and rootless podman present as non-executable
+      # until copy-up — every hive pulling that image crash-looped at boot.
+      # The published per-arch digest MUST stay a plain image manifest, so an
+      # SBOM here is generated as an ordinary file and uploaded to the GitHub
+      # Release, never attached to the GHCR image in any form.
+      #
+      # SOURCE: the already-published image digest, not the source tree. A
+      # source-tree scan would report what go.mod/package.json ask for; an
+      # image scan reports what the shipped filesystem actually contains —
+      # the base OS packages (`apk add`, the eleven-setuid-binary inventory
+      # the SUID contract already tracks), the Node/tmux layers built from
+      # source, and the exact resolved Go module versions — which is the more
+      # faithful record for a security consumer of a specific release.
+      #
+      # TOOL/FORMAT: Syft, SPDX JSON. SPDX is the format the OpenSSF Best
+      # Practices badge and most downstream SBOM consumers (e.g. dependency-
+      # track) expect natively; Syft needs no separate scan step from a
+      # running daemon (unlike Trivy's default vuln-first posture) and reads
+      # directly off a registry reference by digest.
+      #
+      # SCOPE / LIMITATION: `hive` and `hive-hub` are multi-arch
+      # (linux/amd64, linux/arm64); this scans the linux/amd64 manifest of
+      # each image only, not linux/arm64 separately. Go's cross-compiled
+      # binaries and the apk/npm layers in this Dockerfile carry the same
+      # package *versions* on both architectures — only the compiled machine
+      # code differs, which an SBOM does not describe — so one architecture's
+      # package manifest is representative of both. This is recorded here
+      # AND in the generated release notes rather than silently shipping one
+      # file and implying full multi-arch coverage.
+      - name: Generate per-image SBOMs (SPDX JSON, Syft, linux/amd64)
+        uses: anchore/sbom-action@f4dccdb4d47756825f4cc0c65181bd67e19eb70a # v0.20.9
+        with:
+          image: ghcr.io/kubestellar/hive:v${{ env.VERSION }}
+          output-file: hive-v${{ env.VERSION }}-sbom.spdx.json
+          format: spdx-json
+          artifact-name: "" # do not also attach to a GH Actions run artifact; the release upload below is the distribution point
+
+      - name: Generate contributor image SBOM
+        uses: anchore/sbom-action@f4dccdb4d47756825f4cc0c65181bd67e19eb70a # v0.20.9
+        with:
+          image: ghcr.io/kubestellar/hive-contributor:v${{ env.VERSION }}
+          output-file: hive-contributor-v${{ env.VERSION }}-sbom.spdx.json
+          format: spdx-json
+          artifact-name: ""
+
+      - name: Generate hub image SBOM
+        uses: anchore/sbom-action@f4dccdb4d47756825f4cc0c65181bd67e19eb70a # v0.20.9
+        with:
+          image: ghcr.io/kubestellar/hive-hub:v${{ env.VERSION }}
+          output-file: hive-hub-v${{ env.VERSION }}-sbom.spdx.json
+          format: spdx-json
+          artifact-name: ""
+
+      - name: Move CHANGELOG.md Unreleased section into a dated release entry
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y-%m-%d)"
+          python3 - "$today" <<'PYEOF'
+          import re, sys
+          today = sys.argv[1]
+          version = __import__("os").environ["VERSION"]
+          path = "CHANGELOG.md"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+
+          marker = "## Unreleased"
+          start = text.index(marker)
+          # Section body runs from just after the heading line to the next
+          # "## " heading (or EOF).
+          body_start = text.index("\n", start) + 1
+          next_heading = re.search(r"\n## ", text[body_start:])
+          body_end = body_start + next_heading.start() + 1 if next_heading else len(text)
+          body = text[body_start:body_end]
+
+          # Strip any release markers before filing the section under the
+          # dated heading — they are release-decision metadata, not part of
+          # the permanent record.
+          body = re.sub(r"[ \t]*<!-- *release: *(none|major|minor|patch) *-->\n?", "", body)
+
+          new_unreleased = f"{marker}\n\n"
+          dated_heading = f"## {today} (v{version})\n"
+          replacement = new_unreleased + dated_heading + body
+          text = text[:start] + replacement + text[body_end:]
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          PYEOF
+
+      - name: Commit the release changelog entry
+        run: |
+          set -euo pipefail
+          git config user.name "hive-release-bot"
+          git config user.email "actions@github.com"
+          git add CHANGELOG.md
+          git commit -s -m "🔖 release: v${VERSION}
+
+          Automated release commit. Moves the CHANGELOG.md Unreleased section
+          into a dated v${VERSION} entry. See src/docs/releases.md."
+
+      - name: Push release commit and tag to v4
+        run: |
+          set -euo pipefail
+          git tag "v${VERSION}" HEAD
+          # Push the branch update and the tag together. v4 must be at HEAD
+          # of the commit this workflow started from (SHA) plus exactly this
+          # one release commit — if v4 moved underneath us (another merge
+          # landed mid-workflow), a plain fast-forward push fails loudly
+          # rather than force-pushing over new work.
+          git push origin HEAD:refs/heads/v4
+          git push origin "refs/tags/v${VERSION}"
+
+      # --notes-file and --generate-notes have fragile combined behavior
+      # across gh versions, so notes are built as one file: GitHub's own
+      # auto-generated commit/PR summary first (fetched via `gh api
+      # .../generate-notes`, the same content --generate-notes would have
+      # produced), then the SBOM callout appended after it — rather than
+      # relying on the two flags to compose correctly together.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="v${VERSION}" \
+            --jq .body > "$notes_file" || echo "(auto-generated notes unavailable)" > "$notes_file"
+          {
+            echo
+            echo "---"
+            echo
+            echo "**SBOMs:** SPDX JSON, generated by Syft against the linux/amd64 image digest, attached below for \`hive\`, \`hive-contributor\`, and \`hive-hub\`. They cover linux/amd64 only — see [releases.md](https://github.com/${{ github.repository }}/blob/v4/src/docs/releases.md#software-bill-of-materials-sbom) for why linux/arm64 is not scanned separately."
+          } >> "$notes_file"
+          gh release create "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --title "v${VERSION}" \
+            --notes-file "$notes_file" \
+            --target v4 \
+            "hive-v${VERSION}-sbom.spdx.json" \
+            "hive-contributor-v${VERSION}-sbom.spdx.json" \
+            "hive-hub-v${VERSION}-sbom.spdx.json"

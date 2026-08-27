@@ -18,10 +18,15 @@ COPY src/ .
 # fallback for local builds; CI passes GIT_BRANCH explicitly because the .git
 # copy is often in a detached HEAD state.
 ARG GIT_BRANCH=unknown
+# VERSION mirrors src/Dockerfile: wired but unused by any current workflow —
+# see the longer comment there and src/docs/releases.md.
+ARG VERSION=""
 RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     GIT_SHORT=$(git -C /repo rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
-    CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive
+    VERSION_LDFLAG="" && \
+    if [ -n "$VERSION" ]; then VERSION_LDFLAG="-X main.version=${VERSION}"; fi && \
+    CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive
 
 # Named `runtime` so the CI hub build step can list it in `no-cache-filters`
 # alongside `builder`. Busting only `builder` rebuilt a fresh /hive but let

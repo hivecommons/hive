@@ -75,6 +75,10 @@ pinned:
 unpinned:
   # Builds a PR's image on every branch on purpose, with bot branches excluded.
   docker.yml: '**'
+  # Guards the #3760 provenance/sbom attestation fix in docker.yml. Must run
+  # on any branch that could touch docker.yml, same reasoning as the guard
+  # below.
+  image-attestation-guard.yml: '**'
   # The guard itself. It must run on any branch, or it is #4339 one level up.
   release-line-guard.yml: '**'
 

@@ -88,6 +88,22 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// version is the single source of truth for the version string Hive reports
+// in `--version`, hub heartbeats, and dashboard registration payloads.
+//
+// It is overridable at build time via `-ldflags -X main.version=...`, exactly
+// like gitHash/gitShort/gitBranch below. A plain branch build (no ldflag)
+// falls back to "0.0.0-dev" rather than an empty string, so an operator who
+// builds locally or from an untagged CI run still sees a sensible, obviously
+// non-release value instead of "hive  (commit ...)" or a version that lies by
+// claiming a release number it isn't. src/Dockerfile and src/Dockerfile.hub
+// leave the VERSION build-arg empty for ordinary branch builds, so this Go
+// default is what ships; release.yml never rebuilds (it retags an
+// already-published image — see src/docs/releases.md), so today no build
+// path actually passes -X main.version=... yet. That gap is recorded as a
+// known limitation in src/docs/releases.md rather than silently masked here.
+var version = "0.0.0-dev"
+
 var (
 	gitHash   = "unknown"
 	gitShort  = "unknown"
@@ -991,7 +1007,7 @@ func main() {
 	// dd's full CLI dispatcher handles this via a version subcommand; this is
 	// the minimal equivalent for the v4 line.
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
-		fmt.Printf("hive 3.0.0 (commit %s, branch %s)\n", gitShort, gitBranch)
+		fmt.Printf("hive %s (commit %s, branch %s)\n", version, gitShort, gitBranch)
 		return
 	}
 	startTime := time.Now()
@@ -3406,7 +3422,7 @@ func main() {
 	// paused agent(s)" into a false systemic-incident signal on every upgrade
 	// restart of a deliberately owner-quiesced fleet (#4041).
 	dashSrv.AuditLog("system", "hive_restart",
-		fmt.Sprintf("build=%s version=%s; %s", gitShort, "3.0.0",
+		fmt.Sprintf("build=%s version=%s; %s", gitShort, version,
 			pausedRestoreDetail(cfg.EnabledAgents(), onDemandFromPack, agentMgr.AllStatuses())), "")
 
 	// Mark the dashboard READY as soon as the HTTP server can serve requests —
@@ -3832,7 +3848,7 @@ func main() {
 				HiveType:    cfg.Hub.HiveType,
 				ClusterID:   cfg.Hub.ClusterID,
 				IsPublic:    cfg.Hub.IsPublic,
-				Version:     "3.0.0",
+				Version:     version,
 				GitHash:     gitShort,
 				GitBranch:   gitBranch,
 				// The image ref the Deployment tracks, read in-cluster and
@@ -4065,7 +4081,7 @@ func main() {
 					ClusterID:               cfg.Hub.ClusterID,
 					HiveType:                cfg.Hub.HiveType,
 					IsPublic:                cfg.Hub.IsPublic,
-					Version:                 "3.0.0",
+					Version:                 version,
 					RepoTargetMisconfigured: repoTargetMisconfigured(),
 					RepoTargetIssue:         repoTargetIssueMessage(),
 					ProviderLimitReason:     providerLimitReason,

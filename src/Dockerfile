@@ -25,6 +25,17 @@ COPY src/ .
 
 ARG GIT_HASH=unknown
 ARG GIT_BRANCH=unknown
+# VERSION is the semver Hive reports (`hive --version`, heartbeats,
+# registration), wired the same way as GIT_HASH/GIT_BRANCH: an -X ldflag that
+# takes over from the Go linker default (cmd/hive/main.go, "0.0.0-dev") only
+# when a caller passes it. NO current workflow passes it — docker.yml never
+# does, and release.yml (.github/workflows/release.yml) deliberately does not
+# rebuild at all; it retags the image docker.yml already published for that
+# commit rather than invoking this Dockerfile a second time. This ARG exists
+# so that gap can be closed later (teaching a build to embed a real semver)
+# without a second source change. See src/docs/releases.md, "What still
+# blocks cutting a real release", for why that is not done in this PR.
+ARG VERSION=""
 # Cache mounts for GOCACHE (/tmp/gobuild, matching the GOCACHE= below) and the
 # module cache. docker.yml's `no-cache-filters: builder,runtime` still forces
 # this RUN to re-execute on every build — that is the #3760 stale-binary
@@ -37,7 +48,9 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     GIT_SHORT=$(git -C /repo rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive && \
+    VERSION_LDFLAG="" && \
+    if [ -n "$VERSION" ]; then VERSION_LDFLAG="-X main.version=${VERSION}"; fi && \
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup
 

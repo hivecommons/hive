@@ -1,0 +1,258 @@
+# Tagged releases
+
+Hive ships continuously — every merge to `v4` publishes moving image tags
+(`v4-latest`, the three channels, an immutable short-SHA tag; see
+[release channels](release-channels.md)) with no human step. This page covers
+the second, **additive** layer on top of that: immutable, semver-tagged
+releases (`v1.2.3`) with a git tag and a GitHub Release, cut automatically —
+no human ever pushes a tag or clicks "Draft a release" in the normal path.
+
+## What triggers a release
+
+`.github/workflows/release.yml` runs after every successful
+`Build and Push Docker Image` (`docker.yml`) run on `v4` — a `workflow_run`
+trigger, not a tag push, because there is no tag until this workflow decides
+to create one. It never runs for `v2`, `mk`, `dd`, or a manual
+`workflow_dispatch` build.
+
+`src/scripts/derive-release-version.sh` then decides two things by reading
+[`CHANGELOG.md`](../../CHANGELOG.md)'s `## Unreleased` section — nothing else,
+no commit-message parsing:
+
+- **Empty `## Unreleased`** (the common case — most merges are docs, tests,
+  CI, or refactors) → **no release**. Silent, correct, no tag, no GitHub
+  Release, nothing published beyond the continuous images that already went
+  out.
+- **Non-empty** → a release is cut, with the bump taken from which
+  `###` subsection headers are present:
+  - `### Security` present → **major**
+  - else `### Added` present → **minor**
+  - else (`### Changed` / `### Fixed` / `### Deprecated` only) → **patch**
+
+### Why CHANGELOG.md and not the emoji commit-prefix convention
+
+CONTRIBUTING.md asks PR titles to start with an emoji (`🐛 fix`, `✨ feature`,
+`📖 docs`, …), which looks like a ready-made conventional-commit signal. It
+is **not enforced** — plenty of merged commits on `v4` carry no emoji at all
+— so inferring a published, immutable version number from it would mean an
+unlabeled fix silently produces the wrong shape of release, or a missing
+prefix produces no release at all, with nobody watching each merge to catch
+it. `CHANGELOG.md`'s `## Unreleased` section is already the human,
+PR-time judgment call for "is this release-worthy" (`CONTRIBUTING.md` and
+`.github/workflows/changelog-reminder.yml` already ask for and nudge
+entries there), and getting it wrong fails safe: a missed entry means **no**
+release fires, never a released version with the wrong number. See the
+script's own header comment for the full reasoning.
+
+## The commit convention IS the interface
+
+This is the one thing a contributor needs to know to cause a release, and it
+is nothing new — it is the existing changelog convention, now load-bearing:
+
+- Add an entry under `## Unreleased` in your PR (as `CONTRIBUTING.md` already
+  asks, nudged by the changelog-reminder check) if your change is
+  user-visible.
+- Put it under `### Added` for a minor-worthy feature, `### Security` for a
+  major-worthy security change, or `### Fixed`/`### Changed`/`### Deprecated`
+  for a patch-worthy fix or tweak.
+- If your PR does **not** touch `CHANGELOG.md`, it contributes to whatever
+  release fires next but does not by itself trigger one — and if `Unreleased`
+  is otherwise empty, no release fires until someone's entry lands.
+
+You do not choose a version number. You choose a changelog section, and the
+version follows from semver rules applied to whatever is sitting in
+`Unreleased` when the next merge to `v4` completes its build.
+
+## The escape hatch
+
+Inference will occasionally be wrong — an entry filed under the wrong
+heading, or a change a maintainer wants held back. A single HTML-comment
+marker anywhere in the `## Unreleased` section overrides the inferred
+decision:
+
+```markdown
+<!-- release: none -->
+```
+
+suppresses a release for this merge even if `Unreleased` has content (the
+entries stay queued for the next release that does fire). Or force a specific
+bump regardless of which headers are present:
+
+```markdown
+<!-- release: major -->
+<!-- release: minor -->
+<!-- release: patch -->
+```
+
+Two conflicting markers in the same section is a hard failure (the workflow
+errors loudly) rather than a silent pick — remove all but one.
+
+## What is immutable vs. moving
+
+| Tag | Written by | Moves? |
+|---|---|---|
+| `v4-latest`, `stable`, `candidate`, `edge` | `docker.yml`, every merge to `v4` | Yes — moving pointers |
+| `<7-hex-sha>` | `docker.yml`, every successful build | No — immutable, but not a *release* |
+| `v1.2.3` | `release.yml`, only when a release is cut | No — immutable, and **is** the release |
+
+`release.yml` never writes `stable`/`candidate`/`edge`. Channel promotion is a
+separate, deliberate policy described in
+[release-channels.md](release-channels.md); cutting a version tag never
+silently couples to it, on purpose — the operator explicitly asked for these
+to stay decoupled.
+
+## How a release is actually built
+
+`release.yml` does **not** rebuild the image. `docker.yml`'s own freshness
+guard already proved, for this exact commit, that the pushed digest's
+embedded commit hash matches — rebuilding would only reintroduce the risk
+that guard exists to eliminate. Instead, `release.yml` retags the
+already-published `<7-hex-sha>` digest as the immutable version tag with
+`docker buildx imagetools create`, the same primitive
+`src/scripts/publish-image-tags.sh` already uses for the moving tags. The
+published `v1.2.3` image is byte-identical to the `<sha>` / `v4-latest` image
+`docker.yml` published for that commit.
+
+Concretely, per release:
+
+1. `derive-release-version.sh` decides `release=true` and a version.
+2. Refuse if `v<version>` already exists as a git tag (idempotency guard —
+   should never trigger in the normal path; see below).
+3. `docker buildx imagetools create` retags `hive`, `hive-contributor`, and
+   `hive-hub` at `:<7-hex-sha>` as `:v<version>`.
+4. `CHANGELOG.md`'s `## Unreleased` section is moved into a dated
+   `## YYYY-MM-DD (v<version>)` section (the file's own documented
+   convention — see its "How we maintain this file"), and a new empty
+   `## Unreleased` is left above it.
+4a. Syft generates an SPDX JSON SBOM for each of the three retagged images
+   (see "Software bill of materials (SBOM)" below) — this happens before the
+   changelog commit, using the version tag written in step 3.
+5. That change is committed (`git commit -s`, signed off by the release bot)
+   and pushed to `v4`, then the workflow creates and pushes the `v<version>`
+   git tag on that commit.
+6. A GitHub Release is created from the tag, with GitHub's auto-generated
+   notes plus an SBOM callout, and the three SBOM files from step 4a attached
+   as release assets.
+
+## Software bill of materials (SBOM)
+
+Every tagged release ships a downloadable SBOM per image — `hive`,
+`hive-contributor`, `hive-hub` — attached to the GitHub Release as
+`hive-v<version>-sbom.spdx.json`, `hive-contributor-v<version>-sbom.spdx.json`,
+and `hive-hub-v<version>-sbom.spdx.json`. Format is **SPDX JSON**, generated
+by **Syft** (`anchore/sbom-action`), scanning the already-published, just-
+retagged `v<version>` image reference on GHCR — not the source tree. A
+source-tree scan would report what `go.mod`/`package.json` *ask for*; scanning
+the built image reports what the shipped filesystem *actually contains* — the
+apk-installed OS packages, the from-source tmux/Node layers, and the exact
+resolved Go module versions — which is the more faithful record for anyone
+consuming a specific release's security posture.
+
+**Coverage limitation, stated plainly:** `hive` and `hive-hub` are multi-arch
+(`linux/amd64`, `linux/arm64`); the SBOM step scans the `linux/amd64`
+manifest only, not `linux/arm64` separately. This is a documented limitation,
+not a silent gap: a Go binary's cross-compiled machine code differs by
+architecture but the *package versions* that produced it — Go module
+versions, apk/npm package versions in the same Dockerfile layers — are
+identical on both, and an SBOM describes packages and versions, not compiled
+bytes. One architecture's manifest is therefore representative of both, and
+the GitHub Release notes say so explicitly rather than implying full
+multi-arch coverage.
+
+### Why this is a release artifact, not an in-image attestation
+
+`docker.yml` sets `provenance: false` and `sbom: false` on every
+`docker/build-push-action` step, on purpose, and
+`.github/workflows/image-attestation-guard.yml` +
+`src/scripts/check-no-image-attestations.sh` guard those four sites in CI so
+a well-meaning revert fails loudly instead of shipping. The reason ([#3760](https://github.com/kubestellar/hive/issues/3760),
+documented at length directly above each flag in `docker.yml`): `build-push-action`
+attaches provenance/SBOM attestations by *default*, and an attestation can
+only be carried by an OCI image **index** — so turning it on changes the
+published per-arch digest from a plain image manifest to
+`application/vnd.oci.image.index.v1+json`. That index form is exactly what let
+a `COPY --from=builder` layer ship an **overlayfs metacopy redirect** for
+`/usr/local/bin/hive`, which containerd/k3s and rootless podman present as
+**non-executable** at the image path until copy-up — every hive pulling such
+an image crash-looped at boot on a bare `EPERM` at `execve`. The image
+manifest format is therefore a hard constraint, not a style preference: it
+must stay a plain manifest.
+
+The release SBOM generated here never touches that constraint. It runs
+**after** `docker.yml` has already published the plain-manifest image
+(`release.yml` retags, never rebuilds — see above), scans the published
+digest from the outside with an independent tool, and writes an ordinary JSON
+file that is uploaded to the GitHub Release. Nothing about generating it adds
+an attestation to the GHCR image, changes its media type, or touches the
+manifest `docker.yml` published. If a future change moves SBOM generation
+back into `docker.yml`'s `build-push-action` steps (e.g. by flipping
+`sbom: true`), it reopens #3760 — that is exactly what the guard workflow
+exists to catch.
+
+## Idempotency and concurrency
+
+- **Step 5 emptying `Unreleased`** is what makes this safe to chain off
+  `docker.yml`: pushing the release commit to `v4` triggers `docker.yml`
+  again, which triggers `release.yml` again — and on that second pass
+  `Unreleased` is empty, so `derive-release-version.sh` returns
+  `release=false` and the workflow is a no-op. It never chases its own tail.
+- `concurrency: { group: tagged-release-v4, cancel-in-progress: false }`
+  serializes overlapping runs so two merges landing close together queue
+  rather than race two tags for two different commits.
+- A re-run after a partial failure (for example, the images got retagged but
+  the push failed) is safe: `imagetools create` is itself idempotent per tag,
+  and the "refuse to reuse an existing tag" step turns any genuine double-run
+  attempt into a loud failure instead of a silent duplicate.
+- The version a running binary reports can never disagree with its tag,
+  because the version is never a source-committed string to fall out of sync
+  — see below.
+
+## The version constant
+
+`cmd/hive/main.go` carries one `var version = "0.0.0-dev"`, overridable at
+build time via `-ldflags -X main.version=...`, exactly like the existing
+`gitHash`/`gitShort`/`gitBranch` build-time vars. `src/Dockerfile` and
+`src/Dockerfile.hub` both accept an optional `VERSION` build-arg; when unset
+(every ordinary branch build, including plain `docker.yml` runs) the Go
+linker default `0.0.0-dev` ships instead — never an empty string.
+
+`release.yml` does not need to pass `VERSION` to a rebuild, because it never
+rebuilds (see above) — the retagged image was already built by `docker.yml`
+carrying whatever `version` that ordinary build embedded. This is deliberate:
+today, a tagged-release image and its `<sha>`/`v4-latest` sibling report the
+same non-version-specific string (`0.0.0-dev`) even though only one of them
+carries a `vX.Y.Z` GHCR tag. **This is a known gap**, not an oversight — see
+below.
+
+## What still blocks cutting a real release
+
+This PR wires the machinery; it does not itself cut a release, and one
+concrete gap remains before the first automated `v0.x.y` should be trusted
+end-to-end:
+
+- **The running binary's `--version` output does not yet say `v1.2.3` for a
+  release build.** Because `release.yml` retags rather than rebuilds (by
+  design — see "How a release is actually built"), the image GHCR now calls
+  `ghcr.io/kubestellar/hive:v1.2.3` still reports whatever `main.version`
+  the original `docker.yml` build embedded, which today is always the
+  `0.0.0-dev` fallback since `docker.yml` never passes `VERSION`. Closing
+  this cleanly means either (a) teaching `docker.yml` to pass a
+  provisional/dev-style `VERSION` on every `v4` build so the embedded string
+  at least varies per commit, or (b) accepting that `--version` reports the
+  git commit faithfully (`gitShort`/`gitBranch` are always correct) while the
+  semver field is aspirational until a release is cut and only the *image
+  tag*, not the binary's self-report, is authoritative for a specific
+  release. This PR does not resolve that tension — it is a maintainer product
+  decision about what `--version` should mean on a non-release build, not a
+  wiring gap this automation can silently paper over.
+- **No starting version has been chosen.** With zero existing tags, the first
+  automated release computes its base as `0.0.0` and bumps from there (so the
+  first `## Added` entry ships as `v0.1.0`, not `v1.0.0`). If the project
+  wants its first tag to read `v1.0.0`, a maintainer needs to push that tag
+  by hand once, after which every future release bumps from it normally —
+  this workflow deliberately never invents a major version on its own
+  authority.
+- **This PR does not create any tag.** No `v*.*.*` tag or GitHub Release
+  exists yet as of this PR; the very next content-carrying merge to `v4`
+  (after this PR itself merges, assuming its own CHANGELOG entry survives
+  under `## Unreleased`) is what would cut the first one.
