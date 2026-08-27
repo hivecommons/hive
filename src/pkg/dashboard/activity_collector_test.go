@@ -4,6 +4,8 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -218,7 +220,9 @@ func TestHandleRepoActivityReportsPhaseOneHonesty(t *testing.T) {
 	ac.nowFn = func() time.Time { return now }
 	ac.collect()
 
-	s := NewServer(0, nil)
+	// RegisterAPI wires ContributeWSHub, which logs unconditionally; a nil
+	// logger panics in NewContributeWSHub → loadCompletedTasks.
+	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.RegisterAPI(&Dependencies{Activity: ac})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/repo-activity", nil)
