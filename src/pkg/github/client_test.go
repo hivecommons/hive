@@ -63,8 +63,6 @@ type wireIssue struct {
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 }
 
-func boolPtr(b bool) *bool { return &b }
-
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

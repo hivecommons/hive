@@ -397,8 +397,6 @@ var PermanentExemptLabels = []string{"do-not-merge"}
 // exists so a nil or unconfigured client still has a sane value.
 const AutoMergeQueuedLabel = config.DefaultAutoMergeLabel
 
-var exemptFiles = []string{"ADOPTERS.md", "ADOPTERS.MD"}
-
 const slaThresholdMinutes = 30
 
 // NewClient creates a GitHub API client. If apiURL is non-empty and differs
@@ -1424,8 +1422,6 @@ func (c *Client) SearchOutreachPRCount(ctx context.Context, author, org, project
 	}
 	return result.GetTotal(), nil
 }
-
-const perPage = 100
 
 var shaPattern = regexp.MustCompile(`[0-9a-f]{7,40}\b`)
 

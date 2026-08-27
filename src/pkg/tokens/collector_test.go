@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// jsonlLine builds a minimal JSONL line for session entries used in tests.
-func jsonlLine(fields map[string]interface{}) string {
-	parts := []string{}
-	for k, v := range fields {
-		switch val := v.(type) {
-		case string:
-			parts = append(parts, fmt.Sprintf("%q:%q", k, val))
-		case int:
-			parts = append(parts, fmt.Sprintf("%q:%d", k, val))
-		case int64:
-			parts = append(parts, fmt.Sprintf("%q:%d", k, val))
-		}
-	}
-	return "{" + strings.Join(parts, ",") + "}"
-}
-
 // writeFile writes content to a file in dir with the given name.
 func writeFile(t *testing.T, dir, name, content string) string {
 	t.Helper()

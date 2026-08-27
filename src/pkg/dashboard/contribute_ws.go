@@ -356,20 +356,6 @@ func (t *WSTaskAssign) identityKey() string {
 	return worksource.Ref{Repo: t.Repo, Number: t.Number}.Key()
 }
 
-// ref reconstructs the assigned item's source-aware reference.
-func (t *WSTaskAssign) ref() worksource.Ref {
-	if t == nil {
-		return worksource.Ref{}
-	}
-	return worksource.Ref{
-		SourceType: t.SourceType,
-		Repo:       t.Repo,
-		ExternalID: t.ExternalID,
-		Number:     t.Number,
-		URL:        t.URL,
-	}
-}
-
 const maxActivityEntries = 50
 
 type ActivityEntry struct {

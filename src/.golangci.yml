@@ -23,7 +23,7 @@ run:
 linters:
   default: none
   enable:
-    # STARTING SET — deliberately three linters, not six.
+    # THE ENABLED SET grows one linter at a time, never in batches.
     #
     # A first run with errcheck + staticcheck + unused enabled produced 859
     # findings (579 errcheck, 225 staticcheck, 44 unused, 11 ineffassign) on a
@@ -35,12 +35,20 @@ linters:
     # its own PR after its findings are fixed — that ratchet is tracked in the
     # ratchet issue #4903.
     #
-    # errcheck (579) is the most valuable remaining rung and the largest, and
-    # is worth splitting by package.
+    # errcheck is the most valuable remaining rung and the largest, and is worth
+    # splitting by package. Note its true size under this config: the 579 figure
+    # counts non-test files only, and `tests: true` above means the gate measures
+    # 3,139.
     - govet
     - misspell
     # RATCHET: ineffassign enabled after its 11 findings were fixed (#4903).
     - ineffassign
+    # RATCHET: unused enabled after its 44 findings were fixed (#4903). Most were
+    # constants and helpers superseded by a later refactor; a few were guards
+    # that had come loose from the code they were written to protect, and those
+    # were reconnected rather than deleted. One declaration is retained under an
+    # explained //nolint:unused — see pkg/hub/wrapkey_store.go.
+    - unused
 
   exclusions:
     generated: lax

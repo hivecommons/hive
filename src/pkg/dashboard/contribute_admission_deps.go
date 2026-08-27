@@ -136,10 +136,6 @@ func (r beadRecord) generation() string {
 	return r.updatedAt.UTC().Format(time.RFC3339Nano)
 }
 
-// beadLedgerPartialReason is the DegradedReason reported when the ledger
-// snapshot could not cover every configured store.
-const beadLedgerPartialReason = "BeadLedgerPartial"
-
 // contributorAdmissionSweep carries the observation state shared by every
 // candidate in ONE ReadyQueue / selectTask pass. Building it once per sweep
 // keeps the shared admission contract cheap enough to sit in the assignment

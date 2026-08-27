@@ -38,12 +38,19 @@ var skillsConventionalDir = dataVolumePath + "/skills"
 const defaultLookbackHours = 24
 
 // Cadence sentinel values: a per-mode cadence set to one of these means the
-// governor will not kick the agent on a timer in that mode. Kept as named
-// constants so the offByCadence detection and computeNextKick agree on the
-// exact spellings the config layer emits.
+// governor will not kick the agent on a timer in that mode. Named constants so
+// the two next-kick computations below agree on the exact spellings the config
+// layer emits, rather than each carrying its own literal list — the drift these
+// were introduced to prevent, and which had already started before they were
+// wired in.
+//
+// config.Cadence.IsPaused() remains the authority for the interval-mode
+// judgment (it also accepts "paused" and "0"); these are the string-cadence
+// spellings the dashboard's own formatting paths compare against.
 const (
-	cadencePause = "pause"
-	cadenceOff   = "off"
+	cadencePause    = "pause"
+	cadenceOff      = "off"
+	cadenceOnDemand = "on demand"
 )
 
 // SetProxyViolationsProvider registers a function that returns per-agent
@@ -941,7 +948,7 @@ func formatHumanTime(t time.Time) string {
 }
 
 func computeNextKick(lastKick *time.Time, cadence string) string {
-	if cadence == "" || cadence == "off" || cadence == "pause" || cadence == "on demand" {
+	if cadence == "" || cadence == cadenceOff || cadence == cadencePause || cadence == cadenceOnDemand {
 		return ""
 	}
 	base := time.Now()
@@ -973,7 +980,7 @@ func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) str
 
 func parseCadenceDuration(cadence string) time.Duration {
 	cadence = strings.TrimSpace(cadence)
-	if cadence == "" || cadence == "off" || cadence == "pause" || cadence == "on demand" {
+	if cadence == "" || cadence == cadenceOff || cadence == cadencePause || cadence == cadenceOnDemand {
 		return 0
 	}
 	d, err := time.ParseDuration(cadence)

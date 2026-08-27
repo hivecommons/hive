@@ -28,9 +28,6 @@ import (
 // defaultLinearBaseURL is Linear's single GraphQL endpoint.
 const defaultLinearBaseURL = "https://api.linear.app/graphql"
 
-// linearPageSize is the number of issues requested per GraphQL page.
-const linearPageSize = 100
-
 // defaultLinearStates is used when a team's States list is empty.
 var defaultLinearStates = []string{"Todo", "In Progress", "Backlog"}
 
@@ -86,6 +83,10 @@ func NewLinearSource(cfg LinearConfig, httpClient *http.Client) *LinearSource {
 // SourceType implements WorkSource.
 func (s *LinearSource) SourceType() string { return "linear" }
 
+// linearIssuesQuery pages at `first: 100`, Linear's maximum page size. The page
+// size is part of the query document rather than a separate constant so it
+// cannot be changed in one place and left unchanged in the document that
+// actually runs.
 const linearIssuesQuery = `query($teamKey: String!, $states: [String!], $cursor: String) {
   issues(
     filter: {

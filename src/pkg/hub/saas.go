@@ -2074,18 +2074,14 @@ func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 
 const clusterHealthCacheTTL = 30 * time.Second
 
-// clusterHealthCPUWarnPct is the CPU usage percentage threshold for warning state.
-const clusterHealthCPUWarnPct = 60
-
-// clusterHealthCPUDangerPct is the CPU usage percentage threshold for danger state.
-const clusterHealthCPUDangerPct = 80
-
-// clusterHealthMemWarnPct is the memory usage percentage threshold for warning state.
-const clusterHealthMemWarnPct = 60
-
-// clusterHealthMemDangerPct is the memory usage percentage threshold for danger state.
-const clusterHealthMemDangerPct = 80
-
+// CPU and memory bar thresholds are NOT declared here. The hub serves the
+// cluster-health panel raw percentages and the panel colours them with its own
+// CLUSTER_CPU_WARN_PCT / CLUSTER_CPU_DANGER_PCT / CLUSTER_MEM_* constants, so a
+// Go-side copy would be a second set of numbers that nothing reads and nobody
+// updates together. The disk thresholds below are different: they are anchored
+// to kubelet behaviour rather than taste and are pinned by a test, so they have
+// a reason to exist on this side.
+//
 // Disk thresholds are anchored to kubelet's own behaviour rather than to
 // round numbers, so a coloured bar means something concrete is about to
 // happen on the node:
@@ -2107,17 +2103,8 @@ const clusterHealthDiskWarnPct = 85
 // hard eviction threshold fires (nodefs.available<10%).
 const clusterHealthDiskDangerPct = 90
 
-// kubectlTopTimeoutSec is the timeout for kubectl top nodes commands.
-const kubectlTopTimeoutSec = 10
-
-// kubectlGetTimeoutSec is the timeout for kubectl get nodes commands.
-const kubectlGetTimeoutSec = 10
-
 // millicoresPerCore converts cores to millicores.
 const millicoresPerCore = 1000
-
-// mbPerGB converts megabytes to gigabytes.
-const mbPerGB = 1024
 
 // kiToBytes converts Ki units to bytes.
 const kiToBytes = 1024
@@ -2163,15 +2150,6 @@ type ClusterHealthNode struct {
 // hiveHostedNamespacePrefix is the namespace prefix used for SaaS-provisioned
 // hives; pods in these namespaces identify hives running on a node.
 const hiveHostedNamespacePrefix = "hive-hosted-"
-
-// hostedAvailableIDPrefix is the ID prefix a pre-provisioned pool slot carries
-// while it is unclaimed inventory (e.g. "hosted-available-oke-01-placeholder-bb95").
-// It is the RegistryEntry-side marker for an available placeholder: unlike
-// MyHiveEntry, RegistryEntry has no ProvStatus field, so the ID prefix (paired
-// with the "available-" org prefix, placeholderOrgPrefix) is the reliable signal
-// that a slot is idle inventory rather than a claimed hive. A claimed hive keeps
-// neither marker.
-const hostedAvailableIDPrefix = "hosted-available-"
 
 type ClusterHealthSummary struct {
 	TotalNodes    int `json:"total_nodes"`
@@ -4375,7 +4353,9 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 		return fmt.Errorf("hub image %s:%s not published yet", ghcrRepoHub, sha)
 	}
 	image := fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoHub, sha)
-	cmd := kubectlForCluster(s.hubCluster(), "set", "image",
+	ctx, cancel := context.WithTimeout(context.Background(), upgradeKubectlTimeout)
+	defer cancel()
+	cmd := kubectlForClusterContext(ctx, s.hubCluster(), "set", "image",
 		"deployment/"+hubDeploymentName, hubContainerName+"="+image, "-n", hubNamespace)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("kubectl set image failed: %s", strings.TrimSpace(string(out)))
@@ -4764,8 +4744,10 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	// "*=" updates every container including init containers (copy-config,
 	// init-permissions) — pinning only "hive" left inits on the old branch tag.
-	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
+	setCtx, cancelSet := context.WithTimeout(context.Background(), upgradeKubectlTimeout)
+	cmd := kubectlForClusterContext(setCtx, cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
 	out, err := cmd.CombinedOutput()
+	cancelSet()
 	if err != nil {
 		// The hub can't reach this hive's cluster over kubectl (e.g. the heartbeat-only cluster
 		// from the hub-reachable-cluster hub). Fall back to the heartbeat path: record the
@@ -4790,8 +4772,10 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Restart the deployment to pull the new image
-	restartCmd := kubectlForCluster(cluster, "rollout", "restart", "deployment/hive", "-n", ns)
+	restartCtx, cancelRestart := context.WithTimeout(context.Background(), upgradeKubectlTimeout)
+	restartCmd := kubectlForClusterContext(restartCtx, cluster, "rollout", "restart", "deployment/hive", "-n", ns)
 	restartOut, restartErr := restartCmd.CombinedOutput()
+	cancelRestart()
 	if restartErr != nil {
 		s.logger.Warn("rollout restart after branch switch failed", "hive", id, "output", string(restartOut))
 	}
@@ -5132,8 +5116,11 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			hiveCluster := s.clusterForHive(h)
 			if hiveCluster != nil {
 				ns := "hive-hosted-" + id
-				cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
-				if out, err := cmd.CombinedOutput(); err != nil {
+				trigCtx, cancelTrig := context.WithTimeout(context.Background(), upgradeKubectlTimeout)
+				cmd := kubectlForClusterContext(trigCtx, hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
+				out, err := cmd.CombinedOutput()
+				cancelTrig()
+				if err != nil {
 					s.logger.Warn("auto-upgrade initial trigger failed (will retry via heartbeat)", "hive", id, "cluster", hiveCluster.ID, "output", string(out))
 				}
 			}

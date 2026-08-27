@@ -569,12 +569,3 @@ func TestRemoveAgentExisting(t *testing.T) {
 		t.Error("scanner should be removed")
 	}
 }
-
-func containsBoot2(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

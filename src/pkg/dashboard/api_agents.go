@@ -582,25 +582,6 @@ func isGistImportHost(host string) bool {
 	return host == "gist.github.com" || host == "gist.githubusercontent.com"
 }
 
-func importFetchURL(rawURL string) string {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
-		return rawURL
-	}
-	m := githubBlobURLPattern.FindStringSubmatch(u.Path)
-	if m == nil {
-		return rawURL
-	}
-	raw := url.URL{
-		Scheme:   "https",
-		Host:     "raw.githubusercontent.com",
-		Path:     "/" + strings.Join([]string{m[1], m[2], m[3], m[4]}, "/"),
-		RawQuery: u.RawQuery,
-		Fragment: u.Fragment,
-	}
-	return raw.String()
-}
-
 // definitionSourceFromURL parses a GitHub blob or raw file URL into a
 // DefinitionSourceConfig (owner/repo/path/ref). It is used when an operator
 // imports an agent with "keep linked" checked, so the pasted human-facing URL
