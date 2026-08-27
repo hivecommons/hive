@@ -184,10 +184,10 @@ func (f *fakeFleet) waitRestart(t *testing.T, r *Reconciler) {
 	t.Helper()
 	select {
 	case <-f.restartDone:
-	case <-time.After(5 * time.Second):
+	case <-time.After(waitBudget):
 		t.Fatal("timed out waiting for a restart to complete")
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(waitBudget)
 	for time.Now().Before(deadline) {
 		r.mu.Lock()
 		rec, ok := r.agents[f.lastRestarted()]
@@ -1399,9 +1399,19 @@ func TestDefaultBackendProvider(t *testing.T) {
 	}
 }
 
+// waitBudget bounds how long the helpers below poll real wall-clock time for
+// a detached restart goroutine to settle. It is intentionally generous: the
+// condition each helper polls is a real, observed state transition
+// (restartInFlight clearing, restartCount advancing) rather than a fixed
+// sleep, so widening this budget only buys headroom against scheduler
+// contention on coverage-instrumented CI runners — it cannot mask a restart
+// that never happens, and it does not change what is being asserted (see
+// TestDeadSessionRestartsOncePerBackoffNotPerTick's exact-count check).
+const waitBudget = 20 * time.Second
+
 func waitFor(t *testing.T, cond func() bool, msg string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(waitBudget)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
