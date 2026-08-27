@@ -30,11 +30,11 @@
 #   - git-credential-hive.sh reads the per-agent cache file directly; hive-merge
 #     and hive-open-pr likewise never rely on inherited token env.
 #
-# Residual (documented, closed elsewhere): a same-uid agent can still read a
-# backend CLI's /proc/<pid>/environ deliberately. That extraction lane — and
-# any smuggled credential — is closed at the transport by the MITM proxy's
-# Authorization strip/inject (#1861, PR #4032): the proxy, not the agent env,
-# decides what credential GitHub ever sees.
+# Residual (documented, OPEN today): a same-uid agent can still read a backend
+# CLI's /proc/<pid>/environ deliberately. Until the MITM proxy's Authorization
+# strip/inject lands (#1861, PR #4032), that extraction lane remains open: any
+# smuggled credential is still usable against GitHub. Once #1861/#4032 lands,
+# the proxy, not the agent env, will decide what credential GitHub ever sees.
 #
 # POSIX sh compatible (dash-safe): no bashisms, and `unset` of an absent
 # variable is not an error. Keep the variable list in sync with
