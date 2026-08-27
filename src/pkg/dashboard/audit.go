@@ -250,6 +250,15 @@ func auditLogFiles(filePath string) []string {
 	return files
 }
 
+// maxAuditFileReadBytes caps how many decompressed bytes readAuditLogFile will
+// load from a single audit file. Lumberjack rotates at auditMaxSizeMB (5MB), so
+// a legitimate file — compressed or not — decompresses to roughly that size.
+// Without a cap, a crafted or corrupted ".gz" in /data (a gzip bomb: a few KB
+// expanding to many GB) would let io.ReadAll exhaust dashboard memory. 64MB is
+// >10x the rotation size, so no legitimate file is ever truncated; a truncated
+// trailing line simply fails json.Unmarshal and is skipped by the caller.
+const maxAuditFileReadBytes = 64 << 20
+
 func readAuditLogFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -265,7 +274,7 @@ func readAuditLogFile(path string) ([]byte, error) {
 		defer gz.Close()
 		r = gz
 	}
-	return io.ReadAll(r)
+	return io.ReadAll(io.LimitReader(r, maxAuditFileReadBytes))
 }
 
 func (a *AuditLog) Recent(n int) []AuditEntry {
