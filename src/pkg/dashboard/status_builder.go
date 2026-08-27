@@ -272,6 +272,32 @@ func BuildFrontendStatus(
 	return payload
 }
 
+// agentDisabledInConfig reports whether an agent is switched OFF in config —
+// `enabled: false` — as opposed to merely not running right now.
+//
+// The distinction matters because a disabled agent is never started, so it has
+// no tmux session and no captured pane, yet it still appears in the runtime
+// roster: ApplyPack adds every agent in the ACMM level's pack to the manager
+// and gates only the Start on Enabled (api_packs.go). That is deliberate — the
+// runtime card is how an operator turns the agent back on — but it means every
+// consumer reading "not running" has to ask WHY before calling it a fault.
+//
+// The live config wins; proc.Config is the manager's copy and only refreshes
+// on UpdateConfig/reconcile. Callers must check "running" FIRST: an agent
+// disabled while it is still up keeps running until the next reconcile, and it
+// genuinely does have a session until then.
+func agentDisabledInConfig(cfg *config.Config, name string, proc *agent.AgentProcess) bool {
+	if cfg != nil {
+		if liveCfg, ok := cfg.Agents[name]; ok {
+			return !liveCfg.Enabled
+		}
+	}
+	if proc != nil {
+		return !proc.Config.Enabled
+	}
+	return false
+}
+
 func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
 	if cfg == nil {
 		return []FrontendConfiguredAgent{}
@@ -570,6 +596,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			Color:         agentCfg.Color,
 			BeadRole:      agentCfg.GetBeadRole(),
 			Managed:       agentCfg.Managed,
+			Enabled:       !agentDisabledInConfig(cfg, name, proc),
 			ReplicaBase:   agentCfg.ReplicaOf,
 			ReplicaIndex:  agentCfg.ReplicaIndex,
 			ReplicaCount:  agentCfg.ReplicaCount,

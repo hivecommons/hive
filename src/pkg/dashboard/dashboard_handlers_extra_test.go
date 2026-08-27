@@ -31,7 +31,14 @@ func newFullServer(t *testing.T) *Server {
 		},
 		Data: config.DataConfig{AgentsDir: t.TempDir()},
 		Agents: map[string]config.AgentConfig{
-			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner"},
+			// Enabled must be set explicitly. This literal skips
+			// ApplyAgentDefaults, which is what gives a real config
+			// `enabled: true` unless the operator wrote `enabled: false`
+			// (config/agent_overlay.go). Leaving it at the zero value
+			// described a state production cannot produce — an agent in the
+			// runtime roster that is switched OFF — and the health checks now
+			// read that as a deliberate off-state rather than a down agent.
+			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
 		},
 		GitHub:     config.GitHubConfig{Token: "ghp_test123456789"},
 		SourcePath: t.TempDir() + "/hive.yaml",

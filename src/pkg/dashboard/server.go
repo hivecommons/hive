@@ -492,6 +492,21 @@ type FrontendAgent struct {
 	// verdict means the agent was NOT paused, and a reader must not conclude
 	// otherwise.
 	WatchdogMode string `json:"watchdogMode,omitempty"`
+	// Enabled mirrors the CONFIG flag, not a runtime state, and is the only
+	// thing that distinguishes "switched off on purpose" from "stopped because
+	// something broke" — State reads "stopped" for both.
+	//
+	// A disabled agent reaches this payload at all because ApplyPack adds every
+	// pack agent to the runtime roster and gates only the Start on Enabled
+	// (api_packs.go), which is deliberate: the card is how an operator turns
+	// the agent on. But without this field the card cannot say so, and it
+	// offers a terminal and a full log for an agent that has never had a tmux
+	// session — a dead end that reports "no tmux socket found for session
+	// hive-<name>".
+	//
+	// NOT omitempty: false is the meaningful value here, and omitempty would
+	// erase exactly the case this exists to report.
+	Enabled bool `json:"enabled"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the
@@ -2212,6 +2227,16 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 					ac["status"] = "warn"
 					ac["detail"] = "refused kick: " + proc.KickRefusalReason
 				}
+			} else if agentDisabledInConfig(s.deps.Config, name, proc) {
+				// Switched off in config, so nothing ever starts it and it has
+				// no session — the same DELIBERATE non-running state the paused
+				// branch above already scores as "skip". Scoring it "fail"
+				// meant every hive that turns an agent off reports a permanent
+				// health failure it can never clear, and (via healthSummaryFor)
+				// raises a standing hub alert for an agent nobody wants running.
+				ac["disabled"] = true
+				ac["status"] = "skip"
+				ac["detail"] = "disabled in config — not started"
 			} else {
 				ac["status"] = "fail"
 				failCount++
@@ -2924,6 +2949,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		const staleOutputThreshold = 30 * time.Minute
 		running := 0
 		paused := 0
+		disabled := 0
 		stalled := 0
 		unsubstituted := 0
 		down := 0
@@ -2972,6 +2998,15 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 					}
 				}
 			} else if !grace {
+				// Disabled in config is a deliberate off-state, not a fault:
+				// nothing starts the agent, so "down" would be a permanent
+				// false alarm on any hive that switched an agent off. Counted
+				// separately (like paused) so the detail line still says the
+				// agent is not running, without failing the check.
+				if agentDisabledInConfig(s.deps.Config, name, proc) {
+					disabled++
+					continue
+				}
 				// A non-running agent whose CLI has no credentials is not
 				// crashed — it is waiting for a human to click Login on the
 				// agent panel. Bucket it separately so the operator reads an
@@ -2995,6 +3030,9 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		detail := fmt.Sprintf("%d running", running)
 		if paused > 0 {
 			detail += fmt.Sprintf(", %d paused", paused)
+		}
+		if disabled > 0 {
+			detail += fmt.Sprintf(", %d disabled", disabled)
 		}
 		if down > 0 {
 			detail += fmt.Sprintf(", %d down: %s", down, strings.Join(downNames, ", "))
