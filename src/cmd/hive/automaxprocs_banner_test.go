@@ -14,6 +14,10 @@ import (
 // "2026/08/14 08:03:25 maxprocs: Leaving GOMAXPROCS=12: CPU quota undefined".
 var automaxprocsBannerPattern = regexp.MustCompile(`maxprocs:`)
 
+// versionBannerPattern matches the `hive <semver-ish>` banner that --version
+// prints, without pinning the version itself — see the assertion below.
+var versionBannerPattern = regexp.MustCompile(`(?m)^hive [0-9]+\.[0-9]+\.[0-9]+`)
+
 // TestNoBlankAutomaxprocsImport is the source-asserting half of the
 // regression: it fails if anyone reinstates
 // `_ "go.uber.org/automaxprocs"` in this file. That import's init writes an
@@ -69,8 +73,16 @@ func TestChildProcessOutputHasNoAutomaxprocsBanner(t *testing.T) {
 			"a ref name):\n%s", out)
 	}
 
-	if !strings.Contains(string(out), "hive 3.0.0") {
-		t.Fatalf("expected combined output to contain the --version banner, got: %s", out)
+	// Assert a version banner is PRESENT, not that it carries any particular
+	// version. The literal "hive 3.0.0" used to be safe because the version was
+	// hardcoded in three places; it is now a build-time ldflag (see `version`
+	// in main.go), so an ordinary `go build` under test legitimately reports
+	// the 0.0.0-dev fallback while a released build reports its real semver.
+	// Pinning the number here would fail every build that is not a release —
+	// and would silently re-create the hardcoded-version coupling this test
+	// would then be enforcing.
+	if !versionBannerPattern.Match(out) {
+		t.Fatalf("expected combined output to contain a `hive <version>` banner, got: %s", out)
 	}
 }
 
