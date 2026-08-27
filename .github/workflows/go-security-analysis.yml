@@ -28,10 +28,10 @@ name: Go Security Analysis
 on:
   push:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/go-security-analysis.yml']
+    paths: ['src/**', '.github/workflows/go-security-analysis.yml', '.github/release-lines.yml']
   pull_request:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/go-security-analysis.yml']
+    paths: ['src/**', '.github/workflows/go-security-analysis.yml', '.github/release-lines.yml']
   schedule:
     # Weekly, so a newly-PUBLISHED advisory against unchanged code is still
     # found. A push-only trigger cannot catch that: the vulnerability appears

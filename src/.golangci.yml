@@ -13,6 +13,8 @@
 version: "2"
 
 run:
+  # 5m is comfortably above observed runtime for this module; raise it rather
+  # than dropping linters if a future addition pushes past it.
   timeout: 5m
   # Tests are in scope: this repo's tests assert security invariants, so a
   # broken test is a broken guard.
