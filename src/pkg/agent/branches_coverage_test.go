@@ -73,6 +73,13 @@ func TestDeliverStartupKick_Delivered(t *testing.T) {
 	agent.State = StateRunning
 	agent.launchGen = 3
 	paneInject(t, session, "goose is ready")
+	// Don't start deliverStartupKick's readiness clock until tmux has actually
+	// painted the marker: on a loaded runner the render can outlast
+	// paneInject's fixed sleep AND the TestMain-shrunk cliReadyTimeout,
+	// dropping the kick and flaking this test for reasons unrelated to the
+	// delivery path under test. Same pattern as
+	// TestDeliverStartupKick_BobReceivesKick (#4871).
+	requirePaneShows(t, session, "goose is ready")
 	m.deliverStartupKick(agent, "bootstrap prompt", 3)
 	if agent.LastKick == nil {
 		t.Error("startup kick should be delivered on matching generation")
