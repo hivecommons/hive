@@ -30,7 +30,15 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 	}{
 		{"contributor cards", "const avatarHtml = linkedAvatar(c.github_username, CONTRIBUTOR_AVATAR_PX,"},
 		{"leaderboard rows", "? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)"},
-		{"access tab allowlist", "linkedAvatar(u.username, ACCESS_LIST_AVATAR_PX,"},
+		// The access allowlist renders non-GitHub identities (ibmid:, google:,
+		// microsoft:) too, and those have no github.com profile — a linked
+		// avatar there produced a 404 that also pointed at whatever account
+		// occupies that URL shape. It now goes through accessRowAvatar, which
+		// DELEGATES to linkedAvatar for GitHub keys and renders an escaped
+		// initials tile otherwise. The guard's intent is unchanged: no site
+		// hand-rolls an <img>. TestAccessRowAvatarDelegates below pins the
+		// delegation so this indirection cannot become a bypass.
+		{"access tab allowlist", "accessRowAvatar(u.username, u.display_name || '', ACCESS_LIST_AVATAR_PX)"},
 		{"audit log actor", "? linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px')"},
 	}
 	for _, tc := range cases {
@@ -39,6 +47,31 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 				t.Errorf("index.html is missing %q — did an avatar site stop using the shared helper?", tc.snippet)
 			}
 		})
+	}
+}
+
+// TestAccessRowAvatarDelegates pins that accessRowAvatar still routes GitHub
+// keys through the shared linkedAvatar helper, and escapes everything on the
+// non-GitHub path. Without this, swapping the access list off linkedAvatar
+// (see TestAvatarSitesUseSharedHelper) would be a way to bypass the shared
+// helper's anchor, onerror fallback and escaping rather than an indirection
+// through it.
+func TestAccessRowAvatarDelegates(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(html, "function accessRowAvatar(key, displayName, px)") {
+		t.Fatal("accessRowAvatar is missing — the access list has no avatar helper")
+	}
+	// GitHub keys must still go through the shared helper, not a local <img>.
+	if !strings.Contains(html, "if (provider === 'github') return linkedAvatar(key, px, title, '', 'margin-right:6px');") {
+		t.Error("accessRowAvatar no longer delegates GitHub keys to linkedAvatar")
+	}
+	// A display name is attacker-influenced in a way an opaque subject is not,
+	// so both the tooltip and the initial must be escaped.
+	if !strings.Contains(html, `'<span title="' + esc(title) + '"`) {
+		t.Error("accessRowAvatar must escape its title — display names are user-controlled")
+	}
+	if !strings.Contains(html, `var initial = esc((displayName || key || '?')`) {
+		t.Error("accessRowAvatar must escape the initial it renders")
 	}
 }
 
