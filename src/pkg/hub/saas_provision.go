@@ -2048,6 +2048,16 @@ func manifestSecretKeys(manifest, secretName string) map[string]struct{} {
 	return out
 }
 
+func provisionTemplateUseApp(req *CreateHiveRequest, cluster *ClusterConfig) bool {
+	if req.AuthMethod == "app" && req.AppID != "" {
+		return true
+	}
+	if req.AuthMethod != "app" && strings.TrimSpace(req.GitHubToken) == "" && cluster != nil && cluster.GitHubAppID != 0 {
+		return true
+	}
+	return false
+}
+
 // fleetKeys carries every GitHub App private key the fleet knows, keyed by
 // app_id, so a freshly provisioned spoke starts life holding ALL of them rather
 // than waiting for the heartbeat's additional-key delivery to catch up. Pass nil
@@ -2080,7 +2090,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		}
 	}
 
-	useApp := req.AuthMethod == "app" && req.AppID != ""
+	useApp := provisionTemplateUseApp(req, cluster)
 	useAppFull := useApp && req.InstallationID != "" && req.AppPrivateKey != ""
 
 	// Determine the dashboard URL based on cluster domain.
@@ -2778,7 +2788,13 @@ stringData:
   gh-app-key.pem: |
 {{.AppPrivateKey}}
 {{- else if not .UseApp}}
+  # Empty token mode is YAML-valid but not bootable: clusters without a
+  # hub-managed App cannot host credential-less pool placeholders.
+{{- if .Token}}
   github-token: {{.Token}}
+{{- else}}
+  github-token: ""
+{{- end}}
 {{- end}}
 {{- range .AdditionalAppKeys}}
   gh-app-key-{{.AppID}}.pem: |

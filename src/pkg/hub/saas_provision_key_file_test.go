@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+
+	"gopkg.in/yaml.v3"
 )
 
 // #4368: the provisioning seed pinned github.key_file at /secrets/gh-app-key.pem
@@ -21,6 +23,14 @@ import (
 // renderProvisionManifest executes k8sManifestTemplate with the App-related
 // fields under test and inert values for everything else.
 func renderProvisionManifest(t *testing.T, useApp, useAppFull bool) string {
+	return renderProvisionManifestWithAuth(t, useApp, useAppFull, "ghp_test", "3568013", "12345")
+}
+
+func renderProvisionManifestWithToken(t *testing.T, useApp, useAppFull bool, token string) string {
+	return renderProvisionManifestWithAuth(t, useApp, useAppFull, token, "3568013", "12345")
+}
+
+func renderProvisionManifestWithAuth(t *testing.T, useApp, useAppFull bool, token, appID, installationID string) string {
 	t.Helper()
 	tmpl, err := template.New("manifests").Parse(k8sManifestTemplate)
 	if err != nil {
@@ -61,11 +71,11 @@ func renderProvisionManifest(t *testing.T, useApp, useAppFull bool) string {
 		"ACMMLevel":         3,
 		"UseApp":            useApp,
 		"UseAppFull":        useAppFull,
-		"AppID":             3568013,
-		"InstallationID":    "12345",
+		"AppID":             appID,
+		"InstallationID":    installationID,
 		"AppPrivateKey":     "    -----BEGIN RSA PRIVATE KEY-----\n    dGVzdA==\n    -----END RSA PRIVATE KEY-----",
 		"AdditionalAppKeys": []provisionAppKey{},
-		"Token":             "ghp_test",
+		"Token":             token,
 		"HasPlaceholderIDs": false,
 	}
 	var buf bytes.Buffer
@@ -119,6 +129,72 @@ func TestProvisionManifestKeyFileAssertion(t *testing.T) {
 	}
 }
 
+func TestProvisionManifestPlaceholderSeedUsesClusterApp(t *testing.T) {
+	h := &SaaSHive{ID: "hosted-available-test", Org: "kubestellar", PrimaryRepo: "kubestellar/hive"}
+	req := &CreateHiveRequest{}
+	cluster := &ClusterConfig{GitHubAppID: 3568013}
+
+	useApp := provisionTemplateUseApp(req, cluster)
+	if !useApp {
+		t.Fatal("credential-less placeholder seed on a cluster with GitHubAppID must render app-mode config")
+	}
+	manifest := renderProvisionManifestWithAuth(t, useApp, false, "",
+		resolveProvisionAppID(req.AppID, h, cluster), sanitize(req.InstallationID))
+	hiveYAML := manifestConfigMapData(t, manifest, "hive-config", "hive.yaml")
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(hiveYAML), &cfg); err != nil {
+		t.Fatalf("parse rendered hive.yaml: %v\n%s", err, hiveYAML)
+	}
+	github := manifestMap(t, cfg["github"], "hive.yaml github")
+	if got := github["app_id"]; got != 3568013 {
+		t.Fatalf("github.app_id = %#v, want 3568013", got)
+	}
+	if got, ok := github["installation_id"]; !ok || got != nil {
+		t.Fatalf("github.installation_id = %#v (present %v), want empty/null value", got, ok)
+	}
+	if _, ok := github["token"]; ok {
+		t.Fatalf("placeholder app-mode config rendered github.token in hive.yaml:\n%s", hiveYAML)
+	}
+	if pins := manifestKeyFilePins(manifest); len(pins) != 0 {
+		t.Fatalf("placeholder app-mode config pins github.key_file=%v; want it derived", pins)
+	}
+}
+
+func TestProvisionManifestEmptyTokenSecretKeyPresent(t *testing.T) {
+	manifest := renderProvisionManifestWithToken(t, false, false, "")
+	secret := manifestObject(t, manifest, "Secret", "hive-secrets")
+	stringData := manifestMap(t, secret["stringData"], "Secret stringData")
+	token, ok := stringData["github-token"]
+	if !ok {
+		t.Fatalf("hive-secrets stringData keys %v do not include github-token", manifestMapKeys(stringData))
+	}
+	if token != "" {
+		t.Fatalf("github-token = %#v, want empty string", token)
+	}
+
+	refName, refKey, ok := manifestDeploymentEnvSecretKeyRef(t, manifest, "hive", "HIVE_GITHUB_TOKEN")
+	if !ok {
+		t.Fatal("Deployment env HIVE_GITHUB_TOKEN does not use a secretKeyRef")
+	}
+	if refName != "hive-secrets" {
+		t.Fatalf("HIVE_GITHUB_TOKEN secret name = %q, want hive-secrets", refName)
+	}
+	if _, ok := stringData[refKey]; !ok {
+		t.Fatalf("HIVE_GITHUB_TOKEN references missing hive-secrets key %q; available keys %v",
+			refKey, manifestMapKeys(stringData))
+	}
+}
+
+func TestProvisionManifestNonEmptyTokenRenderingUnchanged(t *testing.T) {
+	manifest := renderProvisionManifestWithToken(t, false, false, "ghp_test")
+	if !strings.Contains(manifest, "  github-token: ghp_test\n") {
+		t.Fatalf("non-empty token rendering changed; want bare token line in manifest")
+	}
+	if strings.Contains(manifest, `  github-token: "ghp_test"`) {
+		t.Fatalf("non-empty token was quoted; keep existing manifest output stable")
+	}
+}
+
 // TestProvisionManifestKeyFileAssertionCatchesTheBug reproduces the exact defect
 // by putting the old line back into a rendered manifest, and proves the guard
 // fails it. Without this the assertion could be vacuous and nobody would know.
@@ -157,6 +233,90 @@ func TestProvisionManifestKeyFileAssertionCatchesTheBug(t *testing.T) {
 	if err := assertSpokeManifestKeyFile(okPin); err != nil {
 		t.Errorf("a pin the manifest actually creates was rejected: %v", err)
 	}
+}
+
+func manifestObject(t *testing.T, manifest, kind, name string) map[string]any {
+	t.Helper()
+	for _, doc := range strings.Split(manifest, "\n---") {
+		if strings.TrimSpace(doc) == "" {
+			continue
+		}
+		var obj map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
+			t.Fatalf("parse rendered YAML document: %v\n%s", err, doc)
+		}
+		if obj["kind"] != kind {
+			continue
+		}
+		meta := manifestMap(t, obj["metadata"], kind+" metadata")
+		if meta["name"] == name {
+			return obj
+		}
+	}
+	t.Fatalf("rendered manifest does not contain %s/%s", kind, name)
+	return nil
+}
+
+func manifestConfigMapData(t *testing.T, manifest, configMapName, key string) string {
+	t.Helper()
+	cm := manifestObject(t, manifest, "ConfigMap", configMapName)
+	data := manifestMap(t, cm["data"], "ConfigMap data")
+	value, ok := data[key].(string)
+	if !ok {
+		t.Fatalf("ConfigMap %s data[%q] = %T, want string", configMapName, key, data[key])
+	}
+	return value
+}
+
+func manifestDeploymentEnvSecretKeyRef(t *testing.T, manifest, deploymentName, envName string) (string, string, bool) {
+	t.Helper()
+	deploy := manifestObject(t, manifest, "Deployment", deploymentName)
+	spec := manifestMap(t, deploy["spec"], "Deployment spec")
+	template := manifestMap(t, spec["template"], "Deployment template")
+	podSpec := manifestMap(t, template["spec"], "Pod spec")
+	containers := manifestSlice(t, podSpec["containers"], "Pod containers")
+	for _, c := range containers {
+		container := manifestMap(t, c, "container")
+		env := manifestSlice(t, container["env"], "container env")
+		for _, e := range env {
+			entry := manifestMap(t, e, "env entry")
+			if entry["name"] != envName {
+				continue
+			}
+			valueFrom := manifestMap(t, entry["valueFrom"], envName+" valueFrom")
+			ref := manifestMap(t, valueFrom["secretKeyRef"], envName+" secretKeyRef")
+			name, nameOK := ref["name"].(string)
+			key, keyOK := ref["key"].(string)
+			return name, key, nameOK && keyOK
+		}
+	}
+	return "", "", false
+}
+
+func manifestMap(t *testing.T, v any, context string) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("%s is %T, want map[string]any", context, v)
+	}
+	return m
+}
+
+func manifestSlice(t *testing.T, v any, context string) []any {
+	t.Helper()
+	s, ok := v.([]any)
+	if !ok {
+		t.Fatalf("%s is %T, want []any", context, v)
+	}
+	return s
+}
+
+func manifestMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // TestManifestSecretKeysScopedToHiveSecrets pins the scoping. The manifest holds
