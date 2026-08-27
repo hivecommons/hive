@@ -1,4 +1,27 @@
+# Hive maintainers and reviewers.
+#
+# This file is the machine-readable form of the Maintainer Committee recorded in
+# GOVERNANCE-HIVE.md upstream:
+# https://github.com/kubestellar/kubestellar/blob/main/GOVERNANCE-HIVE.md#current-maintainers
+#
+# The two files MUST agree. A change here without the matching upstream change
+# (or vice versa) is a governance drift bug, not a housekeeping detail — CNCF
+# maturity review checks that code ownership matches documented governance
+# roles.
+#
+# Roles:
+#   approvers — may approve and merge. Members of the Maintainer Committee.
+#   reviewers — may review and LGTM; approval still requires an approver.
+#               This is the Contributor Ladder rung below maintainer and is the
+#               normal path onto the committee.
+#
+# Adding or removing anyone here follows the maintainer lifecycle in
+# GOVERNANCE-HIVE.md: nomination by an existing maintainer, lazy consensus of
+# the committee, and a PR against BOTH this file and the upstream table.
+# Affiliation changes must be reflected within 30 days.
+
 approvers:
   - clubanderson
+
 reviewers:
   - clubanderson
