@@ -42,6 +42,11 @@ release_lines: [v2, v4]
 # somebody has to justify, and a new release line still has to be added or
 # explicitly excluded here before the guard goes green again.
 pinned:
+  # Static analysis and vulnerability scanning for the Go module. Pinned to the
+  # release lines and nothing else: a feature branch gets the same gate through
+  # `pull_request`, and running it on every pushed branch would burn runner
+  # minutes re-scanning code that has not reached a release line.
+  go-security-analysis.yml: []
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
