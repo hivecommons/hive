@@ -166,6 +166,10 @@ func parseCopilotSessionFile(path string) (*SessionSummary, error) {
 	summary := &SessionSummary{
 		Agent: "unknown",
 		Model: "unknown",
+		// All token usage lands in one lump at session.shutdown, so there is no
+		// intra-session time distribution to recover. Repo attribution reports
+		// copilot tokens as backend_unsupported.
+		Backend: BackendCopilot,
 	}
 
 	scanner := bufio.NewScanner(f)

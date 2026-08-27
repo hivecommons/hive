@@ -33,6 +33,36 @@ type SessionEntry struct {
 	Agent string `json:"agent,omitempty"`
 }
 
+// UsageEvent is one timestamped slice of token usage inside a session — the
+// per-assistant-message grain that the Claude session files record and that
+// every scanner previously summed away. Retaining it is what makes intra-session
+// analysis possible: burn-rate curves over the life of a run, and (see
+// pkg/dashboard/repo_cost.go) attributing a session's cost to the repos an agent
+// actually touched while it was spending.
+//
+// TimestampMs is unix-milliseconds. An event whose source line carried no
+// parseable timestamp is still emitted with TimestampMs 0 so its tokens are
+// never lost; consumers that need ordering must treat 0 as "unknown time" and
+// refuse to place it in an interval rather than sorting it to the front.
+type UsageEvent struct {
+	TimestampMs int64 `json:"ts_ms"`
+	Model       string `json:"model,omitempty"`
+	// Coalesced counts how many raw per-message events this entry represents.
+	// It is 1 for an untouched event and >1 for a bucket produced by
+	// coalescing (see maxUsageEventsPerSession). It is never 0 for a real event.
+	Coalesced   int   `json:"coalesced,omitempty"`
+	Input       int64 `json:"input"`
+	Output      int64 `json:"output"`
+	CacheRead   int64 `json:"cache_read"`
+	CacheCreate int64 `json:"cache_create"`
+}
+
+// Total is the sum of the four token counts, matching how SessionSummary
+// computes TotalTokens.
+func (u UsageEvent) Total() int64 {
+	return u.Input + u.Output + u.CacheRead + u.CacheCreate
+}
+
 type SessionSummary struct {
 	SessionID    string `json:"session_id"`
 	Agent        string `json:"agent"`
@@ -48,6 +78,41 @@ type SessionSummary struct {
 	// (0 when the scanner could not determine them).
 	FirstActive int64 `json:"first_active,omitempty"`
 	LastActive  int64 `json:"last_active,omitempty"`
+
+	// Backend names the tool that produced this session ("claude", "copilot",
+	// "bob", "inference", ""). Consumers use it to tell which sessions carry a
+	// usable Usage timeline; "" means an older/flat-format session of unknown
+	// provenance and must be treated as NOT time-resolved.
+	Backend string `json:"backend,omitempty"`
+
+	// Usage is the time-ordered per-message usage timeline, populated only by
+	// scanners that can observe the grain (currently Claude — see
+	// BackendClaude). It is ADDITIVE: the summed fields above remain the
+	// authoritative session totals and are unchanged by its presence. When
+	// non-empty its token sums equal the summed fields exactly, so a consumer
+	// may use either but must never add both.
+	//
+	// Bounded by maxUsageEventsPerSession via coalescing, never truncation:
+	// tokens are preserved even when individual message boundaries are not.
+	Usage []UsageEvent `json:"usage,omitempty"`
+
+	// UsageCoalesced is how many raw per-message events were folded into
+	// coarser buckets to keep Usage within maxUsageEventsPerSession. 0 means
+	// the timeline is at full per-message fidelity. It is reported rather than
+	// hidden because a silently-degraded timeline would make an interval join
+	// look more precise than it is.
+	UsageCoalesced int `json:"usage_coalesced,omitempty"`
+}
+
+// UsageTotal sums the retained usage timeline. It exists so tests and consumers
+// can assert the timeline reconciles against TotalTokens without duplicating the
+// summation. Returns 0 for a session with no timeline.
+func (s *SessionSummary) UsageTotal() int64 {
+	var t int64
+	for _, u := range s.Usage {
+		t += u.Total()
+	}
+	return t
 }
 
 // AgentModelBucket holds per-agent or per-model token breakdown.

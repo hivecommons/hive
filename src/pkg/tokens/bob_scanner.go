@@ -228,7 +228,12 @@ func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary,
 			sessionID = extractBobSessionID(path)
 		}
 		agg.Sessions = append(agg.Sessions, SessionSummary{
-			SessionID:    sessionID,
+			SessionID: sessionID,
+			// No per-message timestamps are parsed here (and estimate-fallback
+			// sessions carry no explicit usage at all), so bob tokens cannot be
+			// placed on a timeline — repo attribution reports them as
+			// backend_unsupported rather than guessing.
+			Backend:      BackendBob,
 			Agent:        agentName,
 			Model:        model,
 			InputTokens:  inputTokens,
