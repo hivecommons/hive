@@ -64,7 +64,13 @@ pinned:
   # entry again, the exclusion has been lost upstream — restore it there; do
   # not merge the sync branch, and do not "fix" it by widening this entry.
   # See src/docs/release-line-guard.md, "The infra workflow sync".
-  scorecard.yml: [main, -v2]
+  # scorecard.yml also does not run on `dd`: the reusable scorecard action only
+  # supports the repository default branch, so a `dd` push trigger fails
+  # structurally on every push ("refs/heads/dd not supported with push event.
+  # Only the default branch v4 is supported.") — a guaranteed red check with no
+  # signal, seen on the #4839 sync merge. Excluded here so the gap is written
+  # down rather than a perpetual failure.
+  scorecard.yml: [main, -v2, -dd]
   suid-contract.yml: []
   v2-ci.yml: []
   v2-tests.yml: []
