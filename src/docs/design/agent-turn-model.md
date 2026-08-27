@@ -1,13 +1,15 @@
 # The agent turn model and where in-process state lives (#4002)
 
-Status: **spike / investigation — informational, no decision taken.**
+Status: **spike / investigation — steps 1 and 2 complete, no production
+decision taken.**
 
-This is step 1 of the four steps proposed in RFC #4002 ("re-entrant
-conversation-as-state agent turn model"). It documents how hive drives an agent
-turn **today** and where per-agent state lives that would not survive a process
-restart. It prototypes nothing, proposes nothing, and takes no decision — steps
-2 (prototype), 3 (handoff path), and 4 (feasibility + migration cost) are
-untouched.
+Step 1 of RFC #4002 documented how hive drives an agent turn **today** and where
+per-agent state lives that would not survive a process restart. Step 2 now adds
+an isolated, contribute-shaped prototype in `pkg/turn`: a re-entrant `Step`
+function over a serialized conversation envelope, with journaled external
+effects and crash/reload tests. Nothing constructs it in the live tmux agent
+loop or contributor relay. Steps 3 (handoff path) and 4 (feasibility + migration
+cost) remain untouched.
 
 Every claim below carries a `file:line` citation against `origin/v4` at the time
 of writing. Line numbers drift; the function names are the durable handle. Where
@@ -414,6 +416,107 @@ A structured turn return value — the RFC's testability and subagent-sync
 benefits — is not a refactor of an existing structured signal. There is no
 structured signal. It would be a new capability, and it requires a channel to
 the backend that hive does not currently have.
+
+---
+
+## 6. Step 2 prototype: a re-entrant contribute turn
+
+The additive prototype in [`pkg/turn`](../../pkg/turn/) takes the smallest
+headless slice that exercises the RFC's state claim without pretending the tmux
+path can provide a structured conversation. Its public transition is:
+
+```text
+Step(SessionEnvelope, optional initial TurnPlan)
+    -> (SessionEnvelope, TurnOutput, error)
+```
+
+It carries the operation-journal lesson previously exercised on the earlier
+`v5` line in [#4053](https://github.com/kubestellar/hive/pull/4053) onto current
+`v4`, and adds the real atomic file store plus fail-closed handling for effects
+that cannot be reconciled.
+
+The first invocation binds the ordered plan into the envelope. A later process
+receives only the serialized envelope and calls `Step` with no plan. The
+envelope carries the conversation, task and agent identity, bound operation
+plan, operation journal, status, and terminal contribute verdict. The return is
+structured (`status`, `done`, `verdict`, `rationale`, landed effects); no pane
+substring decides whether the turn finished.
+
+This is a prototype boundary, not a new production path. It does not call an
+LLM, replace a backend CLI, or run from `bin/contributor-relay.sh`. A headless
+backend adapter would produce the initial plan; the spike starts immediately
+after that model call, where re-entry meets external side effects and where a
+duplicate is more damaging than repeated inference.
+
+### 6.1 Durable operation protocol
+
+Each side-effectful operation has a stable key derived from:
+
+```text
+v1 + sha256(session | kind | repo | target | body)[:32]
+```
+
+The model's tool-call ID is recorded for traceability but excluded from the
+key, because a repeated inference can mint a new call ID for the same semantic
+effect. Keys are bound into the plan before persistence, so scrub-on-persist
+cannot change operation identity.
+
+An operation crosses two durable boundaries:
+
+1. Write `intended` to the envelope and commit it before the external write.
+2. Perform the write.
+3. Write `succeeded` or `failed` and commit again.
+
+On re-entry, `succeeded` short-circuits. `intended` is the ambiguous crash
+window: the write may have landed before the process died, so the runner asks a
+remote reconciler before proceeding. If no reconciler exists, it fails closed
+with `ErrAmbiguous`; it does not blindly replay. This is stricter than
+at-least-once delivery and deliberately trades manual recovery for never
+silently creating a duplicate PR or comment.
+
+`FileStore` makes those boundaries real rather than test-only: it serializes
+through the fleet's `logscrub` boundary, writes a mode-`0600` temporary file,
+syncs it, and atomically renames it over the prior envelope. The in-memory
+conversation is not redacted or mutated; only the artifact that can cross a
+process or spoke boundary is scrubbed.
+
+### 6.2 What the replay test establishes
+
+`TestStepReentersAtEveryPersistenceBoundary` drives a contribute-shaped turn
+(comment → push → PR create → label), kills it before every intent, settle, and
+terminal-envelope commit, discards all in-memory state, reloads only serialized
+JSON, and re-enters. Every case must produce:
+
+- exactly one call per external effect;
+- the same ordered effect summary and `shipped` verdict as an uninterrupted
+  control;
+- no ambiguous journal entries at completion.
+
+Separate tests prove that an ambiguous operation without reconciliation never
+replays, a known-not-landed operation does run, a failed operation can retry,
+semantic keys survive a freshly minted tool-call ID, and the persisted artifact
+contains no credential-shaped plaintext. `pkg/turn` remains above the
+repository's 90% package coverage floor under `go test -race`.
+
+### 6.3 What step 2 does not establish
+
+1. **Inference is outside the envelope transition.** A crash before the plan is
+   committed repeats inference and may produce a different plan. The prototype
+   protects landed effects, not token cost or plan determinism.
+2. **Reconciliation is effect-specific.** PR-by-head has a good remote
+   surrogate; pushes and high-traffic comments do not. Those effects stop as
+   ambiguous instead of claiming exactly-once semantics they cannot provide.
+3. **There is no concurrency claim.** The journal makes sequential re-entry
+   safe. It does not let two processes race one envelope. Step 3 must reuse the
+   contributor relay's existing offer→claim ownership rather than create a
+   fifth durable-state store or parallel claim system.
+4. **No backend conversation is captured.** The package proves the envelope
+   and side-effect protocol after a structured headless response. It does not
+   resolve §5.1's backend-native-resume versus API-shaped-backend fork.
+5. **The beads comparison is not measured.** A bead checkpoint can carry task
+   notes, but not this operation journal or a structured backend response today.
+   Step 4 still needs the proposed kill-at-50% comparison before recommending
+   the larger migration.
 
 ---
 

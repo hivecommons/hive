@@ -59,17 +59,14 @@ that status is the thing to check before treating a page as current behaviour:
   programmatic path that does work today.
 
 - [The agent turn model and where in-process state lives](agent-turn-model.md) —
-  **spike / investigation, informational.** Step 1 of RFC #4002 and the only
-  step taken: a cited map of how hive drives an agent turn today and which
-  per-agent state does not survive a process restart. No decision, no
-  prototype, no proposal. Its main finding is that there is no "turn" in the
-  code at all — a turn begins when hive types a prompt into a tmux pane and
-  ends when the pane matches an idle-prompt marker, so every progress signal
-  hive has (turn completion, liveness, stalls, auth failure) is screen-scraped
-  rendered terminal text. Read it before steps 2-4, particularly for the fork
-  it names: hive does not own the conversation format, so
-  "conversation-as-state" means either accepting backend-specific resume
-  envelopes or moving off opaque interactive CLIs.
+  **spike / investigation, steps 1 and 2 complete.** A cited map of how hive
+  drives an agent turn today and which state does not survive restart, plus an
+  isolated `pkg/turn` prototype: serialized conversation and operation state,
+  a re-entrant structured `Step`, atomic scrubbed persistence, and a replay
+  test that kills a contribute-shaped turn at every operation boundary. It is
+  not wired to the tmux loop or contributor relay, and takes no production
+  decision. Read it before steps 3-4, particularly for the unresolved fork:
+  backend-specific resume envelopes versus an API-shaped backend hive owns.
 
 - [Copilot per-repo cost capture at the MITM proxy](copilot-cost-capture.md) —
   **investigation, no decision taken.** Phase 4 of epic #4836, which asked
