@@ -232,6 +232,11 @@ func TestDeliverStartupKick_BobReceivesKick(t *testing.T) {
 
 	// Render EXACTLY what a booted, idle bob shows — no "❯", no goose banner.
 	paneInject(t, session, bobInputPlaceholder)
+	// Don't start the readiness clock until tmux has actually painted the
+	// placeholder: on a loaded runner the render can outlast paneInject's fixed
+	// sleep AND the TestMain-shrunk cliReadyTimeout, dropping the kick and
+	// flaking this test for reasons unrelated to the delivery path under test.
+	requirePaneShows(t, session, bobInputPlaceholder)
 
 	const prompt = "bootstrap: go find work"
 	m.deliverStartupKick(agent, prompt, 1)

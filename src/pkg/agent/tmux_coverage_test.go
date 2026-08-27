@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,6 +129,33 @@ func paneInject(t *testing.T, session, text string) {
 	}
 	_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
+}
+
+// requirePaneShows blocks until capture-pane actually returns text in the
+// session's visible pane, failing the test if it never renders.
+//
+// paneInject only types the text and sleeps a fixed 400ms; on a loaded runner
+// (parallel packages, coverage instrumentation, the suite's own tmux fork
+// storm) the server can take longer than that to paint. Tests that next enter
+// a readiness poll bounded by the TestMain-shrunk cliReadyTimeout (5s) then
+// start that clock BEFORE their marker is visible and flake with "kick
+// dropped" (seen intermittently in TestDeliverStartupKick_BobReceivesKick).
+// Gating on the render keeps those tests deterministic without widening the
+// production timeouts they exist to exercise.
+func requirePaneShows(t *testing.T, session, text string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		out, err := testTmuxCommand("capture-pane", "-t", session, "-p").Output()
+		if err == nil && strings.Contains(string(out), text) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pane %q never rendered %q (capture err: %v, last capture:\n%s)",
+				session, text, err, string(out))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // paneInjectLines renders each string on its own pane line.
