@@ -36,7 +36,7 @@ func TestNonStaleRearmSkipsUncollectibleHive(t *testing.T) {
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUncollectibleUpgrade("never-beat")
+	s.forgetUncollectibleUpgrade("never-beat")
 	saveSaaSHive(&SaaSHive{
 		ID: "never-beat", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
@@ -61,7 +61,7 @@ func TestNonStaleRearmStillArmsCollectibleHive(t *testing.T) {
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUncollectibleUpgrade("beating")
+	s.forgetUncollectibleUpgrade("beating")
 	saveSaaSHive(&SaaSHive{
 		ID: "beating", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
@@ -88,7 +88,7 @@ func TestNonStaleRearmArmsSpokeQuietBecauseItIsRestarting(t *testing.T) {
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUncollectibleUpgrade("restarting")
+	s.forgetUncollectibleUpgrade("restarting")
 	saveSaaSHive(&SaaSHive{
 		ID: "restarting", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
@@ -155,7 +155,7 @@ func TestUncollectibleUpgradeSurvivesRestartCycle(t *testing.T) {
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUncollectibleUpgrade("wedge-1")
+	s.forgetUncollectibleUpgrade("wedge-1")
 	saveSaaSHive(&SaaSHive{
 		ID: "wedge-1", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
