@@ -15,8 +15,15 @@ name: Go Security Analysis
 #                   file permissions.
 #   golangci-lint — correctness and maintainability lints beyond `go vet`.
 #
+# A fourth job, notice-drift, asks a different question entirely — not "is
+# this code safe" but "is the repo's third-party attribution (NOTICE, at the
+# repo root) still accurate" — and a fifth, action-pins, asks "does every
+# SHA-pinned action actually resolve". Both are static, both are Go/repo-
+# structure checks, and both fit this workflow's existing shape better than a
+# new file.
+#
 # Each runs as its OWN job rather than sequential steps in one job: a gosec
-# finding must not hide a govulncheck finding behind an early exit. Three
+# finding must not hide a govulncheck finding behind an early exit. Five
 # independent verdicts also means a reviewer sees which class of problem
 # failed without opening the log.
 #
@@ -24,6 +31,10 @@ name: Go Security Analysis
 # applies static analysis and checks for known vulnerabilities. Before this
 # workflow the honest answer was "go vet only", which is thin for a project
 # that runs model output with credentials able to write to source repos.
+# notice-drift answers a related but separate ask from a CNCF General
+# Technical Review: how does the project ensure third-party code carries
+# correct and complete attribution. See that job's own comment for the full
+# reasoning.
 
 on:
   push:
@@ -37,6 +48,9 @@ on:
     # found. A push-only trigger cannot catch that: the vulnerability appears
     # in the database, not in a diff.
     - cron: '0 6 * * 1'
+    # Also weekly for notice-drift: an upstream dependency's LICENSE file can
+    # change (a relicense, a typo fix) with go.mod/go.sum untouched, which a
+    # push-only trigger would never catch either.
 
 permissions:
   contents: read
@@ -138,3 +152,52 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: src/scripts/check-action-pins.sh .github/workflows
+
+  notice-drift:
+    name: NOTICE matches the module graph
+    runs-on: ubuntu-latest
+    # WHY THIS JOB EXISTS: a CNCF General Technical Review asks how the
+    # project ensures third-party attribution stays correct and complete. A
+    # generated NOTICE that can silently go stale is worse than no NOTICE at
+    # all — it makes a false completeness claim the moment a dependency is
+    # bumped, added, or removed without anyone regenerating the file by hand.
+    # This job is the enforcement: it regenerates NOTICE the same way a
+    # contributor would (src/scripts/generate-notice.sh, itself pinned — see
+    # that script's header for why google/go-licenses was chosen) and fails
+    # if the committed NOTICE differs from a fresh run against the current
+    # src/go.mod / src/go.sum.
+    #
+    # FIRST-RUN STATE: the NOTICE committed alongside this job is a
+    # STATICALLY-DERIVED placeholder (see NOTICE's own header) — it was
+    # assembled from src/go.mod without running `go` tooling, because the PR
+    # that introduced it was authored in an environment where `go` could not
+    # be run. That placeholder is EXPECTED to differ from this job's output
+    # the first time this job runs for real (this job needs `go`, which is
+    # exactly what was unavailable when NOTICE was hand-assembled). This job
+    # deliberately does NOT special-case that expected first-run diff by
+    # skipping or soft-failing — a diff against the placeholder is a real,
+    # actionable diff (the placeholder is explicitly not yet the resolved
+    # module graph), and the fix is the same either way: run
+    # src/scripts/generate-notice.sh locally, commit the result. There is
+    # nothing for this job to silently tolerate; "the file is stale, here is
+    # the regenerated version, commit it" is the correct message on run one
+    # exactly as it is on every run after.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25'
+          cache-dependency-path: src/go.sum
+
+      - name: Regenerate NOTICE from the current module graph
+        run: src/scripts/generate-notice.sh /tmp/NOTICE.generated
+
+      - name: Fail if the committed NOTICE is stale
+        run: |
+          set -euo pipefail
+          if ! diff -u NOTICE /tmp/NOTICE.generated; then
+            echo "::error::NOTICE is out of date with src/go.mod / src/go.sum. Run 'src/scripts/generate-notice.sh' locally (requires a Go toolchain) and commit the regenerated NOTICE." >&2
+            exit 1
+          fi
+          echo "NOTICE matches the current module graph."

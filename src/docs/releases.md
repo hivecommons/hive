@@ -189,6 +189,79 @@ back into `docker.yml`'s `build-push-action` steps (e.g. by flipping
 `sbom: true`), it reopens #3760 — that is exactly what the guard workflow
 exists to catch.
 
+## Third-party notices (NOTICE)
+
+The repo root carries a generated [`NOTICE`](../../NOTICE) file: one entry per
+Go module dependency compiled into `hive`, `hive-hub`, and
+`hive-contributor`, with module path, resolved version, license identifier,
+and — once CI has produced the authoritative version — the full license text
+where the license requires reproduction (Apache-2.0 §4(d), MIT, and BSD all
+do). This exists because a CNCF General Technical Review asks how the
+project ensures third-party code carries correct and complete attribution;
+`go.sum` pins dependency versions but was never, by itself, an assembled
+attribution document.
+
+**How it is generated.** `src/scripts/generate-notice.sh` walks the resolved
+module graph (not just `go.mod`'s direct requires) using
+[`google/go-licenses`](https://github.com/google/go-licenses), pinned to an
+exact tagged version and installed via `go install` — the same pattern
+`go-security-analysis.yml` already uses for `govulncheck` and `gosec`, for
+the same reason: a supply chain one hop shorter than depending on a
+marketplace action, and a version that only changes when a maintainer
+deliberately bumps it. The script's own header explains why `go-licenses` was
+chosen over a hand-rolled `go list -m -json all` walk.
+
+**How freshness is enforced.** The `notice-drift` job in
+`go-security-analysis.yml` regenerates `NOTICE` on every push and pull
+request touching `src/go.mod`, `src/go.sum`, or the generator script itself
+(plus weekly, since an upstream dependency's license text can change without
+a version bump), and fails the build if the committed file differs from a
+fresh run. A generated file that can silently go stale is worse than no file
+at all — it would make a false completeness claim the moment a dependency
+changed. There is deliberately no special-case in that job to tolerate an
+out-of-date `NOTICE` indefinitely: the first time it runs against a real Go
+toolchain it will very likely find the committed placeholder (see below)
+stale, and that is the correct, actionable failure — the fix is the same one
+line either way, "run the script, commit the result."
+
+**Current state of the committed file, stated plainly.** The `NOTICE` file
+introduced alongside this section was assembled in an environment that could
+not run `go` tooling at all, so it could not produce the real, resolved
+module graph. It is derived **statically from `src/go.mod`'s require
+blocks only** (not `go.sum`, not the full transitive graph, not verified
+license text), and every entry's license field reads `UNVERIFIED` rather than
+guessing — an attribution file with a wrong license identifier is a false
+legal claim and is worse than an admitted gap. The very next CI run of
+`notice-drift` after this merges is expected to fail once, showing a full
+diff against the real, `go-licenses`-generated content; a maintainer applies
+that regenerated output (or re-runs `generate-notice.sh` locally with `go`
+installed) and commits it, after which `NOTICE` is the authoritative,
+license-text-included file and `notice-drift` keeps it that way going
+forward. This is not a hidden gap: `NOTICE`'s own header states the same
+thing in the file itself.
+
+**What `NOTICE` does NOT cover.** Go module dependencies only. It does not
+cover:
+
+- Base container image OS packages (the `apk`-installed package set) — those
+  are covered by the per-image SBOMs above, which scan the built filesystem
+  rather than the source tree.
+- The Node.js and `tmux` layers built from source in `src/Dockerfile` /
+  `src/Dockerfile.hub` — also covered by the SBOMs, not `NOTICE`.
+- Anything in `dashboard/` or other non-Go parts of the repo that may carry
+  their own dependency manifests (npm, etc.) — out of scope for this file;
+  a JS/TS equivalent, if wanted, is a separate follow-up.
+
+`NOTICE` and the per-image SBOMs are therefore complementary, not redundant:
+`NOTICE` gives license *text* for Go dependencies (what the SBOM format does
+not carry), and the SBOM gives full package inventory (OS + language runtime
+layers) that `NOTICE` does not attempt.
+
+**Shipped in releases.** `release.yml` copies the repo-root `NOTICE` (already
+kept fresh by `notice-drift` at every commit that changes dependencies) to
+`hive-v<version>-NOTICE` and attaches it to the GitHub Release alongside the
+three SBOM files, using the same `gh release create` asset-upload call.
+
 ## Idempotency and concurrency
 
 - **Step 5 emptying `Unreleased`** is what makes this safe to chain off
