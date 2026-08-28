@@ -263,17 +263,6 @@ func buildTestDocxArchive(t *testing.T, documentXML string) []byte {
 	return buf.Bytes()
 }
 
-// xmlEscape escapes the minimal set of characters WordprocessingML text
-// content requires escaping for use inside test fixture XML.
-func xmlEscape(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-	)
-	return replacer.Replace(s)
-}
-
 func TestParseDocx(t *testing.T) {
 	paras := []string{
 		"Introduction to Autoscaling",
