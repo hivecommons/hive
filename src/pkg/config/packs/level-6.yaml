@@ -322,3 +322,50 @@ agents:
 
     '
   clear_on_kick: true
+- name: reviewer
+  display_name: reviewer
+  role: reviewer
+  description: 'Repo-grounded PR reviewer. Wakes when a change is proposed and judges
+    THAT change, rather than hunting on a cadence. Reads the repository at the PR''s
+    merge-base and must cite file:line evidence for every finding. Produces structured
+    review verdicts consumed by the review swarm aggregator and, at L6, by the
+    approval desk as withhold-only input to a merge.
+
+    '
+  emoji: 🔬
+  color: '#34495e'
+  sort_order: 26
+  backend: copilot
+  model: claude-opus-4-6
+  bead_role: worker
+  # ADVISORY, deliberately. The reviewer's product is a structured verdict
+  # written as an agent report, not a GitHub PR review — so it needs no GitHub
+  # write scope, and its authority sits strictly below the hive's ACMM level.
+  # Posting an actual PR review would require ModeIssuesAndPRs (proxy/rules.go:115
+  # gates POST .../pulls/{n}/reviews on that mode), which at L3 would mean a
+  # SECOND write-capable agent alongside quality — a change not justified by the
+  # evidence, since a verdict a human reads in the batch queue is worth the same
+  # as one posted to the PR.
+  mode: ADVISORY
+  kick_template: reviewer-advisory.md
+  # PR-triggered, not cadence-triggered. on_demand keeps the governor from ever
+  # kicking this agent on a timer (governor.go gates agentsDueForKick,
+  # event-kicks, and AllowResumeKick on it); the review dispatcher wakes it per
+  # PR instead. Every other agent hunts; this one judges what it is handed.
+  on_demand: true
+  # The reviewer must be able to read the tree it is judging. This is the
+  # measured active ingredient, not a convenience: a diff-only reviewer scored
+  # 17% hits at 3.6 false positives/PR, while the same reviewer with repo access
+  # at the merge-base scored 67% hits at 1.4 FPs/PR.
+  include_repos: true
+  stale_timeout: 7200
+  interactions: 'Woken per-PR by the review dispatcher. Verdicts aggregate into
+    review-verdicts.json, which gates merge eligibility when review.require_approval
+    is set.
+
+    '
+  knowledge_use: 'Reads the repository at the PR merge-base. Produces structured
+    review verdicts with file:line-cited findings.
+
+    '
+  clear_on_kick: true

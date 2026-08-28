@@ -225,6 +225,18 @@ type PullRequest struct {
 	// four days in the 2026-08 seedMission incident.
 	FailingChecks    []string `json:"failing_checks,omitempty"`
 	CIFailureExcerpt string   `json:"ci_failure_excerpt,omitempty"`
+	// BaseSHA is the commit on the base branch the PR targets — the tree a
+	// reviewer should read to judge the change in context. It is carried so a
+	// repo-grounded review can be pinned to a specific commit rather than to
+	// whatever the base branch happens to be when the reviewer runs.
+	//
+	// This is the base branch tip as reported at enumeration time, not the
+	// true merge-base of an ancestry walk. For an up-to-date PR the two are
+	// the same commit, and for a stale one the base tip is the more useful
+	// tree to read anyway (it is what the change will actually land on). It is
+	// an ADVISORY grounding anchor, never a merge-safety input — nothing gates
+	// a merge on this field.
+	BaseSHA string `json:"base_sha,omitempty"`
 }
 
 // HasFailingRequiredCheck reports whether this PR has a completed, non-meta
@@ -667,6 +679,10 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		if pr.GetHead() != nil {
 			headSHA = pr.GetHead().GetSHA()
 		}
+		baseSHA := ""
+		if pr.GetBase() != nil {
+			baseSHA = pr.GetBase().GetSHA()
+		}
 
 		actionable = append(actionable, PullRequest{
 			Repo:      repo,
@@ -683,6 +699,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			// here would yield false for every PR. EnrichCIStatus fills it in
 			// from a per-PR fetch; until then it stays MergeableUnknown.
 			HeadSHA: headSHA,
+			BaseSHA: baseSHA,
 		})
 	}
 

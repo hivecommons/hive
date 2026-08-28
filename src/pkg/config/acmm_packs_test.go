@@ -24,8 +24,12 @@ func TestACMMPacksLoad(t *testing.T) {
 func TestACMMPacksAgentCounts(t *testing.T) {
 	packs := ACMMPacks()
 
+	// L5 and L6 each carry one extra agent over L4's roster growth: the
+	// on-demand `reviewer`, which is PR-triggered rather than cadence-kicked.
+	// It is defined only at the levels where a PR can reach merge without a
+	// mandatory human read (L5 gates on `hold`, L6 auto-merges on green).
 	expected := map[int]int{
-		1: 2, 2: 5, 3: 6, 4: 7, 5: 9, 6: 10,
+		1: 2, 2: 5, 3: 6, 4: 7, 5: 10, 6: 11,
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]

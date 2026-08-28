@@ -7052,6 +7052,11 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			HeadSHA: pr.HeadSHA,
 			URL:     pr.URL,
 			Lane:    string(lane),
+			// Grounding anchor for the review prompt. Repo access is the
+			// measured active ingredient in review quality (17%→67% hit rate,
+			// 61% fewer false positives), so the reviewer is told which commit
+			// to read rather than being left to infer from the diff.
+			MergeBase: pr.BaseSHA,
 		})
 	}
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))
