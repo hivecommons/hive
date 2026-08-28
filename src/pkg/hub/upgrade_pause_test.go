@@ -101,6 +101,8 @@ func TestSpokePauseBlocksTriggerAutoUpgradesReArm(t *testing.T) {
 	s.registry.Hives = []RegistryEntry{{
 		ID: "h1", GitBranch: "v2", GitHash: "old", Upgrading: true,
 		UpgradeTarget: "keepTarget", UpgradeStartedAt: time.Now(),
+		// Collectible, so the resumed positive control genuinely re-arms.
+		LastHeartbeat: rfc3339At(time.Now().Add(-time.Minute)),
 	}}
 
 	pauseSpokes(t, s, true)

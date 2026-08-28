@@ -3762,6 +3762,7 @@ func (s *HubServer) recoverArmedUpgrades() {
 	type armed struct{ id, target string }
 	var recovered []armed
 	stamped := 0
+	skippedUncollectible := 0
 	s.mu.Lock()
 	if s.heartbeatUpgrade == nil {
 		s.heartbeatUpgrade = make(map[string]string)
@@ -3793,6 +3794,17 @@ func (s *HubServer) recoverArmedUpgrades() {
 		if h.UpgradeFailed {
 			continue
 		}
+		// Do not re-arm an instruction this hive cannot collect. Startup
+		// recovery reads the DURABLE registry latch, so an uncollectible
+		// upgrade abandoned in memory by triggerAutoUpgrades() would be
+		// resurrected by the next hub restart if the latch had not yet been
+		// persisted — restoring the wedge across exactly the event (a hub
+		// roll) that this function exists to survive. Same predicate as every
+		// other arming site.
+		if !upgradeCollectible(h.LastHeartbeat, time.Now()) {
+			skippedUncollectible++
+			continue
+		}
 		s.heartbeatUpgrade[h.ID] = h.UpgradeTarget
 		recovered = append(recovered, armed{id: h.ID, target: h.UpgradeTarget})
 	}
@@ -3802,6 +3814,10 @@ func (s *HubServer) recoverArmedUpgrades() {
 		// before saveLoop starts is not lost) — otherwise a crash-looping hub
 		// would re-stamp them to now on every restart.
 		s.requestSave()
+	}
+	if skippedUncollectible > 0 {
+		s.logger.Info("skipped recovering armed upgrades for hives that cannot collect them",
+			"count", skippedUncollectible)
 	}
 	for _, a := range recovered {
 		s.logger.Info("recovered armed upgrade from registry after restart",

@@ -51,6 +51,9 @@ func TestTriggerAutoUpgradesRemoteNotStale(t *testing.T) {
 	s.registry.Hives = []RegistryEntry{{
 		ID: "h1", GitBranch: "v2", GitHash: "old", Upgrading: true,
 		UpgradeTarget: "keepTarget", UpgradeStartedAt: time.Now(),
+		// Heartbeating, so the upgrade is collectible and delivery is re-armed
+		// (uncollectible hives are covered in rearm_collectible_test.go).
+		LastHeartbeat: rfc3339At(time.Now().Add(-time.Minute)),
 	}}
 	s.triggerAutoUpgrades()
 	s.mu.RLock()

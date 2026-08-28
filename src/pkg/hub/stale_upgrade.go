@@ -406,7 +406,14 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 		// silently stop receiving the upgrade. Re-arming the existing target
 		// keeps the instruction alive; it is idempotent, and the heartbeat path
 		// clears it as soon as the spoke reports the target SHA.
-		if h.UpgradeTarget != "" {
+		//
+		// Bounded by collectibility, like every other arming site: a hive that
+		// cannot collect gains nothing from a re-arm here, and re-arming it
+		// each sweep is one of the loops that kept the measured wedge alive.
+		// This sweep is also where such a hive would otherwise spin forever —
+		// evaluateOrphanedUpgrade() bails on an unparseable LastHeartbeat, so
+		// the retry budget above is never spent and cannot retire it.
+		if h.UpgradeTarget != "" && upgradeCollectible(h.LastHeartbeat, now) {
 			s.heartbeatUpgrade[h.ID] = h.UpgradeTarget
 		}
 	}

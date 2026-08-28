@@ -26,16 +26,21 @@ import (
 // only for it.
 func TestRecoverArmedUpgradesRebuildsHeartbeatMap(t *testing.T) {
 	s := &HubServer{logger: slog.Default()}
+	// These entries carry a recent LastHeartbeat because recovery only re-arms
+	// hives that can COLLECT the instruction (upgradeCollectible); a real
+	// latched hive always has one. The uncollectible case is covered in
+	// rearm_collectible_test.go.
+	beat := rfc3339At(time.Now().Add(-time.Minute))
 	s.registry.Hives = []RegistryEntry{
 		// The incident shape: durably latched Upgrading with a target, armed by
 		// handleUpgradeHive before the hub restarted.
-		{ID: "latched", Upgrading: true, UpgradeTarget: "fc32ae4"},
+		{ID: "latched", Upgrading: true, UpgradeTarget: "fc32ae4", LastHeartbeat: beat},
 		// Not upgrading — a leftover target alone must not arm delivery.
-		{ID: "idle", Upgrading: false, UpgradeTarget: "deadbee"},
+		{ID: "idle", Upgrading: false, UpgradeTarget: "deadbee", LastHeartbeat: beat},
 		// Latched but with no target — nothing a heartbeat could deliver.
-		{ID: "no-target", Upgrading: true},
+		{ID: "no-target", Upgrading: true, LastHeartbeat: beat},
 		// Terminal failure recorded by the orphan sweep — must stay terminal.
-		{ID: "failed", Upgrading: true, UpgradeTarget: "fc32ae4", UpgradeFailed: true},
+		{ID: "failed", Upgrading: true, UpgradeTarget: "fc32ae4", UpgradeFailed: true, LastHeartbeat: beat},
 	}
 
 	// heartbeatUpgrade is deliberately left nil: at this point in NewHubServer
@@ -68,7 +73,8 @@ func TestNewHubServerRecoversArmedUpgradesFromDisk(t *testing.T) {
 	defer func() { registryPath = oldRegistry }()
 
 	reg := Registry{Hives: []RegistryEntry{
-		{ID: "latched-disk", Upgrading: true, UpgradeTarget: "fc32ae4"},
+		{ID: "latched-disk", Upgrading: true, UpgradeTarget: "fc32ae4",
+			LastHeartbeat: rfc3339At(time.Now().Add(-time.Minute))},
 	}}
 	data, err := json.Marshal(reg)
 	if err != nil {
@@ -251,6 +257,7 @@ func TestTriggerAutoUpgradesNotStaleManualRepopulates(t *testing.T) {
 	s.registry.Hives = []RegistryEntry{{
 		ID: "manual-2", GitBranch: "v2", GitHash: "old1234", Upgrading: true,
 		UpgradeTarget: "keepTarget", UpgradeStartedAt: time.Now(),
+		LastHeartbeat: rfc3339At(time.Now().Add(-time.Minute)),
 	}}
 
 	s.triggerAutoUpgrades()
@@ -273,14 +280,17 @@ func TestTriggerAutoUpgradesNotStaleManualRepopulates(t *testing.T) {
 func TestRecoverArmedUpgradesStampsZeroClockPreservesLiveClock(t *testing.T) {
 	persisted := time.Now().Add(-42 * time.Minute)
 	s := &HubServer{logger: slog.Default()}
+	// Recent heartbeats: clock stamping is what this test is about, and re-arming
+	// is gated on collectibility (see rearm_collectible_test.go).
+	beat := rfc3339At(time.Now().Add(-time.Minute))
 	s.registry.Hives = []RegistryEntry{
 		// Rehydrated from disk with its real clock — must survive untouched.
-		{ID: "with-clock", Upgrading: true, UpgradeTarget: "fc32ae4", UpgradeStartedAt: persisted},
+		{ID: "with-clock", Upgrading: true, UpgradeTarget: "fc32ae4", UpgradeStartedAt: persisted, LastHeartbeat: beat},
 		// Latched with a lost/never-set clock — must be stamped now.
-		{ID: "zero-clock", Upgrading: true, UpgradeTarget: "fc32ae4"},
+		{ID: "zero-clock", Upgrading: true, UpgradeTarget: "fc32ae4", LastHeartbeat: beat},
 		// Spoke-reported upgrading (no target): nothing to arm, but the badge
 		// still renders, so it must get a clock too.
-		{ID: "spoke-reported", Upgrading: true},
+		{ID: "spoke-reported", Upgrading: true, LastHeartbeat: beat},
 		// Not upgrading — must keep a zero clock.
 		{ID: "idle"},
 	}

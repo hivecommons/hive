@@ -6168,6 +6168,22 @@ func (s *HubServer) triggerAutoUpgrades() {
 
 			// Not stale — keep the original target so the hive can satisfy it.
 			// Re-populate the heartbeatUpgrade map in case the hub restarted.
+			//
+			// SAME COLLECTIBILITY GATE AS THE STALE BRANCH ABOVE. Arming is
+			// arming: re-populating the map for a hive that cannot collect
+			// reproduces the wedge the stale branch just abandoned, only
+			// sooner. Because this branch runs on EVERY poll while the hive is
+			// latched, it re-arms roughly every 2 minutes, whereas abandonment
+			// waits out staleUpgradeTimeout — so without this check the fix
+			// merely races the timeout and the uncollectible hive stays armed.
+			// The predicate is upgradeCollectible(), reused rather than
+			// restated, so there is one definition of "can collect".
+			if upgradeTarget != "" && !upgradeCollectible(lastHeartbeat, time.Now()) {
+				s.logger.Debug("not re-arming in-progress upgrade — hive cannot collect it",
+					"hive", h.ID, "target", upgradeTarget,
+					"last_heartbeat", orDash(lastHeartbeat))
+				continue
+			}
 			hiveCluster := s.clusterForHive(&h)
 			if hiveCluster != nil && !hiveCluster.InCluster {
 				if upgradeTarget != "" {
