@@ -165,6 +165,22 @@ Model/backend/pin are carried into the timeline attrs when the transition has th
 
 ### `enqueue-approval`
 
+> **⚠️ NOT YET FUNCTIONAL — does not gate anything today.**
+>
+> The queue interface is defined and consumed, but the backing queue ships with
+> [#4000](https://github.com/kubestellar/hive/issues/4000). Until then the sink
+> is nil: an `enqueue-approval` hook **loads and validates cleanly, fires, and
+> then fails to enqueue**, recording an unwired-sink error in the audit log.
+>
+> **The transition it appears to gate is NOT blocked.** A hook written to
+> require approval for an ACMM raise does not prevent that raise — it records a
+> failure after the fact. Treat any `enqueue-approval` hook as documentation of
+> intent, not as an enforcement control, and do not rely on one for a change
+> you actually need approved.
+>
+> Watch for `hook_failed` entries in `/data/audit.jsonl` if you configure one
+> anyway.
+
 Places a request on the [#4000](https://github.com/kubestellar/hive/issues/4000) tool-approval queue.
 
 | Param | Meaning |
@@ -173,7 +189,7 @@ Places a request on the [#4000](https://github.com/kubestellar/hive/issues/4000)
 | `summary` | the ask shown in the approvals UI |
 | `agent`, `repo` | scope; default to the transition's values |
 
-**Status:** the queue interface is defined and consumed, but the backing queue lands with #4000. Until then an `enqueue-approval` hook reports a wiring failure per firing (visible in the audit log) rather than silently dropping the request.
+**Status:** see the callout at the top of this section — not yet functional. The wiring target is known: as of [#4057](https://github.com/kubestellar/hive/issues/4057) it is `toolapprove.Inbox`, connected by an adapter in `cmd/hive/hookwire.go` passed via `WithApprovalQueue`. Nothing in `pkg/hooks` changes when it lands.
 
 ## Predicates (`when:`)
 
@@ -249,6 +265,11 @@ hooks:
 ```
 
 ### Require approval for a large ACMM jump
+
+> **⚠️ This example does not work yet.** `enqueue-approval` has no backing queue
+> until [#4000](https://github.com/kubestellar/hive/issues/4000) — the hook
+> below validates, loads, and fires, but **does not block the ACMM raise**. It
+> is shown as the intended shape, not as a control you can deploy today.
 
 ```yaml
 hooks:
