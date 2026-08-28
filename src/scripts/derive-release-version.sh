@@ -132,14 +132,56 @@ if [[ -n "$override" ]]; then
   bump="$override"
   echo "Bump forced to '${bump}' by explicit <!-- release: ${bump} --> marker in CHANGELOG.md."
 else
-  if printf '%s\n' "$unreleased" | grep -qE '^### Security[[:space:]]*$'; then
-    bump=major
-  elif printf '%s\n' "$unreleased" | grep -qE '^### Added[[:space:]]*$'; then
+  # NOTE: `### Security` does NOT imply major here, and that is deliberate.
+  #
+  # In this repository the MAJOR version IS the release line: `v2`, `v4` and
+  # `v5` are real long-lived branches listed in .github/release-lines.yml, and
+  # cutting a new line is a coordinated decision (new branch, workflow pins,
+  # docker LONG_LIVED policy, hub branch switcher). A tag that crosses a major
+  # boundary is therefore not "a bigger release" — it claims a line that may
+  # already exist and be owned by other work.
+  #
+  # This fired for real: a merge to v4 whose Unreleased section contained two
+  # Security entries (an action-pin hardening and a proxy gate) derived
+  # VERSION=5.0.0 while a `v5` branch already existed. Security entries are
+  # common and usually NOT breaking — pinning an action is the opposite of a
+  # breaking change — so inferring major from them mislabels routine hardening
+  # as a line cut.
+  #
+  # Security now maps to PATCH by default, which is the honest floor: a
+  # security fix is at least a patch, and anything genuinely breaking is
+  # declared with the explicit `<!-- release: major -->` marker. Crossing a
+  # release line stays a human decision, which is what it already is
+  # everywhere else in this repo.
+  if printf '%s\n' "$unreleased" | grep -qE '^### Added[[:space:]]*$'; then
     bump=minor
   else
     bump=patch
   fi
   echo "Inferred bump '${bump}' from CHANGELOG.md Unreleased section headers."
+fi
+
+# ---------------------------------------------------------------------------
+# HARD GUARD: never derive a version whose MAJOR differs from the release line
+# this branch belongs to.
+#
+# Belt-and-braces alongside the inference above. Even with an explicit
+# `<!-- release: major -->` marker, a merge to v4 must not mint a v5.x.y tag:
+# in this repo the major IS the line (see .github/release-lines.yml), a `v5`
+# branch can already exist, and a tag minted from the wrong branch is not
+# fixable by deleting it — consumers may already have pulled the image it
+# retagged.
+#
+# Cutting a new line stays a deliberate, human, multi-step operation. If that
+# is genuinely what you want, tag it by hand on the correct branch.
+# ---------------------------------------------------------------------------
+branch_line="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ "$branch_line" =~ ^v([0-9]+)$ ]]; then
+  line_major="${BASH_REMATCH[1]}"
+  if [[ "$bump" == "major" ]]; then
+    echo "::error::refusing to derive a MAJOR bump on release line ${branch_line}: the major version is the release line here, so a major bump would mint a v$((line_major + 1)).0.0 tag from the ${branch_line} branch. Cut a new line deliberately instead." >&2
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------------------
