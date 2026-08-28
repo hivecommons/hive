@@ -35,9 +35,8 @@ linters:
     # its own PR after its findings are fixed — that ratchet is tracked in the
     # ratchet issue #4903.
     #
-    # Remaining backlog: staticcheck (225), errcheck (579). errcheck is the
-    # most valuable remaining rung and the largest, and is worth splitting by
-    # package.
+    # Remaining backlog: errcheck (579) — the most valuable remaining rung and
+    # the largest, worth splitting by package.
     - govet
     - misspell
     # RATCHET: ineffassign enabled after its 11 findings were fixed (#4903).
@@ -47,6 +46,12 @@ linters:
     # that moved on without deleting them. One declaration is retained under an
     # explained //nolint:unused — see pkg/hub/wrapkey_store.go.
     - unused
+    # RATCHET: staticcheck enabled after its 122 findings were fixed (#4903).
+    # Six are retained under explained //nolint:staticcheck for genuine false
+    # positives or intentional patterns. The one raw U+200B in a scheduler
+    # security fixture is now written \u200b: identical bytes, visible in
+    # source, so ST1018 is satisfied without weakening the injection test.
+    - staticcheck
 
   exclusions:
     generated: lax
