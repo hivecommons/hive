@@ -259,7 +259,7 @@ Teardown: `bin/hive-podman-teardown.sh`.
 
 The [Hive Hub](https://hive.kubestellar.io) provides hosted hives with OAuth-protected dashboards, a public registry, and cross-hive leaderboards. No cluster required.
 
-If you need to run your own private hub instead, see the v2
+If you need to run your own private hub instead, see the
 [self-hosted hub deployment guide](src/docs/hub-deployment.md).
 
 ### Self-Hosted Deployment
@@ -412,7 +412,7 @@ kubectl apply -f src/deploy/k8s/service.yaml
 
 ## Configuration
 
-All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [src/hive.yaml.example](src/hive.yaml.example) for the full reference, [src/docs/env-vars.md](src/docs/env-vars.md) for the centralized environment variable reference, [src/docs/agent-configuration.md](src/docs/agent-configuration.md) for agent configuration, [src/AGENT-DEFINITION.md](src/AGENT-DEFINITION.md) for the portable agent YAML format, [src/docs/supervisor.md](src/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration, and [src/docs/migration-v2-v4.md](src/docs/migration-v2-v4.md) for upgrading a v2 deployment to v4.
+All runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [src/hive.yaml.example](src/hive.yaml.example) for the full reference, [src/docs/env-vars.md](src/docs/env-vars.md) for the centralized environment variable reference, [src/docs/agent-configuration.md](src/docs/agent-configuration.md) for agent configuration, [src/AGENT-DEFINITION.md](src/AGENT-DEFINITION.md) for the portable agent YAML format, [src/docs/supervisor.md](src/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration, and [src/docs/migration-v2-v4.md](src/docs/migration-v2-v4.md) for upgrading a v2 deployment to v4.
 
 The top-level deterministic shell pipeline uses a separate project file,
 `config/hive-project.yaml.example`; see [config/README.md](config/README.md)
