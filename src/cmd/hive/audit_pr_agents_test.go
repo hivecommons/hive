@@ -48,3 +48,18 @@ func TestAuditPRAgents(t *testing.T) {
 		t.Error("agent-less entry must not be mapped")
 	}
 }
+
+// Non-required-only red PRs (perma-red Playwright shards on a dependabot
+// bump) must not be classed as failing when a required-check set is declared.
+func TestAnyRequiredCheckFailing(t *testing.T) {
+	req := map[string]bool{"build-gate": true, "go test ./...": true}
+	if anyRequiredCheckFailing([]string{"Test (chromium, shard 1)", "coverage"}, req) {
+		t.Error("optional-only failures must not count as required-failing")
+	}
+	if !anyRequiredCheckFailing([]string{"Test (chromium, shard 1)", "build-gate"}, req) {
+		t.Error("a failing required check must count")
+	}
+	if anyRequiredCheckFailing(nil, req) || anyRequiredCheckFailing([]string{"x"}, nil) {
+		t.Error("empty inputs must be false")
+	}
+}

@@ -5902,7 +5902,8 @@ func runEvalCycle(
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
 	refreshReviewVerdicts(cfg, logger)
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, logger)
+	requiredCheckSet, _ := cfg.AutoMerge.RequiredCheckSet()
+	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, logger)
 
 	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
 	// that is red on a required check AND stale (its red head SHA unchanged past
@@ -8164,7 +8165,18 @@ func auditPRAgents(org string, since time.Time, auditPath string) map[string]str
 	return out
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, logger *slog.Logger) {
+// anyRequiredCheckFailing reports whether any of a PR's failing check names
+// is in the operator-declared required set.
+func anyRequiredCheckFailing(failing []string, required map[string]bool) bool {
+	for _, name := range failing {
+		if required[name] {
+			return true
+		}
+	}
+	return false
+}
+
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, requiredChecks map[string]bool, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
@@ -8246,18 +8258,35 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		}
 
 		if pr.CIStatus == "failure" {
-			failing = append(failing, failingPR{
-				Number:        pr.Number,
-				Repo:          fullRepo,
-				Title:         pr.Title,
-				Author:        pr.Author,
-				HeadSHA:       pr.HeadSHA,
-				FailingChecks: pr.FailingChecks,
-				Excerpt:       pr.CIFailureExcerpt,
-				Escalated:     escalatedPRs[escalation.Key(fullRepo, pr.Number)],
-				Agent:         prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
-			})
-			continue
+			// A PR red ONLY on non-required checks (perma-red Playwright
+			// shards, coverage) that GitHub itself reports mergeable is NOT a
+			// failing PR — it is merge-eligible, mirroring the
+			// pending-but-mergeable rule below. Without this, every dependabot
+			// PR on a repo with permanently-red optional checks classified as
+			// "failure", landed in ci-failing.json where no sweep or agent
+			// would ever merge it, and accumulated indefinitely (observed on
+			// kubestellar/console 2026-08-28: 16 dependabot PRs, oldest 11
+			// days). Gated on an operator-declared required-check set: with no
+			// set configured we cannot distinguish required from optional and
+			// keep the old fail-closed behavior. The merge step re-enforces
+			// branch protection, so this cannot merge anything GitHub blocks.
+			onlyOptionalRed := len(requiredChecks) > 0 &&
+				!anyRequiredCheckFailing(pr.FailingChecks, requiredChecks) &&
+				pr.Mergeable == github.MergeableYes
+			if !onlyOptionalRed {
+				failing = append(failing, failingPR{
+					Number:        pr.Number,
+					Repo:          fullRepo,
+					Title:         pr.Title,
+					Author:        pr.Author,
+					HeadSHA:       pr.HeadSHA,
+					FailingChecks: pr.FailingChecks,
+					Excerpt:       pr.CIFailureExcerpt,
+					Escalated:     escalatedPRs[escalation.Key(fullRepo, pr.Number)],
+					Agent:         prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+				})
+				continue
+			}
 		}
 
 		// A PR whose CI is still "pending" is nonetheless merge-eligible when

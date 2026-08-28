@@ -34,7 +34,7 @@ func TestWriteMergeEligibleExcludesMisalignedWhenIntentEnforced(t *testing.T) {
 			Alignment:  &intent.AlignmentVerdict{Status: intent.AlignmentStatusMisaligned, Rationale: "docs intent touched proxy"},
 		},
 	}
-	writeMergeEligible(actionable, github.HoldResult{}, "kubestellar", nil, true, verdicts, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	writeMergeEligible(actionable, github.HoldResult{}, "kubestellar", nil, true, verdicts, false, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	raw, err := os.ReadFile(mergeEligiblePath)
 	if err != nil {
