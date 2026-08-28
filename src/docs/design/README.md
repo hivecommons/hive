@@ -82,6 +82,24 @@ that status is the thing to check before treating a page as current behaviour:
   with its timestamp would move Copilot from "structurally impossible" to
   phase 3's existing join, in `pkg/tokens` only and off the request path.
 
+- [Agent host confinement on the default (unconfined) launch path](agent-host-confinement.md)
+  — **investigation, no decision taken.** #4918: an agent doing correct,
+  benign work on an assigned third-party repo ran that repo's own test suite,
+  which reached the operator's real bootloader via `rpm-ostree kargs`, stopped
+  only by polkit. Maps the default tmux launch path
+  (`src/pkg/agent/manager.go`, `bin/agent-launch.sh`) against the three
+  deployment modes (hub pod, containerized `contribute-hive`, `contribute-hive
+  ... local`) and establishes precisely what #4938's merged host-state denylist
+  covers — the reported command family, on the `Bash` tool surface, by bare
+  command word — and what it leaves open: absolute-path/wrapper invocation,
+  unlisted polkit-reachable actions, non-`Bash` tool surfaces, and plain
+  filesystem writes outside any denied command. Surveys confinement options
+  (Podman sandbox, bwrap/systemd-run, seccomp, dedicated low-privilege UID, a
+  disposable VM) with real costs, and recommends closing the existing Podman
+  sandbox's double opt-in gate (`src/pkg/config/config.go`) for
+  `contribute-hive` once its CI coverage gap is closed, keeping the denylist as
+  the floor elsewhere.
+
 ## Adding a document here
 
 Add the page, then add a line above saying what a reader gets from it **and its
