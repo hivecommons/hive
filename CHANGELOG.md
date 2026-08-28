@@ -11,6 +11,10 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+### Changed
+
+- `src/docs/getting-started.md`, the primary operator onboarding doc, now includes a "Where agents actually run" section ahead of L3, covering the host-tmux default, the per-backend confinement matrix from [#5024](https://github.com/kubestellar/hive/pull/5024), the `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED` escape hatches, and the hub-side `agent_sandbox` two-gate requirement — with a link to [sandbox-isolation.md](src/docs/sandbox-isolation.md) for the full picture. Previously the guide had zero mentions of sandboxing, confinement, or the security implications of running agents unconfined on a host ([#5028](https://github.com/kubestellar/hive/issues/5028)).
+
 ### Added
 
 - `opencode` (`anomalyco/opencode`) as a contributor-relay CLI backend ([#4970](https://github.com/kubestellar/hive/issues/4970)). It joins `KNOWN_BACKENDS`/`config.CLIBackends` and dispatches through headless one-shot mode (`opencode run "<prompt>" --model provider/model --auto`, `CONTRIBUTOR_MODE=headless`) rather than the interactive tmux keystroke path, since `opencode run` is the CLI's natural non-interactive entry point. opencode is provider-agnostic (75+ providers) and unconfined (no OS sandbox of its own, like goose/pi/bob); `--auto` is its unattended auto-approve flag. It is not yet in `just contribute-k8s`'s headless-pod allowlist pending verification that `opencode auth login`'s credential (`~/.local/share/opencode/auth.json`) supports unattended use in a fresh pod. Relay-only: this does not add hub-side pod-launcher support beyond what the shell/Go backend-list parity guard ([#4987](https://github.com/kubestellar/hive/pull/4987)) already requires.

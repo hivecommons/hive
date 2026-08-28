@@ -219,6 +219,26 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 > 💡 **Tip: customize before you escalate.** Before moving from L3 to L4, take 30 minutes to edit each agent's policy template. Add your coding conventions, your preferred test framework, your off-limits directories. Agents follow instructions literally — the more specific you are, the better the output.
 
+### 🔒 Where agents actually run (read this before L3)
+
+By L3, agents are writing code and running commands on your behalf — so it's worth knowing exactly where that happens. On the contributor path (`just contribute-hive <backend>`), agents run in a **tmux session on the host** by default: the backend CLI runs as your own user, with permission prompts bypassed, and nothing containing it to the assigned workspace unless the backend provides its own confinement.
+
+**Confinement is not the same for every backend.** As of this writing:
+
+| Backend | Confined? |
+|---|---|
+| `claude` / `litellm` | Yes — Claude Code's native OS sandbox |
+| `codex` | Yes — its own `workspace-write` sandbox |
+| `copilot` | Yes — Copilot CLI's own `--sandbox`, checked at launch |
+| `opencode` | Partial — a command deny-list only, **not** a filesystem sandbox |
+| `goose`, `agy`, `bob`, `pi`, `aider` | No — these backends have no confinement mechanism at all. Local mode **refuses to launch** for them unless you explicitly set that backend's own `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1` |
+
+If you see one of those `_DANGEROUSLY_RUN_UNCONFINED` variables mentioned in setup instructions, it means exactly what it says: that backend has no sandbox, and setting the variable is you accepting that the agent runs with full access to your machine. Prefer container mode (drop `local` from the command) or a confined/denylisted backend if you're running hive on a machine you care about.
+
+This matters beyond backend choice, too: the hub-side Podman sandbox (`agent_sandbox`) is a separate, opt-in mechanism, and enabling it requires setting **both** the global `agent_sandbox.enabled` flag **and** a per-agent `sandbox.enabled` flag — the dashboard's Security tab only writes the global one, so turning that toggle on by itself does not sandbox any agent.
+
+See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the complete per-backend matrix, and the hub-side sandbox setup.
+
 ## L4 — Issues and Security
 
 **The level:** You're trusting agents to *file issues on their own* and trusting sec-check to propose security fixes — still all hold-labeled.
