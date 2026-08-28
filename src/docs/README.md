@@ -53,7 +53,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 ## Configuration and agents
 
-- [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, and ACMM packs.
+- [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, ACMM packs, and live-linked `definition_source` (with its seed-only trust model).
 - [Advisory digest](advisory.md) — what the digest shows (`max_findings`, `show_all`) and how findings are retired (staleness auto-close, PR-linked auto-close).
 - [Advisory digest staleness](advisory-staleness.md) — when the hub raises the stale-advisory pill and alert, the gates that deliberately suppress it (undelivered App, App cannot write, all agents quiet), and the admin diagnostics that measure hidden staleness.
 - [Governor mode thresholds](https://github.com/kubestellar/hive/blob/v4/src/docs/governor-thresholds.md) — how idle/quiet/busy/surge thresholds scale with repo count, the `threshold_scaling` curves, and when explicit thresholds win.
@@ -62,6 +62,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Portable AgentDefinition format](https://github.com/kubestellar/hive/blob/v4/src/AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
 - [Knowledge curator](https://github.com/kubestellar/hive/blob/v4/src/docs/knowledge-curator.md) — automatic fact extraction and promotion knobs, plus `knowledge.git_sources`: indexing a remote repo, layer semantics, private-repo auth (unsupported), and diagnosing a failed source.
 - [Skill registry](skills.md) — the `/data/skills/` file format and front-matter fields. **Loaded and counted on the dashboard, but not yet delivered to agents**: populating it changes no agent's behaviour today. Use the knowledge curator for knowledge that actually reaches agents.
+- [AGENTS.md repo instructions](agents-md.md) — the per-repo `AGENTS.md` file format Hive's parser (`pkg/agentsmd`) understands, including front-matter `skills:` and inline `## Skill:` sections. **Parsed and tested, but not wired into kicks**: the one call site's repo-root lookup unconditionally returns empty, so an `AGENTS.md` you add today has no effect on any agent's prompt.
 - [Agent peer-awareness logging (pluk)](https://github.com/kubestellar/hive/blob/v4/src/docs/agent-logging.md) — pluk log format, `hive-panes`, availability, and retention.
 - [Strategy Lab (Nous)](https://github.com/kubestellar/hive/blob/v4/src/docs/strategy-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
 - [GitHub App setup](https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md) — the Forge App on GitHub and GitHub Enterprise: app creation, permissions, Setup URL, and `/gh-setup`.

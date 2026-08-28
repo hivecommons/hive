@@ -450,6 +450,107 @@ preselected as suggestions in the tab. They remain unsaved until an operator
 reviews them and clicks **Save**; after that, the persisted declaration governs
 future telemetry and operations work.
 
+## Live-linked agent definitions (`definition_source`)
+
+An agent can be linked to a whole portable `AgentDefinition` YAML file living in a GitHub repo, so an edit to that file propagates into the agent's config on the next reload or startup — no redeploy, no dashboard edit. This is the whole-agent analogue of `promptTemplate`/prompt-source live-linking (see [Policy and prompt templates](../policies/README.md)); both are implemented as graceful-fallback resolvers in `src/pkg/promptsrc` and `src/pkg/defsrc` respectively.
+
+```yaml
+agents:
+  scanner:
+    backend: copilot
+    model: claude-sonnet-4-6
+    definition_source:
+      type: github          # only "github" is supported; defaults to it when repo is set
+      owner: my-org
+      repo: agent-definitions
+      path: scanner.yaml
+      ref: main              # optional; branch/tag/SHA — omit for the default branch
+```
+
+`definition_source` is `DefinitionSourceConfig` (`src/pkg/config/config.go:469`), a field on `AgentConfig` (`config.go:908`). `owner`, `repo`, and `path` are required for the source to be considered set (`IsSet()`, `config.go:492`); `ref` is optional and falls back to the repo's default branch. `url` is a fifth, informational-only field the dashboard import UI uses to round-trip the pasted `github.com` blob URL — it plays no part in fetching.
+
+### What it does
+
+On startup and on every config reload, `defsrc.ApplyToConfig` (`src/pkg/defsrc/defsrc.go:416`) walks every agent that has `definition_source` set, fetches the file's content from GitHub, and merges the parsed `AgentDefinition`'s operator-safe fields over the agent's baked config in place. It is wired at two call sites in `src/cmd/hive/main.go`:
+
+- **Startup**, line 1294 — applied once before the first kick, so a repo edit made while the hive was down is already reflected.
+- **Config reload**, line 3009 — re-applied on every reload, before `initAgentConfigDrivenSystems`, so downstream systems see the merged config.
+
+Both call sites build the same `defsrc.Resolver` (`main.go:1287`), gated by `func(slug string) bool { return cfg.GitHubDefinitionAllowed(slug) }` (`main.go:1289`).
+
+### What fields the live definition can change
+
+`mergeAllowedFields` (`defsrc.go:170`) is an explicit **allow-list**, not a deny-list: only fields it names are copied from the fetched `AgentDefinition` onto the baked `AgentConfig`. A field not in this list — including any privilege- or security-relevant field added to `AgentConfig` later — is preserved from the baked config by construction; a new field is safe-by-default rather than accidentally live-sourced.
+
+| `AgentDefinition` field (YAML tag) | Applied to `AgentConfig` field |
+|---|---|
+| `metadata.displayName` | `DisplayName` |
+| `metadata.description` | `Description` |
+| `metadata.emoji` | `Emoji` |
+| `metadata.color` | `Color` |
+| `spec.backend` | `Backend` |
+| `spec.model` | `Model` |
+| `spec.role` | `Role` |
+| `spec.mode` | `Mode` |
+| `spec.sortOrder` | `SortOrder` |
+| `spec.beadRole` | `BeadRole` |
+| `spec.staleTimeout` | `StaleTimeout` |
+| `spec.restartStrategy` | `RestartStrategy` |
+| `spec.clearOnKick` | `ClearOnKick` |
+| `spec.includeRepos` | `IncludeRepos` |
+| `spec.laneKeywords` | `LaneKeywords` |
+| `spec.detectKeywords` | `DetectKeywords` |
+| `spec.aliases` | `Aliases` |
+| `spec.cadences` | `Cadences` |
+| `spec.promptTemplate` | `KickTemplate`/prompt template |
+| `spec.channels` | `Channels` |
+| `spec.tools` | `Tools` |
+| `spec.connections` | `Connections` |
+
+Two merge rules to know before you rely on this:
+
+- **A blank field never clears a baked value.** For most fields, an empty string or empty slice in the fetched definition is skipped, so a minimal definition can't silently wipe presentation you set elsewhere. `ClearOnKick` and `IncludeRepos` are the deliberate exceptions — their zero value (`false`) is a legitimate setting, so the definition's value is taken as authoritative whenever the source resolves live (`defsrc.go:212-216`).
+- **Everything else on the agent is preserved untouched**, explicitly including: `Enabled`/`Paused`/`Managed` (operator lifecycle state), `ID`, `BeadsDir`, `MetricsCollector`, `ACMMLevels`, `OnDemand`, `CavemanMode`, and — critically — the `definition_source`/`prompt_source` pointers themselves. A live definition cannot re-point the agent at a different repo (`ApplyToConfig` re-asserts this at `defsrc.go:437-440` even though the merge already excludes it). Nothing under the hive-level `variables.security` block is reachable either — it isn't part of `AgentConfig` at all.
+
+### The trust boundary: allowlisted repos are seed-only
+
+`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4162`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4142`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
+
+```yaml
+variables:
+  security:
+    allow_github_prompt: true              # default false (deny)
+    github_prompt_allowlist:
+      - my-org/agent-definitions           # exact "owner/repo" slugs only
+```
+
+This is the property operators most need to understand before enabling the feature: **`variables.security` is honored only from the trusted config seed.** `LoadWithDashboardOverlay` never merges the dashboard overlay's `Variables` block (`config.go:397-399`, `config.go:4157-4161`), so:
+
+- A dashboard save cannot turn `allow_github_prompt` on if the seed has it off.
+- A dashboard save cannot add a repo slug to `github_prompt_allowlist`.
+- A compromised or malicious dashboard overlay can neither widen the set of readable repos nor repoint an agent's `definition_source` at an arbitrary repo — only a seed edit (ConfigMap in Kubernetes, bind-mounted file in Docker/LXC) can do either.
+
+An empty allowlist denies every repo even with `allow_github_prompt: true` — the allowlist is required, not merely advisory.
+
+### Fetch failures never blank an agent
+
+`Resolve` (`defsrc.go:283`) never propagates an error to the caller: a reload must proceed even when GitHub is unreachable. On any failure it falls back, in order:
+
+1. **Denied** (not allowlisted) — logs a warning, keeps the baked config, `Source: "denied"`.
+2. **No fetcher** (token-mode boot without a GitHub App client) — uses the last-known-good cached document if one exists, else keeps baked, `Source: "no-client"`.
+3. **Fetch error** (timeout, network, 404, etc.) — falls back to the last-known-good cached document if one exists, else keeps baked, `Source: "error"`. Fetches are bounded to 8 seconds (`defaultFetchTimeout`, `defsrc.go:47`) so a hung GitHub call cannot stall a reload.
+4. **Malformed document** (bad YAML, wrong `kind`, missing `metadata.name`) — keeps baked, `Source: "error"`. A document is cached for fallback only after it parses cleanly (`defsrc.go:325-329`), so a later failure never falls back to a corrupt document.
+
+A fetched file is capped at 512 KiB (`maxDefinitionBytes`, `defsrc.go:43`); an oversized file is truncated (and likely then fails to parse) rather than consuming unbounded memory.
+
+### Validating a source before saving it
+
+`defsrc.FetchOnce` (`defsrc.go:372`) does a single gated fetch — bypassing the resolver's cache — and returns a parse error to the caller. This is what the dashboard's import/"keep linked" flow uses to surface a bad `owner`/`repo`/`path`/document to the operator at save time, rather than only discovering the problem silently on the next reload.
+
+### Format reference
+
+The fetched file must be a valid portable `AgentDefinition`: `kind: AgentDefinition` and a non-empty `metadata.name` are required (`ParseDefinition`, `defsrc.go:138`); everything else is optional. For the full schema and a worked example, see [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md) and [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
+
 ## Kick templates: what an agent is told to do
 
 `kick_template` names a Markdown file resolved from the hive's policies checkout (`/data/policies/examples/kubestellar/agents/`, or the directory your `policies:` config points at), falling back to the defaults embedded in the binary (`src/pkg/policies/defaults/`). It is the agent's **periodic work prompt**: on every kick, the template is loaded, variables like `${ISSUE_LIST}`, `${PR_LIST}`, `${AGENT_NAME}`, `${PROJECT_ORG}`, and `${KNOWLEDGE}` are substituted, and the result is dispatched to the agent's session.
@@ -512,6 +613,7 @@ Both polarities are enforced at **enumeration** — the point where GitHub issue
 - **[Documentation index](README.md)** — what hive is, setup, and the full topic-guide surface.
 - **[Architecture](architecture.md)** — process model, deterministic pipeline, governor loop, guardrails, and hub/spoke design.
 - **[Portable AgentDefinition format](../AGENT-DEFINITION.md)** — standalone YAML schema for agent imports, exports, and overlays.
+- **[AGENTS.md repo instructions](agents-md.md)** — the per-repo instruction file format Hive's parser understands. **Not wired into kicks today** — see the page for why.
 - **[Dashboard route and health checks](health-checks.md)** — listener probes and alert behavior for stuck sessions and restart loops.
 - **[Troubleshooting](troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
