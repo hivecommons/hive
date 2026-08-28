@@ -46,7 +46,24 @@ cd src
 go test ./...
 ```
 
-The `src/test/` package contains integration/regression coverage and may exercise local ports, temporary state, and helper processes. If a local environment dependency prevents a full run, include the failing package and error summary in the PR and still run the narrower package tests affected by your change.
+The `src/test/` package holds the inception e2e/regression suite. Those tests
+talk to a **live hive over the network** and sit behind the `integration` build
+tag, so the command above compiles the package but runs none of them — a plain
+`go test ./...` will never exercise this suite, and a green run says nothing
+about it. To actually run it:
+
+```bash
+cd src
+HIVE_URL=http://<host>:<port> HIVE_TOKEN=<token> go test -tags integration ./test/...
+```
+
+The suite skips itself (exit 0) when `HIVE_URL` is unset or the endpoint does
+not answer a fast TCP dial, so a passing run without those variables means
+"skipped", not "verified". Run it when you touch inception code; the normal
+`go test ./pkg/...` loop is enough otherwise. See `src/test/doc.go` for the
+package's own description.
+
+If a local environment dependency prevents a full run, include the failing package and error summary in the PR and still run the narrower package tests affected by your change.
 
 Useful narrower loops:
 
