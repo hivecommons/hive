@@ -4818,7 +4818,7 @@ func IsInferenceBackend(backend string) bool {
 // a backend here without also updating the shell side (or, if it genuinely
 // belongs on only one side, documenting why in cliBackendExceptions) fails
 // that test.
-var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy"}
+var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy", "opencode"}
 
 // IsCLIBackend returns true if the backend launches an agentic CLI binary.
 func IsCLIBackend(backend string) bool {

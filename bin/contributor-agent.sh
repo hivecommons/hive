@@ -144,6 +144,12 @@ GOOSECFG
     agy)
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
+    opencode)
+      # opencode reads AGENTS.md (https://opencode.ai/docs/rules/). Keep the
+      # CLAUDE.md compatibility link too, matching codex/pi above.
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
     *)
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
@@ -324,6 +330,9 @@ detect_cli() {
       ;;
     agy)
       if agy --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
+      ;;
+    opencode)
+      if opencode --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
       ;;
     *)
       echo "UNKNOWN"

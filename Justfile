@@ -175,8 +175,20 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      opencode)
+        if command -v opencode &>/dev/null; then
+          echo "opencode CLI detected ($(opencode --version 2>&1 | head -1))"
+          echo "  Provider-agnostic (75+ providers); set model: export AGENT_MODEL=provider/model"
+          echo "  Auth: run 'opencode auth login' — credential stored at ~/.local/share/opencode/auth.json"
+          echo "  opencode only runs in headless mode (CONTRIBUTOR_MODE=headless): 'opencode run' is its"
+          echo "  one-shot entry point and there is no interactive-tmux wiring for it."
+        else
+          echo "ERROR: opencode CLI not found. Install: https://opencode.ai/docs/"
+          exit 1
+        fi
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode"
         exit 1
         ;;
     esac
@@ -1178,6 +1190,15 @@ contribute-hive backend="" mode="docker": check-version
           elif [ -d "${HOME}/.antigravitycli" ]; then
             stage_copy "${HOME}/.antigravitycli" ".antigravitycli"
             CLI_MOUNTS="-v ${CLI_STAGE}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
+          fi
+          ;;
+        opencode)
+          # opencode auth login writes a credential file (not an interactive
+          # per-session OAuth flow like agy), so it CAN inherit a signed-in
+          # session via a mount — stage it if present.
+          if [ -d "${HOME}/.local/share/opencode" ]; then
+            stage_copy "${HOME}/.local/share/opencode" "opencode"
+            CLI_MOUNTS="-v ${CLI_STAGE}/opencode:/home/dev/.local/share/opencode${VOLSUF}"
           fi
           ;;
       esac

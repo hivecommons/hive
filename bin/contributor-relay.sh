@@ -767,6 +767,14 @@ const HEADLESS_BACKENDS = {
   // K8S_HEADLESS_BACKENDS on the /contribute page and out of the contributor
   // image. The capability and the credential are separate questions.
   agy: { flag: '-p' },
+  // opencode run "<prompt>" — opencode's one-shot headless invocation
+  // (kubestellar/hive#4970). Unlike agy, opencode is the ONLY launch mode
+  // this backend gets: there is no interactive-tmux wiring for it (see the
+  // getCLIState()/classifyTmuxPane() backend lists below, which opencode
+  // deliberately does not join), so it is only ever reached through
+  // CONTRIBUTOR_MODE=headless. `opencode run` exits with a real status code
+  // on completion, the exit-code contract runHeadlessTask() relies on.
+  opencode: { flag: 'run' },
 };
 
 // headlessSupportsBackend reports whether the configured backend has a known
