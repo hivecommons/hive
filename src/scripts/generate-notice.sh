@@ -90,14 +90,21 @@ SAVE_DIR="${WORK_DIR}/licenses"
 echo "Walking the module graph and saving license files..." >&2
 (
   cd "${SRC_DIR}"
-  "${GO_LICENSES_BIN}" save ./... --save_path="${SAVE_DIR}" --force
+  # --ignore the project's own module: LICENSE lives at the REPO root while the
+  # Go module is src/, so go-licenses' upward search stops at src/ and reports
+  # "cannot find a known open source license" for every kubestellar/hive
+  # package, failing the whole run before any dependency is written. Hive's own
+  # code does not belong in a THIRD-PARTY notice regardless, so ignoring it is
+  # correct rather than a workaround for the path layout.
+  "${GO_LICENSES_BIN}" save ./... --save_path="${SAVE_DIR}" --force \
+    --ignore github.com/kubestellar/hive
 )
 
 echo "Classifying each module's license..." >&2
 REPORT_CSV="${WORK_DIR}/report.csv"
 (
   cd "${SRC_DIR}"
-  "${GO_LICENSES_BIN}" csv ./... > "${REPORT_CSV}"
+  "${GO_LICENSES_BIN}" csv ./... --ignore github.com/kubestellar/hive > "${REPORT_CSV}"
 )
 
 {
