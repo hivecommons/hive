@@ -102,8 +102,15 @@ func TestProvenanceAnswersTheGHEQuestion(t *testing.T) {
 }
 
 // TestProvenanceReportsSeedUnwritable pins the single most valuable line in
-// the report: nothing can write the ConfigMap.
+// the report: in Kubernetes, nothing can write the ConfigMap.
+//
+// Explicitly forces Kubernetes mode (#4971): this test previously ran
+// whatever IsKubernetesPod() detected on the test host — normally not a pod —
+// so it was silently exercising the non-Kubernetes branch and would not have
+// caught #4971's regression to the wrong environment's answer. See
+// TestProvenanceReportsSeedWritableOutsideKubernetes for the other branch.
 func TestProvenanceReportsSeedUnwritable(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1") // IsKubernetesPod() → true
 	writeProvenanceFixture(t,
 		"project:\n  org: acme\nagents:\n  scanner: {}\nhub:\n  is_public: true\n",
 		"project:\n  org: acme\nagents:\n  scanner: {}\n")
@@ -124,6 +131,65 @@ func TestProvenanceReportsSeedUnwritable(t *testing.T) {
 	}
 	if !strings.Contains(seedLayer.Writer, "nobody") {
 		t.Errorf("configmap-seed writer = %q, want it to say nobody", seedLayer.Writer)
+	}
+	if !strings.Contains(seedLayer.Path, "ConfigMap") {
+		t.Errorf("configmap-seed path = %q, want it to name the ConfigMap", seedLayer.Path)
+	}
+}
+
+// TestProvenanceReportsSeedWritableOutsideKubernetes is the #4971 regression
+// test: on a non-Kubernetes hive (Docker/podman/LXC) there is no ConfigMap and
+// no RBAC to omit — LayerSeed is RuntimeConfigFile, a plain file the spoke
+// rewrites on every save (saveLocked, config.go:5141) and the entrypoint
+// restores over the boot config on every restart (entrypoint.sh:267-311). The
+// report must say so: writable=true, writer names the spoke, and the path
+// names the real file — never the ConfigMap, which does not exist here.
+func TestProvenanceReportsSeedWritableOutsideKubernetes(t *testing.T) {
+	// No KUBERNETES_SERVICE_HOST set and no serviceaccount token on this host
+	// — IsKubernetesPod() reads false, matching a real Docker/podman hive.
+	writeProvenanceFixture(t,
+		"project:\n  org: acme\nagents:\n  scanner: {}\nhub:\n  is_public: true\nacmm_level: 4\n",
+		"project:\n  org: acme\nagents:\n  scanner: {}\n")
+
+	_, body := getProvenance(t, "owner")
+
+	var seedLayer *layerInfo
+	for i := range body.Layers {
+		if body.Layers[i].Name == "configmap-seed" {
+			seedLayer = &body.Layers[i]
+		}
+	}
+	if seedLayer == nil {
+		t.Fatal("layer legend omits configmap-seed")
+	}
+	if !seedLayer.Writable {
+		t.Error("configmap-seed reported writable=false outside Kubernetes, want true — RuntimeConfigFile is writable by the spoke")
+	}
+	if strings.Contains(seedLayer.Writer, "nobody") {
+		t.Errorf("configmap-seed writer = %q, want it to name the spoke, not nobody (there is no RBAC to omit outside Kubernetes)", seedLayer.Writer)
+	}
+	if strings.Contains(seedLayer.Path, "ConfigMap") {
+		t.Errorf("configmap-seed path = %q, want the real runtime file, not a ConfigMap that does not exist on this hive", seedLayer.Path)
+	}
+	if !strings.Contains(seedLayer.Path, "hive.yaml.runtime") {
+		t.Errorf("configmap-seed path = %q, want it to name RuntimeConfigFile (hive.yaml.runtime)", seedLayer.Path)
+	}
+
+	// acmm_level in the fixture is set only in the seed (no overlay override),
+	// so it is won by LayerSeed — the field-level report must carry the same
+	// writable/writer/path facts as the layer legend above.
+	acmm, ok := fieldByName(body.Fields, "acmm_level")
+	if !ok {
+		t.Fatal("acmm_level missing from fields")
+	}
+	if acmm.Layer != "configmap-seed" {
+		t.Fatalf("acmm_level layer = %q, want configmap-seed (test setup assumption)", acmm.Layer)
+	}
+	if !acmm.Writable {
+		t.Error("acmm_level reported writable=false outside Kubernetes, want true")
+	}
+	if strings.Contains(acmm.Writer, "nobody") {
+		t.Errorf("acmm_level writer = %q, want it to name the spoke, not nobody", acmm.Writer)
 	}
 }
 

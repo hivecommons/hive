@@ -236,18 +236,54 @@ func TestIsPublicExplicitFalseInSeedStillWins(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────
 
 func TestSeedIsWritableByNobody(t *testing.T) {
-	// The single most useful fact this package exposes. The hub has only a
-	// "get" against configmaps and the spoke's RBAC omits them entirely, so
-	// editing the ConfigMap and restarting changes nothing — which is what
-	// happened four times during the GHE incident.
+	// The single most useful fact this package exposes IN KUBERNETES. The hub
+	// has only a "get" against configmaps and the spoke's RBAC omits them
+	// entirely, so editing the ConfigMap and restarting changes nothing — which
+	// is what happened four times during the GHE incident.
+	//
+	// Explicitly forces Kubernetes mode: without this, the test's answer
+	// depended on whether the test host looked like a pod, which is exactly
+	// the gap #4971 shipped through (see
+	// TestSeedIsWritableOutsideKubernetes for the other branch, and
+	// TestProvenanceReportsSeedWritableOutsideKubernetes in pkg/dashboard for
+	// the end-to-end regression test).
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1") // IsKubernetesPod() → true
 	if LayerSeed.Writable() {
 		t.Error("LayerSeed.Writable() = true, want false")
 	}
 	if w := LayerSeed.Writer(); !strings.Contains(w, "nobody") {
 		t.Errorf("LayerSeed.Writer() = %q, want it to say nobody", w)
 	}
+	if p := LayerSeed.Path(); !strings.Contains(p, "ConfigMap") {
+		t.Errorf("LayerSeed.Path() = %q, want it to name the ConfigMap", p)
+	}
 	if !LayerDashboardOverlay.Writable() {
 		t.Error("LayerDashboardOverlay.Writable() = false, want true")
+	}
+}
+
+// TestSeedIsWritableOutsideKubernetes is the #4971 regression test at the
+// Layer-metadata level (see TestProvenanceReportsSeedWritableOutsideKubernetes
+// in pkg/dashboard for the end-to-end HTTP version). Outside Kubernetes there
+// is no ConfigMap and no RBAC to omit: LayerSeed is RuntimeConfigFile, a plain
+// file the spoke rewrites on every save (saveLocked, config.go:5141). Reporting
+// writable=false / writer=nobody / path=ConfigMap there sends an operator
+// looking for something that does not exist while hiding the file that
+// actually decides the value.
+func TestSeedIsWritableOutsideKubernetes(t *testing.T) {
+	// No KUBERNETES_SERVICE_HOST and (on any normal test host) no
+	// serviceaccount token — IsKubernetesPod() reads false.
+	if !LayerSeed.Writable() {
+		t.Error("LayerSeed.Writable() = false outside Kubernetes, want true — RuntimeConfigFile is writable by the spoke")
+	}
+	if w := LayerSeed.Writer(); strings.Contains(w, "nobody") {
+		t.Errorf("LayerSeed.Writer() = %q, want it to name the spoke, not nobody (there is no RBAC to omit outside Kubernetes)", w)
+	}
+	if p := LayerSeed.Path(); strings.Contains(p, "ConfigMap") {
+		t.Errorf("LayerSeed.Path() = %q, want the real runtime file, not a ConfigMap that does not exist on this hive", p)
+	}
+	if p := LayerSeed.Path(); p != RuntimeConfigFile {
+		t.Errorf("LayerSeed.Path() = %q, want RuntimeConfigFile (%q)", p, RuntimeConfigFile)
 	}
 }
 
