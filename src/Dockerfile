@@ -340,13 +340,19 @@ ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd0030
 # a silent trap that cost real debugging time. If this download breaks, the
 # build must break loudly rather than ship an image that reproduces that bug.
 # The `which bob` check turns a partial install into a build failure too.
+# Per-attempt bounds (--connect-timeout/--speed-time/--max-time) kill stalled
+# IBM COS connections so they can't consume the whole retry budget: without
+# them a single hung download burned all of --retry-max-time and exited 28
+# (issue #4941; CI runs 32990236986, 33072306789, 33132187354).
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
       arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
       *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+      --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
+      -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
     echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - && \
     npm install -g /tmp/bobshell.tgz && \
     npm cache clean --force && \
