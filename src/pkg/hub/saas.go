@@ -174,6 +174,14 @@ const hubUpgradeDebounce = 4 * time.Minute
 // paying that per hive serialized the upgrade loop and starved the hub's own
 // upgrade check that runs after it. The heartbeat fallback is the real delivery
 // path for unreachable clusters, so failing fast costs nothing.
+//
+// Retained under nolint despite having no current caller: three other files
+// cite it BY NAME as the basis for their own timeouts
+// (hosted_namespace_identity.go, netadmin_reconcile.go, saas_bulk.go). Deleting
+// it to satisfy the linter would orphan those comments and lose the recorded
+// reasoning for the 15s figure, which is the thing worth keeping.
+//
+//nolint:unused // referenced by name from three sibling timeout comments
 const upgradeKubectlTimeout = 15 * time.Second
 
 // clusterUnreachableTTL is how long the hub skips kubectl for a cluster after a
