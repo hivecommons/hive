@@ -108,13 +108,6 @@ func (h *ContributeWSHub) roleKickPrompt(role string) string {
 	return h.server.deps.Scheduler.BuildAgentMessageFromLastActionable(role)
 }
 
-// buildRoleTaskPrompt is the GitHub-shaped entry point retained for existing
-// callers; buildRoleTaskPromptForRef is the identity-aware one
-// (kubestellar/hive#4245).
-func buildRoleTaskPrompt(repoFull string, number int, title, role, agentPrompt string) string {
-	return buildRoleTaskPromptForRef(worksource.Ref{Repo: repoFull, Number: number}, title, role, agentPrompt)
-}
-
 // buildRoleTaskPromptForRef wraps the source-aware assignment prompt in the
 // role framing. Only the base prompt carries work identity, so the role text
 // itself is unchanged for every source.

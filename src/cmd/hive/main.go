@@ -2812,7 +2812,7 @@ func main() {
 	// The loop therefore runs for the lifetime of the process (it does NOT
 	// return after the first success) and, whenever the banner is currently
 	// showing, re-runs the SAME read+write verification as the manual "Re-check"
-	// button (githubAppRecheckFn, which calls diagnoseGitHubAppWrite) and clears
+	// button (githubAppRecheckFn, which calls diagnoseGitHubApp) and clears
 	// the flag on success. When the banner is not showing there is nothing to do,
 	// so the tick is a cheap no-op that makes no GitHub API calls.
 	{
@@ -5175,14 +5175,8 @@ func (s labelPlanSink) QueuedPlan(epic *beads.Bead, paused bool) {
 	s.logger.Warn("plan-from-label: architect unavailable, plan queued", "epic", epic.ID, "ref", epic.ExternalRef)
 }
 
-// diagnoseGitHubAppWrite returns "" when the configured GitHub App
-// installation belongs to expectedOwner and grants issues:write. Otherwise it
-// returns a banner-ready diagnosis distinguishing the two write-failure causes
-// that produce identical 403s: an installation_id pointing at a different
-// org's installation, and a permission update the org owner hasn't approved
-// yet. A nil appAuth (token-authenticated hive) yields "" — nothing to check.
 // healGitHubAppInstallation self-heals a hive whose github.installation_id
-// points at the WRONG account — the failure mode diagnoseGitHubAppWrite
+// points at the WRONG account — the failure mode diagnoseGitHubApp
 // already detects and reports ("installation N belongs to 'X', not 'Y'"). It
 // asks pkg/github to rediscover the installation covering cfg.Project.Org via
 // the App JWT and, only on an unambiguous match, adopts it in place and
@@ -5256,13 +5250,6 @@ func diagnoseGitHubAppFull(ctx context.Context, appAuth *github.AppAuth, expecte
 		return github.AppAuthDiagnosis{State: github.AppStateOK, ExpectedAccount: expectedOwner}
 	}
 	return appAuth.DiagnoseAppAuth(ctx, expectedOwner, spokeAppKeyPath, spokeProvisionedAppKeyPath)
-}
-
-// diagnoseGitHubAppWrite is the string-only wrapper retained for callers that
-// only need banner copy.
-func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
-	msg, _ := diagnoseGitHubApp(ctx, appAuth, expectedOwner)
-	return msg
 }
 
 // maxTimelineEnumeratePerCycle bounds how many enumerated-issue events a single

@@ -208,26 +208,6 @@ func makeAgentConfig(backend, model string) config.AgentConfig {
 	}
 }
 
-func waitForState(t *testing.T, m *Manager, name string, want ...ProcessState) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		ap, _ := m.GetStatus(name)
-		for _, w := range want {
-			if ap.State == w {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	ap, _ := m.GetStatus(name)
-	wantStrs := make([]string, len(want))
-	for i, w := range want {
-		wantStrs[i] = string(w)
-	}
-	t.Errorf("timed out waiting for %q state: got %q", strings.Join(wantStrs, "|"), ap.State)
-}
-
 // ---------------------------------------------------------------------------
 // NewManager
 // ---------------------------------------------------------------------------

@@ -665,15 +665,6 @@ func TestRouteMessage_EnqueueDoesNotPanic(t *testing.T) {
 // SendMessage – error branches
 // ──────────────────────────────────────────────────────────────────────────────
 
-// errTransport is an http.RoundTripper that always returns the given error.
-// It is used to exercise error paths that cannot be reached through a normal
-// test server (e.g. http.NewRequest failures triggered by an invalid URL).
-type errTransport struct{ err error }
-
-func (e *errTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
-	return nil, e.err
-}
-
 // TestSendMessage_NewRequestError covers the http.NewRequest error branch in
 // SendMessage by using a channelID containing a null byte, which makes the
 // constructed URL invalid.

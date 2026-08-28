@@ -880,8 +880,9 @@ type HubServer struct {
 	//
 	// GUARDED BY keyGenerationsMu. The admin rotate endpoint replaces this
 	// pointer while heartbeat and cookie verifiers are concurrently reading it,
-	// so every access goes through currentGenerations() / setGenerations()
-	// rather than touching the field. The field itself is only ever REPLACED,
+	// so every read goes through currentGenerations() rather than touching the
+	// field, and every write holds keyGenerationsMu for the duration of its
+	// evaluate-persist-install sequence. The field itself is only ever REPLACED,
 	// never mutated in place — generationSet.rotate is pure and returns a new
 	// set — so a reader that grabbed the old pointer keeps a consistent,
 	// immutable snapshot and simply verifies against the pre-rotation set for

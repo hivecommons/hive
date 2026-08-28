@@ -726,20 +726,6 @@ func TestStartInferenceTranslator_HandlerBranches(t *testing.T) {
 	}
 }
 
-func waitForServer(t *testing.T, base string) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(base, "http://"), 200*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("translator server did not come up at %s", base)
-}
-
 // ---------- handleInferenceRequest / handleAnthropicReroute over MITM ----------
 
 // mitmDialClient builds an HTTP client that CONNECTs through the proxy and does

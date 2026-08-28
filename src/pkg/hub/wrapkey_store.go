@@ -32,6 +32,16 @@ import (
 // the PVC. A var rather than a const so tests can redirect it and exercise the
 // real resolution order — the reason given at src/cmd/hive/main.go:95-97.
 // Production never reassigns it.
+//
+// NOT YET READ BY ANY CALLER, deliberately kept. Every function in this file
+// takes the path as an argument and the spoke-side lifecycle has no production
+// entry point yet, so this declaration is the only record of where the key is
+// supposed to land once it does. Deleting it to satisfy the linter would delete
+// the answer, not the dead code — the first caller would then have to re-derive
+// a path for private key material, which is exactly the kind of decision that
+// should not be made twice.
+//
+//nolint:unused // staged lifecycle: documented production location, no caller yet (#4903)
 var spokeWrapKeyPath = "/data/hive-wrap-key"
 
 // spokeWrapKeyFileMode is rw------- , identical to spokeAppKeyFileMode and for

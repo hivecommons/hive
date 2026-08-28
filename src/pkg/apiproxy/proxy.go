@@ -12,7 +12,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -55,7 +54,6 @@ type Proxy struct {
 	// never an implicit credential for anyone who can reach the listener. It
 	// is required: when empty every request is refused with 503.
 	clientAuthToken string
-	mu              sync.RWMutex
 }
 
 func New(upstreamURL string, handler EventHandler, apiKey, clientAuthToken string) (*Proxy, error) {

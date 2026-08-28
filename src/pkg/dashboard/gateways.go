@@ -70,17 +70,6 @@ func gatewayProbeAuth(kind, key, projectID string) (bearer string, headers map[s
 }
 
 const (
-	// openRouterBaseURL is the OpenAI-compatible base URL for OpenRouter. Used
-	// as the preset endpoint when the UI picks the OpenRouter gateway kind.
-	openRouterBaseURL = "https://openrouter.ai/api/v1"
-
-	// watsonxBaseURLTemplate / watsonxDefaultRegion alias the canonical values
-	// in pkg/watsonx. They are NOT redefined here: the agent launch path needs
-	// the same template, and two copies is exactly how the gateway half and the
-	// agent half of watsonx support were able to disagree.
-	watsonxBaseURLTemplate = watsonx.BaseURLTemplate
-	watsonxDefaultRegion   = watsonx.DefaultRegion
-
 	// gatewaySecretFileMode / gatewaySecretDirMode keep gateway key files
 	// owner-only, matching the LiteLLM key store (litellmKeyFileMode).
 	gatewaySecretFileMode = 0o600

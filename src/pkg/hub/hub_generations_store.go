@@ -477,17 +477,6 @@ func (s *HubServer) currentGenerations() *generationSet {
 	return s.keyGenerations
 }
 
-// setGenerations installs a new set and records when it happened.
-func (s *HubServer) setGenerations(gs *generationSet, rotatedAt time.Time) {
-	if s == nil || gs == nil {
-		return
-	}
-	s.keyGenerationsMu.Lock()
-	defer s.keyGenerationsMu.Unlock()
-	s.keyGenerations = gs
-	s.lastKeyRotation = rotatedAt
-}
-
 // lastRotationAt reports when the current generation was minted, or the zero
 // time on a hub that has never rotated.
 func (s *HubServer) lastRotationAt() time.Time {

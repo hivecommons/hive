@@ -255,14 +255,6 @@ type ContributorRateLimits struct {
 	MaxPerDay     int `json:"max_tasks_per_day"`
 }
 
-type ContributorPool struct {
-	Active     int `json:"active"`
-	Registered int `json:"registered"`
-	mu         sync.RWMutex
-}
-
-var contributorPool = &ContributorPool{}
-
 type ContributorPoolStatus struct {
 	Active     int            `json:"active"`
 	Registered int            `json:"registered"`

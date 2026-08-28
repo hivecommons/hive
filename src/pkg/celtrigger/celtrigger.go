@@ -43,10 +43,6 @@ const (
 	KindCommentCreated = "comment.created"
 )
 
-// defaultPriority is applied to rules that declare no explicit priority. Higher
-// priority sorts first in Match results.
-const defaultPriority = 0
-
 // maxEvalCost bounds CEL runtime work per rule evaluation. The budget is high
 // enough for realistic operator rules that combine field checks, string
 // predicates, and modest label scans, while still stopping pathological nested
@@ -107,7 +103,8 @@ type Rule struct {
 	Expr string
 	// Agent names the agent to trigger when Expr matches.
 	Agent string
-	// Priority orders matched rules; higher sorts first. Defaults to defaultPriority.
+	// Priority orders matched rules; higher sorts first. A rule that declares
+	// no priority gets the zero value, so declared order decides ties.
 	Priority int
 }
 

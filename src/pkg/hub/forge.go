@@ -47,16 +47,13 @@ const (
 	ForgeGitea ForgeKind = "gitea"
 )
 
-// gitLabAPIPathSuffix / giteaAPIPathSuffix are the REST API base paths for the
-// non-GitHub forges. The spoke-side pkg/forge adapters append these to the
-// instance root themselves (gitLabAPIPath="/api/v4", giteaAPIPath="/api/v1"), so
-// for these kinds a ForgeTarget carries the BARE instance URL in BaseURL and
-// leaves APIURL empty — the opposite of the GHE case, where the hub pre-appends
-// /api/v3. Kept here as documentation of that contract.
-const (
-	gitLabAPIPathSuffix = "/api/v4"
-	giteaAPIPathSuffix  = "/api/v1"
-)
+// FORGE API-PATH CONTRACT, hub side. The REST API base paths for the non-GitHub
+// forges are appended by the spoke-side pkg/forge adapters themselves
+// (gitLabAPIPath="/api/v4", giteaAPIPath="/api/v1"), so for those kinds a
+// ForgeTarget carries the BARE instance URL in BaseURL and leaves APIURL empty —
+// the opposite of the GHE case below, where the hub pre-appends /api/v3. The hub
+// must not duplicate the GitLab/Gitea suffixes: a second copy here is how the two
+// halves would get a chance to disagree.
 
 // publicForgeHost is the canonical host of public GitHub. A hive on this host
 // carries GitHubHost == "github.com" (or "", historically) and an empty
@@ -114,7 +111,7 @@ func parseForgeTarget(raw string) (ForgeTarget, error) {
 // inferred from the host). "gitlab"/"gitea" produce non-GitHub targets whose
 // BaseURL is the bare instance root and whose APIURL is left empty — the
 // spoke-side pkg/forge adapter appends the /api/v4 or /api/v1 suffix itself
-// (see the gitLabAPIPathSuffix/giteaAPIPathSuffix note). "github"/
+// (see the forge API-path contract note above). "github"/
 // "github-enterprise" fall through to the host-based GitHub path.
 func parseForgeTargetWithKind(kind, raw string) (ForgeTarget, error) {
 	switch ForgeKind(strings.ToLower(strings.TrimSpace(kind))) {
@@ -412,10 +409,10 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info("forge switch queued (non-GitHub)",
 			"hive_id", id, "kind", target.Kind, "host", target.Host)
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":    true,
-			"kind":  string(target.Kind),
-			"host":  target.Host,
-			"note":  fmt.Sprintf("hive %s will switch to %s (%s) on its next heartbeat. Ensure the spoke has a %s access token in its environment.", id, target.Host, target.Kind, defaultTokenEnvForKind(target.Kind)),
+			"ok":   true,
+			"kind": string(target.Kind),
+			"host": target.Host,
+			"note": fmt.Sprintf("hive %s will switch to %s (%s) on its next heartbeat. Ensure the spoke has a %s access token in its environment.", id, target.Host, target.Kind, defaultTokenEnvForKind(target.Kind)),
 		})
 		return
 	}

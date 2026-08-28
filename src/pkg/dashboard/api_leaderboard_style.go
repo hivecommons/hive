@@ -894,14 +894,8 @@ func (s *Server) handleLeaderboardStyle(w http.ResponseWriter, r *http.Request) 
 	s.handleStyle(w, r)
 }
 
-// Back-compatible leaderboard names kept for the PR #2834 tests and callers.
+// Back-compatible leaderboard name kept for the PR #2834 tests and callers.
 type leaderboardCustomStyleSource = customStyleSource
-type leaderboardCustomStyleCacheEntry = customStyleCacheEntry
-
-const (
-	leaderboardCustomStyleMaxBytes   = customStyleMaxBytes
-	leaderboardCustomStyleDefaultRef = customStyleDefaultRef
-)
 
 func validateLeaderboardCustomStyleSource(src string) (leaderboardCustomStyleSource, error) {
 	return validateCustomStyleSource(src)

@@ -158,18 +158,6 @@ func requirePaneShows(t *testing.T, session, text string) {
 	}
 }
 
-// paneInjectLines renders each string on its own pane line.
-func paneInjectLines(t *testing.T, session string, lines ...string) {
-	t.Helper()
-	for _, ln := range lines {
-		if err := testTmuxCommand("send-keys", "-t", session, "-l", ": "+ln).Run(); err != nil {
-			t.Fatalf("send-keys: %v", err)
-		}
-		_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
-	}
-	time.Sleep(500 * time.Millisecond)
-}
-
 // ---------------------------------------------------------------------------
 // Start / launchInTmux — full launch path with real tmux + stub binary
 // ---------------------------------------------------------------------------
