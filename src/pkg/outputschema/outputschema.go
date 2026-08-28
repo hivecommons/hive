@@ -14,7 +14,8 @@ const (
 	// MaxValidationRetries bounds corrective re-prompt attempts after invalid output.
 	MaxValidationRetries = 3
 
-	AgentReportDir        = "/var/run/hive-metrics"
+	defaultAgentReportDir = "/var/run/hive-metrics"
+
 	AgentReportFilePrefix = "agent-report-"
 	AgentReportFileSuffix = ".json"
 
@@ -32,6 +33,12 @@ const (
 	MaxBeadIDLength       = 120
 	MaxArtifactPathLength = 500
 )
+
+// AgentReportDir is where per-agent structured report files are read from and
+// written to. Production leaves it at defaultAgentReportDir; a var (not
+// const) only so governor and outputschema tests can point it at a temp dir,
+// matching the knowledgeBaseDir pattern in pkg/knowledge/api.go.
+var AgentReportDir = defaultAgentReportDir
 
 type ReportKind string
 

@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +143,89 @@ func TestAddRetroGraphTriple(t *testing.T) {
 		_ = gs.Close()
 		api.addRetroGraphTriple("retro-lesson-ghi", RetroLesson{SourcePR: "org/repo#2"})
 	})
+}
+
+// TestWriteRetroLessonFileWritesFrontmatterAtomicallyAndTriggersReindex covers
+// the fallback persistence path used when no project-layer client is
+// configured: IngestRetroLesson falls through to writeRetroLessonFile, which
+// must write a frontmatter'd markdown file under knowledgeBaseDir/project via
+// atomic tmp+rename, and register/reindex a vault at that directory. Every
+// assertion here targets behavior writeRetroLessonFile itself is responsible
+// for — deleting the tmp+rename step, the frontmatter fields, or the
+// triggerVaultReindex call would each fail a distinct assertion below.
+func TestWriteRetroLessonFileWritesFrontmatterAtomicallyAndTriggersReindex(t *testing.T) {
+	base := withKnowledgeBaseDir(t)
+
+	api := NewKnowledgeAPI(nil, KnowledgeConfig{Enabled: true}, discardLogger())
+	lesson := RetroLesson{
+		Lesson:     "Run targeted validation before opening PRs when changes affect CI-sensitive code paths.",
+		SourceBead: "bead-1",
+		SourcePR:   "kubestellar/hive#42",
+	}
+
+	slug, created, err := api.IngestRetroLesson(context.Background(), lesson)
+	if err != nil || !created {
+		t.Fatalf("IngestRetroLesson() created=%v err=%v, want created=true err=nil", created, err)
+	}
+
+	dir := filepath.Join(base, "project")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+
+	// No leftover .tmp file: proves the write went through tmp+rename rather
+	// than a direct, non-atomic write.
+	var mdFiles []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("leftover tmp file %s: rename did not complete", e.Name())
+		}
+		if strings.HasSuffix(e.Name(), ".md") {
+			mdFiles = append(mdFiles, e.Name())
+		}
+	}
+	if len(mdFiles) != 1 {
+		t.Fatalf("found %d .md files in %s, want 1: %v", len(mdFiles), dir, mdFiles)
+	}
+	wantName := strings.ReplaceAll(slug+".md", "/", "_")
+	if mdFiles[0] != wantName {
+		t.Fatalf("file name = %q, want %q", mdFiles[0], wantName)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, mdFiles[0]))
+	if err != nil {
+		t.Fatalf("reading written file: %v", err)
+	}
+	content := string(raw)
+	for _, want := range []string{
+		"---\n",
+		"type: pattern\n",
+		"layer: project\n",
+		"confidence: 0.70\n",
+		"tags: [retro, lesson]\n",
+		"source: retro bead:bead-1 pr:kubestellar/hive#42\n",
+		lesson.Lesson,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("written file missing %q; got:\n%s", want, content)
+		}
+	}
+
+	// triggerVaultReindex must have registered a vault at dir, making the
+	// freshly written lesson discoverable without a process restart.
+	found := false
+	for _, v := range api.vaults {
+		if v.RootDir() == dir {
+			found = true
+			if _, err := v.ReadPage(strings.TrimSuffix(mdFiles[0], ".md")); err != nil {
+				t.Fatalf("reindexed vault cannot find the written lesson page: %v", err)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no vault registered at %s after write; reindex was not triggered", dir)
+	}
 }
 
 func TestRetroLessonTitle(t *testing.T) {

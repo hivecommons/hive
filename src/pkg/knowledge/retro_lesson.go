@@ -92,7 +92,7 @@ func ValidRetroLesson(lesson string) bool {
 }
 
 func (k *KnowledgeAPI) writeRetroLessonFile(slug string, fact ExtractedFact) error {
-	dir := filepath.Join(localKnowledgeDir, retroLessonLayer)
+	dir := filepath.Join(knowledgeBaseDir, retroLessonLayer)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating retro lesson dir: %w", err)
 	}
