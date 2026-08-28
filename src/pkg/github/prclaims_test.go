@@ -277,19 +277,40 @@ func TestFilterClaimedIssues(t *testing.T) {
 			wantRemaining:  []int{100},
 		},
 		{
-			// #3768 invariant preserved: an EXTERNAL claim (a contributor's PR)
-			// never suppresses agent work — only the contribute queue honours
-			// it. The hive-claim cases above are the positive control proving
-			// suppression still works when the claim IS hive-authored.
-			name:  "external claim never suppresses agent work",
+			// #4929: an EXTERNAL claim (a contributor's PR) now DEFERS agent
+			// work for the bounded window instead of being ignored outright,
+			// so an agent that cannot check for existing PRs is not handed
+			// work a live PR already covers.
+			name:  "external claim defers agent work inside the window",
 			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
 			claims: []IssueClaim{{
 				Repo: "spyre-inference", Issue: 100,
 				PRNumber: 900, PRRepo: "spyre-inference",
-				PRURL:          "https://github.com/torch-spyre/spyre-inference/pull/900",
-				PRAuthor:       "outside-dev",
-				ObservedAt:     time.Now(),
-				ExternalAuthor: true,
+				PRURL:           "https://github.com/torch-spyre/spyre-inference/pull/900",
+				PRAuthor:        "outside-dev",
+				ObservedAt:      time.Now(),
+				FirstObservedAt: time.Now(),
+				ExternalAuthor:  true,
+			}},
+			wantSuppressed: 1,
+			wantRemaining:  nil,
+		},
+		{
+			// #3768's invariant, now expressed as a BOUND rather than an
+			// absence: a stranger's PR delays the hive's own pipeline at most
+			// one window and can never freeze it. An adversary has to keep
+			// opening new PRs to extend the delay, which PR creation itself
+			// rate-limits.
+			name:  "external claim releases agent work past the window",
+			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
+			claims: []IssueClaim{{
+				Repo: "spyre-inference", Issue: 100,
+				PRNumber: 900, PRRepo: "spyre-inference",
+				PRURL:           "https://github.com/torch-spyre/spyre-inference/pull/900",
+				PRAuthor:        "outside-dev",
+				ObservedAt:      time.Now(),
+				FirstObservedAt: time.Now().Add(-weakClaimDeferWindow - time.Hour),
+				ExternalAuthor:  true,
 			}},
 			wantSuppressed: 0,
 			wantRemaining:  []int{100},

@@ -47,6 +47,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Fixed
 
+- An issue covered by an open PR that only *references* it (`Refs #N`, `Part of
+  #N`) is no longer immediately re-offered to agents. Such weak claims — along
+  with claims from externally-authored PRs — used to be ignored entirely on the
+  agent side, so the scanner could be handed an issue its own open PR already
+  addressed; because the hold-gated scanner policy forbids `gh pr list` and
+  makes the kick message its only source of truth, the agent could not discover
+  the existing PR and re-implemented the issue from scratch. Weak claims now
+  **defer** agent dispatch for 72h measured from when the claim was first
+  observed, then release the issue even while the PR stays open. Nothing is
+  frozen — a stranger's PR can delay the hive's own pipeline by at most one
+  window, a partially-addressed issue still comes back for its remainder, and a
+  red+stale claiming PR defers nothing. Claims that assert they *close* an issue
+  are unchanged. ([#4929](https://github.com/kubestellar/hive/issues/4929))
+
 - Pull requests from forks can now satisfy `v4`'s required `gate` status context. `gate` is a job in `docker.yml`, which triggered on `push` only — and a fork PR's push event fires in the contributor's repo, not here, so `gate` never attached to the head SHA this repo evaluates and branch protection blocked the merge waiting for a check that could not arrive. Six fully green contributor PRs (#4930, #4932, #4934, #4935, #4936, #4937) were structurally unmergeable; `gate` was verified absent on every one of their head SHAs. It went unnoticed because `enforce_admins` is false, so maintainers' own merges silently bypassed the same missing check — the required context was in practice unenforced for maintainers and absolutely enforced for outside contributors. `docker.yml` now also triggers on `pull_request`, with every image-build job skipped for that event, so the context attaches to fork PRs at the cost of one ~5-second shell job and no image CI: the image is already built and smoke-tested on every PR by `v2-ci.yml` (`docker`, `build-and-test`, `overlayfs-exec-guard`). Push builds and GHCR publishing are unchanged — `gate` reports `push=false` for a PR event, so every `merge*` job stays skipped ([#4965](https://github.com/kubestellar/hive/issues/4965)).
 
 - The canonical `blocked` workflow overlay now stays out of the contributor

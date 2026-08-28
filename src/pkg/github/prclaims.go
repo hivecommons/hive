@@ -38,6 +38,29 @@ const (
 	// without our noticing eventually releases the issue back for work.
 	claimLedgerTTL = 72 * time.Hour
 
+	// weakClaimDeferWindow bounds how long a WEAK claim — an external-authored
+	// PR (#3768) or a non-closing "Refs #N" reference (#3980) — defers agent
+	// dispatch of the issue it covers (kubestellar/hive#4929).
+	//
+	// Weak claims used to be ignored outright on the agent side, on the
+	// reasoning that a PR which never claimed to close the issue must not
+	// freeze work on the remainder, and that a stranger's PR must never freeze
+	// the hive's own pipeline. Both hold. What neither anticipated is an agent
+	// that CANNOT SEE the claiming PR: the scanner's hold-gated policy forbids
+	// `gh pr list`/`gh issue list` and makes the kick message its only source
+	// of truth, so an issue re-offered under a weak claim is not re-examined,
+	// it is re-implemented — and the same policy is what tells agents to write
+	// `Refs #N` for multi-phase work, so following the rules is what makes the
+	// claim invisible.
+	//
+	// The window is the bounded middle ground: within it a weak claim
+	// suppresses like any other, past it the issue releases even while the PR
+	// stays open. Nothing is ever frozen — an adversary must keep opening NEW
+	// PRs to extend the delay, which PR creation itself rate-limits — and
+	// partially-addressed issues still come back for their remainder. 72h
+	// matches claimLedgerTTL so the two bounds on a claim's influence agree.
+	weakClaimDeferWindow = 72 * time.Hour
+
 	// claimSearchPerPage is the page size used when listing open PRs per repo.
 	// 100 is the GitHub API maximum and matches the other paginated listers in
 	// this package.
@@ -79,14 +102,26 @@ type IssueClaim struct {
 	// ObservedAt is when this claim was last confirmed by a live API call.
 	// It is the basis for TTL expiry.
 	ObservedAt time.Time `json:"observed_at"`
+	// FirstObservedAt is when this PR was FIRST seen claiming this issue. It
+	// anchors the weak-claim deferral window (#4929), and is deliberately not
+	// refreshed the way ObservedAt is: the window must age across scans, or a
+	// claim re-confirmed every enumeration cycle would restart its own deadline
+	// forever and the "bounded" window would be a permanent freeze.
+	//
+	// Carried forward by Reconcile whenever the SAME PR is re-observed for the
+	// same issue; a different PR claiming the issue starts a fresh window,
+	// because that is genuinely new work to be deferred behind. Zero on ledgers
+	// written before this field existed, which readers normalize to ObservedAt.
+	FirstObservedAt time.Time `json:"first_observed_at,omitempty"`
 	// ExternalAuthor marks a claim whose PR was opened by an account that is
 	// NOT this hive (kubestellar/hive#3768). External claims exist so the
 	// contribute queue can stop offering an issue that a human contributor's
-	// open PR already fixes; they deliberately do NOT suppress agent work in
-	// FilterClaimedIssues, preserving the original guard's rule that a
-	// stranger's PR can never freeze the hive's own pipeline. The field is
-	// omitempty-false so ledgers written before #3768 — which only ever
-	// recorded hive-authored claims — unmarshal as hive-authored (false),
+	// open PR already fixes. On the agent side, FilterClaimedIssues treats this
+	// as a WEAK claim (kubestellar/hive#4929): it defers dispatch for a bounded
+	// window rather than either freezing it forever or ignoring it outright, so
+	// a stranger's PR still cannot permanently freeze the hive's own pipeline.
+	// The field is omitempty-false so ledgers written before #3768 — which only
+	// ever recorded hive-authored claims — unmarshal as hive-authored (false),
 	// keeping their agent-side suppression intact across the upgrade.
 	ExternalAuthor bool `json:"external_author,omitempty"`
 	// Reference marks a WEAK claim, recovered from a non-closing reference
@@ -100,10 +135,14 @@ type IssueClaim struct {
 	//
 	// Like ExternalAuthor, the field GRADES the claim rather than deciding for
 	// its consumers: the contribute queue honours reference claims (that is the
-	// loop being closed), while FilterClaimedIssues ignores them so agent work
-	// on a partially-addressed issue is never frozen behind a PR that never
-	// claimed to finish it. Also omitempty-false, so pre-#3980 ledgers unmarshal
-	// as strong claims and keep their existing suppression across the upgrade.
+	// loop being closed), while FilterClaimedIssues defers agent work behind
+	// them for a bounded window (kubestellar/hive#4929): long enough that an
+	// agent unable to see the claiming PR (the scanner's hold-gated policy
+	// forbids `gh pr list`) is not handed an issue its own open PR already
+	// covers, but bounded so a PR that never claimed to finish the issue does
+	// not permanently strand its remainder. Also omitempty-false, so pre-#3980
+	// ledgers unmarshal as strong claims and keep their existing suppression
+	// across the upgrade.
 	Reference bool `json:"reference,omitempty"`
 }
 
@@ -247,7 +286,8 @@ var referenceKeywords = []string{
 //
 // A false positive here costs one issue not being OFFERED to the contribute
 // queue while that PR stays open, and is released as soon as the PR closes.
-// It cannot suppress agent work — FilterClaimedIssues ignores reference claims.
+// On the agent side it can defer dispatch for up to weakClaimDeferWindow
+// (kubestellar/hive#4929) — never longer, and never while the PR is closed.
 var referenceRefPattern = regexp.MustCompile(
 	`(?i)\b(` + strings.Join(referenceKeywords, "|") + `)\b[^.\n#]{0,40}?(?:([\w.-]+/[\w.-]+))?#(\d+)`)
 
@@ -339,8 +379,8 @@ func (h HiveIdentity) IsZero() bool {
 // hive did not author are included and marked ExternalAuthor
 // (kubestellar/hive#3768): the contribute queue needs them to stop re-offering
 // an issue a human contributor's open PR already fixes, while
-// FilterClaimedIssues continues to honour only hive-authored claims for agent
-// work.
+// FilterClaimedIssues treats them as a WEAK claim that defers (but does not
+// permanently suppress) agent work (kubestellar/hive#4929).
 //
 // A per-repo API failure is reported via err but the successfully-scanned repos
 // are still returned, so the caller can merge partial results into the ledger
@@ -423,15 +463,16 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 
 				for _, ref := range refs {
 					claims = append(claims, IssueClaim{
-						Repo:           ref.Repo,
-						Issue:          ref.Issue,
-						PRNumber:       pr.GetNumber(),
-						PRRepo:         repo,
-						PRURL:          pr.GetHTMLURL(),
-						PRAuthor:       author,
-						ObservedAt:     now,
-						ExternalAuthor: external,
-						Reference:      reference,
+						Repo:            ref.Repo,
+						Issue:           ref.Issue,
+						PRNumber:        pr.GetNumber(),
+						PRRepo:          repo,
+						PRURL:           pr.GetHTMLURL(),
+						PRAuthor:        author,
+						ObservedAt:      now,
+						FirstObservedAt: now,
+						ExternalAuthor:  external,
+						Reference:       reference,
 					})
 				}
 			}
@@ -460,6 +501,9 @@ type ClaimLedger struct {
 	claims map[string]IssueClaim
 	// ttl bounds entry lifetime; overridable for tests.
 	ttl time.Duration
+	// weakDefer is how long a weak claim defers agent dispatch (#4929);
+	// overridable for tests.
+	weakDefer time.Duration
 	// now is the clock, overridable for tests.
 	now func() time.Time
 }
@@ -480,11 +524,12 @@ func NewClaimLedger(path string, logger *slog.Logger) *ClaimLedger {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	return &ClaimLedger{
-		path:   path,
-		logger: logger,
-		claims: make(map[string]IssueClaim),
-		ttl:    claimLedgerTTL,
-		now:    time.Now,
+		path:      path,
+		logger:    logger,
+		claims:    make(map[string]IssueClaim),
+		ttl:       claimLedgerTTL,
+		weakDefer: weakClaimDeferWindow,
+		now:       time.Now,
 	}
 }
 
@@ -514,9 +559,67 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		if c.ObservedAt.Before(cutoff) {
 			continue
 		}
+		// Ledgers written before FirstObservedAt existed carry a zero anchor.
+		// Normalizing to ObservedAt costs such a claim at most one extra
+		// window and keeps the field's invariant — always anchored once
+		// stored — true for every reader downstream.
+		if c.FirstObservedAt.IsZero() {
+			c.FirstObservedAt = c.ObservedAt
+		}
 		l.insertLocked(c)
 	}
 	return l, nil
+}
+
+// anchorFirstObservedLocked stamps c.FirstObservedAt, carrying the anchor
+// forward from prev when the SAME pull request was already claiming the SAME
+// issue. That carry-forward is the whole mechanism: Reconcile's authoritative
+// path REPLACES the claim map every enumeration cycle, so a claim that took its
+// anchor from the fresh scan would reset its deferral window on every pass and
+// the bound would never be reached.
+//
+// A different PR claiming the issue, or a first sighting, anchors at this
+// observation. Callers must hold l.mu.
+func (l *ClaimLedger) anchorFirstObservedLocked(prev map[string]IssueClaim, c IssueClaim) IssueClaim {
+	if existing, ok := prev[c.Key()]; ok &&
+		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo &&
+		!existing.FirstObservedAt.IsZero() {
+		c.FirstObservedAt = existing.FirstObservedAt
+		return c
+	}
+	if c.FirstObservedAt.IsZero() {
+		c.FirstObservedAt = c.ObservedAt
+	}
+	if c.FirstObservedAt.IsZero() {
+		c.FirstObservedAt = l.now()
+	}
+	return c
+}
+
+// weakDeferExpired reports whether a weak claim's deferral window has elapsed,
+// i.e. whether the issue should be released back for agent work despite the
+// claiming PR still being open. A claim with no usable anchor is treated as
+// NOT expired: an unanchored claim is one we just started tracking, and
+// defaulting to "expired" would make the very first cycle after an upgrade
+// re-offer everything the window exists to hold back.
+func (l *ClaimLedger) weakDeferExpired(c IssueClaim) bool {
+	if l == nil {
+		return true
+	}
+	l.mu.RLock()
+	window, now := l.weakDefer, l.now()
+	l.mu.RUnlock()
+	if window <= 0 {
+		return true
+	}
+	anchor := c.FirstObservedAt
+	if anchor.IsZero() {
+		anchor = c.ObservedAt
+	}
+	if anchor.IsZero() {
+		return false
+	}
+	return now.Sub(anchor) >= window
 }
 
 // insertLocked adds a claim to the map, resolving key collisions with
@@ -541,6 +644,18 @@ func (l *ClaimLedger) SetTTL(d time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.ttl = d
+}
+
+// SetWeakDeferWindow overrides how long a weak claim defers agent dispatch.
+// Intended for tests. A non-positive duration is ignored rather than treated as
+// "defer nothing", so a mis-set value cannot silently reopen #4929.
+func (l *ClaimLedger) SetWeakDeferWindow(d time.Duration) {
+	if l == nil || d <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.weakDefer = d
 }
 
 // SetClock overrides the ledger's time source. Intended for tests.
@@ -612,12 +727,15 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if authoritative {
+		// prev is read for deferral anchors only; the map itself is replaced,
+		// which is what drops claims whose PR closed.
+		prev := l.claims
 		l.claims = make(map[string]IssueClaim, len(live))
 		for _, c := range live {
 			if c.Issue <= 0 || c.Repo == "" {
 				continue
 			}
-			l.insertLocked(c)
+			l.insertLocked(l.anchorFirstObservedLocked(prev, c))
 		}
 		return
 	}
@@ -625,7 +743,7 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 		if c.Issue <= 0 || c.Repo == "" {
 			continue
 		}
-		l.insertLocked(c)
+		l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	}
 	l.pruneLocked()
 }
@@ -675,10 +793,15 @@ func (l *ClaimLedger) Save() error {
 // GENERIC: the predicate keys only off check state + commit staleness.
 type RedStaleFunc func(prRepo string, prNumber int) bool
 
-// FilterClaimedIssues removes from result every issue an open hive-authored PR
-// already claims to CLOSE, logging each suppression with the claiming PR's URL.
-// External claims (#3768) and weak reference claims (#3980) are both skipped
-// here and exist for the contribute queue, which consults the ledger directly.
+// FilterClaimedIssues removes from result every issue an open PR already claims,
+// logging each suppression with the claiming PR's URL.
+//
+// A claim that asserts it CLOSES the issue, from a PR this hive authored,
+// suppresses for as long as it stands. A WEAK claim — external authorship
+// (#3768) or a non-closing "Refs #N" reference (#3980) — suppresses only for
+// weakClaimDeferWindow from when it was first observed, then releases even
+// while the PR stays open (#4929). Weak claims used to be ignored here
+// entirely; see the branch below for why that stopped being safe.
 //
 // redStale (may be nil) is Fix #3's release valve: when it reports the claiming
 // PR is red+stale, the issue is NOT suppressed — it is kept actionable so a
@@ -699,25 +822,63 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			kept = append(kept, issue)
 			continue
 		}
-		// #3768: an EXTERNAL claim (a PR the hive did not author) never
-		// suppresses agent work — that is the guard's original rule, kept
-		// intact so a stranger's junk PR cannot freeze the hive's own
-		// pipeline. External claims exist for the contribute queue, which
-		// consults the ledger directly (dashboard selectTask).
-		if claim.ExternalAuthor {
-			kept = append(kept, issue)
-			continue
-		}
-		// #3980: a REFERENCE claim ("Refs #N") never suppresses agent work
-		// either. The claiming PR explicitly declined to say it closes the
-		// issue, so the issue is by definition not finished — freezing agent
-		// work behind it would strand exactly the partially-addressed issues
-		// this weak tier exists to notice. It still suppresses contribute
-		// dispatch, which consults the ledger directly (selectTask), because
-		// re-handing a contributor work its own open PR already covers is the
-		// waste #3980 reported.
-		if claim.Reference {
-			kept = append(kept, issue)
+		// A WEAK claim is one that does not assert it closes the issue: an
+		// EXTERNAL PR the hive did not author (#3768), or a non-closing
+		// "Refs #N" reference (#3980). Both used to be waved straight through
+		// here, on two rules that still hold — a stranger's junk PR must never
+		// freeze the hive's own pipeline, and a PR that never claimed to finish
+		// an issue must not strand the remainder behind it.
+		//
+		// What they missed is the agent that cannot look (#4929). The scanner's
+		// hold-gated policy forbids `gh pr list`/`gh issue list`, so an issue
+		// re-offered under a weak claim is not re-examined against the open PR,
+		// it is re-implemented from scratch — twice on one issue, two days
+		// apart, in the report that prompted this. Waving the issue through
+		// only avoids stranding when someone downstream can SEE the claim.
+		//
+		// So weak claims now DEFER rather than either freeze or vanish: they
+		// suppress for weakClaimDeferWindow measured from when the PR was first
+		// seen claiming the issue, then release even while it stays open. Both
+		// original rules survive in bounded form.
+		if claim.ExternalAuthor || claim.Reference {
+			// The red+stale valve applies BEFORE the window: a dead PR defers
+			// nothing, which keeps an abandoned weak claim from costing the
+			// issue three days.
+			if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+				kept = append(kept, issue)
+				continue
+			}
+			if ledger.weakDeferExpired(claim) {
+				kept = append(kept, issue)
+				if logger != nil {
+					logger.Info("releasing issue: weak claim past its deferral window",
+						"repo", issue.Repo,
+						"issue", issue.Number,
+						"claimed_by_pr", claim.PRNumber,
+						"pr_repo", claim.PRRepo,
+						"pr_url", claim.PRURL,
+						"external", claim.ExternalAuthor,
+						"reference", claim.Reference,
+						"first_observed", claim.FirstObservedAt,
+					)
+				}
+				continue
+			}
+			suppressed++
+			if logger != nil {
+				logger.Info("deferring issue: open PR weakly claims it",
+					"repo", issue.Repo,
+					"issue", issue.Number,
+					"issue_title", issue.Title,
+					"claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo,
+					"pr_url", claim.PRURL,
+					"pr_author", claim.PRAuthor,
+					"external", claim.ExternalAuthor,
+					"reference", claim.Reference,
+					"first_observed", claim.FirstObservedAt,
+				)
+			}
 			continue
 		}
 		// Fix #3: release (do NOT suppress) when the claiming PR is red on a

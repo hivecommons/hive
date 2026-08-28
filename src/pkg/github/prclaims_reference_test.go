@@ -213,32 +213,58 @@ func TestFetchClaimsReferenceTier(t *testing.T) {
 	}
 }
 
-// TestFilterClaimedIssuesIgnoresReferenceClaims: a reference claim must never
-// suppress AGENT work. The claiming PR explicitly declined to say it closes the
-// issue, so freezing agents behind it would strand exactly the
-// partially-addressed issues this weak tier exists to notice.
-func TestFilterClaimedIssuesIgnoresReferenceClaims(t *testing.T) {
-	result := &ActionableResult{}
-	result.Issues.Items = []Issue{
-		{Repo: "kubestellar/hive", Number: 3498, Title: "referenced, not closed"},
-		{Repo: "kubestellar/hive", Number: 3499, Title: "genuinely claimed"},
+// TestFilterClaimedIssuesDefersReferenceClaims: a reference claim DEFERS agent
+// work rather than either freezing it or vanishing.
+//
+// This test previously asserted that a reference claim never suppresses agent
+// work at all, on the reasoning that a PR which declined to say it closes the
+// issue must not strand the remainder behind it. #4929 showed the hole in that:
+// the scanner cannot run `gh pr list` under its hold-gated policy, so an issue
+// handed back under a reference claim is not re-examined against the open PR,
+// it is re-implemented. The invariant that reasoning protected — agents are
+// never frozen behind a weak claim — is now asserted as the RELEASE half below,
+// which is a stronger statement than the old "never suppresses": it pins the
+// bound instead of merely observing an absence.
+func TestFilterClaimedIssuesDefersReferenceClaims(t *testing.T) {
+	build := func() (*ActionableResult, *ClaimLedger) {
+		result := &ActionableResult{}
+		result.Issues.Items = []Issue{
+			{Repo: "kubestellar/hive", Number: 3498, Title: "referenced, not closed"},
+			{Repo: "kubestellar/hive", Number: 3499, Title: "genuinely claimed"},
+		}
+		result.Issues.Count = 2
+
+		l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+		l.Reconcile([]IssueClaim{
+			{Repo: "kubestellar/hive", Issue: 3498, PRNumber: 3898, PRRepo: "kubestellar/hive",
+				PRAuthor: "clubanderson", ObservedAt: time.Now(), Reference: true},
+			{Repo: "kubestellar/hive", Issue: 3499, PRNumber: 3899, PRRepo: "kubestellar/hive",
+				PRAuthor: "clubanderson", ObservedAt: time.Now()},
+		}, true)
+		return result, l
 	}
-	result.Issues.Count = 2
 
-	l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
-	l.Reconcile([]IssueClaim{
-		{Repo: "kubestellar/hive", Issue: 3498, PRNumber: 3898, PRRepo: "kubestellar/hive",
-			PRAuthor: "clubanderson", ObservedAt: time.Now(), Reference: true},
-		{Repo: "kubestellar/hive", Issue: 3499, PRNumber: 3899, PRRepo: "kubestellar/hive",
-			PRAuthor: "clubanderson", ObservedAt: time.Now()},
-	}, true)
+	// Inside the window: both the closing claim and the reference claim
+	// suppress. This is the #4929 fix — the reference-claimed issue is not
+	// handed back to a scanner that cannot see the PR covering it.
+	result, l := build()
+	if suppressed := FilterClaimedIssues(result, l, nil, testLogger()); suppressed != 2 {
+		t.Fatalf("inside the window: suppressed = %d, want 2 (closing + reference)", suppressed)
+	}
+	if len(result.Issues.Items) != 0 {
+		t.Fatalf("inside the window both issues must be withheld, got %+v", result.Issues.Items)
+	}
 
-	suppressed := FilterClaimedIssues(result, l, nil, testLogger())
-	if suppressed != 1 {
-		t.Fatalf("suppressed = %d, want 1 (only the closing claim)", suppressed)
+	// Past the window: the reference claim releases its issue even though the
+	// PR is still open, while the closing claim keeps suppressing. Nothing is
+	// frozen; the remainder of a partially-addressed issue comes back for work.
+	result, l = build()
+	l.SetClock(func() time.Time { return time.Now().Add(weakClaimDeferWindow + time.Hour) })
+	if suppressed := FilterClaimedIssues(result, l, nil, testLogger()); suppressed != 1 {
+		t.Fatalf("past the window: suppressed = %d, want 1 (the closing claim only)", suppressed)
 	}
 	if len(result.Issues.Items) != 1 || result.Issues.Items[0].Number != 3498 {
-		t.Fatalf("reference-claimed issue must stay actionable for agents, got %+v", result.Issues.Items)
+		t.Fatalf("past the window the reference-claimed issue must return, got %+v", result.Issues.Items)
 	}
 }
 
