@@ -48,6 +48,29 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Security
 
+- Contributor-local confinement now extends to every remaining backend, closing
+  the rest of the gap #5011 opened for claude/litellm only. `copilot` local
+  launches now use Copilot CLI's own OS-enforced `--sandbox` (Seatbelt on
+  macOS, bubblewrap on Linux — same class of boundary as Claude's), gated on
+  the installed CLI actually supporting the flag and falling back with a loud
+  warning (or `HIVE_COPILOT_DANGEROUSLY_BYPASS_SANDBOX=1`) if it does not.
+  `opencode` local launches gain a host-state command deny-list via its own
+  `permission.bash` config — the same command family the claude deny-list
+  covers, honestly documented as a floor and not a filesystem boundary, since
+  opencode has no OS sandbox of its own. `goose`, `agy`, `bob`, `pi`, and
+  `aider` have **no sandbox, filesystem allowlist, or command deny-list this
+  repo can wire at all** (verified against each CLI's own current
+  documentation) — `just contribute-hive <backend> local` for these five now
+  **refuses to launch** with a plain explanation of what's missing, unless the
+  operator sets that backend's own `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1`
+  escape hatch. The local-mode launch banner now distinguishes three postures
+  (sandboxed / denylisted-only / unconfined) instead of two, so it never calls
+  a command-deny floor a "confinement" it is not. Container mode remains the
+  backend-independent default for all of them. See
+  [docs/sandbox-isolation.md](src/docs/sandbox-isolation.md#per-backend-confinement-on-the-contributor-local-path)
+  for the full per-backend matrix
+  ([#4918](https://github.com/kubestellar/hive/issues/4918)).
+
 - Claude-family contributor agents are now write-confined even when explicitly
   launched in host-local mode. `just contribute-hive <claude|litellm> local`
   enables Claude Code's native OS sandbox, fails startup if that sandbox is

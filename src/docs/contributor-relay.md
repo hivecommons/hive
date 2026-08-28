@@ -77,6 +77,13 @@ Important environment variables:
 | `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. Set it to the **empty string** to omit the `-c approvals_reviewer=` key entirely — the escape hatch if a Codex release rejects that config key at startup. Doing so keeps the sandbox posture; it is not the same as the dangerous bypass. |
 | `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | unset | Drops the defense-in-depth Claude command denylist. In local mode the native filesystem sandbox still applies, so this does not grant host writes. |
 | `HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX` | unset | Restores the pre-#4918 unconfined Claude/LiteLLM local posture. Use only on a disposable or externally sandboxed host. |
+| `HIVE_COPILOT_DANGEROUSLY_BYPASS_SANDBOX` | unset | Restores the unconfined Copilot local posture. Also the automatic fallback (with a warning) when the installed `copilot` CLI predates `--sandbox` (copilot-cli < 1.0.60). |
+| `HIVE_OPENCODE_DANGEROUSLY_ALLOW_HOST_STATE` | unset | Drops opencode's host-state command deny-list (`permission.bash`). opencode has no filesystem sandbox to fall back to either way — this only removes the command-name floor. |
+| `HIVE_GOOSE_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive goose local` to launch at all. goose has no sandbox, filesystem allowlist, or command deny-list hive can wire; local mode refuses to launch without this. |
+| `HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive agy local` to launch at all. Same reasoning as goose above — agy's execution modes govern approval only, not filesystem confinement. |
+| `HIVE_BOB_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive bob local` to launch at all. Bob Shell documents no sandbox or path-restriction mechanism of any kind. |
+| `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive pi local` to launch at all. pi ships with no sandbox by default; directory confinement exists only via a third-party extension hive does not depend on. |
+| `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive aider local` to launch at all. aider has no sandbox or OS isolation option of any kind. |
 
 ### Where each backend reads its instructions
 
@@ -135,11 +142,19 @@ loudly named `HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1` restores
 the old unconfined local posture for an externally isolated/disposable host.
 
 `just contribute-hive` still defaults to **container** mode, the stronger
-backend-independent boundary. In local mode Claude/LiteLLM now use the native
-sandbox and Codex retains `workspace-write`; other backends remain unconfined
-and the launch banner says so. The `agent_sandbox` Podman path documented in
-[sandbox-isolation.md](sandbox-isolation.md) remains **hub-side only** — nothing
-on the contributor path reads it.
+backend-independent boundary. In local mode: Claude/LiteLLM and Codex use
+their own OS-enforced sandboxes; Copilot now uses its own `--sandbox` (also
+OS-enforced — Seatbelt/bubblewrap/ProcessContainer depending on platform),
+gated on the installed CLI actually supporting the flag; opencode gets a
+command-name deny-list via its own `permission.bash` config (a floor, not a
+filesystem boundary — opencode has no OS sandbox); goose, agy, bob, pi, and
+aider have no confinement mechanism this repo can wire at all, and local mode
+for them **refuses to launch** unless the operator sets that backend's own
+`HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1`. See
+[sandbox-isolation.md](sandbox-isolation.md)'s per-backend confinement matrix
+for the authoritative, up-to-date state. The `agent_sandbox` Podman path
+documented there remains **hub-side only** — nothing on the contributor path
+reads it.
 
 Codex config-key compatibility: `approvals_reviewer` is passed with `-c`, so it
 depends on the installed Codex release accepting that key. If a version rejects

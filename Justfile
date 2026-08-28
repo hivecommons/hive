@@ -808,49 +808,97 @@ contribute-hive backend="" mode="docker": check-version
       _local_truthy() {
         case "${1:-}" in 1|true|TRUE|yes|YES|on|ON) return 0 ;; *) return 1 ;; esac
       }
-      _LOCAL_WRITE_CONFINED=false
+      # Three postures, not two — an operator reading this banner needs to
+      # know which one they're actually getting:
+      #   sandboxed   — an OS-enforced filesystem boundary (claude/litellm's
+      #                 native sandbox, codex/copilot's own sandbox modes)
+      #   denylisted  — a command-name floor with NO filesystem boundary
+      #                 (opencode's permission.bash denials); real, but not a
+      #                 sandbox, and saying "confined" here would be exactly
+      #                 the overclaim #4918 is about
+      #   unconfined  — nothing at all unless the operator opted in
+      _LOCAL_POSTURE="unconfined"
       case "$BACKEND" in
         claude|litellm)
           if ! _local_truthy "${HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX:-}"; then
-            _LOCAL_WRITE_CONFINED=true
+            _LOCAL_POSTURE="sandboxed"
           fi
           ;;
         codex)
           if ! _local_truthy "${HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX:-}"; then
-            _LOCAL_WRITE_CONFINED=true
+            _LOCAL_POSTURE="sandboxed"
+          fi
+          ;;
+        copilot)
+          if ! _local_truthy "${HIVE_COPILOT_DANGEROUSLY_BYPASS_SANDBOX:-}" \
+              && copilot --help 2>&1 | grep -qe '--sandbox'; then
+            _LOCAL_POSTURE="sandboxed"
+          fi
+          ;;
+        opencode)
+          if ! _local_truthy "${HIVE_OPENCODE_DANGEROUSLY_ALLOW_HOST_STATE:-}" \
+              && command -v jq >/dev/null 2>&1; then
+            _LOCAL_POSTURE="denylisted"
           fi
           ;;
       esac
-      if [[ "$_LOCAL_WRITE_CONFINED" == "true" ]]; then
-        echo "🔒 LOCAL MODE — workspace write confinement is enabled for ${BACKEND}."
-        echo ""
-        echo "    The CLI still runs as $(id -un) on this machine, but commands and"
-        echo "    file edits may write only under the agent state directory and"
-        echo "    ${HIVE_WORKSPACE_DIR:-$HOME/workspace}."
-        if [[ "$BACKEND" == "claude" || "$BACKEND" == "litellm" ]]; then
-          echo "    Claude's native sandbox is mandatory: startup fails rather than"
-          echo "    falling back unconfined when its OS sandbox is unavailable."
-        fi
-        echo ""
-        echo "    Container mode remains the stronger backend-independent boundary:"
-        echo "      just contribute-hive ${BACKEND}"
-        echo ""
-      else
-        echo "⚠️  LOCAL MODE — the agent is NOT confined to a workspace."
-        echo ""
-        echo "    The backend CLI runs as $(id -un) on this machine, with permission"
-        echo "    prompts bypassed. It can read and write anything your user can,"
-        echo "    including files outside ${HIVE_WORKSPACE_DIR:-$HOME/workspace}."
-        echo "    Assigned repos are third-party code and their test suites run for real."
-        echo ""
-        echo "    Still constrained: supported host-state commands are denied, and no"
-        echo "    agent receives a GitHub token or pushes directly."
-        echo "    NOT constrained: everything else your user can reach."
-        echo ""
-        echo "    For a confined agent, drop 'local' and use container mode:"
-        echo "      just contribute-hive ${BACKEND}"
-        echo ""
-      fi
+      case "$_LOCAL_POSTURE" in
+        sandboxed)
+          echo "🔒 LOCAL MODE — workspace write confinement is enabled for ${BACKEND}."
+          echo ""
+          echo "    The CLI still runs as $(id -un) on this machine, but commands and"
+          echo "    file edits may write only under the agent state directory and"
+          echo "    ${HIVE_WORKSPACE_DIR:-$HOME/workspace}."
+          if [[ "$BACKEND" == "claude" || "$BACKEND" == "litellm" ]]; then
+            echo "    Claude's native sandbox is mandatory: startup fails rather than"
+            echo "    falling back unconfined when its OS sandbox is unavailable."
+          elif [[ "$BACKEND" == "copilot" ]]; then
+            echo "    Copilot's own --sandbox flag (OS-enforced: Seatbelt on macOS,"
+            echo "    bubblewrap on Linux) provides the boundary."
+          fi
+          echo ""
+          echo "    Container mode remains the stronger backend-independent boundary:"
+          echo "      just contribute-hive ${BACKEND}"
+          echo ""
+          ;;
+        denylisted)
+          echo "🟡 LOCAL MODE — ${BACKEND} is NOT filesystem-confined, but named"
+          echo "    host-state commands are denied."
+          echo ""
+          echo "    opencode has no OS sandbox and no filesystem write-allowlist. The"
+          echo "    same command family the claude deny-list covers (sudo, pkexec,"
+          echo "    rpm-ostree, bootc, ...) is denied via opencode's own permission"
+          echo "    config, but this is a command-name floor, not a boundary: anything"
+          echo "    not on that list, and anything reached another way, is unconstrained."
+          echo ""
+          echo "    Container mode remains the stronger backend-independent boundary:"
+          echo "      just contribute-hive ${BACKEND}"
+          echo ""
+          ;;
+        *)
+          echo "⚠️  LOCAL MODE — the agent is NOT confined to a workspace."
+          echo ""
+          echo "    The backend CLI runs as $(id -un) on this machine, with permission"
+          echo "    prompts bypassed. It can read and write anything your user can,"
+          echo "    including files outside ${HIVE_WORKSPACE_DIR:-$HOME/workspace}."
+          echo "    Assigned repos are third-party code and their test suites run for real."
+          echo ""
+          if [[ "$BACKEND" == "claude" || "$BACKEND" == "litellm" || "$BACKEND" == "codex" || "$BACKEND" == "copilot" ]]; then
+            echo "    Still constrained: supported host-state commands are denied, and no"
+            echo "    agent receives a GitHub token or pushes directly."
+            echo "    NOT constrained: everything else your user can reach."
+          else
+            echo "    ${BACKEND} has no sandbox, filesystem allowlist, or command deny-list"
+            echo "    hive can wire on this path — nothing stands between the agent and"
+            echo "    anything your user can reach. No agent receives a GitHub token or"
+            echo "    pushes directly, but that is the only guardrail left."
+          fi
+          echo ""
+          echo "    For a confined agent, drop 'local' and use container mode:"
+          echo "      just contribute-hive ${BACKEND}"
+          echo ""
+          ;;
+      esac
       TMUX_SESSION="hive-${BACKEND}-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
       SCRIPT_DIR="$(pwd)/bin"
       RELAY="${SCRIPT_DIR}/contributor-relay.sh"
@@ -912,6 +960,24 @@ contribute-hive backend="" mode="docker": check-version
       case "$BACKEND" in
         claude|litellm)
           PERM_FLAG=$(claude_family_local_perm_flag_shell)
+          ;;
+        copilot)
+          PERM_FLAG=$(copilot_local_perm_flag_shell)
+          ;;
+        opencode)
+          PERM_FLAG=$(opencode_local_perm_flag_shell)
+          ;;
+        codex)
+          PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
+          ;;
+        goose|agy|bob|pi|aider)
+          # No sandbox, filesystem allowlist, or command deny-list exists for
+          # any of these five (see the "no confinement mechanism at all"
+          # block in backends.conf) — refuse to launch unconfined by
+          # default rather than silently grant full host access (#4918).
+          if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then
+            exit 1
+          fi
           ;;
         *)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
