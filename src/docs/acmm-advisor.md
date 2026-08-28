@@ -12,7 +12,7 @@ The advisor evaluates a fixed set of six signals (`Signals` struct, `src/pkg/acm
 |---|---|
 | `CurrentLevel` | The ACMM level the hive is applying right now (1–6). |
 | `CoveragePct` | Current test-coverage percentage (0–100). |
-| `GreenStreak` | Count of consecutive green CI runs with no red. |
+| `GreenStreak` | Count of consecutive green CI runs with no red. **Not yet measured — always zero.** See below. |
 | `MergeSuccessRate` | Fraction (0.0–1.0) of recent PRs that merged cleanly. |
 | `ActionableIssues` | Count of open actionable issues the hive has surfaced but not yet resolved. |
 | `HoldCount` | Count of open PRs still carrying a `hold` label awaiting human review. |
@@ -64,7 +64,7 @@ A recommendation (`Recommendation` struct, `src/pkg/acmmadvisor/acmmadvisor.go:1
 - **It is a pure function with no I/O.** `Recommend` and `RecommendFromStatus` take already-collected signals and return a value; they do not read config, call GitHub, or touch the clock (`src/pkg/acmmadvisor/wire.go:1-12`).
 - **It is not currently rendered anywhere in the dashboard UI.** As of this writing there are no references to `acmm-recommendation` or the advisor under `src/dashboard`. The only way to obtain a recommendation today is to call the API endpoint directly (see below); there is no dashboard pill, tab, or card that displays it. A `TODO(acmm2-wiring)` comment in `src/pkg/acmmadvisor/wire.go` describes wiring `RecommendFromStatus` into the status payload as still-outstanding follow-up work — treat any documentation or issue text implying the dashboard already surfaces a recommendation pill as **not yet true**.
 - **Thresholds are not configurable.** All coverage/streak/rate/backlog numbers are Go constants in `pkg/acmmadvisor`; there is no `hive.yaml` field or environment variable to adjust them.
-- **`GreenStreak` is not really measured yet.** It is always reported as zero because the hive does not track a real green-CI streak signal. Any criterion gated on the streak thresholds (L3 and above) will only pass once that wiring lands.
+- **`GreenStreak` is not measured yet, and its zero is deliberate rather than a bug.** The hive does not track a real green-CI streak, and the code refuses to fabricate one. Because a zero streak can only ever *withhold* a recommendation, the advisor stays conservative rather than proposing a raise on a fabricated signal — the safe direction to fail in. The practical effect is that any criterion gated on streak thresholds (L3 and above) will not pass until that wiring lands, so the advisor currently under-recommends rather than over-recommends.
 
 ## The API endpoint
 
