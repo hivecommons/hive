@@ -144,6 +144,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/packs/level` | Dashboard auth/session | Pack Set Level | `pkg/dashboard/api.go:167` |
 | `GET` | `/api/acmm/evaluation` | Dashboard auth/session | ACMMEvaluation | `pkg/dashboard/api.go:169` |
 | `POST` | `/api/acmm/issue` | Dashboard auth/session | ACMMCreate Issue | `pkg/dashboard/api.go:170` |
+| `GET` | `/api/acmm-recommendation` | Dashboard auth/session | Advisory level-up recommendation (`acmmadvisor.Recommendation`, JSON): never changes the applied level — see [ACMM advisor](acmm-advisor.md) | `pkg/dashboard/api.go:230` |
 
 ## Cost, tokens, telemetry
 

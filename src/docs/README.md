@@ -64,6 +64,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Strategy Lab (Nous)](https://github.com/kubestellar/hive/blob/v4/src/docs/strategy-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
 - [GitHub App setup](https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md) — the Forge App on GitHub and GitHub Enterprise: app creation, permissions, Setup URL, and `/gh-setup`.
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
+- [ACMM level-up advisor](acmm-advisor.md) — the advisory-only `pkg/acmmadvisor` computation behind `GET /api/acmm-recommendation`: the signals it measures, per-level thresholds, and why it never changes the applied level.
 - [Inception](https://github.com/kubestellar/hive/blob/v4/src/docs/inception.md) — operator guide to the L1 brainstorm/inception workflow: phases, API, and template variables.
 - [Planning intelligence](planning-intelligence.md) — how a large GitHub issue becomes an epic the architect lane decomposes into child beads, the human plan-review gate that withholds those children until approved, and stall-replan.
 - [Review swarm](review-swarm.md) — the five review perspectives, the verdict collector and its report contract, and the opt-in merge-gate integration and bounded auto-fix cycle for review findings.

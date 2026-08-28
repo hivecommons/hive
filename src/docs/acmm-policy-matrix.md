@@ -149,3 +149,13 @@ Notes:
 - On a hosted hive the level can also be hub/admin-managed; the ConfigMap seed is
   authoritative for `acmm_level` on those (see the operator reference on config
   precedence).
+
+## Automated level-up guidance
+
+A separate, advisory-only computation — the ACMM advisor (`pkg/acmmadvisor`) —
+can tell you whether a hive has earned progression to the next level, based on
+test coverage, green-CI streak, merge success rate, and backlog/hold signals.
+It never changes the applied level itself; changing the level is always the
+manual process described above. See the [ACMM advisor](acmm-advisor.md) page
+for the exact thresholds per target level and what the `GET
+/api/acmm-recommendation` endpoint returns.
