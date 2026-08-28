@@ -4639,6 +4639,14 @@ func IsInferenceBackend(backend string) bool {
 // KNOWN_BACKENDS, so omitting it here reproduced exactly the accept-in-one-
 // place drift this list exists to prevent — except inverted: valid in the
 // shell config, rejected by the hub.
+//
+// TestShellAndGoCLIBackendListsAgree (backend_list_parity_test.go) asserts
+// this list against config/backends.conf's KNOWN_BACKENDS, with a closed,
+// commented set of exceptions (cliBackendExceptions in that file) for the two
+// names — litellm, gemini — that are known to belong on only one side. Adding
+// a backend here without also updating the shell side (or, if it genuinely
+// belongs on only one side, documenting why in cliBackendExceptions) fails
+// that test.
 var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy"}
 
 // IsCLIBackend returns true if the backend launches an agentic CLI binary.
