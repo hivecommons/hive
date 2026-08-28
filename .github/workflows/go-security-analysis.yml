@@ -28,10 +28,10 @@ name: Go Security Analysis
 on:
   push:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/go-security-analysis.yml', '.github/release-lines.yml']
+    paths: ['src/**', '.github/workflows/**', '.github/release-lines.yml']
   pull_request:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/go-security-analysis.yml', '.github/release-lines.yml']
+    paths: ['src/**', '.github/workflows/**', '.github/release-lines.yml']
   schedule:
     # Weekly, so a newly-PUBLISHED advisory against unchanged code is still
     # found. A push-only trigger cannot catch that: the vulnerability appears
@@ -123,3 +123,18 @@ jobs:
         with:
           version: v2.13.1
           working-directory: src
+
+  action-pins:
+    name: action pins resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A fabricated 40-hex SHA looks exactly like a correct pin and is only
+      # caught when the workflow RUNS. release.yml shipped one (#4908), so every
+      # tagged release failed at "Prepare all required actions" — discovered
+      # only when someone tried to cut a release.
+      - name: Check every pinned action SHA exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: src/scripts/check-action-pins.sh .github/workflows

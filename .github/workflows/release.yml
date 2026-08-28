@@ -212,7 +212,7 @@ jobs:
       # AND in the generated release notes rather than silently shipping one
       # file and implying full multi-arch coverage.
       - name: Generate per-image SBOMs (SPDX JSON, Syft, linux/amd64)
-        uses: anchore/sbom-action@f4dccdb4d47756825f4cc0c65181bd67e19eb70a # v0.20.9
+        uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
         with:
           image: ghcr.io/kubestellar/hive:v${{ env.VERSION }}
           output-file: hive-v${{ env.VERSION }}-sbom.spdx.json
@@ -220,7 +220,7 @@ jobs:
           artifact-name: "" # do not also attach to a GH Actions run artifact; the release upload below is the distribution point
 
       - name: Generate contributor image SBOM
-        uses: anchore/sbom-action@f4dccdb4d47756825f4cc0c65181bd67e19eb70a # v0.20.9
+        uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
         with:
           image: ghcr.io/kubestellar/hive-contributor:v${{ env.VERSION }}
           output-file: hive-contributor-v${{ env.VERSION }}-sbom.spdx.json
@@ -228,7 +228,7 @@ jobs:
           artifact-name: ""
 
       - name: Generate hub image SBOM
-        uses: anchore/sbom-action@f4dccdb4d47756825f4cc0c65181bd67e19eb70a # v0.20.9
+        uses: anchore/sbom-action@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
         with:
           image: ghcr.io/kubestellar/hive-hub:v${{ env.VERSION }}
           output-file: hive-hub-v${{ env.VERSION }}-sbom.spdx.json
