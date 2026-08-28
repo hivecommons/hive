@@ -194,7 +194,10 @@ func registeredDashboardRoutes(t *testing.T) map[string]bool {
 	routes := make(map[string]bool)
 	var unresolved []string
 
-	resolveString := func(e ast.Expr) (string, bool) {
+	// Declared before assignment so the BinaryExpr case can recurse into
+	// itself: a closure bound with := is not in scope inside its own body.
+	var resolveString func(e ast.Expr) (string, bool)
+	resolveString = func(e ast.Expr) (string, bool) {
 		switch v := e.(type) {
 		case *ast.BasicLit:
 			if v.Kind != token.STRING {
