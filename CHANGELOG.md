@@ -81,6 +81,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
   so the overlay stays secret-free. The
   documented `api_key: ${LINEAR_API_KEY}` form works from both `hive.yaml`
   and the dashboard.
+- PRs the hive opens are now based on the **target repository's default
+  branch** instead of a hardcoded `main`. Every PR the App filed on a repo
+  whose default branch is something else (e.g. `testing`) was opened against
+  `main`, so its diff carried the entire divergence between the two branches —
+  one reported PR showed 233 changed files and ~260k changed lines for a
+  one-file change, large enough that GitHub's diff API refused to serve it —
+  and merging it would have landed the change on the wrong branch. The base is
+  now resolved from the repo's own `default_branch` metadata (already covered
+  by the App's metadata:read permission, cached per repo), `hive-open-pr` no
+  longer pins `--base main` when the caller omits it, and sandbox kicks branch
+  from the default branch recorded in their own clone. An explicitly requested
+  base is still honored. Unlike an earlier draft of this fix, an unresolvable
+  repo does **not** fall back to guessing `main` — it fails the PR request (or
+  the sandbox kick) outright, with the reason surfaced in the retry/quarantine
+  log, because a wrong base is worse than a delayed PR
+  ([#4928](https://github.com/kubestellar/hive/issues/4928)).
+
 - Pull requests from forks can now satisfy `v4`'s required `gate` status context. `gate` is a job in `docker.yml`, which triggered on `push` only — and a fork PR's push event fires in the contributor's repo, not here, so `gate` never attached to the head SHA this repo evaluates and branch protection blocked the merge waiting for a check that could not arrive. Six fully green contributor PRs (#4930, #4932, #4934, #4935, #4936, #4937) were structurally unmergeable; `gate` was verified absent on every one of their head SHAs. It went unnoticed because `enforce_admins` is false, so maintainers' own merges silently bypassed the same missing check — the required context was in practice unenforced for maintainers and absolutely enforced for outside contributors. `docker.yml` now also triggers on `pull_request`, with every image-build job skipped for that event, so the context attaches to fork PRs at the cost of one ~5-second shell job and no image CI: the image is already built and smoke-tested on every PR by `v2-ci.yml` (`docker`, `build-and-test`, `overlayfs-exec-guard`). Push builds and GHCR publishing are unchanged — `gate` reports `push=false` for a PR event, so every `merge*` job stays skipped ([#4965](https://github.com/kubestellar/hive/issues/4965)).
 
 - The canonical `blocked` workflow overlay now stays out of the contributor

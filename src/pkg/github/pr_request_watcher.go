@@ -37,8 +37,12 @@ func prRequestDir() string {
 var prRequestPollInterval = 10 * time.Second
 
 // PRRequest is the JSON an agent writes to PRRequestDir to ask the hive to open
-// a PR on its behalf. Repo may be "owner/repo" or a bare repo name; Base
-// defaults to "main".
+// a PR on its behalf. Repo may be "owner/repo" or a bare repo name. Base is
+// optional and normally omitted: an empty Base means "resolve the target
+// repository's default branch" (CreatePR does this from the repo's own
+// metadata, and FAILS THE REQUEST rather than guessing "main" if it can't) —
+// set it only to target a non-default branch on purpose
+// (kubestellar/hive#4928).
 type PRRequest struct {
 	Repo   string `json:"repo"`
 	Head   string `json:"head"`

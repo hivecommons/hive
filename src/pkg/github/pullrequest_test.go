@@ -81,6 +81,10 @@ func TestCreatePR_WhitespaceOnlyTitle(t *testing.T) {
 func TestCreatePR_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		// DefaultBranch: GET /repos/org/repo
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/repos/org/repo"):
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"name": "repo", "default_branch": "main"})
 		// findOpenPRForHead: GET /repos/org/repo/pulls?head=org:feature&state=open
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
 			w.Header().Set("Content-Type", "application/json")
@@ -123,10 +127,19 @@ func TestCreatePR_Success(t *testing.T) {
 	}
 }
 
-func TestCreatePR_DefaultBaseToMain(t *testing.T) {
+// TestCreatePR_EmptyBaseResolvesRepoDefault replaces the old
+// TestCreatePR_DefaultBaseToMain: an empty base is no longer assumed to be
+// "main", it is resolved from the repository's own default_branch metadata.
+// This fixture's default happens to be "main" (the resolution path is what is
+// under test here); kubestellar/hive#4928's actual regression coverage —
+// a non-"main" default reaching the PR — lives in pullrequest_base_test.go.
+func TestCreatePR_EmptyBaseResolvesRepoDefault(t *testing.T) {
 	var receivedBase string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/repos/org/repo"):
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"name": "repo", "default_branch": "main"})
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode([]any{})

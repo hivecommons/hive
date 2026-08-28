@@ -24,6 +24,11 @@ type sandboxFakeRunner struct {
 	commits  int
 	cloneDir string
 	revParse int
+	// defaultBranch is what `git symbolic-ref --short refs/remotes/origin/HEAD`
+	// reports for the clone; tests that don't care about default-branch
+	// resolution leave it at the zero value, which resolves to "main" below so
+	// existing fetch/checkout expectations keep working unchanged.
+	defaultBranch string
 }
 
 func (r *sandboxFakeRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
@@ -43,6 +48,12 @@ func (r *sandboxFakeRunner) Run(ctx context.Context, dir string, env []string, n
 			return nil, err
 		}
 		return nil, os.WriteFile(filepath.Join(workspace, ".git", "config"), []byte("[remote]\nurl = "+effective[len(effective)-2]+"\n"), 0o660)
+	case joined == "symbolic-ref --short refs/remotes/origin/HEAD":
+		branch := r.defaultBranch
+		if branch == "" {
+			branch = "main"
+		}
+		return []byte("origin/" + branch + "\n"), nil
 	case joined == "fetch origin main", strings.HasPrefix(joined, "checkout -B "):
 		return []byte("ok\n"), nil
 	case joined == "rev-parse HEAD":

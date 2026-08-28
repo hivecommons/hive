@@ -148,6 +148,11 @@ func attribPRMock(t *testing.T, postedBody *string) *httptest.Server {
 	var mu sync.Mutex
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/repos/o/r"):
+			// DefaultBranch: the requests these tests write omit Base, so
+			// CreatePR resolves it here (kubestellar/hive#4928).
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"r","default_branch":"main"}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls"):

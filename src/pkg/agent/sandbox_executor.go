@@ -21,7 +21,6 @@ import (
 
 const (
 	DefaultSandboxKickTimeout = 45 * time.Minute
-	defaultSandboxBaseRef     = "main"
 	defaultSandboxNetworkMode = sandbox.NetworkModeRestricted
 	sandboxPromptRelPath      = ".hive/kick-prompt.txt"
 	sandboxTranscriptRelPath  = ".hive/sandbox-transcript.log"
@@ -97,16 +96,19 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	if spec.Timeout <= 0 {
 		spec.Timeout = DefaultSandboxKickTimeout
 	}
-	if spec.BaseRef == "" {
-		spec.BaseRef = defaultSandboxBaseRef
-	}
 	if spec.NetworkMode == "" {
 		spec.NetworkMode = defaultSandboxNetworkMode
 	}
 	if spec.Branch == "" {
 		spec.Branch = e.branchName(spec.Agent)
 	}
-	workspace, baseSHA, err := e.prepareWorkspace(ctx, spec)
+	// prepareWorkspace resolves spec.BaseRef from the clone's own
+	// refs/remotes/origin/HEAD when the caller did not pin one, so the PR
+	// opened below is based on the repo's own default branch rather than an
+	// assumed "main" (kubestellar/hive#4928). It fails the kick outright when
+	// the base cannot be determined and none was pinned — a wrong base is
+	// worse than a failed kick.
+	workspace, baseSHA, err := e.prepareWorkspace(ctx, &spec)
 	if err != nil {
 		res.Error = err.Error()
 		return res, err
@@ -200,7 +202,14 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	return res, nil
 }
 
-func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec SandboxKickSpec) (string, string, error) {
+// prepareWorkspace clones the target repo and checks out the work branch off
+// the base ref. When spec.BaseRef is empty it is RESOLVED from the clone's own
+// refs/remotes/origin/HEAD and written back into spec, so the caller opens its
+// PR against the same ref it branched from (kubestellar/hive#4928). If that
+// resolution fails, prepareWorkspace fails the kick rather than silently
+// falling back to "main" — a wrong base is worse than a failed kick, and the
+// error surfaces through res.Error into the kick result the operator sees.
+func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKickSpec) (string, string, error) {
 	if strings.TrimSpace(spec.Org) == "" || strings.TrimSpace(spec.Repo) == "" {
 		return "", "", errors.New("sandbox workspace prep requires org and repo")
 	}
@@ -221,6 +230,13 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec SandboxKick
 	if out, err := e.runner().Run(ctx, "", pushbroker.PushEnv(os.Environ()), "git", cloneArgs...); err != nil {
 		return "", "", fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	if strings.TrimSpace(spec.BaseRef) == "" {
+		ref, err := e.resolveBaseRef(ctx, workspace)
+		if err != nil {
+			return "", "", fmt.Errorf("sandbox workspace prep: could not resolve %s/%s's default branch and no explicit base ref was given (refusing to guess %q): %w", spec.Org, spec.Repo, FallbackSandboxBaseRef, err)
+		}
+		spec.BaseRef = ref
+	}
 	fetchArgs := append(append([]string{}, authArgs...), "fetch", "origin", spec.BaseRef)
 	if out, err := e.runner().Run(ctx, workspace, pushbroker.PushEnv(os.Environ()), "git", fetchArgs...); err != nil {
 		return "", "", fmt.Errorf("git fetch %s: %w: %s", spec.BaseRef, err, strings.TrimSpace(string(out)))
@@ -233,6 +249,34 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec SandboxKick
 		return "", "", fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
 	return workspace, strings.TrimSpace(string(base)), nil
+}
+
+// FallbackSandboxBaseRef names the branch resolveBaseRef would have used had
+// it not been made an error instead (kubestellar/hive#4928) — kept as a named
+// constant purely so the "refusing to guess" error message above never has a
+// bare string literal to drift out of sync with intent.
+const FallbackSandboxBaseRef = "main"
+
+// resolveBaseRef reports the default branch of the freshly cloned repo. `git
+// clone` records the remote's HEAD in refs/remotes/origin/HEAD, so the answer
+// is already on disk — no API call, no extra token scope. An unreadable or
+// empty answer is returned as an error so the caller can fail the kick rather
+// than silently branching off an assumed "main" (kubestellar/hive#4928).
+func (e *SandboxExecutor) resolveBaseRef(ctx context.Context, workspace string) (string, error) {
+	out, err := e.runner().Run(ctx, workspace, pushbroker.PushEnv(os.Environ()),
+		"git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "", fmt.Errorf("reading refs/remotes/origin/HEAD: %w", err)
+	}
+	ref := strings.TrimSpace(string(out))
+	// symbolic-ref --short renders it as "origin/<branch>".
+	if _, branch, found := strings.Cut(ref, "/"); found {
+		ref = branch
+	}
+	if ref == "" {
+		return "", errors.New("refs/remotes/origin/HEAD resolved to an empty branch name")
+	}
+	return ref, nil
 }
 
 func (e *SandboxExecutor) cloneAuthArgs(ctx context.Context, repo, dir string) ([]string, func(), error) {

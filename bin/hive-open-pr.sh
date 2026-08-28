@@ -15,7 +15,13 @@
 # Usage (drop-in for the common gh pr create shape):
 #   hive-open-pr --repo <owner/repo> --head <branch> [--base <branch>] \
 #                --title "<title>" --body "<body>"
-#   # --head defaults to the current git branch; --base defaults to main.
+#   # --head defaults to the current git branch. --base is OPTIONAL and should
+#   # normally be omitted: an omitted base is left empty in the request so the
+#   # hive resolves the TARGET REPOSITORY's default branch when it opens the PR.
+#   # Do not pass --base main "to be safe" — that is exactly the bug that based
+#   # every PR on main in repos whose default branch is not main
+#   # (kubestellar/hive#4928). Pass --base only to target a non-default branch
+#   # deliberately (a release line, a stacked PR).
 #
 # On success it prints the request path and returns 0. The PR opens
 # asynchronously (within one watcher tick); poll the .result.json next to the
@@ -26,7 +32,7 @@ set -euo pipefail
 
 REQ_DIR="/var/run/hive-metrics/pr-requests"
 
-REPO=""; HEAD=""; BASE="main"; TITLE=""; BODY=""
+REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)  REPO="$2"; shift 2;;
@@ -91,5 +97,5 @@ else
     > "$REQ_FILE"
 fi
 
-echo "hive-open-pr: requested PR on $REPO ($HEAD -> $BASE) as the App bot"
+echo "hive-open-pr: requested PR on $REPO ($HEAD -> ${BASE:-<repo default branch>}) as the App bot"
 echo "hive-open-pr: request $REQ_FILE (the hive opens the PR within ~10s; result appears at ${REQ_FILE%.json}.result.json)"

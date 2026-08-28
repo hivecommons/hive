@@ -93,6 +93,15 @@ type Client struct {
 	// Zero values are ready to use.
 	prRetries     retryTracker
 	reviewRetries retryTracker
+	// defaultBranchMu guards defaultBranches, which memoizes the resolved
+	// default branch per "owner/repo" (see defaultbranch.go). A repo's default
+	// branch changes about as often as the repo is renamed, so caching it keeps
+	// the "what is this repo's base?" lookup off the hot path of every PR open
+	// without risking a stale answer that matters. Only successful lookups are
+	// cached — a transient API error must not pin a repo to the fallback for
+	// the life of the process.
+	defaultBranchMu sync.RWMutex
+	defaultBranches map[string]string
 	// mergerAuthz gates the label-queued auto-merge sweep on WHO queued the
 	// merge: it reports whether a login holds at least config.RoleMerger (audit
 	// F3). nil fails closed — SweepQueuedAutoMerges merges nothing. Guarded

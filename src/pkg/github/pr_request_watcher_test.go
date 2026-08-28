@@ -28,6 +28,13 @@ func newPRMockServerLabels(t *testing.T, existingHead string, created *int, adde
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/repos/o/r"):
+			// DefaultBranch: every request in this file omits Base, so CreatePR
+			// resolves it here. "main" keeps existing assertions in this file
+			// (which expect base "main") unchanged; the non-"main" regression
+			// coverage for kubestellar/hive#4928 lives in pullrequest_base_test.go.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"r","default_branch":"main"}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
 			// dedupe list — return one PR only when the requested head matches.
 			head := r.URL.Query().Get("head") // "owner:branch"
@@ -268,6 +275,9 @@ func newPRFailingMockServer(t *testing.T, created *int, fails *int) *httptest.Se
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/repos/o/r"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"r","default_branch":"main"}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls"):
