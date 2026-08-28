@@ -46,12 +46,31 @@ linters:
     # that moved on without deleting them. One declaration is retained under an
     # explained //nolint:unused — see pkg/hub/wrapkey_store.go.
     - unused
-    # RATCHET: staticcheck enabled after its 122 findings were fixed (#4903).
-    # Six are retained under explained //nolint:staticcheck for genuine false
-    # positives or intentional patterns. The one raw U+200B in a scheduler
-    # security fixture is now written \u200b: identical bytes, visible in
-    # source, so ST1018 is satisfied without weakening the injection test.
+    # RATCHET: staticcheck enabled after its 122 findings were fixed (#4903),
+    # scoped to the SA* bug-detection family (see settings below -- the QF*/ST*
+    # style families are deliberately not enforced). Six findings are retained
+    # under explained //nolint:staticcheck for genuine false positives or
+    # intentional patterns. The one raw U+200B in a scheduler security fixture
+    # is now written \u200b: identical bytes, visible in source, so ST1018 is
+    # satisfied without weakening the injection test.
     - staticcheck
+
+  settings:
+    staticcheck:
+      # The SA* family is the bug detector -- misused stdlib, impossible
+      # conditions, ignored results. That is what this gate is for, and the
+      # tree is clean against it.
+      #
+      # Deliberately NOT enabled:
+      #   QF*  quickfix style rewrites. 103 hits, all QF1012
+      #        (WriteString(Sprintf(...)) -> Fprintf). Mechanically true and
+      #        behaviorally identical, so enforcing it buys no correctness and
+      #        costs a 103-site churn PR across advisory/ and dashboard/.
+      #   ST*  naming and doc-comment conventions, likewise stylistic.
+      #   SA1019 (deprecation) is excluded below rather than repo-wide: the six
+      #        hits are all in tests, and two of them exist precisely to
+      #        exercise a deprecated field's back-compat path.
+      checks: ["SA*", "-SA1019"]
 
   exclusions:
     generated: lax
