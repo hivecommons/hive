@@ -5409,6 +5409,17 @@ var DashboardOverlayFile = "/data/hive.yaml.dashboard"
 // production always uses the fixed in-cluster path.
 var saTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
+// SetSATokenFileForTest points IsKubernetesPod's serviceaccount-token probe
+// at path and returns a restore func. Out-of-package tests that need the
+// non-Kubernetes branch call this with a non-existent path (alongside
+// clearing KUBERNETES_SERVICE_HOST) so they stay hermetic on hosts that
+// really are pods — in-cluster CI runners and dev hives.
+func SetSATokenFileForTest(path string) func() {
+	orig := saTokenFile
+	saTokenFile = path
+	return func() { saTokenFile = orig }
+}
+
 // IsKubernetesPod reports whether the process is running inside a
 // Kubernetes pod (mirrors the entrypoint's IS_KUBERNETES detection).
 func IsKubernetesPod() bool {

@@ -145,8 +145,14 @@ func TestProvenanceReportsSeedUnwritable(t *testing.T) {
 // report must say so: writable=true, writer names the spoke, and the path
 // names the real file — never the ConfigMap, which does not exist here.
 func TestProvenanceReportsSeedWritableOutsideKubernetes(t *testing.T) {
-	// No KUBERNETES_SERVICE_HOST set and no serviceaccount token on this host
-	// — IsKubernetesPod() reads false, matching a real Docker/podman hive.
+	// Force the non-Kubernetes branch explicitly: clear the env probe and
+	// point the serviceaccount-token probe at a non-existent path so
+	// IsKubernetesPod() reads false even when the test host really is a pod
+	// (in-cluster CI runners and dev hives have both signals set, which made
+	// this test fail there while silently passing on laptops).
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	restoreSAToken := config.SetSATokenFileForTest(filepath.Join(t.TempDir(), "no-such-sa-token"))
+	t.Cleanup(restoreSAToken)
 	writeProvenanceFixture(t,
 		"project:\n  org: acme\nagents:\n  scanner: {}\nhub:\n  is_public: true\nacmm_level: 4\n",
 		"project:\n  org: acme\nagents:\n  scanner: {}\n")
