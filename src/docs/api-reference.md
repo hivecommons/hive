@@ -155,6 +155,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/tokens` | Dashboard auth/session | Tokens | `pkg/dashboard/api.go:82` |
 | `GET` | `/api/cost` | Dashboard auth/session | Cost | `pkg/dashboard/api.go:83` |
 | `GET` | `/api/repo-activity` | Dashboard auth/session | Per-repo audited activity | `pkg/dashboard/api.go` |
+| `GET` | `/api/repo-cost` | Dashboard auth/session | Per-repo estimated token cost (interval join, cached) | `pkg/dashboard/api.go` |
 | `GET` | `/api/cost/history` | Dashboard auth/session | Cost History | `pkg/dashboard/api.go:84` |
 | `GET` | `/api/trend/history` | Dashboard auth/session | Trend History | `pkg/dashboard/api.go:85` |
 | `GET` | `/api/timeseries` | Dashboard auth/session | Time Series | `pkg/dashboard/api.go:86` |

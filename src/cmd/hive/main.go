@@ -2106,6 +2106,17 @@ func main() {
 	activityCollector.EnablePersistence("/data/activity.json")
 	go activityCollector.Start(ctx)
 
+	// Per-repo cost collector: joins the same audited output events against
+	// the token collector's per-message usage timeline, on the same ticker
+	// interval as the activity collector above, and caches the result for
+	// /api/repo-cost. Before this (#4943), the interval join — including
+	// the same expensive audit read the activity collector does — ran on
+	// every 60s dashboard poll, per open browser tab, instead of once per
+	// collection interval.
+	repoCostCollector := dashboard.NewRepoCostCollector(dashSrv.GetAudit(), tokenCollector, "", logger)
+	repoCostCollector.EnablePersistence("/data/repo-cost.json")
+	go repoCostCollector.Start(ctx)
+
 	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
 	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
 	// store loads any prior 7-day history from the /data PVC on first use and the
@@ -2535,6 +2546,7 @@ func main() {
 		// 30-minute collect loop instead of issuing a second GitHub fetch.
 		FleetStats:            fleetStatsCollector,
 		Activity:              activityCollector,
+		RepoCost:              repoCostCollector,
 		BeadSynthesizer:       beadSynth,
 		BeadStores:            beadStores,
 		BeadStoreLoadFailures: beadStoreLoadFailures,

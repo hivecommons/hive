@@ -141,6 +141,16 @@ type repoCostResponse struct {
 	PriceTableDate string   `json:"price_table_date"`
 	Disclaimer     string   `json:"disclaimer"`
 	Limitations    []string `json:"limitations"`
+
+	// CollectedAt is when this snapshot was actually computed by
+	// RepoCostCollector (repo_cost_collector.go), NOT when this HTTP response
+	// was served — those now differ by up to repoCostCollectInterval because
+	// the endpoint serves a cached snapshot rather than recomputing per
+	// request (#4943). Zero when no collection has ever completed (Ready is
+	// then also false). A consumer diffing against time.Now() can detect a
+	// stalled collector — a stuck ticker goroutine — the same way a stale
+	// heartbeat is detected elsewhere in the dashboard.
+	CollectedAt time.Time `json:"collected_at,omitempty"`
 }
 
 // repoCostLimitations is surfaced in the payload so the UI renders the method's
@@ -261,6 +271,7 @@ func computeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 		Limitations:        repoCostLimitations(),
 		Unattributed:       repoCostEntry{Repo: repoCostBucketUnattributed, Source: "estimated"},
 		BackendUnsupported: repoCostEntry{Repo: repoCostBucketBackendUnsupported, Source: "estimated"},
+		CollectedAt:        now,
 	}
 	if summary == nil {
 		return resp
@@ -416,8 +427,41 @@ func attributeRepo(events []repoAuditEvent, tsMs, windowStartMs int64) (repoAudi
 	return events[i], true
 }
 
-// handleRepoCost serves GET /api/repo-cost.
+// handleRepoCost serves GET /api/repo-cost from the cached RepoCostCollector
+// snapshot (see repo_cost_collector.go) rather than recomputing the interval
+// join per request. The join reads every rotated/compressed audit backup
+// (up to 64MB decompressed each) and walks every retained Claude usage
+// event in the window — recomputing that on every 60s dashboard poll, per
+// open tab, was the defect fixed by #4943.
+//
+// When the collector has not produced a snapshot yet (fresh boot, before its
+// first ticker fire), this reports ready=false with an EMPTY by_repo/zero
+// totals and no CollectedAt — never a fabricated $0.00. A cost payload with
+// ready=true and an empty by_repo is indistinguishable from "this hive spent
+// nothing", which is exactly the misreporting the #4836 epic exists to
+// prevent, so the not-ready state must stay visibly different from that.
 func (s *Server) handleRepoCost(w http.ResponseWriter, r *http.Request) {
+	if s.deps != nil && s.deps.RepoCost != nil {
+		snap, ready := s.deps.RepoCost.Snapshot()
+		if !ready {
+			jsonResponse(w, repoCostResponse{
+				Phase:              "phase_3_interval_join",
+				ByRepo:             []repoCostEntry{},
+				PriceTableDate:     tokens.PriceTableDate(),
+				Disclaimer:         costEstimateDisclaimer,
+				Limitations:        repoCostLimitations(),
+				Unattributed:       repoCostEntry{Repo: repoCostBucketUnattributed, Source: "estimated"},
+				BackendUnsupported: repoCostEntry{Repo: repoCostBucketBackendUnsupported, Source: "estimated"},
+			})
+			return
+		}
+		jsonResponse(w, snap)
+		return
+	}
+
+	// No collector wired (e.g. a minimal test Server): fall back to computing
+	// inline so the endpoint still degrades to a correct answer rather than
+	// 503ing. Production always wires RepoCost (see cmd/hive/main.go).
 	now := time.Now()
 	var summary *tokens.AggregateSummary
 	if s.deps != nil && s.deps.Tokens != nil {
