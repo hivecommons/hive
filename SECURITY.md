@@ -42,4 +42,11 @@ Reports about the code in this repository are in scope. When in doubt, report it
 privately and let us triage — we would rather hear about a non-issue than miss a
 real one.
 
+## Who Responds
+
+Reports are handled by the Hive Maintainer Committee — see
+[`src/docs/security-response.md`](src/docs/security-response.md) for who
+that is today, how a report is triaged and resolved end to end, how
+membership is decided, and what to do if you don't get a response.
+
 Thank you for contributing to the security of Hive.
