@@ -6292,7 +6292,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		}
 		// The hive is deliverable again — drop any suppressed-refusal memory so a
 		// future undeliverable episode is reported afresh rather than swallowed.
-		forgetUncollectibleUpgrade(h.ID)
+		s.forgetUncollectibleUpgrade(h.ID)
 		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode))
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")

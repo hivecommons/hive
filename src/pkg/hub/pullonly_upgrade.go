@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"sync"
 	"time"
 )
 
@@ -144,36 +143,39 @@ func uncollectibleUpgradeReason(lastHeartbeat string) string {
 		"an upgrade instruction"
 }
 
-// undeliverableUpgradeNoted remembers the (hive, target) pairs already written to
-// a timeline, so the refusal is recorded ONCE per target rather than on every
-// poll.
-//
-// StartLatestSHAPoller ticks every latestSHAPollInterval (2m) and calls
-// triggerAutoUpgrades() each time, so an un-deduplicated timeline write would
-// append an identical entry ~720 times a day per hive — trading an unbounded
-// re-arm loop for an unbounded timeline, and burying the genuine events a
-// timeline exists to show. Keying on the TARGET means a genuinely new upgrade
-// opportunity (the branch advanced) is reported again, while the same refusal is
-// not repeated.
-var (
-	undeliverableUpgradeMu    sync.Mutex
-	undeliverableUpgradeNoted = map[string]string{}
-)
-
 // noteUncollectibleUpgrade records — once per (hive, target) — that the hub
 // declined to arm an upgrade the hive could not collect, and why.
+//
+// The de-duplication memory is s.uncollectibleUpgradeNoted, a PER-SERVER field
+// (server.go) rather than a package global. It used to be a global, which was
+// wrong in two ways: two hubs in one process — the normal case in tests, and
+// possible in-process generally — shared and clobbered each other's state, so
+// one server's arming could suppress a refusal the other should have reported;
+// and every test had to open by hand-scrubbing the global for hive IDs its own
+// fresh server had never seen, which is the smell that gave the bug away.
+//
+// WHY DE-DUPLICATE AT ALL. StartLatestSHAPoller ticks every
+// latestSHAPollInterval (2m) and calls triggerAutoUpgrades() each time, so an
+// un-deduplicated timeline write would append an identical entry ~720 times a
+// day per hive — trading an unbounded re-arm loop for an unbounded timeline, and
+// burying the genuine events a timeline exists to show. Keying on the TARGET
+// means a genuinely new upgrade opportunity (the branch advanced) is reported
+// again, while the same refusal is not repeated.
 //
 // The timeline is the durable, operator-visible surface. Silence is how the
 // original wedge went unnoticed: a hive with auto_upgrade=true that never
 // upgrades is indistinguishable from one already at latest.
 func (s *HubServer) noteUncollectibleUpgrade(hiveID, target, reason string) {
-	undeliverableUpgradeMu.Lock()
-	if prev, ok := undeliverableUpgradeNoted[hiveID]; ok && prev == target {
-		undeliverableUpgradeMu.Unlock()
+	s.uncollectibleUpgradeMu.Lock()
+	if s.uncollectibleUpgradeNoted == nil {
+		s.uncollectibleUpgradeNoted = map[string]string{}
+	}
+	if prev, ok := s.uncollectibleUpgradeNoted[hiveID]; ok && prev == target {
+		s.uncollectibleUpgradeMu.Unlock()
 		return
 	}
-	undeliverableUpgradeNoted[hiveID] = target
-	undeliverableUpgradeMu.Unlock()
+	s.uncollectibleUpgradeNoted[hiveID] = target
+	s.uncollectibleUpgradeMu.Unlock()
 
 	s.recordTimeline(hiveID, TimelineUpgradeStale,
 		"auto-upgrade to "+orDash(target)+" not armed — "+reason, "auto-upgrade")
@@ -181,12 +183,23 @@ func (s *HubServer) noteUncollectibleUpgrade(hiveID, target, reason string) {
 
 // forgetUncollectibleUpgrade drops the de-duplication memory for a hive, so that
 // if it later becomes uncollectible again the refusal is reported afresh rather
-// than suppressed by a stale entry. Called when a hive is successfully armed —
-// i.e. the condition has genuinely cleared.
-func forgetUncollectibleUpgrade(hiveID string) {
-	undeliverableUpgradeMu.Lock()
-	delete(undeliverableUpgradeNoted, hiveID)
-	undeliverableUpgradeMu.Unlock()
+// than suppressed by a stale entry.
+//
+// Called from two places, which together give an entry a bounded lifetime:
+//
+//   - when a hive is successfully armed (saas.go) — the condition has genuinely
+//     cleared;
+//   - when a hive is REMOVED (removeRegistryEntry / handleRegistryDelete in
+//     server.go). Without that second caller an entry leaked forever for every
+//     deleted hive, because a hive that is uncollectible is by definition never
+//     armed and so never reached the first caller. The population this file
+//     exists to handle — unassigned placeholders that never heartbeat — is
+//     exactly the population that could only ever be removed, so the growth was
+//     unbounded across hive churn despite the comment above claiming otherwise.
+func (s *HubServer) forgetUncollectibleUpgrade(hiveID string) {
+	s.uncollectibleUpgradeMu.Lock()
+	delete(s.uncollectibleUpgradeNoted, hiveID)
+	s.uncollectibleUpgradeMu.Unlock()
 }
 
 // upgradeBranchOrDefault resolves the branch whose latest SHA should be used as

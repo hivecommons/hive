@@ -975,6 +975,20 @@ type HubServer struct {
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
 
+	// uncollectibleUpgradeNoted de-duplicates the timeline entry written when
+	// the hub declines to arm an upgrade a hive cannot collect. Key: hive ID,
+	// value: the target the refusal was last reported for, so a genuinely new
+	// upgrade opportunity is reported again while the same refusal is not
+	// repeated every 2-minute poll. See pullonly_upgrade.go.
+	//
+	// PER-SERVER, not a package global: two hubs in one process would otherwise
+	// share and clobber this, letting one server's arming suppress a refusal the
+	// other should have reported. Guarded by its own mutex rather than s.mu
+	// because noteUncollectibleUpgrade is called from paths that do not hold
+	// s.mu and goes on to call recordTimeline.
+	uncollectibleUpgradeMu    sync.Mutex
+	uncollectibleUpgradeNoted map[string]string
+
 	// clusterUnreachableUntil suppresses kubectl against clusters the hub has
 	// just proven it cannot route to (firewalled GPU clusters like the heartbeat-only cluster).
 	// Without this, triggerAutoUpgrades() paid a full dial timeout PER HIVE PER
@@ -3523,6 +3537,10 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 // would reappear in "My Hives" — the in-memory removal alone is not durable.
 // Deletion is rare and user-initiated, so paying the write cost inline is fine.
 func (s *HubServer) removeRegistryEntry(id, by string) {
+	// The hive is going away, so its uncollectible-upgrade de-dup entry must go
+	// with it. An uncollectible hive is by definition never armed, so this is
+	// the ONLY path that can ever retire its entry (see forgetUncollectibleUpgrade).
+	s.forgetUncollectibleUpgrade(id)
 	s.mu.Lock()
 	removed := false
 	for i, h := range s.registry.Hives {
@@ -3586,6 +3604,7 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
+	s.forgetUncollectibleUpgrade(id)
 	s.mu.Lock()
 	removed := false
 	for i, h := range s.registry.Hives {
