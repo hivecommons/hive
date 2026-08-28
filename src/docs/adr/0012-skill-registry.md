@@ -2,6 +2,10 @@
 
 Status: Accepted (back-filled)
 
+> **Operator guide:** [Skill registry](../skills.md) covers the on-disk format
+> and the current wiring status. This ADR records the decision; it is not an
+> operator guide.
+
 ## Context
 
 `AGENTS.md` can carry repo-local skill snippets, but inline snippets do not give
