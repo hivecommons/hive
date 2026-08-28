@@ -124,8 +124,9 @@ func TestReadAgentModeFromTempFile(t *testing.T) {
 	_ = origPrefix
 	// Can't override const, but test the default path behavior
 	got := readAgentMode(agentName)
+	// Expected: mode file not at /tmp/.hive-mode-<name>, so defaults to advisory
 	if got != agent.ModeAdvisory {
-		// Expected: mode file not at /tmp/.hive-mode-<name>, so defaults to advisory
+		t.Errorf("readAgentMode(%q) = %v, want %v (default advisory)", agentName, got, agent.ModeAdvisory)
 	}
 }
 

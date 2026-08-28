@@ -124,7 +124,7 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 	if iManage < 0 || iAdmin < 0 || iOps < 0 || iClankerCtl < 0 {
 		t.Fatalf("anchors missing: manage=%d admin=%d ops=%d clankerCtl=%d", iManage, iAdmin, iOps, iClankerCtl)
 	}
-	if !(iManage < iAdmin && iAdmin < iOps) {
+	if iManage >= iAdmin || iAdmin >= iOps {
 		t.Errorf("admin controls must be under Management, before Operations: manage=%d admin=%d ops=%d", iManage, iAdmin, iOps)
 	}
 	if iClankerCtl < iOps {

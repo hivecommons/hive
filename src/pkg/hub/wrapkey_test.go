@@ -799,7 +799,9 @@ func TestFingerprintIsStableDistinctAndNotKeyMaterial(t *testing.T) {
 	if wrapKeyFingerprint(pubA) == "" {
 		t.Fatal("fingerprint of a valid key was empty")
 	}
-	if wrapKeyFingerprint(pubA) != wrapKeyFingerprint(pubA) {
+	fpA1 := wrapKeyFingerprint(pubA)
+	fpA2 := wrapKeyFingerprint(pubA)
+	if fpA1 != fpA2 {
 		t.Error("fingerprint is not stable")
 	}
 	if wrapKeyFingerprint(pubA) == wrapKeyFingerprint(pubB) {

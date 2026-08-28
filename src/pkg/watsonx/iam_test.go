@@ -16,7 +16,7 @@ import (
 // controllable clock. Returns the minter and a pointer to the current fake time
 // the caller can advance.
 func newTestMinter(endpoint string) (*TokenMinter, *int64) {
-	var nowNanos int64 = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	var nowNanos = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
 	m := &TokenMinter{
 		cache:    make(map[string]iamToken),
 		endpoint: endpoint,

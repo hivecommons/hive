@@ -86,12 +86,12 @@ func TestBobConfigResolveAPIKey(t *testing.T) {
 			}
 
 			source := c.ResolveAPIKeySource()
-			switch {
-			case tc.wantSource == "":
+			switch tc.wantSource {
+			case "":
 				if source != "" {
 					t.Errorf("ResolveAPIKeySource() = %q, want empty", source)
 				}
-			case tc.wantSource == "file:":
+			case "file:":
 				if len(source) < len("file:") || source[:len("file:")] != "file:" {
 					t.Errorf("ResolveAPIKeySource() = %q, want a file: source", source)
 				}

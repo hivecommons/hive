@@ -1228,7 +1228,7 @@ func TestRefreshAndPersist(t *testing.T) {
 	srv.refreshAndPersist()
 	// These run in goroutines — poll instead of racing on plain bools.
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && !(refreshed.Load() && persisted.Load()) {
+	for time.Now().Before(deadline) && (!refreshed.Load() || !persisted.Load()) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !refreshed.Load() {

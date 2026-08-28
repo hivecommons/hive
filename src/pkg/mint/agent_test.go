@@ -142,7 +142,7 @@ func TestMintAgentToken_TTLClampedToCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	life := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time)
+	life := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
 	if life > HardCapTTL+clockSkewLeeway {
 		t.Fatalf("token life %v exceeds hard cap %v", life, HardCapTTL)
 	}

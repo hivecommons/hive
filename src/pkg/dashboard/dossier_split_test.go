@@ -161,7 +161,7 @@ func TestProfileTabIsSeparateFromLeaderboard(t *testing.T) {
 	lbIdx := strings.Index(body, `id="tab-leaderboard"`)
 	profIdx := strings.Index(body, `id="tab-profile"`)
 	cardIdx := strings.Index(body, `id="me-card-mount"`)
-	if !(cardIdx > profIdx && profIdx > lbIdx) {
+	if cardIdx <= profIdx || profIdx <= lbIdx {
 		t.Errorf("dossier is not inside the profile panel (lb=%d profile=%d card=%d)", lbIdx, profIdx, cardIdx)
 	}
 }

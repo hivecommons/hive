@@ -37,8 +37,8 @@ func TestComputeMTTR_WithMergedPRs(t *testing.T) {
 	prMerged := now.Add(-1 * time.Hour)      // 1 hour ago
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/repos/myorg/repo1/pulls":
+		switch r.URL.Path {
+		case "/repos/myorg/repo1/pulls":
 			prs := []map[string]interface{}{
 				{
 					"number":    1,
@@ -59,7 +59,7 @@ func TestComputeMTTR_WithMergedPRs(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(prs)
 
-		case r.URL.Path == "/repos/myorg/repo1/issues/10":
+		case "/repos/myorg/repo1/issues/10":
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"number":     10,
 				"created_at": issueCreated.Format(time.RFC3339),
@@ -100,8 +100,8 @@ func TestComputeMTTR_MultipleRefs(t *testing.T) {
 	prMerged := now.Add(-1 * time.Hour)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/repos/myorg/repo1/pulls":
+		switch r.URL.Path {
+		case "/repos/myorg/repo1/pulls":
 			prs := []map[string]interface{}{
 				{
 					"number":    1,
@@ -114,12 +114,12 @@ func TestComputeMTTR_MultipleRefs(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(prs)
 
-		case r.URL.Path == "/repos/myorg/repo1/issues/10":
+		case "/repos/myorg/repo1/issues/10":
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"number":     10,
 				"created_at": issueCreated1.Format(time.RFC3339),
 			})
-		case r.URL.Path == "/repos/myorg/repo1/issues/20":
+		case "/repos/myorg/repo1/issues/20":
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"number":     20,
 				"created_at": issueCreated2.Format(time.RFC3339),

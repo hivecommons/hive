@@ -55,7 +55,7 @@ func TestRunExtraction_WithMergedPRs(t *testing.T) {
 		prs := []map[string]interface{}{
 			{
 				"number":    1,
-				"merged_at": mergedAt.Time.Format(time.RFC3339),
+				"merged_at": mergedAt.Format(time.RFC3339),
 				"title":     "Fix bug",
 			},
 		}
@@ -106,7 +106,7 @@ func TestRunExtraction_FullRepoPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunExtraction: %v", err)
 	}
-	if facts != nil && len(facts) != 0 {
+	if len(facts) != 0 {
 		t.Errorf("facts = %d", len(facts))
 	}
 }

@@ -254,7 +254,7 @@ func stripCSSComments(css string) string {
 	for i := 0; i < len(css); {
 		if i+1 < len(css) && css[i] == '/' && css[i+1] == '*' {
 			i += 2
-			for i+1 < len(css) && !(css[i] == '*' && css[i+1] == '/') {
+			for i+1 < len(css) && (css[i] != '*' || css[i+1] != '/') {
 				if css[i] == '\n' {
 					out.WriteByte('\n')
 				}

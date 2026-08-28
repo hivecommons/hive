@@ -273,7 +273,7 @@ func ValidateGitSourceURLContext(ctx context.Context, raw string) error {
 		return fmt.Errorf("git URL is invalid")
 	}
 	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "https" && !(scheme == "http" && allowPrivateGitSource()) {
+	if scheme != "https" && (scheme != "http" || !allowPrivateGitSource()) {
 		if scheme == "" {
 			return fmt.Errorf("git URL scheme is required")
 		}

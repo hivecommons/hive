@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/snapshot"
 )
 
 // The turn-loss measurement (#4002 open question 3) is worthless unless it
@@ -103,5 +102,4 @@ func TestPersistedTurnLossIsJSONLegible(t *testing.T) {
 	if out.Recent[0].SinceKickS != 90 {
 		t.Errorf("Recent[0].SinceKickS = %v, want 90", out.Recent[0].SinceKickS)
 	}
-	var _ *snapshot.AgentTurnLoss = out
 }

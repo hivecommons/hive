@@ -679,7 +679,7 @@ func TestExtractLabels(t *testing.T) {
 
 func TestExtractLabels_Nil(t *testing.T) {
 	got := extractLabels(nil)
-	if got != nil && len(got) != 0 {
+	if len(got) != 0 {
 		t.Errorf("extractLabels(nil) = %v, want nil/empty", got)
 	}
 }
@@ -707,7 +707,7 @@ func TestExtractAssignees(t *testing.T) {
 
 func TestExtractAssignees_Nil(t *testing.T) {
 	got := extractAssignees(nil)
-	if got != nil && len(got) != 0 {
+	if len(got) != 0 {
 		t.Errorf("extractAssignees(nil) = %v, want nil/empty", got)
 	}
 }

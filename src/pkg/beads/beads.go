@@ -99,7 +99,7 @@ func (ft *flexTime) UnmarshalJSON(b []byte) error {
 }
 
 func (ft flexTime) MarshalJSON() ([]byte, error) {
-	return json.Marshal(ft.Time.Format(time.RFC3339Nano))
+	return json.Marshal(ft.Format(time.RFC3339Nano))
 }
 
 type Bead struct {

@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -50,7 +51,7 @@ func TestMarkUsersEngaged_EmptySliceNoOp(t *testing.T) {
 
 	s.liveHiveUsersMu.RLock()
 	defer s.liveHiveUsersMu.RUnlock()
-	if s.engagedHiveUsers != nil && len(s.engagedHiveUsers) != 0 {
+	if len(s.engagedHiveUsers) != 0 {
 		t.Error("empty call should not create map entries")
 	}
 }
@@ -328,7 +329,7 @@ func TestIsPrivateURL_DetectsPrivateAddresses(t *testing.T) {
 		"http://0.0.0.0",
 	}
 	for _, u := range privates {
-		if !isPrivateURL(nil, u) {
+		if !isPrivateURL(context.TODO(), u) {
 			t.Errorf("isPrivateURL(%q) = false, want true", u)
 		}
 	}

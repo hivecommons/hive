@@ -1026,10 +1026,10 @@ func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo strin
 	if len(d.RecentlyResolved) == 0 {
 		return
 	}
-	b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
+	fmt.Fprintf(b, "### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved))
 	for _, r := range d.RecentlyResolved {
 		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
-		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
+		fmt.Fprintf(b, "- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2"))
 	}
 	b.WriteString("\n")
 }

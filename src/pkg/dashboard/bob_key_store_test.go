@@ -355,7 +355,7 @@ func TestBobKeyEndpoints_ReadOnlyRoleForbidden(t *testing.T) {
 			// can prove nothing was written.
 			_, _ = clearBobKeyFile()
 
-			var bodyReader *strings.Reader = strings.NewReader(tc.body)
+			var bodyReader = strings.NewReader(tc.body)
 			req := httptest.NewRequest(tc.method, "/api/config/governor/bob", bodyReader)
 			req.Header.Set("X-Hive-Role", tc.role)
 			if tc.role == "owner" {

@@ -8706,9 +8706,9 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	//     the delivery reachable for those hives — and it is self-limiting, so
 	//     re-running it is harmless.
 	needClaimPush := !h.ClaimDelivered &&
-		!(strings.EqualFold(curOrg, h.Org) &&
-			sameStringSliceFold(curRepos, h.Repos) &&
-			strings.EqualFold(curPrimary, primary))
+		(!strings.EqualFold(curOrg, h.Org) ||
+			!sameStringSliceFold(curRepos, h.Repos) ||
+			!strings.EqualFold(curPrimary, primary))
 	// Independent of the project claim: deliver the requested level until the
 	// spoke confirms it. curACMM == 0 means the spoke did not report a level, so
 	// there is nothing to correct yet.

@@ -476,7 +476,7 @@ func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 		if resp.NextPage == 0 {
 			return out, nil
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 }
 
@@ -896,7 +896,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 		if resp.NextPage == 0 {
 			return true, "", nil
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 }
 

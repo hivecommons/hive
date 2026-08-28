@@ -479,7 +479,7 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 			if resp == nil || resp.NextPage == 0 {
 				break
 			}
-			opts.ListOptions.Page = resp.NextPage
+			opts.Page = resp.NextPage
 		}
 	}
 

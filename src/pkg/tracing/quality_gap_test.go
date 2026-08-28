@@ -37,7 +37,7 @@ func TestAgentKickAttributes(t *testing.T) {
 	attrs := AgentKickAttributes("scanner", "copilot", "claude", "triage", "auto", 3)
 	got := map[string]string{}
 	for _, kv := range attrs {
-		got[string(kv.Key)] = kv.Value.Emit()
+		got[string(kv.Key)] = kv.Value.String()
 	}
 	want := map[string]string{
 		AttrHiveAgent:         "scanner",

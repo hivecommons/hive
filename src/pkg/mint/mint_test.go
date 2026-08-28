@@ -176,7 +176,7 @@ func TestTTLCapEnforced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	life := claims.ExpiresAt.Time.Sub(before)
+	life := claims.ExpiresAt.Sub(before)
 	if life > 10*time.Minute+clockSkewLeeway {
 		t.Errorf("token life %v exceeds configured max 10m", life)
 	}
@@ -194,7 +194,7 @@ func TestHardCapAlwaysWins(t *testing.T) {
 		t.Fatalf("Mint: %v", err)
 	}
 	claims, _ := m.Verify(tok)
-	life := claims.ExpiresAt.Time.Sub(before)
+	life := claims.ExpiresAt.Sub(before)
 	if life > HardCapTTL+clockSkewLeeway {
 		t.Errorf("token life %v exceeds hard cap %v", life, HardCapTTL)
 	}

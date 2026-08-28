@@ -99,9 +99,8 @@ func TestPushGitHubConfigToSpokeRetries(t *testing.T) {
 	// Spoke fails the first attempt (connection reset via immediate close) then
 	// succeeds; but to keep the test fast we accept a single 200 immediately.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") == "" {
-			// No auth token was loaded — still fine, just accept.
-		}
+		// No auth token was loaded — still fine, just accept regardless of
+		// whether an Authorization header is present.
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()

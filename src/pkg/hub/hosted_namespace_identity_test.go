@@ -87,7 +87,7 @@ func TestSanitizeLabelValueNeverProducesInvalidValue(t *testing.T) {
 			t.Errorf("sanitizeLabelValue(%q) = %q has leading/trailing separator", in, got)
 		}
 		for _, r := range got {
-			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.') {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '.' {
 				t.Errorf("sanitizeLabelValue(%q) = %q contains disallowed rune %q", in, got, r)
 			}
 		}

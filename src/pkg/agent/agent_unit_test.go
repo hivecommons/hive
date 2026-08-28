@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -664,7 +665,7 @@ func TestStopNotFound(t *testing.T) {
 
 func TestRestartNotFound(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, slog.Default(), ProjectContext{})
-	err := m.Restart(nil, "nonexistent")
+	err := m.Restart(context.TODO(), "nonexistent")
 	if err == nil {
 		t.Error("should error for nonexistent agent")
 	}

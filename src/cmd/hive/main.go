@@ -8280,9 +8280,10 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 
 		dco := "unknown"
 		for _, l := range pr.Labels {
-			if l == "dco-signoff: yes" {
+			switch l {
+			case "dco-signoff: yes":
 				dco = "yes"
-			} else if l == "dco-signoff: no" {
+			case "dco-signoff: no":
 				dco = "no"
 			}
 		}

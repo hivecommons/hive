@@ -186,7 +186,7 @@ func (fc *FleetStatsCollector) Start(ctx context.Context) {
 		if fc != nil && fc.logger != nil {
 			fc.logger.Warn("fleet stats collector not started; this hive will never "+
 				"contribute to the public fleet total",
-				"author", fc.author, "org", fc.org, "has_github_client", fc != nil && fc.ghClient != nil)
+				"author", fc.author, "org", fc.org, "has_github_client", fc.ghClient != nil)
 		}
 		return
 	}

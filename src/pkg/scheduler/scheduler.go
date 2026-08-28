@@ -920,7 +920,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 	var b strings.Builder
 
 	b.WriteString("[agent:scanner]\n")
-	b.WriteString(fmt.Sprintf("YOUR WORK LIST (pre-filtered — hold/ADOPTERS/drafts excluded, classified):\n"))
+	b.WriteString("YOUR WORK LIST (pre-filtered — hold/ADOPTERS/drafts excluded, classified):\n")
 	b.WriteString(s.issueFilterNotice())
 
 	scannerIssues := issues
@@ -1484,7 +1484,7 @@ func splitTitleWords(title string) []string {
 	var words []string
 	for _, word := range strings.Fields(strings.ToLower(title)) {
 		clean := strings.TrimFunc(word, func(r rune) bool {
-			return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
+			return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_'
 		})
 		if len(clean) >= minWordLen {
 			words = append(words, clean)

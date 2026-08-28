@@ -37,13 +37,13 @@ func TestDetect_Idea(t *testing.T) {
 	// Server returns zero results for everything
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/search/code":
+		switch r.URL.Path {
+		case "/search/code":
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"total_count": 0,
 				"items":       []interface{}{},
 			})
-		case r.URL.Path == "/repos/owner/repo/actions/workflows":
+		case "/repos/owner/repo/actions/workflows":
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"total_count": 0,
 				"workflows":   []interface{}{},

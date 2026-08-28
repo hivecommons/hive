@@ -52,9 +52,10 @@ func jsFunc(t *testing.T, name string) string {
 				inBlock, i = false, i+1
 			}
 		case inStr != 0:
-			if c == '\\' {
+			switch c {
+			case '\\':
 				i++
-			} else if c == inStr {
+			case inStr:
 				inStr = 0
 			}
 		case c == '/' && i+1 < len(src) && src[i+1] == '/':

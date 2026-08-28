@@ -32,7 +32,7 @@ func TestContributeTabOrder(t *testing.T) {
 			onboarding, ops, manage, leaderboard)
 	}
 	// The exact required order: Onboarding -> Operations -> Management -> Leaderboard.
-	if !(onboarding < ops && ops < manage && manage < leaderboard) {
+	if onboarding >= ops || ops >= manage || manage >= leaderboard {
 		t.Errorf("tab order wrong: want Onboarding<Operations<Management<Leaderboard, got onboarding=%d ops=%d manage=%d leaderboard=%d",
 			onboarding, ops, manage, leaderboard)
 	}

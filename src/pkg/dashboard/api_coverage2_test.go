@@ -192,7 +192,6 @@ func TestSubstituteTemplateVars(t *testing.T) {
 	deps.Config.Project.AIAuthor = "ai-bot"
 	deps.Config.Project.Repos = []string{"repo1", "repo2"}
 	deps.Config.HiveID = "hive-42"
-	deps.Config.Agents["scanner"] = deps.Config.Agents["scanner"]
 
 	template := "Agent: ${AGENT_NAME}, Project: ${PROJECT_NAME}, Org: ${PROJECT_ORG}, " +
 		"Primary: ${PROJECT_PRIMARY_REPO}, Author: ${PROJECT_AI_AUTHOR}, " +
@@ -221,8 +220,7 @@ func TestSubstituteTemplateVars_NilDeps(t *testing.T) {
 }
 
 func TestSubstituteTemplateVars_DisplayName(t *testing.T) {
-	s, deps := apiServer(t)
-	deps.Config.Agents["scanner"] = deps.Config.Agents["scanner"]
+	s, _ := apiServer(t)
 
 	// Test agent display name substitution
 	result := s.substituteTemplateVars("Display: ${AGENT_DISPLAY_NAME}", "scanner")

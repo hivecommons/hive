@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,7 +77,7 @@ variables:
 	// And a template built from this config must leave ${PWNED} literal (the
 	// resolver was never enabled or defined).
 	reg := cfg.ResolveRegistry(nil)
-	if out := reg.Expand(nil, "x=${PWNED}", "template", nil); out != "x=${PWNED}" {
+	if out := reg.Expand(context.TODO(), "x=${PWNED}", "template", nil); out != "x=${PWNED}" {
 		t.Errorf("overlay script var must not resolve, got %q", out)
 	}
 }
@@ -116,7 +117,7 @@ variables:
 		t.Fatal("seed should enable allow_exec")
 	}
 	reg := cfg.ResolveRegistry(nil)
-	if out := reg.Expand(nil, "${GREET}", "template", nil); out != "hi-from-seed" {
+	if out := reg.Expand(context.TODO(), "${GREET}", "template", nil); out != "hi-from-seed" {
 		t.Errorf("seed script var should resolve, got %q", out)
 	}
 }

@@ -37,13 +37,5 @@ type StatusInputs struct {
 // so it is safe to call from a hot status-build path. Callers attach the result
 // to their status payload; they must not act on it automatically.
 func RecommendFromStatus(in StatusInputs) Recommendation {
-	return Recommend(Signals{
-		CurrentLevel:     in.CurrentLevel,
-		CoveragePct:      in.CoveragePct,
-		GreenStreak:      in.GreenStreak,
-		MergeSuccessRate: in.MergeSuccessRate,
-		ActionableIssues: in.ActionableIssues,
-		HoldCount:        in.HoldCount,
-		HasQualityAgent:  in.HasQualityAgent,
-	})
+	return Recommend(Signals(in))
 }

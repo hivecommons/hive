@@ -1075,8 +1075,8 @@ func TestDedup_CrossAgent(t *testing.T) {
 
 func TestDedup_ExistingWikiFact(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/search":
+		switch r.URL.Path {
+		case "/api/search":
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"results": []map[string]interface{}{
 					{
@@ -1088,7 +1088,7 @@ func TestDedup_ExistingWikiFact(t *testing.T) {
 				},
 				"total": 1,
 			})
-		case r.URL.Path == "/api/ingest":
+		case "/api/ingest":
 			w.WriteHeader(http.StatusOK)
 		default:
 			json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}, "total": 0})

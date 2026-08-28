@@ -49,7 +49,7 @@ func TestMetricsCollector_CollectOutreach_NilClient(t *testing.T) {
 	mc := &MetricsCollector{
 		metrics: make(map[string]any),
 	}
-	result := mc.collectOutreach(nil)
+	result := mc.collectOutreach(context.TODO())
 	if result["stars"] != 0 {
 		t.Errorf("stars = %v", result["stars"])
 	}
@@ -73,7 +73,7 @@ func TestMetricsCollector_CountOutreachPRs_NilClient(t *testing.T) {
 	mc := &MetricsCollector{
 		metrics: make(map[string]any),
 	}
-	open, merged := mc.countOutreachPRs(nil)
+	open, merged := mc.countOutreachPRs(context.TODO())
 	if open != 0 || merged != 0 {
 		t.Errorf("expected 0,0 got %d,%d", open, merged)
 	}

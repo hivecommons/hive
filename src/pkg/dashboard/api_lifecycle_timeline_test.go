@@ -165,7 +165,9 @@ func TestLifecycleTimelineLazyNonNil(t *testing.T) {
 		t.Fatal("LifecycleTimeline() returned nil")
 	}
 	// idempotent
-	if s.LifecycleTimeline() != s.LifecycleTimeline() {
+	first := s.LifecycleTimeline()
+	second := s.LifecycleTimeline()
+	if first != second {
 		t.Fatal("LifecycleTimeline() not stable")
 	}
 }

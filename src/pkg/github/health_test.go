@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	gh "github.com/google/go-github/v72/github"
 )
 
 // --------------------------------------------------------------------------
@@ -1051,7 +1049,7 @@ func TestCheckWorkflow_NoRuns(t *testing.T) {
 	mux.HandleFunc("/repos/org/repo/actions/workflows", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
-			"workflows":  []map[string]interface{}{{"id": 1, "name": "CI"}},
+			"workflows":   []map[string]interface{}{{"id": 1, "name": "CI"}},
 		})
 	})
 	mux.HandleFunc("/repos/org/repo/actions/workflows/1/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -1113,7 +1111,7 @@ func TestCiPassRate_NoRuns(t *testing.T) {
 	mux.HandleFunc("/repos/org/repo/actions/workflows", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
-			"workflows":  []map[string]interface{}{{"id": 1, "name": "CI"}},
+			"workflows":   []map[string]interface{}{{"id": 1, "name": "CI"}},
 		})
 	})
 	mux.HandleFunc("/repos/org/repo/actions/workflows/1/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -1138,7 +1136,7 @@ func TestReleaseCheck_NoRuns(t *testing.T) {
 	mux.HandleFunc("/repos/org/repo/actions/workflows", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
-			"workflows":  []map[string]interface{}{{"id": 1, "name": "Release"}},
+			"workflows":   []map[string]interface{}{{"id": 1, "name": "Release"}},
 		})
 	})
 	mux.HandleFunc("/repos/org/repo/actions/workflows/1/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -1492,9 +1490,3 @@ func TestCheckWorkflow_APIError(t *testing.T) {
 		t.Errorf("expected not-found, got %d", result)
 	}
 }
-
-// --------------------------------------------------------------------------
-// Unused import suppression
-// --------------------------------------------------------------------------
-
-var _ = gh.Int // suppress unused import

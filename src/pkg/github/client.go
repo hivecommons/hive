@@ -672,7 +672,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		if resp.NextPage == 0 {
 			break
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 
 	for _, pr := range allPRs {

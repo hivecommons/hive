@@ -52,12 +52,7 @@ func LoadTargets(dataDir string) (map[string]ClusterTarget, map[string]string, e
 	}
 	clusters := map[string]ClusterTarget{}
 	for _, c := range cds {
-		clusters[c.ID] = ClusterTarget{
-			ID:             c.ID,
-			InCluster:      c.InCluster,
-			KubeconfigPath: c.KubeconfigPath,
-			Context:        c.Context,
-		}
+		clusters[c.ID] = ClusterTarget(c)
 	}
 
 	regRaw, err := os.ReadFile(filepath.Join(dataDir, registryFile))

@@ -1543,7 +1543,7 @@ func TestHandleSaaSAuthCheckPublicPath(t *testing.T) {
 	// Public paths should pass without auth
 	publicPaths := []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute"}
 	for _, p := range publicPaths {
-		req := httptest.NewRequest("GET", fmt.Sprintf("/api/saas/auth-check?hive=test-hive"), nil)
+		req := httptest.NewRequest("GET", "/api/saas/auth-check?hive=test-hive", nil)
 		req.Header.Set("X-Original-URI", p)
 		w := httptest.NewRecorder()
 		srv.mux.ServeHTTP(w, req)

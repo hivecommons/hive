@@ -320,8 +320,7 @@ func TestF13_RedirectDropsAuthorizationCrossHost(t *testing.T) {
 // slash, path normalization).
 func TestF13_RedirectKeepsAuthorizationSameHost(t *testing.T) {
 	var saw []string
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		saw = append(saw, r.Header.Get("Authorization"))
 		if r.URL.Path == "/v1/models" {
 			// Same-host redirect to a normalized path.

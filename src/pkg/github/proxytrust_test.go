@@ -85,9 +85,17 @@ func TestCertPool_SystemOnlyWhenNoCA(t *testing.T) {
 	// include our test CA (which we never wrote).
 	if pool != nil {
 		sysPool, _ := x509.SystemCertPool()
-		if sysPool != nil && len(pool.Subjects()) < len(sysPool.Subjects()) { //nolint:staticcheck // Subjects OK for count
-			t.Errorf("system-only pool smaller than system roots: got %d want >= %d",
-				len(pool.Subjects()), len(sysPool.Subjects()))
+		if sysPool != nil {
+			// Subjects is deprecated (unreliable after SystemCertPool on some
+			// platforms) but remains the only way to get a subject count for
+			// this approximate size comparison; both calls are guarded by the
+			// same sysPool != nil check as before, just computed once each.
+			poolSubjects := pool.Subjects()   //nolint:staticcheck // SA1019: see comment above.
+			sysSubjects := sysPool.Subjects() //nolint:staticcheck // SA1019: see comment above.
+			if len(poolSubjects) < len(sysSubjects) {
+				t.Errorf("system-only pool smaller than system roots: got %d want >= %d",
+					len(poolSubjects), len(sysSubjects))
+			}
 		}
 	}
 }

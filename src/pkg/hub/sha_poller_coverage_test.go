@@ -60,10 +60,7 @@ func TestStartLatestSHAPollerPreLoop(t *testing.T) {
 
 	// Give the synchronous pre-loop pass time to finish its fetch.
 	deadline := time.After(3 * time.Second)
-	for {
-		if getLatestSHAForBranch("v2") != "" {
-			break
-		}
+	for getLatestSHAForBranch("v2") == "" {
 		select {
 		case <-deadline:
 			t.Log("pre-loop did not populate v2 SHA in time (non-fatal)")

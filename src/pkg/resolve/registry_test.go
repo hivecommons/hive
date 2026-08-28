@@ -273,8 +273,10 @@ func TestExpand_Memoization(t *testing.T) {
 func TestExpand_NilContext_BareEnvFallback(t *testing.T) {
 	t.Setenv("HIVE_NILCTX", "works")
 	reg := EnvOnly()
-	// nil ctx should not panic.
-	got := reg.Expand(nil, "${HIVE_NILCTX}", ScopeConfig, nil)
+	// nil ctx should not panic — Expand documents and handles ctx == nil by
+	// falling back to context.Background(); this test exists specifically to
+	// exercise that fallback, so passing nil here is intentional.
+	got := reg.Expand(nil, "${HIVE_NILCTX}", ScopeConfig, nil) //nolint:staticcheck // SA1012: nil ctx is the case under test — see Expand's documented nil-safety fallback.
 	if got != "works" {
 		t.Errorf("nil ctx should default to background, got %q", got)
 	}

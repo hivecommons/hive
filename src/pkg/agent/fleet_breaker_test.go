@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -131,7 +132,7 @@ func TestReleaseBreaker_ResumesOnlyBreakerSet(t *testing.T) {
 		t.Fatalf("re-pause reviewer: %v", err)
 	}
 
-	m.ReleaseBreaker(nil)
+	m.ReleaseBreaker(context.TODO())
 
 	// scanner: breaker paused it, operator never touched it → resumed.
 	if p, _, _ := m.breakerAgentPaused("scanner"); p {
@@ -186,14 +187,14 @@ func TestReleaseBreaker_Idempotent(t *testing.T) {
 	})
 
 	// Release with nothing engaged: no-op, nil result.
-	if resumed := m.ReleaseBreaker(nil); resumed != nil {
+	if resumed := m.ReleaseBreaker(context.TODO()); resumed != nil {
 		t.Errorf("release with no breaker engaged should be nil, got %v", resumed)
 	}
 
 	m.EngageBreaker()
-	m.ReleaseBreaker(nil)
+	m.ReleaseBreaker(context.TODO())
 	// Second release: breaker already disengaged → no-op.
-	if resumed := m.ReleaseBreaker(nil); resumed != nil {
+	if resumed := m.ReleaseBreaker(context.TODO()); resumed != nil {
 		t.Errorf("double-release should be nil, got %v", resumed)
 	}
 	if engaged, _ := m.BreakerState(); engaged {
@@ -236,7 +237,7 @@ func TestRestoreBreaker_SurvivesReload(t *testing.T) {
 	}
 
 	// A later release resumes only the restored breaker set; prepaused stays.
-	m.ReleaseBreaker(nil)
+	m.ReleaseBreaker(context.TODO())
 	if p, _, _ := m.breakerAgentPaused("scanner"); p {
 		t.Error("scanner should resume on post-restore release")
 	}

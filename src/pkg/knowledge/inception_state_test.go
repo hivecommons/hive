@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -288,7 +289,7 @@ func TestLoadStateInvalidJSON(t *testing.T) {
 
 func TestReadIdeaFactNoState(t *testing.T) {
 	e := newTestEngine(t)
-	_, err := e.ReadIdeaFact(nil)
+	_, err := e.ReadIdeaFact(context.TODO())
 	if err == nil {
 		t.Error("should error with no active inception")
 	}
@@ -297,7 +298,7 @@ func TestReadIdeaFactNoState(t *testing.T) {
 func TestReadIdeaFactNoAPI(t *testing.T) {
 	e := newTestEngine(t)
 	e.Start("my idea")
-	fact, err := e.ReadIdeaFact(nil)
+	fact, err := e.ReadIdeaFact(context.TODO())
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}

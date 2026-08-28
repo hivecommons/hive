@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -237,7 +238,7 @@ func TestProduceScaffoldAllLanguages(t *testing.T) {
 		e.state.Phase = PhaseScaffold
 		e.mu.Unlock()
 
-		result, err := e.ProduceScaffold(nil)
+		result, err := e.ProduceScaffold(context.TODO())
 		if err != nil {
 			t.Fatalf("%s: error: %v", tt.lang, err)
 		}

@@ -272,14 +272,14 @@ func ClassifyBead(b *beads.Bead) (FactType, float64) {
 		confidence = 0.7
 
 	case beads.TypeAdvisory:
-		switch {
-		case findingType == "pattern" || findingType == "convention":
+		switch findingType {
+		case "pattern", "convention":
 			factType = FactPattern
 			confidence = 0.6
-		case findingType == "security" || findingType == "vulnerability":
+		case "security", "vulnerability":
 			factType = FactGotcha
 			confidence = 0.8
-		case findingType == "test" || findingType == "coverage":
+		case "test", "coverage":
 			factType = FactTestScaff
 			confidence = 0.5
 		default:

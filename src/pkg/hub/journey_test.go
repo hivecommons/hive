@@ -578,7 +578,7 @@ func TestShouldSendRespectsResendInterval(t *testing.T) {
 // TestResendIntervalsMatchUrgency locks in the product's cadence ordering:
 // urgent nudges repeat more often than the monthly ACMM suggestion.
 func TestResendIntervalsMatchUrgency(t *testing.T) {
-	if !(stage1ResendInterval < stage2ResendInterval && stage2ResendInterval < stage3ResendInterval) {
+	if stage1ResendInterval >= stage2ResendInterval || stage2ResendInterval >= stage3ResendInterval {
 		t.Errorf("re-send intervals must increase with decreasing urgency: %s, %s, %s",
 			stage1ResendInterval, stage2ResendInterval, stage3ResendInterval)
 	}

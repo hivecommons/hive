@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/beads"
@@ -1066,15 +1067,15 @@ func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data = []byte(strings.Replace(string(data),
+	data = []byte(strings.ReplaceAll(string(data),
 		`href="/live/hive/light"`,
-		`href="/snapshot?mode=light"`, -1))
-	data = []byte(strings.Replace(string(data),
+		`href="/snapshot?mode=light"`))
+	data = []byte(strings.ReplaceAll(string(data),
 		`href="/live/hive/dark"`,
-		`href="/snapshot?mode=dark"`, -1))
-	data = []byte(strings.Replace(string(data),
+		`href="/snapshot?mode=dark"`))
+	data = []byte(strings.ReplaceAll(string(data),
 		`href="/live/hive"`,
-		`href="/snapshot"`, -1))
+		`href="/snapshot"`))
 
 	html := string(data)
 	dashURL := ""
@@ -2622,9 +2623,10 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	launchCmd := agentCfg.LaunchCmd
 	if launchCmd == "" {
 		launchCmd = fmt.Sprintf("%s --model %s", cli, model)
-		if cli == "claude" {
+		switch cli {
+		case "claude":
 			launchCmd = fmt.Sprintf("claude --model %s --dangerously-skip-permissions", model)
-		} else if cli == "copilot" {
+		case "copilot":
 			launchCmd = fmt.Sprintf("/usr/bin/copilot --allow-all --model %s", model)
 		}
 	}
@@ -5270,8 +5272,8 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 		// dialog (error bodies can be huge and may echo the key).
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
 		gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
-		switch {
-		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
 			// The two auth failures lead users to different fixes.
 			if apiKey == "" {
 				return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d): %s",
@@ -7299,6 +7301,24 @@ func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// titleCaseWords capitalizes the first letter following each run of
+// whitespace, replicating the exact word-boundary rule of the deprecated
+// strings.Title (boundary = unicode.IsSpace, not "non-letter" — so
+// underscore-joined identifiers like "test_scaffold" are left as
+// "Test_scaffold", matching prior output byte-for-byte). It exists only as a
+// dependency-free fallback for a fact type absent from typeLabels;
+// golang.org/x/text/cases is not a module dependency here.
+func titleCaseWords(s string) string {
+	prevSpace := true
+	return strings.Map(func(r rune) rune {
+		if prevSpace && unicode.IsLetter(r) {
+			r = unicode.ToTitle(r)
+		}
+		prevSpace = unicode.IsSpace(r)
+		return r
+	}, s)
+}
+
 func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	if !s.ensureKnowledge() {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
@@ -7356,7 +7376,7 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		sortFactsStable(ff)
 		label := typeLabels[t]
 		if label == "" {
-			label = strings.Title(t)
+			label = titleCaseWords(t)
 		}
 		sb.WriteString("## " + label + "\n\n")
 		for _, f := range ff {

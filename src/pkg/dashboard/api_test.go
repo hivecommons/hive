@@ -1328,8 +1328,8 @@ func TestHandleNousGateDecision_NoDecision(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Nous = nil
 	rec := doPost(s, "/api/nous/gate/decision", map[string]string{})
-	if rec.Code != http.StatusNotFound || rec.Code == http.StatusBadRequest {
-		// nil nous => 404
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code) // nil nous => 404
 	}
 }
 

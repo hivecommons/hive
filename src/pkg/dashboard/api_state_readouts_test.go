@@ -139,7 +139,7 @@ func TestHandleGovernorWatchdogPersistsValidUpdate(t *testing.T) {
 	enabled := true
 	// A pre-existing legacy Enabled flag must be cleared once Mode is set here,
 	// so the deprecated switch stops overriding the operator's choice on reload.
-	s.deps.Config.Governor.Watchdog.Enabled = &enabled
+	s.deps.Config.Governor.Watchdog.Enabled = &enabled //nolint:staticcheck // SA1019: seeding the deprecated field is the test setup for verifying it gets cleared.
 
 	rec := putGovernorWatchdog(s,
 		`{"mode":"heal","probeIntervalS":60,"crashLoopAfter":3,"healthyReset":"30m","authProbe":false}`, true)
@@ -151,8 +151,8 @@ func TestHandleGovernorWatchdogPersistsValidUpdate(t *testing.T) {
 	if wd.Mode != "heal" {
 		t.Errorf("mode = %q, want heal", wd.Mode)
 	}
-	if wd.Enabled != nil {
-		t.Errorf("legacy Enabled flag must be cleared when mode is set, got %v", *wd.Enabled)
+	if wd.Enabled != nil { //nolint:staticcheck // SA1019: asserting the deprecated field was cleared is the point of this test.
+		t.Errorf("legacy Enabled flag must be cleared when mode is set, got %v", *wd.Enabled) //nolint:staticcheck // SA1019: see comment above.
 	}
 	if wd.ProbeIntervalS != 60 {
 		t.Errorf("probe interval = %d, want 60", wd.ProbeIntervalS)

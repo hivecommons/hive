@@ -252,7 +252,7 @@ func (d *Dispatcher) Fire(ctx context.Context, p Payload) {
 			limited = append(limited, ch.hook)
 			continue
 		}
-		runnable = append(runnable, dispatch{hook: ch.hook, pred: ch.pred})
+		runnable = append(runnable, dispatch(ch))
 	}
 	d.mu.Unlock()
 

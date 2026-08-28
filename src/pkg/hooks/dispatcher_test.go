@@ -299,9 +299,6 @@ func TestCausationPredicates(t *testing.T) {
 	if (Causation{}).IsHookCaused() {
 		t.Error("depth-0 is world-caused")
 	}
-	if !(Causation{Depth: 1}).MayFireHooks() == false {
-		// depth 1 must NOT fire
-	}
 	if (Causation{Depth: 1}).MayFireHooks() {
 		t.Error("depth-1 must not fire hooks")
 	}

@@ -156,10 +156,7 @@ func TestMetricsRollupBuckets(t *testing.T) {
 
 	// Wait for at least two ticks so the seed tick + a delta tick both land.
 	deadline := time.After(2 * time.Second)
-	for {
-		if len(store.snapshot().QueueDepth) >= 2 {
-			break
-		}
+	for len(store.snapshot().QueueDepth) < 2 {
 		select {
 		case <-deadline:
 			cancel()

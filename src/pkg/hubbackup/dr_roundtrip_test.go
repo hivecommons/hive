@@ -41,7 +41,7 @@ func TestDRRoundTripSealVerifyOpenExtract(t *testing.T) {
 	spokes := fixedSpokeCollector{spokes: []SpokeConfig{
 		{ID: "hosted-x", Cluster: "hive-oke", Files: map[string][]byte{
 			"hive.yaml.runtime": []byte("project:\n  org: acme\n"),
-			"agents.json":   []byte(`{"scanner":{"enabled":true}}`),
+			"agents.json":       []byte(`{"scanner":{"enabled":true}}`),
 		}},
 	}}
 	secrets := fixedSecretCollector{items: []SecretItem{
@@ -377,7 +377,7 @@ func TestBuildFailsWhenSecretCollectionFails(t *testing.T) {
 func TestArchiveNameIsSortableUTC(t *testing.T) {
 	older := ArchiveName(mustTime(t, "2026-07-01T00:00:00Z"))
 	newer := ArchiveName(mustTime(t, "2026-07-31T00:00:00Z"))
-	if !(older < newer) {
+	if older >= newer {
 		t.Fatalf("archive names must sort chronologically: %q !< %q", older, newer)
 	}
 	if !strings.HasPrefix(older, "hive-hub-backup-") {

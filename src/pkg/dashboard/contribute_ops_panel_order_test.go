@@ -28,13 +28,13 @@ func TestOpsPanelOrderMyWorkAboveQueue(t *testing.T) {
 	if mainStart < 0 || railStart < 0 || myWork < 0 || queue < 0 {
 		t.Fatalf("missing structure markers (main=%d rail=%d mywork=%d queue=%d)", mainStart, railStart, myWork, queue)
 	}
-	if !(mainStart < myWork && myWork < railStart) {
+	if mainStart >= myWork || myWork >= railStart {
 		t.Errorf("My work heading is not inside .ops-main (main=%d mywork=%d rail=%d)", mainStart, myWork, railStart)
 	}
-	if !(mainStart < queue && queue < railStart) {
+	if mainStart >= queue || queue >= railStart {
 		t.Errorf("Ready-work queue heading is not inside .ops-main (main=%d queue=%d rail=%d)", mainStart, queue, railStart)
 	}
-	if !(myWork < queue) {
+	if myWork >= queue {
 		t.Errorf("expected My work panel to render ABOVE Ready-work queue (mywork=%d, queue=%d)", myWork, queue)
 	}
 }

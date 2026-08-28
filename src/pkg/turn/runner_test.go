@@ -138,7 +138,7 @@ func TestStepReentersAtEveryPersistenceBoundary(t *testing.T) {
 			}
 
 			recovered := testEnvelope()
-			var input *TurnPlan = testPlan()
+			var input = testPlan()
 			if store.saved != nil {
 				recovered, err = ParseEnvelope(store.saved)
 				if err != nil {

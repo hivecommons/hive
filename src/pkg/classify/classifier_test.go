@@ -378,10 +378,9 @@ func TestClassifyAll_MutatesSlice(t *testing.T) {
 
 	result := ClassifyAll(issues)
 
-	// ClassifyAll returns the same (mutated) slice
-	if &result[0] != &issues[0] {
-		// Underlying array might differ due to slice semantics; check values instead
-	}
+	// ClassifyAll returns the same (mutated) slice. The underlying array
+	// might differ due to slice semantics, so the mutation is verified by
+	// checking values below rather than pointer identity.
 
 	if result[0].ComplexityTier != string(TierSimple) {
 		t.Errorf("issue[0]: want ComplexityTier %q, got %q", TierSimple, result[0].ComplexityTier)

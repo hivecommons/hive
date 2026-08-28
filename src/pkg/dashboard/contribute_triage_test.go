@@ -254,7 +254,7 @@ func TestContributeTriageRenderMarkup(t *testing.T) {
 	ops := strings.Index(body, `id="tab-ops"`)
 	card := strings.Index(body, `id="cc-triage-card"`)
 	lb := strings.Index(body, `id="tab-leaderboard"`)
-	if !(ops >= 0 && card > ops && (lb < 0 || card < lb)) {
+	if ops < 0 || card <= ops || (lb >= 0 && card >= lb) {
 		t.Errorf("triage card is not inside the Operations panel (ops=%d card=%d lb=%d)", ops, card, lb)
 	}
 }

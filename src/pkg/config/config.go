@@ -4899,7 +4899,7 @@ func (c *Config) validate() error {
 	// empty github block validate and silently boot a hive with no credentials
 	// at all. Only a forge the operator actually wrote counts.
 	if c.GitHub.Token == "" && c.GitHub.AppID == 0 &&
-		!(strings.TrimSpace(c.GitHub.Forge_) != "" && c.GitHub.ResolvedAppID() != 0) {
+		(strings.TrimSpace(c.GitHub.Forge_) == "" || c.GitHub.ResolvedAppID() == 0) {
 		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {

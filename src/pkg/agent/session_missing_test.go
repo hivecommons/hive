@@ -157,7 +157,7 @@ func TestSessionMissingReleasesTheLock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		m.mu.Lock()
-		m.mu.Unlock()
+		m.mu.Unlock() //nolint:staticcheck // SA2001: the empty critical section IS the test — it proves no reader lock leaked (see comment above).
 		close(done)
 	}()
 	<-done

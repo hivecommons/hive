@@ -180,7 +180,7 @@ func TestContributeCodexOnboardingSurface(t *testing.T) {
 	if iClaude < 0 || iCodex < 0 || iOther < 0 {
 		t.Fatalf("missing select options: claude=%d codex=%d other=%d", iClaude, iCodex, iOther)
 	}
-	if !(iClaude < iCodex && iCodex < iOther) {
+	if iClaude >= iCodex || iCodex >= iOther {
 		t.Errorf("codex must sit next to Claude Code in the CLI select: claude=%d codex=%d other=%d", iClaude, iCodex, iOther)
 	}
 }

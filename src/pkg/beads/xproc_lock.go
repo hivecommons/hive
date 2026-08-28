@@ -87,7 +87,7 @@ func (s *Store) refreshFromDisk() {
 			s.beads[b.ID] = b
 			continue
 		}
-		if b.UpdatedAt.Time.After(cur.UpdatedAt.Time) {
+		if b.UpdatedAt.After(cur.UpdatedAt.Time) {
 			s.beads[b.ID] = b
 		}
 	}

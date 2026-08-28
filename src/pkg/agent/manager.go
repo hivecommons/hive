@@ -6101,7 +6101,7 @@ func isVisualNoise(s string) bool {
 	if t == "" {
 		return true
 	}
-	if strings.Trim(t, "─━─") == "" {
+	if strings.Trim(t, "─━") == "" {
 		return true
 	}
 	if strings.HasPrefix(t, "/data/agents/") && !strings.Contains(t, " ") {

@@ -90,8 +90,8 @@ func TestCovH2_BuildHealthAndRateLimits(t *testing.T) {
 	// hit the server; whatever it returns, the non-nil branch executes.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/rate_limit":
+		switch r.URL.Path {
+		case "/rate_limit":
 			json.NewEncoder(w).Encode(map[string]any{
 				"resources": map[string]any{
 					"core":    map[string]any{"limit": 5000, "remaining": 4999, "reset": 1700000000},

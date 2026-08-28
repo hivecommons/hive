@@ -179,13 +179,13 @@ func TestWholeSetProvenanceCannotInvertTheModeLadder(t *testing.T) {
 	surge := afterOperatorEdit.EffectiveThreshold("surge", testRepos)
 	busy := afterOperatorEdit.EffectiveThreshold("busy", testRepos)
 	quiet := afterOperatorEdit.EffectiveThreshold("quiet", testRepos)
-	if !(surge >= busy && busy >= quiet) {
+	if surge < busy || busy < quiet {
 		t.Errorf("mode ladder inverted: surge=%d busy=%d quiet=%d", surge, busy, quiet)
 	}
 	// And the pack-seeded set scales as a set, which also cannot invert.
 	p := packSeeded(l4Modes())
 	surge, busy, quiet = p.EffectiveThreshold("surge", testRepos), p.EffectiveThreshold("busy", testRepos), p.EffectiveThreshold("quiet", testRepos)
-	if !(surge >= busy && busy >= quiet) {
+	if surge < busy || busy < quiet {
 		t.Errorf("scaled ladder inverted: surge=%d busy=%d quiet=%d", surge, busy, quiet)
 	}
 }

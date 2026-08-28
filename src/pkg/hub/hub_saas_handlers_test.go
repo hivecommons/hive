@@ -794,7 +794,7 @@ func TestCountUserHives(t *testing.T) {
 func TestListSaaSHives(t *testing.T) {
 	// Will return nil on macOS (no /data/saas/hives dir)
 	hives := listSaaSHives()
-	if hives != nil && len(hives) > 0 {
+	if len(hives) > 0 {
 		t.Logf("found %d hives (unexpected)", len(hives))
 	}
 }

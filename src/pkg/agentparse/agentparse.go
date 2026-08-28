@@ -97,9 +97,10 @@ func ParseTable(lines []string, categories map[string]bool) []Item {
 			for _, c := range cleaned {
 				if c != "" {
 					nonEmpty++
-					if nonEmpty == 1 {
+					switch nonEmpty {
+					case 1:
 						currentTitle += " " + c
-					} else if nonEmpty == 2 {
+					case 2:
 						currentDefault += " " + c
 					}
 				}
@@ -207,7 +208,7 @@ func TitleFromBdCreate(line string) (string, bool) {
 	m := bdCreateTitleRe.FindStringSubmatch(line)
 	// len(m) < 2 is defensive: the regex has one capture group, so a non-nil
 	// match always has len 2. It cannot be exercised in a test.
-	if m == nil || len(m) < 2 {
+	if len(m) < 2 {
 		return "", false
 	}
 	title := strings.TrimSpace(m[1])

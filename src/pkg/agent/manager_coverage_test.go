@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -206,7 +207,7 @@ func TestAgentEnvPairs_WithOverrides(t *testing.T) {
 
 func TestRestart_NotFound(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
-	err := m.Restart(nil, "nonexistent")
+	err := m.Restart(context.TODO(), "nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent agent")
 	}
@@ -255,7 +256,7 @@ func TestStart_AlreadyRunning(t *testing.T) {
 	m.agents["scanner"].State = StateRunning
 	m.mu.Unlock()
 
-	err := m.Start(nil, "scanner")
+	err := m.Start(context.TODO(), "scanner")
 	if err == nil {
 		t.Fatal("expected error for already running agent")
 	}
@@ -315,7 +316,7 @@ func TestResume_NotPaused(t *testing.T) {
 	}, discardLogger(), ProjectContext{})
 
 	// Agent is in Stopped state (not paused), Resume should be no-op
-	err := m.Resume(nil, "scanner", "test", "test resume")
+	err := m.Resume(context.TODO(), "scanner", "test", "test resume")
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -323,7 +324,7 @@ func TestResume_NotPaused(t *testing.T) {
 
 func TestResume_NotFound(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
-	err := m.Resume(nil, "nonexistent", "test", "test resume")
+	err := m.Resume(context.TODO(), "nonexistent", "test", "test resume")
 	if err == nil {
 		t.Error("expected error")
 	}

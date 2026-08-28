@@ -103,7 +103,7 @@ func (s *Server) handleGovernorWatchdog(w http.ResponseWriter, r *http.Request) 
 		// The legacy Enabled flag would otherwise keep overriding a mode set
 		// here on the next load. Clearing it makes Mode the single source of
 		// truth once an operator has touched this screen.
-		wd.Enabled = nil
+		wd.Enabled = nil //nolint:staticcheck // SA1019: intentional write to the deprecated field — this IS the migration off it, not accidental use.
 	}
 	if body.ProbeIntervalS > 0 {
 		wd.ProbeIntervalS = body.ProbeIntervalS

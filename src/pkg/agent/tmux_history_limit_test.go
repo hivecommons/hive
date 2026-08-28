@@ -27,7 +27,7 @@ func TestNewSessionCommandsRaisesHistoryBeforePaneCreation(t *testing.T) {
 	setIdx := idx("set-option")
 	sepIdx := idx(";")
 	newIdx := idx("new-session")
-	if !(setIdx < sepIdx && sepIdx < newIdx) {
+	if setIdx >= sepIdx || sepIdx >= newIdx {
 		t.Fatalf("want set-option before %q before new-session, got %v", ";", cmds)
 	}
 

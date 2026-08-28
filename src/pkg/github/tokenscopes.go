@@ -319,7 +319,7 @@ func (c *Client) CheckTokenScopes(ctx context.Context, acmmLevel int) ScopeResul
 	// both must read as Undetermined. Note that an error response is still
 	// useful here — GitHub sets the scope headers on 401/403 too — so we read
 	// the header before considering err.
-	raw, present := resp.Response.Header[http.CanonicalHeaderKey(oauthScopesHeader)]
+	raw, present := resp.Header[http.CanonicalHeaderKey(oauthScopesHeader)]
 	if !present {
 		if err != nil {
 			return ScopeResult{Status: ScopeStatusUndetermined, Reason: "GitHub returned no scope header: " + err.Error()}

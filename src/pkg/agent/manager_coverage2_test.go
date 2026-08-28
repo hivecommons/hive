@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1140,11 +1141,10 @@ func TestSnapshot_CopiesPaneCapture(t *testing.T) {
 	m.mu.Unlock()
 
 	status, _ := m.GetStatus("scanner")
-	// PaneLines should return a copy
-	lines := status.PaneLines(10)
-	if len(lines) == 0 {
-		// OK if filtered out — the point is no panic
-	}
+	// PaneLines should return a copy. Filtering may legitimately drop lines,
+	// so the only invariant this smoke test checks is that the call above
+	// does not panic.
+	_ = status.PaneLines(10)
 }
 
 // ---------------------------------------------------------------------------
@@ -1790,7 +1790,7 @@ func TestConcurrentPauseResume_NoPanic(t *testing.T) {
 		go func() {
 			for j := 0; j < 50; j++ {
 				m.Pause("a", "test", "testing")
-				m.Resume(nil, "a", "test", "testing")
+				m.Resume(context.TODO(), "a", "test", "testing")
 				m.IsPaused("a")
 				m.GetStatus("a")
 			}

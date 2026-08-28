@@ -1926,10 +1926,7 @@ func (s *Server) IsPendingGitHubAppInstall() bool {
 		return false
 	}
 	const pendingInstallExpiry = 10 * time.Minute
-	if time.Since(s.pendingGitHubAppInstallAt) > pendingInstallExpiry {
-		return false
-	}
-	return true
+	return time.Since(s.pendingGitHubAppInstallAt) <= pendingInstallExpiry
 }
 
 func (s *Server) ClearPendingGitHubAppInstall() {

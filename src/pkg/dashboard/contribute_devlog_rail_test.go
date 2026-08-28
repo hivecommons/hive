@@ -64,7 +64,7 @@ func TestOpsDevlogRailMarkup(t *testing.T) {
 	if railOpen < 0 || ccLog < 0 || railClose < 0 {
 		t.Fatalf("missing rail/feed structure (rail=%d cc-log=%d aside-close=%d)", railOpen, ccLog, railClose)
 	}
-	if !(railOpen < ccLog && ccLog < railClose) {
+	if railOpen >= ccLog || ccLog >= railClose {
 		t.Errorf("dev-log #cc-log is not nested inside the .ops-rail <aside> (rail=%d cc-log=%d close=%d)", railOpen, ccLog, railClose)
 	}
 }
