@@ -89,6 +89,11 @@ type TimelineEvent struct {
 	Kind   string `json:"kind"`            // one of the Timeline* constants
 	Detail string `json:"detail"`          // human-readable, pre-sanitized
 	Actor  string `json:"actor,omitempty"` // GitHub username for human-initiated events
+	// ActorName is the resolved display label for an opaque OIDC Actor
+	// identity, stamped on the SERVED copies only (never persisted — the
+	// store keeps raw identities so history survives display-name changes).
+	// Empty when Actor is already the best label.
+	ActorName string `json:"actorName,omitempty"`
 }
 
 // hiveTimeline is the on-disk shape: an append-only, capped event list.
@@ -569,6 +574,7 @@ func (s *HubServer) handleHiveTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	events := s.timeline.recent(hiveID, timelineMaxEvents)
+	s.decorateTimelineActors(events)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"events": events})
 }
@@ -609,6 +615,19 @@ func (s *HubServer) handleAccessLog(w http.ResponseWriter, r *http.Request) {
 			events = append(events, ev)
 		}
 	}
+	s.decorateTimelineActors(events)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"events": events})
+}
+
+// decorateTimelineActors stamps ActorName on served event copies whose Actor
+// is an opaque OIDC identity with a stored display name. Serve-time only —
+// the underlying store is never mutated.
+func (s *HubServer) decorateTimelineActors(events []TimelineEvent) {
+	label := s.identityLabeler()
+	for i := range events {
+		if l := label(events[i].Actor); l != events[i].Actor {
+			events[i].ActorName = l
+		}
+	}
 }

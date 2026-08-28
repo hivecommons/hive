@@ -223,6 +223,10 @@ type Alert struct {
 	// unacknowledged alert, which the client would have to special-case.
 	AckBy string     `json:"ackBy,omitempty"`
 	AckAt *time.Time `json:"ackAt,omitempty"`
+	// AckByName is the resolved display label when AckBy is an opaque OIDC
+	// identity with a stored display name. Serve-time cosmetic only; the ack
+	// record itself keeps the raw identity.
+	AckByName string `json:"ackByName,omitempty"`
 }
 
 // AlertSummary is the whole fleet's alert state, shaped for a single render
@@ -1208,7 +1212,18 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	for _, e := range entries {
 		regs = append(regs, e.RegistryEntry)
 	}
-	return evaluateAlerts(s.alerts, hives, s.urlUnreachableAlerts(regs, now), now)
+	summary := evaluateAlerts(s.alerts, hives, s.urlUnreachableAlerts(regs, now), now)
+	// Cosmetic: resolve opaque OIDC ack identities to display names for the
+	// "— ack by …" note. The stored ack keeps the raw identity.
+	label := s.identityLabeler()
+	for i := range summary.Alerts {
+		if by := summary.Alerts[i].AckBy; by != "" {
+			if l := label(by); l != by {
+				summary.Alerts[i].AckByName = l
+			}
+		}
+	}
+	return summary
 }
 
 // alertAcksFileMu serialises writers of the acks file. Two concurrent ack

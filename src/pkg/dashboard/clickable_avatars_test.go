@@ -39,7 +39,11 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		// hand-rolls an <img>. TestAccessRowAvatarDelegates below pins the
 		// delegation so this indirection cannot become a bypass.
 		{"access tab allowlist", "accessRowAvatar(u.username, u.display_name || '', ACCESS_LIST_AVATAR_PX)"},
-		{"audit log actor", "? linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px')"},
+		// The audit log's GitHub-shaped actors still go through linkedAvatar;
+		// provider-prefixed OIDC keys route through accessRowAvatar (initials
+		// tile, no fabricated github.com link) — same split as the access tab.
+		{"audit log actor", "face = linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px');"},
+		{"audit log OIDC actor", "face = accessRowAvatar(actor, actorLabel, AUDIT_AVATAR_PX);"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,7 +167,7 @@ func TestRedundantProfileAffordancesRemoved(t *testing.T) {
 // profile and imply they performed the action.
 func TestAnonymousAuditActorIsNotLinked(t *testing.T) {
 	html := indexHTML(t)
-	if !strings.Contains(html, ": avatarImg(ghProfileURL('ghost') + '.png', AUDIT_AVATAR_PX, 'margin-right:4px');") {
+	if !strings.Contains(html, "face = avatarImg(ghProfileURL('ghost') + '.png', AUDIT_AVATAR_PX, 'margin-right:4px');") {
 		t.Error("the audit log's actorless placeholder face is no longer rendered unlinked")
 	}
 	if strings.Contains(html, "linkedAvatar(e.user||'ghost'") {

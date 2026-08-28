@@ -571,13 +571,30 @@ func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "owner"
 	}
-	jsonResponse(w, map[string]string{
+	resp := map[string]string{
 		"role": role,
 		"user": user,
 		// The queue label is server-configured, so the dashboard must be told
 		// it rather than hard-coding a name that a hive may have changed.
 		"automerge_label": s.autoMergeLabel(),
-	})
+	}
+	// display_name is the human name for an opaque OIDC identity key
+	// ("ibmid:5500…"), delivered by the hub heartbeat (AuthorizedUserNames).
+	// Purely cosmetic — the header chip shows it; every auth decision stays on
+	// the raw user key. Absent when unknown; the UI falls back to the key.
+	if dn := s.authorizedDisplayName(user); dn != "" && dn != user {
+		resp["display_name"] = dn
+	}
+	jsonResponse(w, resp)
+}
+
+// authorizedDisplayName looks up the hub-delivered cosmetic display name for
+// an identity key. Nil-safe: /api/role is served before deps are required.
+func (s *Server) authorizedDisplayName(user string) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || user == "" {
+		return ""
+	}
+	return strings.TrimSpace(s.deps.Config.Dashboard.AuthorizedUserNames[user])
 }
 
 // autoMergeLabel reports the configured queue label. /api/role is served

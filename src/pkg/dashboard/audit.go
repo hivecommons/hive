@@ -48,6 +48,10 @@ type AuditEntry struct {
 	Action    string `json:"action"`
 	Detail    string `json:"detail,omitempty"`
 	Agent     string `json:"agent,omitempty"`
+	// UserName is the hub-delivered display name when User is an opaque OIDC
+	// identity key. Stamped at SERVE time only (handleAuditLog) — the ring and
+	// the on-disk log keep the raw key, so history survives name changes.
+	UserName string `json:"user_name,omitempty"`
 }
 
 type AuditLog struct {
@@ -301,6 +305,13 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries := s.audit.Recent(auditMaxEntries)
+	// Cosmetic: attach display names for opaque OIDC actor keys. Recent()
+	// returns copies, so the ring itself is never mutated.
+	for i := range entries {
+		if dn := s.authorizedDisplayName(entries[i].User); dn != "" && dn != entries[i].User {
+			entries[i].UserName = dn
+		}
+	}
 	jsonResponse(w, map[string]any{"entries": entries})
 }
 

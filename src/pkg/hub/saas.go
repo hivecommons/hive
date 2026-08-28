@@ -2970,6 +2970,12 @@ type MyHiveEntry struct {
 	ProvError   string `json:"provError,omitempty"`
 	ProvStatus  string `json:"provStatus,omitempty"`
 	AutoUpgrade bool   `json:"autoUpgrade"`
+	// OwnerName is the resolved human display label for an opaque OIDC Owner
+	// identity ("ibmid:5500…" → "Jane Doe"), stamped at serve time from the
+	// stored user record. Empty when Owner is already the best label (GitHub
+	// logins). Purely cosmetic: grouping labels and tooltips show it; every
+	// key, filter and authorization check stays on the raw Owner.
+	OwnerName string `json:"ownerName,omitempty"`
 	// TrackedChannel is the release channel this hive's image is pinned to
 	// ("stable", "candidate", "edge"), or "" for a plain-branch hive. Overlaid
 	// at read time from the hub-owned SaaSHive record — deliberately NOT from
@@ -3665,6 +3671,16 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// this exact set of rows. Ranking against the whole registry instead would
 	// let the header polygon disagree with the rows it summarises.
 	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
+
+	// Cosmetic owner labels: resolve opaque OIDC owner identities to their
+	// stored display names so "Group by owner" headers and tooltips read like
+	// people. Memoized — a fleet shares a handful of owners.
+	ownerLabel := s.identityLabeler()
+	for i := range result {
+		if l := ownerLabel(result[i].Owner); l != result[i].Owner {
+			result[i].OwnerName = l
+		}
+	}
 
 	// Server-side scoping (filter/sort/pagination) happens LAST, after every
 	// set-wide computation above (drift norm, alerts, outage suppression,
@@ -11396,7 +11412,9 @@ const dashboardHTML = `<!DOCTYPE html>
            still identifiable without opening the hover panel. */
         var hiddenNames = [];
         for (var j = shown.length; j < members.length; j++) {
-          hiddenNames.push(String(members[j].username || ''));
+          /* display_label (when present) is the resolved human name for an
+             opaque OIDC key — same precedence the visible faces use. */
+          hiddenNames.push(String(members[j].display_label || members[j].username || ''));
         }
         faces += '<span title="' + escAttr(hiddenNames.join(', ')) + '" ' +
           'style="font-size:0.62rem;color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + '</span>';
@@ -12884,7 +12902,7 @@ const dashboardHTML = `<!DOCTYPE html>
       {key: HIVE_GROUP_NONE, label: 'No grouping', of: function() { return ''; }},
       {key: HIVE_GROUP_CLUSTER, label: 'Cluster', of: function(h) { return (h && (h.clusterName || h.clusterId)) || ''; }},
       {key: HIVE_GROUP_ORG, label: 'Org', of: function(h) { return (h && h.org) || ''; }},
-      {key: HIVE_GROUP_OWNER, label: 'Owner', of: function(h) { return (h && h.owner) || ''; }},
+      {key: HIVE_GROUP_OWNER, label: 'Owner', of: function(h) { /* ownerName resolves opaque OIDC ids ("ibmid:…") to display names; grouping by the label keeps headers human while row data stays raw. */ return (h && (h.ownerName || h.owner)) || ''; }},
       {key: HIVE_GROUP_ACMM, label: 'ACMM level', of: function(h) {
         /* acmmLevel is numeric; render as "Level N" so the header reads as a
            label rather than a bare digit. 0/absent falls through to
@@ -13710,7 +13728,7 @@ const dashboardHTML = `<!DOCTYPE html>
             : '<button type="button" class="alert-ack-btn" onclick="ackAlert(' +
               jsArg(a.hiveId) + ',' + jsArg(a.type) + ',false)">Acknowledge</button>';
         }
-        var ackedBy = (acked && a.ackBy) ? '<span class="alert-row-reason">— ack by ' + esc(a.ackBy) + '</span>' : '';
+        var ackedBy = (acked && a.ackBy) ? '<span class="alert-row-reason">— ack by ' + esc(a.ackByName || a.ackBy) + '</span>' : '';
         /* The row itself is a <button> that jumps to this hive's row in the
            table below. A real button (not a div with role/tabindex) gets Enter,
            Space and the focus ring for free.
@@ -15029,6 +15047,10 @@ const dashboardHTML = `<!DOCTYPE html>
       for (var i = 0; i < shown; i++) {
         var r = rows[i] || {};
         var pct = Number(r.sharePct) || 0;
+        /* label (when present) is the server-resolved display name for an
+           opaque OIDC key. Display only — jumpToUsageBucket and hive-id
+           filtering keep operating on the RAW r.key. */
+        var rLabel = String(r.label || r.key || '');
         /* The key cell links back to the fleet table: one hive jumps to its
            row, several filter the table to the bucket. encodeURIComponent
            then esc() so a user-influenced key can neither break out of the
@@ -15038,12 +15060,12 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ids.length) {
           keyCell = '<a href="#" onclick="jumpToUsageBucket(decodeURIComponent(\'' + esc(encodeURIComponent(String(r.key || ''))) + '\'),JSON.parse(decodeURIComponent(\'' + esc(encodeURIComponent(JSON.stringify(ids))) + '\')));return false"' +
             ' style="color:inherit;text-decoration:none;border-bottom:1px dotted var(--muted)"' +
-            ' title="' + esc(r.key) + ' — show ' + (ids.length === 1 ? 'this hive' : 'these ' + ids.length + ' hives') + ' in the table">' + esc(r.key) + '</a>';
+            ' title="' + esc(rLabel) + ' — show ' + (ids.length === 1 ? 'this hive' : 'these ' + ids.length + ' hives') + ' in the table">' + esc(rLabel) + '</a>';
         } else {
-          keyCell = esc(r.key);
+          keyCell = esc(rLabel);
         }
         html += '<tr>' +
-          '<td style="padding:2px 6px 2px 0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.key) + '">' + keyCell + '</td>' +
+          '<td style="padding:2px 6px 2px 0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(rLabel) + '">' + keyCell + '</td>' +
           '<td style="padding:2px 6px;text-align:right;white-space:nowrap">' + fmtTokens(r.tokens) + '</td>' +
           '<td style="padding:2px 6px;text-align:right;color:var(--muted);white-space:nowrap">' + (Number(r.hives) || 0) + '</td>' +
           /* Inline share bar — cheap visual ranking without a chart library. */
@@ -15103,7 +15125,7 @@ const dashboardHTML = `<!DOCTYPE html>
           var dot = h.online
             ? '<span style="color:#3fb950" title="Online but consuming nothing — idle or stuck">●</span>'
             : '<span style="color:var(--muted)" title="Offline">○</span>';
-          chips += '<span onclick="jumpToHiveRow(decodeURIComponent(\'' + esc(encodeURIComponent(String(h.id || ''))) + '\'),decodeURIComponent(\'' + esc(encodeURIComponent(String(h.name || h.id || ''))) + '\'))" style="display:inline-block;padding:2px 7px;margin:2px 4px 2px 0;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:0.7rem;cursor:pointer" title="' + esc((h.org || '') + (h.owner ? ' · ' + h.owner : '')) + ' — show this hive in the table">' + dot + ' ' + esc(h.name || h.id) + '</span>';
+          chips += '<span onclick="jumpToHiveRow(decodeURIComponent(\'' + esc(encodeURIComponent(String(h.id || ''))) + '\'),decodeURIComponent(\'' + esc(encodeURIComponent(String(h.name || h.id || ''))) + '\'))" style="display:inline-block;padding:2px 7px;margin:2px 4px 2px 0;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:0.7rem;cursor:pointer" title="' + esc((h.org || '') + ((h.ownerName || h.owner) ? ' · ' + (h.ownerName || h.owner) : '')) + ' — show this hive in the table">' + dot + ' ' + esc(h.name || h.id) + '</span>';
         }
         var zMore = '';
         if (zero.length > USAGE_ZERO_TOP_N) {
@@ -21141,8 +21163,9 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Server returns newest first; render in that order. */
         el.innerHTML = events.map(function(ev) {
           var kind = TIMELINE_KINDS[ev.kind] || { label: ev.kind || 'Event', color: '#8b949e' };
+          /* actorName resolves opaque OIDC identities server-side. */
           var actor = ev.actor
-            ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:6px">by ' + esc(ev.actor) + '</span>'
+            ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:6px">by ' + esc(ev.actorName || ev.actor) + '</span>'
             : '';
           return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
             '<div style="flex-shrink:0;width:84px"><span style="display:inline-block;padding:2px 7px;border-radius:9999px;font-size:0.62rem;font-weight:600;white-space:nowrap;background:' + kind.color + '22;color:' + kind.color + ';border:1px solid ' + kind.color + '55">' + esc(kind.label) + '</span></div>' +
@@ -21209,8 +21232,9 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         /* Server returns newest first; render in that order. */
         el.innerHTML = events.map(function(ev) {
+          /* actorName resolves opaque OIDC identities server-side. */
           var actor = ev.actor
-            ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:6px">by ' + esc(ev.actor) + '</span>'
+            ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:6px">by ' + esc(ev.actorName || ev.actor) + '</span>'
             : '';
           return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
             '<div style="font-size:0.78rem;color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +

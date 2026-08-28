@@ -12051,12 +12051,21 @@ function burnAreaChart() {
          rendered UNLINKED by passing no username, rather than sending the
          reader to a stranger's profile. */
       var actor = String(e.user || '');
-      var face = actor
-        ? linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px')
-        : avatarImg(ghProfileURL('ghost') + '.png', AUDIT_AVATAR_PX, 'margin-right:4px');
+      /* user_name is the server-resolved display name for an opaque OIDC key
+         ("ibmid:5500…"); provider-prefixed keys get an unlinked initials tile
+         via accessRowAvatar instead of a fabricated github.com avatar/link. */
+      var actorLabel = String(e.user_name || e.user || '');
+      var face;
+      if (!actor) {
+        face = avatarImg(ghProfileURL('ghost') + '.png', AUDIT_AVATAR_PX, 'margin-right:4px');
+      } else if (actor.indexOf(':') !== -1 || identityKeyProvider(actor) !== 'github') {
+        face = accessRowAvatar(actor, actorLabel, AUDIT_AVATAR_PX);
+      } else {
+        face = linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px');
+      }
       return '<tr style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:4px 8px;white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
-        '<td style="padding:4px 8px">' + face + esc(e.user||'—') + '</td>' +
+        '<td style="padding:4px 8px" title="' + esc(actor) + '">' + face + esc(actorLabel || '—') + '</td>' +
         '<td style="padding:4px 8px;font-weight:600">' + esc(e.action||'—') + '</td>' +
         '<td style="padding:4px 8px">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:4px 8px;color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
@@ -22032,12 +22041,32 @@ function burnAreaChart() {
       setTimeout(() => { btn.textContent = 'Copy'; btn.style.background = 'var(--green)'; }, 2000);
     }
 
-    function showGHAuthState(loggedIn, username, avatarURL, role) {
+    /* Data-URI SVG avatar showing the person's initial — used for OIDC
+       identities ("ibmid:5500…") that have no GitHub avatar to fetch. */
+    function initialsAvatarURI(name) {
+      var base = String(name || '?');
+      var colon = base.indexOf(':');
+      if (colon !== -1 && colon + 1 < base.length) base = base.slice(colon + 1);
+      var ch = (base.trim().charAt(0) || '?').toUpperCase();
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56">' +
+        '<rect width="56" height="56" rx="28" fill="#30363d"/>' +
+        '<text x="28" y="37" font-family="system-ui,sans-serif" font-size="26" fill="#e6edf3" text-anchor="middle">' +
+        ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</text></svg>';
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    }
+
+    function showGHAuthState(loggedIn, username, avatarURL, role, displayName) {
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');
+      /* OIDC identity keys carry a provider prefix ("ibmid:…", "google:…").
+         They have no github.com avatar or profile page, and the menu should
+         show the person's display name, not the opaque key. Every permission
+         check elsewhere still runs on the raw key. */
+      const isProviderKey = !!(username && String(username).indexOf(':') !== -1);
+      const shownName = displayName || username;
       if (loggedIn) {
         banner.style.display = 'none';
         if (topBtn) topBtn.style.display = 'none';
@@ -22046,16 +22075,20 @@ function burnAreaChart() {
           const img = document.getElementById('oc-gh-avatar');
           if (avatarURL) {
             img.src = avatarURL + (avatarURL.includes('?') ? '&' : '?') + 's=56';
-            img.alt = username;
+            img.alt = shownName;
+          } else if (isProviderKey) {
+            img.src = initialsAvatarURI(shownName);
+            img.alt = shownName;
           }
-          document.getElementById('oc-gh-menu-user').textContent = username;
+          document.getElementById('oc-gh-menu-user').textContent = shownName;
           /* Point the menu's profile entry at the signed-in account, and show it
              only once there is a login to point at. href is assigned as a
              property (not interpolated into markup), so encodeURIComponent on
-             the path segment is the whole escaping story here. */
+             the path segment is the whole escaping story here. OIDC keys have
+             no forge profile page — hide the entry entirely. */
           const profEl = document.getElementById('oc-gh-menu-profile');
           if (profEl) {
-            if (username) {
+            if (username && !isProviderKey) {
               profEl.href = ghProfileURL(username);
               profEl.style.display = 'block';
             } else {
@@ -22175,7 +22208,14 @@ function burnAreaChart() {
         const roleData = await roleResp.json();
         if (roleData.user) {
           if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
-          showGHAuthState(true, roleData.user, 'https://github.com/' + roleData.user + '.png', roleData.role);
+          /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
+             fabricate a github.com/<key>.png avatar for them; showGHAuthState
+             falls back to an initials avatar and the server-resolved
+             display_name. */
+          var ghAvatar = roleData.user.indexOf(':') === -1
+            ? 'https://github.com/' + roleData.user + '.png'
+            : '';
+          showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
           return;
         }
       } catch (e) {}

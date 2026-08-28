@@ -911,6 +911,26 @@ func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 	return login, avatarURL
 }
 
+// identityLabeler returns a per-request memoized resolver from a canonical (or
+// legacy bare) identity to its human display label — displayIdentity's login
+// half, cached so a list that repeats the same few owners does one lookup per
+// DISTINCT identity instead of one stored-user read per row. Empty in, empty
+// out. NOT safe for concurrent use; intended for a single handler invocation.
+func (s *HubServer) identityLabeler() func(string) string {
+	cache := map[string]string{}
+	return func(identity string) string {
+		if identity == "" {
+			return ""
+		}
+		if l, ok := cache[identity]; ok {
+			return l
+		}
+		l, _ := s.displayIdentity(identity)
+		cache[identity] = l
+		return l
+	}
+}
+
 func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	// Trust a carried username only when its signature verifies; a legacy
 	// unsigned or forged cookie reports unauthenticated, prompting a re-login.

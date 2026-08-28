@@ -78,6 +78,13 @@ type UsageBucket struct {
 	// Key is the org / owner / cluster name. USER-CONTROLLED — the UI must
 	// escape it with esc() before inserting it into the DOM.
 	Key string `json:"key"`
+	// Label is an OPTIONAL human display label for Key, resolved server-side
+	// for owner buckets whose key is an opaque OIDC identity ("ibmid:5500…",
+	// "google:1078…") that has a stored display name. Purely cosmetic — the
+	// UI shows label||key but keys, filters and links stay on Key. Empty when
+	// Key is already the best label (GitHub logins, clusters, org/repo).
+	// USER-CONTROLLED (it is a provider-asserted display name) — escape it.
+	Label string `json:"label,omitempty"`
 	// Tokens is the summed token count for this bucket. int64 throughout:
 	// a fleet total summed across 42+ hives, each clamped to 100e9, would
 	// overflow a 32-bit int.
@@ -102,6 +109,9 @@ type UsageHive struct {
 	// Org/Owner are USER-CONTROLLED — escape before rendering.
 	Org   string `json:"org,omitempty"`
 	Owner string `json:"owner,omitempty"`
+	// OwnerName mirrors UsageBucket.Label: the resolved display name for an
+	// opaque OIDC Owner identity, empty when Owner is already the best label.
+	OwnerName string `json:"ownerName,omitempty"`
 	// Online distinguishes a hive that is up but idle from one that is simply
 	// unreachable; both consume nothing but they mean different things.
 	Online bool `json:"online"`
@@ -399,6 +409,22 @@ func (s *HubServer) handleUsage(w http.ResponseWriter, r *http.Request) {
 	rollup := buildUsageRollup(scoped, func(h RegistryEntry) bool {
 		return isUnassignedPlaceholder(h.Org, "")
 	}, history, scope)
+
+	// Cosmetic decoration: resolve opaque OIDC owner identities
+	// ("ibmid:5500…") to their stored display names so the By-owner table and
+	// zero-consumption chips read like people, not subjects. Keys stay raw —
+	// they are what links/filters match on.
+	label := s.identityLabeler()
+	for i := range rollup.ByOwner {
+		if l := label(rollup.ByOwner[i].Key); l != rollup.ByOwner[i].Key {
+			rollup.ByOwner[i].Label = l
+		}
+	}
+	for i := range rollup.ZeroConsumption {
+		if l := label(rollup.ZeroConsumption[i].Owner); l != rollup.ZeroConsumption[i].Owner {
+			rollup.ZeroConsumption[i].OwnerName = l
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rollup)
