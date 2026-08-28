@@ -20,8 +20,19 @@
 # the committee, and a PR against BOTH this file and the upstream table.
 # Affiliation changes must be reflected within 30 days.
 
+# Maintainer roster. Affiliation is recorded because CNCF maturity review asks
+# for it; "independent" is a legitimate entry and is not a lesser status.
+#
+#   clubanderson  Andy Anderson    IBM
+#   hanthor       James Reilly     Universal Blue
+#   Danathar      Doug Baggett     independent
+
 approvers:
   - clubanderson
+  - hanthor
+  - Danathar
 
 reviewers:
   - clubanderson
+  - hanthor
+  - Danathar
