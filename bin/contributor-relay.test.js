@@ -751,13 +751,11 @@ test('agy headless argv carries the same --model/--effort pairing', () => {
   } finally { teardown(relay); }
 });
 
-test('amazonq and goose are also excluded from --model', () => {
-  for (const backend of ['amazonq', 'goose']) {
-    const relay = loadRelay({ backend, model: 'some-model' });
-    try {
-      assert.ok(!/--model/.test(relay.buildLaunchCommand()), `${backend} should not get --model`);
-    } finally { teardown(relay); }
-  }
+test('goose is also excluded from --model', () => {
+  const relay = loadRelay({ backend: 'goose', model: 'some-model' });
+  try {
+    assert.ok(!/--model/.test(relay.buildLaunchCommand()), 'goose should not get --model');
+  } finally { teardown(relay); }
 });
 
 // ---------------------------------------------------------------------------

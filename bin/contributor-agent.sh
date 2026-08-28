@@ -510,7 +510,7 @@ PERM_FLAG=$(backend_perm_flag "$AGENT_BACKEND")
 MODEL_FLAG=""
 if [[ -n "${AGENT_MODEL:-}" ]]; then
   case "$AGENT_BACKEND" in
-    # amazonq/goose take their model from config/env, not a --model flag.
+    # goose takes its model from config/env, not a --model flag.
     #
     # bob is excluded because --model is actively FATAL, not merely unused:
     # bob auto-selects its own model, and passing one leaves its model config
@@ -518,7 +518,7 @@ if [[ -n "${AGENT_MODEL:-}" ]]; then
     # "🛑 Cannot read properties of undefined (reading 'maxTokens')".
     # Verified against bobshell 1.0.6. PR #2249 removed it hub-side; this is
     # the same fix on the contributor-relay path.
-    amazonq|goose|bob) ;;
+    goose|bob) ;;
     *) MODEL_FLAG="--model $AGENT_MODEL" ;;
   esac
 fi

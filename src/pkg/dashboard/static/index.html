@@ -7522,7 +7522,7 @@
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
     // Model Gateway is configured — the user picks it, then funds/configures it.
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     // Names of Model Gateways configured under Settings → Model Gateways
@@ -18128,7 +18128,7 @@ function burnAreaChart() {
           <span class="config-toggle-label">CLI Pinned <span class="config-info">i<span class="config-tooltip">When enabled, the agent is locked to the CLI backend specified in CLI Pin Value. The governor will not switch this agent to a different backend. Useful for agents that require a specific tool (e.g. copilot for free-tier work).</span></span></span>
         </div>
         <div class="config-field">
-          <label>CLI Pin Value <span class="config-info">i<span class="config-tooltip">Which CLI backend to pin this agent to when CLI Pinned is on. Options: claude, copilot, bob, gemini, codex, amazonq, goose, aider. copilot and goose are free backends (no token cost).</span></span></label>
+          <label>CLI Pin Value <span class="config-info">i<span class="config-tooltip">Which CLI backend to pin this agent to when CLI Pinned is on. Options: claude, copilot, bob, gemini, codex, goose, aider. copilot and goose are free backends (no token cost).</span></span></label>
           <select id="cfg-pin-value" data-prev="${esc(g.cliPinValue || '')}" data-change-action="onCliPinChange" data-arg-types="t">
             ${backendOptionList().map(b => `<option value="${b}" ${g.cliPinValue === b ? 'selected' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>

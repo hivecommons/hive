@@ -433,11 +433,11 @@ function warnOnProtocolDrift(hub, hubVersion) {
 }
 
 // Backends that must NOT be given --model, mirroring contributor-agent.sh.
-// amazonq/goose take their model from config/env. bob is excluded because
+// goose takes its model from config/env. bob is excluded because
 // --model is actively FATAL for it: bob auto-selects its own model and passing
 // one leaves its model config undefined, so every prompt dies with
 // "Cannot read properties of undefined (reading 'maxTokens')" (bobshell 1.0.6).
-const NO_MODEL_FLAG_BACKENDS = ['amazonq', 'goose', 'bob'];
+const NO_MODEL_FLAG_BACKENDS = ['goose', 'bob'];
 
 // agy (Google's Antigravity CLI) REQUIRES --effort whenever --model is given:
 // without it agy warns "--model <m> requires --effort (available: low, medium,

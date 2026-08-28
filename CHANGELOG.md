@@ -47,6 +47,8 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Fixed
 
+- Removed the half-wired `amazonq` (Amazon Q Developer) backend from the operator-facing dashboard: the CLI backend picker's `KNOWN_BACKENDS` array and the "CLI Pin Value" tooltip both listed it as a selectable option, but it was never in either authoritative registry (`config/backends.conf`'s `KNOWN_BACKENDS`/`backend_binary`/`backend_perm_flag`, or `src/pkg/config/config.go`'s `CLIBackends`), so `validateBackendName` rejected it on launch — an accept-then-fail bug where the dashboard recommended a backend that could not start. Also dropped from the three shell/JS "no `--model` flag" lists in `bin/agent-launch.sh`, `bin/contributor-agent.sh`, and `bin/contributor-relay.sh` (the `goose`/`bob` handling in each is unaffected) and from `bin/contributor-relay.test.js`. Nobody had requested Amazon Q support; removal was cheaper than finishing the integration. Found by the backend-list parity guard added in [#4987](https://github.com/kubestellar/hive/pull/4987). The dashboard's JS `KNOWN_BACKENDS` array is still unguarded by that parity test — it cannot practically parse embedded JS — so this exact class of drift can recur there. ([#4988](https://github.com/kubestellar/hive/issues/4988))
+
 - An issue covered by an open PR that only *references* it (`Refs #N`, `Part of
   #N`) is no longer immediately re-offered to agents. Such weak claims — along
   with claims from externally-authored PRs — used to be ignored entirely on the
