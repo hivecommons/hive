@@ -244,6 +244,33 @@ governor:
   #             repo: your-org/platform
   #           - name: Mobile             # no repo => team.repo fallback
 
+  # Optional: read actionable work from a GitHub Projects v2 board instead of
+  # bare repo issues. Uses the same GitHub token as the rest of the hive
+  # (needs the read:project scope). See docs/work-sources.md.
+  # work_source:
+  #   type: github_projects
+  #   github_projects:
+  #     project_number: 7                # required — the number in the project URL
+  #     org: your-org                    # optional — defaults to project.org
+  #     states: [Todo, In Progress]      # optional — Status field values; empty = all
+  #     priority_field: Priority         # optional — single-select priority field name
+  #     iteration_field: Sprint          # optional — only current-iteration items when set
+  #     default_repo: your-org/repo      # optional — fallback when an item's repo is unknown
+
+  # Optional: read actionable work from Jira Cloud instead of GitHub Issues.
+  # Read-only. Secrets should come from env interpolation, not literal values.
+  # See docs/work-sources.md.
+  # work_source:
+  #   type: jira
+  #   jira:
+  #     base_url: https://your-org.atlassian.net   # required
+  #     email: bot@your-org.com                     # required — Atlassian account email
+  #     api_token: ${JIRA_API_TOKEN}                 # required — Atlassian API token, not password
+  #     project_keys: [ENG, OPS]                      # used to build the default JQL
+  #     # jql: "project in (ENG) AND statusCategory != Done"  # optional full override
+  #     repo: your-org/default-repo                   # required — repo agents clone for these issues
+  #     hold_labels: [hold, blocked]                   # optional — Jira labels that gate an issue
+
   modes:
     surge:
       threshold: 20                       # Queue depth >= 20 triggers SURGE
@@ -384,6 +411,18 @@ github:
   # app_id: 12345
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
+
+# Optional: OIDC token mint — issues short-lived scoped JWTs alongside the
+# GitHub App token, for in-process agent-credential consumers. Disabled by
+# default (absent block == byte-identical to enabled: false). SECURITY-
+# SENSITIVE — read docs/token-mint.md and docs/adr/0007-token-mint.md before
+# enabling: the signing key at key_path must never be readable outside the
+# hive process, and there is no rotation automation.
+# mint:
+#   enabled: true
+#   key_path: /data/mint-signing-key.pem   # auto-generated (0600) if absent; must be on persistent storage
+#   issuer: https://your-hive.example.com  # iss claim; treat as immutable once anything trusts it
+#   max_ttl_seconds: 900                    # default 900 (15m); silently clamped to a 3600s (1h) hard cap
 
 # Notifications — configure one or more channels. See docs/notifications.md.
 notifications:

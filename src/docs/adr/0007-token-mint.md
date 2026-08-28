@@ -2,6 +2,9 @@
 
 Status: Accepted (retroactive)
 
+For the operator-facing config reference (`mint:` block, key lifecycle, and
+the trust boundary stated plainly), see [Token mint](../token-mint.md).
+
 ## Context
 
 Several v4 security fixes tightened token handling, including stopping full
