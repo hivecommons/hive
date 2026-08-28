@@ -7,8 +7,8 @@
 # newer run that finished first.
 set -euo pipefail
 
-if [[ $# -ne 7 ]]; then
-  echo "usage: $0 IMAGE DIGEST_DIR BRANCH GIT_SHA RUN_NUMBER RELEASE_BRANCH INCLUDE_LATEST" >&2
+if [[ $# -lt 7 || $# -gt 8 ]]; then
+  echo "usage: $0 IMAGE DIGEST_DIR BRANCH GIT_SHA RUN_NUMBER RELEASE_BRANCH INCLUDE_LATEST [CHANNELS]" >&2
   exit 2
 fi
 
@@ -19,6 +19,12 @@ git_sha=$4
 run_number=$5
 release_branch=$6
 include_latest=$7
+# CHANNELS: comma-separated release-channel tags this branch's builds own
+# (default preserves the historical behavior). Channel ownership is
+# per-branch: v4 owns stable+candidate, the v5 line owns edge — without the
+# split, every v4 merge silently re-pointed edge back onto v4 minutes after
+# any deliberate promotion of edge to v5.
+channels=${8:-stable,candidate,edge}
 run_label=io.kubestellar.hive.github-actions-run-number
 
 if [[ ! $run_number =~ ^[0-9]+$ ]]; then
@@ -43,8 +49,11 @@ moving_refs=("$image:${branch_tag}-latest")
 if [[ $include_latest == true ]]; then
   moving_refs+=("$image:latest")
 fi
-if [[ $branch == "$release_branch" ]]; then
-  moving_refs+=("$image:stable" "$image:candidate" "$image:edge")
+if [[ $branch == "$release_branch" && -n $channels ]]; then
+  IFS=, read -ra channel_tags <<<"$channels"
+  for ch in "${channel_tags[@]}"; do
+    [[ -n $ch ]] && moving_refs+=("$image:$ch")
+  done
 fi
 
 inspect_status=
