@@ -1,13 +1,12 @@
 package knowledge
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fumiama/go-docx"
 )
 
 func TestParseRawText(t *testing.T) {
@@ -223,19 +222,56 @@ func TestChunksToFacts_SummaryTruncation(t *testing.T) {
 	}
 }
 
+// buildTestDocx assembles a minimal in-memory .docx (OOXML zip) containing
+// one WordprocessingML paragraph per input string. It only writes the
+// word/document.xml entry, which is all parseDocx reads.
 func buildTestDocx(t *testing.T, paragraphs []string) []byte {
 	t.Helper()
-	d := docx.New()
+
+	var body strings.Builder
 	for _, text := range paragraphs {
-		p := d.AddParagraph()
-		p.AddText(text)
+		body.WriteString(`<w:p><w:r><w:t xml:space="preserve">`)
+		body.WriteString(xmlEscape(text))
+		body.WriteString(`</w:t></w:r></w:p>`)
 	}
+
+	documentXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+		`<w:body>` + body.String() + `</w:body></w:document>`
+
+	return buildTestDocxArchive(t, documentXML)
+}
+
+// buildTestDocxArchive writes a minimal .docx zip archive whose
+// word/document.xml entry holds the given raw XML content.
+func buildTestDocxArchive(t *testing.T, documentXML string) []byte {
+	t.Helper()
+
 	var buf bytes.Buffer
-	_, err := d.WriteTo(&buf)
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.Create("word/document.xml")
 	if err != nil {
-		t.Fatalf("failed to create test docx: %v", err)
+		t.Fatalf("failed to create document.xml entry: %v", err)
+	}
+	if _, err := w.Write([]byte(documentXML)); err != nil {
+		t.Fatalf("failed to write document.xml: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to close test docx archive: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// xmlEscape escapes the minimal set of characters WordprocessingML text
+// content requires escaping for use inside test fixture XML.
+func xmlEscape(s string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+	)
+	return replacer.Replace(s)
 }
 
 func TestParseDocx(t *testing.T) {
@@ -265,16 +301,73 @@ func TestParseDocx(t *testing.T) {
 }
 
 func TestParseDocx_Empty(t *testing.T) {
-	d := docx.New()
-	var buf bytes.Buffer
-	d.WriteTo(&buf)
+	data := buildTestDocx(t, nil)
 
-	chunks, title := parseDocx(buf.Bytes())
+	chunks, title := parseDocx(data)
 	if len(chunks) != 0 {
 		t.Errorf("expected 0 chunks from empty docx, got %d", len(chunks))
 	}
 	if title != "" {
 		t.Errorf("expected empty title from empty docx, got %q", title)
+	}
+}
+
+func TestParseDocx_RoundTrip(t *testing.T) {
+	paras := []string{
+		"Title Line",
+		"Body paragraph one.",
+		"Body paragraph two with  preserved   spacing.",
+	}
+	data := buildTestDocx(t, paras)
+
+	chunks, title := parseDocx(data)
+	if title != "Title Line" {
+		t.Errorf("expected title %q, got %q", "Title Line", title)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk for short document, got %d", len(chunks))
+	}
+
+	body := chunks[0].Body
+	for _, want := range paras {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected chunk body to contain %q, got %q", want, body)
+		}
+	}
+}
+
+func TestParseDocx_Malformed(t *testing.T) {
+	cases := map[string][]byte{
+		"not a zip":   []byte("this is not a zip archive"),
+		"empty input": nil,
+		"zip missing document.xml": func() []byte {
+			var buf bytes.Buffer
+			zw := zip.NewWriter(&buf)
+			w, err := zw.Create("word/other.xml")
+			if err != nil {
+				t.Fatalf("failed to create zip entry: %v", err)
+			}
+			if _, err := w.Write([]byte("<root/>")); err != nil {
+				t.Fatalf("failed to write zip entry: %v", err)
+			}
+			if err := zw.Close(); err != nil {
+				t.Fatalf("failed to close zip: %v", err)
+			}
+			return buf.Bytes()
+		}(),
+		"corrupt document.xml": buildTestDocxArchive(t, "<w:document><not-closed>"),
+	}
+
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			chunks, title := parseDocx(data)
+			if chunks != nil {
+				t.Errorf("%s: expected nil chunks, got %v", name, chunks)
+			}
+			if title != "" {
+				t.Errorf("%s: expected empty title, got %q", name, title)
+			}
+		})
 	}
 }
 

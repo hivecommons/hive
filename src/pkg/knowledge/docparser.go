@@ -1,8 +1,11 @@
 package knowledge
 
 import (
+	"archive/zip"
 	"bytes"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"sort"
@@ -10,7 +13,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/fumiama/go-docx"
 	"github.com/ledongthuc/pdf"
 )
 
@@ -32,6 +34,14 @@ const (
 
 	// chunkTitleMaxChars caps the auto-extracted title from chunk content.
 	chunkTitleMaxChars = 80
+
+	// docxDocumentEntry is the path inside a .docx (OOXML zip) archive that
+	// holds the WordprocessingML body text.
+	docxDocumentEntry = "word/document.xml"
+
+	// docxMaxEntrySize bounds how much of a single zip entry we will read,
+	// since .docx uploads are attacker-influenced input.
+	docxMaxEntrySize = 64 << 20 // 64MiB
 )
 
 // DocChunk is a section of a parsed document, ready for conversion to a fact.
@@ -244,30 +254,87 @@ func extractPageTitle(text string, pageNum int) string {
 	return fmt.Sprintf("Page %d", pageNum)
 }
 
+// docxText models a WordprocessingML <w:t> run-text element. It is matched
+// by local name (ignoring the "w:" namespace prefix) so the parser does not
+// need to resolve the full OOXML namespace. xml:space="preserve" content
+// must be kept verbatim, so the element's chardata is captured as-is.
+type docxText struct {
+	Text string `xml:",chardata"`
+}
+
+// docxRun models a WordprocessingML <w:r> run: a span of text with uniform
+// formatting. Only the text children matter for extraction.
+type docxRun struct {
+	Text []docxText `xml:"t"`
+}
+
+// docxParagraph models a WordprocessingML <w:p> paragraph, made up of runs.
+type docxParagraph struct {
+	Runs []docxRun `xml:"r"`
+}
+
+// docxBody models the WordprocessingML <w:body> element containing the
+// document's paragraphs.
+type docxBody struct {
+	Paragraphs []docxParagraph `xml:"p"`
+}
+
+// docxDocument models the WordprocessingML root <w:document> element.
+type docxDocument struct {
+	Body docxBody `xml:"body"`
+}
+
+// extractDocxDocumentXML reads the word/document.xml entry out of a .docx
+// (OOXML zip) archive. It returns an error if the archive is malformed or
+// the entry is missing, so callers can fail closed.
+func extractDocxDocumentXML(data []byte) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+
+	for _, f := range zr.File {
+		if f.Name != docxDocumentEntry {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+
+		limited := io.LimitReader(rc, docxMaxEntrySize)
+		return io.ReadAll(limited)
+	}
+
+	return nil, fmt.Errorf("knowledge: %s not found in docx archive", docxDocumentEntry)
+}
+
 // parseDocx extracts text from a .docx file and splits into chunks.
 // It returns the chunks and the extracted document title (empty if none).
+//
+// A .docx is a ZIP archive whose body text lives in word/document.xml as
+// WordprocessingML: <w:body> contains <w:p> paragraphs, each made of <w:r>
+// runs, each made of <w:t> text nodes. Extraction concatenates the text of
+// each paragraph's runs, trims it, and keeps non-empty lines — mirroring
+// the previous go-docx-based behavior exactly.
 func parseDocx(data []byte) ([]DocChunk, string) {
-	r, err := docx.Parse(bytes.NewReader(data), int64(len(data)))
+	docXML, err := extractDocxDocumentXML(data)
 	if err != nil {
 		return nil, ""
 	}
 
+	var doc docxDocument
+	if err := xml.Unmarshal(docXML, &doc); err != nil {
+		return nil, ""
+	}
+
 	var paragraphs []string
-	for _, item := range r.Document.Body.Items {
-		p, ok := item.(*docx.Paragraph)
-		if !ok {
-			continue
-		}
+	for _, p := range doc.Body.Paragraphs {
 		var line strings.Builder
-		for _, child := range p.Children {
-			run, ok := child.(*docx.Run)
-			if !ok {
-				continue
-			}
-			for _, rc := range run.Children {
-				if t, ok := rc.(*docx.Text); ok {
-					line.WriteString(t.Text)
-				}
+		for _, run := range p.Runs {
+			for _, t := range run.Text {
+				line.WriteString(t.Text)
 			}
 		}
 		if text := strings.TrimSpace(line.String()); text != "" {
