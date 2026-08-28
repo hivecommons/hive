@@ -8,45 +8,34 @@ this repository at `v4` (`src/` prefix for source and most docs).
 
 ## Summary
 
-- **Questions answered from the repository: 60**
-- **Questions marked `[NEEDS OPERATOR INPUT]`: 13**
+- **Questions answered from the repository: 73**
+- **Questions marked `[NEEDS OPERATOR INPUT]`: 0**
 
-Every question below is reproduced verbatim as a heading. Where the repository
-does not support an answer, the heading is followed by the literal marker
-`**[NEEDS OPERATOR INPUT]**` and one sentence naming precisely what is
-missing — that is the operator's worklist. Substantive claims cite a
-`file:line`, a doc, or a named CI workflow.
+Every question below is reproduced verbatim as a heading. Substantive claims
+cite a `file:line`, a doc, or a named CI workflow. Several answers are
+deliberately plain "the project does not do this" statements rather than
+padded ones — that is the accurate answer, not an omission.
 
-### `[NEEDS OPERATOR INPUT]` items, by section
+### Known gaps
 
-**Day 0 — Scope**
-- Project vision and goals (beyond the factual "what it does" already documented)
-- Primary vs. additional vs. out-of-scope use cases, stated as a deliberate boundary
-- Target persona(s) for the project
-- Intended adopter organization types (e.g. financial services, platform engineering teams)
-- Completed end-user research and any reports
+These are the real, standing gaps this review surfaced. They are stated
+plainly in the relevant answers below rather than hidden behind a marker:
 
-**Day 0 — Design**
-- Sovereignty (data residency / jurisdiction) posture
-- Formal compliance certifications pursued or claimed beyond DCO/license/OpenSSF (SOC 2, FedRAMP, etc.)
-
-**Day 0 — Security**
-- Certificate rotation for TLS certificates terminated in front of a hive (ingress/cert-manager is operator-owned; no in-repo rotation policy)
-
-**Day 2 — Scalability/Reliability**
-- Service Level Objectives (SLOs) and Service Level Indicators (SLIs) for the project as a whole
-- Load testing performed and its results
-- Recommended limits of users/requests/system resources, and how they would be obtained
-
-**Day 2 — Dependencies**
-- (none beyond what's answered — dependency lifecycle is documented via Dependabot + CI)
-
-**Day 2 — Compliance**
-- Formal process for third-party attribution/license-notice aggregation (no `NOTICE` file or per-file attribution headers found)
-- Whether a security-specific (as opposed to disaster-recovery) incident-response runbook exists outside this repository
-
-**Day 2 — Security**
-- Community/organizational diversity target for the security response team, beyond the current three-person `OWNERS` roster
+- **No SLOs/SLIs** — the project defines no project-wide Service Level
+  Objectives or Indicators, has run no controlled load test, and publishes
+  no recommended capacity limits ([SLO/SLI](#describe-how-the-project-defines-service-level-objectives-slos-and-service-level-indicators-slis), [load testing](#describe-the-load-testing-that-has-been-performed-on-the-project-and-the-results), [limits](#describe-the-recommended-limits-of-users-requests-system-resources-etc-and-how-they-were-obtained)).
+- **No third-party attribution `NOTICE`** — no `NOTICE` file, per-file
+  attribution headers, or license-aggregation report exists in the repo or
+  in shipped build artifacts; a PR to generate one is being dispatched but
+  is not yet done ([attribution](#what-steps-does-the-project-take-to-ensure-that-all-third-party-code-and-components-have-correct-and-complete-attribution-and-license-notices)).
+- **No formal compliance certification** — no SOC 2, FedRAMP, or other
+  formal certification is pursued or claimed ([compliance](#describe-any-compliance-requirements-addressed-by-the-project)).
+- **No security-response-specific policy** — no defined rotation or
+  diversity policy for the security-response function distinct from the
+  general maintainer roster; an issue to define one is being filed
+  ([diversity](#how-does-the-project-ensure-its-security-reporting-and-response-team-is-representative-of-its-community-diversity-organizational-and-individual), [rotation](#how-does-the-project-invite-and-rotate-security-reporting-team-members)).
+- **No third-party audit** — no independent security audit of the project
+  has been performed or published.
 
 ---
 
@@ -65,13 +54,16 @@ missing — that is the operator's worklist. Substantive claims cite a
 
 #### Describe the project's vision and goals.
 
-**[NEEDS OPERATOR INPUT]** — the repository documents what Hive does and how (architecture, guardrails, autonomy model) in detail, but does not state a forward-looking vision/mission statement distinct from the factual description; the operator should supply the vision framing for this answer.
+The goal is to assist maintainers in keeping their projects relevant and current. Many projects have one to three maintainers; most have one. Hive keeps maintenance going strong while maintainers do the higher-order things needed to gain adoption — adding new features, speaking at conferences, onboarding new users.
 
 #### Describe the primary use cases for the project. Describe any additional use cases the project supports. Describe any use cases specifically out of scope of the project.
 
 Documented, factual use case: running a fleet of AI coding agents against one or more GitHub (or GitHub Enterprise/GitLab/Gitea) repositories to triage issues, open PRs, review code, and — at higher autonomy — merge, with a human-controlled ACMM autonomy dial and layered enforcement (`src/docs/architecture.md:1-12`). Two named production adopters are documented as end users today: the KubeStellar Console team (`kubestellar/console`) and Project Bluefin (`projectbluefin`), each running their own spoke hive (`src/docs/cncf-reference-architecture.md` "Describe your organisation" section).
 
-**[NEEDS OPERATOR INPUT]** — a deliberate statement of *additional* supported use cases beyond repository maintenance, and any use cases explicitly declared **out of scope**, is not present in the repository; this is a product-judgment call for the maintainers.
+Deliberately **out of scope**:
+
+- **Writing net-new features.** Hive maintains existing code — triage, fixes, tests, docs, dependency updates. It is not intended for greenfield development from a spec.
+- **Replacing human review.** The ACMM autonomy levels and merge gates exist so a human sets policy for how much an agent is trusted to do unsupervised; zero human oversight is not a goal of the project.
 
 #### Describe the roadmap process, how scope is determined for mid to long term features, as well as how the roadmap maps back to current contributions and maintainer ladder?
 
@@ -79,15 +71,15 @@ The public roadmap (`src/docs/roadmap.md`) is organized as **Now / Next / Later*
 
 #### Describe the target persona or user(s) for the project?
 
-**[NEEDS OPERATOR INPUT]** — the repository documents *actors* in the security sense (repository maintainer/hive operator, AI agents, public GitHub users, contributors, hub operators, dashboard users — `src/docs/security-self-assessment.md` "Actors") but does not state a target user persona (e.g. maintainer of a small OSS project vs. platform-engineering team at a large org) as a deliberate product decision.
+Three target personas: **OSS maintainers** — individuals or small teams self-hosting Hive for their own repositories; **enterprise development organizations** — running Hive internally against closed-source repositories as well as open-source ones, where closed-source support matters; and **foundations / multi-project organizations** — running Hive across a portfolio of projects under a shared policy. The repository documents *actors* in the security sense (repository maintainer/hive operator, AI agents, public GitHub users, contributors, hub operators, dashboard users — `src/docs/security-self-assessment.md` "Actors"), which maps onto these personas but does not itself state them as a product decision.
 
 #### Describe the intended types of organizations who would benefit from adopting this project. (i.e. financial services, any software manufacturer, organizations providing platform engineering services)?
 
-**[NEEDS OPERATOR INPUT]** — not stated in the repository. The two documented production users (KubeStellar Console, Project Bluefin) are both open-source infrastructure projects, which is evidence of realized adoption but not a stated target-organization-type claim.
+Intended adopter organization types: **software manufacturers**; **platform engineering organizations**; and **foundations and distributions**. Small-team OSS projects are the motivating case behind the project's vision (see [vision and goals](#describe-the-projects-vision-and-goals) above — most projects have one to three maintainers), even though these three organization types are the ones the project targets for adoption. The two documented production users (KubeStellar Console, Project Bluefin) are both open-source infrastructure projects, consistent with this.
 
 #### Please describe any completed end user research and link to any reports.
 
-**[NEEDS OPERATOR INPUT]** — no end-user research report exists in this repository.
+No formal study or structured survey/interview program has been conducted. Real, informal adopter feedback exists in the form of issues filed by adopters running their own hives, and it is the closest thing the project has to end-user research today: [#4918](https://github.com/kubestellar/hive/issues/4918) is a contributor's incident report, with journal evidence, of the default unconfined agent-launch path reaching their host's bootloader; [#4928](https://github.com/kubestellar/hive/issues/4928) and [#4929](https://github.com/kubestellar/hive/issues/4929) were filed by `ahmedadan` from operating `projectbluefin/dakota`; and [#4971](https://github.com/kubestellar/hive/issues/4971) and [#4973](https://github.com/kubestellar/hive/issues/4973) were filed by `Danathar` from running a hive. The CNCF adopter interviews conducted as part of the Incubation application will be the first structured end-user research the project has done.
 
 ### Usability
 
@@ -134,13 +126,13 @@ A separate coarse shared secret, `HIVE_DASHBOARD_TOKEN`, gates the dashboard/API
 
 #### Describe how the project has addressed sovereignty.
 
-**[NEEDS OPERATOR INPUT]** — no data-residency or jurisdictional-sovereignty policy exists in the repository. The only region-shaped configuration found is the OCI Object Storage region for optional disaster-recovery backups (`src/docs/env-vars.md`, `src/docs/backup-restore.md`), which is infrastructure placement, not a stated sovereignty posture.
+Hive is self-hosted and runs in the operator's own cluster or host — there is no hosted multi-tenant plane holding adopter data. Data residency and jurisdiction therefore follow the operator's own infrastructure placement by construction, as a design property of the deployment model rather than a policy statement the project makes on the operator's behalf. What does leave the operator's environment, by design: agent CLI traffic to configured model providers (Anthropic, GitHub Copilot, Gemini, or any OpenAI-compatible gateway), and forge API calls to GitHub/GitHub Enterprise/GitLab/Gitea — both catalogued in `src/docs/network-requirements.md` ("Outbound egress") and enforced/inspectable via the in-pod MITM policy proxy (`src/docs/security-model.md` Layer 3, Layer 5). The only region-shaped configuration in the repository is the OCI Object Storage region for the optional disaster-recovery backup CronJob (`src/docs/env-vars.md`, `src/docs/backup-restore.md`), which an operator chooses and controls like any other infrastructure placement decision.
 
 #### Describe any compliance requirements addressed by the project.
 
 `src/docs/security-self-assessment.md` "Project compliance" states plainly: Hive holds no formal certification (FIPS, Common Criteria, SOC 2) and makes no claim to one. What it does have: a weekly **OpenSSF Scorecard** run (`.github/workflows/scorecard.yml`, no score floor gated in CI), **DCO** enforcement for human contributors (`.github/workflows/copilot-dco.yml`) and as stated policy for agent-authored commits (`git commit -s`), and the **Apache License 2.0** (OSI-approved, CNCF-preferred). The **OpenSSF Best Practices Badge** has since been earned at the **Passing** level with 100% completion across all five categories (Basics 13/13, Change Control 9/9, Reporting 8/8, Quality 13/13, Security 16/16, Analysis 8/8) — [bestpractices.dev/projects/14261](https://www.bestpractices.dev/projects/14261) — which supersedes the self-assessment document's earlier "not yet pursued" note.
 
-**[NEEDS OPERATOR INPUT]** — whether any other formal compliance certification (SOC 2, FedRAMP, HIPAA, etc.) is planned or claimed.
+None. No SOC 2, no FedRAMP, no HIPAA, and no other formal compliance certification is pursued or claimed beyond what is already stated above (OpenSSF Scorecard, OpenSSF Best Practices Badge, DCO, Apache 2.0).
 
 #### Describe the project's High Availability requirements.
 
@@ -243,7 +235,15 @@ Baseline: the container runs as non-root user `dev` (UID 1001); each agent runs 
 
 #### Describe how the project is handling certificate rotation and mitigates any issues with certificates.
 
-**[NEEDS OPERATOR INPUT]** — TLS termination is explicitly documented as the *operator's* responsibility (ingress + cert-manager in the Kubernetes path, README.md prerequisites; `src/docs/tls-setup.md` "termination patterns and certificate ownership"), with no in-repo certificate-rotation policy for those operator-owned certificates. Two adjacent-but-distinct rotation mechanisms *do* exist in-repo and are documented: (1) the hub master secret supports generational rotation with a bounded dual-generation acceptance window (default 7 days) for session/heartbeat/SSO keys, with no dual lane for terminal/invite keys (`security-model.md` "Master key rotation"); (2) the MITM proxy's own CA certificate/key pair is generated and stored by the entrypoint (`/data/proxy-ca.pem` public, `/data/.hive/proxy-ca-key.pem` private at `0600` in a `0700` directory — `security-model.md` "In-container privilege model"), but no rotation *schedule* for that CA is documented. Neither of these is the ingress-facing TLS certificate the question is asking about.
+TLS termination in front of a hive is the operator's responsibility, not the project's: Hive itself implements no native TLS configuration and serves plain HTTP (`src/docs/tls-setup.md` — the dashboard/hub servers call Go `ListenAndServe`, and the bundled Docker gateway also listens with plain HTTP). The project ships no certificate-rotation policy for those operator-owned certificates; renewal, key rotation, HSTS, and CA policy belong to the terminating ingress controller, Route, or reverse proxy — cert-manager on the Kubernetes path (`src/docs/tls-setup.md` "Certificate handling").
+
+Separate from that operator-owned ingress certificate, the project does rotate credentials it owns:
+
+- **Hub master secret** — supports generational rotation with a bounded dual-generation acceptance window (default 7 days) for session, heartbeat, and SSO/session-public keys; terminal and invite keys have no dual lane and are invalidated immediately on rotation (`src/docs/security-model.md` "Master key rotation").
+- **GitHub App private key** — a manual, documented rotation procedure: generate a new key in GitHub, mount it at the configured `key_file`, restart Hive, then delete the old key in GitHub once the new one is confirmed working (`src/docs/github-app-setup.md` "Rotation and recovery").
+- **MITM proxy CA** — the proxy's own CA certificate/key pair is generated and stored by the entrypoint (`/data/proxy-ca.pem` public, `/data/.hive/proxy-ca-key.pem` private at `0600` in a `0700` directory — `src/docs/security-model.md` "In-container privilege model"), but no rotation schedule for that CA is documented.
+
+None of these three is the ingress-facing TLS certificate the question asks about — that boundary is exactly the line described above.
 
 #### Describe how the project is following and implementing secure software supply chain best practices
 
@@ -320,27 +320,27 @@ Two independent scaling axes, both config-driven rather than automatic: **agent 
 
 #### Describe how the project defines Service Level Objectives (SLOs) and Service Level Indicators (SLIs).
 
-**[NEEDS OPERATOR INPUT]** — no project-wide SLO/SLI framework or targets are defined in the repository. "SLO"/"SLA" appear only as (a) a lane-keyword label for an optional "operations" agent role (`src/docs/agent-configuration.md`) and (b) a per-hive dashboard notification for stale actionable issues exceeding a configured age ("SLA breach" — `src/docs/notifications.md`), neither of which is a stated project-level commitment.
+The project defines no SLOs or SLIs. "SLO"/"SLA" appear only as (a) a lane-keyword label for an optional "operations" agent role (`src/docs/agent-configuration.md`) and (b) a per-hive dashboard notification for stale actionable issues exceeding a configured age ("SLA breach" — `src/docs/notifications.md`), neither of which is a stated project-level commitment. What does exist, as raw material from which SLOs could later be defined: `/api/health` and `/api/livez` health endpoints, the agent watchdog's `Ready`/`Authenticated`/`Producing` conditions (`src/docs/agent-watchdog.md`), the append-only audit log (`src/docs/audit-log.md`), and the opt-in Prometheus `/metrics` endpoint (`src/docs/security-model.md` "Metrics endpoint") — all described in full under [Observability Requirements](#observability-requirements) below.
 
 #### Describe any operations that will increase in time covered by existing SLIs/SLOs.
 
-**[NEEDS OPERATOR INPUT]** — not applicable without a defined SLO/SLI framework (see above).
+Not applicable — the project defines no SLOs or SLIs (see above), so there is nothing to describe an increase against.
 
 #### Describe the increase in resource usage in any components as a result of enabling this project, to include CPU, Memory, Storage, Throughput.
 
-**[NEEDS OPERATOR INPUT]** — no baseline-vs.-loaded resource-usage measurements (CPU/Memory/Storage/Throughput deltas) are documented. The only numeric resource figures in the repository are the static Kubernetes `requests`/`limits` (500m/512Mi requests, 2 CPU/2Gi limits — `src/deploy/k8s/deployment.yaml`), which describe a configured ceiling, not a measured usage curve.
+None measured. No baseline-vs.-loaded resource-usage measurements (CPU/Memory/Storage/Throughput deltas) are documented, consistent with the absence of a load-testing program described below. The only numeric resource figures in the repository are the static Kubernetes `requests`/`limits` (500m/512Mi requests, 2 CPU/2Gi limits — `src/deploy/k8s/deployment.yaml`), which describe a configured ceiling, not a measured usage curve.
 
 #### Describe which conditions enabling / using this project would result in resource exhaustion of some node resources (PIDs, sockets, inodes, etc.)
 
-Partially documented as enforced ceilings rather than measured exhaustion behavior: agent replicas are capped at 5 per agent (`config.go`, `MaxAgentReplicas`); each agent runs one dedicated tmux server on a per-agent socket (`security-model.md` Layer 4), so fleet size bounds session/socket count, but no documented total-session or per-node PID/socket/inode ceiling exists. The sandboxed-kick path (opt-in) has a default `timeout_s: 2700` per Podman run (`src/docs/sandbox-isolation.md`). **[NEEDS OPERATOR INPUT]** for specific numeric PID/socket/inode exhaustion thresholds — not present in the repository.
+Partially documented as enforced ceilings rather than measured exhaustion behavior: agent replicas are capped at 5 per agent (`config.go`, `MaxAgentReplicas`); each agent runs one dedicated tmux server on a per-agent socket (`security-model.md` Layer 4), so fleet size bounds session/socket count, but no documented total-session or per-node PID/socket/inode ceiling exists. The sandboxed-kick path (opt-in) has a default `timeout_s: 2700` per Podman run (`src/docs/sandbox-isolation.md`). No specific numeric PID/socket/inode exhaustion thresholds are documented — the project defines none, consistent with the absence of a load-testing program or recommended-limits guidance described above.
 
 #### Describe the load testing that has been performed on the project and the results.
 
-**[NEEDS OPERATOR INPUT]** — no load-testing report exists in the repository. The 39-repo governor-threshold example (`governor-thresholds.md`, "Observed live: queue ~210 against a threshold of 70") is a single production field observation used to justify a scaling-curve design decision, not a controlled load test with methodology or results.
+None. No controlled load testing has been performed on the project. The 39-repo governor-threshold example (`governor-thresholds.md`, "Observed live: queue ~210 against a threshold of 70") is a single production field observation used to justify a scaling-curve design decision, not a controlled load test with methodology or results.
 
 #### Describe the recommended limits of users, requests, system resources, etc. and how they were obtained.
 
-**[NEEDS OPERATOR INPUT]** — no formal recommended-limits guidance exists. The only enforced numeric ceilings found are code-level defaults, not user-facing capacity recommendations: agent replicas ≤ 5 per agent, and the in-memory audit-log ring capped at 500 entries before it relies on the on-disk JSONL file (`src/docs/audit-log.md`).
+None. The project defines no recommended limits of users, requests, or system resources, and none were obtained through measurement. The only enforced numeric ceilings found are code-level defaults, not user-facing capacity recommendations: agent replicas ≤ 5 per agent, and the in-memory audit-log ring capped at 500 entries before it relies on the on-disk JSONL file (`src/docs/audit-log.md`).
 
 #### Describe which resilience pattern the project uses and how, including the circuit breaker pattern.
 
@@ -387,7 +387,7 @@ The combination of health endpoints (`/api/health`, `/api/livez`), the three per
 
 #### Describe the SLOs (Service Level Objectives) for this project.
 
-**[NEEDS OPERATOR INPUT]** — see above; the project does not currently define SLOs.
+None — see [SLOs/SLIs](#describe-how-the-project-defines-service-level-objectives-slos-and-service-level-indicators-slis) above; the project does not currently define SLOs.
 
 #### What are the SLIs (Service Level Indicators) an operator can use to determine the health of the service?
 
@@ -431,23 +431,23 @@ Extensively catalogued, not a short list — `src/docs/troubleshooting.md` docum
 
 #### What steps does the project take to ensure that all third-party code and components have correct and complete attribution and license notices?
 
-**[NEEDS OPERATOR INPUT]** — no `NOTICE` file, per-file third-party attribution header convention, or license-aggregation report was found anywhere in the repository. What does exist is adjacent supply-chain **provenance/integrity** tracking (digest-pinned base images, SHA-pinned tool downloads and CI actions — `security-model.md` "Supply chain") — but pinning a dependency's version is not the same as attributing its license, and the repository does not document a license-notice process.
+This is a known gap. No `NOTICE` file, per-file third-party attribution header convention, or license-aggregation report exists anywhere in the repository, and none is shipped in build artifacts. Go module dependencies carry their own licenses and `go.sum` pins them, but that pinning is integrity/provenance tracking, not license attribution — it does not by itself produce an assembled notice. A separate PR to generate a `NOTICE` file is being dispatched; it is not yet done.
 
 #### Describe how the project ensures alignment with CNCF recommendations for attribution notices.
 
-**[NEEDS OPERATOR INPUT]** — no CNCF attribution-notices policy document exists in the repository (see above).
+No CNCF attribution-notices policy document exists in the repository — see the gap described above. The dispatched `NOTICE`-generation work is the intended first step toward alignment.
 
 ##### How are notices managed for third-party code incorporated directly into the project's source files?
 
-**[NEEDS OPERATOR INPUT]** — not documented; no per-file attribution-header convention was found.
+Not documented. No per-file attribution-header convention exists in the repository.
 
 ##### How are notices retained for unmodified third-party components included within the project's repository?
 
-**[NEEDS OPERATOR INPUT]** — not documented; no vendored-component notice-retention process was found (the project does not appear to vendor third-party source trees — dependencies are resolved via `go.mod`/`go.sum` and `package.json`/`package-lock.json` rather than committed in-tree).
+Not documented; no vendored-component notice-retention process exists. The project does not vendor third-party source trees — dependencies are resolved via `go.mod`/`go.sum` and `package.json`/`package-lock.json` rather than committed in-tree, so this question does not currently have a concrete case to apply to.
 
 ##### How are notices for all dependencies obtained at build time included in the project's distributed build artifacts (e.g. compiled binaries, container images)?
 
-**[NEEDS OPERATOR INPUT]** — the per-release SBOM (Syft/SPDX, attached to each GitHub Release — `src/docs/releases.md`) records the *package versions* present in the shipped image, which is adjacent evidence of what a full license-notice aggregation would need, but the SBOM itself is not a license-notice file and the repository does not describe a process that derives one from it.
+Not currently included. The per-release SBOM (Syft/SPDX, attached to each GitHub Release — `src/docs/releases.md`) records the *package versions* present in the shipped image, which is adjacent evidence of what a full license-notice aggregation would need, but the SBOM itself is not a license-notice file, and no shipped build artifact (image or release) currently includes a dependency-notices file derived from it.
 
 ### Security
 
@@ -463,7 +463,7 @@ Fully detailed in `src/docs/security-model.md`'s seven layers (reproduced with c
 
 `OWNERS` lists three approvers/reviewers spanning three distinct affiliations: `clubanderson` (IBM), `hanthor` (Universal Blue), and `Danathar` (independent) — not a single-organization team (`OWNERS`, `GOVERNANCE.md`). `SECURITY.md`'s vulnerability-reporting process routes to "a repository maintainer" generically, without naming a distinct, separately-constituted security-response sub-team or a stated diversity target for that function specifically.
 
-**[NEEDS OPERATOR INPUT]** — whether the project has (or intends) a specific organizational/individual diversity target for the *security-response* function distinct from the general maintainer roster is not stated.
+No explicit policy exists. `SECURITY.md` defines private vulnerability reporting via GitHub Security Advisories, and the responders are the maintainers listed in `OWNERS` — currently three people across IBM, Universal Blue, and independent, as stated above. That affiliation spread is incidental to the general maintainer roster, not a stated security-response diversity policy. This is recorded as a gap; an issue is being filed to define a Security Response process.
 
 ##### How does the project invite and rotate security reporting team members?
 
