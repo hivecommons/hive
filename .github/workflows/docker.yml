@@ -339,7 +339,7 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/kubestellar/hive /tmp/digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
-            v4 false
+            v5 false edge
 
   build-contributor:
     needs: gate
@@ -437,7 +437,7 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/kubestellar/hive-contributor /tmp/contrib-digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
-            v4 true
+            v5 true edge
 
   build-hub:
     needs: gate
@@ -544,4 +544,4 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/kubestellar/hive-hub /tmp/hub-digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
-            v4 true
+            v5 true edge
