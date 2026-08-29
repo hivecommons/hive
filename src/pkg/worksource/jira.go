@@ -193,7 +193,7 @@ func (s *jiraSource) searchPage(ctx context.Context, startAt int) (*jiraSearchRe
 	if err != nil {
 		return nil, fmt.Errorf("worksource/jira: search: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("worksource/jira: read response: %w", err)

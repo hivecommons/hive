@@ -24,7 +24,7 @@ func main() {
 	http.HandleFunc("/v1/chat/completions", handleCompletions)
 	http.HandleFunc("/v1/models", handleModels)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`)) // mock server; client may already be gone
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
@@ -33,7 +33,7 @@ func main() {
 }
 
 func handleModels(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{ // mock server; client may already be gone
 		"data": []map[string]string{
 			{"id": "Qwen/Qwen2.5-1.5B-Instruct", "object": "model"},
 		},
@@ -75,7 +75,7 @@ func handleCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{ // mock server; client may already be gone
 		"id":      "chatcmpl-mock-001",
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
@@ -136,7 +136,7 @@ func handleStreamingResponse(w http.ResponseWriter, model, text string) {
 		}
 
 		data, _ := json.Marshal(chunk)
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data) // mock server; client may already be gone
 		flusher.Flush()
 		time.Sleep(chunkDelayMs * time.Millisecond)
 	}
@@ -161,7 +161,7 @@ func handleStreamingResponse(w http.ResponseWriter, model, text string) {
 		},
 	}
 	data, _ := json.Marshal(finalChunk)
-	fmt.Fprintf(w, "data: %s\n\n", data)
-	fmt.Fprintf(w, "data: [DONE]\n\n")
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", data) // mock server; client may already be gone
+	_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")   // mock server; client may already be gone
 	flusher.Flush()
 }

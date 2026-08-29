@@ -201,7 +201,7 @@ func (r *Reviewer) Review(ctx context.Context, agentName, intent, transcript str
 	if err != nil {
 		return Verdict{}, fmt.Errorf("review request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Verdict{}, fmt.Errorf("reviewer returned %d", resp.StatusCode)
 	}

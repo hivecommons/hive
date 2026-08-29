@@ -49,7 +49,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to open log file: %v", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }() // process runs under ListenAndServe until killed; defer is unreachable in normal operation
 		logWriter = json.NewEncoder(f)
 	} else {
 		logWriter = json.NewEncoder(os.Stdout)
@@ -81,7 +81,9 @@ func main() {
 		if evt.SSEType != "" && len(evt.Body) > 0 {
 			entry.Body = evt.Body
 		}
-		logWriter.Encode(entry)
+		if err := logWriter.Encode(entry); err != nil {
+			log.Printf("apiproxy: failed to write event log entry: %v", err)
+		}
 	}
 
 	clientAuthToken, err := clientAuthTokenFromEnv(os.Getenv)

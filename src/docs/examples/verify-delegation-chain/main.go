@@ -264,7 +264,7 @@ func loadKeyDocument(ref string) (keyDocument, error) {
 		if herr != nil {
 			return keyDocument{}, herr
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return keyDocument{}, fmt.Errorf("hub returned HTTP %d", resp.StatusCode)
 		}

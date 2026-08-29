@@ -132,27 +132,29 @@ func printEnrollSummary(cmd *cobra.Command, repo string, acmm, requested int, re
 	}
 	action, _ := resp["action"].(string)
 	dashboard, _ := resp["dashboard_url"].(string)
-	fmt.Fprintf(out, "✓ Enrolled %s in Hive lite spoke %s\n", repo, id)
+	// Best-effort CLI output: a write failure means the user's terminal/pipe is
+	// already gone, and there is no one left to report it to.
+	_, _ = fmt.Fprintf(out, "✓ Enrolled %s in Hive lite spoke %s\n", repo, id)
 	switch action {
 	case "spoke_config_update":
-		fmt.Fprintln(out, "  repo will be added to the spoke config on its next heartbeat")
+		_, _ = fmt.Fprintln(out, "  repo will be added to the spoke config on its next heartbeat")
 	case "hosted_lite_spoke_requested":
-		fmt.Fprintln(out, "  hosted lite spoke provisioning requested")
+		_, _ = fmt.Fprintln(out, "  hosted lite spoke provisioning requested")
 	}
 	if requested > acmm {
-		fmt.Fprintf(out, "  requested ACMM L%d capped to L%d for lite mode\n", requested, acmm)
+		_, _ = fmt.Fprintf(out, "  requested ACMM L%d capped to L%d for lite mode\n", requested, acmm)
 	}
 	if installation := numberString(resp["installation_id"]); installation != "" {
-		fmt.Fprintf(out, "  GitHub App installation: %s\n", installation)
+		_, _ = fmt.Fprintf(out, "  GitHub App installation: %s\n", installation)
 	}
 	if dashboard != "" {
-		fmt.Fprintf(out, "  Dashboard: %s\n", dashboard)
+		_, _ = fmt.Fprintf(out, "  Dashboard: %s\n", dashboard)
 	}
-	fmt.Fprintln(out, "\nStarter config: advisory-only lanes at ACMM L1-L2; repo lives in the spoke hive.yaml; no repository PAT or long-lived secret is written.")
-	fmt.Fprintln(out, "\nNext steps:")
-	fmt.Fprintln(out, "  1. Wait for the spoke heartbeat/provisioning to apply the repo config.")
-	fmt.Fprintln(out, "  2. Raise ACMM from L1 to L2 only after advisory noise is acceptable.")
-	fmt.Fprintln(out, "  3. Graduate to a full spoke for execution, private runtime, or ACMM L3+.")
+	_, _ = fmt.Fprintln(out, "\nStarter config: advisory-only lanes at ACMM L1-L2; repo lives in the spoke hive.yaml; no repository PAT or long-lived secret is written.")
+	_, _ = fmt.Fprintln(out, "\nNext steps:")
+	_, _ = fmt.Fprintln(out, "  1. Wait for the spoke heartbeat/provisioning to apply the repo config.")
+	_, _ = fmt.Fprintln(out, "  2. Raise ACMM from L1 to L2 only after advisory noise is acceptable.")
+	_, _ = fmt.Fprintln(out, "  3. Graduate to a full spoke for execution, private runtime, or ACMM L3+.")
 }
 
 func numberString(v any) string {

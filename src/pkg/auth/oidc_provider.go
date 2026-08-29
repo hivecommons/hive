@@ -245,7 +245,7 @@ func (p *Provider) enrichFromUserInfo(ctx context.Context, c *Claims, accessToke
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return
 	}
@@ -301,7 +301,7 @@ func (p *Provider) fetchIDToken(ctx context.Context, code, redirectURI string) (
 	if err != nil {
 		return "", "", fmt.Errorf("token exchange: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if resp.StatusCode != http.StatusOK {
 		return "", "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
@@ -599,7 +599,7 @@ func fetchDiscovery(ctx context.Context, issuer string) (*discoveryDoc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("OIDC discovery: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("OIDC discovery returned %d", resp.StatusCode)
 	}
@@ -636,7 +636,7 @@ func fetchJWKS(ctx context.Context, jwksURL string) (map[string]*rsa.PublicKey, 
 	if err != nil {
 		return nil, fmt.Errorf("JWKS fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("JWKS returned %d", resp.StatusCode)
 	}

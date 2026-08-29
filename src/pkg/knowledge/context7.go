@@ -118,7 +118,7 @@ func context7Get(ctx context.Context, reqURL, apiKey string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("rate limited (429), retry after %s", resp.Header.Get("Retry-After"))

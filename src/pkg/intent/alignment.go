@@ -395,7 +395,7 @@ func (r *AlignmentReviewer) Review(ctx context.Context, ac AlignmentContext) (Mo
 	if err != nil {
 		return ModelAlignmentVerdict{}, fmt.Errorf("alignment review request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return ModelAlignmentVerdict{}, fmt.Errorf("alignment reviewer returned %d", resp.StatusCode)
 	}

@@ -231,7 +231,7 @@ func (w *WebhookReceiver) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 func respondOK(rw http.ResponseWriter, event string, handled bool) {
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(http.StatusOK)
-	fmt.Fprintf(rw, `{"ok":true,"event":%q,"handled":%t}`, event, handled)
+	_, _ = fmt.Fprintf(rw, `{"ok":true,"event":%q,"handled":%t}`, event, handled) // best-effort; client may already be gone
 }
 
 // verifyLinearSignature checks a bare-hex HMAC-SHA256 signature over the raw

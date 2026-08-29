@@ -1068,12 +1068,12 @@ func writeAgentCredFile(path, token string, agentUID int) error {
 	}
 	if agentUID > 0 {
 		if err := os.Chown(tmpPath, agentUID, -1); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath) // best-effort cleanup; the chown error is what's returned
 			return fmt.Errorf("chown cred cache: %w", err)
 		}
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // best-effort cleanup; the rename error is what's returned
 		return fmt.Errorf("rename cred cache: %w", err)
 	}
 	return nil
@@ -6760,7 +6760,7 @@ var githubTokenLogin = func(token string) string {
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
@@ -8138,7 +8138,7 @@ func readInferenceConfigFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 	return io.ReadAll(f)
 }
 
@@ -8168,7 +8168,7 @@ func writeInferenceConfigFile(path string, data []byte) error {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		return err
 	}
 	return f.Close()
@@ -8182,7 +8182,7 @@ func writeAgentStateFile(path string, data []byte) error {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		return err
 	}
 	// O_CREATE honours the mode only when the file did not already exist (and
@@ -8196,7 +8196,7 @@ func writeAgentStateFile(path string, data []byte) error {
 	// symlink and the mode change applied to the link target (TOCTOU, #3175).
 	// f.Chmod acts on the inode we opened, closing that window.
 	if err := f.Chmod(agentStateFileMode); err != nil {
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the chmod error is what's returned
 		return err
 	}
 	return f.Close()
@@ -9457,7 +9457,7 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 				break
 			}
 		}
-		f.Close()
+		_ = f.Close() // read-only /proc status fd; nothing to lose on close error
 
 		if ownerUID != uid {
 			continue

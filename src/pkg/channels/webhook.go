@@ -108,7 +108,7 @@ func (w *WebhookReceiver) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(http.StatusOK)
-	fmt.Fprintf(rw, `{"ok":true,"event":%q,"triggered":%d}`, fullEvent, triggered)
+	_, _ = fmt.Fprintf(rw, `{"ok":true,"event":%q,"triggered":%d}`, fullEvent, triggered) // best-effort; client may already be gone
 }
 
 func matchesEvent(events []string, eventType, fullEvent string) bool {

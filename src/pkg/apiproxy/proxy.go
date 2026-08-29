@@ -187,8 +187,8 @@ func (p *Proxy) wrapSSEBody(orig io.ReadCloser, path string, status int) io.Read
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer orig.Close()
-		defer pw.Close()
+		defer func() { _ = orig.Close() }() // upstream response body, already fully read here
+		defer func() { _ = pw.Close() }()   // io.PipeWriter.Close never returns a non-nil error
 
 		lineCount := 0
 		scanner := bufio.NewScanner(orig)

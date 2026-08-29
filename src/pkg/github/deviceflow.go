@@ -83,7 +83,7 @@ func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error)
 	if err != nil {
 		return nil, fmt.Errorf("device code request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -132,7 +132,7 @@ func PollDeviceFlow(clientID, deviceCode, baseURL, apiURL string) (token string,
 	if err != nil {
 		return "", "", fmt.Errorf("token poll request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -174,7 +174,7 @@ func ValidateToken(token, apiURL string) (*GitHubUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("user request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("token invalid: status %d", resp.StatusCode)

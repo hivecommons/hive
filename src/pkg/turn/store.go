@@ -58,7 +58,7 @@ func (s FileStore) Persist(ctx context.Context, env SessionEnvelope) error {
 	if err != nil {
 		return fmt.Errorf("turn: open envelope directory: %w", err)
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }() // read-only fd opened only to fsync the dir entry; nothing to lose on close error
 	if err := directory.Sync(); err != nil {
 		return fmt.Errorf("turn: sync envelope directory: %w", err)
 	}

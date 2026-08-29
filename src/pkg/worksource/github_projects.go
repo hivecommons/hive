@@ -208,7 +208,7 @@ func (s *githubProjectsSource) queryPage(ctx context.Context, endpoint string, c
 	if err != nil {
 		return nil, fmt.Errorf("worksource/github_projects: request failed: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("worksource/github_projects: unexpected status %d", httpResp.StatusCode)
 	}

@@ -114,7 +114,7 @@ func (c *Curator) Ingest(ctx context.Context, facts []ExtractedFact) error {
 	if err != nil {
 		return fmt.Errorf("ingest request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("ingest returned HTTP %d", resp.StatusCode)

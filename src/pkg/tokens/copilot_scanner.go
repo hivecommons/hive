@@ -161,7 +161,7 @@ func parseCopilotSessionFile(path string) (*SessionSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 
 	summary := &SessionSummary{
 		Agent: "unknown",

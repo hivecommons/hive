@@ -483,7 +483,7 @@ func Verify(key, sealed []byte) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gunzip: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }() // read-only reader; nothing to lose on close error
 
 	tr := tar.NewReader(gz)
 	digests := map[string]string{}
@@ -544,7 +544,7 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }() // read-only reader; nothing to lose on close error
 
 	tr := tar.NewReader(gz)
 	var man *Manifest

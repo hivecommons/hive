@@ -107,7 +107,7 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 
 	t := &inferenceAgentTotals{}
 	found := false

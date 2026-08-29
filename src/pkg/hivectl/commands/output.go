@@ -57,13 +57,21 @@ func (p printer) printTable(value any) error {
 		return err
 	}
 	writer := tabwriter.NewWriter(p.out, 0, 4, 2, ' ', 0)
-	defer writer.Flush()
+	// tabwriter buffers every Write below in memory; the buffer only reaches
+	// p.out on Flush, so Flush's error is the one that can genuinely surface a
+	// broken pipe or full disk. Capture and return it instead of a bare defer.
+	var flushErr error
+	defer func() {
+		if err := writer.Flush(); err != nil && flushErr == nil {
+			flushErr = err
+		}
+	}()
 
 	switch typed := value.(type) {
 	case map[string]any:
 		keys := sortedKeys(typed)
 		for _, key := range keys {
-			fmt.Fprintf(writer, "%s\t%s\n", key, compactValue(typed[key]))
+			_, _ = fmt.Fprintf(writer, "%s\t%s\n", key, compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
 		}
 	case []any:
 		rows := make([]map[string]any, 0, len(typed))
@@ -83,22 +91,22 @@ func (p printer) printTable(value any) error {
 			headers = append(headers, key)
 		}
 		sort.Strings(headers)
-		fmt.Fprintln(writer, strings.Join(headers, "\t"))
+		_, _ = fmt.Fprintln(writer, strings.Join(headers, "\t")) // buffered by tabwriter; Flush error is captured above
 		for _, row := range rows {
 			values := make([]string, len(headers))
 			for index, header := range headers {
 				values[index] = compactValue(row[header])
 			}
-			fmt.Fprintln(writer, strings.Join(values, "\t"))
+			_, _ = fmt.Fprintln(writer, strings.Join(values, "\t")) // buffered by tabwriter; Flush error is captured above
 		}
 	default:
 		data, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(writer, string(data))
+		_, _ = fmt.Fprintln(writer, string(data)) // buffered by tabwriter; Flush error is captured above
 	}
-	return nil
+	return flushErr
 }
 
 func compactValue(value any) string {

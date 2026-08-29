@@ -189,7 +189,7 @@ func ExchangeCode(code, verifier string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("key-exchange request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
@@ -237,7 +237,7 @@ func FetchCredit(key string) (*Credit, error) {
 	if err != nil {
 		return nil, fmt.Errorf("key-info request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("openrouter key-info returned HTTP %d", resp.StatusCode)
@@ -269,7 +269,7 @@ func PublicModelIDs() []string {
 	if err != nil {
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil
 	}

@@ -60,7 +60,7 @@ func NewGraphStore(path string, logger *slog.Logger) (*GraphStore, error) {
 		}
 		return nil
 	}); err != nil {
-		db.Close()
+		_ = db.Close() // best-effort cleanup; the init error is what's returned
 		return nil, fmt.Errorf("init graph store buckets: %w", err)
 	}
 	return &GraphStore{db: db, logger: logger}, nil
@@ -138,7 +138,7 @@ func (g *GraphStore) Outgoing(subject string, predicates ...string) []Triple {
 	predSet := toSet(predicates)
 	prefix := []byte(subject + tripleKeyDelim)
 
-	g.db.View(func(tx *bolt.Tx) error {
+	if err := g.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketSPO).Cursor()
 		for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
 			parts := splitKey(k)
@@ -151,7 +151,9 @@ func (g *GraphStore) Outgoing(subject string, predicates ...string) []Triple {
 			results = append(results, Triple{Subject: parts[0], Predicate: parts[1], Object: parts[2]})
 		}
 		return nil
-	})
+	}); err != nil {
+		g.logger.Warn("graph store view failed", "op", "Outgoing", "subject", subject, "error", err)
+	}
 	return results
 }
 
@@ -163,7 +165,7 @@ func (g *GraphStore) Incoming(object string, predicates ...string) []Triple {
 	var results []Triple
 	predSet := toSet(predicates)
 
-	g.db.View(func(tx *bolt.Tx) error {
+	if err := g.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketOSP).Cursor()
 		prefix := []byte(object + tripleKeyDelim)
 		for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
@@ -178,7 +180,9 @@ func (g *GraphStore) Incoming(object string, predicates ...string) []Triple {
 			results = append(results, Triple{Subject: parts[1], Predicate: pred, Object: parts[0]})
 		}
 		return nil
-	})
+	}); err != nil {
+		g.logger.Warn("graph store view failed", "op", "Incoming", "object", object, "error", err)
+	}
 	return results
 }
 
@@ -222,7 +226,7 @@ func (g *GraphStore) AllTriples() []Triple {
 	defer g.mu.RUnlock()
 
 	var results []Triple
-	g.db.View(func(tx *bolt.Tx) error {
+	if err := g.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketSPO).Cursor()
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			parts := splitKey(k)
@@ -232,7 +236,9 @@ func (g *GraphStore) AllTriples() []Triple {
 			results = append(results, Triple{Subject: parts[0], Predicate: parts[1], Object: parts[2]})
 		}
 		return nil
-	})
+	}); err != nil {
+		g.logger.Warn("graph store view failed", "op", "AllTriples", "error", err)
+	}
 	return results
 }
 
@@ -241,10 +247,12 @@ func (g *GraphStore) Count() int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	count := 0
-	g.db.View(func(tx *bolt.Tx) error {
+	if err := g.db.View(func(tx *bolt.Tx) error {
 		count = tx.Bucket(bucketSPO).Stats().KeyN
 		return nil
-	})
+	}); err != nil {
+		g.logger.Warn("graph store view failed", "op", "Count", "error", err)
+	}
 	return count
 }
 

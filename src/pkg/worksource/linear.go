@@ -496,7 +496,7 @@ func linearGraphQL(ctx context.Context, client *http.Client, baseURL, apiKey, qu
 	if err != nil {
 		return nil, fmt.Errorf("post: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(httpResp.Body, 16<<20))
 	if err != nil {

@@ -342,11 +342,11 @@ func writeKeyPEM(path string, key *rsa.PrivateKey) error {
 		return fmt.Errorf("mint: writing key %s: %w", tmp, err)
 	}
 	if err := os.Chmod(tmp, keyFilePerms); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp) // best-effort cleanup; the chmod error is what's returned
 		return fmt.Errorf("mint: chmod key %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp) // best-effort cleanup; the rename error is what's returned
 		return fmt.Errorf("mint: renaming key into place: %w", err)
 	}
 	return nil

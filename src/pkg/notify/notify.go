@@ -86,7 +86,7 @@ func (n *Notifier) sendNtfy(title, message string, priority Priority) {
 		n.logNtfyError("ntfy send failed", err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		n.logNtfyError("ntfy returned error", fmt.Sprintf("status=%d", resp.StatusCode))
@@ -144,7 +144,7 @@ func (n *Notifier) sendSlack(title, message string) {
 		n.logger.Warn("slack send failed", "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 }
 
 func (n *Notifier) sendDiscordWebhook(title, message string) {
@@ -165,5 +165,5 @@ func (n *Notifier) sendDiscordWebhook(title, message string) {
 		n.logger.Warn("discord webhook send failed", "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 }

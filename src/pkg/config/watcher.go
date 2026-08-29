@@ -57,7 +57,7 @@ func (w *Watcher) Start(ctx context.Context) {
 		w.logger.Error("failed to create fsnotify watcher", "error", err)
 		return
 	}
-	defer fsw.Close()
+	defer func() { _ = fsw.Close() }() // best-effort; process/goroutine is tearing down either way
 
 	if err := fsw.Add(w.path); err != nil {
 		w.logger.Error("failed to watch config file", "path", w.path, "error", err)

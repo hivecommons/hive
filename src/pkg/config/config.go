@@ -4101,7 +4101,7 @@ func ParseEnvFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 
 	result := make(map[string]string)
 	scanner := bufio.NewScanner(f)
@@ -5308,10 +5308,10 @@ func (c *Config) saveLocked() error {
 		}
 	} else {
 		if _, err := f.Write(data); err != nil {
-			f.Close()
+			_ = f.Close() // best-effort cleanup; the write error is what's recorded
 			srcErr = fmt.Errorf("writing config: %w", err)
 		} else if err := f.Sync(); err != nil {
-			f.Close()
+			_ = f.Close() // best-effort cleanup; the sync error is what's recorded
 			srcErr = fmt.Errorf("syncing config: %w", err)
 		} else if err := f.Close(); err != nil {
 			srcErr = fmt.Errorf("closing config: %w", err)
@@ -5330,7 +5330,7 @@ func (c *Config) saveLocked() error {
 	if err := os.WriteFile(runtimePath, data, 0o644); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
-		os.Remove(runtimePath)
+		_ = os.Remove(runtimePath) // best-effort; the retry's own WriteFile error is what's recorded below
 		if retryErr := os.WriteFile(runtimePath, data, 0o644); retryErr != nil {
 			runtimeErr = retryErr
 			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
@@ -5461,12 +5461,12 @@ func (c *Config) saveDashboardOverlay() error {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		log.Printf("[config] warning: failed to write dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the sync error is what's returned
 		log.Printf("[config] warning: failed to fsync dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
 		return err
 	}

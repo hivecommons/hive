@@ -146,7 +146,7 @@ func (c *Client) StreamSSE(ctx context.Context, apiPath string, query url.Values
 	if err != nil {
 		return connectionError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return apiError(resp.StatusCode, data)
@@ -213,7 +213,7 @@ func (c *Client) do(ctx context.Context, method, apiPath string, query url.Value
 	if err != nil {
 		return nil, "", connectionError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, "", connectionError(err)

@@ -220,7 +220,7 @@ func (p ClaudeProber) Probe(ctx context.Context) Headroom {
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return failOpen(p.Provider(), fmt.Errorf("claude usage HTTP %d", resp.StatusCode))
 	}
@@ -451,7 +451,7 @@ func (p DeepSeekProber) Probe(ctx context.Context) Headroom {
 	if err != nil {
 		return failOpen(p.Provider(), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return failOpen(p.Provider(), fmt.Errorf("deepseek balance HTTP %d", resp.StatusCode))
 	}

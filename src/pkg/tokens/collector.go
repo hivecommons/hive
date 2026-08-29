@@ -441,7 +441,7 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 
 	sessionID := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	summary := &SessionSummary{

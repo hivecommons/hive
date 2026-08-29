@@ -178,7 +178,7 @@ func (m *TokenMinter) mint(ctx context.Context, apiKey string) (iamToken, error)
 	if err != nil {
 		return iamToken{}, fmt.Errorf("watsonx: IAM token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, iamErrBodyLimit))

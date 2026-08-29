@@ -60,7 +60,7 @@ func Acquire(path string) (*Lock, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		holder := readHolder(f)
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the flock error is what's returned
 		if holder != "" {
 			return nil, fmt.Errorf("singleton lock %s is held by process %s: %w", path, holder, err)
 		}
@@ -70,8 +70,8 @@ func Acquire(path string) (*Lock, error) {
 	// so a failed write must not fail the acquisition.
 	if err := f.Truncate(0); err == nil {
 		if _, err := f.Seek(0, io.SeekStart); err == nil {
-			fmt.Fprintf(f, "%d\n", os.Getpid())
-			f.Sync()
+			_, _ = fmt.Fprintf(f, "%d\n", os.Getpid()) // best-effort per the comment above
+			_ = f.Sync()                               // best-effort per the comment above
 		}
 	}
 	return &Lock{file: f, path: path}, nil
@@ -92,8 +92,8 @@ func (l *Lock) Release() {
 	if l == nil || l.file == nil {
 		return
 	}
-	syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
-	l.file.Close()
+	_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN) // best-effort; process death releases it anyway
+	_ = l.file.Close()                                   // best-effort; process death releases it anyway
 	l.file = nil
 }
 

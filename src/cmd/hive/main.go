@@ -472,17 +472,17 @@ func writePerAppIDKey(appID int64, pemData string) (string, error) {
 		return "", fmt.Errorf("create temp app key file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename below succeeds
+	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename below succeeds
 	if err := tmp.Chmod(spokeAppKeyFileMode); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // best-effort cleanup; the chmod error is what's returned
 		return "", fmt.Errorf("chmod temp app key file: %w", err)
 	}
 	if _, err := tmp.WriteString(trimmed + "\n"); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // best-effort cleanup; the write error is what's returned
 		return "", fmt.Errorf("write temp app key file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // best-effort cleanup; the sync error is what's returned
 		return "", fmt.Errorf("sync temp app key file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -1065,7 +1065,9 @@ func main() {
 		if m.CurrentSHA != gitShort {
 			// We booted on a different SHA than the one that requested the
 			// upgrade: it landed. Drop the marker so the attempt budget resets.
-			os.Remove(upgradeMarkerStartupPath)
+			if err := os.Remove(upgradeMarkerStartupPath); err != nil && !os.IsNotExist(err) {
+				logger.Warn("failed to clear stale upgrade marker", "path", upgradeMarkerStartupPath, "error", err)
+			}
 			logger.Info("upgrade landed, cleared marker",
 				"current", gitShort, "previous", m.CurrentSHA, "target", m.TargetSHA)
 		} else {
@@ -1107,7 +1109,7 @@ func main() {
 
 	// Load or generate a unique Hive ID for this instance
 	cfg.HiveID = loadOrGenerateHiveID(logger)
-	os.Setenv("HIVE_ID", cfg.HiveID)
+	_ = os.Setenv("HIVE_ID", cfg.HiveID) // valid key/value; Setenv cannot fail on Unix
 
 	// Observability (#2439): report the removed-agents tombstone LoadWithDashboardOverlay
 	// adopted from the dashboard overlay at boot, BEFORE the startup ApplyPack below. On
@@ -1497,7 +1499,7 @@ func main() {
 				}
 			} else {
 				advisoryIssues[primaryRepo] = num
-				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+				_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
 				logger.Info("advisory issue ready", "repo", primaryRepo, "number", num)
 			}
 		}
@@ -1519,7 +1521,9 @@ func main() {
 	if brainstormPolicyDir == "" {
 		brainstormPolicyDir = "/data/policies/examples/kubestellar/agents"
 	}
-	os.MkdirAll(brainstormPolicyDir, 0o755)
+	if err := os.MkdirAll(brainstormPolicyDir, 0o755); err != nil {
+		logger.Warn("failed to create brainstorm policy dir", "path", brainstormPolicyDir, "error", err)
+	}
 	if policyData, err := policies.DefaultPolicies.ReadFile("defaults/brainstorm-advisory.md"); err == nil {
 		policyPath := filepath.Join(brainstormPolicyDir, "brainstorm-advisory.md")
 		// Always overwrite — the embedded policy may have been updated
@@ -2458,8 +2462,12 @@ func main() {
 
 	go dashboard.StartWorkspaceCleanup(ctx, logger, dashSrv.GetAudit())
 
-	os.MkdirAll(nousSnapshotDir, 0o755)
-	os.MkdirAll(nousGovernorDir, 0o755)
+	if err := os.MkdirAll(nousSnapshotDir, 0o755); err != nil {
+		logger.Warn("failed to create nous snapshot dir", "path", nousSnapshotDir, "error", err)
+	}
+	if err := os.MkdirAll(nousGovernorDir, 0o755); err != nil {
+		logger.Warn("failed to create nous governor dir", "path", nousGovernorDir, "error", err)
+	}
 	nousState := loadNousState(logger)
 	nousState.SnapshotDir = nousSnapshotDir
 
@@ -2652,7 +2660,7 @@ func main() {
 					}
 				} else {
 					advisoryIssues[newPrimaryRepo] = num
-					os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+					_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
 					dashSrv.SetGitHubAppRequired(false)
 					dashSrv.ClearPendingGitHubAppInstall()
 					logger.Info("advisory issue ready on new primary repo", "repo", newPrimaryRepo, "number", num)
@@ -2694,7 +2702,7 @@ func main() {
 					logger.Warn("advisory issue creation failed after reinit", "repo", primaryRepo, "error", advErr)
 				} else {
 					advisoryIssues[primaryRepo] = num
-					os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+					_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
 					logger.Info("advisory issue ready after reinit", "repo", primaryRepo, "number", num)
 				}
 			}
@@ -2778,7 +2786,7 @@ func main() {
 					return false
 				}
 				advisoryIssues[recheckRepo] = num
-				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+				_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
 				// Finding the advisory issue only proves the app is installed
 				// (reads succeed on public repos even with a token from the
 				// wrong installation). Verify write capability before letting
@@ -2908,7 +2916,7 @@ func main() {
 						// genuine failure (not installed / insufficient perms).
 						if dashSrv.RecheckGitHubApp() {
 							if num, exists := advisoryIssues[primaryRepo]; exists {
-								os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+								_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
 							}
 							logger.Info("github app self-heal: banner cleared, app installed and write verified", "repo", primaryRepo)
 						} else {
@@ -4105,7 +4113,9 @@ func main() {
 					attemptCount = m.Attempts
 				} else {
 					// Different SHA or a different target — the old marker is stale.
-					os.Remove(upgradeMarkerPath)
+					if err := os.Remove(upgradeMarkerPath); err != nil && !os.IsNotExist(err) {
+						logger.Warn("failed to clear stale upgrade marker", "path", upgradeMarkerPath, "error", err)
+					}
 				}
 			}
 
@@ -5830,7 +5840,7 @@ func runEvalCycle(
 			num, retryErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepoAtCycleStart)
 			if retryErr == nil {
 				advisoryIssues[primaryRepoAtCycleStart] = num
-				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+				_ = os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num)) // valid key/value; Setenv cannot fail on Unix
 				logger.Info("advisory issue resolved on retry", "repo", primaryRepoAtCycleStart, "number", num)
 			} else {
 				advisoryEnsureErr = retryErr
@@ -8753,7 +8763,9 @@ func parseColorInt(color string) int {
 		return 0x95a5a6
 	}
 	var result int
-	fmt.Sscanf(color, "%x", &result)
+	if _, err := fmt.Sscanf(color, "%x", &result); err != nil {
+		return 0x95a5a6 // malformed hex: fall back to the same default as an empty string
+	}
 	return result
 }
 

@@ -201,15 +201,24 @@ func (ds *DocumentSource) Delete() error {
 	}
 
 	if ds.graphStore != nil {
+		// Best-effort like the vault-file removal above: a failure here leaves a
+		// dangling triple pointing at a fact whose file is already gone, which is
+		// a graph-consistency issue worth logging but not worth blocking the
+		// document delete over.
 		for _, slug := range ds.metadata.FactSlugs {
-			ds.graphStore.RemoveTriple(Triple{Subject: slug, Predicate: PredicateDerivedFrom, Object: "doc:" + ds.slug})
+			if err := ds.graphStore.RemoveTriple(Triple{Subject: slug, Predicate: PredicateDerivedFrom, Object: "doc:" + ds.slug}); err != nil {
+				ds.logger.Warn("failed to remove derived-from triple", "slug", slug, "doc", ds.slug, "error", err)
+			}
 		}
 		for i := 1; i < len(ds.metadata.FactSlugs); i++ {
-			ds.graphStore.RemoveTriple(Triple{
+			if err := ds.graphStore.RemoveTriple(Triple{
 				Subject:   ds.metadata.FactSlugs[i-1],
 				Predicate: PredicateRelatedTo,
 				Object:    ds.metadata.FactSlugs[i],
-			})
+			}); err != nil {
+				ds.logger.Warn("failed to remove related-to triple",
+					"subject", ds.metadata.FactSlugs[i-1], "object", ds.metadata.FactSlugs[i], "error", err)
+			}
 		}
 	}
 
@@ -326,7 +335,7 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 	if err != nil {
 		return nil, "", fmt.Errorf("HTTP GET: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)

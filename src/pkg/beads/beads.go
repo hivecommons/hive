@@ -396,8 +396,14 @@ func (s *Store) appendArchiveEntry(b *Bead) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
 	if _, err := f.Write(append(data, '\n')); err != nil {
+		_ = f.Close() // best-effort cleanup; the write already failed
+		return false
+	}
+	// This function's whole contract is "did the record actually reach disk" —
+	// a deferred, error-ignored Close would let a failed flush report success,
+	// so the caller deletes the in-memory bead believing it is safely archived.
+	if err := f.Close(); err != nil {
 		return false
 	}
 	return true
@@ -712,7 +718,7 @@ func (s *Store) loadRetired() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 	// bufio.Reader, not Scanner: a Scanner stops PERMANENTLY on ErrTooLong, so a
 	// single oversized entry would discard every retirement recorded after it
 	// rather than just that one. Bead titles are unbounded and agent-influenced,
@@ -790,16 +796,16 @@ func (s *Store) persist(_ *Bead) error {
 	// makes 0600, so widen explicitly.
 	_ = tmp.Chmod(0660)
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()        // best-effort cleanup; the write error is what's returned
+		_ = os.Remove(tmpPath) // best-effort cleanup; the write error is what's returned
 		return fmt.Errorf("writing tmp beads: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // best-effort cleanup; the close error is what's returned
 		return fmt.Errorf("closing tmp beads: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // best-effort cleanup; the rename error is what's returned
 		return err
 	}
 	return nil
@@ -910,10 +916,15 @@ func (s *Store) Archive(id string) error {
 	if err != nil {
 		return fmt.Errorf("opening archive file: %w", err)
 	}
-	defer f.Close()
-
 	if _, err := f.Write(append(data, '\n')); err != nil {
+		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		return fmt.Errorf("writing archive entry: %w", err)
+	}
+	// The archive is the durability record for a bead about to be deleted from
+	// memory below — an ignored Close error here would let a failed flush look
+	// like a successful archive, and the record would be gone from both places.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing archive file: %w", err)
 	}
 
 	delete(s.beads, id)

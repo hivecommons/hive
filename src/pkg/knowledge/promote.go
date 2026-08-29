@@ -183,7 +183,7 @@ func (p *Promoter) ingestToLayer(ctx context.Context, client *Client, facts []Ex
 	if err != nil {
 		return fmt.Errorf("ingest request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("ingest returned HTTP %d", resp.StatusCode)

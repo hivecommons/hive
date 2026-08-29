@@ -602,5 +602,7 @@ func (s *FileStore) persistAccessCounts() {
 		s.logger.Warn("failed to write access counts", "path", path, "error", err)
 		return
 	}
-	os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		s.logger.Warn("failed to rename access counts into place", "path", path, "error", err)
+	}
 }

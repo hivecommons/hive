@@ -375,7 +375,7 @@ func fixModeFile(path string, logger *slog.Logger) {
 		// ELOOP for a planted symlink, EACCES for a file we do not own: skip.
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only fd; nothing to lose on close error
 	fi, err := f.Stat()
 	if err != nil || !fi.Mode().IsRegular() {
 		return

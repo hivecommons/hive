@@ -421,7 +421,7 @@ func (a *AppAuth) publishBotLogin() {
 		a.logger.Warn("cannot publish bot identity file — author-gated gh listing will stay fail-closed for staff agents (#4044)", "path", path, "error", err)
 		return
 	}
-	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
 	_, werr := tmp.WriteString(login)
 	if werr == nil {
 		werr = tmp.Chmod(botLoginFilePerms)
@@ -490,7 +490,7 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 		return fmt.Errorf("opening agent token cache %s: %w", cachePath, err)
 	}
 	if _, err := f.WriteString(token); err != nil {
-		f.Close()
+		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		return fmt.Errorf("writing agent token cache %s: %w", cachePath, err)
 	}
 	if err := f.Close(); err != nil {

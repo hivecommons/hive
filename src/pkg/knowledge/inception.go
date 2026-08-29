@@ -351,7 +351,7 @@ func (e *InceptionEngine) clearWikiVault() {
 		return
 	}
 	for _, entry := range entries {
-		os.Remove(filepath.Join(vaultDir, entry.Name()))
+		_ = os.Remove(filepath.Join(vaultDir, entry.Name())) // best-effort; a leftover stale file is harmless, it gets overwritten or reindexed next write
 	}
 	if len(entries) > 0 {
 		e.logger.Info("inception wiki cleared on new start", "files", len(entries))
@@ -377,7 +377,7 @@ func (e *InceptionEngine) writeFactsToVault(facts []IdeationFact) {
 	if len(facts) > 0 {
 		if entries, err := os.ReadDir(vaultDir); err == nil && len(entries) > 0 {
 			for _, entry := range entries {
-				os.Remove(filepath.Join(vaultDir, entry.Name()))
+				_ = os.Remove(filepath.Join(vaultDir, entry.Name())) // best-effort; a leftover stale file is harmless, it gets overwritten below
 			}
 			e.logger.Info("inception wiki cleared before write", "files", len(entries), "new_facts", len(facts))
 		}
@@ -981,7 +981,10 @@ func parseInceptionFactFile(content, filename string) (title, body, factType str
 			factType = strings.TrimSpace(strings.TrimPrefix(line, "type:"))
 		}
 		if strings.HasPrefix(line, "confidence:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "confidence:"), "%f", &confidence)
+			// Malformed input leaves confidence at its 0.6 default (Sscanf does not
+			// write to the destination on a parse failure), the same fallback as
+			// when the field is absent entirely.
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "confidence:"), "%f", &confidence)
 		}
 	}
 	return

@@ -156,7 +156,7 @@ func cmdKBImportURL(args []string) {
 	fs := flag.NewFlagSet("import-url", flag.ExitOnError)
 	name := fs.String("name", "", "document name (defaults to URL slug)")
 	layer := fs.String("layer", "project", "knowledge layer")
-	fs.Parse(args)
+	_ = fs.Parse(args) // ExitOnError: Parse never returns on failure, it os.Exits internally
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "bd kb import-url: URL required")
@@ -191,7 +191,7 @@ func cmdKBImportFile(args []string) {
 	fs := flag.NewFlagSet("import-file", flag.ExitOnError)
 	name := fs.String("name", "", "document name (defaults to filename)")
 	layer := fs.String("layer", "project", "knowledge layer")
-	fs.Parse(args)
+	_ = fs.Parse(args) // ExitOnError: Parse never returns on failure, it os.Exits internally
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "bd kb import-file: file path required")
@@ -311,7 +311,7 @@ func cmdKBImportCtx7(args []string) {
 	name := fs.String("name", "", "document name (defaults to library ID)")
 	query := fs.String("query", "", "topic to focus documentation on")
 	layer := fs.String("layer", "community", "knowledge layer")
-	fs.Parse(args)
+	_ = fs.Parse(args) // ExitOnError: Parse never returns on failure, it os.Exits internally
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "bd kb import-ctx7: library ID required (e.g. /vllm-project/vllm)")
@@ -358,7 +358,7 @@ func kbGet(url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HTTP GET: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, kbMaxResponseBytes))
 	if err != nil {
@@ -376,7 +376,7 @@ func kbPost(url, jsonBody string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HTTP POST: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, kbMaxResponseBytes))
 	if err != nil {

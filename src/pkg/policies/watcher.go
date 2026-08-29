@@ -77,7 +77,7 @@ func (w *Watcher) initialClone() error {
 		cmd := exec.Command("git", "-C", w.localDir, "pull", "--rebase", "origin", w.branch)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			w.logger.Warn("git pull failed, re-cloning", "error", err, "output", string(out))
-			os.RemoveAll(w.localDir)
+			_ = os.RemoveAll(w.localDir) // best-effort; the clone below will surface any real failure
 		} else {
 			return nil
 		}
@@ -88,7 +88,7 @@ func (w *Watcher) initialClone() error {
 	}
 
 	if info, err := os.Stat(w.localDir); err == nil && info.IsDir() {
-		os.RemoveAll(w.localDir)
+		_ = os.RemoveAll(w.localDir) // best-effort; the clone below will surface any real failure
 	}
 
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", w.branch, w.repoURL, w.localDir)

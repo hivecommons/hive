@@ -285,7 +285,7 @@ func doGraphQL(ctx context.Context, hc *http.Client, graphqlURL, accessToken, qu
 	if err != nil {
 		return fmt.Errorf("post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, oauthResponseLimit))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)

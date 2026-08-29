@@ -155,7 +155,7 @@ func (c *Client) getJSON(ctx context.Context, path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// Read a bounded prefix so the error can quote the dashboard's own

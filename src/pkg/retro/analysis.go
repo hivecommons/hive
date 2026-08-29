@@ -174,7 +174,7 @@ func (c *openAIChatClient) Complete(ctx context.Context, messages []chatMessage,
 	if err != nil {
 		return "", fmt.Errorf("retro analysis request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("retro analyzer returned %d", resp.StatusCode)
 	}

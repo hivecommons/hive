@@ -36,7 +36,7 @@ func readInput(reader io.Reader, file string, stdin bool) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", file, err)
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }() // read-only fd; nothing to lose on close error
 	data, err := readLimited(handle, maxAPIInputBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", file, err)
