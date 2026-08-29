@@ -42,15 +42,18 @@ communications. Activated during idle periods.
 Security-focused agent. Reviews code for vulnerabilities, checks
 dependencies, and audits access patterns. Runs frequently across all modes.
 
-## Tester
-
-Writes and maintains test suites. Activated when coverage gaps or test
-failures are detected.
-
 ## Strategist
 
 Long-horizon planning agent. Analyzes trends, proposes roadmap items, and
 evaluates technical debt. Only activated in idle mode.
+
+## A note on testing
+
+There is no built-in `tester` agent. Test suites, coverage gates, and
+regression checks are the `quality` lane's work. An operator who wants a
+separate tester must define it as a custom agent with its own metadata and
+policy template — see
+[acmm-policy-matrix.md](../../../docs/acmm-policy-matrix.md).
 
 ## Adding a New Agent
 
