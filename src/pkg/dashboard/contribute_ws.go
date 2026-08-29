@@ -360,6 +360,30 @@ func (t *WSTaskAssign) identityKey() string {
 	return worksource.Ref{Repo: t.Repo, Number: t.Number}.Key()
 }
 
+// assignDesc renders one assigned work item for the activity feed:
+// "<kind> <canonical identity>: <title>", falling back to the given task id
+// when the item has no canonical identity at all (a synthetic pr-review sweep).
+//
+// THE DEFECT THIS REPLACES (kubestellar/hive#5120): every feed entry derived
+// its label from Number. External work items — Linear, Jira — deliberately
+// carry Number == 0 and put their identity in Key/ExternalID (#4245), so a
+// Linear ticket was announced as "issue acme/team#0: …" on pickup and as a
+// bare internal task id on completion: the two entries for the SAME item did
+// not match each other, and every zero-numbered item in a repo rendered
+// identically. WSTaskAssign's own doc comment records where that exact
+// mistake led on the assignment path — two external items colliding as
+// "repo#0" in the double-assignment guard — and #4245 fixed it there; the
+// display layer kept it.
+//
+// For GitHub work the output is byte-identical to the old %s#%d rendering,
+// because Ref.Key() spells a numbered item "repo#number".
+func assignDesc(kind, key, title, fallback string) string {
+	if key == "" {
+		return fallback
+	}
+	return fmt.Sprintf("%s %s: %s", kind, key, title)
+}
+
 const maxActivityEntries = 50
 
 type ActivityEntry struct {
@@ -2162,7 +2186,13 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (
 		if tgt.conn.profile != nil {
 			username = tgt.conn.profile.GitHubUsername
 		}
-		taskDesc := fmt.Sprintf("%s %s#%d: %s", msg.Kind, msg.Repo, msg.Number, msg.Title)
+		// WSMessage carries the canonical TaskKey additively (#4245); an older
+		// record without one keys exactly as it always did.
+		yankKey := msg.TaskKey
+		if yankKey == "" {
+			yankKey = worksource.Ref{Repo: msg.Repo, Number: msg.Number}.Key()
+		}
+		taskDesc := assignDesc(msg.Kind, yankKey, msg.Title, msg.TaskID)
 		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, taskDesc)
 		h.logger.Info("[contribute-ws] clanker reassigned after yank",
 			"username", username, "task", msg.TaskID, "repo", msg.Repo, "number", msg.Number)
@@ -3117,7 +3147,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
 					return
 				}
-				taskDesc := fmt.Sprintf("%s %s#%d: %s", task.Kind, task.Repo, task.Number, task.Title)
+				pickupKey := task.TaskKey
+				if pickupKey == "" {
+					pickupKey = worksource.Ref{Repo: task.Repo, Number: task.Number}.Key()
+				}
+				taskDesc := assignDesc(task.Kind, pickupKey, task.Title, task.TaskID)
 				if task.Role != "" {
 					taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
 				}
@@ -3428,8 +3462,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 					}
 					completedDesc := msg.TaskID
-					if completedTask != nil && completedTask.Number > 0 {
-						completedDesc = fmt.Sprintf("%s %s#%d: %s", completedTask.Kind, completedTask.Repo, completedTask.Number, completedTask.Title)
+					if completedTask != nil {
+						completedDesc = assignDesc(completedTask.Kind, completedTask.identityKey(), completedTask.Title, msg.TaskID)
 					}
 					provider := ""
 					if contributor.cliBackend == "pi" {
@@ -3572,8 +3606,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.mu.Unlock()
 
 					failedDesc := msg.TaskID
-					if failedTask != nil && failedTask.Number > 0 {
-						failedDesc = fmt.Sprintf("%s %s#%d: %s", failedTask.Kind, failedTask.Repo, failedTask.Number, failedTask.Title)
+					if failedTask != nil {
+						failedDesc = assignDesc(failedTask.Kind, failedTask.identityKey(), failedTask.Title, msg.TaskID)
 					}
 					provider := ""
 					if contributor.cliBackend == "pi" {
