@@ -7807,6 +7807,14 @@ func loadProvisionRequest(username string) *ProvisionRequest {
 }
 
 func saveProvisionRequest(pr *ProvisionRequest) error {
+	// Same traversal guard as loadProvisionRequest/deleteProvisionRequest (and
+	// SaveUser): the username becomes a filename, so a value carrying "..", "/"
+	// or "\" must never reach filepath.Join. Auth'd usernames cannot normally
+	// contain these (makeCanonical rejects them), but the write path fails
+	// closed rather than trusting every future caller to have checked.
+	if strings.Contains(pr.Username, "..") || strings.Contains(pr.Username, "/") || strings.Contains(pr.Username, "\\") {
+		return fmt.Errorf("invalid username for provision request: %q", pr.Username)
+	}
 	os.MkdirAll(provisionRequestsDir, 0o755)
 	data, err := json.MarshalIndent(pr, "", "  ")
 	if err != nil {
