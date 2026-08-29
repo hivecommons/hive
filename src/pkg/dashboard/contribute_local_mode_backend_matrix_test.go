@@ -321,14 +321,14 @@ func TestLocalModeBannerNamesCopilotSandbox(t *testing.T) {
 	}
 }
 
-// TestBackendsConfDocumentsWhyFiveBackendsHaveNoWiring guards the honesty
+// TestBackendsConfDocumentsWhyUnconfinedBackendsHaveNoWiring guards the honesty
 // requirement at the source: the "no confinement mechanism at all" block
-// must exist and must not silently shrink to fewer than the five backends
-// it names today.
-func TestBackendsConfDocumentsWhyFiveBackendsHaveNoWiring(t *testing.T) {
+// must exist and must not silently shrink: every backend with no OS-level
+// sandbox has to stay named there. kilo joined the list in #5081.
+func TestBackendsConfDocumentsWhyUnconfinedBackendsHaveNoWiring(t *testing.T) {
 	src := backendsConfSource(t)
 	for _, want := range []string{
-		"goose, agy, bob, pi, and aider expose no OS-level sandbox",
+		"goose, agy, bob, pi, aider, and kilo expose no OS-level sandbox",
 		"unconfined_local_backend_env_var",
 		"unconfined_local_perm_flag_shell",
 	} {
