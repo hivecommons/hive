@@ -823,6 +823,35 @@ test('task_assign queues rather than typing when the CLI is not ready', () => {
   } finally { teardown(relay); }
 });
 
+test('task_assign never persists github_token to the task file (kubestellar/hive#5065)', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    relay.setCliReady(false);
+    relay.setPendingTask(null);
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign',
+      task_id: 'ct-token-1',
+      kind: 'issue',
+      repo: 'foo/bar',
+      number: 422,
+      title: 'token hygiene',
+      prompt: 'do a thing',
+      github_token: `ghs_${'a'.repeat(36)}`,
+      token_expires_at: '2099-01-01T00:00:00Z',
+    }));
+
+    const taskFile = path.join(relay.__tmpDir, 'contributor-task.json');
+    const raw = fs.readFileSync(taskFile, 'utf8');
+    assert.ok(!raw.includes('ghs_'), 'task file must not contain the credential value');
+    const persisted = JSON.parse(raw);
+    assert.ok(!('github_token' in persisted), 'github_token key must be stripped from the task file');
+    assert.strictEqual(persisted.token_expires_at, '2099-01-01T00:00:00Z',
+      'non-secret task fields must survive the strip');
+    const mode = fs.statSync(taskFile).mode & 0o777;
+    assert.strictEqual(mode, 0o600, `task file must be owner-only, got 0o${mode.toString(8)}`);
+  } finally { teardown(relay); }
+});
+
 test('auth_response includes optional HIVE_AGENT_ROLE', () => {
   const relay = loadRelay({ env: { HIVE_AGENT_ROLE: 'scanner' } });
   try {

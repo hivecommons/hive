@@ -2301,7 +2301,15 @@ function handleMessage(data, hub) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
       }
-      fs.writeFileSync(TASK_FILE, JSON.stringify(msg, null, 2));
+      // TASK_FILE is observability/debug state with no reader that needs the
+      // credential; the live token's one legitimate on-disk home is the 0600
+      // GH_TOKEN_CACHE written by injectGhToken above. Strip it and keep the
+      // file owner-only (chmod covers overwriting a pre-existing 0644 file)
+      // so a task-scoped GitHub token never sits world-readable under /tmp
+      // (kubestellar/hive#5065).
+      const { github_token: _omittedToken, ...taskFileRecord } = msg;
+      fs.writeFileSync(TASK_FILE, JSON.stringify(taskFileRecord, null, 2), { mode: 0o600 });
+      try { fs.chmodSync(TASK_FILE, 0o600); } catch (_) { /* content is already token-free */ }
       send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
         // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
