@@ -20,6 +20,8 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 - Interactive contributor relays now revoke task-scoped GitHub credentials, double-interrupt only their configured tmux pane, and relaunch a clean backend before advertising `ready` after a task revoke ([#5041](https://github.com/kubestellar/hive/issues/5041)). A failed relaunch remains unavailable instead of overlapping another assignment.
 
 ### Added
+- `hive tui`'s API client gains `Client.Agents(ctx)`, decoding `GET /api/agents` into a new `client.Agent` type (`name`, `id`, `displayName`, `enabled`, `managed`, `backend`, `model`) — the TUI's agent-list read path (T4 of [#4907](https://github.com/kubestellar/hive/issues/4907), [#5053](https://github.com/kubestellar/hive/issues/5053)). The design doc's contract gap this task was filed against ([#4912](https://github.com/kubestellar/hive/issues/4912)) is closed: [#5023](https://github.com/kubestellar/hive/pull/5023) added `/api/agents` to `dashboard/openapi.json`, and its shape matches the `handleAgentsList` handler field-for-field, so no fields were invented or guessed from the live response.
+
 - `kilo` (`Kilo-Org/kilocode`) as a headless contributor-relay backend ([#5038](https://github.com/kubestellar/hive/issues/5038)). It uses Kilo's distinct `kilo run` surface with `--auto` and optional `--model provider/model`; credentials/config flow only through `KILO_AUTH_CONTENT`, `KILO_CONFIG_CONTENT`, `KILO_API_KEY`, and optional `KILO_ORG_ID`, never a whole Kilo config mount. Kilo is headless-only and remains outside the Kubernetes allowlist pending independent credential and confinement verification.
 
 

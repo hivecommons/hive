@@ -1,0 +1,28 @@
+[
+  {
+    "name": "scanner",
+    "id": "agt_scanner01",
+    "displayName": "Scanner",
+    "enabled": true,
+    "managed": false,
+    "backend": "claude",
+    "model": "claude-opus-4-5"
+  },
+  {
+    "name": "quality",
+    "id": "agt_quality01",
+    "enabled": true,
+    "managed": true,
+    "backend": "copilot",
+    "model": "gpt-5"
+  },
+  {
+    "name": "reviewer",
+    "id": "agt_reviewer01",
+    "displayName": "Reviewer",
+    "enabled": false,
+    "managed": false,
+    "backend": "claude",
+    "model": "claude-sonnet-4-5"
+  }
+]
