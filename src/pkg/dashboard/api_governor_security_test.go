@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/pkg/config"
@@ -94,3 +95,80 @@ func TestAgentConfigGeneralPersistsSandboxOptIn(t *testing.T) {
 		t.Fatalf("sandbox opt-in not persisted: %#v", got)
 	}
 }
+
+// TestSecuritySectionSurfacesInertSandboxGate is #4918's dashboard-facing
+// half: flipping ONLY the global gate through the Security tab's own PUT
+// endpoint must make the resulting GET response say so, not just the server
+// log the operator flipping that toggle has no reason to be watching.
+func TestSecuritySectionSurfacesInertSandboxGate(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Agents["quality"] = config.AgentConfig{Backend: "claude", Enabled: true}
+
+	rec := doPut(s, "/api/config/governor/security", map[string]any{"agentSandboxEnabled": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT security = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	body := decodeJSON(t, doGet(s, "/api/config/governor"))
+	sec, ok := body["security"].(map[string]any)
+	if !ok {
+		t.Fatalf("security section missing: %#v", body["security"])
+	}
+	warnings, ok := sec["sandboxWarnings"].([]any)
+	if !ok {
+		t.Fatalf("sandboxWarnings missing or wrong type: %#v", sec["sandboxWarnings"])
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("sandboxWarnings = %#v, want exactly one warning for an inert global-only gate", warnings)
+	}
+	msg, _ := warnings[0].(string)
+	for _, want := range []string{"NO agent is opted in", "unconfined", "#4918"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("sandboxWarnings[0] = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
+// TestSecuritySectionSandboxWarningsEmptyWhenGateOff pins the non-noisy case:
+// the documented default (sandbox off globally) must not populate warnings,
+// and the field must be an empty array, not JSON null, so callers never need
+// a nil-check on top of the falsy-array check.
+func TestSecuritySectionSandboxWarningsEmptyWhenGateOff(t *testing.T) {
+	s, _ := apiServer(t)
+	body := decodeJSON(t, doGet(s, "/api/config/governor"))
+	sec, ok := body["security"].(map[string]any)
+	if !ok {
+		t.Fatalf("security section missing: %#v", body["security"])
+	}
+	warnings, ok := sec["sandboxWarnings"].([]any)
+	if !ok {
+		t.Fatalf("sandboxWarnings missing or wrong type: %#v", sec["sandboxWarnings"])
+	}
+	if len(warnings) != 0 {
+		t.Errorf("sandboxWarnings = %#v, want none when the sandbox is off globally (the default)", warnings)
+	}
+}
+
+// TestSecuritySectionSandboxWarningsEmptyWhenFullyOptedIn: a correctly
+// configured hive (global gate on, every agent opted in) must produce no
+// warnings — the diagnostic must not become noise on a healthy config.
+func TestSecuritySectionSandboxWarningsEmptyWhenFullyOptedIn(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.AgentSandbox = config.AgentSandboxConfig{Enabled: true, Image: "ghcr.io/example/agent:latest"}
+	deps.Config.Agents["scanner"] = config.AgentConfig{
+		Backend: "claude", Enabled: true,
+		Sandbox: &config.AgentSandboxOverride{Enabled: boolPtrGovSecurityTest(true)},
+	}
+
+	body := decodeJSON(t, doGet(s, "/api/config/governor"))
+	sec, ok := body["security"].(map[string]any)
+	if !ok {
+		t.Fatalf("security section missing: %#v", body["security"])
+	}
+	warnings, _ := sec["sandboxWarnings"].([]any)
+	if len(warnings) != 0 {
+		t.Errorf("sandboxWarnings = %#v, want none for a fully opted-in hive", warnings)
+	}
+}
+
+func boolPtrGovSecurityTest(b bool) *bool { return &b }

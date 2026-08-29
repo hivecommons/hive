@@ -16,7 +16,15 @@ opt-in rather than launching silently unconfined. See
 current, authoritative state — the analysis below is left as the historical
 record of how each decision was reached, not a live status report. The
 hub-side Podman sandbox's double gate (`agent_sandbox.enabled` +
-per-agent `sandbox.enabled`) remains an open concern, unchanged by this pass.
+per-agent `sandbox.enabled`) is unchanged — collapsing it is deliberately
+not done, since a sandboxed agent has no tmux fallback and an image-less
+opt-in would fail every kick outright (`config.AgentSandboxGateWarnings`'s
+doc comment). What *is* now fixed is the gate's silence: the dashboard's
+Security tab previously let an owner enable the global flag and believe the
+fleet was sandboxed with no per-agent opt-in and no error anywhere in the
+UI. `GET /api/config/governor`'s `security.sandboxWarnings` now carries the
+same diagnosis boot/reload already logged at WARN, and the Security tab
+renders it inline under the toggle and in the page's coherence-warnings box.
 
 All citations are against `origin/v4` at `1b54c69e` unless noted.
 

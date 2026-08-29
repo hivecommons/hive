@@ -110,6 +110,22 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 			reviewCapable++
 		}
 	}
+	// sandboxWarnings surfaces the exact diagnostic that boot/reload already
+	// log at WARN (config.AgentSandboxGateWarnings) into the same response the
+	// Security tab renders from. Before this, the two-gate misconfiguration
+	// #4918 describes — global agent_sandbox.enabled on, no (or partial)
+	// per-agent opt-in — was reported only to the server log, which the
+	// operator flipping the Security tab toggle has no reason to be watching.
+	// Empty means the diagnostic has nothing to say (off globally, or fully
+	// opted in); see AgentSandboxGateWarnings for the exact conditions.
+	sandboxWarnings := config.AgentSandboxGateWarnings(cfg)
+	if sandboxWarnings == nil {
+		// Always an array in the JSON response, never null — the frontend
+		// (and any other API consumer) should not need a nil-check on top of
+		// the falsy-array check it already does.
+		sandboxWarnings = []string{}
+	}
+
 	return map[string]interface{}{
 		"ioscanEnabled":                    cfg.Ioscan.IsEnabled(),
 		"ioscanFailMode":                   failMode,
@@ -126,6 +142,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"agentSandboxEnabled":              cfg.AgentSandbox.Enabled,
 		"sandboxedAgents":                  sandboxed,
 		"totalAgents":                      len(cfg.Agents),
+		"sandboxWarnings":                  sandboxWarnings,
 	}
 }
 
