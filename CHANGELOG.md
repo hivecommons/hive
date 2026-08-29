@@ -64,6 +64,8 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ### Fixed
 
+- **Go Security Analysis's `notice-drift` job no longer fails on every `v5` push.** `github.com/fumiama/go-docx`, used for read-only `.docx` text extraction in `src/pkg/knowledge/docparser.go`, is licensed AGPL-3.0 — classified FORBIDDEN by `go-licenses`, so the NOTICE generator aborted before writing anything and the job failed deterministically on every push to this branch. It is replaced with a stdlib-only implementation: `archive/zip` opens the `.docx` container and locates `word/document.xml`, and `encoding/xml` decodes the `<w:body>`/`<w:p>`/`<w:r>`/`<w:t>` shape, matched by local element name so the `w:` namespace prefix needs no special handling. Chunking, title derivation, and error handling are unchanged — malformed input (corrupt zip, missing `word/document.xml`, unparseable XML) still returns `nil, ""` exactly as before. `go mod tidy` removed `github.com/fumiama/go-docx` and its transitive `github.com/fumiama/imgsz` from `go.mod`/`go.sum`; no replacement dependency was added ([#5046](https://github.com/kubestellar/hive/issues/5046)). Ported from the equivalent `v4` fix ([#5016](https://github.com/kubestellar/hive/pull/5016)).
+
 - **The dashboard no longer offers `amazonq` as a backend it cannot launch**
   ([#4988](https://github.com/kubestellar/hive/issues/4988)). It was listed in
   the backend/method picker and named in the CLI Pin Value tooltip while being
