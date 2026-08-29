@@ -1018,9 +1018,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider)
+        goose|agy|bob|pi|aider|kilo)
           # No sandbox, filesystem allowlist, or command deny-list exists for
-          # any of these five (see the "no confinement mechanism at all"
+          # any of these six (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
           # default rather than silently grant full host access (#4918).
           if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then

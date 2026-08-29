@@ -84,6 +84,7 @@ Important environment variables:
 | `HIVE_BOB_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive bob local` to launch at all. Bob Shell documents no sandbox or path-restriction mechanism of any kind. |
 | `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive pi local` to launch at all. pi ships with no sandbox by default; directory confinement exists only via a third-party extension hive does not depend on. |
 | `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive aider local` to launch at all. aider has no sandbox or OS isolation option of any kind. |
+| `HIVE_KILO_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive kilo local` to launch at all. kilo's `--auto` is an unattended auto-approve flag, not a boundary; kilo has no verified sandbox, filesystem allowlist, or command deny-list hive can wire. |
 
 ### Where each backend reads its instructions
 
