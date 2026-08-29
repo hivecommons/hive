@@ -14,6 +14,7 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 ### Changed
 
 - `src/docs/getting-started.md`, the primary operator onboarding doc, now includes a "Where agents actually run" section ahead of L3, covering the host-tmux default, the per-backend confinement matrix from [#5024](https://github.com/kubestellar/hive/pull/5024), the `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED` escape hatches, and the hub-side `agent_sandbox` two-gate requirement — with a link to [sandbox-isolation.md](src/docs/sandbox-isolation.md) for the full picture. Previously the guide had zero mentions of sandboxing, confinement, or the security implications of running agents unconfined on a host ([#5028](https://github.com/kubestellar/hive/issues/5028)).
+- `docs/backend-setup.md` now documents `opencode` in the CLI backends table (install, `opencode auth login`/credential path, provider-agnostic model config, headless-only dispatch, and its command-deny-list-only confinement posture) and `src/docs/operator-reference.md`'s configuration-blocks table now includes an `agent_sandbox` row describing the two-gate opt-in and the dashboard Security tab's silent-misconfiguration gap, cross-linked to [sandbox-isolation.md](src/docs/sandbox-isolation.md) ([#5045](https://github.com/kubestellar/hive/issues/5045), [#5047](https://github.com/kubestellar/hive/issues/5047)).
 
 ### Added
 
