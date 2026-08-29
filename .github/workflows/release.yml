@@ -46,6 +46,11 @@ concurrency:
 permissions:
   contents: write
   packages: write
+  # `actions: write` is required for the `release` job's `gh workflow run
+  # docker.yml` call (#5072) — dispatching a workflow via the API needs this
+  # scope on top of `contents: write`/`packages: write`, which only cover the
+  # git push and image-tag operations this workflow already did.
+  actions: write
 
 jobs:
   decide:
@@ -297,25 +302,34 @@ jobs:
       # v4 branch protection requires the "gate" status check (the only
       # required context — see docker.yml) on the exact SHA being pushed.
       # `gate` only ever attaches to a commit via docker.yml's own `push` /
-      # `pull_request` triggers, so a commit created here in-workflow and
-      # pushed straight to v4 has no check on it yet and GitHub rejects the
-      # push outright (GH006, #5026) — it can never fast-forward, on the
-      # first attempt or any retry, because nothing about retrying produces
-      # the missing check.
+      # `pull_request` / `workflow_dispatch` triggers, so a commit created
+      # here in-workflow and pushed straight to v4 has no check on it yet and
+      # GitHub rejects the push outright (GH006, #5026) — it can never
+      # fast-forward, on the first attempt or any retry, because nothing
+      # about retrying produces the missing check.
       #
       # Required-status-check evaluation is keyed on the commit SHA, not on
       # which ref the check ran against (GitHub's own docs: a check "must
       # have completed successfully" on that SHA — pushing to another branch
       # first, then to the protected branch, is the documented pattern). So:
-      # push this release commit to a scratch branch first (docker.yml's
-      # `push` trigger is `branches: ["**"]` minus bot branches, so it fires
-      # there too and produces `gate` on this exact SHA), wait for `gate` to
-      # succeed, then push the SAME SHA to v4 — protection now finds an
-      # already-successful `gate` check on it and allows the fast-forward.
-      # The scratch branch name is deliberately outside docker.yml's
-      # `LONG_LIVED` set (v2/v4/mk/dd), so this detour never pushes a GHCR
-      # image or moving tag — `gate` still runs (it always does, regardless
-      # of push policy), only its downstream `build`/`merge` jobs no-op.
+      # push this release commit to a scratch branch first, make docker.yml
+      # run on that exact SHA, wait for `gate` to succeed, then push the SAME
+      # SHA to v4 — protection now finds an already-successful `gate` check
+      # on it and allows the fast-forward.
+      #
+      # #5072: the scratch push below uses this job's default GITHUB_TOKEN
+      # (persisted by actions/checkout). GitHub deliberately does not trigger
+      # *other* workflow runs from a GITHUB_TOKEN-authenticated push
+      # (recursive-workflow prevention), so docker.yml's `push` trigger never
+      # fires on the scratch branch — the original version of this step
+      # pushed and then waited forever for a `gate` check that could never
+      # exist. docker.yml does have a `workflow_dispatch` trigger that a
+      # GITHUB_TOKEN CAN start via the API, so this step explicitly dispatches
+      # it against the scratch branch right after pushing, and the resulting
+      # run's check-runs attach to that branch's head SHA — the exact release
+      # commit. (docker.yml's `gate` job carries a matching `release-gate/*`
+      # exception so this dispatch cannot push a GHCR image or a moving tag
+      # under the scratch branch name — see the EXCEPTION comment there.)
       - name: Push release commit to a scratch branch and wait for gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -332,8 +346,11 @@ jobs:
           echo "Pushing release commit ${commit_sha} to scratch branch ${scratch} to earn a 'gate' check..."
           git push origin "HEAD:refs/heads/${scratch}"
 
+          echo "Dispatching docker.yml on ${scratch} (GITHUB_TOKEN pushes don't trigger it — #5072)..."
+          gh workflow run docker.yml --ref "${scratch}"
+
           echo "Waiting for docker.yml's 'gate' job to report success on ${commit_sha}..."
-          deadline=$((SECONDS + 600)) # 10 minutes: gate itself is a ~5s shell job; this bounds queueing/runner delay, not gate's own runtime
+          deadline=$((SECONDS + 600)) # 10 minutes: gate itself is a ~5s shell job; this bounds queueing/runner delay plus the dispatch's own startup lag, not gate's own runtime
           conclusion=""
           while [ "$SECONDS" -lt "$deadline" ]; do
             conclusion="$(gh api "repos/${{ github.repository }}/commits/${commit_sha}/check-runs" \
@@ -357,7 +374,7 @@ jobs:
           case "$conclusion" in
             success|skipped|neutral) ;;
             *)
-              echo "::error::Timed out waiting for gate to succeed on ${commit_sha}." >&2
+              echo "::error::Timed out waiting for gate to succeed on ${commit_sha}. Check whether the workflow_dispatch run against ${scratch} actually started (Actions tab) — if it never queued, docker.yml's workflow_dispatch trigger or this job's actions:write permission may need attention." >&2
               exit 1
               ;;
           esac

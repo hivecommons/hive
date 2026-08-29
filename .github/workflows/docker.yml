@@ -62,6 +62,23 @@ jobs:
   # merges and is deleted. workflow_dispatch always pushes so a throwaway branch
   # can be published for a hive on demand before merge.
   #
+  # EXCEPTION: `release-gate/*` (#5072). release.yml pushes its release commit
+  # to a throwaway `release-gate/v<version>` branch to earn a `gate` check on
+  # that exact SHA before pushing to protected `v4` (see docs/releases.md,
+  # "Satisfying branch protection"). That push uses the job's default
+  # GITHUB_TOKEN, and GitHub's documented recursive-workflow guard means a
+  # GITHUB_TOKEN push never fires another workflow's `push` trigger — so
+  # release.yml has to fall back to explicitly dispatching this workflow via
+  # `gh workflow run docker.yml --ref release-gate/v<version>` instead. Without
+  # this exception, that dispatch would hit the `workflow_dispatch` branch
+  # below and force push=true on a branch nothing should ever publish images
+  # for: a full two-platform GHCR push under a one-off scratch branch name,
+  # solely to obtain a status check that only needs `gate` (a five-second job)
+  # to run. `release-gate/*` branches are deliberately never in LONG_LIVED and
+  # are deleted immediately after use (release.yml's `trap ... EXIT`), so this
+  # exception cannot leave a stray moving tag behind — it only ever prevents
+  # one from being created in the first place.
+  #
   # The long-lived branch set is defined ONCE below (LONG_LIVED). To add or
   # remove one, edit only that list — the whole workflow derives from this job's
   # output, so nothing else changes.
@@ -84,13 +101,23 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           push=false
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            push=true
-          else
-            for b in $LONG_LIVED; do
-              if [ "$b" = "$REF_NAME" ]; then push=true; break; fi
-            done
-          fi
+          case "$REF_NAME" in
+            release-gate/*)
+              # See the EXCEPTION comment above this job: this scratch branch
+              # only ever exists to earn a `gate` check for release.yml, never
+              # to publish an image, regardless of trigger event.
+              push=false
+              ;;
+            *)
+              if [ "$EVENT" = "workflow_dispatch" ]; then
+                push=true
+              else
+                for b in $LONG_LIVED; do
+                  if [ "$b" = "$REF_NAME" ]; then push=true; break; fi
+                done
+              fi
+              ;;
+          esac
           echo "push=$push" >> "$GITHUB_OUTPUT"
           echo "Push to GHCR: $push (branch=$REF_NAME event=$EVENT)"
 

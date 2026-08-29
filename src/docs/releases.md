@@ -154,18 +154,38 @@ fails identically, so the workflow cannot simply retry its way past it.
 GitHub evaluates a required status check against the commit **SHA**, not the
 ref the check happened to run on, and it accepts a check that already
 succeeded on that SHA before the push — pushing to a side branch first, then
-to the protected branch, is GitHub's own documented pattern for this. Because
+to the protected branch, is GitHub's own documented pattern for this. The
+release commit is pushed to a scratch branch (`release-gate/v<version>`)
+first, `gate` runs and succeeds on that exact SHA, and the workflow then
+pushes the *same* commit to `v4` — which protection now accepts.
+
+**Getting `docker.yml` to actually run on the scratch branch (#5072):**
 `docker.yml`'s `push` trigger is `branches: ["**"]` (minus bot branches — see
-`.github/release-lines.yml`'s `unpinned` entry for it), pushing the release
-commit to a scratch branch (`release-gate/v<version>`) fires `docker.yml`
-there too, `gate` runs and succeeds on that exact SHA, and the workflow then
-pushes the *same* commit to `v4` — which protection now accepts. The scratch
-branch name is deliberately not in `docker.yml`'s `LONG_LIVED` set
-(`v2 v4 mk dd`), so this detour never pushes a GHCR image or moves a channel
-tag on it; `gate` runs regardless of push policy, which is all this needs.
-The scratch branch is deleted immediately after (`trap ... EXIT`), whether
-the wait succeeds or fails, so a failed release run never leaves a stray
-branch behind.
+`.github/release-lines.yml`'s `unpinned` entry for it), which on paper covers
+`release-gate/*` too — but the scratch push uses this job's default
+`GITHUB_TOKEN`, and GitHub deliberately does not start *other* workflow runs
+from a `GITHUB_TOKEN`-authenticated push (recursive-workflow prevention). The
+`push` trigger silently never fires, no `gate` check ever attaches to the
+commit, and the wait loop times out — every release run failed this way until
+#5072. `docker.yml` also has a `workflow_dispatch` trigger, which a
+`GITHUB_TOKEN` *can* start via the API (`gh workflow run docker.yml --ref
+release-gate/v<version>`), and that run's check-runs attach to the scratch
+branch's head SHA exactly as a `push`-triggered run's would — so this step
+dispatches it explicitly right after the scratch push, rather than relying on
+the `push` trigger.
+
+`workflow_dispatch` on `docker.yml` normally forces a GHCR push regardless of
+branch (so a throwaway branch can be published for a hive on demand) — which
+would mean every release pushes a real, one-off `release-gate/v<version>`
+image and moving tag to GHCR purely to obtain a status check that only needs
+the `gate` job (a few seconds) to run. `docker.yml`'s `gate` job carries a
+`release-gate/*` exception so that never happens, on any trigger: the scratch
+branch name is deliberately not in `docker.yml`'s `LONG_LIVED` set (`v2 v4 mk
+dd`) and the exception forces `push=false` for it unconditionally, so this
+detour never pushes a GHCR image or moves a channel tag; `gate` runs
+regardless of push policy, which is all this needs. The scratch branch is
+deleted immediately after (`trap ... EXIT`), whether the wait succeeds or
+fails, so a failed release run never leaves a stray branch behind.
 
 This preserves the branch protection exactly as configured — no bypass, no
 weakened check, no `enforce_admins` change, no force push. The workflow earns
