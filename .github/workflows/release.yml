@@ -294,6 +294,74 @@ jobs:
           Automated release commit. Moves the CHANGELOG.md Unreleased section
           into a dated v${VERSION} entry. See src/docs/releases.md."
 
+      # v4 branch protection requires the "gate" status check (the only
+      # required context — see docker.yml) on the exact SHA being pushed.
+      # `gate` only ever attaches to a commit via docker.yml's own `push` /
+      # `pull_request` triggers, so a commit created here in-workflow and
+      # pushed straight to v4 has no check on it yet and GitHub rejects the
+      # push outright (GH006, #5026) — it can never fast-forward, on the
+      # first attempt or any retry, because nothing about retrying produces
+      # the missing check.
+      #
+      # Required-status-check evaluation is keyed on the commit SHA, not on
+      # which ref the check ran against (GitHub's own docs: a check "must
+      # have completed successfully" on that SHA — pushing to another branch
+      # first, then to the protected branch, is the documented pattern). So:
+      # push this release commit to a scratch branch first (docker.yml's
+      # `push` trigger is `branches: ["**"]` minus bot branches, so it fires
+      # there too and produces `gate` on this exact SHA), wait for `gate` to
+      # succeed, then push the SAME SHA to v4 — protection now finds an
+      # already-successful `gate` check on it and allows the fast-forward.
+      # The scratch branch name is deliberately outside docker.yml's
+      # `LONG_LIVED` set (v2/v4/mk/dd), so this detour never pushes a GHCR
+      # image or moving tag — `gate` still runs (it always does, regardless
+      # of push policy), only its downstream `build`/`merge` jobs no-op.
+      - name: Push release commit to a scratch branch and wait for gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          scratch="release-gate/v${VERSION}"
+          commit_sha="$(git rev-parse HEAD)"
+
+          cleanup() {
+            git push origin --delete "refs/heads/${scratch}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          echo "Pushing release commit ${commit_sha} to scratch branch ${scratch} to earn a 'gate' check..."
+          git push origin "HEAD:refs/heads/${scratch}"
+
+          echo "Waiting for docker.yml's 'gate' job to report success on ${commit_sha}..."
+          deadline=$((SECONDS + 600)) # 10 minutes: gate itself is a ~5s shell job; this bounds queueing/runner delay, not gate's own runtime
+          conclusion=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            conclusion="$(gh api "repos/${{ github.repository }}/commits/${commit_sha}/check-runs" \
+              --jq '[.check_runs[] | select(.name == "gate")] | sort_by(.started_at) | last | .conclusion // "pending"')"
+            # GitHub treats success/skipped/neutral as satisfying a required
+            # status check; only those three should let this proceed.
+            case "$conclusion" in
+              success|skipped|neutral)
+                echo "gate concluded '${conclusion}' on ${commit_sha} — satisfies the required check."
+                break
+                ;;
+              pending)
+                ;;
+              *)
+                echo "::error::gate concluded '${conclusion}' on ${commit_sha} — cannot push to v4." >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          case "$conclusion" in
+            success|skipped|neutral) ;;
+            *)
+              echo "::error::Timed out waiting for gate to succeed on ${commit_sha}." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Push release commit and tag to v4
         run: |
           set -euo pipefail
@@ -302,7 +370,9 @@ jobs:
           # of the commit this workflow started from (SHA) plus exactly this
           # one release commit — if v4 moved underneath us (another merge
           # landed mid-workflow), a plain fast-forward push fails loudly
-          # rather than force-pushing over new work.
+          # rather than force-pushing over new work. The SHA now carries a
+          # successful "gate" check (see the step above), so protection
+          # allows this push.
           git push origin HEAD:refs/heads/v4
           git push origin "refs/tags/v${VERSION}"
 

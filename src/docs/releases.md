@@ -127,12 +127,51 @@ Concretely, per release:
 4a. Syft generates an SPDX JSON SBOM for each of the three retagged images
    (see "Software bill of materials (SBOM)" below) — this happens before the
    changelog commit, using the version tag written in step 3.
-5. That change is committed (`git commit -s`, signed off by the release bot)
-   and pushed to `v4`, then the workflow creates and pushes the `v<version>`
-   git tag on that commit.
-6. A GitHub Release is created from the tag, with GitHub's auto-generated
+5. That change is committed (`git commit -s`, signed off by the release bot).
+5a. Before it can reach `v4`, the commit has to earn the `gate` status check
+   that branch protection requires (see "Satisfying branch protection"
+   below) — the commit is pushed to a throwaway `release-gate/v<version>`
+   branch first, the workflow waits for `gate` to succeed on that exact SHA,
+   then deletes the scratch branch.
+6. The workflow pushes the same commit to `v4` (protection now finds a
+   successful `gate` check already on it and allows the fast-forward), then
+   creates and pushes the `v<version>` git tag on that commit.
+7. A GitHub Release is created from the tag, with GitHub's auto-generated
    notes plus an SBOM callout, and the three SBOM files from step 4a attached
    as release assets.
+
+## Satisfying branch protection
+
+`v4`'s only required status check is `gate` (`docker.yml`). `gate` only ever
+attaches to a commit through `docker.yml`'s own `push` / `pull_request`
+triggers — nothing manufactures it out of band — so the release commit this
+workflow creates in-job has no `gate` check on it the moment it exists, and a
+direct push straight to `v4` is rejected (`GH006: Required status check
+"gate" is expected`, [#5026](https://github.com/kubestellar/hive/issues/5026)).
+This is not intermittent: every retry recreates the same ungated commit and
+fails identically, so the workflow cannot simply retry its way past it.
+
+GitHub evaluates a required status check against the commit **SHA**, not the
+ref the check happened to run on, and it accepts a check that already
+succeeded on that SHA before the push — pushing to a side branch first, then
+to the protected branch, is GitHub's own documented pattern for this. Because
+`docker.yml`'s `push` trigger is `branches: ["**"]` (minus bot branches — see
+`.github/release-lines.yml`'s `unpinned` entry for it), pushing the release
+commit to a scratch branch (`release-gate/v<version>`) fires `docker.yml`
+there too, `gate` runs and succeeds on that exact SHA, and the workflow then
+pushes the *same* commit to `v4` — which protection now accepts. The scratch
+branch name is deliberately not in `docker.yml`'s `LONG_LIVED` set
+(`v2 v4 mk dd`), so this detour never pushes a GHCR image or moves a channel
+tag on it; `gate` runs regardless of push policy, which is all this needs.
+The scratch branch is deleted immediately after (`trap ... EXIT`), whether
+the wait succeeds or fails, so a failed release run never leaves a stray
+branch behind.
+
+This preserves the branch protection exactly as configured — no bypass, no
+weakened check, no `enforce_admins` change, no force push. The workflow earns
+the same check a human contributor's PR would, just via a scratch branch
+instead of a PR, because the release commit has no PR of its own to attach a
+check to.
 
 ## Software bill of materials (SBOM)
 
