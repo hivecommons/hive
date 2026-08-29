@@ -118,6 +118,64 @@ func setStatusIssues(s *Server, issues ...map[string]any) {
 	s.statusMu.Unlock()
 }
 
+// contributorPollTimeout/contributorPollInterval bound the poll loops below.
+// task_complete is handled asynchronously relative to the test goroutine: the
+// WS write only queues the frame, and the handler's disk save
+// (saveContributorProfile) runs on the connection's own read-loop goroutine
+// sometime after that. A fixed time.Sleep between writing task_complete and
+// reading the profile back off disk is exactly the flake #5037 reported —
+// under load the save can simply lose the race against the sleep, and the
+// test then drives selectTask with a stale TasksWithPR, reusing an issue
+// number that is actually already in its just-booked cooldown (selectTask
+// then legitimately returns task_unavailable/no_matching_work for it). Poll
+// the real on-disk condition instead of guessing a fixed delay.
+const (
+	contributorPollTimeout  = 2 * time.Second
+	contributorPollInterval = 5 * time.Millisecond
+)
+
+// waitForContributorTasksCompleted polls findContributor until its persisted
+// TasksCompleted reaches want (or the deadline expires), so the caller
+// observes the task_complete handler's saveContributorProfile write rather
+// than a fixed sleep guessing when it landed.
+func waitForContributorTasksCompleted(t *testing.T, contributorID string, want int) *ContributorProfile {
+	t.Helper()
+	deadline := time.Now().Add(contributorPollTimeout)
+	var p *ContributorProfile
+	for time.Now().Before(deadline) {
+		p = findContributor(contributorID)
+		if p != nil && p.TasksCompleted >= want {
+			return p
+		}
+		time.Sleep(contributorPollInterval)
+	}
+	if p == nil {
+		t.Fatalf("contributor %s not found after waiting for TasksCompleted=%d", contributorID, want)
+	}
+	t.Fatalf("timed out waiting for TasksCompleted=%d, got %d", want, p.TasksCompleted)
+	return nil
+}
+
+// waitForContributorTasksWithPR is waitForContributorTasksCompleted's sibling
+// for the verified-PR counter driving auto-promotion.
+func waitForContributorTasksWithPR(t *testing.T, contributorID string, want int) *ContributorProfile {
+	t.Helper()
+	deadline := time.Now().Add(contributorPollTimeout)
+	var p *ContributorProfile
+	for time.Now().Before(deadline) {
+		p = findContributor(contributorID)
+		if p != nil && p.TasksWithPR >= want {
+			return p
+		}
+		time.Sleep(contributorPollInterval)
+	}
+	if p == nil {
+		t.Fatalf("contributor %s not found after waiting for TasksWithPR=%d", contributorID, want)
+	}
+	t.Fatalf("timed out waiting for TasksWithPR=%d, got %d", want, p.TasksWithPR)
+	return nil
+}
+
 // TestIntegration_SelectTask_PriorityOrdering builds a queue mixing:
 //   - an issue authored by the connecting contributor ("own work", #2409)
 //   - an issue authored by someone else, never failed
@@ -380,7 +438,7 @@ func TestIntegration_SelectTask_PromotionRequiresPR(t *testing.T) {
 			t.Fatalf("round %d: expected task_assign, got %+v", i, assign)
 		}
 		conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: assign.TaskID, Result: "no_pr", PRURL: ""})
-		time.Sleep(30 * time.Millisecond)
+		waitForContributorTasksCompleted(t, reg["contributor_id"], i+1)
 	}
 
 	p := findContributor(reg["contributor_id"])
@@ -418,11 +476,8 @@ func TestIntegration_SelectTask_PromotionRequiresPR(t *testing.T) {
 		}
 		prURL := "https://github.com/myorg/repo1/pull/" + itoa(500+p.TasksWithPR)
 		conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: assign.TaskID, Result: "pr_created", PRURL: prURL})
-		time.Sleep(30 * time.Millisecond)
-		p = findContributor(reg["contributor_id"])
-		if p == nil {
-			t.Fatalf("contributor disappeared mid-loop")
-		}
+		wantTasksWithPR := p.TasksWithPR + 1
+		p = waitForContributorTasksWithPR(t, reg["contributor_id"], wantTasksWithPR)
 	}
 	if p.TrustTier != "contributor" {
 		t.Fatalf("expected auto-promotion to contributor once TasksWithPR reached %d, got tier %q (TasksWithPR=%d)",
