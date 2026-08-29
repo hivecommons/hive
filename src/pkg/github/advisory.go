@@ -169,6 +169,16 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	// scrub (logscrub) runs after, so nothing it redacts can re-introduce a
 	// mention and neither pass weakens the other.
 	digest = advisory.NeutralizeMentions(digest)
+
+	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
+	// (kubestellar/hive#4960): the digest aggregates agent-sourced advisory
+	// finding text, so it is a secondary exfiltration channel that must honor
+	// the same fail-closed contract as the primary write paths.
+	if leak, ok := c.scanCanaryText(digest, "hive-advisory-digest:"+repo); ok {
+		if c.canaryFailClosed {
+			return fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
+		}
+	}
 	digest = truncateDigest(logscrub.ScrubString(digest))
 
 	// Skip-if-unchanged guard (#4818): the digest is re-rendered ~once a

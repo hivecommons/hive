@@ -946,9 +946,20 @@ func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, ru
 // CreateIssueComment posts a comment on an issue or PR. The signature mirrors
 // forge.Forge.CreateIssueComment so escalation callers can swap in a neutral
 // forge adapter on non-GitHub hives without changing call sites.
+//
+// Canary-gated exactly like CreateIssue/CreatePR (kubestellar/hive#4960): the
+// issue-request watcher dispatches the same agent-supplied body to either
+// CreateIssue (kind "issue") or here (kind "comment"), so a comment left
+// ungated would let a prompt-injected agent exfiltrate a canary that a new
+// issue would have refused fail-closed.
 func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
 	if c == nil {
 		return ErrNoGitHubClient
+	}
+	if leak, ok := c.scanCanaryText(body, "hive-comment:"+repo); ok {
+		if c.canaryFailClosed {
+			return fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
+		}
 	}
 	body = logscrub.ScrubString(body)
 	owner, repoName := c.splitRepo(repo)

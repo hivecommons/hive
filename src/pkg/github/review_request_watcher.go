@@ -217,8 +217,17 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if strings.TrimSpace(body) != "" {
 		reviewReq.Body = gh.Ptr(body)
 	}
-	_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 	resp := ReviewResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
+	// (kubestellar/hive#4960): a PR review body is agent-supplied text posted
+	// straight to GitHub, the same exfiltration shape as an issue or comment,
+	// so it must honor the same fail-closed contract and flow through the same
+	// error/retry handling as a real CreateReview failure below.
+	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
+		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
+	} else {
+		_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon
 		// (request_retry.go) — an every-tick retry loop on a poisoned request
