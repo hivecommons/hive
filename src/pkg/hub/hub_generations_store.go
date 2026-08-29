@@ -290,6 +290,16 @@ func loadGenerations(master string, logger interface {
 	return gs, p.RotatedAt, generationsLoaded
 }
 
+// afterGenerationsReadAttempt, if non-nil, is called with the attempt index
+// (0-based) immediately after each read attempt in readGenerationsFile
+// completes, whether it succeeded or failed. It exists purely as a test
+// seam — see TestF20_ReadIsRetriedBeforeFailingClosed — so a test can learn
+// exactly when attempt 0 has failed and synchronize a fault-clearing action
+// to land deterministically between attempts, instead of racing that action's
+// own timer against generationsReadRetryDelay. Left nil in production, where
+// calling it is a no-op check on every attempt.
+var afterGenerationsReadAttempt func(attempt int)
+
 // readGenerationsFile reads the generations file, retrying a non-ENOENT error a
 // bounded number of times.
 //
@@ -309,6 +319,9 @@ func readGenerationsFile() ([]byte, error) {
 			time.Sleep(generationsReadRetryDelay)
 		}
 		data, err := os.ReadFile(hubGenerationsPath)
+		if afterGenerationsReadAttempt != nil {
+			afterGenerationsReadAttempt(attempt)
+		}
 		if err == nil {
 			return data, nil
 		}

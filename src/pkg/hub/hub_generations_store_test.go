@@ -905,14 +905,35 @@ func TestF20_ReadIsRetriedBeforeFailingClosed(t *testing.T) {
 		t.Skip("this filesystem/user can still read a 0000 file")
 	}
 
-	// Restore readability partway through the retry budget.
+	// Restore readability right after attempt 0 is observed to have failed,
+	// synchronized on the loader's own progress via afterGenerationsReadAttempt
+	// instead of a wall-clock guess. The original version raced a fixed
+	// generationsReadRetryDelay*1.5 sleep against readGenerationsFile's own
+	// generationsReadRetryDelay sleep before its 3rd/final attempt (attempts
+	// land at ~0/100/200ms): under load the restore goroutine's time.Sleep can
+	// overshoot that ~50ms margin, so the final read still sees EACCES and the
+	// loader correctly, but flakily, fails closed (#5080). Hooking the actual
+	// attempt boundary removes the margin entirely — the restore is scheduled
+	// the instant attempt 0 is known to have failed, not "probably by then".
 	restored := make(chan struct{})
-	go func() {
-		time.Sleep(generationsReadRetryDelay + generationsReadRetryDelay/2)
-		_ = os.Chmod(path, hubGenerationsFileMode)
-		close(restored)
-	}()
-	t.Cleanup(func() { <-restored })
+	t.Cleanup(func() {
+		afterGenerationsReadAttempt = nil
+		select {
+		case <-restored:
+		case <-time.After(time.Second):
+			t.Error("restore goroutine never signalled completion")
+		}
+	})
+	afterGenerationsReadAttempt = func(attempt int) {
+		if attempt != 0 {
+			return
+		}
+		afterGenerationsReadAttempt = nil // fire once
+		go func() {
+			defer close(restored)
+			_ = os.Chmod(path, hubGenerationsFileMode)
+		}()
+	}
 
 	gs, _, outcome := loadGenerations(rotStoreSecretA, quietLogger())
 	if outcome != generationsLoaded {
