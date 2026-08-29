@@ -185,15 +185,17 @@ func TestContributeCodexOnboardingSurface(t *testing.T) {
 	}
 }
 
-// TestContributeAgyHostOnlySurface pins agy (Google's Antigravity CLI) as a
-// picker entry that is honest about its one real limit. agy already had a
-// Justfile preflight, a backends.conf perm flag and relay readiness/idle
-// patterns, so interactive HOST runs work — but the contributor image does not
-// ship the binary and agy's sign-in is an interactive Google OAuth flow with no
-// API-key mode, so no container or pod can inherit a session. The page
-// therefore offers it in host mode only and says why, rather than generating
-// containerized commands that cannot work.
-func TestContributeAgyHostOnlySurface(t *testing.T) {
+// TestContributeAgySurface pins agy (Google's Antigravity CLI) as a picker
+// entry honest about its real, narrower limit (#5048). agy is no longer
+// forced to Host: src/Dockerfile.contributor now installs the binary, so
+// Container is offerable like any other backend. What actually still applies
+// to agy is that it has no OS-level sandbox of its own — Container mode is
+// the only mode with any host boundary, and Local mode refuses to launch it
+// without the explicit HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED=1 escape hatch
+// (#5024, untouched by this change). The page says exactly that, rather than
+// the two inaccurate/unverified reasons ("no binary in the image" and "no
+// inheritable credential") the old copy gave for forcing Host.
+func TestContributeAgySurface(t *testing.T) {
 	body := renderContributePage(t)
 
 	for _, want := range []string{
@@ -202,28 +204,39 @@ func TestContributeAgyHostOnlySurface(t *testing.T) {
 		`brew install --cask antigravity-cli`,
 		// agy needs --effort whenever a model is set, or it ignores the model.
 		`AGENT_REASONING_EFFORT=low`,
-		// Tile metadata + emblem, tagged so the host-only constraint is visible
-		// before a contributor commits to it.
-		`agy:{name:'Antigravity',tag:'Google (host)'}`,
-		// Host-only forcing + the note that explains the mode flip.
-		`var HOST_ONLY_BACKENDS=['other','agy']`,
-		`id="hostonly-note"`,
+		// Tile metadata + emblem, tagged so the "no sandbox" constraint is
+		// visible before a contributor commits to it.
+		`agy:{name:'Antigravity',tag:'Google (unconfined)'}`,
+		// agy's own confinement note (no OS sandbox; Container is the only
+		// mode with a boundary) — separate from the generic host-only note.
+		`id="agy-confinement-note"`,
+		`no OS-level sandbox of its own`,
 		`interactive Google OAuth flow`,
+		`HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("agy onboarding surface missing %q", want)
 		}
 	}
 
-	// The host-only fallback must still cover "other" — the entry that had this
-	// behavior before agy joined it — and must switch the visible selector, not
-	// just the local variable, or the generated commands and the UI disagree.
+	// agy must NOT force Host anymore — "other" is the only entry left with
+	// no image at all.
+	if strings.Contains(body, `HOST_ONLY_BACKENDS=['other','agy']`) {
+		t.Error("agy must not be in HOST_ONLY_BACKENDS — the contributor image now ships the agy binary (#5048)")
+	}
+	if !strings.Contains(body, `var HOST_ONLY_BACKENDS=['other']`) {
+		t.Error("HOST_ONLY_BACKENDS must still cover 'other' — the entry that has no image by definition")
+	}
+
+	// The host-only fallback (now scoped to "other") must still switch the
+	// visible mode selector itself, not just a local variable, or the
+	// generated commands and the UI disagree.
 	if !strings.Contains(body, `if(isHostOnly(cli)&&mode!=='host'){modeSel.value='host';mode='host';}`) {
 		t.Error("host-only backends must flip the mode selector itself, not only the local mode")
 	}
 
 	// agy must NOT be advertised for Kubernetes: a pod cannot complete its
-	// OAuth, so the k8s capability map stays without it (see
+	// OAuth even once, so the k8s capability map stays without it (see
 	// TestContributeK8sHeadlessCapability for the full enumeration).
 	if strings.Contains(body, "K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1,agy:1") {
 		t.Error("agy must stay out of K8S_HEADLESS_BACKENDS — a pod cannot complete agy's sign-in")

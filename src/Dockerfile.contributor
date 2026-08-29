@@ -151,6 +151,51 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        echo "Goose install skipped"; \
      fi
 
+# Install agy (Google Antigravity CLI). Not an npm package — Google ships it
+# as a standalone binary from a versioned, checksummed GCS URL (the same URL
+# Homebrew's antigravity-cli cask resolves to, confirmed against
+# formulae.brew.sh/api/cask/antigravity-cli.json). ~200MB uncompressed, so
+# this is its own layer, isolated from smaller/more frequently bumped CLIs
+# above. Upstream ships the binary as `antigravity`; the Homebrew cask
+# installs it under the name `agy` (its actual CLI entry point name), so this
+# layer renames it the same way — every other reference to this backend in
+# hive (Justfile, backends.conf, docs) expects the binary on PATH as `agy`.
+#
+# Download failures are tolerated, matching Goose above: agy is an optional
+# contributor backend and its origin (a Google-controlled GCS bucket, not a
+# package registry hive otherwise depends on) is less predictable than
+# npm/apt. Checksum mismatches are never tolerated.
+#
+# This installs the CLI only. It does NOT make container mode confined for
+# agy in any deeper sense than the container boundary itself — agy has no
+# per-invocation OS sandbox flag hive can wire (see config/backends.conf's
+# "no confinement mechanism at all" section). It also does not solve
+# credentials: agy signs in through an interactive Google OAuth flow with no
+# API-key mode, so a fresh container still needs an operator to sign in
+# inside it (or a future credential-mount fix, see Justfile's `agy)` staging
+# case) before it can do unattended work.
+ARG AGY_VERSION=1.1.22-5711547746615296
+ARG AGY_SHA256_AMD64=1e1a219a86e75d7c6351f96d182ca2105302d5c34d8fa9c31265dc0adf24145f
+ARG AGY_SHA256_ARM64=a68925bc7336eb0b90de1e1aefd44d535f5487b7cf606a76fdb982207aef9a2e
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64) AGY_PLATFORM=linux-x64; AGY_TARBALL=cli_linux_x64.tar.gz; AGY_SHA256="$AGY_SHA256_AMD64" ;; \
+       arm64) AGY_PLATFORM=linux-arm; AGY_TARBALL=cli_linux_arm64.tar.gz; AGY_SHA256="$AGY_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for agy: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && mkdir -p /tmp/agy-dl \
+  && if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
+       "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}/${AGY_PLATFORM}/${AGY_TARBALL}" \
+       -o /tmp/agy-dl/agy.tar.gz; then \
+       echo "${AGY_SHA256}  /tmp/agy-dl/agy.tar.gz" | sha256sum -c - \
+       && cd /tmp/agy-dl && tar -xzf agy.tar.gz \
+       && install -m 0755 antigravity /usr/local/bin/agy \
+       && rm -rf /tmp/agy-dl; \
+     else \
+       echo "agy install skipped"; \
+     fi
+
 # Install Pi CLI (pi.dev coding agent). Do not use pi.dev's curl-pipe-to-shell
 # installer here: it is mutable and executes remote shell as root. Pi publishes
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts

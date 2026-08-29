@@ -171,13 +171,19 @@ contribute-check-backend backend="claude":
           echo "  Models: gemini-3.6-flash, claude-sonnet-4-6, gpt-oss-120b, and more"
           echo "  Set model: export AGENT_MODEL=gemini-3.6-flash-high"
           echo "  Effort:    export AGENT_REASONING_EFFORT=low|medium|high (agy needs --effort with --model)"
-          # agy signs in through an interactive Google OAuth flow (browser URL
-          # plus a pasted code) and offers no API-key mode, so run it on the
-          # HOST: a container cannot inherit the sign-in. Sign in once with a
-          # bare `agy` before starting the relay.
-          echo "  Sign in once interactively (run: agy) — agy's Google OAuth cannot be"
-          echo "  completed by an unattended container, so run this backend on the host:"
-          echo "    just contribute-hive agy local"
+          # agy has NO OS-level sandbox of its own (config/backends.conf's "no
+          # confinement mechanism at all" list) — Container is the only mode
+          # with any host boundary, and is now possible: src/Dockerfile.contributor
+          # installs the agy binary (#5048; it did not before). agy signs in
+          # through an interactive Google OAuth flow with no API-key mode, so
+          # sign in once — either on the host first (this recipe stages a
+          # signed-in ~/.gemini into the container) or interactively inside the
+          # container itself.
+          echo "  Recommended: sign in once (run: agy), then run this backend CONTAINERIZED:"
+          echo "    just contribute-hive agy"
+          echo "  Local mode has no sandbox for agy and REFUSES to launch unless you set"
+          echo "  HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED=1, which runs agy directly against your"
+          echo "  host filesystem with no boundary at all — not recommended."
         else
           echo "ERROR: agy CLI not found. Install: https://antigravity.google/product/antigravity-cli"
           echo "  Homebrew: brew install --cask antigravity-cli"
@@ -1287,14 +1293,37 @@ contribute-hive backend="" mode="docker": check-version
           # was a silent no-op. Stage whichever is present (legacy first-run
           # installs may still use the old path) so neither layout is dropped.
           #
-          # Staging state is NOT the same as staging a session: agy authenticates
-          # through an interactive Google OAuth flow and keeps no credential file
-          # under HOME that a container can inherit (verified on 1.1.13 — a clean
-          # container asks for a browser login regardless of what is mounted).
-          # The /contribute page therefore offers agy in HOST mode only.
-          if [ -d "${HOME}/.gemini/antigravity-cli" ]; then
-            stage_copy "${HOME}/.gemini/antigravity-cli" "antigravity-cli"
-            CLI_MOUNTS="-v ${CLI_STAGE}/antigravity-cli:/home/dev/.gemini/antigravity-cli${VOLSUF}"
+          # CORRECTION (#5048): an earlier version of this comment claimed agy
+          # "keeps no credential file under HOME that a container can inherit."
+          # That was wrong. agy DOES persist OAuth state under ${HOME}/.gemini —
+          # ${HOME}/.gemini/oauth_creds.json (with a refresh_token, not just a
+          # short-lived access_token) and ${HOME}/.gemini/google_accounts.json —
+          # but as SIBLINGS of antigravity-cli/, one level up from what this
+          # recipe staged. Staging only antigravity-cli/ mounted agy's state
+          # directory (conversations, cache, settings) while silently omitting
+          # both credential files, so a "clean container asks for a browser
+          # login regardless of what is mounted" was actually observing an
+          # incomplete mount, not an absence of inheritable credentials. Stage
+          # the whole ${HOME}/.gemini directory so the credential files travel
+          # alongside the state dir.
+          #
+          # This still does NOT make agy's headless/unattended container
+          # authentication a verified path: whether a mounted refresh_token
+          # actually re-authenticates a headless agy (vs. agy consulting an OS
+          # keyring/Secret Service in some auth modes — the binary links
+          # go-keyring) has not been confirmed end-to-end. Treat a mounted
+          # ${HOME}/.gemini as "gives agy in the container the best chance of
+          # inheriting a signed-in session," not as a guarantee. If the mount
+          # is insufficient, sign in interactively inside the container once
+          # (same `agy` interactive OAuth flow as on a host).
+          #
+          # H6 (CWE-668) is unaffected: this stages into the same ephemeral,
+          # 0700, cleanup_container-destroyed staging dir as every other
+          # backend below, not the host's real ${HOME}/.gemini. A poisoned
+          # agent still cannot write back to the host's real credentials.
+          if [ -d "${HOME}/.gemini" ]; then
+            stage_copy "${HOME}/.gemini" ".gemini"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.gemini:/home/dev/.gemini${VOLSUF}"
           elif [ -d "${HOME}/.antigravitycli" ]; then
             stage_copy "${HOME}/.antigravitycli" ".antigravitycli"
             CLI_MOUNTS="-v ${CLI_STAGE}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
