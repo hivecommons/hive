@@ -392,6 +392,16 @@ governor:
 #   recent_closed_window_s: 604800
 #   analysis_model: ""   # empty disables all LLM calls (default)
 
+# Planning intelligence — the `plan`/`epic` issue-label trigger that auto-mints
+# an epic bead and requests architect decomposition (see docs/planning-intelligence.md).
+# Only gates the label trigger; the dashboard's "Plan this issue" button is always
+# available regardless of this block. OFF by default: the label path pipes a raw
+# issue body into the architect's kick prompt with no per-kick review, so this
+# must be explicitly opted into. Even when true, it is a no-op below ACMM L5 —
+# the decomposing architect only has a cadence at L5+.
+# planning:
+#   plan_from_label: false
+
 # Review swarm merge gate — optional structured multi-perspective PR review.
 # Default is false to preserve existing merge eligibility behavior; when true,
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.
