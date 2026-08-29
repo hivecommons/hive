@@ -53,6 +53,13 @@ func runBootPreludeRO(t *testing.T, env map[string]string, files map[string]stri
 	body := text[:end]
 	body = strings.ReplaceAll(body, `"/data/`, `"`+root+`/data/`)
 	body = strings.ReplaceAll(body, `/etc/hive/hive.yaml`, root+"/etc/hive/hive.yaml")
+	// Rewrite the serviceaccount-token probe too, so IS_KUBERNETES is decided
+	// by the test's KUBERNETES_SERVICE_HOST alone. Without this, the real
+	// in-cluster token file flips every "Docker mode" test into the K8s
+	// branch on in-cluster CI runners and dev hives.
+	body = strings.ReplaceAll(body,
+		"/var/run/secrets/kubernetes.io/serviceaccount/token",
+		root+"/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 	for _, rel := range readOnly {
 		p := filepath.Join(root, rel)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -271,8 +272,14 @@ func TestSeedIsWritableByNobody(t *testing.T) {
 // looking for something that does not exist while hiding the file that
 // actually decides the value.
 func TestSeedIsWritableOutsideKubernetes(t *testing.T) {
-	// No KUBERNETES_SERVICE_HOST and (on any normal test host) no
-	// serviceaccount token — IsKubernetesPod() reads false.
+	// Force the non-Kubernetes branch explicitly: clear the env probe and
+	// point the serviceaccount-token probe at a path that does not exist.
+	// Relying on the host "not looking like a pod" made this test fail on
+	// in-cluster CI runners and dev hives, where KUBERNETES_SERVICE_HOST is
+	// set and the real token file exists.
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	restore := SetSATokenFileForTest(filepath.Join(t.TempDir(), "no-such-sa-token"))
+	defer restore()
 	if !LayerSeed.Writable() {
 		t.Error("LayerSeed.Writable() = false outside Kubernetes, want true — RuntimeConfigFile is writable by the spoke")
 	}
