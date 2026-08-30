@@ -179,7 +179,7 @@ func (s *HubServer) handleGetScaleSettings(w http.ResponseWriter, r *http.Reques
 	}
 	sortClusterRows(rows)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(scaleSettingsView{
+	_ = json.NewEncoder(w).Encode(scaleSettingsView{
 		Saved: saved,
 		Effective: map[string]any{
 			"upgrade_wave_size":     upgradeWaveSize(),

@@ -96,7 +96,7 @@ var fetchCommitCompareStatus = func(base, head string, logger *slog.Logger) (str
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("compare %s...%s: HTTP %d", base, head, resp.StatusCode)
 	}

@@ -393,7 +393,7 @@ func k8sAPIPatch(path string, body []byte) error {
 	if err != nil {
 		return fmt.Errorf("k8s API PATCH %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

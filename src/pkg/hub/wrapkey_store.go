@@ -196,21 +196,26 @@ func persistSpokeWrapKeys(path string, keys spokeWrapKeys) error {
 	// Chmod BEFORE writing: the key bytes must never exist on disk at a wider
 	// mode, not even for the microseconds between write and chmod.
 	if err := tmp.Chmod(spokeWrapKeyFileMode); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		// Best-effort cleanup: the chmod error above is what's returned, and a
+		// leftover temp file is a harmless artifact next run's os.CreateTemp
+		// won't collide with.
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("wrap key file: chmod: %w", err)
 	}
 	if _, err := tmp.Write(blob); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		// Best-effort cleanup: the write error above is what's returned.
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("wrap key file: write: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("wrap key file: close: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
+		// Best-effort cleanup: the rename error above is what's returned.
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("wrap key file: rename: %w", err)
 	}
 	return nil

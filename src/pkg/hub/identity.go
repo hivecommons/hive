@@ -362,5 +362,5 @@ func (s *HubServer) handleResetApp(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("app reset armed by operator", "hive_id", hiveID)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"armed","detail":"the spoke will clear its installation on the next heartbeat and prompt for a fresh App install"}`))
+	_, _ = w.Write([]byte(`{"status":"armed","detail":"the spoke will clear its installation on the next heartbeat and prompt for a fresh App install"}`))
 }

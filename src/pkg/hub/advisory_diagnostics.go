@@ -250,5 +250,5 @@ func (s *HubServer) handleAdvisoryDiagnostics(w http.ResponseWriter, r *http.Req
 	rep := s.advisoryDiagnostics(time.Now())
 	s.logAdvisoryDiagnostics(rep)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rep)
+	_ = json.NewEncoder(w).Encode(rep)
 }

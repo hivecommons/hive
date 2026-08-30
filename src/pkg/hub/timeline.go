@@ -239,7 +239,7 @@ func (t *timelineStore) persist(hiveID string, events []TimelineEvent) {
 		return
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // best-effort cleanup of the failed-rename temp file
 	}
 }
 
@@ -576,7 +576,7 @@ func (s *HubServer) handleHiveTimeline(w http.ResponseWriter, r *http.Request) {
 	events := s.timeline.recent(hiveID, timelineMaxEvents)
 	s.decorateTimelineActors(events)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"events": events})
+	_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
 }
 
 // handleAccessLog serves GET /api/saas/hives/{id}/access-log — the
@@ -617,7 +617,7 @@ func (s *HubServer) handleAccessLog(w http.ResponseWriter, r *http.Request) {
 	}
 	s.decorateTimelineActors(events)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"events": events})
+	_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
 }
 
 // decorateTimelineActors stamps ActorName on served event copies whose Actor

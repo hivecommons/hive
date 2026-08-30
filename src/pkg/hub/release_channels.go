@@ -133,7 +133,7 @@ var ghcrTagDigest = func(repo, tag string, logger *slog.Logger) string {
 		logger.Warn("channel resolve: GHCR token request failed", "repo", repo, "error", err)
 		return ""
 	}
-	defer tokenResp.Body.Close()
+	defer func() { _ = tokenResp.Body.Close() }()
 	var tok struct {
 		Token string `json:"token"`
 	}
@@ -153,7 +153,7 @@ var ghcrTagDigest = func(repo, tag string, logger *slog.Logger) string {
 		logger.Warn("channel resolve: GHCR manifest HEAD failed", "repo", repo, "tag", tag, "error", err)
 		return ""
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// Previously silent, which is how an auth/permission regression on the
 		// package (401/403) or a channel CI never published (404) could blank

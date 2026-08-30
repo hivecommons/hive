@@ -175,7 +175,7 @@ func sendSlackDM(token, slackID, message string) error {
 	if err != nil {
 		return fmt.Errorf("slack request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		// Surfaced explicitly rather than folded into a generic status error:
@@ -408,11 +408,11 @@ func (s *HubServer) handleSlackMessageUser(w http.ResponseWriter, r *http.Reques
 		res.Status = "skipped"
 		res.Note = fmt.Sprintf("%s has no slack_id on file — set one on the admin users panel before messaging them", username)
 		s.logger.Info("slack message skipped: no slack_id", "target", "user", "user", username, "actor", actor)
-		json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
 	if body.DryRun {
-		json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
 	token := requireSlackToken(w)
@@ -421,7 +421,7 @@ func (s *HubServer) handleSlackMessageUser(w http.ResponseWriter, r *http.Reques
 	}
 	s.logger.Info("audit: slack message queued", "target", "user", "user", username, "actor", actor)
 	go s.deliverSlackMessages(token, "user", body.Message, recipients, actor)
-	json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 // handleSlackMessageHiveOwner sends to the OWNER of a given hive.
@@ -467,11 +467,11 @@ func (s *HubServer) handleSlackMessageHiveOwner(w http.ResponseWriter, r *http.R
 		res.Note = fmt.Sprintf("%s (owner of %s) has no slack_id on file", h.Owner, id)
 		s.logger.Info("slack message skipped: no slack_id",
 			"target", "hive-owner", "hive_id", id, "owner", h.Owner, "actor", actor)
-		json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
 	if body.DryRun {
-		json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
 	token := requireSlackToken(w)
@@ -481,7 +481,7 @@ func (s *HubServer) handleSlackMessageHiveOwner(w http.ResponseWriter, r *http.R
 	s.logger.Info("audit: slack message queued",
 		"target", "hive-owner", "hive_id", id, "owner", h.Owner, "actor", actor)
 	go s.deliverSlackMessages(token, "hive-owner", body.Message, recipients, actor)
-	json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 // handleSlackBroadcast sends to EVERY user with a slack_id.
@@ -516,7 +516,7 @@ func (s *HubServer) handleSlackBroadcast(w http.ResponseWriter, r *http.Request)
 			"confirm", slackBroadcastConfirm, len(recipients))
 		s.logger.Info("slack broadcast dry run",
 			"actor", actor, "recipients", len(recipients), "skipped", len(skipped))
-		json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
 	if body.Confirm != slackBroadcastConfirm {
@@ -524,7 +524,7 @@ func (s *HubServer) handleSlackBroadcast(w http.ResponseWriter, r *http.Request)
 		// confirmed. Reporting the recipient count in the refusal means the
 		// operator sees the blast radius before they retype the confirmation.
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"error":        fmt.Sprintf("broadcast requires confirm: %q", slackBroadcastConfirm),
 			"recipients":   len(recipients),
 			"skipped":      len(skipped),
@@ -538,7 +538,7 @@ func (s *HubServer) handleSlackBroadcast(w http.ResponseWriter, r *http.Request)
 		res.Note = "no user on this hub has a slack_id on file — nothing to send"
 		s.logger.Warn("slack broadcast had no reachable recipients",
 			"actor", actor, "users", len(users), "skipped", len(skipped))
-		json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res)
 		return
 	}
 	token := requireSlackToken(w)
@@ -556,5 +556,5 @@ func (s *HubServer) handleSlackBroadcast(w http.ResponseWriter, r *http.Request)
 		"skipped_users", strings.Join(skipped, ","),
 		"estimated_seconds", res.EstimatedSeconds)
 	go s.deliverSlackMessages(token, "all-users", body.Message, recipients, actor)
-	json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(res)
 }

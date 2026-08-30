@@ -114,7 +114,7 @@ func (s *HubServer) handleRotateMasterKey(w http.ResponseWriter, r *http.Request
 			"retry_after_seconds", retry,
 			"current", s.currentGenerations().Current)
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(rotateRefusedResponse{
+		_ = json.NewEncoder(w).Encode(rotateRefusedResponse{
 			Error:             decision.Reason,
 			RetryAfterSeconds: retry,
 			Current:           s.currentGenerations().Current,
@@ -137,7 +137,7 @@ func (s *HubServer) handleRotateMasterKey(w http.ResponseWriter, r *http.Request
 			"unreachable_clusters", strings.Join(obs.UnreachableClusters, ","),
 			"current", s.currentGenerations().Current)
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(rotateRefusedResponse{
+		_ = json.NewEncoder(w).Encode(rotateRefusedResponse{
 			Error:   decision.Reason,
 			Current: s.currentGenerations().Current,
 		})
@@ -150,7 +150,7 @@ func (s *HubServer) handleRotateMasterKey(w http.ResponseWriter, r *http.Request
 		s.logger.Error("master key rotation FAILED — no rotation applied",
 			"by", s.getRealAuthUser(r), "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"error": "rotation failed; no rotation was applied — see hub logs",
 		})
 		return
@@ -183,7 +183,7 @@ func (s *HubServer) handleRotateMasterKey(w http.ResponseWriter, r *http.Request
 		"forced", resp.Forced,
 		"path", hubGenerationsPath)
 
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // keyGenerationsResponse is the read-only view of the generation set.
@@ -258,5 +258,5 @@ func (s *HubServer) handleKeyGenerations(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(out)
 }

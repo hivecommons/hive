@@ -1711,7 +1711,8 @@ func saveSaaSHive(h *SaaSHive) error {
 		return fmt.Errorf("invalid hive ID for save: %q", h.ID)
 	}
 	dir := filepath.Join(saasHivesDir, h.ID)
-	os.MkdirAll(dir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(dir, 0o755)
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
@@ -2064,7 +2065,8 @@ func provisionTemplateUseApp(req *CreateHiveRequest, cluster *ClusterConfig) boo
 // to provision with only the primary key (the pre-existing behaviour).
 func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, fleetKeys map[int64]fleetAppKey, logger *slog.Logger) error {
 	dir := filepath.Join(saasHivesDir, h.ID, "manifests")
-	os.MkdirAll(dir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the os.Create error below.
+	_ = os.MkdirAll(dir, 0o755)
 
 	// Strip a leading "<org>/" off each repo before it is baked into the spoke's
 	// hive.yaml. The spoke builds every repo target as org + "/" + repo, so an
@@ -2337,10 +2339,18 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		return fmt.Errorf("create manifest: %w", err)
 	}
 	if _, err := f.Write(manifestBuf.Bytes()); err != nil {
-		f.Close()
+		_ = f.Close()
+		_ = os.Remove(manifestPath)
 		return fmt.Errorf("write manifest: %w", err)
 	}
-	f.Close()
+	// A failed Close can mean buffered bytes never made it to disk — kubectl
+	// would then apply a truncated manifest carrying a partial plaintext
+	// token. Treat it as a write failure: remove the manifest and refuse to
+	// apply rather than risk a broken/partial secret landing on the cluster.
+	if err := f.Close(); err != nil {
+		_ = os.Remove(manifestPath)
+		return fmt.Errorf("close manifest: %w", err)
+	}
 
 	cmd := kubectlForCluster(cluster, "apply", "-f", manifestPath)
 	out, err := cmd.CombinedOutput()
@@ -2515,7 +2525,9 @@ func (s *HubServer) startProvisionWatcher(ctx context.Context) {
 			if time.Since(created) > provisionTimeout {
 				h.Status = "error"
 				h.Error = "provisioning timed out"
-				saveSaaSHive(&h)
+				if err := saveSaaSHive(&h); err != nil {
+					s.logger.Warn("failed to persist hive timeout status", "hive_id", h.ID, "error", err)
+				}
 				s.logger.Warn("saas hive provision timeout", "hive_id", h.ID)
 				continue
 			}
@@ -2533,7 +2545,9 @@ func (s *HubServer) startProvisionWatcher(ctx context.Context) {
 			}
 			if strings.TrimSpace(string(out)) == "1" {
 				h.Status = "running"
-				saveSaaSHive(&h)
+				if err := saveSaaSHive(&h); err != nil {
+					s.logger.Warn("failed to persist hive running status", "hive_id", h.ID, "error", err)
+				}
 				s.logger.Info("audit: saas hive running", "hive_id", h.ID, "cluster", cluster.ID)
 			}
 		}

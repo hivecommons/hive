@@ -45,7 +45,7 @@ var fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (count
 	if err != nil {
 		return 0, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return 0, false, nil
 	}

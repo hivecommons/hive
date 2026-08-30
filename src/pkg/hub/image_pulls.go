@@ -162,7 +162,8 @@ func persistImagePullsLocked(logger *slog.Logger) {
 		logger.Warn("image pulls: persist marshal failed", "error", err)
 		return
 	}
-	os.MkdirAll(filepath.Dir(imagePullsPath), 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(filepath.Dir(imagePullsPath), 0o755)
 	tmpPath := imagePullsPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		logger.Warn("image pulls: persist write failed", "path", imagePullsPath, "error", err)
@@ -217,7 +218,7 @@ var fetchCumulativePulls = func(ctx context.Context, logger *slog.Logger) (int64
 		logger.Warn("image pulls: fetch package page failed", "url", pullPackagePageURL, "error", err)
 		return 0, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("image pulls: package page non-200", "url", pullPackagePageURL, "status", resp.StatusCode)
 		return 0, false

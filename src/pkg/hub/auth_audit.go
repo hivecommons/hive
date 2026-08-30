@@ -159,7 +159,7 @@ func probeWideOpen(ctx context.Context, client *http.Client, base string) (statu
 	if err != nil {
 		return 0, false, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode, resp.StatusCode == http.StatusOK, true
 }
 

@@ -92,7 +92,7 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
 func (s *HubServer) handleInstallationEvent(body []byte) {
@@ -252,7 +252,7 @@ func (s *HubServer) pushGitHubConfigToSpoke(hive *RegistryEntry, appID, installa
 		}
 
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		cancel()
 
 		if resp.StatusCode >= http.StatusBadRequest {

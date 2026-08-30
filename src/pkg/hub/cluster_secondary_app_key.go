@@ -321,7 +321,7 @@ func (s *HubServer) handleSetHiveSecondaryApp(w http.ResponseWriter, r *http.Req
 		"by", s.getAuthUser(r),
 	)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"hive_id":          hiveID,
 		"secondary_app_id": h.SecondaryAppID,
 		// Fingerprint only, so an operator can confirm the hub holds a key for
