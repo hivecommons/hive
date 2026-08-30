@@ -85,19 +85,29 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 
 # Install bobshell (IBM "bob"). Mirrors Layer 9 of src/Dockerfile so the
 # containerized contributor relay can actually run the bob backend — without
-# this, detect_cli in bin/contributor-agent.sh reports NOT_AUTHED because the
-# binary does not exist, and a contributor who selects "Bob" on /contribute
-# gets a container that can never take work.
+# this, detect_cli in bin/contributor-agent.sh reports NOT_INSTALLED because
+# the binary does not exist, and a contributor who selects "Bob" on
+# /contribute gets a container that can never take work.
 #
 # Version is pinned to match the hub image exactly: hub and relay agents must
 # speak the same bobshell CLI surface (the hidden --auth-method flag and the
 # --approval-mode choices are version-dependent). Do not bump one without the
 # other.
 #
-# Deliberately NOT tolerant of failure, matching the hub layer: a silent skip
-# here reproduces exactly the "backend validates but never launches" trap this
-# layer exists to prevent. The `which bob` check turns a partial install into a
-# build failure too.
+# Tolerant of download failure now, matching src/Dockerfile's Layer 9 (issue
+# #5203): IBM COS has gone unreachable for multi-minute windows repeatedly,
+# and no retry ladder can outlast a genuine outage. This is safe because
+# absence is still honestly surfaced, not silent: detect_cli's
+# `command -v "$cmd"` gate runs before any per-backend logic and returns
+# NOT_INSTALLED for a missing bob binary, which bin/contributor-agent.sh
+# turns into `ERROR: bob CLI not found. Install it and try again.` and a
+# non-zero exit — the container refuses to start claiming readiness it
+# doesn't have, the same "backend validates but never launches" trap #5048
+# describes is not reproduced here because the container fails loudly at
+# startup instead of accepting work it cannot do.
+#
+# Checksum mismatches are still never tolerated — the || only covers the
+# curl download step, not the verify/install steps.
 ARG BOBSHELL_VERSION=1.0.6
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
 ARG TARGETARCH
@@ -109,14 +119,17 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
        *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
      esac \
-  && curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+  && if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
-       -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" \
-  && echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - \
-  && npm install -g /tmp/bobshell.tgz && \
-    npm cache clean --force && \
-    which bob && \
-    rm -f /tmp/bobshell.tgz
+       -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz"; then \
+       echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - \
+    && npm install -g /tmp/bobshell.tgz \
+    && npm cache clean --force \
+    && which bob \
+    && rm -f /tmp/bobshell.tgz; \
+     else \
+       echo "WARN: Bob CLI download failed — skipping (backend: bob will be unavailable)"; \
+     fi
 
 # Install gh CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

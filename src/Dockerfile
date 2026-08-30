@@ -334,30 +334,52 @@ ARG BOBSHELL_VERSION=1.0.6
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
 ARG BOBSHELL_SHA256_AMD64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
 ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
-# Deliberately NOT tolerant of failure, unlike the copilot/goose layers above.
-# A hive configured with backend "bob" passes config validation (validBackends
-# in pkg/config) and then fails at launch with "agent scanner not running" —
-# a silent trap that cost real debugging time. If this download breaks, the
-# build must break loudly rather than ship an image that reproduces that bug.
-# The `which bob` check turns a partial install into a build failure too.
-# Per-attempt bounds (--connect-timeout/--speed-time/--max-time) kill stalled
-# IBM COS connections so they can't consume the whole retry budget: without
-# them a single hung download burned all of --retry-max-time and exited 28
-# (issue #4941; CI runs 32990236986, 33072306789, 33132187354).
+# Tolerant of download failure now, like the copilot/codex/goose/pi layers
+# above (issue #5203) — IBM COS (s3.us-south.cloud-object-storage.appdomain.cloud)
+# has gone unreachable for multi-minute windows three times in one day
+# (#4941, then recurred post-fix; CI runs 32990236986, 33072306789,
+# 33132187354, 33322522386), and no retry ladder can ride out an outage that
+# outlasts it — every one of #4941's added attempts hit
+# "Connection timed out after 15002 ms" across ~175s, i.e. the endpoint was
+# down for the whole window, not flaking.
+#
+# This used to be deliberately hard-fail-only, because a hive configured with
+# backend "bob" passed config validation (validBackends in pkg/config) and
+# then failed at launch with no honest signal — a silent trap that cost real
+# debugging time. That trap is now closed at the launch site instead of at
+# image-build time: pkg/agent/manager.go's launchInTmux resolves the backend
+# binary via exec.LookPath BEFORE any bob-specific logic runs, and on a miss
+# marks the agent StateFailed, records LastError, logs a warning, writes a
+# banner into the agent's own tmux pane, and emits an AuditAgentStartFailed
+# event — all before the agent could ever appear to be silently stuck. A
+# soft-failed bobshell layer now degrades exactly the same way a soft-failed
+# Goose layer already does: the backend is honestly reported unavailable per
+# agent, at launch, not silently absent with no signal anywhere (the failure
+# mode #5048 describes for a different backend, agy).
+#
+# Checksum mismatches are still never tolerated — the || only covers the
+# curl download step, not the verify/install steps, so a tampered or
+# corrupted tarball still hard-fails the build exactly as before.
+# Per-attempt bounds (--connect-timeout/--speed-time/--max-time) still kill
+# stalled IBM COS connections so a single hung attempt cannot consume the
+# whole retry budget on its own (issue #4941).
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
       arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
       *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+    if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
-      -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
-    echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - && \
-    npm install -g /tmp/bobshell.tgz && \
-    npm cache clean --force && \
-    which bob && \
-    rm -f /tmp/bobshell.tgz
+      -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz"; then \
+      echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - && \
+      npm install -g /tmp/bobshell.tgz && \
+      npm cache clean --force && \
+      which bob && \
+      rm -f /tmp/bobshell.tgz; \
+    else \
+      echo "WARN: Bob CLI download failed — skipping (backend: bob will be unavailable)"; \
+    fi
 
 # --- Application layers ---
 ENV HOME=/home/dev
