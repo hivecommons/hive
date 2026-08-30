@@ -408,7 +408,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Info("forge switch queued (non-GitHub)",
 			"hive_id", id, "kind", target.Kind, "host", target.Host)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"kind": string(target.Kind),
 			"host": target.Host,
@@ -439,7 +439,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	// missing so an operator can populate clusters.json and re-run.
 	if len(missing) > 0 {
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"error": fmt.Sprintf("refusing to switch %s to %s: the target forge identity is incomplete for cluster %q, and a partial switch produces a broken hive (a wrong App install link 404s)",
 				id, target.Host, clusterIDForHive(h)),
 			"missing": missing,
@@ -586,7 +586,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	if appID > 0 {
 		resp.AppID = strconv.FormatInt(appID, 10)
 	}
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // forgeIdentity is the COMPLETE App identity for one forge. A forge switch

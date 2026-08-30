@@ -1163,7 +1163,7 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 			if err == nil {
 				resp, err := http.DefaultClient.Do(req)
 				if err == nil {
-					resp.Body.Close()
+					_ = resp.Body.Close()
 					if resp.StatusCode == 200 {
 						cancel()
 						logger.Info("dashboard ready, starting heartbeats")
@@ -1309,7 +1309,7 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 		logger.Debug("hub heartbeat unreachable", "error", err)
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -1525,7 +1525,7 @@ func publicURLSelfProbe(ctx context.Context, rawURL string, client *http.Client)
 	if err != nil {
 		return PublicURLSelfCheck{Status: publicURLSelfCheckStatusForError(err), CheckedAt: checkedAt, Error: terseProbeError(err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusInternalServerError {
 		return PublicURLSelfCheck{Status: PublicURLSelfCheckOK, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode}
 	}
@@ -1857,7 +1857,7 @@ func listKubernetesResource(ctx context.Context, client *http.Client, cfg *inClu
 	if err != nil {
 		return true, terseProbeError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
@@ -1947,7 +1947,7 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 		logger.Debug("upgrading heartbeat failed", "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 300 {
 		// Counts as a successful beat for liveness purposes: the process is
 		// seconds from a self-initiated restart anyway, so this mainly keeps
@@ -1999,7 +1999,7 @@ func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, l
 		logger.Warn("could not report upgrade failure to hub", "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	logger.Info("reported upgrade failure to hub", "target", targetSHA, "cause", cause)
 }
 
@@ -2324,7 +2324,7 @@ func StartTaskStatusPush(ctx context.Context, hubURL string, collect TaskStatusC
 			resp, err := http.DefaultClient.Do(req)
 			cancel()
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 		}
 	}

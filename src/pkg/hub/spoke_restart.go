@@ -170,5 +170,5 @@ func (s *HubServer) handleRestartSpoke(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("spoke restart armed by operator", "hive_id", hiveID)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"armed","detail":"every spoke instance reporting as this hive will rolling-restart on its next heartbeat within the delivery window"}`))
+	_, _ = w.Write([]byte(`{"status":"armed","detail":"every spoke instance reporting as this hive will rolling-restart on its next heartbeat within the delivery window"}`))
 }

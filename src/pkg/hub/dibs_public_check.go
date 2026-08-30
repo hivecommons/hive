@@ -180,7 +180,7 @@ func (c *dibsPublicChecker) check(repoID string) (public, definitive bool) {
 		c.logger.Warn("dibs public check: github unreachable", "repo", repoID, "error", err)
 		return false, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var payload struct {

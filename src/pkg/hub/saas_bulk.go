@@ -229,7 +229,7 @@ func (s *HubServer) handleBulkHiveAction(w http.ResponseWriter, r *http.Request)
 		"succeeded", okCount, "failed", len(ids)-okCount)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"action":    body.Action,
 		"requested": len(ids),
 		"succeeded": okCount,
@@ -482,5 +482,5 @@ func sortedBulkResults(results []BulkHiveResult) []BulkHiveResult {
 func writeBulkError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

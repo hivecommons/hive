@@ -150,21 +150,21 @@ func storeAppKeyAtPath(path, pemData, subject string) error {
 		return fmt.Errorf("create temp app key file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename below succeeds
+	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename below succeeds
 
 	if err := tmp.Chmod(clusterAppKeyFileMode); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("chmod temp app key file: %w", err)
 	}
 	if _, err := tmp.WriteString(trimmed + "\n"); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write temp app key file: %w", err)
 	}
 	// Sync before rename so the rename cannot publish an empty file after a
 	// crash — the key is distributed fleet-wide, so a partial write is worse
 	// than no write.
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("sync temp app key file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -1259,7 +1259,7 @@ func (s *HubServer) handleGetClusterAppKeys(w http.ResponseWriter, r *http.Reque
 	}
 	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ClusterID < statuses[j].ClusterID })
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(statuses)
+	_ = json.NewEncoder(w).Encode(statuses)
 }
 
 // handlePutClusterAppKey stores (or replaces) a cluster's App private key.
@@ -1344,7 +1344,7 @@ func (s *HubServer) handlePutClusterAppKey(w http.ResponseWriter, r *http.Reques
 			"by", s.getAuthUser(r),
 		)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(clusterAppKeyStatus{
+		_ = json.NewEncoder(w).Encode(clusterAppKeyStatus{
 			ClusterID:     clusterID,
 			AppID:         primaryAppID,
 			HasKey:        clusterAppKeyFingerprint(clusterID) != "",
@@ -1380,7 +1380,7 @@ func (s *HubServer) handlePutClusterAppKey(w http.ResponseWriter, r *http.Reques
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(clusterAppKeyStatus{
+	_ = json.NewEncoder(w).Encode(clusterAppKeyStatus{
 		ClusterID:   clusterID,
 		AppID:       appID,
 		HasKey:      true,
@@ -1440,7 +1440,7 @@ func (s *HubServer) setClusterAppID(clusterID string, appID int64) error {
 		return fmt.Errorf("write clusters config: %w", err)
 	}
 	if err := os.Rename(tmp, clustersConfigPath); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("rename clusters config: %w", err)
 	}
 	return nil

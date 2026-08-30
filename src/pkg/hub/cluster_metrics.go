@@ -427,7 +427,7 @@ func k8sAPIGet(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("k8s API %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

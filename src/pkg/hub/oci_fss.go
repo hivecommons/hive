@@ -246,7 +246,7 @@ func createOCIFileSystem(displayName string, logger *slog.Logger) (string, error
 	if err != nil {
 		return "", fmt.Errorf("OCI FSS API call failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 
@@ -305,7 +305,7 @@ func createOCIExport(fileSystemID, exportPath string, logger *slog.Logger) (stri
 	if err != nil {
 		return "", fmt.Errorf("OCI export API call failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 
@@ -353,7 +353,7 @@ func deleteOCIExport(exportID string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("OCI export delete API call failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 204 No Content is the expected success response for DELETE.
 	if resp.StatusCode >= 300 {
@@ -391,7 +391,7 @@ func deleteOCIFileSystem(fileSystemID string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("OCI file system delete API call failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 204 No Content is the expected success response for DELETE.
 	if resp.StatusCode >= 300 {

@@ -106,7 +106,7 @@ func (s *HubServer) handleReadingList(w http.ResponseWriter, r *http.Request) {
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // readingList returns the current article list, its as-of time, and provenance,
@@ -162,7 +162,7 @@ func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, readingListMaxBytes))
 	if err != nil {

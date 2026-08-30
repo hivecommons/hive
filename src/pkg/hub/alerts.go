@@ -1361,7 +1361,7 @@ func (s *HubServer) handleAlertAck(w http.ResponseWriter, r *http.Request) {
 
 func writeAlertAckOK(w http.ResponseWriter, acked bool) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "acknowledged": acked})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "acknowledged": acked})
 }
 
 // knownAlertTypes is the closed set of types the ack endpoint accepts, so a

@@ -112,7 +112,7 @@ func (s *HubServer) handleHubOpenRouterStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"authorize_url": authURL, "state": state})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"authorize_url": authURL, "state": state})
 }
 
 // handleHubOpenRouterQR renders a QR PNG for ?data=<authorize_url>. Same-origin
@@ -130,7 +130,7 @@ func (s *HubServer) handleHubOpenRouterQR(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(png)
+	_, _ = w.Write(png)
 }
 
 // handleHubOpenRouterModels returns the curated suggested list + OpenRouter's live
@@ -138,7 +138,7 @@ func (s *HubServer) handleHubOpenRouterQR(w http.ResponseWriter, r *http.Request
 func (s *HubServer) handleHubOpenRouterModels(w http.ResponseWriter, r *http.Request) {
 	live := fetchOpenRouterModels()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"suggested": openrouter.SuggestedModels,
 		"models":    live,
 		"default":   openrouter.DefaultModel,
@@ -163,7 +163,7 @@ func (s *HubServer) handleHubOpenRouterCredit(w http.ResponseWriter, r *http.Req
 	}
 	pendingDelivery := s.hasPendingGateway(hiveID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"pending_delivery": pendingDelivery,
 	})
 }

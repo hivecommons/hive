@@ -1312,7 +1312,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		b := make([]byte, secretLen)
 		cryptoRand.Read(b)
 		secret = fmt.Sprintf("%x", b)
-		os.MkdirAll("/data/saas", 0o755)
+		// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+		_ = os.MkdirAll("/data/saas", 0o755)
 		if err := os.WriteFile("/data/saas/hub-secret.key", []byte(secret), 0o600); err != nil {
 			logger.Error("failed to write hub secret", "error", err)
 		}
@@ -2670,7 +2671,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 const (
@@ -2948,7 +2949,7 @@ func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *HubServer) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
@@ -2958,7 +2959,7 @@ func (s *HubServer) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 
 	data, _ := json.Marshal(map[string]any{"leaderboard": merged})
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
@@ -3038,7 +3039,7 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -3073,7 +3074,7 @@ func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
 		"prs":          totalPRs,
 	})
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // FleetStats is the aggregated, fleet-wide contribution total exposed at
@@ -3535,7 +3536,7 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 
 	data, _ := json.Marshal(fs)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // removeRegistryEntry removes a hive from the in-memory registry by ID and
@@ -3634,7 +3635,7 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", primaryHubAdmin())
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"removed": removed, "id": id})
+	_ = json.NewEncoder(w).Encode(map[string]any{"removed": removed, "id": id})
 }
 
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
@@ -3672,7 +3673,7 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // markStaleHives flips Online off for hives that stopped beating and evicts
@@ -3756,7 +3757,7 @@ func (s *HubServer) serveStatic(path string) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(data)
+		_, _ = w.Write(data)
 	}
 }
 
@@ -3949,14 +3950,14 @@ func (s *HubServer) handleContributeStatus(w http.ResponseWriter, r *http.Reques
 	hive := s.findContributeHive()
 	if hive == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"available": false,
 			"message":   "no hives currently available for contribution",
 		})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"available": true,
 		"hive_id":   hive.ID,
 		"hive_name": hive.Name,

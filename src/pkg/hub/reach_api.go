@@ -249,7 +249,7 @@ type reachResponse struct {
 func writeReachError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // handleReach serves GET /api/reach — by PR (?pr=NNN) or the recent-PRs
@@ -353,5 +353,5 @@ func (s *HubServer) handleReach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }

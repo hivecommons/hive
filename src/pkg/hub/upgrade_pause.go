@@ -179,7 +179,7 @@ func (s *HubServer) setUpgradePause(target string, paused bool, by string) (Upgr
 // describes, and the who/when metadata names admins.
 func (s *HubServer) handleGetUpgradePause(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.upgradePauseSnapshot())
+	_ = json.NewEncoder(w).Encode(s.upgradePauseSnapshot())
 }
 
 // handleSetUpgradePause flips one switch. Admin-only (requireAdmin). Every
@@ -212,5 +212,5 @@ func (s *HubServer) handleSetUpgradePause(w http.ResponseWriter, r *http.Request
 	}
 	s.emitUpgradePause(UpgradePauseEvent{Target: body.Target, Paused: body.Paused, By: username, At: sw.At})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": state})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": state})
 }

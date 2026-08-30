@@ -106,5 +106,5 @@ func buildCountryRollup(users []SaaSUser) countryRollup {
 func (s *HubServer) handleAdminUserCountries(w http.ResponseWriter, r *http.Request) {
 	rollup := buildCountryRollup(listAllSaaSUsers())
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rollup)
+	_ = json.NewEncoder(w).Encode(rollup)
 }

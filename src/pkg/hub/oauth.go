@@ -168,7 +168,7 @@ func writeLinkPreview(w http.ResponseWriter) {
 	// Preview cards are identical for every link and change only on deploy.
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(linkPreviewMaxAge.Seconds())))
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(previewHTML))
+	_, _ = w.Write([]byte(previewHTML))
 }
 
 // ogCardPath is the pre-rendered preview image inside staticFS. It is a real
@@ -195,7 +195,7 @@ func (s *HubServer) handleOGCard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(ogCardMaxAge.Seconds())))
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // handleLogin is the login entry point. With exactly one provider enabled
@@ -421,7 +421,7 @@ text-decoration:none;font-size:16px;font-weight:600;transition:background .12s,b
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(page))
+	_, _ = w.Write([]byte(page))
 }
 
 func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -557,7 +557,9 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 			saasUser.EncryptedToken = encrypted
 		}
 	}
-	saveSaaSUser(saasUser)
+	if err := saveSaaSUser(saasUser); err != nil {
+		s.logger.Error("oauth callback: save failed", "user", saasUser.GitHubUsername, "error", err)
+	}
 
 	if redirect == "" {
 		redirect = "/dashboard"
@@ -651,7 +653,7 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 		http.Error(w, "token exchange failed", http.StatusBadGateway)
 		return "", "", "", false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	const maxOAuthResponseBytes = 1 << 16
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxOAuthResponseBytes))
@@ -678,7 +680,7 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 		http.Error(w, "user fetch failed", http.StatusBadGateway)
 		return "", "", "", false
 	}
-	defer userResp.Body.Close()
+	defer func() { _ = userResp.Body.Close() }()
 
 	userBody, _ := io.ReadAll(io.LimitReader(userResp.Body, maxOAuthResponseBytes))
 	var user struct {
@@ -948,7 +950,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"authenticated":false}`))
+		_, _ = w.Write([]byte(`{"authenticated":false}`))
 		return
 	}
 	// #4193: re-scope the session cookie on every authenticated dashboard load.
@@ -1023,7 +1025,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -1088,7 +1090,7 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 const (

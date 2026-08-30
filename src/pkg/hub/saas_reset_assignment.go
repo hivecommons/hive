@@ -238,7 +238,7 @@ func (s *HubServer) handleResetAssignment(w http.ResponseWriter, r *http.Request
 		admin)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ok":                   true,
 		"status":               statusAvailable,
 		"id":                   hiveID,

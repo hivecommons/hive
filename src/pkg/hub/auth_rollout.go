@@ -166,5 +166,5 @@ func (s *HubServer) AuthRolloutReadiness() AuthRolloutStatus {
 // reason to be public.
 func (s *HubServer) handleAuthRollout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.AuthRolloutReadiness())
+	_ = json.NewEncoder(w).Encode(s.AuthRolloutReadiness())
 }
