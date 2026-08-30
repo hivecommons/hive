@@ -1541,7 +1541,11 @@ function redactTokens(text) {
     .replace(/ghp_[A-Za-z0-9]{36,}/g, 'ghp_***REDACTED***')
     .replace(/ghs_[A-Za-z0-9]{36,}/g, 'ghs_***REDACTED***')
     .replace(/ghu_[A-Za-z0-9]{36,}/g, 'ghu_***REDACTED***')
-    .replace(/ghr_[A-Za-z0-9]{36,}/g, 'ghr_***REDACTED***');
+    .replace(/ghr_[A-Za-z0-9]{36,}/g, 'ghr_***REDACTED***')
+    // Fine-grained PATs: github_pat_ + 82 chars of [A-Za-z0-9_]. The Go-side
+    // redactors (dashboard, status_builder, prompt_history) already scrub this
+    // prefix; the relay must match or PAT material leaks into hub log lines.
+    .replace(/github_pat_[A-Za-z0-9_]{36,}/g, 'github_pat_***REDACTED***');
   return BACKEND === 'pi' ? redactPiCredentials(githubRedacted, PI_SELECTION, PI_ENV) : githubRedacted;
 }
 

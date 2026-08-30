@@ -3096,7 +3096,7 @@ const TOKEN_BODY = 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
 test('#4267 redactTokens scrubs every GitHub token prefix', () => {
   const relay = loadRelay({});
   try {
-    for (const prefix of ['gho_', 'ghp_', 'ghs_', 'ghu_', 'ghr_']) {
+    for (const prefix of ['gho_', 'ghp_', 'ghs_', 'ghu_', 'ghr_', 'github_pat_']) {
       const out = relay.redactTokens(`token=${prefix}${TOKEN_BODY} end`);
       assert.strictEqual(out, `token=${prefix}***REDACTED*** end`,
         `${prefix} token must be redacted, got: ${out}`);
