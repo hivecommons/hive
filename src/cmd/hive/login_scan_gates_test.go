@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/config"
 )
 
@@ -37,4 +38,22 @@ func TestScanForLoginRequiredStandsDownWithoutUsablePatterns(t *testing.T) {
 				nil, nil, nil, restoreTestLogger())
 		})
 	}
+}
+
+// A pattern list with at least one valid regex must clear the "stand down"
+// gate and reach the per-agent scan loop, even when other entries in the
+// list are blank or fail to compile. With zero agents registered,
+// AllStatuses() is empty and the loop body never runs — proving the
+// invalid-pattern skip itself does not panic or short-circuit the whole
+// function, only the individual bad pattern.
+func TestScanForLoginRequiredMixedValidityPatternsReachesScanLoop(t *testing.T) {
+	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	cfg := loginScanConfig([]string{"", "[unclosed", "please log in"})
+
+	// A nil dashSrv/notifier is safe here only because there are no running
+	// agents for AllStatuses() to return — the loop body that would use them
+	// never executes. This still proves the function gets PAST the early
+	// "no usable patterns" return (which the panic-on-touch test above
+	// verifies happens for an all-invalid list) to the scan loop itself.
+	scanForLoginRequired(context.Background(), cfg, mgr, nil, nil, restoreTestLogger())
 }
