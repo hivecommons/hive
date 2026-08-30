@@ -126,48 +126,47 @@ package. The mapping for the whole epic:
 
 Verification for every code task is `go test ./pkg/tui/...`, run from `src/`.
 
-### Contract status: the spec covers 11% of the API, and no writes
+### Contract status: the spec now covers writes, with four gaps
 
 The Contract decision names `dashboard/openapi.json` as the source of truth and
-tells a sub-issue what to do when an operation is missing from it. That clause
-is going to fire far more often than the epic assumes, so the size of the gap is
-recorded here once rather than rediscovered by each task.
+tells a sub-issue what to do when an operation is missing from it. This section
+records how large that gap actually is.
 
-Measured at `45a13d5`:
+**Originally measured at `45a13d5`, the spec was GET-only: 32 routes, zero
+writes.** [#5023](https://github.com/kubestellar/hive/pull/5023) closed most of
+that — it found the 32-vs-298 comparison had been made against
+`dashboard/server.js`, a legacy Node prototype that `dashboard/README.md`
+states v2 production never starts, and re-measured against the live Go server.
 
-| | Published in `dashboard/openapi.json` | Registered by the dashboard |
-|---|---:|---:|
-| Distinct `/api` routes | 32 | 298 |
-| `GET` | 32 | 137 |
-| `POST` | **0** | 83 |
-| `PUT` | **0** | 64 |
-| `DELETE` | **0** | 14 |
+Current state:
 
-The spec is **GET-only**. It documents no write operation of any kind, which
-means **every Phase 2 action task in the epic — T14 pause/resume, T17 apply
-model, T19 apply ACMM, T20 kick now — has no contract to build against.** Each
-of those endpoints exists and is exercised today by `hivectl`; none is in the
-spec:
+| Method | Published in `dashboard/openapi.json` |
+|---|---:|
+| Distinct `/api` paths | 255 |
+| `GET` | 131 |
+| `POST` | 83 |
+| `PUT` | 64 |
+| `DELETE` | 14 |
 
-| Task | Endpoint `hivectl` uses today | In spec |
-|---|---|---|
-| T14 pause/resume | `POST /api/pause/{name}`, `POST /api/resume/{name}` (`commands/agent.go:39`) | no |
-| T17 apply model | `PUT /api/config/agent/{name}/models` (`commands/agent.go:262`) | no |
-| T19 apply ACMM | `GET /api/acmm/evaluation`, `POST /api/acmm/issue` (`dashboard/api.go:228-229`) | no |
-| T20 kick now | `POST /api/kick/{name}` (`commands/agent.go:158`) | no |
+The Phase 2 action tasks now have a contract to build against, and the two read
+tasks that were blocked are unblocked: **`/api/agents` is in the spec** (`get`,
+`post`), as is `/api/acmm/evaluation` and `/api/events`.
 
-Two **read** tasks are affected too, and one of them is named after the gap:
+The Phase 2 action endpoints are all published — note the path parameter is
+`{agent}`, not `{name}`: `POST /api/pause/{agent}`, `POST /api/resume/{agent}`,
+`POST /api/kick/{agent}`, plus `/api/agents/{name}/kicks`.
 
-- **T2 (#4917) is "API client core + `/api/health`" — `/api/health` is not in
-  the spec.** It is a real endpoint (`hivectl system health` calls it,
-  `commands/system.go`), just an undocumented one.
-- **T4 needs the agent list. `/api/agents` is not in the spec** either, though
-  `hivectl agent list` calls it (`commands/agent.go:24`). The spec has
-  `/api/status` and `/api/config/agent/{name}`, but no list operation.
+**One endpoint remains unpublished by design.** `GET /api/health` (used by
+`hivectl system health`, `commands/system.go`) sits in the parity test's
+documented exception set as "not part of the client data contract", alongside
+`/api/health/deep`, `/api/livez`, `/api/docs`, `/api/contribute/ws`,
+`/api/terminal/assertion/renew` and the legacy `/api/v1/` catch-all. T2 should
+treat it as a deliberate exception rather than a gap to fill.
 
-Of the four pane endpoints, only three are published: `/api/status`,
-`/api/config/governor`, `/api/tokens` and `/api/events` are all in the spec;
-`/api/agents` is not.
+`TestOpenAPISpecCoversEveryRegisteredRoute`
+(`src/pkg/dashboard/openapi_route_parity_test.go`, added by #5023) now fails if
+a registered route and the spec diverge in either direction, so this section
+should not go stale again silently.
 
 **What this means for sub-issues.** The epic's own escape hatch applies and
 should be used deliberately rather than as a surprise: a task whose endpoint is

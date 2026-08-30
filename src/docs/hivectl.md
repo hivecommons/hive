@@ -137,6 +137,38 @@ hivectl observe timeline
 hivectl observe trends --range week        # or --hours 12 (1-720); not both
 ```
 
+### tui — live terminal dashboard
+
+```bash
+hivectl tui
+```
+
+Opens a full-screen, keyboard-driven view of the fleet over the same dashboard
+API the non-interactive subcommands use, so it honours the same `--hive` /
+endpoint configuration. Requires a real terminal; press `q` or `ctrl+c` to
+exit.
+
+**Under active construction.** Four panes sit in a 2×2 grid, and only half are
+wired to live data today:
+
+| Pane | State |
+|---|---|
+| Agents | live — polls `GET /api/agents` |
+| Tokens | live — per-agent rows and fleet total |
+| Governor | stub — renders its title, pending T7 |
+| Events | stub — renders its title, pending T11 |
+
+`tab` moves focus between panes; `q` or `ctrl+c` exits. Those are the only keys
+bound: no help overlay, no pause/resume, no resize handling yet.
+
+Note the command's own `--help` text describes an event feed — that is the
+end-state design, not what ships today.
+
+Track progress under the `hive tui` epic
+([#4907](https://github.com/kubestellar/hive/issues/4907)); the open `tui T*`
+issues list what is still missing. Prefer the web dashboard or the
+non-interactive subcommands above for anything you need today.
+
 ### enroll — spoke-based lite repo enrollment
 
 ```bash
