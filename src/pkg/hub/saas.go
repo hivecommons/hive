@@ -481,7 +481,8 @@ var hmacKeyPath = "/data/saas/hmac.key"
 const hmacKeySize = 32
 
 func loadOrCreateHMACKey() ([]byte, error) {
-	os.MkdirAll(filepath.Dir(hmacKeyPath), 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(filepath.Dir(hmacKeyPath), 0o755)
 	if data, err := os.ReadFile(hmacKeyPath); err == nil && len(data) == hmacKeySize {
 		return data, nil
 	}
@@ -753,7 +754,7 @@ func (s *HubServer) blockIfImpersonatingWrite(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	// target is a GitHub login (no quotes/backslashes possible), safe to inline.
-	w.Write([]byte(`{"error":"read-only while viewing as ` + target + ` — exit impersonation to make changes"}`))
+	_, _ = w.Write([]byte(`{"error":"read-only while viewing as ` + target + ` — exit impersonation to make changes"}`))
 	return true
 }
 
@@ -784,7 +785,7 @@ func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if !isCSRFSafe(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			_, _ = w.Write([]byte(`{"error":"CSRF check failed"}`))
 			return
 		}
 		if s.blockIfImpersonatingWrite(w, r) {
@@ -794,7 +795,7 @@ func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if username == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"not authenticated"}`))
+			_, _ = w.Write([]byte(`{"error":"not authenticated"}`))
 			return
 		}
 		user := loadSaaSUser(username)
@@ -805,13 +806,13 @@ func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if user == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"unknown user — please log in again"}`))
+			_, _ = w.Write([]byte(`{"error":"unknown user — please log in again"}`))
 			return
 		}
 		if user.Blocked {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"account blocked"}`))
+			_, _ = w.Write([]byte(`{"error":"account blocked"}`))
 			return
 		}
 		next(w, r)
@@ -826,7 +827,7 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 		if !isCSRFSafe(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			_, _ = w.Write([]byte(`{"error":"CSRF check failed"}`))
 			return
 		}
 		if s.blockIfImpersonatingWrite(w, r) {
@@ -845,7 +846,7 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 			// toast — a bare "not authenticated" told a logged-in owner nothing.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": reason})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
 			return
 		}
 		user := loadSaaSUser(username)
@@ -856,13 +857,13 @@ func (s *HubServer) requireAuthOrSpokeUpgrade(next http.HandlerFunc) http.Handle
 		if user == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"unknown user — please log in again"}`))
+			_, _ = w.Write([]byte(`{"error":"unknown user — please log in again"}`))
 			return
 		}
 		if user.Blocked {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"account blocked"}`))
+			_, _ = w.Write([]byte(`{"error":"account blocked"}`))
 			return
 		}
 		next(w, r)
@@ -1370,7 +1371,7 @@ func (s *HubServer) validateGitHubToken(token string) string {
 	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var user struct {
 		Login string `json:"login"`
 	}
@@ -1486,7 +1487,8 @@ func saveSaaSUser(u *SaaSUser) error {
 	if strings.Contains(u.GitHubUsername, "..") || strings.Contains(u.GitHubUsername, "/") || strings.Contains(u.GitHubUsername, "\\") {
 		return fmt.Errorf("invalid username for save: %q", u.GitHubUsername)
 	}
-	os.MkdirAll(saasUsersDir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(saasUsersDir, 0o755)
 	data, err := json.MarshalIndent(u, "", "  ")
 	if err != nil {
 		return err
@@ -1523,12 +1525,15 @@ func ensureSaaSUser(username string) *SaaSUser {
 		Hives:          map[string]string{},
 		SaaSQuota:      quota,
 	}
-	saveSaaSUser(u)
+	if err := saveSaaSUser(u); err != nil {
+		slog.Warn("ensureSaaSUser: create failed", "user", username, "error", err)
+	}
 	return u
 }
 
 func listAllSaaSUsers() []SaaSUser {
-	os.MkdirAll(saasUsersDir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the ReadDir error below.
+	_ = os.MkdirAll(saasUsersDir, 0o755)
 	entries, err := os.ReadDir(saasUsersDir)
 	if err != nil {
 		return nil
@@ -1567,7 +1572,7 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		if !isCSRFSafe(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			_, _ = w.Write([]byte(`{"error":"CSRF check failed"}`))
 			return
 		}
 		// Gate on the REAL logged-in user, not the effective (possibly
@@ -1593,7 +1598,7 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			if _, _, impersonating := s.resolveIdentity(r); impersonating {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(`{"error":"admin surfaces are hidden while viewing as a user — exit impersonation for admin access"}`))
+				_, _ = w.Write([]byte(`{"error":"admin surfaces are hidden while viewing as a user — exit impersonation for admin access"}`))
 				return
 			}
 		}
@@ -1643,7 +1648,7 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"users": views})
+	_ = json.NewEncoder(w).Encode(map[string]any{"users": views})
 }
 
 // setImpersonateCookie writes (value != "") or clears (value == "") the signed
@@ -1739,7 +1744,7 @@ func (s *HubServer) handleImpersonateStart(w http.ResponseWriter, r *http.Reques
 	s.logger.Info("audit: admin impersonation started", "admin", admin, "target", target,
 		"at", time.Now().UTC().Format(time.RFC3339))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "viewing_as": target})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "viewing_as": target})
 }
 
 // handleImpersonateExit ends an active "View as user" session by clearing the
@@ -1755,7 +1760,7 @@ func (s *HubServer) handleImpersonateExit(w http.ResponseWriter, r *http.Request
 	}
 	setImpersonateCookie(w, "")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 // handleImpersonationStatus reports whether the current request is inside an
@@ -1766,10 +1771,10 @@ func (s *HubServer) handleImpersonateExit(w http.ResponseWriter, r *http.Request
 func (s *HubServer) handleImpersonationStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if grant, ok := s.activeImpersonationGrant(r); ok {
-		json.NewEncoder(w).Encode(map[string]any{"impersonating": true, "viewing_as": grant.Target})
+		_ = json.NewEncoder(w).Encode(map[string]any{"impersonating": true, "viewing_as": grant.Target})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"impersonating": false})
+	_ = json.NewEncoder(w).Encode(map[string]any{"impersonating": false})
 }
 
 // handleAdminUpdateUser applies a partial admin edit to one hub user record.
@@ -1911,7 +1916,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	}
 	s.logger.Info("audit: admin updated user", attrs...)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
 // handleAdminDeleteUser removes a hub user record. It refuses to delete the
@@ -1953,7 +1958,7 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 	}
 	s.logger.Info("audit: admin deleted user", "target", username, "by", s.getAuthUser(r))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
 // --- Cluster Helpers ---
@@ -2075,7 +2080,7 @@ func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		return entries[i].ID < entries[j].ID
 	})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entries)
+	_ = json.NewEncoder(w).Encode(entries)
 }
 
 // --- Cluster Health ---
@@ -2219,7 +2224,7 @@ func (s *HubServer) handleClusterHealth(w http.ResponseWriter, r *http.Request) 
 		cached := clusterHealthCache
 		clusterHealthCacheMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(cached)
+		_ = json.NewEncoder(w).Encode(cached)
 		return
 	}
 	clusterHealthCacheMu.Unlock()
@@ -2237,7 +2242,7 @@ func (s *HubServer) handleClusterHealth(w http.ResponseWriter, r *http.Request) 
 	clusterHealthCacheMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 const (
@@ -2960,7 +2965,7 @@ func parseTopMemory(s string) int64 {
 // parseInt parses an integer from a string, returning 0 on failure.
 func parseInt(s string) int {
 	var v int
-	fmt.Sscanf(s, "%d", &v)
+	_, _ = fmt.Sscanf(s, "%d", &v)
 	return v
 }
 
@@ -3478,7 +3483,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(user.Hives) > 0 {
-		saveSaaSUser(user)
+		if err := saveSaaSUser(user); err != nil {
+			s.logger.Warn("handleMyHives: save failed", "user", username, "error", err)
+		}
 	}
 
 	// Read the user roster ONCE for the access hover rather than per row —
@@ -3760,14 +3767,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
 	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"authenticated": false,
 			"show_my_hives": false,
 		})
@@ -3777,7 +3784,7 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	user := loadSaaSUser(username)
 	if user == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"authenticated": true,
 			"show_my_hives": true,
 			"hives":         map[string]string{},
@@ -3827,7 +3834,7 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"authenticated":            true,
 		"show_my_hives":            true,
 		"hives":                    hiveAccess,
@@ -4023,7 +4030,9 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user.Hives[hiveID] = "owner"
-	saveSaaSUser(user)
+	if err := saveSaaSUser(user); err != nil {
+		s.logger.Warn("handleCreateHive: owner grant save failed", "hive_id", hiveID, "user", user.GitHubUsername, "error", err)
+	}
 
 	provisionHiveRecord := *h
 	provisionHiveRecord.Repos = append([]string(nil), h.Repos...)
@@ -4036,23 +4045,29 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		if cluster == nil {
 			h.Status = "error"
 			h.Error = "no cluster config available"
-			saveSaaSHive(h)
+			if saveErr := saveSaaSHive(h); saveErr != nil {
+				s.logger.Warn("failed to persist hive error status", "hive_id", hiveID, "error", saveErr)
+			}
 			s.logger.Error("no cluster config for provisioning", "hive_id", hiveID, "cluster_id", h.ClusterID)
 			return
 		}
 		if err := provisionHive(h, &provisionReq, cluster, s.appKeysByAppID(), s.logger); err != nil {
 			h.Status = "error"
 			h.Error = err.Error()
-			saveSaaSHive(h)
+			if saveErr := saveSaaSHive(h); saveErr != nil {
+				s.logger.Warn("failed to persist hive error status", "hive_id", hiveID, "error", saveErr)
+			}
 			s.logger.Warn("hosted hive provision failed", "hive_id", hiveID, "error", err)
 			return
 		}
 		h.Status = "provisioning"
-		saveSaaSHive(h)
+		if saveErr := saveSaaSHive(h); saveErr != nil {
+			s.logger.Warn("failed to persist hive provisioning status", "hive_id", hiveID, "error", saveErr)
+		}
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":        hiveID,
 		"status":    "provisioning",
 		"subdomain": h.Subdomain,
@@ -4081,7 +4096,7 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(h)
+	_ = json.NewEncoder(w).Encode(h)
 }
 
 // handleOpenHive is the SSO handoff entry point: a hub-authenticated user hits
@@ -4207,7 +4222,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		s.removeRegistryEntry(id, username)
 		removeHiveRecord(id, s.logger)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
 	}
 	if !userIsHiveOwner(username, h) {
@@ -4256,13 +4271,13 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 	if cluster == nil {
 		// deleteStatusPartial tells the UI the registry row is gone but cloud
 		// resources may survive and need manual cleanup.
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  deleteStatusPartial,
 			"warning": "removed from the hub registry, but no cluster config was available to delete the namespace, PV, or OCI storage — these may need manual cleanup",
 		})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 }
 
 // Delete outcome statuses returned by handleDeleteHive.
@@ -4314,7 +4329,11 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 	if body.AutoUpgrade {
 		val = "true"
 	}
-	os.WriteFile(hubAutoUpgradePath, []byte(val), 0644)
+	if err := os.WriteFile(hubAutoUpgradePath, []byte(val), 0644); err != nil {
+		s.logger.Error("hub auto-upgrade toggle save failed", "enabled", body.AutoUpgrade, "error", err)
+		http.Error(w, `{"error":"failed to save preference"}`, http.StatusInternalServerError)
+		return
+	}
 	s.logger.Info("audit: hub auto-upgrade toggled", "enabled", body.AutoUpgrade, "by", s.getAuthUser(r))
 
 	// If enabling and hub is behind, trigger immediately. The kill switch does
@@ -4326,7 +4345,7 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 			s.logger.Info("hub auto-upgrade initial trigger suppressed — hub upgrades are paused",
 				"paused_by", sw.By, "paused_at", sw.At)
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
+			_, _ = fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
 			return
 		}
 		latestSHA := getLatestHubSHAForBranch(s.hubGitBranch)
@@ -4341,7 +4360,7 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
+	_, _ = fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
 }
 
 // rolloutHubToSHA upgrades the hub deployment to a specific v2 SHA. It first
@@ -4533,7 +4552,7 @@ func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request)
 	if sw, paused := s.hubUpgradesPaused(); paused {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("hub", sw)})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("hub", sw)})
 		return
 	}
 	target := getLatestHubSHAForBranch(s.hubGitBranch)
@@ -4544,7 +4563,7 @@ func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"upgrading"}`))
+	_, _ = w.Write([]byte(`{"status":"upgrading"}`))
 }
 
 func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
@@ -4579,7 +4598,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	if sw, paused := s.spokeUpgradesPaused(); paused {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
 		return
 	}
 	cluster := s.clusterForHive(h)
@@ -4636,7 +4655,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
 	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
+	_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
 
 // branchToTag converts a git branch name into a valid Docker image tag.
@@ -4676,7 +4695,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	if sw, paused := s.spokeUpgradesPaused(); paused {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
 		return
 	}
 	var body struct {
@@ -4788,7 +4807,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		s.logger.Info("audit: hive branch switch queued via heartbeat", "hive_id", id, "branch", body.Branch, "image", image, "by", username)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"status": "switching", "branch": body.Branch, "image": image, "via": "heartbeat"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "switching", "branch": body.Branch, "image": image, "via": "heartbeat"})
 		return
 	}
 	// Restart the deployment to pull the new image
@@ -4809,7 +4828,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status": "switching",
 		"branch": body.Branch,
 		"image":  image,
@@ -4876,7 +4895,7 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 	go s.pushVisibilityToSpoke(id, body.IsPublic)
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"is_public":%t}`, body.IsPublic)
+	_, _ = fmt.Fprintf(w, `{"ok":true,"is_public":%t}`, body.IsPublic)
 }
 
 // maxHiveDisplayNameLen bounds a hive's operator-set display name (ProjectName).
@@ -4971,7 +4990,7 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 	s.recordTimeline(id, TimelineRenamed, fmt.Sprintf("hive renamed to %q", name), username)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "project_name": name})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "project_name": name})
 }
 
 // pushVisibilityToSpoke best-effort notifies a hosted hive's own governor
@@ -4998,7 +5017,7 @@ func (s *HubServer) pushVisibilityToSpoke(id string, isPublic bool) {
 		s.logger.Warn("visibility spoke push failed, will resync on next heartbeat", "hive", id, "error", err)
 		return
 	}
-	defer spokeResp.Body.Close()
+	defer func() { _ = spokeResp.Body.Close() }()
 	if spokeResp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(spokeResp.Body)
 		s.logger.Warn("visibility spoke push rejected", "hive", id, "status", spokeResp.StatusCode, "body", string(respBody))
@@ -5036,7 +5055,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 		if regEntry == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"hive not found"}`)
+			_, _ = fmt.Fprint(w, `{"error":"hive not found"}`)
 			return
 		}
 		h = &SaaSHive{
@@ -5049,7 +5068,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	if !userIsHiveOwner(username, h) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
+		_, _ = fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
 		return
 	}
 	// The mode rides on the EXISTING endpoint rather than a second one: it is
@@ -5065,7 +5084,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid request body"}`)
+		_, _ = fmt.Fprint(w, `{"error":"invalid request body"}`)
 		return
 	}
 	// Reject unknown modes instead of defaulting — a typo must not silently
@@ -5073,7 +5092,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	if !isValidAutoUpgradeMode(body.Mode) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\", \"daily\" or \"weekly\")"}`)
+		_, _ = fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\", \"daily\" or \"weekly\")"}`)
 		return
 	}
 	h.AutoUpgrade = body.AutoUpgrade
@@ -5085,7 +5104,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	if err := saveSaaSHive(h); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"error":"failed to save"}`)
+		_, _ = fmt.Fprint(w, `{"error":"failed to save"}`)
 		return
 	}
 	s.logger.Info("audit: auto-upgrade toggled", "hive_id", id, "auto_upgrade", body.AutoUpgrade, "mode", normalizeAutoUpgradeMode(body.Mode), "by", username)
@@ -5143,7 +5162,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t,"auto_upgrade_mode":%q}`, body.AutoUpgrade, normalizeAutoUpgradeMode(body.Mode))
+	_, _ = fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t,"auto_upgrade_mode":%q}`, body.AutoUpgrade, normalizeAutoUpgradeMode(body.Mode))
 }
 
 // branchSHAInfo holds a short SHA and the first line of its commit message.
@@ -5365,7 +5384,7 @@ func listRepoBranches(client *http.Client) []string {
 		}
 		decErr := json.NewDecoder(resp.Body).Decode(&body)
 		link := resp.Header.Get("Link")
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK || decErr != nil {
 			return nil
 		}
@@ -5399,7 +5418,7 @@ func listLatestImageBranches(client *http.Client) []string {
 	if err != nil {
 		return nil
 	}
-	defer tokenResp.Body.Close()
+	defer func() { _ = tokenResp.Body.Close() }()
 	var tok struct {
 		Token string `json:"token"`
 	}
@@ -5426,7 +5445,7 @@ func listLatestImageBranches(client *http.Client) []string {
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
 		link := resp.Header.Get("Link")
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK || decodeErr != nil {
 			break
 		}
@@ -5726,7 +5745,8 @@ func persistLatestSHAs(logger *slog.Logger) {
 		logger.Warn("SHA poll: persist marshal failed", "error", err)
 		return
 	}
-	os.MkdirAll(filepath.Dir(latestSHAsPath), 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(filepath.Dir(latestSHAsPath), 0o755)
 	tmpPath := latestSHAsPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		logger.Warn("SHA poll: persist write failed", "path", latestSHAsPath, "error", err)
@@ -6356,7 +6376,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		logger.Warn("SHA poll: branch API request failed", "branch", branch, "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: branch API non-200", "branch", branch, "status", resp.StatusCode)
 		// Backfill missing commit messages for already-cached SHAs
@@ -6462,7 +6482,7 @@ func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Log
 		logger.Warn("SHA poll: workflow runs request failed", "sha", fullSHA, "error", err)
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: workflow runs non-200", "sha", fullSHA, "status", resp.StatusCode)
 		return ""
@@ -6504,7 +6524,7 @@ func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
 		return ""
@@ -6557,7 +6577,7 @@ func ghcrTagExists(client *http.Client, repo, tag string, logger *slog.Logger) b
 		logger.Warn("SHA poll: GHCR token request failed", "repo", repo, "error", err)
 		return false
 	}
-	defer tokenResp.Body.Close()
+	defer func() { _ = tokenResp.Body.Close() }()
 	var tok struct {
 		Token string `json:"token"`
 	}
@@ -6573,7 +6593,7 @@ func ghcrTagExists(client *http.Client, repo, tag string, logger *slog.Logger) b
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -6635,16 +6655,16 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"could not reach hive"}`, http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxConfigResponseBytes))
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.WriteHeader(resp.StatusCode)
-	w.Write(body)
+	_, _ = w.Write(body)
 }
 
 func (s *HubServer) handleLatestSHA(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"sha": getLatestSHA()})
+	_ = json.NewEncoder(w).Encode(map[string]string{"sha": getLatestSHA()})
 }
 
 // authorizedUsersForHiveID returns the hub's access list for a hive as
@@ -6896,7 +6916,7 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	// name+Slack but not the admin's private CRM notes.
 	access := accessForHive(hiveID, listAllSaaSUsers(), isHubAdmin(username))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"access": access})
+	_ = json.NewEncoder(w).Encode(map[string]any{"access": access})
 }
 
 // handleGrantableUsers lists the usernames a hive owner may grant access to.
@@ -6952,7 +6972,7 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 	// "users" (bare stable IDs) is kept for back-compat with older dashboards;
 	// "entries" adds the normalized display label alongside the same stable ID
 	// so the picker can show a human name while still granting by identity key.
-	json.NewEncoder(w).Encode(map[string]any{"users": names, "entries": entries})
+	_ = json.NewEncoder(w).Encode(map[string]any{"users": names, "entries": entries})
 }
 
 // grantableUserEntry is one row of the Manage Access "Add User" picker: the
@@ -7113,7 +7133,11 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		target.HiveExpiry[hiveID] = expiresAt
 	}
-	saveSaaSUser(target)
+	if err := saveSaaSUser(target); err != nil {
+		s.logger.Error("audit: access grant save failed", "hive", hiveID, "target", body.Username, "error", err)
+		http.Error(w, `{"error":"failed to save access grant"}`, http.StatusInternalServerError)
+		return
+	}
 	// The stored (possibly preserved) expiry after the update, for the audit
 	// trail; "" means permanent.
 	newExpiry := target.HiveExpiry[hiveID]
@@ -7147,7 +7171,7 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		// Same role re-granted: a no-op — do not pollute the append-only log.
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "granted"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "granted"})
 }
 
 func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
@@ -7182,12 +7206,16 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(target.Hives, hiveID)
 	delete(target.HiveExpiry, hiveID)
-	saveSaaSUser(target)
+	if err := saveSaaSUser(target); err != nil {
+		s.logger.Error("audit: access revoke save failed", "hive", hiveID, "target", targetUsername, "error", err)
+		http.Error(w, `{"error":"failed to save access revocation"}`, http.StatusInternalServerError)
+		return
+	}
 	s.logger.Info("audit: access revoked", "hive", hiveID, "target", targetUsername, "by", username)
 	s.recordTimeline(hiveID, TimelineAccess,
 		fmt.Sprintf("access revoked from %s", targetUsername), username)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
 }
 
 type AccessRequest struct {
@@ -7211,7 +7239,9 @@ func loadAccessRequests(hiveID string) []AccessRequest {
 		return nil
 	}
 	var reqs []AccessRequest
-	json.Unmarshal(data, &reqs)
+	if err := json.Unmarshal(data, &reqs); err != nil {
+		return nil
+	}
 	return reqs
 }
 
@@ -7221,7 +7251,8 @@ func saveAccessRequests(hiveID string, reqs []AccessRequest) {
 		return
 	}
 	dir := filepath.Join(saasHivesDir, hiveID)
-	os.MkdirAll(dir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(dir, 0o755)
 	data, err := json.MarshalIndent(reqs, "", "  ")
 	if err != nil {
 		slog.Warn("saveAccessRequests: marshal failed", "hiveID", hiveID, "error", err)
@@ -7259,7 +7290,7 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 	}
 	// Body is optional to decode (missing/invalid JSON leaves Note empty,
 	// which the validation below rejects with a clear message).
-	json.NewDecoder(r.Body).Decode(&body)
+	_ = json.NewDecoder(r.Body).Decode(&body)
 	note := strings.TrimSpace(body.Note)
 	if note == "" {
 		http.Error(w, `{"error":"a note explaining why you need access is required"}`, http.StatusBadRequest)
@@ -7300,7 +7331,7 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Info("audit: access requested", "hive", hiveID, "by", username)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "requested"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "requested"})
 }
 
 func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
@@ -7333,7 +7364,7 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"requests": pending})
+	_ = json.NewEncoder(w).Encode(map[string]any{"requests": pending})
 }
 
 func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request) {
@@ -7361,7 +7392,9 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Role string `json:"role"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	// Body is optional to decode (missing/invalid JSON leaves Role empty,
+	// defaulted to "read" below).
+	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Role == "" {
 		body.Role = "read"
 	}
@@ -7377,7 +7410,11 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 
 	target := ensureSaaSUser(targetUsername)
 	target.Hives[hiveID] = body.Role
-	saveSaaSUser(target)
+	if err := saveSaaSUser(target); err != nil {
+		s.logger.Error("audit: access request approval save failed", "hive", hiveID, "target", targetUsername, "error", err)
+		http.Error(w, `{"error":"failed to save access grant"}`, http.StatusInternalServerError)
+		return
+	}
 
 	reqs := loadAccessRequests(hiveID)
 	for i := range reqs {
@@ -7391,7 +7428,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	s.recordTimeline(hiveID, TimelineAccess,
 		fmt.Sprintf("access request from %s approved as %s", targetUsername, body.Role), approver)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
 }
 
 func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
@@ -7428,7 +7465,7 @@ func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
 	s.recordTimeline(hiveID, TimelineAccess,
 		fmt.Sprintf("access request from %s denied", targetUsername), denier)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "denied"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "denied"})
 }
 
 func (s *HubServer) handleApproveAccess(w http.ResponseWriter, r *http.Request) {
@@ -7475,11 +7512,15 @@ func (s *HubServer) handleApproveAccess(w http.ResponseWriter, r *http.Request) 
 	if target.Hives[hiveID] != "owner" && !canonicalEqual(h.Owner, targetUsername) {
 		target.Hives[hiveID] = defaultApproveRole
 	}
-	saveSaaSUser(target)
+	if err := saveSaaSUser(target); err != nil {
+		s.logger.Error("audit: access approve-via-PUT save failed", "hive", hiveID, "target", targetUsername, "error", err)
+		http.Error(w, `{"error":"failed to save access grant"}`, http.StatusInternalServerError)
+		return
+	}
 
 	s.logger.Info("audit: access approved via PUT", "hive", hiveID, "target", targetUsername, "by", approver)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 func (s *HubServer) handleDenyAccess(w http.ResponseWriter, r *http.Request) {
@@ -7514,7 +7555,7 @@ func (s *HubServer) handleDenyAccess(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("audit: access denied via DELETE", "hive", hiveID, "target", targetUsername, "by", denier)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 var provisionRequestsDir = "/data/saas/provision-requests"
@@ -7815,7 +7856,8 @@ func saveProvisionRequest(pr *ProvisionRequest) error {
 	if strings.Contains(pr.Username, "..") || strings.Contains(pr.Username, "/") || strings.Contains(pr.Username, "\\") {
 		return fmt.Errorf("invalid username for provision request: %q", pr.Username)
 	}
-	os.MkdirAll(provisionRequestsDir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
+	_ = os.MkdirAll(provisionRequestsDir, 0o755)
 	data, err := json.MarshalIndent(pr, "", "  ")
 	if err != nil {
 		return err
@@ -7832,11 +7874,14 @@ func deleteProvisionRequest(username string) {
 	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
 		return
 	}
-	os.Remove(filepath.Join(provisionRequestsDir, username+".json"))
+	if err := os.Remove(filepath.Join(provisionRequestsDir, username+".json")); err != nil && !os.IsNotExist(err) {
+		slog.Warn("deleteProvisionRequest: remove failed", "user", username, "error", err)
+	}
 }
 
 func listProvisionRequests() []ProvisionRequest {
-	os.MkdirAll(provisionRequestsDir, 0o755)
+	// Best-effort: a failed mkdir surfaces via the ReadDir error below.
+	_ = os.MkdirAll(provisionRequestsDir, 0o755)
 	entries, err := os.ReadDir(provisionRequestsDir)
 	if err != nil {
 		return nil
@@ -8053,7 +8098,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 
 	s.logger.Info("audit: provision request created", "user", username, "org", body.Org, "repos", body.Repos)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": provisionStatusPending})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": provisionStatusPending})
 }
 
 // ApproveProvisionRequest is the OPTIONAL body of PUT
@@ -8301,7 +8346,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	s.kickClaimClusterWorkAsync(hiveID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ok":      true,
 		"status":  provisionStatusApproved,
 		"hive_id": hiveID,
@@ -8341,7 +8386,7 @@ func (s *HubServer) handleDenyProvision(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Info("audit: provision request denied", "target", targetUsername, "by", denier)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 // authMethodPrivate is the request auth_method value that routes a provision
@@ -8432,7 +8477,7 @@ func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.R
 		placeholders = []AvailablePlaceholder{}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"placeholders": placeholders})
+	_ = json.NewEncoder(w).Encode(map[string]any{"placeholders": placeholders})
 }
 
 // projectConfigForHiveID returns the claimed project's real org/repos/ACMM for
@@ -9181,7 +9226,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	s.kickClaimClusterWorkAsync(hiveID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":       "assigned",
 		"id":           hiveID,
 		"owner":        h.Owner,
@@ -9232,7 +9277,7 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("audit: user token issued", "user", body.Username, "hive", body.HiveID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": token})
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
 var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath}
@@ -9353,13 +9398,13 @@ func (s *HubServer) handleSaaSWhoami(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
 	if username == "" {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"not authenticated"}`))
+		_, _ = w.Write([]byte(`{"error":"not authenticated"}`))
 		return
 	}
 	user := loadSaaSUser(username)
 	if user == nil {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"not authenticated"}`))
+		_, _ = w.Write([]byte(`{"error":"not authenticated"}`))
 		return
 	}
 	// Bare login for GitHub identities, canonical provider:sub for the rest —
@@ -9385,7 +9430,7 @@ func (s *HubServer) handleSaaSWhoami(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // dibsRepoEntry is one hive-managed repo in the feed dibs's registry syncs
@@ -9641,7 +9686,7 @@ const ogFallbackHTML = `<!DOCTYPE html><html><head>
 func (s *HubServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if isUnfurlBot(r.UserAgent()) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(ogFallbackHTML))
+		_, _ = w.Write([]byte(ogFallbackHTML))
 		return
 	}
 	cookie, err := r.Cookie("hive_hub_user")
@@ -9650,7 +9695,7 @@ func (s *HubServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, dashboardHTML)
+	_, _ = fmt.Fprint(w, dashboardHTML)
 }
 
 func (s *HubServer) handleAccessDenied(w http.ResponseWriter, r *http.Request) {
@@ -9674,7 +9719,7 @@ func (s *HubServer) handleAccessDenied(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Access Denied — Hive Hub</title>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");gtag("event","access_denied",{hive_id:"%s"});</script>
 <style>
@@ -22174,7 +22219,7 @@ func (s *HubServer) handleSendHubBanner(w http.ResponseWriter, r *http.Request) 
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"banner_id":%q,"hive_count":%d}`, bannerID, len(body.HiveIDs))
+	_, _ = fmt.Fprintf(w, `{"ok":true,"banner_id":%q,"hive_count":%d}`, bannerID, len(body.HiveIDs))
 }
 
 func (s *HubServer) handleClearHubBanner(w http.ResponseWriter, r *http.Request) {
@@ -22189,7 +22234,7 @@ func (s *HubServer) handleClearHubBanner(w http.ResponseWriter, r *http.Request)
 	s.logger.Info("hub banners cleared", "cleared_count", count, "by", username)
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"cleared":%d}`, count)
+	_, _ = fmt.Fprintf(w, `{"ok":true,"cleared":%d}`, count)
 }
 
 func (s *HubServer) handleGetHubBanner(w http.ResponseWriter, r *http.Request) {
@@ -22218,5 +22263,5 @@ func (s *HubServer) handleGetHubBanner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"banners": banners})
+	_ = json.NewEncoder(w).Encode(map[string]any{"banners": banners})
 }

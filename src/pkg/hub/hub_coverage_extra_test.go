@@ -350,6 +350,7 @@ func TestHandleToggleAutoUpgradeCORSHeaders(t *testing.T) {
 // ============================================================
 
 func TestHandleHubAutoUpgradeValid(t *testing.T) {
+	defer helperSetupTempDirs(t)()
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("PUT", "/hub-auto-upgrade", strings.NewReader(`{"auto_upgrade":false}`))
@@ -366,6 +367,7 @@ func TestHandleHubAutoUpgradeValid(t *testing.T) {
 }
 
 func TestHandleHubAutoUpgradeEnable(t *testing.T) {
+	defer helperSetupTempDirs(t)()
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("PUT", "/hub-auto-upgrade", strings.NewReader(`{"auto_upgrade":true}`))
