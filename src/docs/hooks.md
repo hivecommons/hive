@@ -193,7 +193,7 @@ Places a request on the [#4000](https://github.com/kubestellar/hive/issues/4000)
 
 ## Predicates (`when:`)
 
-An optional CEL expression, evaluated against the transition payload bound to `t`. Empty means "always fire". It uses the same engine and the same fail-closed posture as `triggers:` (`pkg/celtrigger`).
+An optional CEL expression, evaluated against the transition payload bound to `t`. Empty means "always fire". It uses the same engine and the same fail-closed posture as `triggers:` (`pkg/celtrigger`) — for the `triggers:` config key itself (declarative agent triggering on source-control events, a separate surface from hooks that happens to share this engine), see [CEL-based agent triggers](cel-triggers.md).
 
 ```yaml
 hooks:

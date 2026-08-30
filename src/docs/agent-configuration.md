@@ -387,6 +387,12 @@ governor:
 
 Set `stale_timeout` with your cadences in mind: an agent kicked every 4h with a 30-minute stale timeout will look dead between kicks. The shipped packs use "longest cadence × 2".
 
+Cadences are not the only way an agent gets kicked: the additive `triggers:`
+config key declares CEL rules that kick a named agent directly off a
+source-control event (issue opened, PR opened, a label applied, a comment
+posted), independent of the governor's queue-depth cadence. See
+[CEL-based agent triggers](cel-triggers.md).
+
 ## ACMM levels: agent rosters as packs
 
 You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml` … `level-6.yaml`, embedded in the binary and forkable) that pair a curated agent roster with governor cadences and a merge policy:

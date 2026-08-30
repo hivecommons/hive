@@ -402,6 +402,24 @@ governor:
 # planning:
 #   plan_from_label: false
 
+# CEL-based agent triggers — declarative rules that kick an agent directly off
+# a normalized source-control event (issue opened, PR opened, a label applied,
+# a comment posted), evaluated with CEL against the `event` variable. This is
+# additive: it runs alongside the existing label/governor triggering above, not
+# instead of it, and an absent/empty list is byte-identical to today's behavior.
+# The evaluator fails closed — a malformed rule is rejected at config load, and
+# a runtime evaluation error is treated as "no match", never a crash.
+# See docs/cel-triggers.md for the full `event.*` field reference and worked
+# examples.
+# triggers:
+#   - name: bug-triage
+#     expr: event.kind == "issue.opened" && hasLabel(event.labels, "bug")
+#     agent: triager
+#     priority: 10
+#   - name: ready-pr-review
+#     expr: event.kind == "pr.opened" && !event.is_draft && event.base_branch == "main"
+#     agent: reviewer
+
 # Review swarm merge gate — optional structured multi-perspective PR review.
 # Default is false to preserve existing merge eligibility behavior; when true,
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.

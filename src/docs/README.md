@@ -32,6 +32,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Token collection and usage tracking](https://github.com/kubestellar/hive/blob/v4/src/docs/token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Notifications](https://github.com/kubestellar/hive/blob/v4/src/docs/notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](https://github.com/kubestellar/hive/blob/v4/discord/README.md).
 - [State-triggered hooks](hooks.md) — declarative `transition → action` rules, the transition catalog, the vetted action set, and the security model (RFC #4001).
+- [CEL-based agent triggers](cel-triggers.md) — the `triggers:` config key: declarative CEL rules that kick an agent on a normalized source-control event, additive to built-in label/governor triggering, the `event.*` field reference, and the fail-closed compile/runtime contract.
 - [Public snapshots](https://github.com/kubestellar/hive/blob/v4/src/docs/snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [`bd` beads CLI](https://github.com/kubestellar/hive/blob/v4/src/docs/beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
