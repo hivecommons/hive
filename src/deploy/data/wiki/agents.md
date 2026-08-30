@@ -14,6 +14,22 @@ repository queue depth.
 The first-responder agent. Scans open issues and PRs for actionable items,
 triages new issues, and handles quick fixes. Runs frequently in all modes.
 
+## Quality
+
+Owns test suites, coverage gates, and regression checks. Typically the first
+agent an operator grants write access to when moving to L3.
+
+## Guide
+
+Audits documentation, onboarding material, and contributor experience,
+identifying gaps that make the project harder to pick up.
+
+## Brainstorm
+
+Idea incubation. **Advisory only** — it files beads, never GitHub issues or
+pull requests, at every level. Commonly left paused until an operator wants
+its output.
+
 ## CI Maintainer
 
 Monitors CI pipelines, fixes flaky tests, updates workflows, and ensures
