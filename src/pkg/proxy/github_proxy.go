@@ -332,7 +332,7 @@ func (p *GitHubProxy) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", p.listenAddr, err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	p.logger.Info("proxy listening", "addr", p.listenAddr)
 
 	for {
@@ -347,12 +347,12 @@ func (p *GitHubProxy) Start() error {
 // handleConn peeks at the first byte to distinguish HTTP CONNECT requests
 // (explicit proxy) from raw TLS ClientHello (iptables-redirected traffic).
 func (p *GitHubProxy) handleConn(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	peeked := make([]byte, 1)
-	conn.SetReadDeadline(time.Now().Add(transparentProxyTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(transparentProxyTimeout))
 	n, err := conn.Read(peeked)
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil || n == 0 {
 		return
 	}
@@ -369,9 +369,9 @@ func (p *GitHubProxy) handleConn(conn net.Conn) {
 	// which closes the connection on shutdown — racing with hijacked CONNECT
 	// handlers.
 	prefixed := &prefixConn{Conn: conn, prefix: peeked[:n]}
-	conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	req, err := http.ReadRequest(bufio.NewReader(prefixed))
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return
 	}
@@ -415,9 +415,9 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	// handshake then fails deterministically (bad certificate / bad record MAC),
 	// which is exactly why every Copilot agent could not authenticate. Loop until
 	// the full record (per the record-layer length) is buffered.
-	conn.SetReadDeadline(time.Now().Add(transparentProxyTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(transparentProxyTimeout))
 	fullBuf, err := readClientHelloRecord(conn, peeked)
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return
 	}
@@ -473,7 +473,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		if err != nil {
 			return
 		}
-		defer upstream.Close()
+		defer func() { _ = upstream.Close() }()
 		if _, err := upstream.Write(fullBuf); err != nil {
 			return
 		}
@@ -497,21 +497,21 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	// Bound the client TLS handshake: a client that connects and then stops
 	// sending handshake bytes would otherwise wedge this connection forever
 	// (empty queues on both sides — the observed egress-hang signature).
-	conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	_ = conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
 	handshakeErr := tlsClientConn.Handshake()
-	conn.SetDeadline(time.Time{})
+	_ = conn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
 		p.logger.Warn("transparent proxy TLS handshake failed", "error", handshakeErr)
 		return
 	}
-	defer tlsClientConn.Close()
+	defer func() { _ = tlsClientConn.Close() }()
 
 	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", host+":443", &tls.Config{ServerName: host})
 	if err != nil {
 		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
 		return
 	}
-	defer upstreamConn.Close()
+	defer func() { _ = upstreamConn.Close() }()
 
 	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
 }
@@ -835,14 +835,14 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	})
 	// Bound the client TLS handshake (see handleTransparentTLS): a client that
 	// stops mid-handshake must not wedge this connection forever.
-	conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	_ = conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
 	handshakeErr := tlsClientConn.Handshake()
-	conn.SetDeadline(time.Time{})
+	_ = conn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
 		p.logger.Warn("proxy client TLS handshake failed", "error", handshakeErr)
 		return
 	}
-	defer tlsClientConn.Close()
+	defer func() { _ = tlsClientConn.Close() }()
 
 	// Connect to the real GitHub server. SO_MARK the socket so the forced-egress
 	// redirect exempts this proxy-originated dial (see proxyEgressMark).
@@ -858,7 +858,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 		p.logger.Error("proxy upstream dial failed", "host", r.Host, "error", err)
 		return
 	}
-	defer upstreamConn.Close()
+	defer func() { _ = upstreamConn.Close() }()
 
 	// Proxy HTTP requests, inspecting each one.
 	p.proxyHTTPHost(tlsClientConn, upstreamConn, host, agentName, mode, caps)
@@ -906,10 +906,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// GitHub and its session froze. Each phase gets its own deadline;
 		// they are cleared once the phase completes so healthy keep-alive
 		// connections are unaffected.
-		client.SetReadDeadline(time.Now().Add(httpReadTimeout))
+		_ = client.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
-			client.SetReadDeadline(time.Time{})
+			_ = client.SetReadDeadline(time.Time{})
 			p.logTimeout("proxy client request read timed out", err, "agent", agentName)
 			return
 		}
@@ -936,10 +936,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		} else if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, graphQLBodyLimit))
 			if req.Body != nil {
-				req.Body.Close()
+				_ = req.Body.Close()
 			}
 			if readErr != nil {
-				client.SetReadDeadline(time.Time{})
+				_ = client.SetReadDeadline(time.Time{})
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
@@ -1005,9 +1005,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 			resp.Header.Set("Content-Type", "text/plain")
 			resp.Header.Set("X-Hive-Proxy-Blocked", "true")
-			client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			writeErr := resp.Write(client)
-			client.SetWriteDeadline(time.Time{})
+			_ = client.SetWriteDeadline(time.Time{})
 			if writeErr != nil {
 				p.logTimeout("proxy blocked response write timed out", writeErr, "agent", agentName)
 				return
@@ -1017,9 +1017,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				if _, drainErr := io.Copy(io.Discard, req.Body); drainErr != nil {
 					p.logTimeout("proxy blocked request body drain timed out", drainErr, "agent", agentName, "path", req.URL.Path)
 				}
-				req.Body.Close()
+				_ = req.Body.Close()
 			}
-			client.SetReadDeadline(time.Time{})
+			_ = client.SetReadDeadline(time.Time{})
 			continue
 		}
 
@@ -1027,15 +1027,15 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// can't handle reliably. After the ACMM check passes, forward
 		// the request and switch to raw bidirectional streaming.
 		if isGitPath(req.URL.Path) {
-			upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			if err := req.Write(upstream); err != nil {
-				upstream.SetWriteDeadline(time.Time{})
-				client.SetReadDeadline(time.Time{})
+				_ = upstream.SetWriteDeadline(time.Time{})
+				_ = client.SetReadDeadline(time.Time{})
 				p.logTimeout("proxy git request relay timed out", err, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			upstream.SetWriteDeadline(time.Time{})
-			client.SetReadDeadline(time.Time{})
+			_ = upstream.SetWriteDeadline(time.Time{})
+			_ = client.SetReadDeadline(time.Time{})
 			// Use relayTunnel, NOT an inline copy pair: this branch used to run
 			// its own unbounded io.Copy pair, which was the same wedge #3872
 			// fixed in relayTunnel but left here. When GitHub FIN'd after the
@@ -1052,19 +1052,19 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// Forward to upstream. The client read deadline stays in force until
 		// the body is fully drained (req.Write pipes req.Body from the client),
 		// so a client stalling mid-body cannot hang the relay.
-		upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+		_ = upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := req.Write(upstream); err != nil {
-			upstream.SetWriteDeadline(time.Time{})
-			client.SetReadDeadline(time.Time{})
+			_ = upstream.SetWriteDeadline(time.Time{})
+			_ = client.SetReadDeadline(time.Time{})
 			p.logTimeout("proxy request relay timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
-		upstream.SetWriteDeadline(time.Time{})
-		client.SetReadDeadline(time.Time{})
+		_ = upstream.SetWriteDeadline(time.Time{})
+		_ = client.SetReadDeadline(time.Time{})
 
-		upstream.SetReadDeadline(time.Now().Add(httpReadTimeout))
+		_ = upstream.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		resp, err := http.ReadResponse(newBufferedReader(upstream), req)
-		upstream.SetReadDeadline(time.Time{})
+		_ = upstream.SetReadDeadline(time.Time{})
 		if err != nil {
 			p.logTimeout("proxy upstream response read timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
@@ -1084,15 +1084,15 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// handler's deferred Closes reclaim the sockets.
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: responseBodyStallTimeout}
 
-		client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+		_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := resp.Write(client); err != nil {
-			resp.Body.Close()
-			client.SetWriteDeadline(time.Time{})
+			_ = resp.Body.Close()
+			_ = client.SetWriteDeadline(time.Time{})
 			p.logTimeout("proxy response relay timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
-		client.SetWriteDeadline(time.Time{})
-		resp.Body.Close()
+		_ = client.SetWriteDeadline(time.Time{})
+		_ = resp.Body.Close()
 	}
 }
 
@@ -1108,7 +1108,7 @@ func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (
 	}
 	body, err := io.ReadAll(io.LimitReader(req.Body, maxGitHubWriteBodyScan+1))
 	if req.Body != nil {
-		req.Body.Close()
+		_ = req.Body.Close()
 	}
 	if err != nil {
 		return "", false, false
@@ -1150,7 +1150,7 @@ func (p *GitHubProxy) enforceLinear(req *http.Request, agentName string, mode ag
 	// otherwise, and truncation must deny.
 	body, readErr := io.ReadAll(io.LimitReader(req.Body, linearBodyLimit+1))
 	if req.Body != nil {
-		req.Body.Close()
+		_ = req.Body.Close()
 	}
 	truncated := len(body) > linearBodyLimit
 	if truncated {
@@ -1236,12 +1236,12 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	upstream, err := markDialer(tunnelDialTimeout).Dial("tcp", r.Host)
 	if err != nil {
 		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error", err)
-		fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
+		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 
-	fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
+	_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
 	relayTunnel(conn, upstream)
 }
@@ -1268,7 +1268,7 @@ type stallBoundedBody struct {
 }
 
 func (b *stallBoundedBody) Read(p []byte) (int, error) {
-	b.conn.SetReadDeadline(time.Now().Add(b.idle))
+	_ = b.conn.SetReadDeadline(time.Now().Add(b.idle))
 	return b.body.Read(p)
 }
 
@@ -1278,9 +1278,9 @@ func (b *stallBoundedBody) Close() error {
 	// read there would reintroduce the very stall this type exists to bound.
 	// The deadline is cleared afterwards so the next keep-alive exchange on
 	// this conn starts unencumbered.
-	b.conn.SetReadDeadline(time.Now().Add(b.idle))
+	_ = b.conn.SetReadDeadline(time.Now().Add(b.idle))
 	err := b.body.Close()
-	b.conn.SetReadDeadline(time.Time{})
+	_ = b.conn.SetReadDeadline(time.Time{})
 	return err
 }
 
@@ -1318,28 +1318,28 @@ var tunnelHalfCloseDrain = 30 * time.Second
 func relayTunnel(conn, upstream net.Conn) {
 	done := make(chan struct{})
 	go func() {
-		io.Copy(upstream, conn)
+		_, _ = io.Copy(upstream, conn)
 		if tc, ok := upstream.(*net.TCPConn); ok {
-			tc.CloseWrite()
+			_ = tc.CloseWrite()
 		}
 		// Client side is done (EOF or error — a dead client looks the same).
 		// A live upstream answers or closes within RTTs; a blackholed one
 		// never would, so bound the remaining upstream→client read.
-		upstream.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
+		_ = upstream.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
 		close(done)
 	}()
-	io.Copy(conn, upstream)
+	_, _ = io.Copy(conn, upstream)
 	// Mirror image: upstream finished (or errored) but the client may sit
 	// half-open without ever sending EOF; bound the client-side read so
 	// <-done cannot wedge this handler.
-	conn.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
+	_ = conn.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
 	<-done
 }
 
 func transfer(dst, src net.Conn) {
-	defer dst.Close()
-	defer src.Close()
-	io.Copy(dst, src)
+	defer func() { _ = dst.Close() }()
+	defer func() { _ = src.Close() }()
+	_, _ = io.Copy(dst, src)
 }
 
 // forwardPlainDirect handles non-CONNECT (plain HTTP) requests on a raw connection.
@@ -1352,11 +1352,11 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	resp, err := plainHTTPClient.Transport.RoundTrip(r)
 	if err != nil {
 		p.logger.Warn("proxy: plain HTTP forward failed", "url", r.URL.String(), "error", err)
-		fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nupstream request failed\n")
+		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nupstream request failed\n")
 		return
 	}
-	defer resp.Body.Close()
-	resp.Write(conn)
+	defer func() { _ = resp.Body.Close() }()
+	_ = resp.Write(conn)
 }
 
 // extractAgentName reads the agent name from the Proxy-Authorization header.
@@ -1850,7 +1850,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		body, err := io.ReadAll(r.Body)
 		if r.Body != nil {
-			r.Body.Close()
+			_ = r.Body.Close()
 		}
 		if err != nil {
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read request"}}`, http.StatusBadRequest)
@@ -1863,7 +1863,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			status, respBody := p.localInferenceResponse(kind, r.Method, r.URL.Path, body, agentName)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
-			io.WriteString(w, respBody)
+			_, _ = io.WriteString(w, respBody)
 			return
 		}
 
@@ -1916,7 +1916,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		p.logger.Info("inference upstream response",
 			"agent", agentName,
@@ -1939,7 +1939,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 				resp.StatusCode, truncateBytes(errBody, 200))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
-			w.Write([]byte(anthropicErr))
+			_, _ = w.Write([]byte(anthropicErr))
 			return
 		}
 
@@ -1998,7 +1998,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write(translated)
+		_, _ = w.Write(translated)
 	})
 
 	return mux
@@ -2033,20 +2033,20 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 	tlsConn := tls.Server(conn, &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	})
-	conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	_ = conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
 	handshakeErr := tlsConn.Handshake()
-	conn.SetDeadline(time.Time{})
+	_ = conn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
 		p.logger.Warn("inference reroute: TLS handshake failed", "error", handshakeErr)
 		return
 	}
-	defer tlsConn.Close()
+	defer func() { _ = tlsConn.Close() }()
 
 	clientBuf := bufio.NewReader(tlsConn)
 	for {
-		tlsConn.SetReadDeadline(time.Now().Add(httpReadTimeout))
+		_ = tlsConn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
-		tlsConn.SetReadDeadline(time.Time{})
+		_ = tlsConn.SetReadDeadline(time.Time{})
 		if err != nil {
 			p.logTimeout("inference reroute: client request read timed out", err, "agent", agentName)
 			return
@@ -2060,11 +2060,11 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
 	route = p.routeWithEntitledModel(route, agentName)
-	conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
-	conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 	if req.Body != nil {
-		req.Body.Close()
+		_ = req.Body.Close()
 	}
 	if err != nil {
 		p.logTimeout("inference reroute: request body read timed out", err, "agent", agentName)
@@ -2112,7 +2112,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		p.writeHTTPError(conn, http.StatusBadGateway, "inference backend unreachable: "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)
@@ -2128,7 +2128,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 				`{"type":"error","error":{"type":"api_error","message":"inference backend returned %d: %s"}}`,
 				resp.StatusCode, jsonEscape(truncateBytes(errBody, 200))))),
 		}
-		anthropicErr.Write(conn)
+		_ = anthropicErr.Write(conn)
 		return
 	}
 
@@ -2180,7 +2180,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(bytes.NewReader(translated)),
 	}
-	httpResp.Write(conn)
+	_ = httpResp.Write(conn)
 }
 
 // handleCopilotSniff MITMs a GitHub Copilot completion-API connection to read
@@ -2221,21 +2221,21 @@ func (p *GitHubProxy) sniffCopilotOnTLS(clientConn net.Conn, host, agentName str
 	}
 
 	tlsClientConn := tls.Server(clientConn, &tls.Config{Certificates: []tls.Certificate{tlsCert}})
-	clientConn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	_ = clientConn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
 	handshakeErr := tlsClientConn.Handshake()
-	clientConn.SetDeadline(time.Time{})
+	_ = clientConn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
 		p.logger.Warn("copilot sniff: client TLS handshake failed", "error", handshakeErr)
 		return
 	}
-	defer tlsClientConn.Close()
+	defer func() { _ = tlsClientConn.Close() }()
 
 	upstreamConn, err := p.dialCopilotUpstream(host)
 	if err != nil {
 		p.logger.Error("copilot sniff: upstream dial failed", "host", host, "error", err)
 		return
 	}
-	defer upstreamConn.Close()
+	defer func() { _ = upstreamConn.Close() }()
 
 	p.proxyCopilotHTTP(tlsClientConn, upstreamConn, host, agentName)
 }
@@ -2257,10 +2257,10 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 	upstreamBuf := bufio.NewReader(upstream)
 
 	for {
-		client.SetReadDeadline(time.Now().Add(httpReadTimeout))
+		_ = client.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
-			client.SetReadDeadline(time.Time{})
+			_ = client.SetReadDeadline(time.Time{})
 			p.logTimeout("copilot sniff: client request read timed out", err, "agent", agentName, "host", host)
 			return
 		}
@@ -2273,9 +2273,9 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 		// requests (model listings, etc.) are forwarded without buffering.
 		if isCompletion && req.Body != nil {
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, copilotSniffBodyLimit))
-			req.Body.Close()
+			_ = req.Body.Close()
 			if readErr != nil {
-				client.SetReadDeadline(time.Time{})
+				_ = client.SetReadDeadline(time.Time{})
 				p.logTimeout("copilot sniff: request body read timed out", readErr, "agent", agentName, "host", host, "path", req.URL.Path)
 				return
 			}
@@ -2289,19 +2289,19 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		}
 
-		upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+		_ = upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := req.Write(upstream); err != nil {
-			upstream.SetWriteDeadline(time.Time{})
-			client.SetReadDeadline(time.Time{})
+			_ = upstream.SetWriteDeadline(time.Time{})
+			_ = client.SetReadDeadline(time.Time{})
 			p.logTimeout("copilot sniff: request relay timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
 			return
 		}
-		upstream.SetWriteDeadline(time.Time{})
-		client.SetReadDeadline(time.Time{})
+		_ = upstream.SetWriteDeadline(time.Time{})
+		_ = client.SetReadDeadline(time.Time{})
 
-		upstream.SetReadDeadline(time.Now().Add(httpReadTimeout))
+		_ = upstream.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		resp, err := http.ReadResponse(upstreamBuf, req)
-		upstream.SetReadDeadline(time.Time{})
+		_ = upstream.SetReadDeadline(time.Time{})
 		if err != nil {
 			p.logTimeout("copilot sniff: upstream response read timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
 			return
@@ -2310,15 +2310,15 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 		if isCompletion && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			p.forwardCopilotResponseWithUsage(client, resp, host, agentName, model)
 		} else {
-			client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			if err := resp.Write(client); err != nil {
-				resp.Body.Close()
-				client.SetWriteDeadline(time.Time{})
+				_ = resp.Body.Close()
+				_ = client.SetWriteDeadline(time.Time{})
 				p.logTimeout("copilot sniff: response relay timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
 				return
 			}
-			client.SetWriteDeadline(time.Time{})
-			resp.Body.Close()
+			_ = client.SetWriteDeadline(time.Time{})
+			_ = resp.Body.Close()
 		}
 
 		if req.Close || resp.Close {
@@ -2333,7 +2333,7 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 // is rewritten to the client verbatim. resp.Body is consumed and closed here.
 func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *http.Response, host, agentName, model string) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, copilotSniffBodyLimit))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		// Best effort: nothing to forward.
 		return
@@ -2366,11 +2366,11 @@ func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *htt
 	// buffered copy and drop Content-Length ambiguity by setting it explicitly.
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
-	client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+	_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 	if err := resp.Write(client); err != nil {
 		p.logger.Warn("copilot sniff: response write to client failed", "agent", agentName, "error", err)
 	}
-	client.SetWriteDeadline(time.Time{})
+	_ = client.SetWriteDeadline(time.Time{})
 }
 
 func (p *GitHubProxy) writeHTTPError(conn net.Conn, status int, msg string) {
@@ -2381,7 +2381,7 @@ func (p *GitHubProxy) writeHTTPError(conn net.Conn, status int, msg string) {
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, msg))),
 	}
-	resp.Write(conn)
+	_ = resp.Write(conn)
 }
 
 func truncateBytes(b []byte, max int) string {

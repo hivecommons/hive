@@ -473,7 +473,9 @@ type sseToolCallAccumulator struct {
 
 func writeSSE(w io.Writer, eventType string, data interface{}) {
 	jsonData, _ := json.Marshal(data)
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
+	// Best effort: the client may have disconnected mid-stream; the request
+	// was already authorized, so a broken pipe here is not a policy concern.
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
 }
 
 func extractSystemText(raw json.RawMessage) string {
@@ -559,7 +561,7 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 	if err != nil {
 		return fmt.Errorf("upstream request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)

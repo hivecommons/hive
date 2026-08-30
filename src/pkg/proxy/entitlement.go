@@ -363,7 +363,7 @@ func probeEntitledModels(endpoint, apiKey string, transport http.RoundTripper) [
 			continue
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil || resp.StatusCode != http.StatusOK {
 			continue
 		}

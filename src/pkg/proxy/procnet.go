@@ -43,7 +43,7 @@ func lookupUIDByLocalPortFrom(path string, port int) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	hexPort := fmt.Sprintf("%04X", port)
 	scanner := bufio.NewScanner(f)

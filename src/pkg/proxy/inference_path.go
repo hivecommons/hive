@@ -111,5 +111,7 @@ func writeLocalInferenceResponse(conn net.Conn, status int, body string) {
 		Body:          io.NopCloser(strings.NewReader(body)),
 		ContentLength: int64(len(body)),
 	}
-	resp.Write(conn)
+	// Best effort: conn is a raw MITM connection and may already be gone;
+	// the policy decision was already made before this write.
+	_ = resp.Write(conn)
 }

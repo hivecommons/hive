@@ -316,7 +316,7 @@ func FindEndpointForModel(endpoints []string, model, apiKey, caBundle string) st
 			continue
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK || err != nil {
 			continue
 		}
@@ -358,7 +358,7 @@ func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 	if err != nil {
 		return 0
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0
 	}
