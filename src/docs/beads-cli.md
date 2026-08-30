@@ -17,6 +17,35 @@
 | `bd remember "fact"` | Quick-add an advisory bead authored by `system`. |
 | `bd init` | No-op compatibility command; opening the store creates it. |
 | `bd dolt push` | No-op compatibility command; bead data is already persisted on disk. |
+| `bd decompose <epic-id> [--plan <file>] [--actor <lane>] [--auto-approve] [--print-prompt]` | Decompose an epic bead into a DAG of child task beads. See below. |
+
+## Decomposing an epic
+
+`bd decompose` turns one epic bead into a graph of child task beads, wiring
+their dependencies so `bd ready` only offers a child once its predecessors
+close.
+
+```bash
+bd decompose <epic-id> --plan plan.txt
+cat plan.txt | bd decompose <epic-id>          # or read the plan from stdin
+```
+
+| Flag | Effect |
+|---|---|
+| `--plan <file>` | File holding the planner's task list. Defaults to stdin. |
+| `--actor <lane>` | Override the child beads' actor/lane. Defaults to `classifier`/`architect`. |
+| `--auto-approve` | Approve the plan immediately — children are claimable at once, with no review gate. |
+| `--print-prompt` | Print the architect decomposition prompt for this epic and exit without writing anything. |
+
+**This does not run an agent.** The task breakdown is read from `--plan` or
+stdin, so the trigger stays manual and the planning package carries no
+agent/tmux dependency. Wiring the architect lane's live output in place of the
+file/stdin source is later-phase work — see `cmdDecompose` in
+`src/cmd/bd/decompose.go`.
+
+Without `--auto-approve` the children land behind a review gate, so use
+`--print-prompt` first when you want to see what an epic would expand into
+before committing anything to the ledger.
 
 Examples:
 
