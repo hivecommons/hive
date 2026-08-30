@@ -172,6 +172,15 @@ func (c *Client) postJSON(ctx context.Context, path string, body, v any) error {
 	return c.doJSON(ctx, http.MethodPost, path, body, v)
 }
 
+// putJSON performs a PUT and decodes the response body into v.
+//
+// PUT rather than POST because that is the method the operation declares:
+// /api/packs/level is registered as "PUT /api/packs/level" and Go's mux matches
+// on the method, so a POST would not reach the handler at all.
+func (c *Client) putJSON(ctx context.Context, path string, body, v any) error {
+	return c.doJSON(ctx, http.MethodPut, path, body, v)
+}
+
 // doJSON is the single request path for this package; typed methods call it
 // rather than building requests themselves, so there is exactly one place that
 // knows how a dashboard request is addressed, authenticated and error-wrapped.

@@ -1,0 +1,91 @@
+[
+  {
+    "level": 1,
+    "name": "Observe",
+    "description": "Read-only scanning. Agents report findings; nothing is written back.",
+    "agentCount": 1,
+    "governor": {
+      "modes": "advisory",
+      "mergePolicy": "manual"
+    },
+    "current": false,
+    "agents": [
+      {
+        "name": "scanner",
+        "displayName": "Scanner",
+        "role": "scanner",
+        "description": "Reads the repo and files findings.",
+        "emoji": "🔍",
+        "color": "#4c9aff",
+        "sortOrder": 1,
+        "backend": "claude",
+        "model": "claude-opus-5",
+        "beadRole": "advisory",
+        "kickTemplate": "scanner",
+        "includeRepos": true,
+        "laneKeywords": ["scan", "audit"],
+        "interactions": "Files advisory beads other agents read.",
+        "knowledgeUse": "Reads the knowledge base; never writes."
+      }
+    ]
+  },
+  {
+    "level": 4,
+    "name": "Contribute",
+    "description": "Agents open pull requests. Merges still require a human.",
+    "agentCount": 2,
+    "governor": {
+      "modes": "issues_and_prs",
+      "mergePolicy": "owner",
+      "evalIntervalS": 60,
+      "cadences": {
+        "quiet": { "scanner": "30m" },
+        "busy": { "scanner": "5m" }
+      },
+      "thresholds": { "quiet": 0, "busy": 5, "surge": 20 },
+      "planAutoApprove": false
+    },
+    "current": true,
+    "agents": [
+      {
+        "name": "scanner",
+        "displayName": "Scanner",
+        "role": "scanner",
+        "description": "Reads the repo and files findings.",
+        "emoji": "🔍",
+        "color": "#4c9aff",
+        "sortOrder": 1,
+        "backend": "claude",
+        "model": "claude-opus-5",
+        "beadRole": "advisory",
+        "kickTemplate": "scanner",
+        "includeRepos": true,
+        "laneKeywords": ["scan", "audit"],
+        "interactions": "Files advisory beads other agents read.",
+        "knowledgeUse": "Reads the knowledge base; never writes."
+      },
+      {
+        "name": "telemetry",
+        "displayName": "Telemetry",
+        "role": "telemetry",
+        "description": "Watches metrics and reports drift.",
+        "emoji": "📈",
+        "color": "#f0a30a",
+        "sortOrder": 9,
+        "backend": "copilot",
+        "model": "gpt-5",
+        "beadRole": "advisory",
+        "kickTemplate": "telemetry",
+        "includeRepos": false,
+        "laneKeywords": ["metrics"],
+        "interactions": "Reports to the operations agent.",
+        "knowledgeUse": "Writes observations back.",
+        "hidden": true,
+        "staleTimeout": 900,
+        "mode": "advisory",
+        "onDemand": true,
+        "cavemanMode": "off"
+      }
+    ]
+  }
+]
