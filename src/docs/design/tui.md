@@ -10,7 +10,7 @@ Two things in the epic's drafted text do not match this repository, and both
 are corrected here with the evidence: the `v2/` path prefix
 ([Paths](#paths-the-epics-v2-prefix-predates-3996)) and the assumption that
 `dashboard/openapi.json` is a usable contract for the action tasks
-([Contract status](#contract-status-the-spec-covers-11-of-the-api-and-no-writes)).
+([Contract status](#contract-status-the-spec-now-covers-writes)).
 Citations are against `origin/v4` at `45a13d5`.
 
 ---
@@ -30,7 +30,7 @@ tmux, the relay is a CLI, self-hosters are SSH'd into a box — so exposing :300
 or tunnelling it just to check governor mode is friction the web UI imposes. A
 second API consumer also hardens the contract: anything the TUI cannot do
 through the published spec is a gap worth an issue anyway, which is exactly what
-[section 2.1](#contract-status-the-spec-covers-11-of-the-api-and-no-writes)
+[section 2.1](#contract-status-the-spec-now-covers-writes)
 turned out to be.
 
 **Non-goals for v1**, quoted from the epic:
@@ -126,7 +126,7 @@ package. The mapping for the whole epic:
 
 Verification for every code task is `go test ./pkg/tui/...`, run from `src/`.
 
-### Contract status: the spec now covers writes, with four gaps
+### Contract status: the spec now covers writes
 
 The Contract decision names `dashboard/openapi.json` as the source of truth and
 tells a sub-issue what to do when an operation is missing from it. This section
@@ -293,5 +293,5 @@ running Hive, no Docker, no network.
 - [`hivectl`](../hivectl.md) — the non-interactive client for the same API, and
   the command this TUI is a subcommand of.
 - [`api-reference.md`](../api-reference.md) — the dashboard API as documented
-  for humans; see [section 2.1](#contract-status-the-spec-covers-11-of-the-api-and-no-writes)
+  for humans; see [section 2.1](#contract-status-the-spec-now-covers-writes)
   for how much of it `dashboard/openapi.json` actually publishes.
