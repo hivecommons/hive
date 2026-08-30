@@ -95,6 +95,7 @@ func TestCovB_ClaudeAuthLogout(t *testing.T) {
 }
 
 func TestCovB_CopilotAuthStatus(t *testing.T) {
+	withCopilotTokenPath(t)
 	s := NewServer(0, covBLogger())
 	s.RegisterAPI(testDeps(t))
 
@@ -118,6 +119,7 @@ func TestCovB_CopilotAuthStatus(t *testing.T) {
 }
 
 func TestCovB_CopilotAuthLogout(t *testing.T) {
+	withCopilotTokenPath(t)
 	s := NewServer(0, covBLogger())
 	s.RegisterAPI(testDeps(t))
 
