@@ -1,0 +1,137 @@
+# NOTICE Autofix — commit the regenerated NOTICE back onto Dependabot's own
+# Go-module bump branches.
+#
+# WHY THIS WORKFLOW EXISTS (#5256)
+#
+# The "NOTICE matches the module graph" gate (go-security-analysis.yml, job
+# notice-drift) compares the committed NOTICE byte-for-byte against a fresh
+# regeneration from src/go.mod + src/go.sum. That comparison is correct and
+# worth keeping — it is what surfaced an AGPL-3.0 dependency entering this
+# Apache-2.0 project (#5016). But it fails on EVERY Dependabot gomod PR by
+# construction: a version bump changes the module graph, so the committed
+# NOTICE necessarily no longer matches, and Dependabot cannot regenerate it
+# (that needs a Go toolchain and the pinned go-licenses). Result: 100% of
+# gomod bumps arrive permanently red and each one needs a human to check out
+# the branch, run the generator, and push.
+#
+# This workflow closes that loop. It does NOT weaken the gate: the gate still
+# runs, still compares byte-for-byte, and still fails when NOTICE is stale.
+# What changes is that for a Dependabot branch the staleness is repaired
+# automatically, so the next run of the gate passes on a correct NOTICE
+# rather than a human doing the same mechanical regeneration by hand.
+#
+# WHY workflow_run AND NOT pull_request_target
+#
+# The obvious implementation is a pull_request_target job that checks out the
+# PR head and runs src/scripts/generate-notice.sh with a contents:write token.
+# That is unsafe even when gated to Dependabot: generate-notice.sh resolves
+# and downloads the module graph described by the PR's own go.mod/go.sum, so
+# it executes tooling against attacker-influenceable inputs while holding a
+# token that can write to the repository. `go install`, module resolution and
+# go-licenses all run arbitrary upstream code paths.
+#
+# workflow_run splits the privilege from the untrusted work:
+#
+#   * go-security-analysis.yml's notice-drift job runs on `pull_request` —
+#     read-only token, no secrets — and uploads its already-generated
+#     /tmp/NOTICE.generated as an artifact. It was going to generate that
+#     file anyway; it now publishes it.
+#   * this workflow runs on `workflow_run`, so it executes the version of
+#     itself committed on the DEFAULT branch, never the PR's version. It
+#     downloads the artifact and commits it. It never checks out or runs any
+#     code from the PR head.
+#
+# The artifact is data, not code, and it is validated below before use.
+#
+# WHY THE VALIDATION STEP IS NOT OPTIONAL
+#
+# Committing a generated file from an artifact means the artifact's content
+# becomes the repository's attribution record. Three things are checked
+# before anything is committed, and any failure aborts loudly rather than
+# committing a degraded NOTICE:
+#
+#   1. The file must carry the generator's real header — a truncated or
+#      empty artifact must never overwrite a good NOTICE.
+#   2. No trailing-whitespace lines (#5064). The generator normalizes these,
+#      but committing an unnormalized file would guarantee a permanent diff
+#      against every future regeneration.
+#   3. No unverified/missing license text, and no FORBIDDEN license class.
+#      A copyleft dependency entering the tree must still stop the pipeline
+#      and reach a human — auto-committing a NOTICE that records an AGPL
+#      dependency would launder a license problem into a green check.
+#
+# KNOWN LIMITATION
+#
+# A push made with GITHUB_TOKEN does not trigger new workflow runs, so the
+# autofix commit does not itself re-run notice-drift. The branch is correct
+# from that moment on and the gate passes on the next run (Dependabot's next
+# rebase, a maintainer re-run, or any later push). The value delivered is
+# that no human has to regenerate the file. If Dependabot force-pushes a
+# rebase the autofix commit is dropped and this workflow simply runs again.
+
+name: NOTICE Autofix
+
+on:
+  workflow_run:
+    workflows: ['Go Security Analysis']
+    types: [completed]
+
+# contents:write is the only privilege needed and the only one granted.
+permissions:
+  contents: write
+
+concurrency:
+  group: notice-autofix-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  regenerate-notice:
+    name: Commit regenerated NOTICE for Dependabot
+    runs-on: ubuntu-latest
+    # Gate on the triggering run: a Dependabot-authored PR from a branch in
+    # this repository. Dependabot never opens PRs from forks, so requiring
+    # head_repository == repository closes the fork vector completely.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    steps:
+      # Check out the DEFAULT branch state of the PR's branch — i.e. the
+      # Dependabot branch itself, which contains only manifest/lockfile
+      # changes. Nothing from it is executed; it is the commit target.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Download the regenerated NOTICE
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notice-generated
+          path: /tmp/notice-artifact
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate the regenerated NOTICE before trusting it
+        run: src/scripts/validate-generated-notice.sh /tmp/notice-artifact/NOTICE.generated
+
+      - name: Commit and push if NOTICE changed
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          cp -- /tmp/notice-artifact/NOTICE.generated NOTICE
+          if git diff --quiet -- NOTICE; then
+            echo "NOTICE already matches the module graph — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- NOTICE
+          # -s because this repository requires DCO sign-off on every commit.
+          git commit -s -m "chore: regenerate NOTICE for dependency bump
+
+          Regenerated by .github/workflows/notice-autofix.yml from the module
+          graph in this branch's src/go.mod and src/go.sum. See #5256."
+          git push origin "HEAD:${HEAD_BRANCH}"

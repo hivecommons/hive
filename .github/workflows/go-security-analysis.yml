@@ -188,6 +188,13 @@ jobs:
       - name: Exercise NOTICE drift diagnostics
         run: src/scripts/test-check-notice-drift.sh
 
+      # The autofix workflow commits a generated NOTICE unattended, so the
+      # guard that decides whether a generated file is fit to commit needs its
+      # own regression coverage here — notice-autofix.yml runs on
+      # workflow_run and cannot gate a PR itself.
+      - name: Exercise generated-NOTICE validation
+        run: src/scripts/test-validate-generated-notice.sh
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
@@ -195,6 +202,39 @@ jobs:
 
       - name: Regenerate NOTICE from the current module graph
         run: src/scripts/generate-notice.sh /tmp/NOTICE.generated
+
+      # Publish the regenerated file BEFORE the gate runs, so it is uploaded
+      # on the failing path too — that is the only path where anyone needs it.
+      # notice-autofix.yml consumes this artifact via workflow_run to commit
+      # the regeneration back onto a Dependabot branch (#5256). Uploading here
+      # rather than regenerating in the autofix workflow is deliberate: this
+      # job already runs the generator with a read-only token and no secrets,
+      # so the privileged workflow never has to execute PR-head code.
+      - name: Publish the regenerated NOTICE for the autofix workflow
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: notice-generated
+          path: /tmp/NOTICE.generated
+          retention-days: 1
+          if-no-files-found: error
+
+      # The PR number travels with the artifact because workflow_run does not
+      # expose it: the triggering run's event payload is not forwarded, and
+      # resolving head SHA back to a PR is an extra API round trip that can
+      # match the wrong PR when several share a head.
+      - name: Record the PR number for the autofix workflow
+        if: github.event_name == 'pull_request'
+        run: echo "${{ github.event.pull_request.number }}" > /tmp/pr-number.txt
+
+      - name: Publish the PR number for the autofix workflow
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: notice-pr-number
+          path: /tmp/pr-number.txt
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Fail if the committed NOTICE is stale
         run: src/scripts/check-notice-drift.sh NOTICE /tmp/NOTICE.generated
