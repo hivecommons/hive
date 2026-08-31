@@ -426,7 +426,12 @@ func TestSpokePauseRefusesManualUpgradeHive(t *testing.T) {
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
 	s := newHandlerHub()
 	s.clusters = map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}
-	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2", GitHash: "old"}}
+	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2", GitHash: "old",
+		// Heartbeating, so the ONLY thing that can refuse the resumed control
+		// below is the pause switch — which is what this test is about. The
+		// manual path independently refuses a hive that cannot COLLECT an
+		// upgrade (pull-only delivery, see pullonly_upgrade.go).
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	resetSHACaches(t)
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "newsha7"}
