@@ -1379,9 +1379,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/grpc-ecosystem/grpc-gateway/v2
-Version:  v2.29.0
+Version:  v2.30.0
 License:  BSD-3-Clause
-Source:   https://github.com/grpc-ecosystem/grpc-gateway/blob/v2.29.0/LICENSE
+Source:   https://github.com/grpc-ecosystem/grpc-gateway/blob/v2.30.0/LICENSE
 
 Copyright (c) 2015, Gengo, Inc.
 All rights reserved.
@@ -2404,9 +2404,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  go.opentelemetry.io/otel/exporters/otlp/otlptrace
-Version:  v1.45.0
+Version:  v1.46.0
 License:  Apache-2.0
-Source:   https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/v1.45.0/exporters/otlp/otlptrace/LICENSE
+Source:   https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/v1.46.0/exporters/otlp/otlptrace/LICENSE
 
                                  Apache License
                            Version 2.0, January 2004
@@ -2642,9 +2642,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
-Version:  v1.45.0
+Version:  v1.46.0
 License:  Apache-2.0
-Source:   https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/otlptracehttp/v1.45.0/exporters/otlp/otlptrace/otlptracehttp/LICENSE
+Source:   https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/otlptracehttp/v1.46.0/exporters/otlp/otlptrace/otlptracehttp/LICENSE
 
                                  Apache License
                            Version 2.0, January 2004
@@ -3922,9 +3922,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/net
-Version:  v0.57.0
+Version:  v0.58.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/net/+/v0.57.0:LICENSE
+Source:   https://cs.opensource.google/go/x/net/+/v0.58.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -3992,9 +3992,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/text
-Version:  v0.40.0
+Version:  v0.41.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/text/+/v0.40.0:LICENSE
+Source:   https://cs.opensource.google/go/x/text/+/v0.41.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -4027,9 +4027,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  google.golang.org/genproto/googleapis/api
-Version:  v0.0.0-20260803160001-6ac0973c030d
+Version:  v0.0.0-20260819154853-08b0e4226688
 License:  Apache-2.0
-Source:   https://github.com/googleapis/go-genproto/blob/6ac0973c030d/googleapis/api/LICENSE
+Source:   https://github.com/googleapis/go-genproto/blob/08b0e4226688/googleapis/api/LICENSE
 
 
                                  Apache License
@@ -4237,9 +4237,9 @@ Source:   https://github.com/googleapis/go-genproto/blob/6ac0973c030d/googleapis
 -----------------------------------------------------------------------------
 
 Package:  google.golang.org/genproto/googleapis/rpc/status
-Version:  v0.0.0-20260803160001-6ac0973c030d
+Version:  v0.0.0-20260819154853-08b0e4226688
 License:  Apache-2.0
-Source:   https://github.com/googleapis/go-genproto/blob/6ac0973c030d/googleapis/rpc/LICENSE
+Source:   https://github.com/googleapis/go-genproto/blob/08b0e4226688/googleapis/rpc/LICENSE
 
 
                                  Apache License
@@ -4447,9 +4447,9 @@ Source:   https://github.com/googleapis/go-genproto/blob/6ac0973c030d/googleapis
 -----------------------------------------------------------------------------
 
 Package:  google.golang.org/grpc
-Version:  v1.83.0
+Version:  v1.83.1
 License:  Apache-2.0
-Source:   https://github.com/grpc/grpc-go/blob/v1.83.0/LICENSE
+Source:   https://github.com/grpc/grpc-go/blob/v1.83.1/LICENSE
 
 
                                  Apache License
@@ -4657,9 +4657,9 @@ Source:   https://github.com/grpc/grpc-go/blob/v1.83.0/LICENSE
 -----------------------------------------------------------------------------
 
 Package:  google.golang.org/protobuf
-Version:  v1.36.11
+Version:  v1.36.12
 License:  BSD-3-Clause
-Source:   https://github.com/protocolbuffers/protobuf-go/blob/v1.36.11/LICENSE
+Source:   https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/LICENSE
 
 Copyright (c) 2018 The Go Authors. All rights reserved.
 
