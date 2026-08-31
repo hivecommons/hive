@@ -525,9 +525,11 @@ func TestSwitchForgeAuthorization(t *testing.T) {
 }
 
 // TestParseForgeTargetWithKind covers the GitLab/Gitea explicit-kind path added
-// for spoke-side pkg/forge routing: a non-GitHub kind yields a bare-host BaseURL
-// and an EMPTY APIURL (the spoke adapter appends /api/v4 or /api/v1 itself),
-// while the GitHub kinds behave exactly as the host-only parse.
+// in anticipation of pkg/forge routing: a non-GitHub kind yields a bare-host
+// BaseURL and an EMPTY APIURL, while the GitHub kinds behave exactly as the
+// host-only parse. The empty APIURL is asserted as the hub-side contract; note
+// that nothing completes it today, since no running code path constructs a
+// pkg/forge adapter (see the note at the top of forge.go).
 func TestParseForgeTargetWithKind(t *testing.T) {
 	cases := []struct {
 		name        string
