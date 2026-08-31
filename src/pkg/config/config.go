@@ -5341,11 +5341,15 @@ func (c *Config) saveLocked() error {
 	// renamed or removed here — see RuntimeConfigFileLegacy.
 	runtimePath := RuntimeConfigFile
 	var runtimeErr error
-	if err := os.WriteFile(runtimePath, data, 0o644); err != nil {
+	// 0600, not 0644: the marshaled config carries dashboard.auth_token (and
+	// github.token in PAT mode), and /data is world-traversable on hive
+	// hosts, so a group/world-readable runtime config hands the dashboard
+	// owner credential to every unprivileged agent user (#5331).
+	if err := os.WriteFile(runtimePath, data, 0o600); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
 		_ = os.Remove(runtimePath) // best-effort; the retry's own WriteFile error is what's recorded below
-		if retryErr := os.WriteFile(runtimePath, data, 0o644); retryErr != nil {
+		if retryErr := os.WriteFile(runtimePath, data, 0o600); retryErr != nil {
 			runtimeErr = retryErr
 			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
 		} else {
@@ -5353,6 +5357,12 @@ func (c *Config) saveLocked() error {
 		}
 	} else {
 		log.Printf("[config] PVC runtime config written to %s", runtimePath)
+		// os.WriteFile's mode only applies when it CREATES the file; a
+		// pre-existing world-readable inode (every hive deployed before
+		// this fix) keeps its old 0644 bits, so tighten explicitly.
+		if chmodErr := os.Chmod(runtimePath, 0o600); chmodErr != nil {
+			log.Printf("[config] warning: failed to tighten permissions on %s: %v", runtimePath, chmodErr)
+		}
 	}
 
 	overlayErr := c.saveDashboardOverlay()
@@ -5479,12 +5489,20 @@ func (c *Config) saveDashboardOverlay() error {
 		return err
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
-	const overlayFileMode = 0o644
+	// 0600, not 0644: dashboardOverlayBytes only folds the dashboard auth
+	// token back to its env form when it matches a bootstrap env var — a
+	// dashboard-minted token is persisted verbatim, so the overlay is not
+	// reliably secret-free (#5331).
+	const overlayFileMode = 0o600
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, overlayFileMode)
 	if err != nil {
 		log.Printf("[config] warning: failed to open dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
 		return err
 	}
+	// OpenFile's mode only applies on create; a leftover 0644 tmp file from a
+	// crash before this fix would otherwise carry its old bits through the
+	// rename. Best-effort: the rename below installs whatever mode f has.
+	_ = f.Chmod(overlayFileMode)
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		log.Printf("[config] warning: failed to write dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)

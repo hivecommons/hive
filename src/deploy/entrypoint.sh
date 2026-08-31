@@ -61,6 +61,15 @@ HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
 
+# These PVC config copies can carry dashboard.auth_token (and github.token in
+# PAT mode). Files written before the 0600 fix (#5331) are world-readable, and
+# /data is world-traversable, so tighten pre-existing copies at boot.
+# Best-effort: on a read-only or foreign-owned PVC this must not abort boot.
+for _cfg in "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml.dashboard; do
+  [ -f "$_cfg" ] && chmod 600 "$_cfg" 2>/dev/null || true
+done
+unset _cfg
+
 # hive_runtime_config_read echoes the path to read the persisted runtime
 # config from: the new name when it is present and non-empty, else the
 # legacy name when that is, else empty. Read-only — it never creates,
