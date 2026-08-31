@@ -5,17 +5,25 @@
 # merge state machine is proven against the shipped source rather than a copy.
 #
 # Since #5222 the step opens a PR from the scratch branch into v4 and merges
-# it via `gh pr merge` (SHA-keyed required-status evaluation) instead of a
-# raw `git push` to v4 (ref-keyed evaluation, which is why the raw push could
-# never succeed — see the workflow's RACES header comment). The step
-# distinguishes three ways that merge can fail:
-#   not-yet-mergeable — GitHub is still settling mergeable_state after the
-#                    gate check landed: retry on a deadline, then hard-fail.
-#   base moved       — v4 advanced past the release SHA: defer GREEN with
-#                    pushed=false, because the successor run releases the
-#                    newer merge and retagging here would publish images
-#                    built from a different tree.
-#   anything else    — hard-fail.
+# it (SHA-keyed required-status evaluation) instead of doing a raw `git push`
+# to v4 (ref-keyed evaluation, which is why the raw push could never succeed
+# — see the workflow's RACES header comment).
+#
+# Since #5318/#5324 that merge is `gh api -X PUT .../pulls/{n}/merge -f
+# sha=...` rather than `gh pr merge`. `gh pr merge` consults the PR's
+# AGGREGATE mergeStateStatus, which a pending NON-required status (`tide`)
+# forces to BLOCKED forever even with the only required context (`gate`)
+# green — so the retry window was burned waiting on a state that could not
+# change. The API endpoint is evaluated against the required contexts for
+# that SHA instead. The step distinguishes three ways that merge can fail:
+#   not-yet-mergeable — HTTP 405: a required check has not landed / GitHub is
+#                    still settling: retry on a deadline, then hard-fail.
+#   base moved       — HTTP 409 (base OR head branch modified): v4 advanced
+#                    past the release SHA: defer GREEN with pushed=false,
+#                    because the successor run releases the newer merge and
+#                    retagging here would publish images built from a
+#                    different tree.
+#   anything else    — hard-fail immediately, no retry.
 #
 # Usage: src/scripts/test-release-push-retry.sh
 set -uo pipefail
@@ -51,23 +59,28 @@ PY
 
 # --- stub git + gh + sleep -----------------------------------------------------
 # The stubs read their scenario from RPR_SCENARIO and count merge attempts in
-# RPR_STATE. `gh pr merge` output mimics real rejection text so the ORDER of
-# the step's grep checks is exercised, not just their presence: "base branch
-# was modified" must NOT be captured as a generic retry case, and a
-# not-yet-mergeable rejection must NOT be captured by the base-moved pattern.
+# RPR_STATE. The merge stub's output mimics real `gh api` rejection text so
+# the ORDER of the step's grep checks is exercised, not just their presence:
+# a 409 "base branch was modified" must NOT be captured as a generic retry
+# case, and a 405 not-yet-mergeable rejection must NOT be captured by the
+# base-moved pattern.
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/git" <<'STUB'
 #!/usr/bin/env bash
 state="$RPR_STATE"
+# NOTE the trailing "${3:-}" makes every key carry a trailing space when
+# invoked with two args, so the two-word patterns below are written with one
+# too. Getting this wrong silently returns an empty commit_sha, which now
+# matters: the merge call passes it as `-f sha=` (#5318/#5324).
 case "$1 $2 ${3:-}" in
-  "rev-parse HEAD")
+  "rev-parse HEAD ")
     echo "deadbeefcafe0000000000000000000000000000"; exit 0 ;;
-  "rev-parse origin/v4")
+  "rev-parse origin/v4 ")
     echo "f00df00df00d0000000000000000000000000000"; exit 0 ;;
-  "fetch origin")
+  "fetch origin "*)
     exit 0 ;;
   "tag "*) exit 0 ;;
-  "push origin --delete")
+  "push origin --delete"*)
     exit 0 ;;
   "push origin refs/tags/"*)
     n=$(( $(cat "$state/tag" 2>/dev/null || echo 0) + 1 ))
@@ -83,31 +96,45 @@ STUB
 cat > "$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 state="$RPR_STATE"
-case "$1 $2" in
-  "pr create")
-    echo "https://github.com/kubestellar/hive/pull/9999"
-    exit 0 ;;
-  "pr merge")
+# The merge is `gh api -X PUT repos/<repo>/pulls/<n>/merge ...` (#5318/#5324),
+# so dispatch on the argv containing a /merge endpoint rather than on $1 $2.
+args="$*"
+case "$args" in
+  *"/merge"*)
     n=$(( $(cat "$state/merge" 2>/dev/null || echo 0) + 1 ))
     echo "$n" > "$state/merge"
+    # A missing `-f sha=` would silently reintroduce the head-moved race the
+    # 409 deferral branch depends on, so assert the step still passes it.
+    case "$args" in
+      *"sha=deadbeefcafe0000000000000000000000000000"*) ;;
+      *) echo "STUBFAIL: merge called without -f sha=<head commit>: $args" >&2; exit 1 ;;
+    esac
     case "$RPR_SCENARIO" in
-      ok) echo "✓ Merged pull request #9999"; exit 0 ;;
+      ok) echo '{"merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
       settle_then_ok)
         if [ "$n" -le 2 ]; then
-          echo "Pull request #9999 is not mergeable: the merge commit cannot be cleanly created."
+          echo "gh: Required status check \"gate\" is expected. (HTTP 405)"
           exit 1
         fi
-        echo "✓ Merged pull request #9999"; exit 0 ;;
+        echo '{"merged":true,"message":"Pull Request successfully merged"}'; exit 0 ;;
       settle_forever)
-        echo "Pull request #9999 is not mergeable: the merge commit cannot be cleanly created."
+        echo "gh: Required status check \"gate\" is expected. (HTTP 405)"
         exit 1 ;;
       base_moved)
-        echo "Pull request #9999 is not mergeable: the base branch was modified. Review the PR and try again."
+        echo "gh: Base branch was modified. Review and try the merge again. (HTTP 409)"
+        exit 1 ;;
+      head_moved)
+        echo "gh: Head branch was modified. Review and try the merge again. (HTTP 409)"
         exit 1 ;;
       unknown)
         echo "gh: connection reset by peer"
         exit 1 ;;
     esac ;;
+esac
+case "$1 $2" in
+  "pr create")
+    echo "https://github.com/kubestellar/hive/pull/9999"
+    exit 0 ;;
   "pr close")
     exit 0 ;;
   *) exit 0 ;;
@@ -129,6 +156,7 @@ run_step() {
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
     RELEASE_PUSH_GH006_WINDOW="${3:-120}" \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
+    GITHUB_REPOSITORY="kubestellar/hive" \
     PATH="$tmp/bin:$PATH" bash "$tmp/push_v4.sh" > "$st/out" 2>&1
   rc=$?
   output=$(cat "$st/out")
@@ -166,10 +194,18 @@ grep -q '::notice::' <<<"$output" && note_ok "::notice:: explains the deferral" 
 [ -f "$st/tag" ] && note_fail "tag was pushed for a release that deferred" || note_ok "no tag pushed"
 [ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "base-moved was retried; it can never succeed without a rebase"
 
+echo "case: head branch moved also defers green (409 sha= guard)"
+run_step head_moved
+[ "$rc" -eq 0 ] && note_ok "exit 0 (deferral is not a failure)" || note_fail "exit $rc, want 0: $output"
+grep -q '^pushed=false$' <<<"$ghout" && note_ok "pushed=false" || note_fail "GITHUB_OUTPUT lacks pushed=false: $ghout"
+[ -f "$st/tag" ] && note_fail "tag was pushed for a release that deferred" || note_ok "no tag pushed"
+[ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "head-moved was retried; it can never succeed"
+
 echo "case: unrecognized merge failure hard-fails"
 run_step unknown
 [ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "unknown failure must not be retried or deferred, got exit 0"
 grep -q 'pushed=' <<<"$ghout" && note_fail "unknown failure still wrote a pushed= output" || note_ok "no pushed= output"
+[ "$(cat "$st/merge")" = 1 ] && note_ok "unrecognized failure not retried" || note_fail "$(cat "$st/merge") attempts, want 1"
 
 echo "case: transient tag-push failure is retried"
 run_step ok flaky_twice
@@ -219,8 +255,27 @@ push_step = next((s for s in rel.get("steps", [])
                    if s.get("id") == "push_v4"), None)
 if push_step is None:
     bad("no step with id push_v4 found")
-elif "gh pr merge" not in push_step.get("run", ""):
-    bad("push_v4 no longer merges via a PR (#5222) — check for a regression back to a raw v4 push")
+else:
+    run = push_step.get("run", "")
+    # Comments in this step DISCUSS `gh pr merge` (explaining why it was
+    # abandoned), so the regression pins below must look at code only.
+    code = "\n".join(l for l in run.splitlines()
+                     if not l.lstrip().startswith("#"))
+    if "gh pr create" not in code:
+        bad("push_v4 no longer merges via a PR (#5222) — check for a regression back to a raw v4 push")
+    if "/merge" not in code or "gh api -X PUT" not in code:
+        bad("push_v4 no longer merges via the SHA-keyed merge API (#5318/#5324)")
+    if '-f sha="${commit_sha}"' not in code:
+        bad("the merge API call no longer passes -f sha=<head> — without it a mid-flight "
+            "head move merges the wrong tree instead of deferring (#5318/#5324)")
+    if "${{" in code:
+        bad("push_v4's code uses a ${{ }} expression — this step is extracted and run under "
+            "plain bash by this test, where that is a bad-substitution. Use the runner's "
+            "environment variables (e.g. $GITHUB_REPOSITORY) instead.")
+    if "gh pr merge" in code:
+        bad("push_v4 regressed to `gh pr merge`, which refuses any PR whose AGGREGATE "
+            "mergeStateStatus is BLOCKED — a pending non-required `tide` status alone is "
+            "enough to block every release forever (#5318/#5324)")
 sys.exit(0 if ok else 1)
 PY
 

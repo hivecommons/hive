@@ -49,9 +49,24 @@ name: Tagged Release
 #     — the same lookup this workflow's own wait-for-gate step already uses,
 #     and the same path every ordinary contributor PR into v4 merges
 #     through. That merge call is still retried for a bounded window in case
-#     GitHub's mergeable_state computation needs a moment to settle after the
+#     GitHub's required-status evaluation needs a moment to settle after the
 #     gate check lands, which is a real (if short) async step on GitHub's
 #     side independent of the #5222 root cause.
+#   - THE MERGE IS SHA-KEYED, NOT AGGREGATE-KEYED (#5318/#5324). That merge
+#     is performed by `gh api -X PUT .../pulls/{n}/merge -f sha=<head>`, NOT
+#     by `gh pr merge`. `gh pr merge` refuses any PR whose AGGREGATE
+#     `mergeStateStatus` is BLOCKED, and a pending NON-required commit
+#     status is enough to force BLOCKED even when the only required context
+#     is green: on release PR #5319, `gate` was success and `dco` was
+#     success, but `tide` sat PENDING (Tide never reports on a PR it will
+#     not act on), so `gh pr merge` returned "the base branch policy
+#     prohibits the merge" on every attempt for the full retry window. The
+#     API call is evaluated server-side against v4's ACTUAL required
+#     contexts for that SHA — protection is still fully enforced, an
+#     unsatisfied required check still yields 405 — it simply stops
+#     consulting a status the repo does not require. This is the same
+#     "trust the SHA lookup, not the aggregate or branch-scoped view"
+#     reasoning as the wait-for-gate step, extended one step further.
 #
 # IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
 # dated section) is what empties Unreleased, which re-triggers docker.yml on
@@ -505,44 +520,92 @@ jobs:
           pr_number="$(grep -oE '[0-9]+$' <<<"$pr_url")"
           echo "Opened PR #${pr_number}: ${pr_url}"
 
-          # The two live failure modes of a merge attempt, and their remedies
+          # #5318/#5324 (5th recurrence): this loop called `gh pr merge`, which
+          # refuses to act on a PR whose aggregate `mergeStateStatus` is
+          # BLOCKED, and reports `the base branch policy prohibits the merge`.
+          # On release PR #5319 that aggregate was BLOCKED while every input
+          # protection actually evaluates was green:
+          #
+          #     gate check-run on bb633caa   success   <- the ONLY required
+          #                                               context on v4
+          #     dco commit status            success
+          #     tide commit status           PENDING   <- never resolves
+          #     mergeable                    MERGEABLE
+          #     mergeStateStatus             BLOCKED   <- caused by tide
+          #
+          # `tide` is NOT a required status context on v4 (protection lists
+          # `gate` and nothing else), but a pending commit status still drags
+          # the aggregate to BLOCKED, and Tide holds that status pending
+          # indefinitely for a PR it is never going to act on. So the retry
+          # loop waited out its whole window for a state that could not change
+          # — the same shape of mistake as #5222, one layer up: waiting on an
+          # aggregate/branch-scoped view instead of the SHA-keyed evidence.
+          #
+          # The fix is the same fix, applied to the merge call: PUT
+          # /pulls/{n}/merge with the head SHA. The server still enforces
+          # branch protection on that SHA — an unsatisfied REQUIRED context
+          # is rejected with 405 — so this does not bypass the gate; it just
+          # stops consulting a non-required status that never reports. `sha=`
+          # additionally makes the call fail rather than merge if the PR head
+          # moved out from under this run.
+          #
+          # The three failure modes of a merge attempt, and their remedies
           # (carried over from #5142's push-retry logic, now applied to the
           # merge call instead of a raw push):
           #
-          #   "not mergeable"/mergeable_state transients (e.g. `blocked`
-          #   momentarily while GitHub finishes recomputing mergeability
-          #   after the gate check landed): retried for a bounded window.
+          #   "not mergeable"/mergeable_state transients (405 while GitHub
+          #   finishes recomputing mergeability after the gate check landed,
+          #   or a genuinely-unsatisfied required check that is still
+          #   settling): retried for a bounded window.
           #
           #   non-fast-forward equivalents (base branch moved, merge
-          #   conflict): v4 advanced mid-flight. Retrying could never
-          #   succeed — this release commit is parented on the old tip, and
-          #   rebasing it forward would tag source the already-published
-          #   images were not built from. Defer instead: exit green with a
-          #   notice, push nothing (tag included), and let the successor run
-          #   — triggered by the very merge that won — cut the release from
-          #   ITS tip. The `pushed` output gates the GitHub-Release step
-          #   below so a deferred run creates no release object either.
+          #   conflict, 409 head-SHA mismatch): v4 advanced mid-flight.
+          #   Retrying could never succeed — this release commit is parented
+          #   on the old tip, and rebasing it forward would tag source the
+          #   already-published images were not built from. Defer instead:
+          #   exit green with a notice, push nothing (tag included), and let
+          #   the successor run — triggered by the very merge that won — cut
+          #   the release from ITS tip. The `pushed` output gates the
+          #   GitHub-Release step below so a deferred run creates no release
+          #   object either.
+          #
+          #   anything else: hard-fail.
           # RELEASE_PUSH_GH006_WINDOW is a test seam (test-release-push-retry.sh
           # drives the exhaustion path with 0); production always uses 120s.
           deadline=$((SECONDS + ${RELEASE_PUSH_GH006_WINDOW:-120}))
           while true; do
-            if out="$(gh pr merge "$pr_number" --merge 2>&1)"; then
+            # $GITHUB_REPOSITORY (runner-provided) rather than the
+            # ${{ github.repository }} expression other steps use: this step's
+            # script is extracted verbatim and run under plain bash by
+            # test-release-push-retry.sh, where an unexpanded ${{ }} is a bash
+            # bad-substitution. Same value, and it keeps the step testable.
+            if out="$(gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge" \
+                        -f merge_method=merge -f sha="${commit_sha}" 2>&1)"; then
               echo "$out"
               merged=true
               break
             fi
             echo "$out"
-            if grep -qiE 'not mergeable because the base branch was modified|base branch was modified|is out of date' <<<"$out"; then
+            # 409 Conflict from this endpoint means either "Head branch was
+            # modified" (the sha= guard fired) or "Base branch was modified" —
+            # both are the base-moved case, not something a retry fixes.
+            if grep -qiE 'base branch was modified|head branch was modified|is out of date|HTTP 409' <<<"$out"; then
               echo "::notice::v4 advanced past ${SHA} while this release run was in flight — deferring to the successor run for the newer merge (see the RACES note in this workflow's header, #5142/#5222). Nothing was pushed; Unreleased is untouched."
               echo "pushed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if [ "$SECONDS" -lt "$deadline" ]; then
-              echo "PR #${pr_number} not mergeable yet (mergeable_state still settling after gate succeeded) — retrying in 8s..."
-              sleep 8
-              continue
+            # 405 Method Not Allowed is GitHub's "not mergeable" for this
+            # endpoint — including a required check that has not landed yet.
+            if grep -qiE 'HTTP 405|not mergeable|required status check' <<<"$out"; then
+              if [ "$SECONDS" -lt "$deadline" ]; then
+                echo "PR #${pr_number} not mergeable yet (required-status evaluation still settling after gate succeeded) — retrying in 8s..."
+                sleep 8
+                continue
+              fi
+              echo "::error::PR #${pr_number} still not mergeable ${RELEASE_PUSH_GH006_WINDOW:-120}s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact. Note this merge is SHA-keyed (#5318/#5324), so a pending non-required status such as 'tide' is no longer the cause; check the REQUIRED contexts on v4 against the check-runs for ${commit_sha}." >&2
+              exit 1
             fi
-            echo "::error::PR #${pr_number} still not mergeable 120s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact; inspect the PR's mergeable_state and required-status configuration." >&2
+            echo "::error::merging PR #${pr_number} failed for an unrecognized reason (see the API response above) — not retrying." >&2
             exit 1
           done
 
