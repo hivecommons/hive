@@ -2,10 +2,13 @@ package pushbroker
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -149,8 +152,11 @@ func TestF5_PushTokenNeverAppearsInGitArgv(t *testing.T) {
 func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	preAmendHead := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r, Logger: logger}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -163,6 +169,19 @@ func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
 	}
 	if want := "package main\n\nfunc main() {}\n"; string(got) != want {
 		t.Fatalf("trailing blank line not stripped: got %q, want %q", got, want)
+	}
+	// The amend path itself: HEAD must actually have moved (the strip amended
+	// the commit), and the reported Commit must be the NEW head, not the one
+	// the CLI originally committed with the trailing blank line still in it.
+	if res.Commit == preAmendHead {
+		t.Fatalf("commit did not change: still %s — normalisation amend did not run", preAmendHead)
+	}
+	postAmendHead := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	if res.Commit != postAmendHead {
+		t.Fatalf("Result.Commit = %s, want the post-amend HEAD %s", res.Commit, postAmendHead)
+	}
+	if !strings.Contains(buf.String(), "pushbroker normalised trailing blank lines") {
+		t.Fatalf("normalisation was not logged: %s", buf.String())
 	}
 }
 
@@ -235,6 +254,215 @@ func TestBrokerLeavesBinaryFileWithTrailingNewlinesAlone(t *testing.T) {
 	}
 	if !slices.Equal(got, binary) {
 		t.Fatalf("binary file mutated: got %v, want %v", got, binary)
+	}
+}
+
+// looksBinary samples only the leading 8000 bytes (git's own heuristic
+// window). A large, entirely clean text file must not be misclassified as
+// binary just because it exceeds that sample size, and — the actual
+// uncovered branch — the truncation itself (data[:sample]) must execute
+// without a NUL anywhere in the full file.
+func TestBrokerNormalisesLargeCleanTextFile(t *testing.T) {
+	dir := initRepo(t)
+	var b strings.Builder
+	for i := 0; i < 2000; i++ {
+		b.WriteString("line " + strconv.Itoa(i) + "\n")
+	}
+	body := b.String()                        // > 8000 bytes, well-formed text, single trailing newline
+	writeCommit(t, dir, "big.txt", body+"\n") // add one extra blank line at EOF
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "big.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != body {
+		t.Fatalf("large clean text file not normalised correctly (len got=%d want=%d)", len(got), len(body))
+	}
+}
+
+// A large binary file whose only NUL byte falls INSIDE the leading 8000-byte
+// sample must still be caught — proving the sample window, not the whole
+// file, is what looksBinary actually inspects.
+func TestBrokerDetectsBinaryWithinLeadingSample(t *testing.T) {
+	dir := initRepo(t)
+	data := make([]byte, 9000)
+	for i := range data {
+		data[i] = 'x'
+	}
+	data[100] = 0x00 // well inside the 8000-byte sample
+	data[len(data)-1] = '\n'
+	data[len(data)-2] = '\n' // trailing blank line, which a text path WOULD strip
+	path := filepath.Join(dir, "blob.bin")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "blob.bin")
+	runGit(t, dir, "commit", "-m", "large binary")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !slices.Equal(got, data) {
+		t.Fatal("large binary file with a NUL in its leading sample was mutated")
+	}
+}
+
+// A file consisting entirely of newlines is the degenerate input
+// trimTrailingBlankLines guards explicitly: bytes.TrimRight would strip
+// everything, so the function must fall back to a single newline rather than
+// emit an empty file.
+func TestBrokerCollapsesAllNewlineFileToOneNewline(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "blank.txt", "\n\n\n\n")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "blank.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "\n" {
+		t.Fatalf("all-newline file = %q, want a single newline (not empty)", got)
+	}
+}
+
+// failingRunner lets a test fail one specific git subcommand (matched by a
+// substring of the joined argv) while every other invocation proceeds through
+// the real git binary — used to exercise stripTrailingBlankLines' own error
+// paths (git add / git commit --amend failing) without hand-rolling a full
+// scripted double for the whole broker.
+type failingRunner struct {
+	failSubstr string
+	failErr    error
+}
+
+func (f *failingRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && strings.Contains(strings.Join(args, " "), f.failSubstr) {
+		return []byte("fatal: injected failure"), f.failErr
+	}
+	if name == "git" && slices.Contains(args, "push") {
+		return []byte("ok"), nil
+	}
+	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
+// If `git add` fails while staging a normalised file, Run must surface that
+// as a wrapped, attributable error rather than silently pushing the
+// unnormalised commit.
+func TestBrokerSurfacesGitAddFailureDuringNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &failingRunner{failSubstr: "add --", failErr: errors.New("disk full")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+}
+
+// Same shape for the amend itself: a failed `git commit --amend` must not be
+// swallowed.
+func TestBrokerSurfacesGitAmendFailureDuringNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &failingRunner{failSubstr: "commit --amend", failErr: errors.New("hook rejected")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+}
+
+// nthCallFailingRunner fails a matched git subcommand only on its Nth
+// occurrence (1-indexed), letting an earlier identical invocation (e.g. the
+// FIRST "rev-parse HEAD", before any normalisation) succeed while a LATER one
+// (the post-amend re-read) fails. slices/strings-substring matched, same as
+// failingRunner.
+type nthCallFailingRunner struct {
+	failSubstr string
+	failOnCall int
+	failErr    error
+	seen       int
+}
+
+func (r *nthCallFailingRunner) Run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
+	if name == "git" && strings.Contains(strings.Join(args, " "), r.failSubstr) {
+		r.seen++
+		if r.seen == r.failOnCall {
+			return []byte("fatal: injected failure"), r.failErr
+		}
+	}
+	if name == "git" && slices.Contains(args, "push") {
+		return []byte("ok"), nil
+	}
+	return ExecRunner{}.Run(ctx, dir, env, name, args...)
+}
+
+// If HEAD cannot be re-read immediately after a successful amend, Run must
+// surface that rather than report success with a stale (pre-amend) commit.
+func TestBrokerSurfacesReadHeadFailureAfterAmend(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &nthCallFailingRunner{failSubstr: "rev-parse HEAD", failOnCall: 2, failErr: errors.New("index corrupt")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reading HEAD after newline normalisation") {
+		t.Fatalf("Run error = %v, want it to mention reading HEAD after newline normalisation", err)
+	}
+}
+
+// A changed file that becomes unreadable between being listed by `git diff
+// --name-only` and stripTrailingBlankLines opening it (permission revoked
+// mid-run, in practice a filesystem race) must surface as an attributable
+// error rather than silently skip normalisation.
+func TestBrokerSurfacesReadFailureDuringNormalisation(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores file permissions, so an unreadable-file test cannot fail as designed")
+	}
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	path := filepath.Join(dir, "main.go")
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0o644)
+	r := &recordingRunner{}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
+	}
+}
+
+// A changed file that cannot be WRITTEN back must surface as an attributable
+// error, not a silently unnormalised push. os.WriteFile on an existing path
+// opens O_WRONLY|O_TRUNC on the file itself (pushbroker.go's own doc comment
+// notes this), so it is the FILE's write permission that has to be revoked —
+// a read-only directory alone still permits truncating an existing file on at
+// least one common platform, which is what made an earlier version of this
+// test pass for the wrong reason.
+func TestBrokerSurfacesWriteFailureDuringNormalisation(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores file permissions, so a read-only-file test cannot fail as designed")
+	}
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	path := filepath.Join(dir, "main.go")
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0o644)
+	r := &recordingRunner{}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
+		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
 	}
 }
 
