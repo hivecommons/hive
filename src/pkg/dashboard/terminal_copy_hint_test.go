@@ -5,11 +5,13 @@ import (
 	"testing"
 )
 
-// TestTerminalCopyHints pins the usable fallback for issue #5188. Released
-// ttyd does not consume OSC52 clipboard writes, and tmux mouse mode intercepts
-// ordinary selection, so both dashboard agent layouts must explain
-// Shift-selection next to their terminal controls. Login-blocked agents must
-// keep the stronger URL warning even after the ordinary hint has been dismissed.
+// TestTerminalCopyHints pins the usable fallback for issue #5188, as reshaped
+// by #5327. Released ttyd does not consume OSC52 clipboard writes, and tmux
+// mouse mode intercepts ordinary selection, so both dashboard agent layouts
+// must still reach the Shift-selection advice — but it now lives in a tooltip
+// on a small affordance instead of a full sentence of permanent chrome on
+// every agent card. Login-blocked agents keep the stronger URL warning, which
+// is never dismissible.
 func TestTerminalCopyHints(t *testing.T) {
 	raw, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
@@ -21,10 +23,16 @@ func TestTerminalCopyHints(t *testing.T) {
 		"const TERMINAL_COPY_HINT_LS_KEY = 'hive-terminal-copy-hint-dismissed';",
 		"try { return localStorage.getItem(TERMINAL_COPY_HINT_LS_KEY) === '1'; }",
 		"if (sessionUnavailable) return '';",
-		"if (!needsLogin && terminalCopyHintDismissed()) {",
-		"You’ll be copying a URL: hold <strong>Shift</strong> while selecting",
-		"Terminal copy: <strong>⇧-drag</strong> to select",
-		"const dismiss = needsLogin ? '' : '<button type=\"button\"",
+		"if (terminalCopyHintDismissed()) return '';",
+		// #5327: the keyboard advice survives, but as tooltip text rather than
+		// a rendered sentence. Losing the ⇧/Ctrl+Shift+C content entirely
+		// would strand operators on a terminal they cannot select out of.
+		"const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging",
+		"Ctrl+Shift+C copies and Ctrl+Shift+V pastes.",
+		`title="${esc(TERMINAL_KEYBOARD_COPY_HINT)}"`,
+		// The login-blocked row still says its piece in full — that one
+		// predicts a URL must be copied right now.
+		"This agent is waiting on a login.",
 		"try { localStorage.setItem(TERMINAL_COPY_HINT_LS_KEY, '1'); } catch {}",
 		".terminal-copy-hint:not(.needs-login)",
 		"data-action=\"dismissTerminalCopyHint\"",
@@ -42,12 +50,25 @@ func TestTerminalCopyHints(t *testing.T) {
 	if strings.Contains(html, `onclick="dismissTerminalCopyHint`) {
 		t.Error("terminal copy hint reintroduced an inline event handler; CSP requires data-action delegation")
 	}
+
+	// #5327: the ⇧-drag / Ctrl+Shift+C sentence must not come back as
+	// always-on chrome. It was noise on every card, and welding an unrelated
+	// copy control onto it is what made that control unreadable.
+	if strings.Contains(html, "Terminal copy: <strong>⇧-drag</strong> to select") {
+		t.Error("the always-visible keyboard hint sentence returned; #5327 moved it into a tooltip")
+	}
+	// A hover-only tooltip strands touch and keyboard users, so the
+	// affordance must also be clickable.
+	if !strings.Contains(html, `data-action="showTerminalKeyboardHint"`) {
+		t.Error("keyboard-copy help must be reachable by click, not hover alone")
+	}
 }
 
 // TestTerminalCopyUrlButton pins the part of #5188 that actually completes a
-// copy rather than explaining a workaround. The hint tells an operator how to
-// work around the terminal; this button does the copy for them, and the
-// contracts below are the ones whose loss would silently return the bug.
+// copy rather than explaining a workaround, under the #5327 rules that make it
+// legible: it is named for its case ("Copy login URL"), it is rendered only
+// when a login is actually in flight, and it leads with a pre-selected field
+// instead of a clipboard write that this deployment routinely blocks.
 func TestTerminalCopyUrlButton(t *testing.T) {
 	raw, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
@@ -67,9 +88,9 @@ func TestTerminalCopyUrlButton(t *testing.T) {
 		"ok = document.execCommand('copy');",
 		// Every failure path must SAY something.
 		"showToast(`Could not read ${agentName}'s terminal:",
-		"showToast(`No URL on ${agentName}'s terminal right now`",
-		"showTerminalUrlFallback(agentName, url);",
-		"Clipboard access needs HTTPS or localhost",
+		"showToast(`No login URL on ${agentName}'s terminal right now`",
+		"showTerminalUrlPanel(agentName, urls[0]);",
+		"Automatic copying needs HTTPS or localhost",
 		// An error toast is sticky and dismisses on any click within it, so
 		// the fallback input must stop propagation or the first click into it
 		// closes the toast and takes the URL away.
@@ -80,11 +101,46 @@ func TestTerminalCopyUrlButton(t *testing.T) {
 		}
 	}
 
-	// The button must survive hint dismissal. Dismissing the advice must not
-	// remove the only affordance that actually copies.
-	if !strings.Contains(html, "hint-dismissed") {
-		t.Error("dismissing the hint must retain the copy-URL button, not delete the row")
+	// #5327 (1): the label must name the case, not the mechanism. An operator
+	// asked "what is the 'copy URL' for?" precisely because it did not.
+	if !strings.Contains(html, "Copy login URL</button>") {
+		t.Error("copy control must be labelled for the login case it exists for, not the mechanism")
 	}
+	if strings.Contains(html, "🔗 copy URL") {
+		t.Error("the mechanism-named 'copy URL' label returned; #5327 renamed it")
+	}
+
+	// #5327 (2): HIDDEN, not merely disabled, when no login is in flight.
+	// needsLogin is the pane poller's own observation of a login prompt — the
+	// same signal behind the 🔑 badge — so the control is present exactly when
+	// there is a login URL worth offering.
+	if !strings.Contains(html, "if (!agentName || !needsLogin) return '';") {
+		t.Error("copy-URL button must be omitted entirely when no login is in flight")
+	}
+	if !strings.Contains(html, "terminalCopyUrlButtonHtml(agentName, needsLogin)") {
+		t.Error("copy-URL button must be passed the needsLogin signal that gates it")
+	}
+	// It must offer the auth subset only. Falling back to the unfiltered list
+	// is what handed the operator a repository URL under a login label.
+	if !strings.Contains(html, "Array.isArray(d.authUrls) ? d.authUrls : []") {
+		t.Error("copy control must consume authUrls, never the unfiltered URL list")
+	}
+
+	// #5327 (4): the pre-selected field is shown FIRST and the clipboard
+	// write only reports its outcome, so a blocked write never becomes the
+	// whole result of the operator's click.
+	if !strings.Contains(html, "const ok = await writeClipboardText(url);") {
+		t.Error("clipboard write must still be attempted underneath the field")
+	}
+	if !strings.Contains(html, "'✓ Also copied to your clipboard.'") {
+		t.Error("a successful clipboard write must be reported as a bonus, not the headline")
+	}
+	// The field must be usable: an info toast self-dismisses on a timer, which
+	// would take the URL away mid-read.
+	if !strings.Contains(html, "if (toast) makeToastSticky(toast);") {
+		t.Error("the login-URL panel must not self-dismiss while the operator is copying from it")
+	}
+
 	if strings.Contains(html, `onclick="copyTerminalUrl`) {
 		t.Error("copy-URL button used an inline handler; CSP requires data-action delegation")
 	}

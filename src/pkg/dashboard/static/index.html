@@ -793,6 +793,17 @@
     }
     .terminal-copy-hint-dismiss:hover { color: var(--text); }
     .terminal-copy-hint-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* #5327: the ⇧-drag / Ctrl+Shift+C advice used to be a full sentence on
+       every agent card. It is now this one small affordance carrying the
+       advice in its tooltip, so the row costs a few characters instead of a
+       line of permanent chrome. */
+    .terminal-copy-hint-help {
+      padding: 0; border: 0; background: transparent; color: var(--muted);
+      cursor: help; font: inherit; text-decoration: underline dotted;
+      text-underline-offset: 2px;
+    }
+    .terminal-copy-hint-help:hover { color: var(--text); }
+    .terminal-copy-hint-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     /* Sits after the message and before the ×, so the working control is the
        last thing read before the dismissal. margin-left:auto pushes it right
        when the hint text has been dismissed and it is the only child. */
@@ -806,13 +817,19 @@
     .terminal-copy-url-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     /* The × must stay rightmost even though the button also claims auto. */
     .terminal-copy-url-btn + .terminal-copy-hint-dismiss { margin-left: 0; }
-    .terminal-copy-hint.hint-dismissed { justify-content: flex-end; }
-    /* Manual-copy escape hatch inside the failure toast. */
+    /* The operator's copy surface inside the login-URL toast (#5327): shown
+       first, not as a fallback, because a programmatic write is blocked in
+       any non-secure context. */
     .terminal-copy-url-fallback {
       display: block; width: 100%; margin-top: 8px; padding: 4px 6px;
       border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
       border-radius: var(--radius); background: var(--bg-soft);
       color: var(--text); font-family: var(--font-mono); font-size: 0.72rem;
+    }
+    /* Reports whether the automatic clipboard write also landed. Secondary to
+       the field above it, which always works. */
+    .terminal-copy-url-note {
+      margin-top: 6px; font-size: 0.7rem; line-height: 1.4; opacity: 0.85;
     }
     .cli-login-btn { border: none; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; }
     .cli-login-btn.claude { background: #d97706; color: #fff; }
@@ -6088,45 +6105,67 @@
     /* ttyd 1.7.7 does not handle OSC52 writes in its browser client, while
        tmux mouse mode owns ordinary drag selection. Put the escape hatch next
        to the terminal control rather than in a first-open toast that is gone
-       by the time it matters. A login prompt always wins over the persisted
-       baseline dismissal because it predicts an OAuth URL must be copied. */
+       by the time it matters.
+
+       #5327: the ⇧-drag / Ctrl+Shift+C advice is useful the first time and
+       pure noise on every agent card thereafter, so the baseline row is now a
+       single small "keyboard copy" affordance carrying the advice in its
+       tooltip, dismissible for good. The login-blocked row keeps its full
+       sentence — that one predicts an OAuth URL must be copied right now, so
+       it earns the space and always wins over the persisted dismissal. */
+    const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then Ctrl+Shift+C copies and Ctrl+Shift+V pastes.';
     function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName) {
       if (sessionUnavailable) return '';
-      const copyBtn = terminalCopyUrlButtonHtml(agentName);
-      /* A dismissed baseline hint hides the ADVICE, never the working copy
-         control: dismissal means "I know the workaround", not "take the fix
-         away". The row survives, carrying only the button. */
-      if (!needsLogin && terminalCopyHintDismissed()) {
-        return copyBtn ? `<div class="terminal-copy-hint hint-dismissed">${copyBtn}</div>` : '';
+      /* #5327: the copy control is for a LOGIN link. It is rendered only
+         where one is expected — see terminalCopyUrlButtonHtml — rather than
+         standing on every card offering whatever URL the pane happens to
+         hold. */
+      if (!needsLogin) {
+        /* Dismissed means gone. Before #5327 the row survived dismissal to
+           keep the copy button alive; now that button only exists on a
+           login-blocked card, which never reaches this branch, so there is
+           nothing left to preserve. */
+        if (terminalCopyHintDismissed()) return '';
+        const help = `<button type="button" class="terminal-copy-hint-help" data-action="showTerminalKeyboardHint" title="${esc(TERMINAL_KEYBOARD_COPY_HINT)}" aria-label="How to copy text out of this terminal">⌨ keyboard copy</button>`;
+        const dismiss = '<button type="button" class="terminal-copy-hint-dismiss" data-action="dismissTerminalCopyHint" aria-label="Dismiss terminal copy hint" title="Don’t show this hint again">×</button>';
+        return `<div class="terminal-copy-hint" role="note">${help}${dismiss}</div>`;
       }
-      const message = needsLogin
-        ? 'You’ll be copying a URL: hold <strong>Shift</strong> while selecting · <strong>Ctrl+Shift+V</strong> pastes. Wrapped URLs may copy with line breaks — or use the button, which rejoins them.'
-        : 'Terminal copy: <strong>⇧-drag</strong> to select · <strong>Ctrl+Shift+C / Ctrl+Shift+V</strong>';
-      const dismiss = needsLogin ? '' : '<button type="button" class="terminal-copy-hint-dismiss" data-action="dismissTerminalCopyHint" aria-label="Dismiss terminal copy hint" title="Don’t show this hint again">×</button>';
-      return `<div class="terminal-copy-hint${needsLogin ? ' needs-login' : ''}" role="note">${message}${copyBtn}${dismiss}</div>`;
+      const copyBtn = terminalCopyUrlButtonHtml(agentName, needsLogin);
+      const message = 'This agent is waiting on a login. The URL is on its terminal — use the button to copy it whole (wrapped lines are rejoined), or hold <strong>Shift</strong> while selecting.';
+      return `<div class="terminal-copy-hint needs-login" role="note">${message}${copyBtn}</div>`;
+    }
+    /* The tooltip is the primary surface; this is the click-through for
+       touch and keyboard users, who never get a hover. */
+    function showTerminalKeyboardHint() {
+      showToast(TERMINAL_KEYBOARD_COPY_HINT, 'info');
     }
     function dismissTerminalCopyHint() {
       try { localStorage.setItem(TERMINAL_COPY_HINT_LS_KEY, '1'); } catch {}
-      /* Strip the advice text and the × but keep the copy button, matching
-         what terminalCopyHintHtml renders on the next full re-render. */
-      document.querySelectorAll('.terminal-copy-hint:not(.needs-login)').forEach(el => {
-        const btn = el.querySelector('.terminal-copy-url-btn');
-        if (!btn) { el.remove(); return; }
-        el.classList.add('hint-dismissed');
-        el.removeAttribute('role');
-        el.replaceChildren(btn);
-      });
+      /* Remove the baseline row, matching what terminalCopyHintHtml renders
+         on the next full re-render — the two paths must agree or the hint
+         reappears on the next poll. The :not(.needs-login) selector is what
+         protects the login-blocked row, which carries the copy control and is
+         never dismissible. */
+      document.querySelectorAll('.terminal-copy-hint:not(.needs-login)').forEach(el => el.remove());
     }
 
-    /* The hint above tells an operator how to work AROUND the terminal. This
-       button does the copy for them: the pane is captured server-side with
-       `capture-pane -J`, which rejoins terminal-wrapped lines, so a wrapped
-       OAuth URL comes back whole. Shift-drag cannot do that — it copies the
-       wrap's newlines along with the URL, which is the failure mode that
-       makes a pasted login URL silently invalid. */
-    function terminalCopyUrlButtonHtml(agentName) {
-      if (!agentName) return '';
-      return `<button type="button" class="terminal-copy-url-btn" data-action="copyTerminalUrl" data-agent="${esc(agentName)}" title="Capture this agent's pane server-side and copy the most recent URL — wrapped lines are rejoined, so an OAuth URL copies whole">🔗 copy URL</button>`;
+    /* Copies the LOGIN URL off the agent's pane. The capture is server-side
+       with `capture-pane -J`, which rejoins terminal-wrapped lines, so a
+       wrapped OAuth URL comes back whole — Shift-drag cannot do that, it
+       copies the wrap's newlines along with the URL, which is the failure
+       mode that makes a pasted login URL silently invalid.
+
+       #5327: rendered ONLY when a login is actually in flight. needsLogin is
+       the pane poller's own observation that a login prompt is on screen (see
+       _agentNeedsLogin), which is the same condition that paints the 🔑 badge
+       — so the control appears exactly when there is a login URL worth
+       offering, and is absent (not merely disabled) the rest of the time.
+       Naming the case rather than the mechanism is the other half: an
+       operator who sees "Copy login URL" beside a 🔑 agent does not have to
+       hover a tooltip to find out what it is for. */
+    function terminalCopyUrlButtonHtml(agentName, needsLogin) {
+      if (!agentName || !needsLogin) return '';
+      return `<button type="button" class="terminal-copy-url-btn" data-action="copyTerminalUrl" data-agent="${esc(agentName)}" title="Show this agent\u2019s sign-in URL, captured whole from its terminal — wrapped lines are rejoined so the OAuth link is not broken by the wrap">🔑 Copy login URL</button>`;
     }
 
     /* Writes text to the clipboard, reporting honestly when it cannot.
@@ -6164,51 +6203,76 @@
         const r = await fetch(`/api/agents/${encodeURIComponent(agentName)}/terminal-urls`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
-        urls = Array.isArray(d.urls) ? d.urls : [];
+        /* #5327: authUrls is the sign-in subset. The unfiltered `urls` list
+           is deliberately NOT used as a fallback — offering "the newest URL
+           on the pane" under a button labelled "Copy login URL" is precisely
+           the mislabelling being fixed. */
+        urls = Array.isArray(d.authUrls) ? d.authUrls : [];
       } catch (e) {
         showToast(`Could not read ${agentName}'s terminal: ${e.message || e}`, 'error');
         return;
       }
       if (!urls.length) {
-        showToast(`No URL on ${agentName}'s terminal right now`, 'info');
+        showToast(`No login URL on ${agentName}'s terminal right now`, 'info');
         return;
       }
-      const url = urls[0];
-      const ok = await writeClipboardText(url);
-      if (ok) {
-        showToast('Terminal URL copied to clipboard', 'success');
-        return;
-      }
-      // Both clipboard paths failed — almost always an insecure context with
-      // execCommand also disabled. Never fail silently: this is the bug being
-      // fixed. Put the URL somewhere the operator can select it by hand.
-      showTerminalUrlFallback(agentName, url);
+      /* #5327: lead with the pre-selected field rather than a programmatic
+         write. A self-hosted hive is routinely reached over plain http:// on
+         a LAN address, which is not a secure context, so the write is BLOCKED
+         more often than it succeeds here — and a blocked write spends the
+         operator's click and returns instructions. Showing the URL, selected
+         and ready for one Cmd/Ctrl+C, always works; the automatic write is
+         still attempted underneath, and when it lands the panel just says so.
+         Either way the operator ends the click holding the URL. */
+      showTerminalUrlPanel(agentName, urls[0]);
     }
 
-    /* Last resort when the browser refuses to write the clipboard at all:
-       show the URL in a selectable, pre-selected input with a plain-language
-       reason. The operator still gets the joined URL — just with one manual
-       Cmd/Ctrl+C — instead of a button that appeared to do nothing. */
-    function showTerminalUrlFallback(agentName, url) {
-      const reason = window.isSecureContext
-        ? 'This browser blocked the clipboard write.'
-        : 'Clipboard access needs HTTPS or localhost, and this hive is being served over plain http.';
-      const toast = showToast(`Could not copy automatically. ${reason} Press Cmd/Ctrl+C to copy the selected URL.`, 'error');
+    /* Presents the login URL in a selectable, pre-selected input and reports
+       whether the clipboard write also succeeded. This is the PRIMARY surface
+       (#5327), not a last resort: it is the only path that works in every
+       browser context this dashboard is served from. */
+    async function showTerminalUrlPanel(agentName, url) {
+      const toast = showToast(`Login URL from ${agentName}'s terminal — press Cmd/Ctrl+C to copy the selected text.`, 'info');
+      /* An info toast self-dismisses on a timer, which would take the URL
+         away mid-read. Stick it explicitly: this panel is the operator's copy
+         surface and closes only when they say so. Sticking it directly rather
+         than raising the toast to 'error' keeps it from reading as a failure
+         — in the common path nothing failed. */
+      if (toast) makeToastSticky(toast);
       const input = document.createElement('input');
       input.type = 'text';
       input.readOnly = true;
       input.value = url;
       input.className = 'terminal-copy-url-fallback';
-      input.setAttribute('aria-label', `URL from ${agentName}'s terminal`);
+      input.setAttribute('aria-label', `Login URL from ${agentName}'s terminal`);
       /* An error toast is made sticky, and makeToastSticky puts a
          dismiss-on-click listener on the WHOLE toast. Without this the first
-         click into the input — the one action this fallback exists to invite —
+         click into the input — the one action this panel exists to invite —
          would close the toast and take the URL with it. */
       input.addEventListener('click', e => e.stopPropagation());
       if (toast) toast.appendChild(input);
       else document.body.appendChild(input);
       input.focus();
       input.select();
+
+      /* Try the clipboard too, but only report the OUTCOME — never let a
+         refused write become the whole result of the click. */
+      const ok = await writeClipboardText(url);
+      // Re-select: the off-screen textarea execCommand uses steals the
+      // selection, which would leave the operator's Cmd/Ctrl+C copying
+      // nothing if the write was refused.
+      input.focus();
+      input.select();
+      if (!toast || !toast.isConnected) return;
+      const note = document.createElement('div');
+      note.className = 'terminal-copy-url-note';
+      note.textContent = ok
+        ? '✓ Also copied to your clipboard.'
+        : (window.isSecureContext
+          ? 'This browser blocked the automatic clipboard write, so copy it by hand above.'
+          : 'Automatic copying needs HTTPS or localhost and this hive is served over plain http, so copy it by hand above.');
+      note.addEventListener('click', e => e.stopPropagation());
+      toast.appendChild(note);
     }
 
     async function openTerminal(agentName, href) {
@@ -14206,6 +14270,7 @@ function burnAreaChart() {
         case 'kickEmpty': { const inp = document.getElementById('kick-prompt-' + agent); if (inp) inp.value = ''; kick(agent); } break;
         case 'openTerminal': e.preventDefault(); openTerminal(agent, el.href); break;
         case 'copyTerminalUrl': e.stopPropagation(); copyTerminalUrl(agent); break;
+        case 'showTerminalKeyboardHint': e.stopPropagation(); showTerminalKeyboardHint(); break;
         case 'togglePin': togglePin(agent, el.dataset.pinType, el.dataset.unpin === 'true'); break;
         case 'resetRestarts': resetRestarts(agent); break;
         case 'deleteAgentFromConfig': deleteAgentFromConfig(agent); break;

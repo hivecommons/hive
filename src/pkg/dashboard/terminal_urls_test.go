@@ -93,3 +93,90 @@ func TestPrepareTerminalURLsRedacts(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterAuthURLs pins the #5327 fix: the dashboard's "Copy login URL"
+// control must be offered a sign-in link or nothing at all. The bug it fixes
+// is an operator with no login in flight clicking the control and receiving a
+// repository URL scraped from the agent's own output — a URL they never asked
+// for, under a label promising something else.
+func TestFilterAuthURLs(t *testing.T) {
+	t.Run("keeps an OAuth authorize URL", func(t *testing.T) {
+		// The flow the control exists for.
+		const login = "https://claude.ai/oauth/authorize?code=true&client_id=abc123"
+		got := filterAuthURLs([]string{login})
+		if len(got) != 1 || got[0] != login {
+			t.Fatalf("the OAuth login URL must survive filtering, got %v", got)
+		}
+	})
+
+	t.Run("drops URLs an agent merely printed", func(t *testing.T) {
+		// Exactly what the issue observed: with no auth URL on the pane the
+		// control offered a repo URL from the agent's own output.
+		for _, u := range []string{
+			"https://github.com/kubestellar/hive",
+			"https://github.com/kubestellar/hive/pull/5315",
+			"https://pkg.go.dev/net/http",
+			"https://example.com/docs/getting-started",
+		} {
+			if got := filterAuthURLs([]string{u}); len(got) != 0 {
+				t.Errorf("non-auth URL %q was offered as a login URL", u)
+			}
+		}
+	})
+
+	t.Run("a hostname that merely reads like auth does not qualify", func(t *testing.T) {
+		// Markers are matched on path+query only, so prose about an OAuth
+		// demo site cannot dress an ordinary link up as a sign-in link.
+		if got := filterAuthURLs([]string{"https://oauth-authorize-demo.example.com/blog"}); len(got) != 0 {
+			t.Fatalf("host-only match promoted a non-auth URL: %v", got)
+		}
+	})
+
+	t.Run("preserves newest-first order", func(t *testing.T) {
+		got := filterAuthURLs([]string{
+			"https://a.test/oauth/authorize?n=1",
+			"https://github.com/kubestellar/hive",
+			"https://b.test/login/oauth?n=2",
+		})
+		if len(got) != 2 || got[0] != "https://a.test/oauth/authorize?n=1" {
+			t.Fatalf("filtering must not reorder, got %v", got)
+		}
+	})
+
+	t.Run("empty in empty out", func(t *testing.T) {
+		if got := filterAuthURLs(nil); len(got) != 0 {
+			t.Fatalf("want empty, got %v", got)
+		}
+	})
+}
+
+// TestAuthURLsStayRedacted keeps the #5315 security invariant attached to the
+// new list too: filtering runs on the ALREADY-redacted output of
+// prepareTerminalURLs, so a credential-bearing URL can never reach the
+// dashboard through authUrls either. A `?token=` string is URL-shaped and is
+// the single most likely credential in a pane, so this is the shape most worth
+// pinning.
+func TestAuthURLsStayRedacted(t *testing.T) {
+	pane := "sign in: https://hive.test/login/oauth?token=ghp_" + strings.Repeat("A", 36) + "\n"
+	for _, u := range filterAuthURLs(prepareTerminalURLs(pane)) {
+		if strings.Contains(u, "REDACTED") || strings.Contains(u, "***") {
+			t.Fatalf("offered an auth URL carrying a redaction marker: %q", u)
+		}
+		if strings.Contains(u, strings.Repeat("A", 36)) {
+			t.Fatalf("leaked an unredacted token through the auth URL list: %q", u)
+		}
+	}
+}
+
+// TestDeviceFlowStaysExcluded restates the deliberate #5315 trade in the new
+// filter's terms. deviceCodeLineRedactor blanks any `login/device` line
+// wholesale because it carries a one-time code beside the URL, so a GitHub
+// device-flow URL never reaches either list — even though `/login/device` is
+// an authURLMarker. The device flow has its own first-class dashboard control
+// that copies the code, so nothing is lost.
+func TestDeviceFlowStaysExcluded(t *testing.T) {
+	pane := "! First copy your one-time code: ABCD-1234\nOpen https://github.com/login/device and paste it\n"
+	if got := filterAuthURLs(prepareTerminalURLs(pane)); len(got) != 0 {
+		t.Fatalf("device-flow URL must not be offered (its line carries the code): %v", got)
+	}
+}

@@ -46,10 +46,16 @@ const terminalURLTrailing = `.,;:!?)]}'"`
 // retained tmux scrollback, most recent first, so the dashboard can offer
 // click-to-copy for a URL the operator cannot select out of the terminal.
 //
-// Response: {"urls": ["https://…", …]}. An agent with no session, or with no
-// URL on screen, is not an error — it returns an empty list, because "there is
-// nothing to copy right now" is a normal state the dashboard renders as a
-// disabled control rather than a failure.
+// Response: {"urls": [...], "authUrls": [...]}. `authUrls` is the subset that
+// looks like a sign-in link (see isAuthURL) and is the ONLY list the dashboard
+// offers to copy — issue #5327: an operator with no login in flight was handed
+// a repository URL scraped from the agent's own output, which they had never
+// asked for. `urls` is retained for callers that want the unfiltered view.
+//
+// An agent with no session, or with no URL on screen, is not an error — it
+// returns empty lists, because "there is nothing to copy right now" is a
+// normal state the dashboard renders by hiding the control rather than as a
+// failure.
 func (s *Server) handleAgentTerminalURLs(w http.ResponseWriter, r *http.Request) {
 	if s.deps == nil || s.deps.AgentMgr == nil {
 		jsonError(w, "agent manager unavailable", http.StatusServiceUnavailable)
@@ -61,13 +67,14 @@ func (s *Server) handleAgentTerminalURLs(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		// A stopped or never-started agent has no pane to read. That is not a
 		// server fault and must not render as an error in the dashboard.
-		jsonResponse(w, map[string]interface{}{"urls": []string{}})
+		jsonResponse(w, map[string]interface{}{"urls": []string{}, "authUrls": []string{}})
 		return
 	}
 
 	// The pane is a live capture; never let an intermediary serve a stale copy.
 	w.Header().Set("Cache-Control", "no-store")
-	jsonResponse(w, map[string]interface{}{"urls": prepareTerminalURLs(log)})
+	urls := prepareTerminalURLs(log)
+	jsonResponse(w, map[string]interface{}{"urls": urls, "authUrls": filterAuthURLs(urls)})
 }
 
 // prepareTerminalURLs is everything handleAgentTerminalURLs does to a captured
@@ -118,4 +125,80 @@ func prepareTerminalURLs(log string) []string {
 		}
 	}
 	return urls
+}
+
+// authURLMarkers are substrings that identify a URL as a sign-in link rather
+// than an incidental URL the agent happened to print. Issue #5327: the copy
+// control was offered unconditionally, so a pane with no login in flight
+// returned a repository URL from the agent's own output — a URL the operator
+// never asked for, attached to a button whose whole reason to exist is the
+// login case.
+//
+// Kept deliberately narrow. A false negative hides a control the operator can
+// still work around (open the terminal, or use the full log); a false positive
+// reintroduces exactly the bug being fixed, by promising "Copy login URL" and
+// delivering whatever else was on screen. Matching is case-insensitive because
+// CLIs are inconsistent about it, and is done on the path+query only so a host
+// named e.g. "oauth-demo.example.com" in ordinary output cannot qualify.
+var authURLMarkers = []string{
+	"/oauth/authorize",
+	"/oauth2/authorize",
+	"/authorize",
+	"/cai/oauth",
+	"/login/oauth",
+	"/login/device",
+	"/device/code",
+	"/activate",
+	"/signin",
+	"/sign-in",
+	"/auth/callback",
+}
+
+// authURLHosts are hosts whose *sole* dashboard-relevant purpose is
+// authentication, so any URL on them is a sign-in link regardless of path.
+var authURLHosts = []string{
+	"claude.ai/oauth",
+	"console.anthropic.com/oauth",
+	"accounts.google.com",
+}
+
+// isAuthURL reports whether u is a sign-in link an operator is expected to
+// open in a browser to unwedge an agent. See authURLMarkers for why this is
+// intentionally conservative.
+func isAuthURL(u string) bool {
+	lower := strings.ToLower(u)
+	for _, h := range authURLHosts {
+		if strings.Contains(lower, h) {
+			return true
+		}
+	}
+	// Strip the scheme and host so a marker can only match in the path or
+	// query, never in a hostname that merely reads like one.
+	rest := lower
+	if i := strings.Index(rest, "://"); i >= 0 {
+		rest = rest[i+3:]
+	}
+	slash := strings.IndexAny(rest, "/?#")
+	if slash < 0 {
+		return false
+	}
+	rest = rest[slash:]
+	for _, m := range authURLMarkers {
+		if strings.Contains(rest, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterAuthURLs keeps only the sign-in links, preserving the newest-first
+// order prepareTerminalURLs established.
+func filterAuthURLs(urls []string) []string {
+	out := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if isAuthURL(u) {
+			out = append(out, u)
+		}
+	}
+	return out
 }

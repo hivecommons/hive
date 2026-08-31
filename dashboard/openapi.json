@@ -2121,7 +2121,7 @@
           "Agents"
         ],
         "summary": "URLs visible in the agent's terminal",
-        "description": "Read-only; any authenticated role. Returns the distinct http(s) URLs present in the agent's retained tmux scrollback, most recent first, captured with `capture-pane -J` so terminal-wrapped URLs are rejoined and copy whole. Backs the dashboard's click-to-copy control (#5188), which exists because the embedded ttyd terminal cannot complete a clipboard write. The capture is redacted before extraction and any URL still carrying a redaction marker is dropped, so device-flow login URLs (whose line carries the one-time code) do not appear. An agent with no session, or with no URL on screen, returns an empty list rather than an error.",
+        "description": "Read-only; any authenticated role. Returns the distinct http(s) URLs present in the agent's retained tmux scrollback, most recent first, captured with `capture-pane -J` so terminal-wrapped URLs are rejoined and copy whole. Backs the dashboard's click-to-copy control (#5188), which exists because the embedded ttyd terminal cannot complete a clipboard write. `authUrls` narrows the list to sign-in links, which is all the dashboard control offers (#5327). The capture is redacted before extraction and any URL still carrying a redaction marker is dropped, so device-flow login URLs (whose line carries the one-time code) do not appear. An agent with no session, or with no URL on screen, returns an empty list rather than an error.",
         "parameters": [
           {
             "name": "name",
@@ -2143,6 +2143,14 @@
                   "properties": {
                     "urls": {
                       "type": "array",
+                      "description": "All distinct URLs on the pane, newest first.",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "authUrls": {
+                      "type": "array",
+                      "description": "The subset of `urls` that looks like a sign-in link. This is the only list the dashboard offers to copy (#5327): a control labelled \"Copy login URL\" must hand back a login URL or nothing, never whatever else the agent happened to print.",
                       "items": {
                         "type": "string"
                       }
