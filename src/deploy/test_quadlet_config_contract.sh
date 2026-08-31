@@ -327,7 +327,14 @@ fi
 
 # And the gateway must still carry the stop-direction half, or stopping hive
 # would leave an orphaned gateway serving 502s.
-if [[ -f "${ROOT}/${GATEWAY_UNIT}" ]]; then
+#
+# need_file, not a bare `[[ -f ]]`: GATEWAY_UNIT is not covered by need_file
+# anywhere else in this file (UNIT is, in sections 1-4), so a bare existence
+# test made this the one section that could vanish silently. Deleting
+# hive-gateway.container dropped the run from 14 assertions to 13 and still
+# exited 0 — the guard reported PASS for a repo with no gateway unit at all
+# (#5388). need_file turns that into a failure.
+if need_file "${GATEWAY_UNIT}"; then
   if grep -qE '^Requires=hive\.service[[:space:]]*$' "${ROOT}/${GATEWAY_UNIT}" \
      && grep -qE '^After=hive\.service[[:space:]]*$' "${ROOT}/${GATEWAY_UNIT}"; then
     ok
