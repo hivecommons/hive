@@ -229,13 +229,47 @@ const PROGRESS_REPORT_INTERVAL_MS = 120000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
+// MAX_TASK_DURATION_MS is a PROGRESS lease, not a wall-clock budget
+// (kubestellar/hive#5321). It bounds how long a task may go without the relay
+// observing forward progress; every tick that sees new pane output re-arms it
+// from now. It is NOT "the longest a task may take".
+//
+// It used to be exactly that, and the result was a bug: the timer was armed
+// once in startProgressReporting() and never re-armed, so a task was killed at
+// a flat 30 minutes however hard the agent was working. Observed live on
+// 2026-08-31 it killed an agent that had already committed and pushed and was
+// blocked on a green `go test` run — the hub booked the task `failed` 57
+// seconds before that task's PR (#5320) was opened, and returned the issue to
+// the failure cooldown. Any task whose honest duration exceeds this bound was
+// not slow, it was impossible.
+//
+// The hang case the wall was nominally there for is covered — better — by
+// PANE_STALL_TIMEOUT_MS, which fails a frozen pane in 20 minutes and confirms
+// the verdict over multiple ticks. What remains here is a coarser second
+// opinion on the same question, kept because it is armed from the timer wheel
+// rather than from the tick loop and so still fires if the tick loop itself
+// dies.
 const MAX_TASK_DURATION_MS = 1800000;
+
+// ABSOLUTE_TASK_DEADLINE_MS is the backstop the progress lease deliberately
+// does not provide: a ceiling on total elapsed time from task assignment,
+// re-armed by nothing. A task that produces output forever (a retry loop
+// redrawing a spinner is output) would otherwise hold its lease indefinitely.
+//
+// Set far above the working range — the point is to bound the pathological
+// case, not to second-guess a long one. Crossing it is a statement about this
+// runtime, not about the agent's work, so it is reported as an `environment`
+// failure (see the failCurrentTask contract).
+const ABSOLUTE_TASK_DEADLINE_MS = Number(process.env.HIVE_ABSOLUTE_TASK_DEADLINE_MS) || 4 * 60 * 60 * 1000;
+
 // Hard ceiling on a single headless one-shot invocation (kubestellar/hive#2538).
-// The interactive path bounds a task with MAX_TASK_DURATION_MS via a
-// tmux-scraping watchdog; the headless child gets the SAME bound enforced
-// directly on the process, so a wedged CLI is killed and reported failed rather
-// than hanging the pod forever.
-const HEADLESS_TASK_TIMEOUT_MS = MAX_TASK_DURATION_MS;
+// The interactive path has no pane to scrape for progress on the headless path,
+// so a headless child cannot use the progress lease above: there is no
+// equivalent signal. It gets the ABSOLUTE bound enforced directly on the
+// process instead, so a wedged CLI is killed and reported failed rather than
+// hanging the pod forever — and, per #5321, a long-but-live headless run is no
+// longer killed at 30 minutes either.
+const HEADLESS_TASK_TIMEOUT_MS = Number(process.env.HIVE_HEADLESS_TASK_TIMEOUT_MS) || ABSOLUTE_TASK_DEADLINE_MS;
 const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // After the hub sends an explicit task_unavailable negative-ack (no admissible
 // work, a disabled tier, a concurrency limit, or a token-mint failure — see
@@ -2371,6 +2405,31 @@ function paneStalled(tmuxLines) {
   return now - lastPaneChangeAt >= PANE_STALL_TIMEOUT_MS;
 }
 
+// paneChangedSince reports whether the pane differs from the last fingerprint
+// paneStalled() recorded — i.e. whether the agent produced output since the
+// previous tick (kubestellar/hive#5321).
+//
+// PURE BY CONSTRUCTION: it must not update lastPaneFingerprint or
+// lastPaneChangeAt. paneStalled() is destructive — the first call that sees new
+// output records it and returns false, so a second call in the same tick sees
+// no change. progressTick() calls this one FIRST and paneStalled() (via
+// paneStallConfirmed) later in the same tick; if this function recorded, the
+// stall detector would see an already-consumed change every time and could
+// never accumulate a stall. Read only.
+//
+// A null fingerprint means no tick has recorded one yet (fresh task): that is
+// not evidence of progress, and treating it as such would hand a task that has
+// never drawn anything a free lease renewal.
+function paneChangedSince(tmuxLines) {
+  if (lastPaneFingerprint === null) return false;
+  const fingerprint = Array.isArray(tmuxLines) ? tmuxLines.join('\n') : String(tmuxLines || '');
+  // An empty capture means tmux told us nothing (session gone, capture failed).
+  // paneStalled() refuses to read that as a stall; symmetrically it must not be
+  // read as progress either.
+  if (!fingerprint) return false;
+  return fingerprint !== lastPaneFingerprint;
+}
+
 // paneStallConfirmed wraps paneStalled() with the multi-tick confirmation
 // described above it. Any tick where paneStalled() is false (new output
 // appeared) resets the count — the CLI gets full credit for proving it is not
@@ -2498,13 +2557,73 @@ function startProgressReporting() {
   // And the one-shot autonomy reminder (#5281), for the same reason.
   resetAutonomyNudgeState();
 
-  taskTimeoutHandle = setTimeout(() => {
-    if (currentTask) {
-      failCurrentTask(`task exceeded max duration (${MAX_TASK_DURATION_MS / 60000}min)`);
-    }
-  }, MAX_TASK_DURATION_MS);
+  armTaskProgressLease();
 
   progressInterval = setInterval(progressTick, PROGRESS_REPORT_INTERVAL_MS);
+}
+
+// armTaskProgressLease (re)starts the max-duration timer from NOW.
+//
+// Called once at task start and again from every tick that observes forward
+// progress, which is what turns MAX_TASK_DURATION_MS from a wall-clock budget
+// into a lease (kubestellar/hive#5321). An agent producing output keeps its
+// lease; a silent one lets it run down.
+//
+// Deliberately mirrors the sibling per-task clocks armed alongside it —
+// resetPaneStallClock(), resetTransientNudgeState(), resetAutonomyNudgeState()
+// — all of which were already progress-aware. This one was the odd clock out.
+//
+// Takes no locks and touches no shared connection state: it clears and re-sets
+// a timer handle owned by this module, so it is safe to call from inside
+// progressTick without regard to what the caller already holds.
+function armTaskProgressLease() {
+  if (taskTimeoutHandle) clearTimeout(taskTimeoutHandle);
+  // Deliberately NOT unref'd: no other timer in this relay is, and the handle
+  // is cleared on every task exit (completion, failure, revoke), so it never
+  // outlives the task it bounds. Changing process-exit semantics is not part of
+  // this fix.
+  taskTimeoutHandle = setTimeout(onTaskProgressLeaseExpired, MAX_TASK_DURATION_MS);
+}
+
+// onTaskProgressLeaseExpired runs when MAX_TASK_DURATION_MS elapsed with no
+// observed progress.
+//
+// It re-checks the progress signal rather than trusting the timer alone: the
+// tick loop re-arms on output, but a tick that lands microseconds after the
+// timer fired would otherwise lose the race and kill a live agent for it. If
+// the pane HAS changed within the lease window, the lease is simply renewed.
+//
+// Reaching the kill means the relay saw no progress for the lease window AND
+// (normally) the stall detector already had its say — so this is a runtime
+// verdict, not a judgement of the work: kind 'environment' (#5321). Previously
+// this path passed no opts at all, so an infrastructure ceiling was recorded as
+// a plain task failure.
+function onTaskProgressLeaseExpired() {
+  if (!currentTask) return;
+  const now = Date.now();
+  const elapsed = taskAssignedAt ? now - taskAssignedAt : 0;
+
+  // Absolute backstop first: past this, no amount of output buys more time.
+  if (elapsed >= ABSOLUTE_TASK_DEADLINE_MS) {
+    failCurrentTask(
+      `task exceeded the absolute deadline (${Math.round(ABSOLUTE_TASK_DEADLINE_MS / 60000)}min) without completing`,
+      { kind: 'environment' }
+    );
+    return;
+  }
+
+  // Forward progress since the lease was armed? Renew it and say nothing.
+  // lastPaneChangeAt is maintained by paneStalled() on every tick, so it is the
+  // same signal the stall detector uses — one definition of "progress", not two.
+  if (lastPaneChangeAt && now - lastPaneChangeAt < MAX_TASK_DURATION_MS) {
+    armTaskProgressLease();
+    return;
+  }
+
+  failCurrentTask(
+    `no observed progress for ${MAX_TASK_DURATION_MS / 60000}min — the agent CLI is not visibly working`,
+    { kind: 'environment' }
+  );
 }
 
 // One iteration of the progress/completion/crash-detection loop. Extracted from
@@ -2740,6 +2859,16 @@ function progressTick() {
 
   const paneState = checkTmuxPaneState();
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+
+  // #5321: forward progress renews the max-duration lease. Recorded here,
+  // before any branch below can return, so EVERY pane state gets the credit —
+  // an agent stepping through blocked_on_human or a retried API error is still
+  // visibly alive, and none of those states should burn down a deadline whose
+  // question is "is this thing moving at all". paneChangedSince() is a pure
+  // read of the fingerprint clock paneStalled() maintains; the stall detector
+  // below still does its own recording, unaffected.
+  if (paneChangedSince(tmuxLines)) armTaskProgressLease();
+
   if (paneState === PANE_STATE_IDLE_COMPLETE) {
     console.log(`Task ${currentTask.task_id} completed — agent idle`);
     // Successful completion clears this work item's crash-retry budget.
@@ -3052,6 +3181,13 @@ function handleMessage(data, hub) {
       currentTask = null;
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+      // The max-duration lease dies with the task it bounds. Previously leaked
+      // here — harmless only because the callback guards on currentTask, so a
+      // revoke followed by a NEW task within the window would have had the old
+      // timer fire against the new task's assignment. startProgressReporting()
+      // re-arms it, which masked this; clearing it makes the lifecycle explicit
+      // and matches every other task-exit path (#5321).
+      if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
       // Headless mode: kill the in-flight one-shot child so the revoked task's
       // process does not keep running (and holding the credential) after the
       // hub took the work back.
@@ -3304,8 +3440,21 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     paneStalled,
     paneStallConfirmed,
+    paneChangedSince,
     resetPaneStallClock,
     PANE_STALL_CONFIRM_TICKS,
+    // Max-duration lease surface (kubestellar/hive#5321).
+    MAX_TASK_DURATION_MS,
+    ABSOLUTE_TASK_DEADLINE_MS,
+    HEADLESS_TASK_TIMEOUT_MS,
+    armTaskProgressLease,
+    onTaskProgressLeaseExpired,
+    getTaskTimeoutHandle: () => taskTimeoutHandle,
+    // Backdate the task-assignment clock so the absolute backstop can be
+    // crossed without waiting hours.
+    __ageTaskAssignedAt: (ms) => { if (taskAssignedAt) taskAssignedAt -= ms; },
+    setTaskAssignedAt: (v) => { taskAssignedAt = v; },
+    getTaskAssignedAt: () => taskAssignedAt,
     getStallConfirmCount: () => stallConfirmCount,
     launchCommandWithCwd,
     cliProcessLooksGone,

@@ -26,3 +26,7 @@ _inline.js
 # Test-run scratch: pkg/agent tests create stub CLI binaries under a
 # randomly-suffixed dir. Generated per run; never part of the tree.
 .hive-agent-stubs-*/
+
+# Test-run scratch: bin/contributor-relay.test.js writes per-task status files
+# into randomly-suffixed workspace dirs under here. Generated per run.
+.relay-test-tmp/

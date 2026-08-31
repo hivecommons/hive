@@ -4626,6 +4626,211 @@ test('#5145 the needs-authentication banner prints the resolved command', () => 
   } finally { teardown(relay); }
 });
 
+// --- #5321: the max-duration deadline bounds HANGS, not DURATION -----------
+//
+// The deadline used to be a flat wall-clock kill armed once per task and never
+// re-armed. Live on 2026-08-31 it killed an agent that had already committed
+// and pushed and was waiting on a green test suite; the hub booked the task
+// `failed` 57 seconds before that task's own PR (#5320) was opened. Any task
+// whose honest duration exceeded MAX_TASK_DURATION_MS was not slow, it was
+// impossible.
+//
+// These pin the corrected contract: output renews the lease, silence spends it,
+// an absolute backstop still terminates a truly wedged task, and neither
+// ceiling is booked as the agent's fault.
+
+test('#5321 the max-duration ceiling is a progress LEASE, not a wall-clock budget', () => {
+  // The structural claim, independent of any timing: the absolute ceiling must
+  // be strictly larger than the lease. If a regression collapses them back into
+  // one constant, "long but live" becomes unrepresentable again.
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.ok(relay.ABSOLUTE_TASK_DEADLINE_MS > relay.MAX_TASK_DURATION_MS,
+      `the absolute backstop (${relay.ABSOLUTE_TASK_DEADLINE_MS}) must exceed the progress lease ` +
+      `(${relay.MAX_TASK_DURATION_MS}) — collapsing them restores the flat wall-clock kill`);
+    // And it must be far enough above the working range to be a backstop rather
+    // than a second deadline: a full test suite is the long pole this repo has.
+    assert.ok(relay.ABSOLUTE_TASK_DEADLINE_MS >= 2 * 60 * 60 * 1000,
+      'the absolute backstop must sit well above the honest working range');
+  } finally { teardown(relay); }
+});
+
+test('#5321 a task producing output past MAX_TASK_DURATION_MS is NOT failed', () => {
+  // The acceptance criterion, driven through the real tick loop: the pane keeps
+  // changing, the lease keeps being renewed, and the expiry callback — invoked
+  // directly, as the timer would — declines to kill a live agent.
+  let n = 0;
+  const relay = loadRelay({
+    backend: 'agy',
+    // A fresh line every capture: this is what "the agent is working" looks
+    // like. No idle prompt, so the pane never classifies as IDLE_COMPLETE.
+    paneText: () => `running the full test suite, still going, tick ${n++}`,
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-live');
+
+    // Simulate the task running well past the old 30-minute wall: many ticks,
+    // each producing new output, with the assignment clock aged accordingly.
+    for (let i = 0; i < 5; i++) {
+      relay.__stallTick();
+      relay.__ageTaskAssignedAt(relay.MAX_TASK_DURATION_MS / 2);
+      // Fire the deadline callback exactly as the timer would. On a live pane
+      // it must renew, not kill.
+      relay.onTaskProgressLeaseExpired();
+    }
+
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'a task whose pane keeps producing output must never be failed on duration — ' +
+      'this is the #5321 regression that booked a shipped PR as a failure');
+    assert.ok(relay.getCurrentTask(), 'the task must still be held');
+    assert.ok(relay.__sent.some(m => m.type === 'task_progress' && m.status === 'working'),
+      'and the relay must still be reporting it as working, so the hub renews its lease');
+  } finally { teardown(relay); }
+});
+
+test('#5321 a silent pane still spends the lease, and is blamed on the environment', () => {
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: 'a frozen pane with no idle prompt and nothing happening',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-silent');
+    relay.__stallTick();               // records the fingerprint
+
+    // No new output since; age the pane clock past the lease window so the
+    // expiry callback sees genuine silence.
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    const failures = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1, 'a pane silent for the whole lease window must be given back');
+    assert.strictEqual(failures[0].failure_kind, 'environment',
+      'a runtime ceiling is not the agent failing its work — #5321 defect 1 was that this ' +
+      'path passed no opts at all, so the kind was undefined');
+  } finally { teardown(relay); }
+});
+
+test('#5321 the absolute backstop terminates a task that never stops printing', () => {
+  // The case the lease deliberately does not cover: output forever (a retry
+  // loop redrawing a spinner is output) must not buy unbounded time.
+  let n = 0;
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: () => `spinning forever ${n++}`,
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-forever');
+    relay.__stallTick();
+
+    // Live pane, but past the absolute ceiling.
+    relay.__ageTaskAssignedAt(relay.ABSOLUTE_TASK_DEADLINE_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    const failures = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1,
+      'past the absolute deadline, forward progress must no longer renew the lease');
+    assert.strictEqual(failures[0].failure_kind, 'environment',
+      'the backstop firing is a statement about this runtime, not about the work');
+    assert.match(failures[0].reason, /absolute deadline/i,
+      `the reason must name the backstop, not the lease; got: ${failures[0].reason}`);
+  } finally { teardown(relay); }
+});
+
+test('#5321 paneChangedSince is a PURE read — it must not consume the stall clock', () => {
+  // Load-bearing: progressTick() calls paneChangedSince() first and
+  // paneStalled() (via paneStallConfirmed) later in the SAME tick. paneStalled()
+  // is destructive — it records the fingerprint. If paneChangedSince() also
+  // recorded, the stall detector would see an already-consumed change on every
+  // tick and could never accumulate a stall, silently disabling the hang
+  // detector this fix relies on to cover the case the wall used to.
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    relay.resetPaneStallClock();
+    // Nothing recorded yet: a fresh task has drawn nothing, which is not
+    // evidence of progress.
+    assert.strictEqual(relay.paneChangedSince(['first']), false,
+      'with no recorded fingerprint there is no change to report');
+
+    relay.paneStalled(['first']);      // records 'first'
+    assert.strictEqual(relay.paneChangedSince(['second']), true, 'new content is a change');
+    // Repeated reads must keep reporting the change — proof nothing was consumed.
+    assert.strictEqual(relay.paneChangedSince(['second']), true,
+      'paneChangedSince must be idempotent; a second read seeing false means it recorded');
+    assert.strictEqual(relay.paneChangedSince(['first']), false, 'identical content is not a change');
+    // An empty capture is a missing pane, and paneStalled() refuses to read it
+    // as a stall; symmetrically it must not be read as progress.
+    assert.strictEqual(relay.paneChangedSince([]), false,
+      'an empty capture must never be credited as forward progress');
+
+    // And the stall clock is still intact after all those reads.
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    assert.strictEqual(relay.paneStalled(['first']), true,
+      'the stall detector must still trip — paneChangedSince did not disturb its clock');
+  } finally { teardown(relay); }
+});
+
+test('#5321 a genuinely hung agent is still terminated by the stall detector', () => {
+  // The other half of the acceptance criteria: relaxing the wall must not have
+  // relaxed the hang case. The stall detector fires at 20 minutes, sooner than
+  // the lease, and is unaffected by the new progress-credit call.
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: 'a frozen pane with no idle prompt and nothing happening',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-hung');
+    relay.__stallTick();
+    for (let i = 0; i < relay.PANE_STALL_CONFIRM_TICKS; i++) {
+      relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+      relay.__stallTick();
+    }
+    const failures = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1, 'a frozen pane must still be given back');
+    assert.match(failures[0].reason, /no pane activity/i,
+      `the stall detector, not the duration ceiling, must be the one to fire; got: ${failures[0].reason}`);
+  } finally { teardown(relay); }
+});
+
+test('#5321 the deadline timer is re-armed on progress, not left as a one-shot', () => {
+  // Mechanism-level: the original bug was a handle set once at :2501 and never
+  // re-set. Pin that a tick observing new output installs a NEW handle.
+  let n = 0;
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: () => `working ${n++}`,
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-rearm');
+    relay.__stallTick();                       // records the first fingerprint
+    const first = relay.getTaskTimeoutHandle();
+    assert.ok(first, 'a task must hold a deadline handle');
+    relay.__stallTick();                       // new output -> must re-arm
+    const second = relay.getTaskTimeoutHandle();
+    assert.ok(second, 'the deadline handle must still exist after a progress tick');
+    assert.notStrictEqual(second, first,
+      'a tick that observed new pane output must have re-armed the deadline — ' +
+      'an unchanged handle is the #5321 one-shot timer');
+  } finally { teardown(relay); }
+});
+
+test('#5321 a headless one-shot is no longer capped at the old 30-minute wall', () => {
+  // The headless path has no pane to scrape, so it cannot use the lease; it
+  // gets the absolute bound instead. Before the fix it aliased
+  // MAX_TASK_DURATION_MS and killed long-but-live runs for the same reason.
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(relay.HEADLESS_TASK_TIMEOUT_MS, relay.ABSOLUTE_TASK_DEADLINE_MS,
+      'the headless ceiling must be the absolute backstop, not the progress lease');
+    assert.ok(relay.HEADLESS_TASK_TIMEOUT_MS > relay.MAX_TASK_DURATION_MS,
+      'a headless run must not be killed at the old wall-clock deadline');
+  } finally { teardown(relay); }
+});
+
 // ---------------------------------------------------------------------------
 
 let failed = 0;
