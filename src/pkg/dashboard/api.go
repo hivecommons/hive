@@ -70,6 +70,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
 	// Backs the Terminal's "view / download full log" controls.
 	s.mux.HandleFunc("GET /api/agents/{name}/log", s.handleAgentFullLog)
+	// URLs visible in the agent's pane, joined across terminal wrapping, for
+	// the dashboard's click-to-copy control (#5188). The terminal itself
+	// cannot deliver a copy, so the copy is done server-side.
+	s.mux.HandleFunc("GET /api/agents/{name}/terminal-urls", s.handleAgentTerminalURLs)
 	// Durable per-kick run-log history (#4296, #4295): list archived kick
 	// logs, fetch one, and a minimal HTML index page linked from agent cards.
 	s.mux.HandleFunc("GET /api/agents/{name}/kicks", s.handleAgentKickLogList)

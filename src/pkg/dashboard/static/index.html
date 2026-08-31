@@ -793,6 +793,27 @@
     }
     .terminal-copy-hint-dismiss:hover { color: var(--text); }
     .terminal-copy-hint-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* Sits after the message and before the ×, so the working control is the
+       last thing read before the dismissal. margin-left:auto pushes it right
+       when the hint text has been dismissed and it is the only child. */
+    .terminal-copy-url-btn {
+      margin-left: auto; flex: none; padding: 2px 8px;
+      border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+      border-radius: var(--radius); background: var(--panel);
+      color: var(--text); cursor: pointer; font: inherit; white-space: nowrap;
+    }
+    .terminal-copy-url-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .terminal-copy-url-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* The × must stay rightmost even though the button also claims auto. */
+    .terminal-copy-url-btn + .terminal-copy-hint-dismiss { margin-left: 0; }
+    .terminal-copy-hint.hint-dismissed { justify-content: flex-end; }
+    /* Manual-copy escape hatch inside the failure toast. */
+    .terminal-copy-url-fallback {
+      display: block; width: 100%; margin-top: 8px; padding: 4px 6px;
+      border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
+      border-radius: var(--radius); background: var(--bg-soft);
+      color: var(--text); font-family: var(--font-mono); font-size: 0.72rem;
+    }
     .cli-login-btn { border: none; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; }
     .cli-login-btn.claude { background: #d97706; color: #fff; }
     .cli-login-btn.claude:hover { background: #f59e0b; }
@@ -4499,7 +4520,7 @@
             ${modelOptionsHtml(a.cli, a.model)}
           </select>
         </div>
-        ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a))}
+        ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
         <div class="oc-detail-summary-wrap">
@@ -6062,18 +6083,120 @@
        to the terminal control rather than in a first-open toast that is gone
        by the time it matters. A login prompt always wins over the persisted
        baseline dismissal because it predicts an OAuth URL must be copied. */
-    function terminalCopyHintHtml(needsLogin, sessionUnavailable) {
+    function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName) {
       if (sessionUnavailable) return '';
-      if (!needsLogin && terminalCopyHintDismissed()) return '';
+      const copyBtn = terminalCopyUrlButtonHtml(agentName);
+      /* A dismissed baseline hint hides the ADVICE, never the working copy
+         control: dismissal means "I know the workaround", not "take the fix
+         away". The row survives, carrying only the button. */
+      if (!needsLogin && terminalCopyHintDismissed()) {
+        return copyBtn ? `<div class="terminal-copy-hint hint-dismissed">${copyBtn}</div>` : '';
+      }
       const message = needsLogin
-        ? 'You’ll be copying a URL: hold <strong>Shift</strong> while selecting · <strong>Ctrl+Shift+V</strong> pastes. Wrapped URLs may copy with line breaks — check before submitting.'
+        ? 'You’ll be copying a URL: hold <strong>Shift</strong> while selecting · <strong>Ctrl+Shift+V</strong> pastes. Wrapped URLs may copy with line breaks — or use the button, which rejoins them.'
         : 'Terminal copy: <strong>⇧-drag</strong> to select · <strong>Ctrl+Shift+C / Ctrl+Shift+V</strong>';
       const dismiss = needsLogin ? '' : '<button type="button" class="terminal-copy-hint-dismiss" data-action="dismissTerminalCopyHint" aria-label="Dismiss terminal copy hint" title="Don’t show this hint again">×</button>';
-      return `<div class="terminal-copy-hint${needsLogin ? ' needs-login' : ''}" role="note">${message}${dismiss}</div>`;
+      return `<div class="terminal-copy-hint${needsLogin ? ' needs-login' : ''}" role="note">${message}${copyBtn}${dismiss}</div>`;
     }
     function dismissTerminalCopyHint() {
       try { localStorage.setItem(TERMINAL_COPY_HINT_LS_KEY, '1'); } catch {}
-      document.querySelectorAll('.terminal-copy-hint:not(.needs-login)').forEach(el => el.remove());
+      /* Strip the advice text and the × but keep the copy button, matching
+         what terminalCopyHintHtml renders on the next full re-render. */
+      document.querySelectorAll('.terminal-copy-hint:not(.needs-login)').forEach(el => {
+        const btn = el.querySelector('.terminal-copy-url-btn');
+        if (!btn) { el.remove(); return; }
+        el.classList.add('hint-dismissed');
+        el.removeAttribute('role');
+        el.replaceChildren(btn);
+      });
+    }
+
+    /* The hint above tells an operator how to work AROUND the terminal. This
+       button does the copy for them: the pane is captured server-side with
+       `capture-pane -J`, which rejoins terminal-wrapped lines, so a wrapped
+       OAuth URL comes back whole. Shift-drag cannot do that — it copies the
+       wrap's newlines along with the URL, which is the failure mode that
+       makes a pasted login URL silently invalid. */
+    function terminalCopyUrlButtonHtml(agentName) {
+      if (!agentName) return '';
+      return `<button type="button" class="terminal-copy-url-btn" data-action="copyTerminalUrl" data-agent="${esc(agentName)}" title="Capture this agent's pane server-side and copy the most recent URL — wrapped lines are rejoined, so an OAuth URL copies whole">🔗 copy URL</button>`;
+    }
+
+    /* Writes text to the clipboard, reporting honestly when it cannot.
+       navigator.clipboard exists only in a secure context, and a hive reached
+       over plain http:// on a LAN address is not one — which is exactly how
+       self-hosted hives are usually reached, so this is the common case, not
+       the edge case. The execCommand fallback works there; when BOTH fail the
+       caller gets false and must say so rather than pretend it copied. */
+    async function writeClipboardText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(text); return true; } catch {}
+      }
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      // Off-screen but still focusable: execCommand('copy') ignores a hidden
+      // or display:none element.
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      let ok = false;
+      try {
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        ok = document.execCommand('copy');
+      } catch { ok = false; }
+      ta.remove();
+      return ok;
+    }
+
+    async function copyTerminalUrl(agentName) {
+      let urls = [];
+      try {
+        const r = await fetch(`/api/agents/${encodeURIComponent(agentName)}/terminal-urls`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        urls = Array.isArray(d.urls) ? d.urls : [];
+      } catch (e) {
+        showToast(`Could not read ${agentName}'s terminal: ${e.message || e}`, 'error');
+        return;
+      }
+      if (!urls.length) {
+        showToast(`No URL on ${agentName}'s terminal right now`, 'info');
+        return;
+      }
+      const url = urls[0];
+      const ok = await writeClipboardText(url);
+      if (ok) {
+        showToast('Terminal URL copied to clipboard', 'success');
+        return;
+      }
+      // Both clipboard paths failed — almost always an insecure context with
+      // execCommand also disabled. Never fail silently: this is the bug being
+      // fixed. Put the URL somewhere the operator can select it by hand.
+      showTerminalUrlFallback(agentName, url);
+    }
+
+    /* Last resort when the browser refuses to write the clipboard at all:
+       show the URL in a selectable, pre-selected input with a plain-language
+       reason. The operator still gets the joined URL — just with one manual
+       Cmd/Ctrl+C — instead of a button that appeared to do nothing. */
+    function showTerminalUrlFallback(agentName, url) {
+      const reason = window.isSecureContext
+        ? 'This browser blocked the clipboard write.'
+        : 'Clipboard access needs HTTPS or localhost, and this hive is being served over plain http.';
+      const toast = showToast(`Could not copy automatically. ${reason} Press Cmd/Ctrl+C to copy the selected URL.`, 'error');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.readOnly = true;
+      input.value = url;
+      input.className = 'terminal-copy-url-fallback';
+      input.setAttribute('aria-label', `URL from ${agentName}'s terminal`);
+      if (toast) toast.appendChild(input);
+      else document.body.appendChild(input);
+      input.focus();
+      input.select();
     }
 
     async function openTerminal(agentName, href) {
@@ -6210,7 +6333,7 @@
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
           <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${disabledBadge}${replicaBadge} ${toggleBtn} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
-          ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a))}
+          ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name)}
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
@@ -14019,6 +14142,7 @@ function burnAreaChart() {
         case 'kick': kick(agent); break;
         case 'kickEmpty': { const inp = document.getElementById('kick-prompt-' + agent); if (inp) inp.value = ''; kick(agent); } break;
         case 'openTerminal': e.preventDefault(); openTerminal(agent, el.href); break;
+        case 'copyTerminalUrl': e.stopPropagation(); copyTerminalUrl(agent); break;
         case 'togglePin': togglePin(agent, el.dataset.pinType, el.dataset.unpin === 'true'); break;
         case 'resetRestarts': resetRestarts(agent); break;
         case 'deleteAgentFromConfig': deleteAgentFromConfig(agent); break;
