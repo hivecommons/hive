@@ -56,7 +56,7 @@ When no token or App credentials are usable, Hive starts the dashboard but disab
 - `GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.`
 - `persisted user token is invalid or expired`
 
-Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls this the **Forge App** — the app for your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — under Governor Config → Forge App.
+Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls this the **Forge App** — the app for your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — under Governor Config → Forge App. GitLab, Gitea, and Forgejo are **not supported for running a hive** today; see [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md).
 
 ## Hosted hive disappeared or its URL times out
 

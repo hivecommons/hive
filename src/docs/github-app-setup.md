@@ -2,6 +2,13 @@
 
 > **Terminology:** the dashboard and docs call this the **Forge App** — the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea). On **GitHub.com and GitHub Enterprise (GHE)** the Forge App **is a GitHub App**; this page covers creating and installing it. Dashboard controls live under **Governor Config → Forge App**.
 
+> **On GitLab, Gitea, or Forgejo?** This page does not apply, and there is no
+> equivalent setup to perform: those forges are **not supported for running a
+> hive** today. The adapters exist in the source tree but are not wired into any
+> running code path, and the agent execution path is GitHub-only. See
+> [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md) for exactly what
+> is and is not implemented before you attempt an install.
+
 Hive can authenticate with either a personal access token or a GitHub App. Use a GitHub App for production hives because installation tokens are scoped to selected repositories and can author PRs as the app bot when `github.app_authored_prs` is enabled.
 
 ## Personal access token (PAT) scopes
