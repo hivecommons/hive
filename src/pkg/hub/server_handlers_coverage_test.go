@@ -337,9 +337,23 @@ func TestHandleStats_EmptyRegistry(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
+	// Presence AND value. The registry is empty, so the expected answer for
+	// every counter is 0 — asserting only that the key exists (#5388) let any
+	// count through, including garbage, in the one test whose name states what
+	// the numbers have to be.
 	for _, key := range []string{"hives", "online", "agents", "contributors", "issues", "prs"} {
-		if _, ok := resp[key]; !ok {
+		v, ok := resp[key]
+		if !ok {
 			t.Errorf("response missing key %q", key)
+			continue
+		}
+		n, isNum := v.(float64)
+		if !isNum {
+			t.Errorf("%s = %v (%T), want a JSON number", key, v, v)
+			continue
+		}
+		if n != 0 {
+			t.Errorf("%s = %v, want 0 — the registry is empty", key, n)
 		}
 	}
 }
