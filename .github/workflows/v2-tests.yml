@@ -22,7 +22,12 @@ on:
   # so a red PR fails the check without also filing an issue.
   pull_request:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/v2-tests.yml']
+    # dashboard/openapi.json is in scope because the two guards that police it
+    # live under src/ (pkg/dashboard/openapi_route_parity_test.go and
+    # openapi_schema_parity_test.go) but the file they check does not. Without
+    # it a spec-only PR — the exact shape of the #5077 drift — would edit the
+    # published contract while running neither guard.
+    paths: ['src/**', 'dashboard/openapi.json', '.github/workflows/v2-tests.yml']
 
 permissions:
   contents: read
