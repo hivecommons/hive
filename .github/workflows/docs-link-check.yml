@@ -1,0 +1,54 @@
+name: Docs Link Check
+
+# Why this exists
+#
+# kubestellar/docs (the org's published docs site, Next.js on Netlify at
+# kubestellar.io/docs/hive/*) pulls a growing subset of src/docs/*.md straight
+# from this repo's `v4` branch on every site build
+# (kubestellar/docs:scripts/sync-hive-docs.ts fetches the raw file over HTTP
+# and rewrites relative links to site routes or GitHub blob URLs). That sync
+# runs no Markdown linter and no link checker of its own — it trusts this
+# source tree to already be internally consistent.
+#
+# That trust broke concretely once already: #5206 fixed three cross-reference
+# anchors that a heading rename in design/tui.md had silently broken. Nothing
+# failed red when it happened; a human had to notice. This job is the gate
+# that catches the same class of break before merge, for every relative link
+# and heading anchor inside src/docs/ — whether or not the file happens to be
+# on the sync manifest today, since that manifest only grows over time.
+#
+# It intentionally does NOT validate http(s)/mailto links (network-dependent,
+# and not what broke in #5206) and does not touch the sync manifest itself,
+# which lives in the separate kubestellar/docs repository.
+
+on:
+  push:
+    branches:
+      - v4
+    paths:
+      - 'src/docs/**'
+      - 'src/scripts/check-docs-links.py'
+      - '.github/workflows/docs-link-check.yml'
+  pull_request:
+    branches:
+      - v4
+    paths:
+      - 'src/docs/**'
+      - 'src/scripts/check-docs-links.py'
+      - '.github/workflows/docs-link-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    name: relative links and anchors resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Self-test the checker against fixtures
+        run: bash src/scripts/test-check-docs-links.sh
+
+      - name: Check src/docs/ relative links and anchors
+        run: python3 src/scripts/check-docs-links.py src/docs

@@ -7,7 +7,7 @@ Status: Accepted (retroactive)
 Hive agents need durable coordination state that is separate from GitHub's issue
 queue. The reference architecture describes beads as a git-backed JSON ledger
 per agent, with typed work items, priorities, dependencies, metadata, and
-actor-scoped ready queues ([architecture §7](../architecture.md#7-beads-the-work-ledger)).
+actor-scoped ready queues ([architecture §7](../architecture.md#7-beads--the-work-ledger)).
 The deterministic pipeline can turn GitHub work into internal artifacts before
 agents act ([architecture §4](../architecture.md#4-the-deterministic-pipeline)).
 

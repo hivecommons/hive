@@ -8,7 +8,7 @@ Hive needs one operator-facing control for how autonomous agents may be. The
 reference architecture describes ACMM as the human-selected dial that maps to
 per-agent modes, and the policy matrix defines which agents may only advise,
 file issues, open hold-gated PRs, or auto-merge at each level
-([architecture §6](../architecture.md#6-acmm-controlling-agent-autonomy),
+([architecture §6](../architecture.md#6-acmm--controlling-agent-autonomy),
 [ACMM policy matrix](../acmm-policy-matrix.md)). The same modes feed the
 layered guardrails in [architecture §5](../architecture.md#5-layered-guardrails-defense-in-depth).
 

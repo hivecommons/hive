@@ -92,7 +92,7 @@ netfilter lock contention) still exits `1`, since granting `NET_ADMIN` would
 not fix those.
 
 The escape hatch is the same as always: set `HIVE_PROXY_ADVISORY_OK=true` to
-start anyway in advisory-only mode (see [security-model.md](security-model.md#forced-proxy-egress-f5-and-cap_net_admin)),
+start anyway in advisory-only mode (see [security-model.md](security-model.md#forced-proxy-egress-and-cap_net_admin)),
 or grant the capability per the section below for the full gate.
 
 ## How to get the full gate

@@ -492,7 +492,7 @@ development, not externally reported vulnerabilities.
 
 ### Open SSF best practices
 
-An [OpenSSF Scorecard](.github/workflows/scorecard.yml) workflow runs weekly
+An [OpenSSF Scorecard](https://github.com/kubestellar/hive/blob/v4/.github/workflows/scorecard.yml) workflow runs weekly
 against the repository. This assessment does not reproduce the current
 numeric score here (it changes over time and is available live via the
 Scorecard badge/API); a reviewer should pull the current score rather than
