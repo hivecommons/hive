@@ -67,7 +67,7 @@ fi
 # the inverted signal: a PR whose image does not build would go green against
 # someone else's working image.
 build_block="$(awk '/Build the arm64 image from this PR/,/^      - name: Select/' "$LANE")"
-if printf '%s' "$build_block" | grep -qE 'continue-on-error|\|\| true'; then
+if grep -qE 'continue-on-error|\|\| true' <<<"$build_block"; then
   bad "the PR build step swallows failures" \
       "a PR that cannot build an image must fail the lane, not fall back to the published one"
 else

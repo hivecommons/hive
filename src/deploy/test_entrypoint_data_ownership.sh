@@ -62,7 +62,7 @@ fi
 SWEEP="$(sed -n '/^hive_sweep_root_phase_paths() {/,/^}/p' "$ENTRYPOINT")"
 if [ -z "$SWEEP" ]; then
   bad "could not extract hive_sweep_root_phase_paths from $ENTRYPOINT"
-elif printf '%s' "$SWEEP" | grep -qE 'chown[[:space:]]+-R|chown[[:space:]]+-[a-zA-Z]*R'; then
+elif grep -qE 'chown[[:space:]]+-R|chown[[:space:]]+-[a-zA-Z]*R' <<<"$SWEEP"; then
   bad "the ownership sweep recurses" \
       "a recursive chown here costs the same multi-minute NFS walk the DATA_OWNER guard prevents"
 else
@@ -150,11 +150,11 @@ else
 
   for p in $mkdir_paths; do
     # Covered if it is in the list...
-    if printf '%s' "$LIST" | grep -qxF "$p"; then
+    if grep -qxF "$p" <<<"$LIST"; then
       continue
     fi
     # ...or if the site chowns that exact path...
-    if printf '%s' "$ROOT_PHASE" | grep -qE "chown( -R)? dev:node [^&|;]*${p}( |$|/)"; then
+    if grep -qE "chown( -R)? dev:node [^&|;]*${p}( |$|/)" <<<"$ROOT_PHASE"; then
       continue
     fi
     # ...or if an ANCESTOR is chowned RECURSIVELY, which does cover it. E.g.
@@ -166,7 +166,7 @@ else
     while [ "$anc" != "/data" ] && [ "$anc" != "/" ]; do
       anc="$(dirname "$anc")"
       [ "$anc" = "/data" ] && break
-      if printf '%s' "$ROOT_PHASE" | grep -qE "chown -R dev:node [^&|;]*${anc}( |$)"; then
+      if grep -qE "chown -R dev:node [^&|;]*${anc}( |$)" <<<"$ROOT_PHASE"; then
         covered_by_ancestor=yes
         break
       fi
@@ -186,9 +186,9 @@ else
   # the concrete gaps found for #5369: created by `cat >` / `printf >` as root,
   # chmod 644 applied, no chown — so root:root on every boot.
   for f in /data/home/.bashrc /data/home/.profile; do
-    if printf '%s' "$ROOT_PHASE" | grep -qE "chown dev:node ${f}( |$)"; then
+    if grep -qE "chown dev:node ${f}( |$)" <<<"$ROOT_PHASE"; then
       ok "$f is chowned at its creation site"
-    elif printf '%s' "$LIST" | grep -qxF "$f"; then
+    elif grep -qxF "$f" <<<"$LIST"; then
       ok "$f is covered by the sweep list"
     else
       bad "$f is written by root and never handed to dev" \
@@ -251,7 +251,7 @@ else
   #    diagnostic #5360 lacked: a silent EACCES from the Go binary versus a
   #    line of output identifying the file.
   assert_out="$(HIVE_RUNTIME_USER=dev hive_assert_runtime_readable "$tmpd/home" "$tmpd/home/.bashrc" 2>&1 || true)"
-  if printf '%s' "$assert_out" | grep -qF "$tmpd/home"; then
+  if grep -qF "$tmpd/home" <<<"$assert_out"; then
     ok "the assertion names the unreadable path before the privilege drop"
   else
     bad "the assertion did not name the unreadable path" \
