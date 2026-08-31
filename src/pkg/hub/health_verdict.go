@@ -252,7 +252,21 @@ func hiveHealthFor(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealth
 			return maxRFC3339(maxRFC3339(r.Issues.NewestAt, r.PRs.NewestAt),
 				maxRFC3339(r.Comments.NewestAt, r.Reviews.NewestAt))
 		})
-		return bandFreshness(v, last, ok, queuedWork, now, "write")
+		verdict := bandFreshness(v, last, ok, queuedWork, now, "write")
+		// A stale write stream is NOT an agent fault when the hive's output is
+		// parked on the HUMAN side of the gate: hold-labeled PRs awaiting
+		// review mean the agents produced, then correctly stood down to avoid
+		// duplicating in-flight work — the next move is the operator's.
+		// Without this, a saturated L3 hive reads "no write in Nd (M queued)",
+		// indistinguishable from a broken one (observed on flashsystems/ess
+		// 2026-08-31: 14 held PRs covering every queued item, quality agent
+		// explicitly declining new work, row solid red for 4 days). Amber, not
+		// green: the hive is healthy but a human action is pending.
+		if verdict.State == HealthStateRed && e.HoldTotal != nil && *e.HoldTotal > 0 {
+			verdict.State = HealthStateAmber
+			verdict.Reason = fmt.Sprintf("awaiting human review — %d held for approval", *e.HoldTotal)
+		}
+		return verdict
 	}
 }
 

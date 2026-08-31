@@ -110,6 +110,27 @@ func TestHiveHealthFor_ACMMBands(t *testing.T) {
 			wantKind:  "creates",
 		},
 		{
+			// Saturated-on-human: the write stream is stale ONLY because the
+			// output is parked behind hold labels awaiting operator review —
+			// agents produced, then stood down to avoid duplicating held work
+			// (flashsystems/ess 2026-08-31: 14 held PRs covering all 28 queued
+			// items read as "no write in 4d" solid red). Amber + explicit
+			// reason, never red.
+			name: "L4 creates stale, work queued, but PRs HELD for review — amber",
+			entry: func() RegistryEntry {
+				e := withActivity(base(4), ractivity("o/r", oldTs, oldTs, "", ""))
+				held := 14
+				e.HoldTotal = &held
+				return e
+			}(),
+			rollup:     okRollup(),
+			app:        okApp(),
+			queued:     28,
+			wantState:  HealthStateAmber,
+			wantKind:   "creates",
+			wantReason: "awaiting human review — 14 held for approval",
+		},
+		{
 			name:      "L4 creates stale but queue EMPTY — green (idle, nothing to do)",
 			entry:     withActivity(base(4), ractivity("o/r", oldTs, oldTs, "", "")),
 			rollup:    okRollup(),
