@@ -2560,81 +2560,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
 		}
 	} else {
-		switch backend {
-		case "claude":
-			bareFlag := ""
-			if isInference {
-				bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
-			}
-			base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
-			// Deny ALL GitHub MCP write tools in EVERY mode: agents author via the
-			// App-gated gh wrapper, never as the user via the MCP. Mode governs the
-			// gh-wrapper/proxy layer only, not what the MCP may write.
-			launchCmd = base + claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()
-		case "copilot":
-			// model arrives here already canonicalized by normalizeModelName
-			// (CanonicalizeCopilotModel: separator drift like claude-fable.5 is
-			// normalized to the CLI-accepted claude-fable-5, #4262) and is then
-			// passed as-is to `copilot --model %s`. It may be a
-			// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
-			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
-			// per task. Nothing here assumes a concrete id, so the sentinel flows
-			// through unchanged.
-			// PRIMARY defense against authoring as the login USER via the MCP:
-			// we do NOT pass --enable-all-github-mcp-tools. Copilot CLI's built-in
-			// GitHub MCP server is READ-ONLY BY DEFAULT (v0.0.350+), so the write
-			// tools (create_issue/create_pull_request/…) are never registered.
-			// READ tools (get_issue/list/search) stay available in that read-only
-			// default, so nothing here disables useful lookups. All GitHub writes
-			// must go through the App-gated gh wrapper / hive-open-pr.
-			// copilotGitHubWriteDenyFlags is applied as belt-and-suspenders (with
-			// the CORRECT `github-mcp-server(` server name) on top of the read-only
-			// default. This is identical across ModeIssuesAndPRs / ModeIssuesOnly /
-			// advisory — the mode never changes what the MCP can write (it never
-			// legitimately should), it only governs the separate, unchanged
-			// gh-wrapper/proxy layer that still reads Mode for the App-gated writes.
-			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
-				binary, model, copilotGitHubWriteDenyFlags)
-		case "gemini":
-			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
-		case "agy":
-			// Antigravity CLI (Google's Gemini CLI replacement). Needs
-			// --dangerously-skip-permissions or it blocks on a per-tool
-			// approval prompt that no one is attached to answer — the same
-			// contract as claude's bypass flag, and the value already used for
-			// agy in config/backends.conf.
-			//
-			// An unrecognised --model is NOT fatal here: agy warns
-			// ("model X is not recognized ... Using \"Gemini 3.6 Flash\"
-			// instead") and continues on its default, so a stale model carried
-			// over from another provider degrades to a warning rather than a
-			// dead agent.
-			//
-			// --effort is REQUIRED whenever --model is given. Without it agy
-			// warns "--model <m> requires --effort (available: low, medium,
-			// high)" and silently ignores the model, so the configured model
-			// would never actually take effect. "low" matches the effort agy
-			// itself falls back to, keeping behaviour unchanged while making
-			// the model selection real.
-			launchCmd = fmt.Sprintf("%s --dangerously-skip-permissions", binary)
-			if model != "" {
-				launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyDefaultEffort)
-			}
-		case "pi":
-			// pi takes the model as a CLI flag, not a subcommand. Without
-			// this case the launch command never receives the configured
-			// model (previously it also hit the goose binary via the alias).
-			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
-		case "goose":
-			launchCmd = fmt.Sprintf("%s run -s", binary)
-			if model != "" {
-				launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
-			}
-		case bobBackend:
-			launchCmd = bobLaunchCmd(binary)
-		default:
-			launchCmd = binary
-		}
+		launchCmd = backendLaunchCmd(binary, model, backend, isInference)
 	}
 
 	if mcpFlags := connectionMCPFlags(agent.Config.Connections, backend); mcpFlags != "" {
@@ -9931,6 +9857,91 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	}
+}
+
+// backendLaunchCmd builds the per-backend CLI command used when an agent has no
+// explicit ToolsConfig. It is the default-path counterpart to
+// toolRulesToLaunchCmd and is deliberately pure — no Manager, no tmux, no
+// process — so the flag contract each backend depends on can be asserted
+// directly in tests instead of by polling a live pane for typed output.
+func backendLaunchCmd(binary, model, backend string, isInference bool) string {
+	var launchCmd string
+	switch backend {
+	case "claude":
+		bareFlag := ""
+		if isInference {
+			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
+		}
+		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
+		// Deny ALL GitHub MCP write tools in EVERY mode: agents author via the
+		// App-gated gh wrapper, never as the user via the MCP. Mode governs the
+		// gh-wrapper/proxy layer only, not what the MCP may write.
+		launchCmd = base + claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()
+	case "copilot":
+		// model arrives here already canonicalized by normalizeModelName
+		// (CanonicalizeCopilotModel: separator drift like claude-fable.5 is
+		// normalized to the CLI-accepted claude-fable-5, #4262) and is then
+		// passed as-is to `copilot --model %s`. It may be a
+		// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
+		// in cli_models.go), which lets the Copilot CLI pick/adjust the model
+		// per task. Nothing here assumes a concrete id, so the sentinel flows
+		// through unchanged.
+		// PRIMARY defense against authoring as the login USER via the MCP:
+		// we do NOT pass --enable-all-github-mcp-tools. Copilot CLI's built-in
+		// GitHub MCP server is READ-ONLY BY DEFAULT (v0.0.350+), so the write
+		// tools (create_issue/create_pull_request/…) are never registered.
+		// READ tools (get_issue/list/search) stay available in that read-only
+		// default, so nothing here disables useful lookups. All GitHub writes
+		// must go through the App-gated gh wrapper / hive-open-pr.
+		// copilotGitHubWriteDenyFlags is applied as belt-and-suspenders (with
+		// the CORRECT `github-mcp-server(` server name) on top of the read-only
+		// default. This is identical across ModeIssuesAndPRs / ModeIssuesOnly /
+		// advisory — the mode never changes what the MCP can write (it never
+		// legitimately should), it only governs the separate, unchanged
+		// gh-wrapper/proxy layer that still reads Mode for the App-gated writes.
+		launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
+			binary, model, copilotGitHubWriteDenyFlags)
+	case "gemini":
+		launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+	case "agy":
+		// Antigravity CLI (Google's Gemini CLI replacement). Needs
+		// --dangerously-skip-permissions or it blocks on a per-tool
+		// approval prompt that no one is attached to answer — the same
+		// contract as claude's bypass flag, and the value already used for
+		// agy in config/backends.conf.
+		//
+		// An unrecognised --model is NOT fatal here: agy warns
+		// ("model X is not recognized ... Using \"Gemini 3.6 Flash\"
+		// instead") and continues on its default, so a stale model carried
+		// over from another provider degrades to a warning rather than a
+		// dead agent.
+		//
+		// --effort is REQUIRED whenever --model is given. Without it agy
+		// warns "--model <m> requires --effort (available: low, medium,
+		// high)" and silently ignores the model, so the configured model
+		// would never actually take effect. "low" matches the effort agy
+		// itself falls back to, keeping behaviour unchanged while making
+		// the model selection real.
+		launchCmd = fmt.Sprintf("%s --dangerously-skip-permissions", binary)
+		if model != "" {
+			launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyDefaultEffort)
+		}
+	case "pi":
+		// pi takes the model as a CLI flag, not a subcommand. Without
+		// this case the launch command never receives the configured
+		// model (previously it also hit the goose binary via the alias).
+		launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+	case "goose":
+		launchCmd = fmt.Sprintf("%s run -s", binary)
+		if model != "" {
+			launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
+		}
+	case bobBackend:
+		launchCmd = bobLaunchCmd(binary)
+	default:
+		launchCmd = binary
+	}
+	return launchCmd
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.
