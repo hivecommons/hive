@@ -11,6 +11,8 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-08-31 (v4.0.1)
+
 ### Added
 
 - A companion page [`src/docs/forge-app-setup.md`](src/docs/forge-app-setup.md) covering the non-GitHub forges, because `github-app-setup.md` is scoped to GitHub.com and GHE while its own terminology note — echoed by `getting-started.md` and `troubleshooting.md` — told GitLab, Gitea, and Forgejo operators that the Forge App was "the equivalent host app" on their platform and pointed them at a GitHub-only guide. That framing was wrong in a way an operator could only discover after attempting an install. The new page states plainly that a hive **cannot run against GitLab, Gitea, or Forgejo today**: `src/pkg/forge` ships tested GitHub/GitLab/Gitea adapters, but nothing imports the package outside its own tests, so `project.forge: gitlab` changes only the dashboard's Platform tile. It documents why — agents reach their forge through the `gh` CLI wrapper and the `hive-open-pr`/`hive-open-issue` request-file path, not through the abstraction, and the GitHub MCP write tools are explicitly denied — plus the ceiling on the abstraction itself (no `CreateIssue`, no `CreatePR`, and `Merge` left an explicit interface TODO). It also documents the `gitlab:`/`gitea:` config blocks that genuinely parse, as **top-level** siblings of `github:` rather than nested inside it, and disambiguates `project.forge` (forge family) from `github.forge` (which GitHub instance a hive's App lives on) — two unrelated settings sharing a word, where confusing them breaks a working hive. The three misleading cross-references are corrected in place ([#5284](https://github.com/kubestellar/hive/issues/5284)).
