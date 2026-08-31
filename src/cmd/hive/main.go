@@ -8529,6 +8529,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			continue
 		}
 
+		if pr.Mergeable == github.MergeableNo {
+			// A conflicting PR cannot merge no matter how green its checks
+			// are. Listing it as merge-eligible left the eligible count stuck
+			// at N forever while nothing could actually merge (console
+			// #23002/#23003, 2026-08-31: the only two build-gate-green PRs
+			// were DIRTY go.mod dependabot bumps). Conflicts are the
+			// rebase/needs-human path's job, not the sweep's — keep them out
+			// of the eligible bucket.
+			continue
+		}
+
 		dco := "unknown"
 		for _, l := range pr.Labels {
 			switch l {
