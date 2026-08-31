@@ -98,6 +98,15 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
 | `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.sh` as JavaScript with stubs. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
+| `test_agent_env_scrub.sh` | `agent-env-scrub.sh` (#4045): backend CLIs must not re-export live GitHub credentials into the tool shells they spawn. Behavioural plus source assertions. |
+| `test_gh_auth_native_no_cat.sh` | The N14 (#3842) fix: a native/systemd-install agent kicked via `kick-agents.sh` — no Go AgentManager, no per-agent `HIVE_AGENT_TOKEN_CACHE` — still authenticates without leaking the token through `cat`. |
+| `test_gh_wrapper_gates.sh` | `gh-wrapper.sh`'s enforcement gates. |
+| `test_git_credential_hive.sh` | `git-credential-hive.sh` behaviour. |
+| `test_hive_open_issue.sh` | `hive-open-issue.sh`, the agent issue-creation chokepoint. See [`src/docs/hive-open-issue.md`](../src/docs/hive-open-issue.md). |
+| `test_hive_review.sh` | `hive-review.sh`, the agent PR-review chokepoint. |
+| `test_hive_podman_setup.sh` | Contract tests for `hive-podman-setup.sh` (#4470). |
+| `test_hive_podman_update.sh` | Contract tests for `hive-podman-update.sh` (#4378). |
+| `test_hive_podman_lifecycle_probe.sh` | Contract tests for `hive-podman-lifecycle-probe.sh` (#4377). |
 | `test_hive_baseline_check.sh` | Shared-CI classifier regressions for red default branches, exact-name sibling thresholds, reruns, pending checks, and fail-closed API errors. |
 | `test_bin_suites_wired.sh` | Fails when a test suite in this directory is not run by any workflow, Justfile target, or hook (#4363). |
 | `test_hive_standalone_runtime.sh` | `hive-standalone-runtime.sh` engine selection: Docker default, explicit Podman, and no silent fallback. |
