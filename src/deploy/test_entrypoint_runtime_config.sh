@@ -114,6 +114,120 @@ check "both PVC writes target the new name" "2" "$writes_new"
 writes_legacy="$(grep -c 'cp "\$HIVE_CONFIG_PATH" "\$HIVE_CONFIG_RUNTIME_LEGACY"' "$ENTRYPOINT" || true)"
 check "no PVC write targets the legacy name" "0" "$writes_legacy"
 
+# ── #5360: hardening must leave the file READABLE BY THE READING USER ──
+#
+# The regression this closes: #5342 asserted only that the mode was 0600 and
+# passed while the product was broken. 0600 is OWNER-only, the `cp` calls that
+# create the file run as root, and the hive process drops to dev (uid 1001)
+# before it opens the config — so a root:root 0600 file is mode-correct and
+# unreadable, and startup died with `permission denied` on the arm64 lane.
+#
+# So the assertion is not "mode is 0600". It is "the mode is 0600 AND uid 1001
+# can actually open it" — the property the product needs, checked by really
+# opening the file as that uid rather than by inspecting metadata.
+
+echo
+echo "=== #5360: hardened config is readable by the runtime user ==="
+
+# Every site that creates or hardens a PVC config copy must route through the
+# helper, so a new `cp` cannot reintroduce the bug by hardening inline.
+inline_chmod="$(grep -cE '^[[:space:]]*chmod 600 "\$(HIVE_CONFIG_RUNTIME|_cfg)' "$ENTRYPOINT" || true)"
+check "no site chmods a PVC config copy outside the helper" "0" "$inline_chmod"
+
+# The helper must chown, not merely chmod. A helper that only chmods is
+# exactly the #5360 shape.
+HARDEN="$(sed -n '/^hive_harden_runtime_config() {/,/^}/p' "$ENTRYPOINT")"
+if [ -z "$HARDEN" ]; then
+  echo "  FAIL: could not extract hive_harden_runtime_config from $ENTRYPOINT"
+  FAIL=$((FAIL + 1))
+elif ! printf '%s' "$HARDEN" | grep -q 'chown'; then
+  echo "  FAIL: hive_harden_runtime_config does not chown — 0600 on a root-owned"
+  echo "        file is unreadable to the dev uid that reads it (#5360)"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: hive_harden_runtime_config chowns as well as chmods"
+  PASS=$((PASS + 1))
+fi
+
+# The behavioural test. Requires root (to own a file as root and then drop to
+# another uid) and a uid-1001 account. CI's arm64/container lanes have both;
+# a developer laptop generally has neither, so skip loudly rather than fake a
+# pass — a silent skip here is how the original gap shipped.
+RUNTIME_UID=1001
+if [ "$(id -u)" != "0" ]; then
+  echo "  SKIP: not root — cannot exercise the root-creates/dev-reads path"
+  echo "        (this is the case CI must run; see #5360)"
+elif ! id -u dev >/dev/null 2>&1; then
+  echo "  SKIP: no 'dev' account on this host — cannot exercise the drop"
+else
+  tmpd="$(mktemp -d)"
+  trap 'rm -rf "$tmpd"' EXIT
+  # /data is world-traversable in the image; mirror that so the only thing
+  # under test is the file's own mode and ownership.
+  chmod 755 "$tmpd"
+
+  target="$tmpd/hive.yaml.runtime"
+  # Reproduce the failing shape exactly: root creates the file 0644 (the mode
+  # `cp` inherits from the 0644 ConfigMap seed / bind-mounted hive.yaml).
+  printf 'dashboard:\n  auth_token: probe-not-a-real-token\n' > "$target"
+  chown root:root "$target"
+  chmod 644 "$target"
+
+  HIVE_RUNTIME_USER="dev"
+  HIVE_RUNTIME_GROUP="node"
+  export HIVE_RUNTIME_USER HIVE_RUNTIME_GROUP
+  # shellcheck disable=SC1090
+  eval "$HARDEN"
+  hive_harden_runtime_config "$target" >/dev/null
+
+  mode="$(stat -c '%a' "$target" 2>/dev/null)"
+  owner="$(stat -c '%u' "$target" 2>/dev/null)"
+
+  # 1. Still owner-only. The security fix must not be weakened to buy back
+  #    readability — the file holds dashboard.auth_token (#5331).
+  check "hardened config is still mode 0600" "600" "$mode"
+
+  # 2. Owned by the uid that reads it. This is the half #5342 was missing.
+  check "hardened config is owned by the runtime uid" "$RUNTIME_UID" "$owner"
+
+  # 3. THE ASSERTION THAT MATTERS: really open it as that uid. Mode and owner
+  #    are metadata; this is the syscall the hive binary makes at startup,
+  #    and it is what returned EACCES in #5360.
+  if su -s /bin/sh dev -c "cat '$target' >/dev/null 2>&1"; then
+    echo "  PASS: the runtime user can actually read the hardened config"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: the runtime user CANNOT read the hardened config"
+    echo "        this is #5360 — hive aborts with 'permission denied' at startup"
+    FAIL=$((FAIL + 1))
+  fi
+
+  # 4. And nobody else can. Confirms we bought readability with ownership,
+  #    not by widening the mode. 'nobody' exists on every image variant here.
+  if id -u nobody >/dev/null 2>&1; then
+    if su -s /bin/sh nobody -c "cat '$target' >/dev/null 2>&1"; then
+      echo "  FAIL: an unrelated uid can read the hardened config"
+      echo "        the token in this file must not be world-readable (#5331)"
+      FAIL=$((FAIL + 1))
+    else
+      echo "  PASS: an unrelated uid cannot read the hardened config"
+      PASS=$((PASS + 1))
+    fi
+  fi
+
+  # 5. A file already owned by the runtime user still gets tightened. This is
+  #    the steady state after Config.Save() and every non-root boot.
+  printf 'dashboard:\n  auth_token: probe-not-a-real-token\n' > "$target"
+  chown dev:node "$target"
+  chmod 644 "$target"
+  hive_harden_runtime_config "$target" >/dev/null
+  check "already dev-owned config is still tightened to 0600" \
+    "600" "$(stat -c '%a' "$target" 2>/dev/null)"
+
+  rm -rf "$tmpd"
+  trap - EXIT
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

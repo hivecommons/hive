@@ -61,32 +61,71 @@ HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
 
-# These PVC config copies can carry dashboard.auth_token (and github.token in
-# PAT mode). Files written before the 0600 fix (#5331) are world-readable, and
-# /data is world-traversable, so tighten pre-existing copies at boot.
-# Best-effort: on a read-only or foreign-owned PVC this must not abort boot.
-for _cfg in "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml.dashboard; do
-  [ -f "$_cfg" ] && chmod 600 "$_cfg" 2>/dev/null || true
-done
-unset _cfg
+# The uid/gid the hive process actually runs as after the privilege drop
+# further down (setpriv/gosu to dev). 0600 is an OWNER-only mode, so every
+# hardened config copy has to be owned by THIS user or the owner of the file
+# is not the reader of the file — see hive_harden_runtime_config.
+HIVE_RUNTIME_USER="dev"
+HIVE_RUNTIME_GROUP="node"
 
-# hive_harden_runtime_config tightens $1 to 0600 after any cp that (re)creates
-# a PVC config copy.
+# hive_harden_runtime_config makes $1 readable by the user that reads it, and
+# by nobody else: chown to dev:node, then chmod 0600.
 #
-# The boot-time chmod loop above only covers files that already existed when
-# this script started. Every `cp` below that writes $HIVE_CONFIG_RUNTIME
+# BOTH halves are load-bearing, and #5360 is what happens with only one.
+#
+# The mode half (#5342/#5331): every `cp` below that writes a PVC config copy
 # creates the destination anew, and cp gives a newly created destination the
 # SOURCE's mode — the ConfigMap seed and the bind-mounted hive.yaml are both
-# 0644 — so the runtime copy is re-widened to 0644 on every boot, after the
-# loop above has already run. Without this the 0600 fix only holds from the
-# first Config.Save() onward, and a hive that boots and never saves stays
-# world-readable indefinitely.
+# 0644 — so the copy is re-widened to 0644 on every boot. Without the chmod
+# the 0600 fix only holds from the first Config.Save() onward, and a hive that
+# boots and never saves stays world-readable indefinitely. These files carry
+# dashboard.auth_token (and github.token in PAT mode) and /data is
+# world-traversable, so that is the dashboard owner credential readable by
+# every unprivileged agent uid.
 #
-# Best-effort for the same reason as the loop above: a read-only or
-# foreign-owned PVC must not abort boot.
+# The ownership half (#5360): those same `cp` calls run in the ROOT phase, so
+# the destination is created root:root. chmod 600 on a root:root file grants
+# access to root ALONE — and the hive process drops to dev (uid 1001) before
+# it ever opens the config, so it reads back `permission denied` and startup
+# aborts. The `chown -R dev:node /data` in the root-only block does NOT cover
+# this: it is guarded by `[ "$DATA_OWNER" != "1001" ]` and src/Dockerfile
+# already ships /data owned by dev:node, so on a fresh anonymous volume the
+# guard is false and the recursive chown never runs at all. It is also far
+# BELOW these call sites, so even when it does run it cannot help a file the
+# config branch has not created yet.
+#
+# Do the chown FIRST and the chmod second. The reverse order leaves a window
+# in which the file is 0644 and root-owned; chown does not clear the mode, so
+# chown-then-chmod is never wider than 0600 for longer than the chown itself.
+#
+# Best-effort throughout: a read-only or foreign-owned PVC, or a container
+# without CAP_CHOWN, must not abort boot. When the chown cannot be performed
+# the chmod is deliberately skipped rather than applied to a file we do not
+# own — locking a root-owned file to 0600 is precisely the #5360 failure, and
+# a readable-but-wider file that boots beats a hardened one that cannot.
 hive_harden_runtime_config() {
-  [ -f "$1" ] && chmod 600 "$1" 2>/dev/null || true
+  [ -f "$1" ] || return 0
+  # Already owned by the runtime user (the steady state after Config.Save(),
+  # and every non-root boot) — just tighten the mode.
+  if [ "$(stat -c '%u' "$1" 2>/dev/null || echo)" = "1001" ]; then
+    chmod 600 "$1" 2>/dev/null || true
+    return 0
+  fi
+  if chown "$HIVE_RUNTIME_USER:$HIVE_RUNTIME_GROUP" "$1" 2>/dev/null; then
+    chmod 600 "$1" 2>/dev/null || true
+  else
+    echo "[entrypoint] WARN: cannot chown $1 to $HIVE_RUNTIME_USER:$HIVE_RUNTIME_GROUP — leaving its mode alone so the runtime user can still read it (0600 on a foreign-owned file is #5360). Is CAP_CHOWN in the pod's capabilities.add?"
+  fi
 }
+
+# Tighten pre-existing PVC config copies at boot. Files written before the
+# 0600 fix (#5331) are world-readable. Routed through the helper above so
+# these get the same chown-then-chmod treatment as the ones the `cp` calls
+# recreate — a pre-existing root-owned copy is just as unreadable to dev.
+for _cfg in "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml.dashboard; do
+  hive_harden_runtime_config "$_cfg"
+done
+unset _cfg
 
 # hive_runtime_config_read echoes the path to read the persisted runtime
 # config from: the new name when it is present and non-empty, else the
