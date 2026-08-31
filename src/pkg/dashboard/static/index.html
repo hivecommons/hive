@@ -4552,8 +4552,7 @@
       const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
       if (prompt) opts.body = JSON.stringify({ prompt });
       try {
-        const res = await fetch('/api/kick/' + name, opts);
-        const data = await res.json();
+        const data = await postJSON('/api/kick/' + name, opts);
         if (!data.ok) { showToast('Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
         showToast(prompt ? 'Sent to ' + name : 'Kicked ' + name, 'success');
         input.value = '';
@@ -14204,6 +14203,32 @@ function burnAreaChart() {
       }
     }
 
+    // postJSON POSTs to an API endpoint and returns its decoded JSON body.
+    //
+    // The endpoints we control always answer JSON, but an intermediary need
+    // not: an auth proxy can answer a session-expiry redirect, an ingress can
+    // answer a 502/504, and both bodies are HTML. Calling res.json() on those
+    // throws a parser error ("Unexpected token '<'"), and the caller's catch
+    // then reports the parser's complaint instead of the actual failure —
+    // hiding whether the fix is "sign in again" or "the spoke is unreachable".
+    //
+    // So sniff the content type first and, when it is not JSON, throw an Error
+    // whose message names the real HTTP condition. Callers keep their existing
+    // catch and now surface something an operator can act on.
+    async function postJSON(url, opts) {
+      const res = await fetch(url, opts);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        // 401/403 is the session-expiry case and has a specific remedy; every
+        // other non-JSON answer is reported by its status so a screenshot still
+        // carries the diagnosis.
+        throw new Error(res.status === 401 || res.status === 403
+          ? 'session expired — reload and sign in again'
+          : `server returned ${res.status} ${res.statusText || 'error'}`);
+      }
+      return await res.json();
+    }
+
     async function kick(agent) {
       const input = document.getElementById(`kick-prompt-${agent}`);
       const prompt = input ? input.value.trim() : '';
@@ -14215,8 +14240,7 @@ function burnAreaChart() {
       // request still surfaces feedback instead of silently doing nothing.
       const toast = showToast(`Kicking ${agent}...`, 'info', true);
       try {
-        const res = await fetch(`/api/kick/${agent}`, opts);
-        const data = await res.json();
+        const data = await postJSON(`/api/kick/${agent}`, opts);
         if (!data.ok) { dismissToast(toast, 'Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
         dismissToast(toast, `Kicked ${agent}`, 'success');
         if (input) input.value = '';
