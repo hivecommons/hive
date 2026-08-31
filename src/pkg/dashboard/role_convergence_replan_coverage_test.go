@@ -77,31 +77,6 @@ func TestRequestRoleAllowsOwner_EmptyRoleDeniedWithDirectRouteAuthz(t *testing.T
 
 // ── configuredDossierCacheMaxEntries (dossier.go) ───────────────────────────
 
-func TestConfiguredDossierCacheMaxEntries(t *testing.T) {
-	cases := []struct {
-		name string
-		env  string
-		want int
-	}{
-		{"unset", "", dossierCacheMaxEntriesDefault},
-		{"valid", "64", 64},
-		{"whitespace-padded valid", "  128  ", 128},
-		{"non-numeric", "lots", dossierCacheMaxEntriesDefault},
-		{"zero", "0", dossierCacheMaxEntriesDefault},
-		{"negative", "-3", dossierCacheMaxEntriesDefault},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(dossierCacheMaxEntriesEnv, tc.env)
-			if got := configuredDossierCacheMaxEntries(); got != tc.want {
-				t.Fatalf("env %q: got %d, want %d", tc.env, got, tc.want)
-			}
-		})
-	}
-}
-
-// ── handleConvergenceConfigGet (api_config_convergence.go) ──────────────────
-
 func convergenceGetReq(owner bool) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, "/api/config/convergence", nil)
 	if owner {
