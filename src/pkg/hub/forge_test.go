@@ -566,3 +566,80 @@ func TestParseForgeTargetWithKind(t *testing.T) {
 		})
 	}
 }
+
+// TestPendingForgeAPIURLRespectsStoredKind is the regression test for #5336.
+//
+// pendingForgeAPIURL used to re-parse the stored host with the KIND-LESS
+// parseForgeTarget. A host alone cannot distinguish GitLab or Gitea from GitHub
+// Enterprise, so every well-formed non-github.com host was classified as GHE and
+// a GitLab hive got "https://<gitlab-host>/api/v3" — a GHE API path aimed at a
+// GitLab instance. The failure is silent: a plausible-looking wrong URL, not an
+// error, which is exactly why it needs a test.
+//
+// The CORRECT outcome for gitlab/gitea is that NOTHING is pushed. Their
+// ForgeTarget.APIURL is deliberately empty under the API-path contract — the
+// pkg/forge adapter appends /api/v4 or /api/v1, so the hub must not pre-append a
+// suffix — and an empty API URL is not a value the hub has anything to say
+// about. Asserting merely "not /api/v3" would pass if the public api.github.com
+// default leaked through instead, so the assertion is on emptiness.
+func TestPendingForgeAPIURLRespectsStoredKind(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	nonGitHub := []struct {
+		id, forge, host string
+	}{
+		{"gl", string(ForgeGitLab), "gitlab.example.com"},
+		{"gl-saas", string(ForgeGitLab), "gitlab.com"},
+		{"gt", string(ForgeGitea), "gitea.example.com"},
+		{"gt-codeberg", string(ForgeGitea), "codeberg.org"},
+	}
+	for _, tc := range nonGitHub {
+		t.Run(tc.forge+"/"+tc.host, func(t *testing.T) {
+			saveSaaSHive(&SaaSHive{
+				ID: tc.id, Status: "running", Org: "o", Repos: []string{"r"},
+				PrimaryRepo: "r", ACMMLevel: 2,
+				Forge: tc.forge, GitHubHost: tc.host,
+				RequestedGitHubHost: tc.host,
+			})
+			got := pendingForgeAPIURL(loadSaaSHive(tc.id), "")
+			if strings.Contains(got, gheAPIPathSuffix) {
+				t.Fatalf("a %s hive was handed the GitHub Enterprise API path %q — the stored kind was dropped (#5336)", tc.forge, got)
+			}
+			if got != "" {
+				t.Fatalf("pendingForgeAPIURL = %q, want %q: a %s target has no hub-side API URL, and pushing anything here (including the public default) aims the spoke at the wrong host", got, "", tc.forge)
+			}
+		})
+	}
+
+	// The GitHub paths must be untouched by passing the kind through: an
+	// enterprise hive still gets its /api/v3, and a switch to public github.com
+	// still gets the EXPLICIT default rather than "" (which the spoke ignores).
+	saveSaaSHive(&SaaSHive{
+		ID: "ghe", Status: "running", Org: "o", Repos: []string{"r"},
+		PrimaryRepo: "r", ACMMLevel: 2,
+		Forge: string(ForgeGitHubEnterprise), GitHubHost: "github.ibm.com",
+		RequestedGitHubHost: "github.ibm.com",
+	})
+	if got, want := pendingForgeAPIURL(loadSaaSHive("ghe"), ""), "https://github.ibm.com"+gheAPIPathSuffix; got != want {
+		t.Errorf("enterprise hive: pendingForgeAPIURL = %q, want %q", got, want)
+	}
+	// An enterprise hive whose Forge field was never written (every record
+	// predating the field) must still resolve through the host, unchanged.
+	saveSaaSHive(&SaaSHive{
+		ID: "ghe-legacy", Status: "running", Org: "o", Repos: []string{"r"},
+		PrimaryRepo: "r", ACMMLevel: 2,
+		GitHubHost: "github.ibm.com", RequestedGitHubHost: "github.ibm.com",
+	})
+	if got, want := pendingForgeAPIURL(loadSaaSHive("ghe-legacy"), ""), "https://github.ibm.com"+gheAPIPathSuffix; got != want {
+		t.Errorf("legacy enterprise hive with no stored kind: pendingForgeAPIURL = %q, want %q", got, want)
+	}
+	saveSaaSHive(&SaaSHive{
+		ID: "pub", Status: "running", Org: "o", Repos: []string{"r"},
+		PrimaryRepo: "r", ACMMLevel: 2,
+		Forge: string(ForgeGitHub), RequestedGitHubHost: "github.com",
+	})
+	if got := pendingForgeAPIURL(loadSaaSHive("pub"), ""); got != defaultPublicAPIURL {
+		t.Errorf("public hive: pendingForgeAPIURL = %q, want the explicit %q", got, defaultPublicAPIURL)
+	}
+}

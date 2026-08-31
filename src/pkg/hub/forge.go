@@ -151,16 +151,15 @@ func parseForgeTarget(raw string) (ForgeTarget, error) {
 // anyone. It is a placeholder for a consumer that does not exist, not a value
 // something downstream fills in.
 //
-// It is also not delivered anywhere, and the reason is worth pinning down
-// because it is not obvious: the only path that would push it,
-// pendingForgeAPIURL, re-parses h.RequestedGitHubHost through parseForgeTarget
-// — the KIND-LESS variant, which cannot see that the hive is on GitLab/Gitea.
-// A well-formed non-github.com host there is therefore classified as GitHub
-// Enterprise and yields APIURL = "https://<host>/api/v3". So a GitLab hive does
-// not push an empty API URL; the delivery path would push a GHE /api/v3 URL for
-// a GitLab host. That value is meaningless to a spoke, which is another reason
-// this path is not deployment-ready — and a trap for anyone who wires it later
-// and assumes the kind survives the round trip through the stored host.
+// It is also not delivered anywhere. The only path that would push it,
+// pendingForgeAPIURL, passes h.Forge to THIS function rather than re-parsing
+// the stored host kind-lessly, so a gitlab/gitea hive resolves to this empty
+// APIURL and pendingForgeAPIURL pushes nothing at all. Before #5336 it called
+// the kind-less parseForgeTarget, which cannot see that the hive is on
+// GitLab/Gitea and classified every well-formed non-github.com host as GitHub
+// Enterprise — so a GitLab hive would have been sent
+// "https://<gitlab-host>/api/v3", a GHE path aimed at a GitLab instance. The
+// kind must survive the round trip through the stored host; it now does.
 //
 // Keep the empty APIURL: it is the correct hub-side value under the API-path
 // contract below, and pre-appending a suffix here would be the duplicate that
@@ -813,12 +812,27 @@ func pendingForgeAPIURL(h *SaaSHive, curAPIURL string) string {
 	if h == nil || h.ForgeDelivered || h.RequestedGitHubHost == "" {
 		return ""
 	}
-	target, err := parseForgeTarget(h.RequestedGitHubHost)
+	// Pass the STORED KIND through. A host alone cannot distinguish GitLab or
+	// Gitea from GitHub Enterprise, so the kind-less parseForgeTarget would
+	// classify every well-formed non-github.com host as GHE and hand a GitLab
+	// hive "https://<gitlab-host>/api/v3" — a GHE path aimed at a GitLab
+	// instance (#5336). h.Forge is written by handleForgeSwitch alongside
+	// RequestedGitHubHost and is the authoritative family for this record.
+	target, err := parseForgeTargetWithKind(h.Forge, h.RequestedGitHubHost)
 	if err != nil {
 		return "" // an unparseable stored target is never pushed
 	}
 	want := target.APIURL
 	if want == "" {
+		if !target.IsPublic() {
+			// A non-public target with no APIURL is a GitLab/Gitea hive. Its
+			// empty APIURL is the correct hub-side value under the API-path
+			// contract — the adapter appends /api/v4 or /api/v1 — so there is
+			// nothing to push. Falling through to defaultPublicAPIURL here
+			// would aim a GitLab spoke at api.github.com, which is the same
+			// class of wrong value this fix removes.
+			return ""
+		}
 		// Public github.com — send the explicit default, not "" (see above).
 		want = defaultPublicAPIURL
 	}
