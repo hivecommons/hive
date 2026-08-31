@@ -118,6 +118,135 @@ hive_harden_runtime_config() {
   fi
 }
 
+# ── /data ownership as an INVARIANT, not a boot-time snapshot (#5369) ──
+#
+# HIVE_DATA_ROOT_PHASE_PATHS is the closed list of paths the root phase of this
+# script creates under /data. It exists because the recursive
+# `chown -R dev:node /data` further down is guarded on `[ "$DATA_OWNER" != 1001 ]`
+# and src/Dockerfile already ships /data owned by dev:node — so on a normal boot
+# the guard is FALSE and that chown never runs. Everything the root phase then
+# creates keeps root:root, and the hive process (uid 1001, after the setpriv/gosu
+# drop) cannot read it. #5360 was one instance of that; this list closes the class.
+#
+# The guard is NOT the bug and must stay. A recursive chown over an NFS-backed
+# PVC with thousands of files costs minutes of startup. This list is the targeted
+# alternative: a fixed set of shallow paths, chowned by NAME, so the cost is
+# O(number of entries here) rather than O(size of the PVC) — and the invariant is
+# restored without reintroducing the walk.
+#
+# MAINTENANCE RULE: if you add a root-phase write under /data, add its path here.
+# hive_assert_runtime_readable below fails the boot LOUDLY, naming the path, when
+# something in this list is unreadable to the runtime uid — so a forgotten entry
+# surfaces as a named error at startup instead of as a silent EACCES later.
+#
+# Deliberately NOT in this list:
+#   /data/agents/*, /data/beads/*  — chowned to per-agent hive-<name> UIDs by the
+#     per-agent loop, not to dev. Sweeping them to dev would undo that isolation.
+#   /data/secrets/bob_api_key      — mode 440, chowned at its own site, and read
+#     by agent UIDs rather than by dev.
+#   /data/.hive/proxy-ca-key.pem   — owner-only by design, chowned at its site.
+HIVE_DATA_ROOT_PHASE_PATHS="
+/data/.hive
+/data/secrets
+/data/config
+/data/config/github-copilot
+/data/home
+/data/home/.config
+/data/home/.bashrc
+/data/home/.profile
+"
+
+# hive_sweep_root_phase_paths hands every existing entry of that list to the
+# runtime user. Ownership ONLY — it never touches modes, because the modes are
+# already deliberate at each site (2775 on /data/home, 710 on /data/secrets,
+# 700 on /data/.hive) and re-deriving them here would be a second source of
+# truth that silently drifts from the first.
+#
+# Non-recursive on purpose: `chown` without -R on a directory is a single
+# syscall regardless of how many files are under it, which is what keeps the
+# NFS cost bounded. Directory ENTRIES created by the root phase are named
+# individually above; entries created later by dev or by an agent are already
+# owned by their creator and are not ours to reassign.
+#
+# Fails OPEN, per #5368: a chown that cannot happen (no CAP_CHOWN, read-only or
+# foreign-owned PVC) WARNs and continues. Nothing here is a security control —
+# the modes set at each site are — so a failed chown must never abort a boot.
+hive_sweep_root_phase_paths() {
+  _sweep_failed=""
+  for _p in $HIVE_DATA_ROOT_PHASE_PATHS; do
+    [ -e "$_p" ] || continue
+    # Already owned by the runtime user — the steady state on almost every
+    # boot. Skip the syscall entirely so the common path costs one stat.
+    [ "$(stat -c '%u' "$_p" 2>/dev/null || echo)" = "1001" ] && continue
+    chown "$HIVE_RUNTIME_USER:$HIVE_RUNTIME_GROUP" "$_p" 2>/dev/null \
+      || _sweep_failed="$_sweep_failed $_p"
+  done
+  if [ -n "$_sweep_failed" ]; then
+    echo "[entrypoint] WARN: could not chown to $HIVE_RUNTIME_USER:$HIVE_RUNTIME_GROUP:$_sweep_failed — is CAP_CHOWN in the pod's capabilities.add? Continuing; the runtime user may hit EACCES on these paths."
+  fi
+  unset _p _sweep_failed
+}
+
+# hive_assert_runtime_readable is the #5369 assertion: immediately BEFORE the
+# privilege drop, prove that the paths the hive process must read are actually
+# readable by the uid it is about to become — and if not, say WHICH path.
+#
+# This is option 3 from the issue, and it is worth having no matter how good the
+# sweep above is. #5360 took four merges to diagnose because the symptom was a
+# bare `permission denied` from the Go binary with no indication of which file or
+# why. The same fault caught here prints the path, its owner and its mode, before
+# the process that would fail on it has even started.
+#
+# Cheap by construction: it stats a short fixed list and, where a real read is
+# possible, does ONE open() per path as the runtime user. No directory walk.
+#
+# Non-fatal by design. A hive that boots degraded and tells you which file is
+# wrong beats one that refuses to boot on a check that may itself be wrong — and
+# on hosts without a `dev` account or without root there is no way to perform the
+# authoritative test at all. The Go binary still enforces what it genuinely needs;
+# this exists to NAME the fault first. The one true hard failure (an unreadable
+# config) already exits from the config block above.
+hive_assert_runtime_readable() {
+  _assert_bad=""
+  for _p in "$@"; do
+    [ -e "$_p" ] || continue
+    _owner="$(stat -c '%u' "$_p" 2>/dev/null || echo '')"
+    # Owned by the runtime uid — readable by definition, no probe needed.
+    [ "$_owner" = "1001" ] && continue
+    # No usable stat (BSD stat has no -c; a stat-less image is conceivable).
+    # We cannot evaluate this path, and a check that cannot evaluate must stay
+    # SILENT rather than report a fault it did not observe. A warning that
+    # fires on every path on every boot trains the operator to ignore the one
+    # that is real — which is how #5360's actual signal got lost.
+    [ -n "$_owner" ] || continue
+    # Not owned by it. Try the real syscall as that user when we can, since
+    # a foreign-owned file may still be perfectly readable via group or other
+    # bits and flagging it on ownership alone would be a false alarm.
+    if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1 \
+       && id -u "$HIVE_RUNTIME_USER" >/dev/null 2>&1; then
+      if [ -d "$_p" ]; then
+        gosu "$HIVE_RUNTIME_USER" test -r "$_p" -a -x "$_p" 2>/dev/null && continue
+      else
+        gosu "$HIVE_RUNTIME_USER" test -r "$_p" 2>/dev/null && continue
+      fi
+    else
+      # Cannot perform the authoritative test. Fall back to the mode bits: if
+      # the "other" class can read it, the runtime user can too. This is weaker
+      # than the open() above and is only used where the open() is impossible.
+      case "$(stat -c '%a' "$_p" 2>/dev/null || echo 000)" in
+        *[4567]) continue ;;
+      esac
+    fi
+    _assert_bad="$_assert_bad
+  $_p (owner uid=$_owner, mode=$(stat -c '%a' "$_p" 2>/dev/null || echo '?'))"
+  done
+  if [ -n "$_assert_bad" ]; then
+    echo "[entrypoint] WARN (#5369): these paths are NOT readable by the runtime user '$HIVE_RUNTIME_USER' (uid 1001) that this process is about to become:$_assert_bad"
+    echo "[entrypoint] WARN (#5369): they were created by the root phase and never handed over. Anything that reads them after the privilege drop will fail with EACCES. If a path above is a root-phase write, add it to HIVE_DATA_ROOT_PHASE_PATHS in this script."
+  fi
+  unset _p _owner _assert_bad
+}
+
 # Tighten pre-existing PVC config copies at boot. Files written before the
 # 0600 fix (#5331) are world-readable. Routed through the helper above so
 # these get the same chown-then-chmod treatment as the ones the `cp` calls
@@ -832,12 +961,35 @@ fi
 case ":$PATH:" in *:/usr/local/go/bin:*) ;; *) export PATH="$PATH:/usr/local/go/bin" ;; esac
 BASHRC
   chmod 644 /data/home/.bashrc 2>/dev/null || true
+  # Written by root via `cat >` above, so it is created root:root. Hand it to
+  # dev at the point of creation (#5369): the recursive /data chown is guarded
+  # off on every normal boot and cannot be relied on to fix it later.
+  chown dev:node /data/home/.bashrc 2>/dev/null || true
   # Login shells (tmux default-command) read ~/.profile, not ~/.bashrc — chain
   # them so both shell flavors get the same environment.
   if [ ! -f /data/home/.profile ]; then
     printf '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' > /data/home/.profile 2>/dev/null || true
     chmod 644 /data/home/.profile 2>/dev/null || true
+    # Same as .bashrc above — created by root, so hand it over here (#5369).
+    chown dev:node /data/home/.profile 2>/dev/null || true
   fi
+
+  # ── #5369: targeted post-phase ownership sweep ────────────────────────
+  # Everything the root phase creates under /data has now been created. Hand
+  # the closed list of those paths (HIVE_DATA_ROOT_PHASE_PATHS, defined at the
+  # top of this script) to the runtime user by NAME.
+  #
+  # This is what restores the invariant the DATA_OWNER guard turned into a
+  # boot-time snapshot. It is NOT a substitute for the guard and does not
+  # weaken it: the guard still prevents the recursive walk over an NFS PVC,
+  # and this sweep is deliberately non-recursive over a fixed list so its cost
+  # does not scale with the size of the volume.
+  #
+  # Most sites above already chown at the point of creation, and this sweep
+  # skips anything already dev-owned — so on a steady-state boot it is a
+  # handful of stat() calls and nothing else. It is the backstop for the site
+  # that forgets, which is the failure mode #5369 is actually about.
+  hive_sweep_root_phase_paths
 
   # ── Per-agent UID isolation ──────────────────────────────────────────
   # Extract agent names from config + pack YAML, create system users,
@@ -1292,6 +1444,20 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
   # below cannot write it. This is the ONLY git config any per-agent UID reads
   # — their $HOME (/data/home/agents/<name>) has no .gitconfig of its own.
   hive_write_system_gitconfig
+
+  # ── #5369: last chance to name a handover we missed ───────────────────
+  # This is the final instruction of the root phase. Every root-phase write
+  # under /data has happened and the sweep has run; the next statement execs
+  # as uid 1001 and can no longer chown anything. So verify HERE that the
+  # paths the hive process must read are readable by the user it is about to
+  # become, and if any is not, print WHICH ONE with its owner and mode.
+  #
+  # The config paths are included explicitly alongside the swept list because
+  # they are the ones whose failure is fatal — an unreadable
+  # /data/hive.yaml.runtime is #5360 verbatim, and it is the exact fault this
+  # assertion exists to name in one line instead of four merges.
+  hive_assert_runtime_readable $HIVE_DATA_ROOT_PHASE_PATHS \
+    "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml.dashboard
 
   # setpriv identity mirrors `gosu dev` exactly: reuid=dev (UID 1001), regid=node
   # (dev's PRIMARY login group, GID 1000 — there is NO group named `dev`), and
