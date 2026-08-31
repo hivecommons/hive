@@ -1872,6 +1872,43 @@ func (h *ContributeWSHub) bookReleaseCooldown(repo string, number int) {
 	h.saveFailedTasks()
 }
 
+// clearReleaseCooldown withdraws a cooldown booked by bookReleaseCooldown once the
+// release it was hedging against turns out not to have happened
+// (kubestellar/hive#5322).
+//
+// The disconnect path books that cooldown speculatively: at the moment a socket
+// drops the hub cannot know whether the relay is gone for good or reconnecting, so
+// it stamps the #2356 window to stop a second session being handed the same issue
+// during the gap. A lease-bound resume answers the question — the ORIGINAL relay is
+// back and still on the ORIGINAL task, so no release ever occurred and the hedge has
+// served its purpose. Leaving it stamped is what left a demonstrably in-flight issue
+// carrying a release cooldown for the rest of the window: the ledger said "recently
+// let go" about work nobody let go of, and the operator surfaces that read the
+// failure ledger agreed.
+//
+// It is deliberately NARROW. It clears only the timestamp, and only when the issue
+// carries NO consecutive-failure count — i.e. only a hedge booked by
+// bookReleaseCooldown, never a cooldown earned through recordTaskFailure by a real
+// task_failed, a watchdog give-up, or the wedged-task backstop. A resume therefore
+// cannot launder a genuine failure record, and the #2356 duplicate-PR guarantee is
+// intact because the very thing that clears the window is the original owner
+// re-entering activeIssues, which is the stronger guard the window was standing in
+// for.
+func (h *ContributeWSHub) clearReleaseCooldown(repo string, number int) {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	h.completedMu.Lock()
+	_, booked := h.failedTasks[key]
+	if booked && h.consecutiveFailures[key] == 0 {
+		delete(h.failedTasks, key)
+	} else {
+		booked = false
+	}
+	h.completedMu.Unlock()
+	if booked {
+		h.saveFailedTasks()
+	}
+}
+
 // failureCooldownForLocked returns how long, from the last failure time, an
 // issue should be excluded from selection. It is the SHORT
 // failedTaskCooldownMinutes normally, or the LONGER quarantineCooldownHours once
@@ -2853,6 +2890,50 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.pendingToken = ""
 			contributor.credentialDelivered = false
 			contributor.mu.Unlock()
+
+			// #5322: deregister THIS socket before deciding whether its task is
+			// really abandoned. The check below asks "is some OTHER live
+			// connection for this identity already holding this task?", and the
+			// answer must not be able to include the connection being torn down.
+			// Moved up from the tail of this defer for exactly that reason; it is
+			// the same single delete of the same key, just ordered ahead of the
+			// release so the two cannot observe each other.
+			h.mu.Lock()
+			delete(h.connections, connID)
+			h.mu.Unlock()
+
+			// #5322: a socket that dies WITHOUT a close frame (an L7 proxy cutting
+			// the tunnel — the 1006 flap #5090/#5310 measured) leaves this read
+			// loop parked in ReadMessage, so this defer does not run when the
+			// socket dies; it runs whenever the next read finally errors. The
+			// relay meanwhile redials in ~1s and re-asserts its task over a NEW
+			// connection, which the lease-bound resume in task_progress legitimately
+			// adopts. h.connections is keyed by a random per-socket connID and the
+			// hub has no notion of "this contributor's current socket", so when this
+			// defer eventually fires it releases BY ISSUE a task that a live
+			// connection is demonstrably still working: it books a release cooldown
+			// on an in-flight issue and writes "released: connection lost" for work
+			// nobody released. That is the silent drop — the hub's own record of the
+			// assignment contradicted by the ghost of a socket that no longer
+			// represents the contributor.
+			//
+			// So: release only what is still ours to release. If another LIVE
+			// connection for this same identity already holds this exact task, the
+			// reconnect has already reconciled and this socket is a ghost — skip the
+			// release entirely. This changes nothing about a genuine departure (no
+			// other connection holds the task, so the release runs exactly as
+			// before, booking the same cooldown and writing the same rows —
+			// deliberately leaving kubestellar/hive#5151's accounting untouched).
+			if abandonedTask != nil && h.taskReadoptedByLiveConnection(contributor, abandonedTask) {
+				h.logger.Info("[contribute-ws] disconnect release skipped: task already re-adopted on a live connection",
+					"username", contributor.profile.GitHubUsername,
+					"task", abandonedTask.TaskID,
+					"repo", abandonedTask.Repo,
+					"number", abandonedTask.Number,
+				)
+				abandonedTask = nil
+			}
+
 			if abandonedTask != nil {
 				h.logger.Warn("[contribute-ws] task released on disconnect",
 					"username", contributor.profile.GitHubUsername,
@@ -2898,9 +2979,6 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.role, contributor.cliBackend, contributor.model,
 					contributor.reasoningEffort, taskDescOf(abandonedTask))
 			}
-			h.mu.Lock()
-			delete(h.connections, connID)
-			h.mu.Unlock()
 			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
 			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
 		}
@@ -3341,6 +3419,19 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// reconnected twice inside one lease window would be refused the
 					// second time even though it never stopped working.
 					h.renewLease(identity, lease.taskID, time.Now())
+
+					// #5322: the disconnect that preceded this resume booked a
+					// speculative release cooldown on the issue (#2356's
+					// duplicate-assign hedge). This resume proves the release never
+					// happened — the original relay is back, on the original task,
+					// under the original generation — so withdraw the hedge rather
+					// than leave a live, in-flight issue stamped "recently released"
+					// in the failure ledger for the rest of the window. Narrow by
+					// construction: clearReleaseCooldown refuses to touch an issue
+					// that carries a real consecutive-failure count.
+					if lease.number > 0 {
+						h.clearReleaseCooldown(lease.repo, lease.number)
+					}
 
 					h.logger.Info("[contribute-ws] task resumed from server-issued lease",
 						"username", contributor.profile.GitHubUsername,
@@ -3824,6 +3915,60 @@ func (h *ContributeWSHub) taskHeldByAnotherConnection(candidate *ContributorConn
 		conn.mu.Lock()
 		held := conn.currentTask != nil &&
 			conn.currentTask.Number == number &&
+			h.canonicalRepoKey(conn.currentTask.Repo) == canonicalRepo
+		conn.mu.Unlock()
+		if held {
+			return true
+		}
+	}
+	return false
+}
+
+// taskReadoptedByLiveConnection reports whether some OTHER live connection
+// belonging to the SAME contributor identity is currently holding the given task
+// (kubestellar/hive#5322).
+//
+// It exists because h.connections is keyed by a random per-socket connID, so the
+// hub cannot tell "the contributor's current socket" from "a socket the
+// contributor abandoned". When a tunnel is cut without a close frame the dead
+// socket's read loop stays parked until its next read errors, so its disconnect
+// defer can fire well AFTER the relay has redialed and re-adopted the task from
+// the server-issued lease. Releasing by issue at that point tears down work that
+// is demonstrably still in flight.
+//
+// The match is deliberately narrow — same identity AND same task id AND same
+// canonical repo/number — so it can only ever suppress the release of the exact
+// assignment that was reconciled. Anything else (a different task, a different
+// contributor, no live holder at all) is a genuine abandonment and releases
+// normally. It suppresses ONLY the release; it never adopts, assigns, extends a
+// lease, or relaxes any admission or ownership check.
+//
+// Concurrency: takes h.mu.RLock and each candidate's own mu, mirroring
+// taskHeldByAnotherConnection and the other read-only scans. `self` is skipped by
+// pointer identity, so the caller may hold neither, either, or both of self.mu
+// and self.writeMu without risking re-entrancy on this path.
+func (h *ContributeWSHub) taskReadoptedByLiveConnection(self *ContributorConnection, task *WSTaskAssign) bool {
+	if h == nil || task == nil || task.TaskID == "" {
+		return false
+	}
+	identity := identityOf(self)
+	if identity == "" {
+		return false
+	}
+	canonicalRepo := h.canonicalRepoKey(task.Repo)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, conn := range h.connections {
+		if conn == nil || conn == self {
+			continue
+		}
+		if identityOf(conn) != identity {
+			continue
+		}
+		conn.mu.Lock()
+		held := conn.currentTask != nil &&
+			conn.currentTask.TaskID == task.TaskID &&
+			conn.currentTask.Number == task.Number &&
 			h.canonicalRepoKey(conn.currentTask.Repo) == canonicalRepo
 		conn.mu.Unlock()
 		if held {
