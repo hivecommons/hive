@@ -8,6 +8,14 @@ updates:
     labels:
       - "dependencies"
     open-pull-requests-limit: 10
+    ignore:
+      # Module path moved upstream to cel.dev/cel-go (v0.26.0+); dependabot
+      # reports go_module_path_mismatch and fails the whole gomod job.
+      # Remove once /src/go.mod migrates to the new module path.
+      - dependency-name: "github.com/google/cel-go"
+      # teatest lives in a nested module with independent tags; resolving
+      # github.com/charmbracelet/x@v0.1.0 fails (dependency_file_not_resolvable).
+      - dependency-name: "github.com/charmbracelet/x/exp/teatest"
 
   - package-ecosystem: "github-actions"
     directory: "/"
