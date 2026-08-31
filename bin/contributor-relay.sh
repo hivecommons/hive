@@ -1101,6 +1101,11 @@ function runHeadlessTask(task) {
       const noWork = prURL ? null : detectNoWorkVerdict(outTail);
       if (noWork) console.log(`Detected no_work_needed verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, task_gen: task.task_gen, result: 'completed', pr_url: prURL });
+      // #5353: the one-shot child has already exited (this callback is its
+      // exit), so there is no process to stop — but the task-scoped token it
+      // was given stays valid for the rest of wsTokenTTL. Drop it with the
+      // task, so a credential never outlives the assignment it belongs to.
+      stopAgentForTaskExit();
       send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined, ...effectiveSelectionFields() });
       currentTask = null;
       taskAssignedAt = 0;
@@ -1434,7 +1439,11 @@ function armCLIReadyWait() {
     pendingTask = null;
     if (currentTask) {
       // environment: the agent CLI never reached its prompt on this host.
-      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true, kind: 'environment' });
+      // skipCLI: this IS the relaunch path — armCLIReadyWait() re-arms itself
+      // below and the pane already has a launch in flight. Quitting and
+      // relaunching from here would nest a second launch inside the first
+      // (#5353). The credential is still dropped by failCurrentTask.
+      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true, skipCLI: true, kind: 'environment' });
     }
     // Keep waiting. The CLI may still come up (a slow login, an operator
     // attaching to clear a prompt we don't recognize), and when it does the
@@ -2309,6 +2318,86 @@ function relaunchCLI() {
   return launchCmd;
 }
 
+// dropTaskCredential removes the repo-scoped GitHub token this relay was given
+// for the task that is ending.
+//
+// The token lives in exactly one place — the 0600 GH_TOKEN_CACHE written by
+// injectGhToken — and it stays valid for the remainder of wsTokenTTL (~55min)
+// no matter what the relay reports. Leaving it on disk after the hub has
+// released the work means a turn that is still running can keep pushing and
+// opening PRs against an issue the hub has already offered to someone else.
+//
+// Kept separate from the stop so the ordering in stopAgentForTaskExit() is
+// visible at its single call site rather than buried in a compound helper.
+function dropTaskCredential() {
+  try { fs.unlinkSync(GH_TOKEN_CACHE); } catch (_) {}
+  tokenExpiresAt = null;
+}
+
+// stopAgentForTaskExit ends the AGENT, not just the bookkeeping, when a task
+// stops being ours (kubestellar/hive#5353 cause B).
+//
+// Reporting task_complete or task_failed tells the hub to revoke the lease,
+// book a cooldown and offer the issue to someone else. Before this existed,
+// only five of the relay's task-exit paths touched the pane, so the other
+// paths left the original agent running in the same pane, on the same context,
+// holding a live scoped token — and it would eventually open a PR against an
+// issue the hub had already reassigned. That is the duplicate-PR shape #2356
+// exists to prevent, produced from inside the contributor rather than outside
+// it, which is why the hub's cooldown accounting cannot see it.
+//
+// The sequence is the one the task_revoke handler already got right, and the
+// ORDER is load-bearing:
+//
+//  1. Unlink the credential FIRST, so a turn that survives the interrupt (or
+//     races it) cannot keep using it. Interrupting first leaves a window in
+//     which the agent is being killed but is still authorized.
+//  2. Two Ctrl-Cs via quitLiveCLI() — one only cancels a claude/codex/agy
+//     turn and leaves the CLI running, so the relaunch command that follows
+//     would be typed into the CLI as a chat message (#2203).
+//  3. Relaunch, which sets cliReady=false and re-arms armCLIReadyWait(), so
+//     the next task's prompt is queued until a clean prompt is confirmed.
+//
+// Re-entrancy: callers that have ALREADY stopped or relaunched the pane pass
+// { skipCLI: true } and get only step 1 — nesting a second quit/relaunch into
+// a relaunch already in flight is how double-launches happen. Headless mode
+// has no pane at all; there the in-flight one-shot child is killed instead,
+// matching what the revoke handler does.
+//
+// opts.reason names the exit in the relaunch log line, and opts.onRelaunchFailed
+// lets a caller with its own post-relaunch latch (the revoke handler's
+// readyAfterInteractiveRevoke) unwind it — the latch is only meaningful if a
+// relaunch actually happened.
+//
+// Best-effort by design, like quitLiveCLI(): every caller is already on an
+// exit path, and a relaunch that lands badly is recovered by the
+// armCLIReadyWait() contract.
+function stopAgentForTaskExit(opts) {
+  const skipCLI = !!(opts && opts.skipCLI);
+  const reason = (opts && opts.reason) || 'a task exit';
+  // Step 1, always — even when the pane is deliberately left alone. A task
+  // that is no longer ours must not keep its credential under any branch.
+  dropTaskCredential();
+  if (skipCLI) return;
+  if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+    if (headlessChild) {
+      try { headlessChild.kill('SIGKILL'); } catch (_) {}
+      headlessChild = null;
+      writeHeadlessStatus(HEADLESS_STATE_WAITING);
+    }
+    return;
+  }
+  cliReady = false;
+  quitLiveCLI();
+  try {
+    console.log(`Relaunching ${BACKEND} after ${reason}: ${relaunchCLI()}`);
+  } catch (e) {
+    cliReadyFailed = true;
+    if (opts && opts.onRelaunchFailed) opts.onRelaunchFailed();
+    console.error(`Failed to stop and relaunch ${BACKEND} after ${reason}: ${e.message}`);
+  }
+}
+
 // --- Pane stall backstop ------------------------------------------------
 //
 // A relay that BELIEVES it is working renews the hub's task lease on every
@@ -2510,13 +2599,25 @@ function restartBackoffMs(attempt) {
 //
 // It is advisory: the hub records and displays it and does not route, gate, or
 // change the work item's failure cooldown on it. Older hubs ignore the field.
+//
+// opts.skipCLI (kubestellar/hive#5353) says the CALLER has already dealt with
+// the pane — it quit and relaunched the CLI itself, or the CLI is already gone.
+// The credential is still dropped; only the quit/relaunch is skipped, so a
+// relaunch already in flight is not nested inside another one.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
   const kind = (opts && opts.kind) || undefined;
   const taskId = currentTask.task_id;
   const taskGen = currentTask.task_gen;
+  // Captured BEFORE the agent is stopped: the pane text is the evidence the
+  // hub and the operator read to understand the failure, and quitLiveCLI()
+  // followed by a relaunch overwrites it with launch chrome.
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+  // Cause B (#5353): the hub is about to release this issue and offer it to
+  // someone else. Stop the agent and drop its token FIRST, so the report and
+  // the reality agree at the instant the hub acts on it.
+  stopAgentForTaskExit({ skipCLI: !!(opts && opts.skipCLI) });
   console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}${kind ? ` [${kind}]` : ''}: ${reason}`);
   send({
     type: 'task_failed',
@@ -2820,9 +2921,14 @@ function progressTick() {
         // never wedge the whole contributor.
         givenUpTasks.set(key, Date.now());
         cliRestartCounts.delete(key);
+        // skipCLI: this branch's premise is that the CLI process is ALREADY
+        // gone (probeCLIPresence confirmed it), and the relaunch that follows
+        // is this path's own. There is no live turn to interrupt, so quitting
+        // here would only send Ctrl-Cs at a bare shell and then race the
+        // relaunch below. The token is dropped regardless (#5353).
         failCurrentTask(
           `CLI process exited ${MAX_TASK_CLI_RESTARTS} times for ${key} — giving up on this task (relay still accepting other work)`,
-          { permanent: true }
+          { permanent: true, skipCLI: true }
         );
         // Bring the CLI back so the next, different task can run.
         try { console.log(`CLI restarted: ${relaunchCLI()}`); } catch (e) { console.error('Failed to restart CLI:', e.message); }
@@ -2838,7 +2944,9 @@ function progressTick() {
         console.error('Failed to restart CLI:', e.message);
       }
       // environment: the agent CLI process died; nothing was judged about the work.
-      failCurrentTask('CLI process exited — restarted', { kind: 'environment' });
+      // skipCLI for the same reason as the give-up branch above — the process
+      // is gone and the relaunch just above is this path's own (#5353).
+      failCurrentTask('CLI process exited — restarted', { kind: 'environment', skipCLI: true });
       return;
     }
     // A pane sitting at a shell is never evidence that the AGENT finished: the
@@ -2884,11 +2992,31 @@ function progressTick() {
     // claim with "shipped" anyway).
     const noWork = prURL ? null : detectNoWorkVerdict(tmuxLines);
     if (noWork) console.log(`Detected no_work_needed verdict for ${currentTask.task_id}: ${noWork.reason || '(no reason)'}`);
+    // Cause B (#5353). "Idle" here is a verdict read off the pane's rendering
+    // chrome, and it is wrong often enough to have produced thirteen separate
+    // issues. When it is wrong, the agent is still mid-turn — and reporting
+    // task_complete makes the hub revoke the lease, book the cooldown, and
+    // offer the issue to somebody else while that turn keeps running in this
+    // pane on this token. Stopping the CLI and dropping the credential here
+    // makes the misread cost a retry instead of a duplicate PR.
+    //
+    // Note the ordering against `send` below: the agent is stopped BEFORE the
+    // hub is told, so at the instant the hub acts on the completion the claim
+    // is already true. tmuxLines was captured above, so the evidence the hub
+    // receives is still the agent's own output and not launch chrome.
+    //
+    // bob is exempt from the quit half: it is not a persistent REPL and has
+    // already exited at the end of its turn, so the pane is a bare shell and
+    // there is nothing to interrupt — sending Ctrl-C at that shell and then
+    // racing the bob-specific relaunch below is how a pane ends up with two
+    // launches in flight. Its credential is still dropped.
+    const bobAlreadyExited = BACKEND === 'bob' && !bobIsRunning();
+    stopAgentForTaskExit({ skipCLI: bobAlreadyExited });
     send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: noWork ? 'Agent returned to idle (reported no_work_needed)' : 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
     // bob exits after each turn, so the pane is now a bare shell. Bring it
     // back up before the next task, or the prompt would be typed into bash
     // ("-bash: <prompt>: command not found") and silently lost.
-    if (BACKEND === 'bob' && !bobIsRunning()) {
+    if (bobAlreadyExited) {
       try {
         // relaunchCLI() clears cliReady and re-arms the readiness callback,
         // which flushes any queued prompt once the CLI is confirmed up.
@@ -2977,12 +3105,11 @@ function progressTick() {
       // a live CLI that cancels the turn without exiting, and the launch command
       // is then typed into the CLI as a chat prompt — #2203 again, and worse here
       // because the "prompt" is a shell command an agent may simply run.
-      quitLiveCLI();
-      try {
-        console.log(`Relaunching ${BACKEND} after a confirmed pane stall: ${relaunchCLI()}`);
-      } catch (e) {
-        console.error('Failed to relaunch after a confirmed pane stall:', e.message);
-      }
+      //
+      // Now done by failCurrentTask via stopAgentForTaskExit (#5353), which
+      // adds the credential unlink ahead of the interrupt and captures the
+      // stalled pane as evidence BEFORE the relaunch overwrites it — this path
+      // previously reported the launch chrome as the failure's tmux_output.
       failCurrentTask(
         `no pane activity for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)}+ minutes, confirmed over ${PANE_STALL_CONFIRM_TICKS} checks — the agent CLI is not visibly working`,
         { kind: 'environment' }
@@ -3174,10 +3301,6 @@ function handleMessage(data, hub) {
         break;
       }
       console.log(`Task revoked: ${msg.task_id} — ${msg.reason}`);
-      // A task-issued GitHub token is stored only in this relay cache. Remove it
-      // before interrupting the CLI so a surviving turn cannot keep using it.
-      try { fs.unlinkSync(GH_TOKEN_CACHE); } catch (_) {}
-      tokenExpiresAt = null;
       currentTask = null;
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -3188,29 +3311,23 @@ function handleMessage(data, hub) {
       // re-arms it, which masked this; clearing it makes the lifecycle explicit
       // and matches every other task-exit path (#5321).
       if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
-      // Headless mode: kill the in-flight one-shot child so the revoked task's
-      // process does not keep running (and holding the credential) after the
-      // hub took the work back.
-      if (CONTRIBUTOR_MODE === MODE_HEADLESS && headlessChild) {
-        try { headlessChild.kill('SIGKILL'); } catch (_) {}
-        headlessChild = null;
-        writeHeadlessStatus(HEADLESS_STATE_WAITING);
-      }
+      // Stop the agent and drop its credential. This is the sequence
+      // stopAgentForTaskExit() was factored out of (#5353): the token is
+      // unlinked BEFORE the interrupt so a surviving turn cannot keep using
+      // it; two Ctrl-C events are required because one cancels a Claude/Codex/
+      // Pi turn but leaves the CLI alive; relaunchCLI gates ready on a clean
+      // prompt; and in headless mode the in-flight one-shot child is killed
+      // instead, so the revoked task's process does not keep running.
       if (CONTRIBUTOR_MODE !== MODE_HEADLESS) {
-        // Bind interruption to this relay's configured pane only. Two Ctrl-C
-        // events are required because one cancels a Claude/Codex/Pi turn but
-        // leaves the CLI alive; relaunchCLI gates ready on a clean prompt.
+        // Set before the stop: the relaunch's readiness callback consumes this
+        // latch to re-advertise availability, and it is only meaningful if a
+        // relaunch actually happened — hence the unwind on failure.
         readyAfterInteractiveRevoke = true;
-        cliReady = false;
-        quitLiveCLI();
-        try {
-          console.log(`Relaunching ${BACKEND} after task revoke: ${relaunchCLI()}`);
-        } catch (e) {
-          readyAfterInteractiveRevoke = false;
-          cliReadyFailed = true;
-          console.error(`Failed to stop and relaunch ${BACKEND} after revoke: ${e.message}`);
-        }
       }
+      stopAgentForTaskExit({
+        reason: 'task revoke',
+        onRelaunchFailed: () => { readyAfterInteractiveRevoke = false; },
+      });
       // Stay with the hub that just revoked — it's clearly alive and reachable.
       activeHubIndex = hubs.indexOf(hub);
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) sendTo(hub, { type: 'ready', seq: nextSeq() });
@@ -3460,6 +3577,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     cliProcessLooksGone,
     paneForegroundCommand,
     quitLiveCLI,
+    stopAgentForTaskExit,
+    dropTaskCredential,
     CLI_GONE_CONFIRMATIONS,
     PANE_STALL_TIMEOUT_MS,
     // Backdate the stall clock so a test can cross the timeout without

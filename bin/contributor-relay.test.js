@@ -4832,6 +4832,256 @@ test('#5321 a headless one-shot is no longer capped at the old 30-minute wall', 
 });
 
 // ---------------------------------------------------------------------------
+// kubestellar/hive#5353 cause B — ending a task must stop the agent.
+//
+// Reporting task_complete or task_failed tells the hub to revoke the lease,
+// book a cooldown and offer the issue to somebody else. Before this, only five
+// of the twelve task-exit paths touched the pane, so the other seven left the
+// original agent running in the same pane on the same context with a live
+// repo-scoped token — and it would go on to open a PR against work the hub had
+// already reassigned.
+//
+// Every assertion below is on OBSERVABLE state: the token file is gone, and
+// the pane received the two Ctrl-Cs that actually exit a CLI followed by a
+// relaunch. None of them assert that a particular function was called.
+// ---------------------------------------------------------------------------
+
+// An IDLE_COMPLETE pane for copilot/claude — the ready chrome the classifier
+// matches, with no "esc cancel" working marker.
+const IDLE_PANE = '/ commands for help\n';
+
+// Plant a task-scoped token exactly where injectGhToken puts it, so a test can
+// watch it survive or not survive a task exit.
+function plantTaskToken(relay) {
+  fs.mkdirSync(path.dirname(relay.GH_TOKEN_CACHE), { recursive: true });
+  fs.writeFileSync(relay.GH_TOKEN_CACHE, 'gho_task_scoped_token', { mode: 0o600 });
+  assert.ok(fs.existsSync(relay.GH_TOKEN_CACHE), 'test setup: token cache was not planted');
+}
+
+// The two Ctrl-Cs that exit a live CLI, followed by the launch command. One
+// Ctrl-C only cancels a claude/codex/agy turn and leaves the CLI running, so
+// "stopped" means at least two, and they must PRECEDE the relaunch or the
+// launch command is typed into the CLI as a chat message (#2203).
+function assertAgentStopped(sends, backend) {
+  const launchIdx = sends.findIndex(c => new RegExp(backend).test(c));
+  assert.ok(launchIdx >= 0, `expected a relaunch of ${backend}: ${JSON.stringify(sends)}`);
+  const ctrlCs = sends.slice(0, launchIdx).filter(c => /C-c\s*$/.test(c)).length;
+  assert.ok(ctrlCs >= 2,
+    `a live CLI needs two Ctrl-Cs before the relaunch; saw ${ctrlCs} in ${JSON.stringify(sends)}`);
+}
+
+test('#5353 a reported completion stops the agent and drops its token', () => {
+  // The headline case. The pane reads idle, the relay books a completion, the
+  // hub reassigns the issue — and the agent that "finished" must not still be
+  // sitting in the pane with a valid credential.
+  const relay = loadRelay({ backend: 'copilot', paneText: IDLE_PANE });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-complete');
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.__stallTick();
+
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'setup: expected exactly one completion');
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
+      'a completed task left its repo-scoped GitHub token on disk, valid for the rest of wsTokenTTL');
+    assertAgentStopped(relay.__tmuxSends().slice(before), 'copilot');
+  } finally { teardown(relay); }
+});
+
+test('#5353 the completion report still carries the AGENT output, not the relaunch chrome', () => {
+  // Stopping the agent must not cost the evidence: tmux_output is captured
+  // before the quit, so the hub still sees the pane the verdict was read from
+  // (and detectPRURL still finds the PR the agent opened).
+  const relay = loadRelay({
+    backend: 'copilot',
+    paneText: 'Pull request opened: https://github.com/foo/bar/pull/909\n/ commands for help\n',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-evidence');
+    relay.__stallTick();
+    const completed = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(completed, 'expected a completion');
+    assert.strictEqual(completed.pr_url, 'https://github.com/foo/bar/pull/909',
+      'the PR the agent shipped must survive the stop');
+    assert.ok(completed.tmux_output.join('\n').includes('Pull request opened'),
+      `tmux_output must be the agent's pane, not launch chrome: ${JSON.stringify(completed.tmux_output)}`);
+  } finally { teardown(relay); }
+});
+
+test('#5353 a progress-lease expiry stops the agent and drops its token', () => {
+  // "No observed progress" is a verdict about a pane, not about a process. The
+  // CLI is still running and still authorized until something stops it.
+  const relay = loadRelay({ backend: 'agy', paneText: 'still chewing on it' });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-lease');
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.__agePaneStallClock(relay.MAX_TASK_DURATION_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    const failedMsgs = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failedMsgs.length, 1, `expected one failure: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
+      'a lease-expired task left its GitHub token on disk');
+    assertAgentStopped(relay.__tmuxSends().slice(before), 'agy');
+  } finally { teardown(relay); }
+});
+
+test('#5353 the absolute deadline stops the agent and drops its token', () => {
+  const relay = loadRelay({ backend: 'agy', paneText: 'printing forever' });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-deadline');
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.__ageTaskAssignedAt(relay.ABSOLUTE_TASK_DEADLINE_MS + 1);
+    relay.onTaskProgressLeaseExpired();
+
+    const failedMsgs = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failedMsgs.length, 1);
+    assert.match(failedMsgs[0].reason, /absolute deadline/);
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
+      'a task killed at the absolute deadline left its GitHub token on disk');
+    assertAgentStopped(relay.__tmuxSends().slice(before), 'agy');
+  } finally { teardown(relay); }
+});
+
+test('#5353 a fatal API error stops the agent and drops its token', () => {
+  // An authorization refusal or exhausted quota ends the TASK. The CLI is
+  // still up, and on some backends will happily continue once the operator
+  // fixes the cause — on an issue the hub has already given to someone else.
+  const relay = loadRelay({
+    backend: 'claude',
+    paneText: 'API Error: 403 {"type":"error","error":{"type":"permission_error","message":"denied"}}\n',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-fatal');
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.__stallTick();
+
+    const failedMsgs = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failedMsgs.length, 1, `expected a fatal-API failure: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
+      'a fatally-failed task left its GitHub token on disk');
+    assertAgentStopped(relay.__tmuxSends().slice(before), 'claude');
+  } finally { teardown(relay); }
+});
+
+test('#5353 a task exit relaunches the CLI exactly once — no nested double launch', () => {
+  // quitLiveCLI + relaunch paths already existed; routing every exit through
+  // one helper must not stack a second launch on top of an in-flight one. The
+  // confirmed pane stall is the case that already stopped the CLI itself.
+  const relay = loadRelay({ backend: 'agy', paneText: 'a frozen pane, nothing happening' });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-once');
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();                                   // confirmation 1
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();                                   // confirmation 2 -> exit
+    const sends = relay.__tmuxSends().slice(before);
+    const launches = sends.filter(c => /agy --allow-all/.test(c)).length;
+    assert.strictEqual(launches, 1,
+      `exactly one relaunch per task exit; saw ${launches} in ${JSON.stringify(sends)}`);
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE), 'the stall path must also drop the token');
+  } finally { teardown(relay); }
+});
+
+test('#5353 a CLI that already died is not Ctrl-C\'d at a bare shell, but still loses its token', () => {
+  // The deliberate exception. This branch's premise is that the process is
+  // GONE and the pane is a shell; quitting there would only fire Ctrl-Cs at
+  // bash and race this path's own relaunch. The credential still goes.
+  const relay = loadRelay({ backend: 'copilot', procAlive: false });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-dead');
+    plantTaskToken(relay);
+    relay.__crashTick();   // reading 1 — not yet confirmed
+    const before = relay.__tmuxSends().length;
+    relay.__crashTick();   // reading 2 — confirmed death
+
+    const failedMsgs = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.ok(failedMsgs.length >= 1, 'a dead CLI must still hand the task back');
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
+      'a task whose CLI died left its GitHub token on disk');
+    const launches = relay.__tmuxSends().slice(before).filter(c => /copilot --allow-all/.test(c)).length;
+    assert.strictEqual(launches, 1,
+      'the crash path owns its own single relaunch — the exit helper must not add another');
+  } finally { teardown(relay); }
+});
+
+test('#5353 a headless one-shot drops its token on completion as well as on revoke', () => {
+  // Headless already killed the child on revoke but kept the credential on a
+  // clean exit-0 completion, which is the same outlived-credential shape.
+  const relay = loadRelay({ backend: 'pi', mode: 'headless', model: 'openai/gpt-5', cliVersion: 'pi 0.73.1' });
+  try {
+    const task = { task_id: 'h-done', task_gen: 4, kind: 'issue', repo: 'x/y', number: 7, title: 'headless' };
+    relay.setCurrentTask(task);
+    plantTaskToken(relay);
+    relay.runHeadlessTask(task);
+    assert.ok(relay.__sent.some(m => m.type === 'task_complete'), 'setup: expected a headless completion');
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE),
+      'a completed headless task left its GitHub token on disk for the rest of wsTokenTTL');
+  } finally { teardown(relay); }
+});
+
+test('#5353 task_revoke keeps its exact behaviour after the refactor', () => {
+  // The path that was already correct is the one the helper was factored out
+  // of, so it is also the regression risk: the token must still go, the CLI
+  // must still be stopped and relaunched, and the revoke-specific readiness
+  // latch must still be armed so the relay re-advertises when it comes back.
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-revoke');
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't-revoke', reason: 'operator stop' }));
+
+    assert.strictEqual(relay.getCurrentTask(), null, 'revoke must clear the active task');
+    assert.ok(!fs.existsSync(relay.GH_TOKEN_CACHE), 'revoke must still drop the token');
+    assert.strictEqual(relay.getCliReady(), false, 'revoke must clear the readiness latch');
+    assertAgentStopped(relay.__tmuxSends().slice(before), 'claude');
+  } finally { teardown(relay); }
+});
+
+test('#5353 declining an assignment touches neither the pane nor an unrelated token', () => {
+  // Three task_assign paths answer task_failed for work that was never
+  // started. There is no agent of ours to stop, and the running task's own
+  // credential must not be collateral damage — this is the exception the
+  // uniform treatment would have broken.
+  const relay = loadRelay({ backend: 'copilot', paneText: 'esc cancel\n' });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-first', 1);
+    plantTaskToken(relay);
+    const before = relay.__tmuxSends().length;
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign', task_id: 't-second', kind: 'issue', repo: 'foo/bar', number: 2, title: 'second',
+    }));
+
+    const declined = relay.__sent.filter(m => m.type === 'task_failed' && m.task_id === 't-second');
+    assert.strictEqual(declined.length, 1, 'the second assignment must be declined');
+    assert.ok(fs.existsSync(relay.GH_TOKEN_CACHE),
+      'declining a NEW task must not delete the token of the task still being worked');
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-first',
+      'declining must not disturb the active task');
+    const ctrlCs = relay.__tmuxSends().slice(before).filter(c => /C-c\s*$/.test(c)).length;
+    assert.strictEqual(ctrlCs, 0,
+      'declining an assignment must never interrupt the agent working the previous one');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
