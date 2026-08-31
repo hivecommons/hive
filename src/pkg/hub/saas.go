@@ -4617,12 +4617,59 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	// the wedge this PR fixes. The hive is latched Upgrading with a target the
 	// moment the request returns, which is what the dashboard renders.
 
+	// Do not ARM an upgrade this hive cannot COLLECT — the same predicate
+	// triggerAutoUpgrades() applies, for the same reason. Delivery is PULL on
+	// BOTH paths: the hub only records a target and arms the heartbeat, and the
+	// spoke patches its own Deployment when it next beats. A hive that never
+	// heartbeats (or is silent past staleRemoveAge) therefore never collects
+	// the instruction, while Upgrading=true latches on the hub and the
+	// stale-upgrade sweep re-arms it every staleUpgradeTimeout — an unbounded
+	// loop the orphan sweep's retry budget cannot break, because such a hive
+	// fails evaluateOrphanedUpgrade()'s liveness test. See pullonly_upgrade.go.
+	//
+	// Without this, the manual button was strictly WORSE than the auto path it
+	// diverged from: auto-upgrade refuses and records the refusal on the
+	// timeline, whereas the click reported {"status":"upgrading"} and a success
+	// toast for an upgrade that could never land. Worse, the asymmetry read as
+	// a workaround — the same spoke auto-upgrade had declined would accept a
+	// manual click, appearing to fix the problem while only hiding it.
+	//
+	// lastHeartbeat comes from the REGISTRY entry, which is the only record
+	// that carries it; SaaSHive (the loadSaaSHive record `h` above) has no such
+	// field. This is the identical source triggerAutoUpgrades() reads.
+	//
+	// Refused with 409, matching the pause-switch refusal above. The reason is
+	// operator-facing by construction and documented to carry no kubeconfig
+	// paths or credentials, so it is safe in the body.
 	s.mu.Lock()
-	var latestSHA string
+	var latestSHA, lastHeartbeat string
+	var found bool
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
+			found = true
+			lastHeartbeat = s.registry.Hives[i].LastHeartbeat
 			branch := s.upgradeBranchOrDefault(s.registry.Hives[i].GitBranch)
 			latestSHA = getLatestSHAForBranch(branch)
+			break
+		}
+	}
+	// A hive with no registry entry has never checked in at all, so it is
+	// uncollectible for exactly the reason the empty-heartbeat case is.
+	if !found || !upgradeCollectible(lastHeartbeat, time.Now()) {
+		s.mu.Unlock()
+		reason := uncollectibleUpgradeReason(lastHeartbeat)
+		s.logger.Warn("manual upgrade not armed — hive cannot collect the instruction",
+			"hive_id", id, "by", username, "cluster", cluster.ID,
+			"would_have_targeted", latestSHA, "last_heartbeat", orDash(lastHeartbeat),
+			"reason", reason)
+		s.noteUncollectibleUpgrade(id, latestSHA, reason)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
+		return
+	}
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == id {
 			s.beginUpgrade(i, latestSHA)
 			break
 		}
@@ -4651,6 +4698,11 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	// collected by the spoke on its next beat. The UI uses this to say "queued"
 	// rather than implying an immediate roll.
 	const mode = "heartbeat"
+	// Armed successfully, so the uncollectible condition has genuinely cleared:
+	// drop the de-duplication memory (as the auto path does on its own successful
+	// arm) so a LATER refusal for this same target is reported afresh rather than
+	// suppressed by a stale entry.
+	s.forgetUncollectibleUpgrade(id)
 	s.logger.Info("audit: hosted hive upgrade requested",
 		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
 	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)

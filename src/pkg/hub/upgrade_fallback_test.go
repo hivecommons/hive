@@ -47,7 +47,10 @@ func TestHandleUpgradeHiveUnreachableClusterArmsHeartbeatFallback(t *testing.T) 
 		// kubectl entirely and reports non-delivery.
 		clusterUnreachableUntil: map[string]time.Time{"vllm-d": time.Now().Add(time.Hour)},
 	}
-	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
+	// Heartbeating: the manual upgrade path refuses a hive that cannot COLLECT
+	// the instruction (pull-only delivery, see pullonly_upgrade.go). That gate is
+	// independent of what this test is about.
+	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2", LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	seedLatestSHA(t, "v2", "abc1234")
 
 	rec := httptest.NewRecorder()
@@ -95,7 +98,10 @@ func TestHandleUpgradeHiveUnreachableClusterWithoutTargetFails(t *testing.T) {
 		clusterUnreachableUntil: map[string]time.Time{"vllm-d": time.Now().Add(time.Hour)},
 	}
 	// The registry names a branch with NO cached SHA: no target can exist.
-	s.registry.Hives = []RegistryEntry{{ID: "h2", GitBranch: "branch-with-no-builds"}}
+	// Heartbeating: the manual upgrade path refuses a hive that cannot COLLECT
+	// the instruction (pull-only delivery, see pullonly_upgrade.go). That gate is
+	// independent of what this test is about.
+	s.registry.Hives = []RegistryEntry{{ID: "h2", GitBranch: "branch-with-no-builds", LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser("POST", "/up", "", "alice"), "id", "h2")

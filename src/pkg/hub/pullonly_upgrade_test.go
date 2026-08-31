@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -533,5 +534,251 @@ func TestAutoUpgradeToggleWorksUnderPull(t *testing.T) {
 	s.triggerAutoUpgrades()
 	if !s.registry.Hives[0].Upgrading {
 		t.Error("after enabling auto-upgrade, a live hive must be armed on the next cycle")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MANUAL "Upgrade now" — the same collectibility gate as the automatic path.
+//
+// These are the manual-path halves of the pairs above. The bug they pin (#5304)
+// is an ASYMMETRY, not a missing feature: triggerAutoUpgrades() already refused
+// to arm a hive that cannot COLLECT an upgrade, while handleUpgradeHive — the
+// button — armed unconditionally. That made the click strictly worse than the
+// auto path it diverged from. The auto path refuses and records the refusal on
+// the timeline, so an operator can find out why; the click returned
+// {"status":"upgrading"} and a success toast for a target that could never be
+// collected, then latched Upgrading=true for the stale sweep to re-arm every
+// staleUpgradeTimeout forever.
+//
+// The asymmetry is also actively misleading: the same spoke auto-upgrade had
+// declined would happily accept a manual click, so the button LOOKED like it
+// worked around the problem when it had only hidden it.
+//
+// The positive control (healthy hive → 200) is what stops a regression that
+// simply refuses every manual upgrade from passing this file.
+// ---------------------------------------------------------------------------
+
+// manualUpgradeReq builds the authenticated manual-upgrade request the button
+// sends, with the hive id bound the way the mux would bind it.
+func manualUpgradeReq(hiveID, user string) *http.Request {
+	return setPathValue(reqWithUser(http.MethodPost, "/api/saas/hives/"+hiveID+"/upgrade", "", user), "id", hiveID)
+}
+
+func TestManualUpgradeRefusesUncollectibleHive(t *testing.T) {
+	cases := []struct {
+		name string
+		// lastHeartbeat is RegistryEntry.LastHeartbeat — the ONLY record that
+		// carries it. SaaSHive has no such field, so this is also the source the
+		// automatic path reads.
+		lastHeartbeat func() string
+		// wantReason is a fragment the operator-facing refusal must contain.
+		wantReason string
+	}{
+		{
+			// The measured wedge population: unassigned placeholders that have
+			// never checked in. Under pull delivery nothing will EVER collect.
+			name:          "never heartbeated",
+			lastHeartbeat: func() string { return "" },
+			wantReason:    "never heartbeated",
+		},
+		{
+			// Silent past staleRemoveAge is the same bound the registry already
+			// uses to call a hive gone for good. Deliberately NOT
+			// maxHeartbeatAge — a spoke one beat late must still be upgradable.
+			name:          "silent beyond staleRemoveAge",
+			lastHeartbeat: func() string { return rfc3339At(time.Now().Add(-staleRemoveAge - time.Hour)) },
+			wantReason:    "beyond the point where it is considered present",
+		},
+		{
+			// An unreadable timestamp is treated as uncollectible: we must not
+			// arm on evidence we cannot read (the rule evaluateOrphanedUpgrade
+			// applies).
+			name:          "unparseable heartbeat",
+			lastHeartbeat: func() string { return "not-a-timestamp" },
+			wantReason:    "cannot collect",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := helperSetupTempDirs(t)
+			defer cleanup()
+			mkUser(t, "alice")
+
+			s := pullOnlyTestServer(t)
+			s.forgetUncollectibleUpgrade("manual-dead")
+			saveSaaSHive(&SaaSHive{
+				ID: "manual-dead", Owner: "alice", Status: "running", ClusterID: "vllm-d",
+			})
+			s.registry.Hives = []RegistryEntry{{
+				ID: "manual-dead", GitBranch: "v4", GitHash: "old1234",
+				LastHeartbeat: tc.lastHeartbeat(),
+			}}
+
+			rec := httptest.NewRecorder()
+			s.handleUpgradeHive(rec, manualUpgradeReq("manual-dead", "alice"))
+
+			// 409, matching the pause-switch refusal shape in the same handler.
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409 — the manual button must refuse an upgrade "+
+					"this hive can never collect, exactly as auto-upgrade does (body=%s)",
+					rec.Code, rec.Body.String())
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", ct)
+			}
+
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("refusal body is not JSON: %v (%s)", err, rec.Body.String())
+			}
+			// The operator must be told WHY. A bare 409 reproduces the original
+			// complaint in a new shape: the click stops working with no reason.
+			if !strings.Contains(body["error"], tc.wantReason) {
+				t.Errorf("refusal reason %q does not contain %q", body["error"], tc.wantReason)
+			}
+			// The reason is returned over the wire, so it must stay free of
+			// anything that is not the operator's business.
+			for _, leak := range []string{"kubeconfig", "/root/", "token", "secret"} {
+				if strings.Contains(strings.ToLower(body["error"]), leak) {
+					t.Errorf("refusal body leaks %q: %s", leak, body["error"])
+				}
+			}
+
+			// THE LATCH IS THE BUG. Arming set Upgrading=true against a target
+			// nothing would collect, and the stale sweep then re-armed it every
+			// staleUpgradeTimeout while beginUpgrade preserved the original start
+			// clock — so the elapsed only ever grew. Refusing must leave no latch.
+			s.mu.RLock()
+			h := s.registry.Hives[0]
+			s.mu.RUnlock()
+			if h.Upgrading {
+				t.Error("refused upgrade still latched Upgrading=true — this is the wedge: " +
+					"the stale sweep re-arms it forever and the orphan sweep's retry budget " +
+					"cannot break the loop, because a hive that never heartbeated fails " +
+					"evaluateOrphanedUpgrade()'s liveness test")
+			}
+			if h.UpgradeTarget != "" {
+				t.Errorf("refused upgrade recorded a target %q", h.UpgradeTarget)
+			}
+			if got, ok := s.heartbeatUpgrade["manual-dead"]; ok {
+				t.Errorf("refused upgrade still armed the heartbeat with %q", got)
+			}
+
+			// Refused LOUDLY. The auto path records its refusal on the timeline;
+			// the manual path recording nothing is what let this hide as success.
+			var found bool
+			for _, e := range s.timeline.recent("manual-dead", 100) {
+				if e.Kind == TimelineUpgradeStale {
+					found = true
+				}
+			}
+			if !found {
+				t.Error("the manual refusal left NO timeline record — the operator has no " +
+					"durable way to learn why the click did nothing")
+			}
+		})
+	}
+}
+
+// TestManualUpgradeHealthyHiveStillArms is the positive control for the gate
+// above: without it, a change that refused EVERY manual upgrade would pass.
+// A heartbeating spoke must arm exactly as before — including on a pull-only
+// cluster, since the hub's inability to kubectl in is irrelevant to a pull
+// delivery.
+func TestManualUpgradeHealthyHiveStillArms(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, "alice")
+
+	s := pullOnlyTestServer(t)
+	s.forgetUncollectibleUpgrade("manual-live")
+	saveSaaSHive(&SaaSHive{
+		ID: "manual-live", Owner: "alice", Status: "running", ClusterID: "vllm-d",
+	})
+	s.registry.Hives = []RegistryEntry{{
+		ID: "manual-live", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
+	}}
+
+	rec := httptest.NewRecorder()
+	s.handleUpgradeHive(rec, manualUpgradeReq("manual-live", "alice"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a heartbeating spoke must still upgrade on "+
+			"click, on ANY cluster (body=%s)", rec.Code, rec.Body.String())
+	}
+	// The exact success shape the dashboard parses; "heartbeat" is what makes
+	// the UI say "queued" rather than implying an immediate pod roll.
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"status":"upgrading","mode":"heartbeat"}` {
+		t.Errorf("success body = %s, want {\"status\":\"upgrading\",\"mode\":\"heartbeat\"}", got)
+	}
+
+	s.mu.RLock()
+	h := s.registry.Hives[0]
+	s.mu.RUnlock()
+	if !h.Upgrading || h.UpgradeTarget != "7cd059b" {
+		t.Errorf("healthy hive was not armed: Upgrading=%v target=%q", h.Upgrading, h.UpgradeTarget)
+	}
+	// Delivery is pull: this map entry is the whole mechanism — the spoke reads
+	// it off its next heartbeat response and patches its own Deployment.
+	if got := s.heartbeatUpgrade["manual-live"]; got != "7cd059b" {
+		t.Errorf("heartbeat not armed for delivery: got %q, want 7cd059b", got)
+	}
+}
+
+// TestManualUpgradeRefusalDoesNotSuppressLaterRefusal pins the de-duplication
+// contract across the two paths. noteUncollectibleUpgrade dedupes per
+// (hive, target) using per-server memory; a successful arm must CLEAR that
+// memory, as the auto path already does on its own successful arm. Otherwise a
+// hive that is refused, recovers, is armed, and later goes silent again has its
+// second — genuine — refusal swallowed for the same target, putting the
+// operator back in the silence this fix exists to remove.
+func TestManualUpgradeRefusalDoesNotSuppressLaterRefusal(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, "alice")
+
+	s := pullOnlyTestServer(t)
+	s.forgetUncollectibleUpgrade("manual-flap")
+	saveSaaSHive(&SaaSHive{
+		ID: "manual-flap", Owner: "alice", Status: "running", ClusterID: "vllm-d",
+	})
+
+	// 1. Dead → refused, and recorded.
+	s.registry.Hives = []RegistryEntry{{ID: "manual-flap", GitBranch: "v4", GitHash: "old1234"}}
+	rec := httptest.NewRecorder()
+	s.handleUpgradeHive(rec, manualUpgradeReq("manual-flap", "alice"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("first click status = %d, want 409", rec.Code)
+	}
+
+	// 2. Recovers and is armed. This must clear the de-dup memory.
+	s.mu.Lock()
+	s.registry.Hives[0].LastHeartbeat = rfc3339At(time.Now())
+	s.mu.Unlock()
+	rec = httptest.NewRecorder()
+	s.handleUpgradeHive(rec, manualUpgradeReq("manual-flap", "alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovered click status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	// 3. Goes silent again, same target. The refusal must be reported AFRESH.
+	s.mu.Lock()
+	s.registry.Hives[0].LastHeartbeat = ""
+	s.registry.Hives[0].Upgrading = false
+	s.registry.Hives[0].UpgradeTarget = ""
+	s.mu.Unlock()
+	delete(s.heartbeatUpgrade, "manual-flap")
+
+	before := len(s.timeline.recent("manual-flap", 100))
+	rec = httptest.NewRecorder()
+	s.handleUpgradeHive(rec, manualUpgradeReq("manual-flap", "alice"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second refusal status = %d, want 409", rec.Code)
+	}
+	if after := len(s.timeline.recent("manual-flap", 100)); after <= before {
+		t.Error("the second, genuine refusal was suppressed by stale de-duplication memory " +
+			"from the first — a successful arm must forget it, as the auto path does")
 	}
 }

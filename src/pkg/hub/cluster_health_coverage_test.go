@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -110,7 +111,13 @@ func TestHandleUpgradeHiveSuccess(t *testing.T) {
 		logger:    slog.Default(),
 		clusters:  map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}},
 	}
-	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
+	// LastHeartbeat: the manual path refuses a hive that cannot COLLECT the
+	// upgrade (pull-only delivery, see pullonly_upgrade.go), so a success-path
+	// test needs a hive that is heartbeating.
+	s.registry.Hives = []RegistryEntry{{
+		ID: "h1", GitBranch: "v2",
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+	}}
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser("POST", "/up", "", "alice"), "id", "h1")

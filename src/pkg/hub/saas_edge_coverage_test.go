@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -49,7 +50,11 @@ func TestHandleUpgradeHiveRegistryUpdate(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}}
 	// A matching registry entry so the post-upgrade registry-update loop runs.
-	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "h1", GitBranch: "v2",
+		// Heartbeating, so the collectibility gate does not refuse the arm.
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+	}}
 	resetSHACaches(t)
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "latest7"}

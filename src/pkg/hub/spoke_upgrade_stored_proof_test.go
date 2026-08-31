@@ -69,7 +69,7 @@ func TestSpokeUpgradeProofStoredRecordNoClusterAccess(t *testing.T) {
 	s.hubGitBranch = branch
 	// ClusterID the hub has no config (and so no kubeconfig) for: every
 	// kubectl lane is structurally unavailable.
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", GitBranch: branch}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", GitBranch: branch, LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	if err := saveSaaSHive(&SaaSHive{
 		ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only",
 		Org: "org", PrimaryRepo: "repo",
@@ -110,7 +110,7 @@ func TestSpokeUpgradeProofClusterReadFallbackBackfillsRecord(t *testing.T) {
 
 	s := newHandlerHub()
 	s.hubGitBranch = branch
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "hive-oke", GitBranch: branch}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "hive-oke", GitBranch: branch, LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	s.spokeProxyAuthCache = map[string]spokeProxyAuthEntry{
 		hiveID: {token: token, expires: time.Now().Add(time.Hour)},
 	}
@@ -148,7 +148,7 @@ func TestSpokeUpgradeProofBothLanesUnavailableIsHonest(t *testing.T) {
 	)
 
 	s := newHandlerHub()
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only"}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	if err := saveSaaSHive(&SaaSHive{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only"}); err != nil {
 		t.Fatalf("save hive: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestSpokeUpgradeProofMismatchAgainstStoredRecord(t *testing.T) {
 	)
 
 	s := newHandlerHub()
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only"}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	if err := saveSaaSHive(&SaaSHive{
 		ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only",
 		DashboardTokenHash: HashDashboardToken("the-real-token"),
@@ -259,7 +259,7 @@ func TestHeartbeatAdoptedHashVerifiesUpgradeProof(t *testing.T) {
 	)
 
 	hb := newHeartbeatHub()
-	hb.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", GitBranch: branch}}
+	hb.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", GitBranch: branch, LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	if err := saveSaaSHive(&SaaSHive{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", Org: "org", PrimaryRepo: "repo"}); err != nil {
 		t.Fatalf("save hive: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestHeartbeatAdoptedHashVerifiesUpgradeProof(t *testing.T) {
 
 	s := newHandlerHub()
 	s.hubGitBranch = branch
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", GitBranch: branch}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "fmaas-pull-only", GitBranch: branch, LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	seedUpgradeTarget(t, branch, "89abcdef")
 
 	rec = httptest.NewRecorder()

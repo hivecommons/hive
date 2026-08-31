@@ -26,6 +26,9 @@ func TestSpokeUpgradeProofAllowsOwnerWithoutHubCookie(t *testing.T) {
 		Owner:     user,
 		ClusterID: "hive-oke",
 		GitBranch: branch,
+		// Heartbeating: the manual upgrade path refuses a hive that cannot
+		// COLLECT the instruction (pull-only delivery, see pullonly_upgrade.go).
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 	}}
 	s.spokeProxyAuthCache = map[string]spokeProxyAuthEntry{
 		hiveID: {token: token, expires: time.Now().Add(time.Hour)},
@@ -125,7 +128,8 @@ func TestSpokeUpgradeMiddlewareStillAcceptsHubSession(t *testing.T) {
 
 	s := newHandlerHub()
 	s.hubGitBranch = branch
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: user, ClusterID: "hive-oke", GitBranch: branch}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: user, ClusterID: "hive-oke", GitBranch: branch,
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	if err := saveSaaSHive(&SaaSHive{ID: hiveID, Owner: user, ClusterID: "hive-oke"}); err != nil {
 		t.Fatalf("save hive: %v", err)
 	}
@@ -261,7 +265,8 @@ func TestSpokeUpgradeProofWithoutUserIdentityAttributesToOwner(t *testing.T) {
 
 	s := newHandlerHub()
 	s.hubGitBranch = branch
-	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "hive-oke", GitBranch: branch}}
+	s.registry.Hives = []RegistryEntry{{ID: hiveID, Owner: owner, ClusterID: "hive-oke", GitBranch: branch,
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}}
 	s.spokeProxyAuthCache = map[string]spokeProxyAuthEntry{
 		hiveID: {token: token, expires: time.Now().Add(time.Hour)},
 	}

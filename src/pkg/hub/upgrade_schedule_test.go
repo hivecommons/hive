@@ -460,6 +460,14 @@ func TestManualUpgradeUnaffectedByMode(t *testing.T) {
 		AutoUpgradeMode: AutoUpgradeModeDaily,
 	})
 	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string)}
+	// This hive must be COLLECTIBLE, so that the only candidate reason for a
+	// refusal below is the schedule — which is what this test is about. The
+	// manual path refuses a hive that cannot collect an upgrade (it is pull-only
+	// delivery; see pullonly_upgrade.go), and that gate is deliberately
+	// independent of AutoUpgradeMode.
+	s.registry.Hives = []RegistryEntry{{
+		ID: "h1", LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+	}}
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser(http.MethodPost, "/upgrade", `{}`, "alice"), "id", "h1")

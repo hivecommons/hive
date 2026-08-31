@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -286,6 +287,13 @@ func TestHandleUpgradeHiveKubectlFails(t *testing.T) {
 	// failure alone no longer fails the request: with a known target it arms
 	// the heartbeat fallback instead (TestHandleUpgradeHiveUnreachableCluster*).
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
+	// The hive must be heartbeating, otherwise the collectibility gate refuses
+	// with 409 BEFORE the no-build-target check this case is about. The branch
+	// deliberately has no known SHA, which is what produces the 502.
+	s.registry.Hives = []RegistryEntry{{
+		ID: "h1", GitBranch: "branch-with-no-build",
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+	}}
 	rec = httptest.NewRecorder()
 	req = setPathValue(reqWithUser(http.MethodPost, "/up", "", "alice"), "id", "h1")
 	s.handleUpgradeHive(rec, req)
