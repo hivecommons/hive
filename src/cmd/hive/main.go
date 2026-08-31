@@ -3373,6 +3373,23 @@ func main() {
 						endpoint = litellmLocalProxyURL()
 					}
 					if endpoint == "" {
+						// A hive configured ONLY through the Model Gateways tab
+						// (an explicit gateway named "litellm") leaves the
+						// legacy governor.litellm block empty. The key and CA
+						// bundle below already resolve from that gateway — the
+						// endpoint must too, or NO route is ever installed and
+						// every agent call dies "502 no inference route" while
+						// the Gateways tab Test button (which uses the gateway)
+						// happily passes (ains-validation/pocketmini,
+						// 2026-08-31).
+						if gw := cfg.Governor.ResolveGateway(backend); gw != nil && gw.Endpoint != "" {
+							endpoint = gw.Endpoint
+							if model == "" {
+								model = gw.DefaultModel
+							}
+						}
+					}
+					if endpoint == "" {
 						logger.Warn("litellm backend selected but no endpoint configured",
 							"agent", agentName, "model", model)
 						return
