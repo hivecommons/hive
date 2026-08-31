@@ -1,11 +1,23 @@
 name: Dashboard Lint
+
+# The checker itself is in scope, not just the files it checks (#5388).
+# The syntax-check job runs .github/scripts/check-inline-js.js, but the filter
+# named only 'dashboard/**' — so a change that broke the checker (or silently
+# stopped it detecting anything) ran no CI at all, and the next dashboard PR
+# would then pass against a checker nobody had exercised. The workflow file is
+# listed for the same reason: an edit to the `find` invocation here changes
+# what gets checked, and that edit must run the job it changes.
 on:
   push:
     paths:
       - 'dashboard/**'
+      - '.github/scripts/check-inline-js.js'
+      - '.github/workflows/dashboard-lint.yml'
   pull_request:
     paths:
       - 'dashboard/**'
+      - '.github/scripts/check-inline-js.js'
+      - '.github/workflows/dashboard-lint.yml'
 
 permissions:
   contents: read

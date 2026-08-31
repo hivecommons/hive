@@ -36,13 +36,22 @@ name: Go Security Analysis
 # correct and complete attribution. See that job's own comment for the full
 # reasoning.
 
+# NOTICE is in the path filter because the notice-drift job below compares the
+# COMMITTED repo-root NOTICE byte-for-byte against a fresh regeneration
+# (`check-notice-drift.sh NOTICE /tmp/NOTICE.generated`). NOTICE does not live
+# under src/, so before #5388 a PR editing NOTICE alone — hand-correcting an
+# attribution, or reverting the autofix commit — changed the exact file this
+# gate polices while running neither that gate nor anything else. The drift
+# would surface only on the next unrelated src/ change, attributed to that PR.
+# Same shape as dashboard/openapi.json in v2-tests.yml: guarded by a job whose
+# filter excluded it.
 on:
   push:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/**', '.github/release-lines.yml']
+    paths: ['src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
   pull_request:
     branches: [v2, v4]
-    paths: ['src/**', '.github/workflows/**', '.github/release-lines.yml']
+    paths: ['src/**', 'NOTICE', '.github/workflows/**', '.github/release-lines.yml']
   schedule:
     # Weekly, so a newly-PUBLISHED advisory against unchanged code is still
     # found. A push-only trigger cannot catch that: the vulnerability appears
