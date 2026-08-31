@@ -103,7 +103,8 @@
                             "format": "date-time"
                           },
                           "user": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "Actor identity. May be an opaque OIDC identity key rather than a human-readable name \u2014 see user_name."
                           },
                           "action": {
                             "type": "string"
@@ -113,8 +114,13 @@
                           },
                           "agent": {
                             "type": "string"
+                          },
+                          "user_name": {
+                            "type": "string",
+                            "description": "Hub-delivered display name, stamped at SERVE time only when `user` is an opaque OIDC identity key. The audit ring and the on-disk log keep the raw key, so history survives name changes. Absent when there is no display name to add."
                           }
-                        }
+                        },
+                        "description": "dashboard.AuditEntry (src/pkg/dashboard/audit.go)."
                       }
                     }
                   }
@@ -134,83 +140,367 @@
           "Status"
         ],
         "summary": "Overall hive status",
-        "description": "Returns the full hive status including governor state, agent details, repos, queue depth, and all metrics used by the dashboard.",
+        "description": "Returns the full hive status snapshot the dashboard renders from: governor state, agent runtime details, configured-agent inventory, repos, token rollups, health, budget and ACMM level. The response is dashboard.StatusPayload (src/pkg/dashboard/server.go). Before the first status build completes the handler returns {\"status\": \"initializing\"} instead. Only the fields TUI/API clients consume are enumerated below; StatusPayload carries more.",
         "responses": {
           "200": {
-            "description": "Current hive status",
+            "description": "Current hive status, or {\"status\": \"initializing\"} before the first status build.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "description": "dashboard.StatusPayload.",
                   "properties": {
+                    "timestamp": {
+                      "type": "string"
+                    },
+                    "statusSeq": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Monotonic publish sequence. Clients drop any payload whose seq is older than the last rendered one."
+                    },
+                    "statusInstance": {
+                      "type": "string",
+                      "description": "Identifies the server process that produced statusSeq; seqs restart at 1 on spoke restart, so a changed instance means reset the guard rather than drop."
+                    },
+                    "hiveId": {
+                      "type": "string"
+                    },
                     "governor": {
                       "type": "object",
+                      "description": "dashboard.FrontendGovernor (src/pkg/dashboard/server.go), built by buildGovernor (status_builder.go).",
                       "properties": {
+                        "active": {
+                          "type": "boolean",
+                          "description": "Hardcoded true whenever buildGovernor ran; false means the payload carried no governor section, not a stopped governor."
+                        },
                         "mode": {
                           "type": "string",
                           "enum": [
-                            "surge",
-                            "busy",
+                            "idle",
                             "quiet",
-                            "idle"
+                            "busy",
+                            "surge"
                           ],
-                          "description": "Current governor mode"
+                          "description": "Laddered governor mode, lowercased by buildGovernor."
                         },
-                        "queue": {
+                        "issues": {
                           "type": "integer",
-                          "description": "Actionable issue count"
+                          "description": "Actionable issue count the governor laddered on (governor.State.QueueIssues)."
                         },
-                        "budgetPct": {
-                          "type": "number",
-                          "description": "Token budget usage percentage"
+                        "prs": {
+                          "type": "integer",
+                          "description": "Actionable PR count the governor laddered on (governor.State.QueuePRs)."
+                        },
+                        "thresholds": {
+                          "type": "object",
+                          "description": "dashboard.FrontendThresholds: the EFFECTIVE ladder boundaries that produced mode, after per-repo scaling. Idle is absent by design \u2014 its threshold is always 0.",
+                          "properties": {
+                            "quiet": {
+                              "type": "integer"
+                            },
+                            "busy": {
+                              "type": "integer"
+                            },
+                            "surge": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "quiet",
+                            "busy",
+                            "surge"
+                          ]
+                        },
+                        "nextKick": {
+                          "type": "string",
+                          "description": "When the governor next evaluates, as a PRE-FORMATTED server-local display string (\"1/2 3:04 PM MST\"), NOT RFC 3339. Omitted when no evaluation interval is configured. The interval itself is only published by GET /api/config/governor as general_advanced.eval_interval_s."
                         }
-                      }
+                      },
+                      "required": [
+                        "active",
+                        "mode",
+                        "issues",
+                        "prs",
+                        "thresholds"
+                      ]
                     },
                     "agents": {
                       "type": "array",
                       "items": {
                         "type": "object",
+                        "description": "dashboard.FrontendAgent (src/pkg/dashboard/server.go). Only the commonly consumed fields are listed; the struct carries more.",
                         "properties": {
                           "name": {
                             "type": "string"
                           },
-                          "status": {
+                          "id": {
                             "type": "string"
                           },
-                          "model": {
+                          "displayName": {
                             "type": "string"
                           },
-                          "cli": {
+                          "role": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "session": {
+                            "type": "string",
+                            "description": "tmux session name."
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "Runtime state (e.g. \"running\", \"stopped\"). There is no `status` field on this object."
+                          },
+                          "busy": {
                             "type": "string"
                           },
                           "paused": {
                             "type": "boolean"
                           },
-                          "restarts": {
-                            "type": "integer"
+                          "pausedReason": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean",
+                            "description": "Mirrors the CONFIG flag, not runtime state \u2014 the only thing distinguishing \"switched off on purpose\" from \"stopped because something broke\". Never omitted: false is meaningful."
+                          },
+                          "offByCadence": {
+                            "type": "boolean"
+                          },
+                          "needsLogin": {
+                            "type": "boolean"
+                          },
+                          "cli": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "cadence": {
+                            "type": "string"
+                          },
+                          "doing": {
+                            "type": "string"
                           },
                           "pinned": {
                             "type": "boolean"
+                          },
+                          "pinnedCli": {
+                            "type": "boolean"
+                          },
+                          "pinnedModel": {
+                            "type": "boolean"
+                          },
+                          "restarts": {
+                            "type": "integer"
+                          },
+                          "lastKick": {
+                            "type": "string",
+                            "description": "Pre-formatted server-local display string, not RFC 3339."
+                          },
+                          "nextKick": {
+                            "type": "string",
+                            "description": "Pre-formatted server-local display string, not RFC 3339."
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "sandboxed": {
+                            "type": "boolean"
+                          },
+                          "onDemand": {
+                            "type": "boolean"
+                          },
+                          "proxyViolations": {
+                            "type": "integer"
+                          },
+                          "lastError": {
+                            "type": "string"
                           }
                         }
                       }
+                    },
+                    "configuredAgents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "dashboard.FrontendConfiguredAgent \u2014 secret-free config inventory covering agents with no runtime process (notably enabled: false)."
                     },
                     "repos": {
                       "type": "array",
                       "items": {
                         "type": "object",
+                        "description": "dashboard.FrontendRepo (src/pkg/dashboard/server.go).",
                         "properties": {
                           "name": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "Short repo name."
+                          },
+                          "full": {
+                            "type": "string",
+                            "description": "owner/name."
                           },
                           "issues": {
                             "type": "integer"
                           },
                           "prs": {
                             "type": "integer"
+                          },
+                          "actionableIssues": {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            },
+                            "description": "Untyped in the Go source ([]any) \u2014 populated from forge issue records whose shape is not fixed by a Go struct."
+                          },
+                          "openPrs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            },
+                            "description": "Untyped in the Go source ([]any) \u2014 populated from forge PR records whose shape is not fixed by a Go struct."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "full",
+                          "issues",
+                          "prs"
+                        ]
+                      }
+                    },
+                    "acmmLevel": {
+                      "type": "integer",
+                      "description": "Hive ACMM maturity level, 1-6. TOP-LEVEL, not nested under governor. 1 is also the fallback when nothing is configured \u2014 see acmmLevelConfigured to tell those apart."
+                    },
+                    "acmmLevelConfigured": {
+                      "type": "boolean",
+                      "description": "False means nobody chose a level and acmmLevel is the fallback."
+                    },
+                    "acmmPackAgents": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "tokens": {
+                      "type": "object",
+                      "description": "dashboard.FrontendTokens \u2014 the status-embedded token rollup (lookbackHours, sessions, totals, byAgent, byModel, byAgentModel). This is a DIFFERENT shape from GET /api/tokens, which returns tokens.AggregateSummary with snake_case keys."
+                    },
+                    "budget": {
+                      "type": "object",
+                      "description": "dashboard.FrontendBudget. Budget is top-level; there is no budgetPct under governor."
+                    },
+                    "beads": {
+                      "type": "object",
+                      "description": "dashboard.FrontendBeads: {workers, supervisor}."
+                    },
+                    "planning": {
+                      "type": "object",
+                      "description": "dashboard.FrontendPlanning."
+                    },
+                    "hold": {
+                      "type": "object",
+                      "description": "dashboard.FrontendHold."
+                    },
+                    "cadenceMatrix": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "dashboard.FrontendCadence entries."
+                    },
+                    "health": {
+                      "type": "object",
+                      "description": "Untyped in the Go source (map[string]any): repo-workflow health map."
+                    },
+                    "deepHealth": {
+                      "type": "object",
+                      "description": "Untyped in the Go source (map[string]any): the spoke's own deep health checks, the same ones reported hub-ward in the heartbeat."
+                    },
+                    "ghRateLimits": {
+                      "type": "object",
+                      "description": "Untyped in the Go source (map[string]any)."
+                    },
+                    "agentMetrics": {
+                      "type": "object",
+                      "description": "Untyped in the Go source (map[string]any)."
+                    },
+                    "issueToMerge": {
+                      "type": "object",
+                      "description": "Untyped in the Go source (map[string]any)."
+                    },
+                    "systemAlerts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "severity": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
                           }
                         }
                       }
+                    },
+                    "inferenceBackends": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "inference": {
+                            "type": "boolean"
+                          },
+                          "models": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "models_fallback": {
+                            "type": "boolean",
+                            "description": "True when models is NOT an authoritative census (static aliases, partial sweep, or env list standing in). Consumers must not diff against a fallback list."
+                          }
+                        }
+                      }
+                    },
+                    "platform": {
+                      "type": "object",
+                      "description": "dashboard.FrontendPlatform: {forge, mint, skills}."
+                    },
+                    "security": {
+                      "type": "object",
+                      "description": "dashboard.FrontendSecurity."
+                    },
+                    "githubAppRequired": {
+                      "type": "boolean"
+                    },
+                    "githubAppInstallURL": {
+                      "type": "string"
+                    },
+                    "githubAppInstallMissing": {
+                      "type": "boolean",
+                      "description": "CONFIG TRUTH independent of any auth probe: a real App is named but installation_id is 0."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "initializing"
+                      ],
+                      "description": "Present ONLY in the pre-first-build response, which is the bare object {\"status\": \"initializing\"} with no other field set."
                     }
                   }
                 }
@@ -567,15 +857,261 @@
           "Tokens"
         ],
         "summary": "Token usage by agent and model",
-        "description": "Returns token consumption data broken down by agent and model.",
+        "description": "Returns tokens.AggregateSummary (src/pkg/tokens/collector.go) as served by dashboard.Server.handleTokens (src/pkg/dashboard/api.go). Keys are snake_case and differ from the camelCase `tokens` block embedded in GET /api/status. NO COST FIELD is returned \u2014 this endpoint reports token counts only; cost must be estimated by the caller or read from a cost endpoint. The handler has two degenerate responses: {\"status\": \"no_collector\"} when no token collector is wired, and {\"total_tokens\": 0, \"sessions\": []} when the collector has no summary yet.",
         "responses": {
           "200": {
-            "description": "Token usage data",
+            "description": "Aggregate token usage, or one of the two degenerate shapes (no_collector / empty summary).",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "description": "Token usage keyed by agent name, with model-level breakdowns"
+                  "description": "tokens.AggregateSummary, or one of the two degenerate handler responses described above.",
+                  "properties": {
+                    "total_tokens": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total_input": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total_output": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total_cache_read": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total_cache_create": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "total_messages": {
+                      "type": "integer"
+                    },
+                    "by_agent": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                      },
+                      "description": "Agent name to total token count."
+                    },
+                    "by_model": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                      },
+                      "description": "Model id to total token count."
+                    },
+                    "by_agent_detail": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "description": "tokens.AgentModelBucket.",
+                        "properties": {
+                          "input": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "output": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "cache_read": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "cache_create": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "messages": {
+                            "type": "integer"
+                          },
+                          "sessions": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "input",
+                          "output",
+                          "cache_read",
+                          "cache_create",
+                          "messages",
+                          "sessions"
+                        ]
+                      },
+                      "description": "Agent name to its full breakdown."
+                    },
+                    "by_model_detail": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "description": "tokens.AgentModelBucket.",
+                        "properties": {
+                          "input": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "output": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "cache_read": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "cache_create": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "messages": {
+                            "type": "integer"
+                          },
+                          "sessions": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "input",
+                          "output",
+                          "cache_read",
+                          "cache_create",
+                          "messages",
+                          "sessions"
+                        ]
+                      },
+                      "description": "Model id to its full breakdown."
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "tokens.SessionSummary.",
+                        "properties": {
+                          "session_id": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "input_tokens": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "output_tokens": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "cache_read": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "cache_create": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "total_tokens": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "messages": {
+                            "type": "integer"
+                          },
+                          "first_active": {
+                            "type": "integer",
+                            "format": "int64",
+                            "description": "Unix milliseconds of the earliest event seen; omitted when undeterminable."
+                          },
+                          "last_active": {
+                            "type": "integer",
+                            "format": "int64",
+                            "description": "Unix milliseconds of the latest event seen; omitted when undeterminable."
+                          },
+                          "backend": {
+                            "type": "string",
+                            "description": "Tool that produced the session (\"claude\", \"copilot\", \"bob\", \"inference\"). Empty/absent means an older flat-format session of unknown provenance, which must be treated as NOT time-resolved."
+                          },
+                          "usage": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "description": "tokens.UsageEvent \u2014 one timestamped slice of a session's usage timeline.",
+                              "properties": {
+                                "ts_ms": {
+                                  "type": "integer",
+                                  "format": "int64",
+                                  "description": "Unix milliseconds. 0 means the source line carried no parseable timestamp; consumers must treat 0 as unknown time rather than sorting it first."
+                                },
+                                "model": {
+                                  "type": "string"
+                                },
+                                "coalesced": {
+                                  "type": "integer",
+                                  "description": "How many raw per-message events this entry represents. Omitted/absent for an untouched event; >1 for a coalesced bucket."
+                                },
+                                "input": {
+                                  "type": "integer",
+                                  "format": "int64"
+                                },
+                                "output": {
+                                  "type": "integer",
+                                  "format": "int64"
+                                },
+                                "cache_read": {
+                                  "type": "integer",
+                                  "format": "int64"
+                                },
+                                "cache_create": {
+                                  "type": "integer",
+                                  "format": "int64"
+                                }
+                              },
+                              "required": [
+                                "ts_ms",
+                                "input",
+                                "output",
+                                "cache_read",
+                                "cache_create"
+                              ]
+                            },
+                            "description": "Per-message usage timeline, populated only by scanners that can observe the grain (currently claude). ADDITIVE: when present its sums equal the summed session fields exactly \u2014 use either, never add both. Absent on sessions restored from the persisted snapshot, which strips timelines."
+                          },
+                          "usage_coalesced": {
+                            "type": "integer",
+                            "description": "How many raw events were folded to keep usage bounded. Absent/0 means full per-message fidelity."
+                          }
+                        },
+                        "required": [
+                          "session_id",
+                          "agent",
+                          "model",
+                          "input_tokens",
+                          "output_tokens",
+                          "cache_read",
+                          "cache_create",
+                          "total_tokens",
+                          "messages"
+                        ]
+                      }
+                    },
+                    "session_count": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "no_collector"
+                      ],
+                      "description": "Present ONLY in the degenerate no-collector response, which is the bare object {\"status\": \"no_collector\"} with no other field set."
+                    }
+                  }
                 }
               }
             }
