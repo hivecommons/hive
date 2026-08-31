@@ -1048,7 +1048,8 @@ func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 	if mode != "dark" {
 		mode = "light"
 	}
-	snapshotFile := fmt.Sprintf("/data/snapshots/snapshot-%s.html", mode)
+	snapDir := s.snapshotDirOrDefault()
+	snapshotFile := filepath.Join(snapDir, fmt.Sprintf("snapshot-%s.html", mode))
 	info, err := os.Stat(snapshotFile)
 	intervalMin := cfg.Hub.SnapshotIntervalMin
 	if intervalMin < 5 {
@@ -1058,8 +1059,8 @@ func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 	needsRebuild := err != nil || time.Since(info.ModTime()) > staleThreshold
 
 	if needsRebuild {
-		s.buildSnapshot("/data/snapshots/snapshot-dark.html", "dark")
-		s.buildSnapshot("/data/snapshots/snapshot-light.html", "light")
+		s.buildSnapshot(filepath.Join(snapDir, "snapshot-dark.html"), "dark")
+		s.buildSnapshot(filepath.Join(snapDir, "snapshot-light.html"), "light")
 	}
 
 	data, err := os.ReadFile(snapshotFile)
@@ -1102,8 +1103,33 @@ func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(html))
 }
 
+// snapshotDirOrDefault returns the directory handleSnapshotPage/buildSnapshot
+// read and write snapshot-{mode}.html under: s.snapshotDir when a test has
+// overridden it, otherwise the production default. See the field comment on
+// Server.snapshotDir (#5235).
+func (s *Server) snapshotDirOrDefault() string {
+	if s.snapshotDir != "" {
+		return s.snapshotDir
+	}
+	return "/data/snapshots"
+}
+
 func (s *Server) buildSnapshot(outputFile, mode string) {
-	if err := os.MkdirAll("/data/snapshots", 0o755); err != nil {
+	if s.buildSnapshotFn != nil {
+		s.buildSnapshotFn(s, outputFile, mode)
+		return
+	}
+	buildSnapshotProd(s, outputFile, mode)
+}
+
+// buildSnapshotProd is the real Node-builder invocation buildSnapshot runs in
+// production. Split out from buildSnapshot so tests can override the whole
+// invocation via Server.buildSnapshotFn (#5235) without ever spawning `node`
+// — see the field comment on Server.buildSnapshotFn for the seam convention
+// this follows (pkg/hub's afterGenerationsReadAttempt, #5080).
+func buildSnapshotProd(s *Server, outputFile, mode string) {
+	snapDir := s.snapshotDirOrDefault()
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
 		s.logger.Warn("snapshot directory creation failed", "error", err)
 		return
 	}

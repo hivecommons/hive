@@ -95,6 +95,22 @@ type Server struct {
 	// point it at an httptest server.
 	acmmLinearBaseURL string
 
+	// snapshotDir overrides the directory handleSnapshotPage/buildSnapshot
+	// read and write snapshot-{mode}.html under (#5235). Empty = production
+	// default "/data/snapshots"; tests point it at t.TempDir() so the
+	// stale-threshold rebuild decision can be exercised against real mtimes
+	// without touching the host filesystem. Read via s.snapshotDirOrDefault().
+	snapshotDir string
+	// buildSnapshotFn, if non-nil, replaces the Node builder invocation in
+	// buildSnapshot (#5235) — the same nil-in-production hook convention as
+	// pkg/hub's afterGenerationsReadAttempt (#5080). Production leaves this
+	// nil, in which case buildSnapshot runs the real `node
+	// build-snapshot.mjs` subprocess; tests set it to a fake that writes a
+	// fixture file instead, so the CSP-stamping/rewrite pipeline in
+	// handleSnapshotPage can be exercised without a Node toolchain on the
+	// test host.
+	buildSnapshotFn func(s *Server, outputFile, mode string)
+
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
 	// /costSeries() accessors so the zero-value Server needs no constructor
