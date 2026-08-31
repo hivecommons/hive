@@ -88,6 +88,40 @@ cd src
 go vet ./...
 ```
 
+
+## If CI says "NOTICE is out of date"
+
+`NOTICE` lists every Go module compiled into the shipped binaries. It is
+**generated**, not hand-edited, so any change to `src/go.mod` or `src/go.sum`
+— including a Dependabot version bump — makes it stale and fails the
+`notice-drift` job ("NOTICE matches the module graph") in
+`.github/workflows/go-security-analysis.yml`.
+
+Regenerate and commit it:
+
+```bash
+bash src/scripts/generate-notice.sh   # writes NOTICE at the repo root
+```
+
+Three things that will otherwise cost you a CI round trip:
+
+- **Commit the output verbatim.** The check is byte-exact. Do not reformat it,
+  do not strip trailing whitespace — several dependency licences contain
+  trailing spaces on their own lines, and removing them produces a permanent
+  diff against what CI generates.
+- **The generator needs the module's Go toolchain.** `src/go.mod` pins a
+  specific version; running under an older `go` makes `go-licenses` fail to
+  resolve stdlib packages and abort before writing anything. Set
+  `GOTOOLCHAIN` to the pinned version if your default `go` is older.
+- **A red `notice-drift` is not always yours.** Because `NOTICE` lives on the
+  branch, a dependency bump merged without regenerating it leaves `v4` itself
+  stale — and then *every* open PR inherits the failure, including docs-only
+  ones. Check whether `v4` is clean before assuming your change caused it.
+
+A `FORBIDDEN` result is a different problem: the module graph contains a
+licence the project cannot ship (this is how an AGPL-3.0 dependency was caught
+in #5016). That needs the dependency removed or replaced, not a regeneration.
+
 There is no public `just lint` recipe in the current root `Justfile`; use `go vet ./...` for the repository's documented local lint-equivalent check, plus `gofmt`, `go build`, and targeted `go test` for the files you change.
 
 ## Running Hive locally
