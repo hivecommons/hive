@@ -493,6 +493,14 @@ type Manager struct {
 	// observer is always invoked on its own goroutine. See kick_observer.go.
 	kickObserver atomic.Pointer[func(agentName, event, detail string)]
 
+	// kickDispatches tracks asynchronous kick dispatches (#5325): the in-flight
+	// guard that makes delivery exactly-once, and the latest outcome per agent
+	// so the dashboard can report the true result after answering the POST with
+	// 202. It carries its OWN mutex rather than living under m.mu, because the
+	// delivery goroutine settles a dispatch from a context that holds no
+	// manager lock and must not contend with the launch path. See kick_async.go.
+	kickDispatches kickDispatchRegistry
+
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 

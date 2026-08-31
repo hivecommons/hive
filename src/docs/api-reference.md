@@ -117,7 +117,8 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `POST` | `/api/kick/{agent}` | Dashboard auth/session | Kick | `pkg/dashboard/api.go:67` |
+| `POST` | `/api/kick/{agent}` | Dashboard auth/session | Kick — asynchronous; answers `202` once queued (see below) | `pkg/dashboard/api.go:67` |
+| `GET` | `/api/kick/{agent}/status` | Dashboard auth/session | Outcome of the most recent kick | `pkg/dashboard/api.go:71` |
 | `POST` | `/api/switch/{agent}/{backend}` | Dashboard auth/session | Switch | `pkg/dashboard/api.go:68` |
 | `POST` | `/api/model/{agent}/{model}` | Dashboard auth/session | Model Set | `pkg/dashboard/api.go:69` |
 | `POST` | `/api/pause/{agent}` | Dashboard auth/session | Pause | `pkg/dashboard/api.go:70` |
@@ -134,6 +135,20 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `POST` | `/api/agents` | Dashboard auth/session | Agent Create | `pkg/dashboard/api.go:161` |
 | `POST` | `/api/agents/import` | Dashboard auth/session | Agent Import | `pkg/dashboard/api.go:162` |
 | `DELETE` | `/api/agents/{name}` | Dashboard auth/session | Agent Delete | `pkg/dashboard/api.go:163` |
+
+### Kick is asynchronous
+
+`POST /api/kick/{agent}` queues the message and returns immediately with `202`; it is not a delivery confirmation.
+
+Delivery has to wait for the agent's CLI to present its input prompt, which is bounded by `inputPromptTimeout` (120s). Doing that wait on the request path made the handler outlive a typical 60s ingress idle timeout, so a proxy answered `504` for kicks that had in fact succeeded — the prompt was typed, the agent ran the session, and the operator was told it failed (kubestellar/hive#5325). Retrying a false failure delivered the prompt twice.
+
+The contract is now:
+
+- **`400`** — a genuine, deterministic precondition failure evaluated inline: unknown agent, paused, stopped, no tmux session, sandbox kick rejected, prompt over 10000 chars.
+- **`202` with `status: "queued"`** — accepted; a background delivery started.
+- **`202` with `status: "in-flight"`** — a delivery for this agent was already running, so this call was deduplicated. Delivery is exactly-once per agent, which is what makes an operator's retry harmless.
+
+Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `unknown`, `in-flight`, `delivered`, or `failed`, plus a `pending` boolean. While `pending` is true the outcome is **indeterminate** — the prompt may still be delivered — and clients must not render it as a failure. A CLI that never reaches its input prompt within `inputPromptTimeout` settles as `failed` with a reason.
 
 ## Packs and ACMM
 

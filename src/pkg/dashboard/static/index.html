@@ -4575,8 +4575,16 @@
       try {
         const data = await postJSON('/api/kick/' + name, opts);
         if (!data.ok) { showToast('Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
-        showToast(prompt ? 'Sent to ' + name : 'Kicked ' + name, 'success');
         input.value = '';
+        if (data.status === 'in-flight') {
+          showToast('A kick is already being delivered to ' + name, 'info');
+          return;
+        }
+        // 202 means queued, not delivered (#5325). Hold a persistent toast and
+        // rewrite it once the poll settles, so the card never claims success
+        // the server has not confirmed — nor failure it has not observed.
+        const toast = showToast((prompt ? 'Sending to ' : 'Kicking ') + name + '...', 'info', true);
+        await reportKickOutcome(name, toast, 'Queued for ' + name);
       } catch (e) { showToast('Kick failed: ' + e.message, 'error'); }
     }
 
@@ -14358,6 +14366,49 @@ function burnAreaChart() {
       return await res.json();
     }
 
+    // Kick delivery is asynchronous (#5325). POST /api/kick answers 202 as soon
+    // as the message is queued; whether it actually reached the CLI is read
+    // from GET /api/kick/{agent}/status. Poll that until it settles.
+    //
+    // The wait can legitimately run to the server's input-prompt timeout (120s)
+    // when a CLI is slow to present its prompt, so the ceiling here is above it
+    // — and running out of poll budget is reported as STILL PENDING, never as a
+    // failure. That distinction is the whole point of the issue: an
+    // indeterminate kick that gets rendered as failed is what made operators
+    // click Kick again and deliver the work twice.
+    const KICK_POLL_INTERVAL_MS = 2000;
+    const KICK_POLL_TIMEOUT_MS = 150000;
+
+    async function pollKickOutcome(agent) {
+      const deadline = Date.now() + KICK_POLL_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, KICK_POLL_INTERVAL_MS));
+        try {
+          const res = await fetch(`/api/kick/${agent}/status`);
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) continue;
+          const data = await res.json();
+          if (data.status === 'delivered') return { settled: true, ok: true };
+          if (data.status === 'failed') return { settled: true, ok: false, error: data.error || 'unknown' };
+        } catch (e) {
+          // A transient poll failure says nothing about the kick. Keep polling.
+        }
+      }
+      return { settled: false };
+    }
+
+    // reportKickOutcome renders a queued kick's true result, or leaves the
+    // operator with an explicitly indeterminate message if it never settles.
+    async function reportKickOutcome(agent, toast, queuedMsg) {
+      const outcome = await pollKickOutcome(agent);
+      if (!outcome.settled) {
+        dismissToast(toast, `${queuedMsg} — still waiting for ${agent}'s CLI; check the terminal`, 'info');
+        return;
+      }
+      if (outcome.ok) { dismissToast(toast, `Kicked ${agent}`, 'success'); return; }
+      dismissToast(toast, 'Kick failed: ' + outcome.error, 'error');
+    }
+
     async function kick(agent) {
       const input = document.getElementById(`kick-prompt-${agent}`);
       const prompt = input ? input.value.trim() : '';
@@ -14371,8 +14422,12 @@ function burnAreaChart() {
       try {
         const data = await postJSON(`/api/kick/${agent}`, opts);
         if (!data.ok) { dismissToast(toast, 'Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
-        dismissToast(toast, `Kicked ${agent}`, 'success');
         if (input) input.value = '';
+        if (data.status === 'in-flight') {
+          dismissToast(toast, `A kick is already being delivered to ${agent}`, 'info');
+          return;
+        }
+        await reportKickOutcome(agent, toast, `Queued for ${agent}`);
       } catch (e) {
         dismissToast(toast, 'Kick failed: ' + e.message, 'error');
       }

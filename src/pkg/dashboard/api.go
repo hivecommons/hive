@@ -83,6 +83,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/role", s.handleRole)
 
 	s.mux.HandleFunc("POST /api/kick/{agent}", s.handleKick)
+	// Outcome of the most recent asynchronous kick (#5325). The POST answers
+	// 202 as soon as the kick is queued; delivery success or failure is read
+	// from here, off the request path and therefore never proxy-timed-out.
+	s.mux.HandleFunc("GET /api/kick/{agent}/status", s.handleKickStatus)
 	s.mux.HandleFunc("POST /api/switch/{agent}/{backend}", s.handleSwitch)
 	s.mux.HandleFunc("POST /api/model/{agent}/{model}", s.handleModelSet)
 	s.mux.HandleFunc("POST /api/pause/{agent}", s.handlePause)
@@ -406,6 +410,22 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": msg}); err != nil {
 		slog.Warn("jsonError encode failed", "error", err)
+	}
+}
+
+// jsonStatusResponse writes a JSON body under an explicit status code.
+//
+// The Content-Type MUST be set before WriteHeader — writing the status first
+// freezes the header map, and a JSON body served without its content type is
+// exactly what the dashboard's postJSON guard (#5301/#5306) treats as an
+// intermediary's HTML error page. Getting this backwards on the kick endpoint
+// would turn a healthy 202 into a reported failure, which is the whole class
+// of bug #5325 is about.
+func jsonStatusResponse(w http.ResponseWriter, code int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Warn("jsonStatusResponse encode failed", "error", err)
 	}
 }
 
@@ -1511,8 +1531,35 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		msg = s.deps.Scheduler.BuildAgentMessageFromLastActionable(name)
 	}
 
-	if err := s.deps.AgentMgr.SendKick(name, msg); err != nil {
+	// Queue the kick and answer immediately (#5325).
+	//
+	// The old code called the synchronous SendKick inline. Its slow leg waits
+	// for the CLI's input prompt for up to inputPromptTimeout (120s), which
+	// exceeds a typical ingress idle timeout (commonly 60s) — so a kick to an
+	// agent whose CLI was merely slow to present its prompt was answered by the
+	// proxy with 504 while the wait was still running. The wait then completed,
+	// the prompt WAS typed, and the agent ran the session; the operator had
+	// been told it failed, and the natural retry delivered the work twice.
+	//
+	// SendKickAsync keeps every fast, deterministic precondition synchronous —
+	// unknown agent, paused/stopped, missing tmux session, sandbox rejection
+	// still return 400 here — and moves only the prompt wait and the typing to
+	// a background goroutine with an exactly-once in-flight guard. The outcome
+	// is reported by GET /api/kick/{agent}/status, off the request path.
+	started, err := s.deps.AgentMgr.SendKickAsync(name, msg)
+	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !started {
+		// A delivery for this agent is already in flight. Answering 202 with
+		// status "in-flight" is what makes an operator's retry harmless: the
+		// prompt is delivered exactly once regardless of how many times Kick
+		// is clicked.
+		jsonStatusResponse(w, http.StatusAccepted, map[string]interface{}{
+			"ok": true, "status": kickStatusInFlight, "agent": name,
+			"message": "a kick is already being delivered to " + name + "; not sending it twice",
+		})
 		return
 	}
 
@@ -1520,7 +1567,74 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	s.deps.Logger.Info("audit: agent kicked", "agent", name, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "kick", "", name)
 	s.refreshAfterMutation()
-	okResponse(w, map[string]string{"status": "kicked", "agent": name})
+	// 202, not 200: the message is queued, not yet proven delivered.
+	jsonStatusResponse(w, http.StatusAccepted, map[string]interface{}{
+		"ok": true, "status": kickStatusQueued, "agent": name,
+	})
+}
+
+// Kick dispatch statuses on the wire. "queued"/"in-flight" are the POST's
+// answers; the poll adds the terminal "delivered" and "failed".
+const (
+	kickStatusQueued    = "queued"
+	kickStatusInFlight  = "in-flight"
+	kickStatusUnknown   = "unknown"
+	kickStatusDelivered = "delivered"
+	kickStatusFailed    = "failed"
+)
+
+// handleKickStatus reports the outcome of the most recent asynchronous kick
+// for an agent (#5325).
+//
+// This is where kick success or failure is now decided. The POST only promises
+// the kick was queued; a client learns whether the prompt actually reached the
+// CLI by polling here. While the phase is "queued"/"in-flight" the outcome is
+// INDETERMINATE — pending is not failure, and a UI must not render it as one.
+//
+// Read-only, so any authenticated role may call it.
+func (s *Server) handleKickStatus(w http.ResponseWriter, r *http.Request) {
+	name := s.resolveAgentParam(r.PathValue("agent"))
+	if s.deps == nil || s.deps.AgentMgr == nil {
+		jsonError(w, "agent manager unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	d, ok := s.deps.AgentMgr.KickDispatchState(name)
+	if !ok {
+		// No async kick has been dispatched for this agent in this process's
+		// lifetime. That is not an error — it is simply "nothing to report".
+		jsonResponse(w, map[string]interface{}{
+			"ok": true, "agent": name, "status": kickStatusUnknown, "pending": false,
+		})
+		return
+	}
+	resp := map[string]interface{}{
+		"ok":       true,
+		"agent":    name,
+		"status":   kickPhaseStatus(d.Phase),
+		"pending":  d.Pending(),
+		"queuedAt": d.QueuedAt.UTC().Format(time.RFC3339),
+	}
+	if d.Error != "" {
+		resp["error"] = d.Error
+	}
+	if !d.SettledAt.IsZero() {
+		resp["settledAt"] = d.SettledAt.UTC().Format(time.RFC3339)
+	}
+	jsonResponse(w, resp)
+}
+
+// kickPhaseStatus maps a manager dispatch phase onto the wire status. The
+// pending phase is reported as "in-flight" so the poll's vocabulary matches the
+// POST's, and so no client can mistake it for a settled outcome.
+func kickPhaseStatus(phase string) string {
+	switch phase {
+	case agent.KickPhaseDelivered:
+		return kickStatusDelivered
+	case agent.KickPhaseFailed:
+		return kickStatusFailed
+	default:
+		return kickStatusInFlight
+	}
 }
 
 // claimAgentFieldOwnership writes an operator's model and/or backend choice

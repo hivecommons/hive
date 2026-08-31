@@ -58,13 +58,24 @@ type AgentActionResult struct {
 
 // KickResult is the response from POST /api/kick/{agent}.
 //
-// It mirrors dashboard/openapi.json exactly. Unlike AgentActionResult, the
-// kick response has no blanket success flag or resulting lifecycle state: a
-// 200 is represented by status "kicked" and the resolved agent name.
+// It mirrors dashboard/openapi.json exactly. Unlike AgentActionResult, the kick
+// response has no resulting lifecycle state.
+//
+// The endpoint is ASYNCHRONOUS (#5325): it answers 202 once the message is
+// queued, so Status is "queued" — or "in-flight" when a delivery for the same
+// agent was already running and this call was deduplicated to guarantee the
+// prompt is typed exactly once. Neither value asserts the message reached the
+// CLI. A definitive precondition failure (unknown, paused, stopped, no tmux
+// session) still comes back as an APIError with 400; delivery success or
+// failure is read from GET /api/kick/{agent}/status.
 type KickResult struct {
 	Status string `json:"status"`
 	Agent  string `json:"agent"`
 }
+
+// Queued reports whether the kick was accepted for delivery by this call, as
+// opposed to being folded into a delivery that was already in flight.
+func (r KickResult) Queued() bool { return r.Status == "queued" }
 
 // kickRequest is the prompt-bearing form of the optional kick request body.
 // The published operation also accepts a legacy message field when prompt is

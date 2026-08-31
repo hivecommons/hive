@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -62,8 +63,19 @@ func TestKickCallSitesUsePostJSON(t *testing.T) {
 			t.Errorf("index.html is missing %q — a kick call site bypasses postJSON", snippet)
 		}
 	}
-	// No kick path may keep a raw fetch of the endpoint alongside the helper.
-	if strings.Contains(html, "await fetch('/api/kick/") || strings.Contains(html, "await fetch(`/api/kick/") {
-		t.Error("a kick call site still fetches /api/kick directly; it must go through postJSON")
+	// No kick SENDER may keep a raw fetch of the endpoint alongside the helper.
+	//
+	// The read-only outcome poll added for #5325 legitimately fetches
+	// /api/kick/{agent}/status directly: it is a GET, it tolerates a non-JSON
+	// answer by simply polling again (a transient proxy hiccup says nothing
+	// about the kick), and throwing there would reintroduce the very thing that
+	// issue is about — reporting an indeterminate kick as failed. So the guard
+	// targets the POST path specifically rather than the whole prefix.
+	// Match any raw fetch of /api/kick/... whose argument list continues past
+	// the URL — i.e. one that passes options, which is how a POST is spelled.
+	// A bare one-argument fetch is a GET and is allowed (the status poll).
+	rawPost := regexp.MustCompile(`fetch\([` + "`" + `'"]/api/kick/[^)]*,`)
+	if m := rawPost.FindString(html); m != "" {
+		t.Errorf("a kick sender fetches /api/kick directly (%q); it must go through postJSON", m)
 	}
 }

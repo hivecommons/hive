@@ -2272,7 +2272,7 @@
           "Agents"
         ],
         "summary": "Kick (message) an agent",
-        "description": "Sends a message/prompt to the agent's running session. If no prompt/message is given, an auto-generated message is built from the agent's last actionable item.",
+        "description": "Queues a message/prompt for delivery to the agent's running session and returns immediately. If no prompt/message is given, an auto-generated message is built from the agent's last actionable item.\n\nASYNCHRONOUS (kubestellar/hive#5325). Delivery waits for the CLI's input prompt, which can take up to 120s and therefore used to outlive a typical 60s ingress idle timeout, making a proxy answer 504 for a kick that actually succeeded. Fast, deterministic preconditions (unknown agent, paused, stopped, missing tmux session) are still evaluated inline and still return 400. Everything slower runs in the background; poll GET /api/kick/{agent}/status for the delivery outcome.\n\nDelivery is exactly-once per agent: a second POST while a delivery is in flight is deduplicated and answers status \"in-flight\" without typing the prompt again.",
         "parameters": [
           {
             "name": "agent",
@@ -2305,19 +2305,30 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Kick sent",
+          "202": {
+            "description": "Kick queued for delivery. Not a delivery confirmation.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
                     "status": {
                       "type": "string",
-                      "example": "kicked"
+                      "enum": [
+                        "queued",
+                        "in-flight"
+                      ],
+                      "description": "queued: this call started a delivery. in-flight: a delivery for this agent was already running and this call was deduplicated."
                     },
                     "agent": {
                       "type": "string"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Present on the in-flight path, explaining the deduplication."
                     }
                   }
                 }
@@ -2325,7 +2336,7 @@
             }
           },
           "400": {
-            "description": "Prompt too long, or SendKick failed (e.g. unknown agent)"
+            "description": "Prompt too long, or the kick failed its preconditions (unknown agent, paused, stopped, no tmux session)"
           }
         }
       }
@@ -16447,6 +16458,75 @@
         "responses": {
           "204": {
             "description": "No content"
+          }
+        }
+      }
+    },
+    "/api/kick/{agent}/status": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Outcome of the most recent kick",
+        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (kubestellar/hive#5325). This is where kick success or failure is decided \u2014 POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kick dispatch state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "unknown",
+                        "in-flight",
+                        "delivered",
+                        "failed"
+                      ]
+                    },
+                    "pending": {
+                      "type": "boolean",
+                      "description": "True while the outcome is indeterminate."
+                    },
+                    "error": {
+                      "type": "string",
+                      "description": "Failure reason; present only when status is failed."
+                    },
+                    "queuedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "settledAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Absent while pending."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agent manager unavailable"
           }
         }
       }
