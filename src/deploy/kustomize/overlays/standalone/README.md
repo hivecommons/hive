@@ -99,7 +99,7 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
   publishes, and they are the only tags that are guaranteed to exist.
 - `vX.Y.Z` **image** tags are produced only by the automated
   [tagged-release workflow](../../../../docs/releases.md)
-  (`.github/workflows/release.yml`), which retags the just-published short-SHA
+  (`.github/workflows/tagged-release.yml`), which retags the just-published short-SHA
   images with the version it cut. That workflow landed *after* the `v4.0.0`
   **git** tag, so **there is no `ghcr.io/kubestellar/hive:v4.0.0` image** — a
   `newTag: v4.0.0` pin goes straight to `ImagePullBackOff`. Before pinning a

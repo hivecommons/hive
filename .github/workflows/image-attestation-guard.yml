@@ -16,7 +16,7 @@ name: Image Attestation Guard
 # branch-pinned, and the path filter below is what keeps it cheap.
 #
 # Release SBOMs (added in the same change that added this guard) are
-# deliberately NOT part of this workflow — release.yml's SBOM step runs
+# deliberately NOT part of this workflow — tagged-release.yml's SBOM step runs
 # against an already-published image digest and produces a standalone file
 # attached to the GitHub Release, never an in-image attestation. See
 # src/docs/releases.md, "Software bill of materials (SBOM)".

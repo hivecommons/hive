@@ -9,11 +9,26 @@ no human ever pushes a tag or clicks "Draft a release" in the normal path.
 
 ## What triggers a release
 
-`.github/workflows/release.yml` runs after every successful
+`.github/workflows/tagged-release.yml` runs after every successful
 `Build and Push Docker Image` (`docker.yml`) run on `v4` — a `workflow_run`
 trigger, not a tag push, because there is no tag until this workflow decides
 to create one. It never runs for `v2`, `mk`, `dd`, or a manual
 `workflow_dispatch` build.
+
+It also runs **hourly on a schedule**, as a backstop (#5318). The
+`workflow_run` trigger alone can silently lose a release opportunity: a
+`docker.yml` run that is *cancelled* never fires `workflow_run` at all, and a
+run that fires but finds `v4` already advanced stands down in favour of a
+successor that may itself stand down. Standing down is correct — the run's
+images were built from the older tree, so tagging would name content those
+images do not contain — but nothing used to come back for the abandoned work.
+The scheduled pass evaluates `v4`'s **current** tip, whose images have long
+since been published, so it retags an existing digest exactly as the normal
+path does. It refuses to act unless `docker.yml` has a *successful, completed*
+push run for that tip, so a cancelled or in-flight build never produces a tag
+with no digest behind it, and it is a no-op whenever `## Unreleased` is empty
+— which on a healthy repository is almost always. Deferrals are logged as
+warnings so a skipped opportunity is visible rather than silent.
 
 `src/scripts/derive-release-version.sh` then decides two things by reading
 [`CHANGELOG.md`](../../CHANGELOG.md)'s `## Unreleased` section — nothing else,
@@ -93,9 +108,9 @@ errors loudly) rather than a silent pick — remove all but one.
 |---|---|---|
 | `v4-latest`, `stable`, `candidate`, `edge` | `docker.yml`, every merge to `v4` | Yes — moving pointers |
 | `<7-hex-sha>` | `docker.yml`, every successful build | No — immutable, but not a *release* |
-| `v1.2.3` | `release.yml`, only when a release is cut | No — immutable, and **is** the release |
+| `v1.2.3` | `tagged-release.yml`, only when a release is cut | No — immutable, and **is** the release |
 
-`release.yml` never writes `stable`/`candidate`/`edge`. Channel promotion is a
+`tagged-release.yml` never writes `stable`/`candidate`/`edge`. Channel promotion is a
 separate, deliberate policy described in
 [release-channels.md](release-channels.md); cutting a version tag never
 silently couples to it, on purpose — the operator explicitly asked for these
@@ -103,10 +118,10 @@ to stay decoupled.
 
 ## How a release is actually built
 
-`release.yml` does **not** rebuild the image. `docker.yml`'s own freshness
+`tagged-release.yml` does **not** rebuild the image. `docker.yml`'s own freshness
 guard already proved, for this exact commit, that the pushed digest's
 embedded commit hash matches — rebuilding would only reintroduce the risk
-that guard exists to eliminate. Instead, `release.yml` retags the
+that guard exists to eliminate. Instead, `tagged-release.yml` retags the
 already-published `<7-hex-sha>` digest as the immutable version tag with
 `docker buildx imagetools create`, the same primitive
 `src/scripts/publish-image-tags.sh` already uses for the moving tags. The
@@ -239,7 +254,7 @@ must stay a plain manifest.
 
 The release SBOM generated here never touches that constraint. It runs
 **after** `docker.yml` has already published the plain-manifest image
-(`release.yml` retags, never rebuilds — see above), scans the published
+(`tagged-release.yml` retags, never rebuilds — see above), scans the published
 digest from the outside with an independent tool, and writes an ordinary JSON
 file that is uploaded to the GitHub Release. Nothing about generating it adds
 an attestation to the GHCR image, changes its media type, or touches the
@@ -306,7 +321,7 @@ cover:
 not carry), and the SBOM gives full package inventory (OS + language runtime
 layers) that `NOTICE` does not attempt.
 
-**Shipped in releases.** `release.yml` copies the repo-root `NOTICE` (already
+**Shipped in releases.** `tagged-release.yml` copies the repo-root `NOTICE` (already
 kept fresh by `notice-drift` at every commit that changes dependencies) to
 `hive-v<version>-NOTICE` and attaches it to the GitHub Release alongside the
 three SBOM files, using the same `gh release create` asset-upload call.
@@ -315,7 +330,7 @@ three SBOM files, using the same `gh release create` asset-upload call.
 
 - **Step 5 emptying `Unreleased`** is what makes this safe to chain off
   `docker.yml`: pushing the release commit to `v4` triggers `docker.yml`
-  again, which triggers `release.yml` again — and on that second pass
+  again, which triggers `tagged-release.yml` again — and on that second pass
   `Unreleased` is empty, so `derive-release-version.sh` returns
   `release=false` and the workflow is a no-op. It never chases its own tail.
 - `concurrency: { group: tagged-release-v4, cancel-in-progress: false }`
@@ -338,7 +353,7 @@ build time via `-ldflags -X main.version=...`, exactly like the existing
 (every ordinary branch build, including plain `docker.yml` runs) the Go
 linker default `0.0.0-dev` ships instead — never an empty string.
 
-`release.yml` does not need to pass `VERSION` to a rebuild, because it never
+`tagged-release.yml` does not need to pass `VERSION` to a rebuild, because it never
 rebuilds (see above) — the retagged image was already built by `docker.yml`
 carrying whatever `version` that ordinary build embedded. This is deliberate:
 today, a tagged-release image and its `<sha>`/`v4-latest` sibling report the
@@ -353,7 +368,7 @@ concrete gap remains before the first automated `v0.x.y` should be trusted
 end-to-end:
 
 - **The running binary's `--version` output does not yet say `v1.2.3` for a
-  release build.** Because `release.yml` retags rather than rebuilds (by
+  release build.** Because `tagged-release.yml` retags rather than rebuilds (by
   design — see "How a release is actually built"), the image GHCR now calls
   `ghcr.io/kubestellar/hive:v1.2.3` still reports whatever `main.version`
   the original `docker.yml` build embedded, which today is always the

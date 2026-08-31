@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # check-action-pins.sh — assert every SHA-pinned GitHub Action actually exists.
 #
-# WHY: release.yml shipped `anchore/sbom-action@f4dccdb4...`, a 40-hex SHA that
-# resolves to no commit in that repository (#4908). It LOOKS like a correct pin
+# WHY: tagged-release.yml shipped `anchore/sbom-action@f4dccdb4...`, a 40-hex
+# SHA that resolves to no commit in that repository (#4908). It LOOKS like a
+# correct pin
 # — right shape, plausible `# v0.20.9` comment beside it — and nothing catches a
 # fabricated SHA until the workflow runs and dies at "Prepare all required
 # actions". For a tag-triggered release workflow that means the break is only

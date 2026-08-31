@@ -16,7 +16,7 @@
 # `provenance: false` pair; this script is the automated version of "please
 # read the comment before reverting these two lines" (#3760).
 #
-# It deliberately does NOT scan release.yml (the tagged-release workflow):
+# It deliberately does NOT scan tagged-release.yml (the tagged-release workflow):
 # that workflow never builds an image at all — it retags an already-published
 # digest and generates a separate, standalone SBOM file (Syft, attached to
 # the GitHub Release) that never touches GHCR or the image manifest. See

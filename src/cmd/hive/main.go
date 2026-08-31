@@ -98,7 +98,7 @@ import (
 // non-release value instead of "hive  (commit ...)" or a version that lies by
 // claiming a release number it isn't. src/Dockerfile and src/Dockerfile.hub
 // leave the VERSION build-arg empty for ordinary branch builds, so this Go
-// default is what ships; release.yml never rebuilds (it retags an
+// default is what ships; tagged-release.yml never rebuilds (it retags an
 // already-published image — see src/docs/releases.md), so today no build
 // path actually passes -X main.version=... yet. That gap is recorded as a
 // known limitation in src/docs/releases.md rather than silently masked here.

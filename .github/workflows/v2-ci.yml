@@ -107,13 +107,13 @@ jobs:
       - name: Docker release-tag publication policy (#4804)
         run: bash scripts/test-publish-image-tags.sh
 
-      # #5142: v4.0.1 failed to publish twice in a row inside release.yml's
+      # #5142: v4.0.1 failed to publish twice in a row inside tagged-release.yml's
       # final push — once on GH006 propagation lag (branch protection had not
       # yet ingested the just-earned gate check), once on a non-fast-forward
       # when a second merge landed mid-run. The push step now retries the
       # first and defers green on the second (the successor run releases the
       # newer merge; retagging here would publish images built from a
-      # different tree). Extracts the push step from release.yml and drives
+      # different tree). Extracts the push step from tagged-release.yml and drives
       # every branch of that state machine with a stubbed git.
       - name: Release push retry/deferral state machine (#5142)
         run: bash scripts/test-release-push-retry.sh

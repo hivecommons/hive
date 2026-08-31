@@ -145,7 +145,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # A fabricated 40-hex SHA looks exactly like a correct pin and is only
-      # caught when the workflow RUNS. release.yml shipped one (#4908), so every
+      # caught when the workflow RUNS. tagged-release.yml shipped one (#4908), so every
       # tagged release failed at "Prepare all required actions" — discovered
       # only when someone tried to cut a release.
       - name: Check every pinned action SHA exists

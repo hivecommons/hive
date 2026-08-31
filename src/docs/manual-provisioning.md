@@ -161,7 +161,7 @@ kubectl apply -k .
 > **Which image tags exist.** `ghcr.io/kubestellar/hive` carries the channel
 > tags (`stable`, `candidate`, `edge`, `v4-latest`) and a short-SHA tag per
 > merge. A `vX.Y.Z` **image** tag exists only when the automated tagged-release
-> workflow (`.github/workflows/release.yml`, see
+> workflow (`.github/workflows/tagged-release.yml`, see
 > [Tagged releases](releases.md)) has cut that version — it retags the merge's
 > short-SHA images. That workflow landed after the `v4.0.0` git tag, so there is
 > **no `:v4.0.0` image**; `newTag: v4.0.0` is an `ImagePullBackOff`. Pin a

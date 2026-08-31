@@ -29,7 +29,7 @@ ARG GIT_BRANCH=unknown
 # registration), wired the same way as GIT_HASH/GIT_BRANCH: an -X ldflag that
 # takes over from the Go linker default (cmd/hive/main.go, "0.0.0-dev") only
 # when a caller passes it. NO current workflow passes it — docker.yml never
-# does, and release.yml (.github/workflows/release.yml) deliberately does not
+# does, and .github/workflows/tagged-release.yml deliberately does not
 # rebuild at all; it retags the image docker.yml already published for that
 # commit rather than invoking this Dockerfile a second time. This ARG exists
 # so that gap can be closed later (teaching a build to embed a real semver)

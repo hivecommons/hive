@@ -104,7 +104,7 @@ jobs:
       # and failed the whole gate for a PR that touches only Go code in
       # pkg/dashboard; re-running the identical job passed. Three attempts
       # with a short backoff, matching the transient-transport idiom in
-      # release.yml. Everything this gate refuses to do stays refused: a
+      # tagged-release.yml. Everything this gate refuses to do stays refused: a
       # registry that is really unreachable still ends the job red on the last
       # attempt, and there is still no `continue-on-error`, no `|| true`, and
       # no path that reports green without the generator in hand.

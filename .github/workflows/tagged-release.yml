@@ -79,10 +79,31 @@ name: Tagged Release
 # never regresses a moving tag, and the immutable version tag is refused
 # outright if it already exists (a re-run after a partial failure is a safe
 # no-op, not a duplicate release).
+# BACKSTOP (#5318): the workflow_run trigger alone cannot guarantee that a
+# release-worthy commit ever gets a release opportunity. Two ways one is lost
+# silently:
+#   - A docker.yml run that is CANCELLED never fires workflow_run at all. A
+#     multi-arch build takes ~10 minutes, so when merges arrive faster than
+#     that, most commits never complete one.
+#   - A run that DOES fire defers at `precheck` when v4 has already advanced,
+#     on the reasoning that the successor releases instead. That reasoning is
+#     sound per-run but has no terminating condition: under sustained merges
+#     every successor applies the same test and defers again.
+# Neither is a bug in the deferral itself — a superseded run genuinely must
+# not release, because its images were built from the old tree (see RACES).
+# The gap is that nothing ever comes back for the work left behind. The
+# schedule below is that "come back": it runs against v4's CURRENT tip, whose
+# images docker.yml has long since published, so it releases the accumulated
+# Unreleased section without ever tagging content the images do not contain.
+# On a healthy repo it is a no-op (Unreleased is empty => release=false).
 on:
   workflow_run:
     workflows: ["Build and Push Docker Image"]
     types: [completed]
+  schedule:
+    # Hourly, offset off the hour to avoid GitHub's :00 scheduling crush.
+    - cron: "37 * * * *"
+  workflow_dispatch:
 
 concurrency:
   group: tagged-release-v4
@@ -109,22 +130,67 @@ permissions:
 
 jobs:
   decide:
+    # workflow_run: only a successful docker.yml build of a real v4 push (a
+    # workflow_dispatch build is the scratch-branch gate dance this workflow
+    # itself starts — releasing off it would be releasing off our own tail).
+    # schedule/workflow_dispatch: the #5318 backstop, which has no triggering
+    # run to qualify and instead resolves v4's current tip below.
     if: >-
+      github.event_name != 'workflow_run' || (
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'v4' &&
-      github.event.workflow_run.event != 'workflow_dispatch'
+      github.event.workflow_run.event != 'workflow_dispatch' )
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.derive.outputs.release }}
       version: ${{ steps.derive.outputs.version }}
       bump: ${{ steps.derive.outputs.bump }}
-      sha: ${{ github.event.workflow_run.head_sha }}
+      sha: ${{ steps.target.outputs.sha }}
     steps:
+      # workflow_run carries the exact commit docker.yml built. The backstop
+      # has no such commit, so it resolves v4's tip — whose images are already
+      # published (its docker.yml run completed long before an hourly tick),
+      # which is what keeps the retag honest.
+      - name: Resolve the commit to consider releasing
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            sha="${{ github.event.workflow_run.head_sha }}"
+            echo "Triggered by docker.yml on ${sha}."
+          else
+            sha="$(gh api "repos/${{ github.repository }}/branches/v4" --jq .commit.sha)"
+            echo "Backstop (${{ github.event_name }}): considering v4 tip ${sha}."
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout the commit docker.yml just built
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ steps.target.outputs.sha }}
           fetch-depth: 0 # full history + tags: derive-release-version.sh reads `git tag`
+
+      # The backstop must not tag a commit whose images were never published:
+      # it retags an existing digest, so a tip whose docker.yml run is still
+      # running (or was cancelled) has nothing to retag. Stand down and let
+      # the next tick take it — by then the build has settled either way.
+      - name: Require published images for the backstop's target
+        if: github.event_name != 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="${{ steps.target.outputs.sha }}"
+          conclusion="$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
+            --jq '[.workflow_runs[] | select(.event == "push")] | last | .conclusion // ""')"
+          if [ "$conclusion" != "success" ]; then
+            echo "::warning::Backstop standing down: docker.yml has no successful completed push run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
+            exit 1
+          fi
+          echo "docker.yml succeeded on ${sha} — images are published, safe to retag."
 
       - name: Derive whether this merge warrants a release
         id: derive
@@ -135,9 +201,18 @@ jobs:
   # spent here is wasted — the final push can only ever be rejected
   # non-fast-forward — and worse, the `concurrency` group above serializes
   # release runs, so a doomed run delays the successor that CAN release. One
-  # API call decides in seconds. The successor is guaranteed to exist for any
-  # commit worth releasing: the merge that advanced v4 triggered docker.yml,
-  # whose completion triggers release.yml for that newer tip.
+  # API call decides in seconds.
+  #
+  # #5318: this job used to claim the successor was GUARANTEED to exist ("the
+  # merge that advanced v4 triggered docker.yml, whose completion triggers
+  # tagged-release.yml for that newer tip"). That guarantee does not hold — a
+  # cancelled docker.yml run fires no workflow_run at all, and a successor
+  # that does fire applies this same test and defers again. Deferring is still
+  # the right call for THIS run (its images were built from the old tree), so
+  # the fix is not to stop deferring; it is that the schedule trigger above
+  # now provides the terminating condition, and the deferral is logged as a
+  # ::warning:: rather than a ::notice:: so a lost opportunity is visible in
+  # the run list instead of silently disappearing.
   precheck:
     needs: decide
     if: needs.decide.outputs.release == 'true'
@@ -157,7 +232,7 @@ jobs:
             echo "v4 is still at ${sha} — proceeding with the release."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::v4 is at ${tip}, already past ${sha}. Deferring: the release run for the newer merge cuts this release (Unreleased is untouched, so nothing is dropped). See the RACES note in this workflow's header (#5142)."
+            echo "::warning::Release opportunity skipped for ${sha}: v4 is already at ${tip}. Deferring — this run's images were built from the older tree, so it must not tag. Unreleased is untouched, so nothing is dropped: either a successor run releases it, or the hourly backstop does. See the RACES note and the BACKSTOP note in this workflow's header (#5142/#5318)."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -590,7 +665,7 @@ jobs:
             # modified" (the sha= guard fired) or "Base branch was modified" —
             # both are the base-moved case, not something a retry fixes.
             if grep -qiE 'base branch was modified|head branch was modified|is out of date|HTTP 409' <<<"$out"; then
-              echo "::notice::v4 advanced past ${SHA} while this release run was in flight — deferring to the successor run for the newer merge (see the RACES note in this workflow's header, #5142/#5222). Nothing was pushed; Unreleased is untouched."
+              echo "::warning::Release opportunity skipped for ${SHA}: v4 advanced while this run was in flight — deferring (see the RACES note, #5142/#5222). Nothing was pushed; Unreleased is untouched, so either a successor run or the hourly backstop (#5318) releases it."
               echo "pushed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi

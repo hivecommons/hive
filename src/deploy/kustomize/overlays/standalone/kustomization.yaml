@@ -31,7 +31,7 @@ resources:
 # Do NOT assume `newTag: vX.Y.Z` works: ghcr.io/kubestellar/hive only carries
 # channel tags (stable/candidate/edge/v4-latest) plus short-SHA tags on every
 # merge, and a `vX.Y.Z` IMAGE tag exists only when the automated tagged-release
-# workflow (.github/workflows/release.yml) has cut that version. In particular
+# workflow (.github/workflows/tagged-release.yml) has cut that version. In particular
 # there is no `:v4.0.0` image — pinning it is an ImagePullBackOff. Check the
 # tag exists (README) before using one.
 # images:

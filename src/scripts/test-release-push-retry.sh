@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-release-push-retry.sh — exercises the `push_v4` step of
-# .github/workflows/release.yml (#5142, #5222) by extracting its script from
-# the workflow file itself and driving it with stubbed `git`/`gh`, so the
+# .github/workflows/tagged-release.yml (#5142, #5222) by extracting its script
+# from the workflow file itself and driving it with stubbed `git`/`gh`, so the
 # merge state machine is proven against the shipped source rather than a copy.
 #
 # Since #5222 the step opens a PR from the scratch branch into v4 and merges
@@ -30,7 +30,7 @@ set -uo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../.." && pwd)
-workflow="$repo_root/.github/workflows/release.yml"
+workflow="$repo_root/.github/workflows/tagged-release.yml"
 tmp_root=${TMPDIR:-"$script_dir/../.test-tmp"}
 mkdir -p "$tmp_root"
 tmp=$(mktemp -d "$tmp_root/release-push.XXXXXX")
@@ -190,7 +190,10 @@ echo "case: base branch moved defers green with pushed=false"
 run_step base_moved
 [ "$rc" -eq 0 ] && note_ok "exit 0 (deferral is not a failure)" || note_fail "exit $rc, want 0: $output"
 grep -q '^pushed=false$' <<<"$ghout" && note_ok "pushed=false" || note_fail "GITHUB_OUTPUT lacks pushed=false: $ghout"
-grep -q '::notice::' <<<"$output" && note_ok "::notice:: explains the deferral" || note_fail "deferral is silent: $output"
+# #5318: a deferral is a SKIPPED RELEASE OPPORTUNITY and must surface as a
+# ::warning:: (visible in the run list and the job summary), not a ::notice::
+# that scrolls past unread. Assert the stronger annotation specifically.
+grep -q '::warning::' <<<"$output" && note_ok "::warning:: makes the skipped opportunity visible" || note_fail "deferral is not surfaced as a warning: $output"
 [ -f "$st/tag" ] && note_fail "tag was pushed for a release that deferred" || note_ok "no tag pushed"
 [ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "base-moved was retried; it can never succeed without a rebase"
 
@@ -251,6 +254,24 @@ elif "steps.push_v4.outputs.pushed == 'true'" not in (gh_release.get("if") or ""
 perms = w.get("permissions", {})
 if perms.get("pull-requests") != "write":
     bad("permissions no longer grant pull-requests: write — the #5222 PR-merge path needs it")
+# #5318: the deferral chain has no terminating condition of its own — a
+# superseded run correctly stands down, and a cancelled docker.yml run never
+# fires workflow_run at all. The schedule trigger is what eventually comes
+# back for that work. Without it, releases silently stop under sustained
+# merge traffic, which is exactly the failure this guards.
+triggers = w.get(True) or w.get("on") or {}
+if "schedule" not in triggers:
+    bad("the schedule backstop is gone — a deferred or never-fired release "
+        "opportunity would again be lost with nothing to recover it (#5318)")
+# The backstop releases v4's CURRENT tip, so it must first prove docker.yml
+# published images for that tip; otherwise it would tag a commit whose
+# digest does not exist (this workflow retags, it never rebuilds).
+dec = jobs.get("decide", {})
+guard = next((s for s in dec.get("steps", [])
+              if "Require published images" in (s.get("name") or "")), None)
+if guard is None:
+    bad("the backstop's published-images guard is gone — a scheduled run could "
+        "tag a v4 tip whose docker.yml build was cancelled or is still running (#5318)")
 push_step = next((s for s in rel.get("steps", [])
                    if s.get("id") == "push_v4"), None)
 if push_step is None:
