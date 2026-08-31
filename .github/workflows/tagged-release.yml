@@ -103,6 +103,24 @@ name: Tagged Release
 #     they now skip and the suite completes when `gate` does. If a job is ever
 #     added to docker.yml that runs on the scratch branch, it will re-block
 #     this merge in exactly the same invisible way.
+#   - OPENING THE RELEASE PR HIDES ITS OWN GREEN GATE (#5339 7th, #5356 8th).
+#     Opening the PR below fires every `pull_request`-triggered workflow on the
+#     SAME SHA. Those runs are created by GITHUB_TOKEN, so GitHub's recursion
+#     guard never starts their jobs: each fails in ~2s having scheduled ZERO
+#     jobs, leaving a check-SUITE with no check-RUNS in it. Protection resolves
+#     a required context against the most recent suite, so with an empty suite
+#     newest, `gate` reads as MISSING — `Required status check "gate" is
+#     expected` (405) for the whole retry window.
+#
+#     Note the green `gate` is NOT overwritten: a zero-job run publishes no
+#     check-runs, and the one `gate` check-run on the SHA stays `success`. It
+#     is simply not in the suite protection consults. #5358's job-level `if:`
+#     in docker.yml therefore fixed nothing (the runner never reaches a job),
+#     and no docker.yml-only change could — nine other workflows leave an
+#     identical empty suite in the same second. The step below instead
+#     RE-DISPATCHES docker.yml once the PR exists, making a green suite newest
+#     again. If a future change stops that re-dispatch, this failure returns
+#     looking exactly like a green gate that protection refuses to see.
 #
 # IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
 # dated section) is what empties Unreleased, which re-triggers docker.yml on
@@ -639,6 +657,105 @@ jobs:
             || { echo "::error::gh pr create failed: ${pr_url}" >&2; exit 1; }
           pr_number="$(grep -oE '[0-9]+$' <<<"$pr_url")"
           echo "Opened PR #${pr_number}: ${pr_url}"
+
+          # #5356 (8th recurrence): RE-EARN `gate` AFTER the PR exists.
+          #
+          # Opening the PR above fires every `pull_request`-triggered workflow
+          # in this repo on the SAME SHA. Those runs are created by this job's
+          # GITHUB_TOKEN, so GitHub's recursive-workflow guard never starts
+          # their jobs: each one completes as `failure` within ~2s having
+          # scheduled ZERO jobs, and therefore produces a check-SUITE that
+          # contains no check-RUNS at all. Measured on release PR #5361, head
+          # 4d6510fc: one green suite from the dispatch at 20:22:25Z with 10
+          # runs in it, then TEN empty failed github-actions suites at
+          # 20:22:42Z — docker.yml, changelog-reminder, docs-index-reminder,
+          # greetings, copilot-dco, copilot-automation, quadlet-gate and the
+          # three podman lanes.
+          #
+          # WHY THE EARLIER READING OF THIS BUG WAS WRONG, and why #5358 could
+          # not have fixed it. The failure was diagnosed as the empty run
+          # publishing a FAILED `gate` check-run that superseded the green one.
+          # It does not: a run with zero jobs publishes zero check-runs, and on
+          # 4d6510fc there is exactly ONE `gate` check-run and it is `success`.
+          # What protection actually reports is `Required status check "gate"
+          # is expected` — "expected", i.e. MISSING, not failed — because it
+          # resolves the required context against the most recent
+          # github-actions check-suite on the SHA, and the newest suite is an
+          # empty one that contains no `gate`. So the green `gate` is never
+          # overwritten; it is merely no longer the suite protection looks at.
+          #
+          # That is also why suppressing docker.yml alone cannot work, whether
+          # at the job layer or the trigger layer: NINE other workflows create
+          # an identical empty suite in the same second, and any one of them
+          # left newest reproduces the 405. #5358 added a job-level `if:` to
+          # docker.yml's `gate` job; a job-level condition is evaluated by the
+          # runner after the run exists, and these runs never schedule a job,
+          # so it is unreachable by construction. There is no trigger-layer fix
+          # either: `pull_request`'s `branches`/`branches-ignore` filter matches
+          # the PR's BASE ref (`v4`), never its head, and GitHub has no
+          # head-branch trigger filter — so `branches-ignore: [release-gate/**]`
+          # would exclude PRs INTO the scratch branch, not the release PR, while
+          # breaking the fork-PR contract (#4965) it is meant to preserve.
+          #
+          # The fix that matches the actual mechanism is to make a GREEN suite
+          # the newest one again, by dispatching docker.yml a second time now
+          # that the PR (and its burst of empty suites) exists. `gate` is a ~5s
+          # shell job and `release-gate/*` never pushes an image, so this is
+          # cheap and cannot publish anything. This does not weaken the gate:
+          # the merge below is still SHA-keyed and still rejected with 405 by
+          # the server if `gate` is genuinely unsatisfied.
+          #
+          # Settle first. The empty suites all land within ~2s of `gh pr
+          # create` returning; dispatching before they exist would put the
+          # green suite BACK underneath them and rebuild the same failure.
+          #
+          # RELEASE_REGATE_SETTLE / RELEASE_REGATE_WINDOW are test seams in the
+          # same spirit as RELEASE_PUSH_GH006_WINDOW (test-release-push-retry.sh
+          # sets them to 0 so the extracted step does not idle); production uses
+          # the defaults.
+          settle="${RELEASE_REGATE_SETTLE:-30}"
+          echo "Waiting ${settle}s for the PR-open workflow suites to land before re-earning gate (#5356)..."
+          [ "$settle" -gt 0 ] && sleep "$settle"
+
+          echo "Re-dispatching docker.yml on ${scratch} so a green 'gate' suite is the most recent on ${commit_sha} (#5356)..."
+          gh workflow run docker.yml --ref "${scratch}" \
+            || echo "::warning::re-dispatch of docker.yml failed; the merge retry below may exhaust its window (#5356)."
+
+          echo "Waiting for the re-dispatched 'gate' to conclude on ${commit_sha}..."
+          regate_deadline=$((SECONDS + ${RELEASE_REGATE_WINDOW:-600}))
+          regate=""
+          while [ "$SECONDS" -lt "$regate_deadline" ]; do
+            # Newest `gate` check-run by started_at — the one protection will
+            # resolve to once its suite is the most recent.
+            regate="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${commit_sha}/check-runs" \
+              --jq '[.check_runs[] | select(.name == "gate")] | sort_by(.started_at) | last | (.conclusion // "pending")' 2>/dev/null || true)"
+            case "$regate" in
+              success|skipped|neutral)
+                echo "Re-earned gate concluded '${regate}' on ${commit_sha}."
+                break
+                ;;
+              failure|cancelled|timed_out|action_required|stale)
+                # A REAL red conclusion. Everything else — including an empty
+                # or unparseable response — is treated as "not known yet" and
+                # retried, never as a verdict: this step must not turn a
+                # transient API hiccup into a failed release.
+                echo "::error::re-dispatched gate concluded '${regate}' on ${commit_sha} — refusing to merge." >&2
+                exit 1
+                ;;
+              *) ;;
+            esac
+            [ "${RELEASE_REGATE_WINDOW:-600}" -gt 0 ] && sleep 10
+          done
+          case "$regate" in
+            success|skipped|neutral) ;;
+            *)
+              # NOT fatal. The merge below is SHA-keyed and the server enforces
+              # protection on it regardless, so an unconfirmed re-gate costs at
+              # worst the existing retry window — whereas failing here would
+              # abandon a release that may well be mergeable.
+              echo "::warning::could not confirm the re-dispatched gate on ${commit_sha} within the window; proceeding to the merge retry below, which enforces protection server-side regardless (#5356)."
+              ;;
+          esac
 
           # #5318/#5324 (5th recurrence): this loop called `gh pr merge`, which
           # refuses to act on a PR whose aggregate `mergeStateStatus` is

@@ -155,6 +155,7 @@ run_step() {
   : > "$st/out"
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
     RELEASE_PUSH_GH006_WINDOW="${3:-120}" \
+    RELEASE_REGATE_SETTLE=0 RELEASE_REGATE_WINDOW=0 \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
     GITHUB_REPOSITORY="kubestellar/hive" \
     PATH="$tmp/bin:$PATH" bash "$tmp/push_v4.sh" > "$st/out" 2>&1
@@ -332,6 +333,18 @@ else:
         bad("push_v4 regressed to `gh pr merge`, which refuses any PR whose AGGREGATE "
             "mergeStateStatus is BLOCKED — a pending non-required `tide` status alone is "
             "enough to block every release forever (#5318/#5324)")
+    # #5356: the re-dispatch must happen AFTER `gh pr create`, or the green
+    # suite goes back underneath the empty ones the PR-open burst creates and
+    # the 405 returns. Order is the whole point, so assert it, not mere
+    # presence.
+    if "gh workflow run docker.yml" not in code:
+        bad("push_v4 no longer re-dispatches docker.yml after opening the release PR — "
+            "the PR-open burst leaves an EMPTY check-suite newest on the head SHA and "
+            "protection reports `gate` as missing, blocking every release (#5356)")
+    elif code.index("gh workflow run docker.yml") < code.index("gh pr create"):
+        bad("push_v4 re-dispatches docker.yml BEFORE opening the release PR — the "
+            "PR-open burst then leaves an empty check-suite newest again and the "
+            "merge is refused exactly as in #5356. Re-dispatch after `gh pr create`.")
 sys.exit(0 if ok else 1)
 PY
 
