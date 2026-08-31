@@ -54,7 +54,12 @@ func (c *Client) validatePRRequestContent(ctx context.Context, req PRRequest) er
 	head := strings.TrimSpace(req.Head)
 	comparison, _, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, head, nil)
 	if err != nil {
-		return fmt.Errorf("validating PR content metadata in %s/%s diff %s...%s: %w", owner, repo, base, head, err)
+		// #5343: a 404 here means the head ref is not on the remote, which on
+		// this path almost always means the agent's PUSH failed to
+		// authenticate. Report that cause instead of the downstream symptom —
+		// the raw error sends an operator to investigate branch creation.
+		return fmt.Errorf("validating PR content metadata: %w",
+			c.diagnoseCompareFailure(ctx, owner, repo, base, head, err))
 	}
 	if comparison == nil {
 		return fmt.Errorf("validating PR content metadata in %s/%s diff %s...%s: GitHub returned an empty comparison", owner, repo, base, head)

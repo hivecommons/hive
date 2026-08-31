@@ -82,6 +82,108 @@ hive_runtime_config_read() {
   fi
 }
 
+# hive_ghe_git_host echoes this hive's configured GitHub host when it is NOT
+# public github.com (i.e. a GitHub Enterprise instance such as github.ibm.com),
+# and nothing at all otherwise. Derived the same way the Go binary's
+# GitHubConfig.HostLabel() derives it (pkg/config/config.go): prefer
+# github.base_url, fall back to the host portion of github.api_url, strip the
+# scheme and a trailing /api/v3.
+#
+# Defined here, at the top, because BOTH boot phases need it: the root phase
+# writes /etc/gitconfig (which every agent UID reads) and the dev phase writes
+# ~dev/.gitconfig. Deriving it once keeps the two from drifting apart, which is
+# exactly the failure mode #5343 was.
+hive_ghe_git_host() {
+  _hgh_cfg="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+  [ -f "$_hgh_cfg" ] || return 0
+  python3 -c "
+import sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        cfg = yaml.safe_load(f) or {}
+except Exception:
+    sys.exit(0)
+gh = cfg.get('github') or {}
+pick = (gh.get('base_url') or gh.get('api_url') or '').strip()
+if pick.startswith('https://'):
+    pick = pick[len('https://'):]
+elif pick.startswith('http://'):
+    pick = pick[len('http://'):]
+pick = pick.rstrip('/')
+if pick.endswith('/api/v3'):
+    pick = pick[: -len('/api/v3')]
+host = pick.split('/', 1)[0]
+if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
+    print(host)
+" "$_hgh_cfg" 2>/dev/null || true
+}
+
+# hive_write_system_gitconfig writes /etc/gitconfig — the SYSTEM-level git
+# config, read by EVERY UID regardless of $HOME.
+#
+# WHY THIS EXISTS (#5343). The credential helper used to be installed with
+# `git config --global`, which is per-$HOME. The entrypoint runs as dev
+# (ENV HOME=/home/dev), so it landed in /home/dev/.gitconfig — while agents run
+# under per-agent UIDs with HOME=/data/home/agents/<name>. Measured on a hosted
+# GHE spoke: `su -s /bin/sh hive-quality -c 'git config --get-regexp credential'`
+# returned NOTHING for both --global and --system, because there was no
+# /etc/gitconfig either. Agents committed branches they could never push, and
+# the failure surfaced only as a line inside an otherwise-healthy session.
+#
+# /etc/gitconfig is the right home for it: the helper is already a single
+# system-wide binary at /usr/local/bin/git-credential-hive.sh, and a system file
+# sidesteps the per-UID ownership question that a shared /data/home/.gitconfig
+# would introduce (multiple agent UIDs, one directory).
+#
+# NO SECRET LIVES HERE. This file names a helper PATH and a bot identity. The
+# token is minted by the helper, per agent, from the per-agent scoped cache. So
+# 0644 (world-readable) is correct and required — every agent UID must read it.
+#
+# PRECEDENCE is safe: git reads system < global < local. /home/dev/.gitconfig
+# still exists for the dev user and for the contributor-relay/local-mode paths,
+# and it sets the SAME helper for the SAME hosts, so it shadows nothing. Agents
+# have no global config at all, so for them the system file is the only layer.
+#
+# HIVE_SYSTEM_GITCONFIG is a TEST SEAM (same convention as sharedAgentHome in
+# pkg/agent). It is never set in production; the regression test points it at a
+# temp file so it can exercise the real writer without touching /etc.
+hive_write_system_gitconfig() {
+  _hwsg_path="${HIVE_SYSTEM_GITCONFIG:-/etc/gitconfig}"
+  _hwsg_host="$(hive_ghe_git_host)"
+
+  # Refuse a planted symlink: /etc/gitconfig is read by every UID including
+  # root, so it must never be redirected somewhere agent-writable.
+  if [ -L "$_hwsg_path" ]; then
+    rm -f -- "$_hwsg_path" 2>/dev/null || true
+  fi
+
+  {
+    echo "# Managed by the hive entrypoint (kubestellar/hive#5343). Regenerated on every boot."
+    echo "# System-level so EVERY agent UID reads it regardless of \$HOME. Contains no secret:"
+    echo "# it names a helper path; the helper mints the per-agent scoped token."
+    echo "[user]"
+    echo "	name = kubestellar-hive"
+    echo "	email = hive-bot@kubestellar.io"
+    echo "[credential]"
+    echo "	helper = "
+    echo '[credential "https://github.com"]'
+    echo "	helper = /usr/local/bin/git-credential-hive.sh"
+    if [ -n "$_hwsg_host" ]; then
+      echo "[credential \"https://${_hwsg_host}\"]"
+      echo "	helper = /usr/local/bin/git-credential-hive.sh"
+    fi
+  } > "$_hwsg_path" 2>/dev/null || {
+    echo "[entrypoint] WARN: could not write $_hwsg_path — agents may be unable to push (see kubestellar/hive#5343)"
+    return 0
+  }
+  chmod 0644 "$_hwsg_path" 2>/dev/null || true
+  if [ -n "$_hwsg_host" ]; then
+    echo "[entrypoint] git credential helper wired system-wide in $_hwsg_path (github.com + GHE host ${_hwsg_host}) — readable by every agent UID"
+  else
+    echo "[entrypoint] git credential helper wired system-wide in $_hwsg_path (github.com) — readable by every agent UID"
+  fi
+}
+
 # Detect Kubernetes vs Docker environment
 IS_KUBERNETES=false
 if [ -n "${KUBERNETES_SERVICE_HOST:-}" ] || [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
@@ -1125,6 +1227,12 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
   # than re-derived, since it can't have changed and the FATAL branch's exit
   # code already depends on the two staying the same value.
 
+  # ── System-wide git credential helper (#5343) ───────────────────────────
+  # MUST happen here, in the root phase: /etc is root-owned, and the dev phase
+  # below cannot write it. This is the ONLY git config any per-agent UID reads
+  # — their $HOME (/data/home/agents/<name>) has no .gitconfig of its own.
+  hive_write_system_gitconfig
+
   # setpriv identity mirrors `gosu dev` exactly: reuid=dev (UID 1001), regid=node
   # (dev's PRIMARY login group, GID 1000 — there is NO group named `dev`), and
   # --init-groups to populate the supplementary groups from the user db for dev
@@ -1219,7 +1327,25 @@ if [ -n "${HIVE_WIKI_GIT_URL:-}" ] && [ ! -d /data/vaults/hive-wiki/.git ]; then
 fi
 mkdir -p /data/vaults/hive-wiki
 
-# Configure git identity and credential helper for GitHub App token
+# Configure git identity and credential helper for GitHub App token.
+#
+# TWO LAYERS, DELIBERATELY (#5343):
+#
+#  1. /etc/gitconfig (SYSTEM) — written in the root phase above by
+#     hive_write_system_gitconfig. This is the layer that matters for AGENTS:
+#     every per-agent UID runs with its own $HOME (/data/home/agents/<name>)
+#     which has no .gitconfig, so the system file is the ONLY config they read.
+#
+#  2. ~dev/.gitconfig (GLOBAL, this block) — the dev user's own config, which
+#     the contributor-relay / local-mode / `just contribute-*` paths and any
+#     interactive `docker exec` shell have always used. Kept because those
+#     paths are not agent-UID paths, and because a hive that could not become
+#     root (the "continuing as root" / already-non-root boot) never reaches
+#     layer 1 at all — this block is then the only wiring there is.
+#
+# These do not fight: git precedence is system < global < local, and both
+# layers set the SAME helper for the SAME hosts, so the global layer shadows
+# nothing. What went wrong before was having ONLY layer 2.
 git config --global user.name "kubestellar-hive"
 git config --global user.email "hive-bot@kubestellar.io"
 git config --global --replace-all credential.helper ""
@@ -1238,39 +1364,32 @@ git config --global --replace-all "credential.https://github.com.helper" "/usr/l
 # and quality (which talk to the GitHub API, not git-over-HTTPS) worked fine
 # while guide's `git clone` could not authenticate at all.
 #
-# The host is derived the same way the Go binary's GitHubConfig.HostLabel()
-# derives it (pkg/config/config.go): prefer github.base_url, fall back to the
-# host portion of github.api_url, strip scheme and a trailing /api/v3, default
-# to github.com. Reading it here (from the same hive.yaml the Go binary reads)
-# rather than hardcoding "github.ibm.com" keeps this general for ANY configured
-# GHE host, and a no-op for a plain github.com hive (GHE_GIT_HOST resolves to
-# "github.com", which already has its helper wired above).
-GHE_GIT_HOST=""
-if [ -f "${HIVE_CONFIG:-/etc/hive/hive.yaml}" ]; then
-  GHE_GIT_HOST=$(python3 -c "
-import sys, yaml
-try:
-    with open(sys.argv[1]) as f:
-        cfg = yaml.safe_load(f) or {}
-except Exception:
-    sys.exit(0)
-gh = cfg.get('github') or {}
-pick = (gh.get('base_url') or gh.get('api_url') or '').strip()
-if pick.startswith('https://'):
-    pick = pick[len('https://'):]
-elif pick.startswith('http://'):
-    pick = pick[len('http://'):]
-pick = pick.rstrip('/')
-if pick.endswith('/api/v3'):
-    pick = pick[: -len('/api/v3')]
-host = pick.split('/', 1)[0]
-if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
-    print(host)
-" "${HIVE_CONFIG:-/etc/hive/hive.yaml}" 2>/dev/null) || true
-fi
+# The host derivation lives in hive_ghe_git_host() at the top of this file so
+# the system and global layers cannot drift apart.
+GHE_GIT_HOST="$(hive_ghe_git_host)"
 if [ -n "$GHE_GIT_HOST" ]; then
   git config --global --replace-all "credential.https://${GHE_GIT_HOST}.helper" "/usr/local/bin/git-credential-hive.sh"
   echo "[entrypoint] git credential helper wired for GitHub Enterprise host: ${GHE_GIT_HOST}"
+fi
+
+# ── Startup assertion: is the helper actually reachable from an AGENT UID? ──
+#
+# The whole point of #5343 is that the wiring LOOKED right (it was present in
+# ~dev/.gitconfig) while being invisible to every agent. So assert the property
+# that actually matters — "a process whose $HOME is not /home/dev resolves the
+# helper" — rather than "we ran git config successfully".
+#
+# HOME=/nonexistent is the cheapest faithful stand-in for an agent UID here:
+# it removes the global layer exactly the way an agent's own empty $HOME does,
+# leaving only the system layer under test. GIT_CONFIG_NOSYSTEM is explicitly
+# NOT set — the system layer is the thing being verified.
+_cred_probe_host="${GHE_GIT_HOST:-github.com}"
+_cred_probe="$(HOME=/nonexistent XDG_CONFIG_HOME=/nonexistent \
+  git config --get-regexp "^credential\." 2>/dev/null | grep -c "git-credential-hive.sh" || true)"
+if [ "${_cred_probe:-0}" -gt 0 ]; then
+  echo "[entrypoint] git credential helper VERIFIED reachable without a per-user .gitconfig (system layer, ${_cred_probe} host entries; agent UIDs will resolve it for ${_cred_probe_host})"
+else
+  echo "[entrypoint] WARN: git credential helper is NOT reachable from a process without a per-user .gitconfig. Every per-agent UID will commit branches it cannot push, and hive-open-pr will report the branch as missing from the remote. Check that /etc/gitconfig exists and is mode 0644. See kubestellar/hive#5343."
 fi
 
 # Generate initial GitHub App token if credentials are available

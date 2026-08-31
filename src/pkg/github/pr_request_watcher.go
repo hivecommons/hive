@@ -419,6 +419,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func() time.Time) {
 	resp := PRResponse{OK: false, Error: err.Error(), At: nowFn().UTC().Format(time.RFC3339)}
 	c.writePRResult(path, resp)
+
+	// #5343: an unpushed head ref is the one failure here whose visible symptom
+	// points away from its cause. Log it at ERROR on its own line — this is
+	// work an agent already completed and cannot publish, and it is invisible
+	// in the fleet view because the agent's session ended healthy.
+	if reason, ok := missingHeadReason(err); ok {
+		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not authenticate",
+			slog.String("repo", req.Repo), slog.String("head", req.Head),
+			slog.String("agent", req.Agent), slog.String("diagnosis", reason))
+	}
 	if c.prRetries.noteFailure(path, nowFn()) {
 		_ = os.Rename(path, path+".failed")
 		c.prRetries.clear(path)

@@ -72,7 +72,10 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		}
 		comparison, _, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head), nil)
 		if err != nil {
-			return "", "", fmt.Errorf("validating PR title against %s/%s diff %s...%s: %w", owner, repo, base, req.Head, err)
+			// #5343: same diagnosis as the content gate — an unpushed branch
+			// must be reported as a push-auth failure, not as a bad title.
+			return "", "", fmt.Errorf("validating PR title artifacts: %w",
+				c.diagnoseCompareFailure(ctx, owner, repo, base, strings.TrimSpace(req.Head), err))
 		}
 		if comparison == nil {
 			return "", "", fmt.Errorf("validating PR title against %s/%s diff %s...%s: GitHub returned an empty comparison", owner, repo, base, req.Head)
