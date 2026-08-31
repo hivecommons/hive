@@ -37,18 +37,50 @@ const (
 	// both resolve through the same identity/credential machinery.
 	ForgeGitHubEnterprise ForgeKind = "github-enterprise"
 	// ForgeGitLab is a GitLab instance (gitlab.com or self-managed). Unlike the
-	// GitHub kinds it does NOT use the GitHub App identity machinery: the spoke
-	// executes against it via pkg/forge's GitLab adapter using a PRIVATE-TOKEN
-	// from the env. These values match pkg/forge.KindGitLab.
+	// GitHub kinds it does NOT use the GitHub App identity machinery. It is
+	// DISPLAY-ONLY today: accepting this kind records the forge family and host
+	// on the hive and changes what the dashboard shows. No spoke executes
+	// against GitLab. The value matches pkg/forge.KindGitLab so a future wiring
+	// need not translate, but pkg/forge is not reached from here.
 	ForgeGitLab ForgeKind = "gitlab"
 	// ForgeGitea is a Gitea/Forgejo instance (self-managed or Codeberg). Same
-	// story as GitLab — executed via pkg/forge's Gitea adapter. Matches
-	// pkg/forge.KindGitea.
+	// story as GitLab: display-only, matching pkg/forge.KindGitea by value only.
 	ForgeGitea ForgeKind = "gitea"
 )
 
+// WHY "DISPLAY-ONLY" IS THE ACCURATE WORD FOR GITLAB/GITEA
+//
+// src/pkg/forge is a complete, tested adapter package with THREE implementations
+// (GitHub, GitLab, Gitea) and ZERO non-test importers:
+//
+//	$ grep -rn "kubestellar/hive/pkg/forge" --include="*.go" src/ \
+//	    | grep -v _test | grep -v "^src/pkg/forge/"
+//	(no output)
+//
+// Nothing in the running system constructs an adapter. Agents reach their forge
+// through the gh CLI wrapper, which is GitHub-only. So a hive switched to
+// ForgeGitLab gets a recorded kind/host and a different dashboard tile, and its
+// agents do not run.
+//
+// The hub-side SaaSHive.Forge field this endpoint writes is also NOT delivered
+// to spokes: no heartbeat struct carries a forge field. Wiring the path would
+// mean adding one to HeartbeatResponse, adding a spoke-side consumer that
+// constructs the adapter, and extending the interface (below).
+//
+// THE INTERFACE CEILING, worth knowing before anyone plans that work: the
+// pkg/forge.Forge interface exposes GetRepo, ListOpenIssues,
+// ListOpenChangeRequests, CreateIssueComment, AddLabels, RemoveLabel and
+// SetHold — but NO CreateIssue and NO CreatePR. Merge is a separate, optional
+// Merger interface that no adapter implements. Even fully delivered and wired,
+// these adapters could comment, label and hold, but could not open the issue or
+// change request an agent's work has to land in.
+//
+// The verified support matrix lives in src/docs/forge-app-setup.md; keep this
+// comment and that document in agreement.
+
 // FORGE API-PATH CONTRACT, hub side. The REST API base paths for the non-GitHub
-// forges are appended by the spoke-side pkg/forge adapters themselves
+// forges are appended by the pkg/forge adapters themselves (which, per the note
+// above, no running code path constructs today)
 // (gitLabAPIPath="/api/v4", giteaAPIPath="/api/v1"), so for those kinds a
 // ForgeTarget carries the BARE instance URL in BaseURL and leaves APIURL empty —
 // the opposite of the GHE case below, where the hub pre-appends /api/v3. The hub

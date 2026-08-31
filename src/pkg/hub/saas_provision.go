@@ -670,12 +670,31 @@ type SaaSHive struct {
 	// reporting the code branch actually running.
 	TrackedChannel string `json:"tracked_channel,omitempty"`
 
-	// Forge names the forge FAMILY this hive runs against: "" / "github" /
-	// "github-enterprise" (the GitHub App path), or "gitlab" / "gitea" (the
-	// pkg/forge adapter path, PRIVATE-TOKEN auth — no GitHub App). Empty means
-	// GitHub, preserving every existing hive. The spoke uses this to pick which
-	// pkg/forge adapter to execute against; it is delivered over the heartbeat
-	// alongside the host. GitLab/Gitea carry no PendingAppConfig (no App).
+	// Forge names the forge FAMILY this hive is recorded as running against:
+	// "" / "github" / "github-enterprise" (the GitHub App path), or "gitlab" /
+	// "gitea". Empty means GitHub, preserving every existing hive. GitLab/Gitea
+	// carry no PendingAppConfig (no App).
+	//
+	// WHAT THIS FIELD ACTUALLY DOES TODAY: it is hub-side bookkeeping only. It
+	// is written by handleForgeSwitch (forge.go) and read by hub code to
+	// classify a hive — e.g. saas.go excludes non-"github" hives from
+	// github.com-scoped sweeps. It is NOT delivered to any spoke: no heartbeat
+	// struct carries a forge field, and HeartbeatResponse has no way to convey
+	// one, so the value never reaches a spoke at all.
+	//
+	// NO SPOKE SELECTS AN ADAPTER FROM THIS. The pkg/forge adapter package has
+	// zero non-test importers anywhere in the tree — nothing constructs a
+	// GitLab or Gitea adapter in any running code path. Setting this to
+	// "gitlab" or "gitea" changes hub classification and what the dashboard
+	// displays; it does not change what any agent executes against. See
+	// src/docs/forge-app-setup.md for the verified support matrix.
+	//
+	// FOR THE ADAPTER-SELECTION PATH TO EXIST, three things would have to be
+	// built: (1) a forge field on HeartbeatResponse (and the hub code to
+	// populate it), (2) a spoke-side consumer that reads it and constructs the
+	// matching pkg/forge adapter, and (3) CreateIssue/CreatePR on the
+	// pkg/forge.Forge interface — it has neither today, so even a fully wired
+	// adapter could comment and label but could not file the work.
 	Forge string `json:"forge,omitempty"`
 
 	// PendingAppConfig is a GitHub App identity queued for delivery to the
