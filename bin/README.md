@@ -44,6 +44,8 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `git-credential-hive.sh` | Credentials | Git credential helper that serves cached GitHub App tokens and honors the host requested by Git. |
 | `gh-wrapper.sh` | Enforcement | `gh` wrapper that injects App tokens and enforces global/per-agent restriction rules from `/etc/hive/restrictions/<agent-id>.json`. |
 | `hive-open-pr.sh` | Enforcement | Agent-side wrapper for PR creation requests. It writes a request file for the Hive watcher so PRs are opened by the GitHub App bot and pass the same ACMM authorization checks. |
+| `hive-open-issue.sh` | Enforcement | Agent-side wrapper for issue creation and comments. Agents call it INSTEAD of `gh issue create` / `gh issue comment`; it writes a request file for the Hive watcher so the work is attributed to the GitHub App bot and passes the same ACMM authorization checks. |
+| `hive-merge.sh` | Enforcement | Agent-side wrapper for merging a PR. Agents call it INSTEAD of the GitHub MCP `merge_pull_request` tool, so the merge is performed by the App bot under the same ACMM gating rather than with an agent's own credential. |
 | `hive-review.sh` | Enforcement | Agent-side wrapper for `gh pr review`. Writes a review-request file the Hive submits with the App token and audits as `agent_pr_reviewed`, so PR-review activity is attributed and visible to hive-health (a direct `gh pr review` is invisible). |
 | `setup-proxy-iptables.sh` | Enforcement | Installs iptables rules in the container to force GitHub HTTPS traffic through the ACMM proxy even if an agent unsets proxy variables. |
 | `agent-env-scrub.sh` | Enforcement | Sourced (never executed) at the start of every shell in an agent's process tree, via `BASH_ENV`/`ENV` from `agent-launch.sh` and an `/etc/bash.bashrc` guard, to unset the live GitHub credentials backend CLIs re-export into agent tool shells (#4045). |
@@ -63,6 +65,9 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `hive-podman-preflight.sh` | Bootstrap | Read-only Podman diagnostics before a lifecycle runs: engine/version, the connection it is actually talking to, rootless vs rootful, and cgroup version. Runs only when `HIVE_DEPLOY_RUNTIME` selects podman; `hive-prereq-check.sh` invokes it. |
 | `hive-podman-preflight-host.sh` | Deploy | Read-only Podman preflight for SELinux state and mount labeling, configuration/secrets readability, and published host-port availability. Runs only when `HIVE_DEPLOY_RUNTIME=podman`. See [`src/docs/podman-preflight-host.md`](../src/docs/podman-preflight-host.md). |
 | `hive-podman-preflight-ids.sh` | Deploy | Read-only Podman preflight for rootless subordinate UID/GID delegation, unsupported (NFS and other distributed) container storage, and the rootless network backend/helper. Never edits `/etc/subuid` or `/etc/subgid`. Runs only when `HIVE_DEPLOY_RUNTIME=podman`. See [`src/docs/podman-preflight-ids.md`](../src/docs/podman-preflight-ids.md). |
+| `hive-podman-setup.sh` | Bootstrap | One-command standalone Podman install (#4470), the Podman counterpart to `hive-setup.sh`'s Docker path. |
+| `hive-podman-update.sh` | Deploy | Deliberate manual update and rollback for the Hive Quadlet unit (#4378). Updates are explicit rather than automatic, per ADR-0017. |
+| `hive-podman-lifecycle-probe.sh` | Deploy | Exercises the Quadlet lifecycle — stop, start, restart, recreate, and boot wiring (#4377) — to verify the unit behaves correctly across each transition. |
 | `federation-heartbeat.sh` | Federation | Sends live contributor and actionable-work stats to the Hive federation registry. |
 | `notify.sh` | Notifications | Shared Bash notification library for ntfy, Slack incoming webhooks, and Discord webhooks. |
 
@@ -72,6 +77,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 |---|---|---|
 | `contributor-agent.sh` | Contributor runtime | Contributor-container entrypoint: detects authenticated CLI backend, starts the relay, launches the CLI in tmux, and creates `${HOME}/agent.md` only from a verified live knowledge export. |
 | `contributor-relay.sh` | Contributor runtime | Node.js WebSocket client for ClankeR contributor agents. It authenticates to one or more hubs, receives tasks, injects GitHub tokens, reports progress/results, and supports interactive tmux or headless one-shot delivery. |
+| `pi-backend.js` | Contributor runtime | Pi contributor adapter contract (#5039). `AGENT_MODEL` is the one contributor-owned selection input; the adapter derives the provider's official credential variable names from it so only the selected provider's keys are handed to the container. |
 
 ## Model, token, and experiment helpers
 
