@@ -28,6 +28,15 @@ name: Podman Rootful Lane
 # Probing a PR-built image is the map's lane 3 and is outside #4335's boundary,
 # which is "wrap the existing probe in a workflow".
 #
+# LANE 3 NOW DOES THAT (#5370). podman-arm64-lane.yml builds the PR's own image
+# and probes it on pull_request, so a change to src/deploy/entrypoint.sh IS
+# covered pre-merge — on arm64, for startup. This lane still probes the
+# published image, so the gap that remains here is narrower than the paragraph
+# above implies: the PR's own EGRESS-GATE behaviour under rootful Podman stays
+# unverified until publication. Closing that means building the image in this
+# lane too; #5370 judged the startup half the one worth paying for first,
+# because that is the half that had already shipped a regression (#5360).
+#
 # No path filters, on purpose. #4339 is what a skipped guard looks like: a
 # workflow scoped so narrowly that it reports green by never running.
 #

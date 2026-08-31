@@ -90,6 +90,33 @@ jobs:
       - name: Entrypoint dangling key_file tests (#4368)
         run: bash deploy/test_entrypoint_dangling_keyfile.sh
 
+      # #5369: the `chown -R dev:node /data` in the entrypoint's root phase is
+      # guarded on `[ "$DATA_OWNER" != "1001" ]`, and the Dockerfile already
+      # does that chown at BUILD time — so the guard is false on every normal
+      # boot and the chown never runs. Anything the root phase creates under
+      # /data afterwards stays root:root and is unreadable to the uid the hive
+      # process drops to. #5360 was one instance; this asserts the class.
+      #
+      # The guard must SURVIVE (it prevents a multi-minute recursive chown over
+      # an NFS PVC), so this pins the targeted sweep that replaces it, checks
+      # the pre-drop readability assertion, and mechanically enforces the
+      # maintenance rule: it extracts the root phase and fails if any mkdir
+      # under /data is neither swept nor chowned at its site, so the path list
+      # cannot go stale the first time someone adds a write.
+      - name: Entrypoint /data ownership invariant (#5369)
+        run: bash deploy/test_entrypoint_data_ownership.sh
+
+      # #5370: the arm64 lane probed the PUBLISHED image, so on a PR it
+      # validated code already on v4 rather than the change proposed — a PR
+      # fixing a startup bug stayed red, one introducing a startup bug went
+      # green. #5342 merged green that way and #5368, its fix, was red. The
+      # lane now builds the PR's own image and probes that. This pins the
+      # wiring: the build exists, it does not swallow failures, the probe is
+      # told the image is local, and the push path's missing-manifest failure
+      # (#4336) is untouched.
+      - name: arm64 lane probes PR code, not the published image (#5370)
+        run: bash deploy/test_arm64_lane_probes_pr_code.sh
+
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
       # older side and restored `ARG PI_VERSION=latest` — the fix commit is an

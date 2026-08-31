@@ -41,6 +41,8 @@
 #
 #   --image REF     image to probe (default: the hive ref in standalone-images.sh)
 #   --arch ARCH     architecture to require and pull (default arm64)
+#   --local         the image is already in the local store; skip the manifest
+#                   and pull cases and probe what is there (#5370)
 #   --store DIR     reuse a probe store instead of creating one (kept on exit)
 #   --shared-store  deliberately use the caller's default Podman store
 #   --port PORT     host port for the published API port (default 18402)
@@ -61,6 +63,12 @@ IMAGE="${IMAGE:-$HIVE_STANDALONE_IMAGE_HIVE}"
 ARCH="arm64"
 STORE=""
 SHARED_STORE="false"
+# --local (#5370): probe an image that already exists in the local store rather
+# than one to be fetched from a registry. Needed because a PR's image is built
+# on the runner and never published — docker.yml skips its build job on
+# pull_request and only pushes from long-lived branches, so a PR head SHA has
+# no published image to pull. See podman-arm64-lane.yml.
+LOCAL_IMAGE="false"
 HOST_PORT="18402"
 HEALTH_TIMEOUT="180"
 OWN_STORE="false"
@@ -72,6 +80,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --image) IMAGE="${2:?--image needs a value}"; shift 2 ;;
     --arch) ARCH="${2:?--arch needs a value}"; shift 2 ;;
+    --local) LOCAL_IMAGE="true"; shift ;;
     --store) STORE="${2:?--store needs a value}"; shift 2 ;;
     --shared-store) SHARED_STORE="true"; shift ;;
     --port) HOST_PORT="${2:?--port needs a value}"; shift 2 ;;
@@ -99,6 +108,17 @@ case "$host_arch" in
 esac
 [[ "$host_arch" == "$ARCH" ]] || \
   fail_prereq "this probe must run ON ${ARCH} (host is ${host_arch}); it measures the native ${ARCH} path, not emulation"
+
+# A locally-built image lives in the caller's default store, so a throwaway
+# store would not contain it and every case below would fail for a reason that
+# has nothing to do with the image. Couple the two rather than letting the
+# combination fail confusingly ten lines later.
+if [[ "$LOCAL_IMAGE" == "true" ]]; then
+  SHARED_STORE="true"
+  if [[ -n "$STORE" ]]; then
+    fail_prereq "--local uses the caller's store and cannot be combined with --store"
+  fi
+fi
 
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2329 # invoked through the EXIT trap below
@@ -148,6 +168,37 @@ printf 'store=%s (throwaway=%s)\nimage=%s\n\n' "${STORE:-<caller default>}" "$OW
 # silently steps aside when the image is not there is the same vacuous pass
 # #4211 warns about, and the whole point of this lane is that arm64 stopped
 # being unproven.
+if [[ "$LOCAL_IMAGE" == "true" ]]; then
+  # #5370: a locally-built image has no registry manifest and nothing to pull,
+  # so cases 1 and 2 have no meaning here. They are SKIPPED, not faked green —
+  # and the two cases that carry this lane's real signal (the binary executes,
+  # the service starts) run exactly as they do on the published path. Those are
+  # the ones a change to entrypoint.sh or the Dockerfile can break, and they
+  # are the ones probing the published image could never test on a PR.
+  #
+  # The publisher-facing guarantee is unchanged: on a push the image is pulled
+  # and a missing arm64 manifest still fails, per #4336.
+  printf -- '--- cases: manifest + pull (SKIPPED: --local) ---\n'
+  printf '  %s is a local build, not a registry reference.\n' "$IMAGE"
+  printf '  A PR head SHA has no published image (docker.yml skips its build job\n'
+  printf '  on pull_request and pushes only from long-lived branches), so there is\n'
+  printf '  nothing to pull. Verifying the image exists locally instead.\n'
+  if ! pod image exists "$IMAGE"; then
+    printf '  RECORDED: %s is not in the local store.\n' "$IMAGE"
+    note_fail "local image ${IMAGE} does not exist (was the build step skipped or did it fail?)"
+    printf '\nSUMMARY: %d failure(s)\n' "$failures"
+    exit 1
+  fi
+  local_arch="$(pod image inspect "$IMAGE" --format '{{.Architecture}}' 2>/dev/null)"
+  printf '  architecture: %s\n' "${local_arch:-?}"
+  if [[ "$local_arch" != "$ARCH" ]]; then
+    note_fail "local image reports architecture=${local_arch:-unknown}, expected ${ARCH}"
+    printf '\nSUMMARY: %d failure(s)\n' "$failures"
+    exit 1
+  fi
+  note_ok "the local image is ${ARCH} and is present"
+else
+
 printf -- '--- case: manifest advertises linux/%s ---\n' "$ARCH"
 manifest="${WORK}/manifest.json"
 
@@ -204,6 +255,8 @@ else
   sed 's/^/    /' "${WORK}/pull.err"
   note_fail "could not pull ${IMAGE} for ${ARCH}"
 fi
+
+fi  # end of the registry-vs-local branch opened before case 1 (#5370)
 
 # ── Case 3: the shipped binary actually executes ───────────────────────────
 # #3760: an image can pull cleanly and still carry a /usr/local/bin/hive that
