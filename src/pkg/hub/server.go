@@ -1012,6 +1012,11 @@ type HubServer struct {
 	// Same rationale and same guarding mutex as lastNetAdminReconcile above:
 	// both are poller-loop-only state.
 	lastPerHiveEnvReconcile time.Time
+	// lastOrphanedPodReap throttles the orphaned Terminating-pod reaper
+	// (orphaned_pod_reaper.go), which force-deletes hive-namespace pods left
+	// behind when a node disappears without draining (#5328). Same rationale
+	// and same guarding mutex as the two above: poller-loop-only state.
+	lastOrphanedPodReap time.Time
 	// lastGenerationRetire throttles the expired-master-generation retirement
 	// sweep (hub_generations_retire.go). Same rationale and same guarding mutex
 	// as the two above: poller-loop-only state.

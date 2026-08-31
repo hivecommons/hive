@@ -5884,6 +5884,14 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// rate-limited to perHiveEnvMaxPatchesPerCycle patches per cycle, because
 	// each patch rolls that hive's pod. See perhive_env_reconcile.go.
 	s.reconcilePerHiveEnvIfDue()
+	// Force-delete hive-namespace pods stuck in Terminating past
+	// orphanedPodMinAge with no finalizers and a non-Running phase — the
+	// residue of nodes disappearing without draining (#5328). Throttled
+	// internally to orphanedPodReapInterval and capped per cycle; nothing else
+	// ever removes these, so without this they accumulate indefinitely (32
+	// measured across 16 namespaces, oldest three weeks). See
+	// orphaned_pod_reaper.go.
+	s.reapOrphanedPodsIfDue()
 	// Drop master generations whose verify window has closed, and warn when one
 	// is closing while spokes still carry it. Throttled internally to
 	// generationRetireInterval. This lane PERSISTS the drop and ALERTS; it is
@@ -5930,6 +5938,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepStuckAssignmentsIfDue()
 		s.reconcileNetAdminIfDue()
 		s.reconcilePerHiveEnvIfDue()
+		s.reapOrphanedPodsIfDue()
 		s.retireExpiredGenerationsIfDue()
 		s.sweepExpiredAccessIfDue()
 		s.replenishPoolsIfDue()
