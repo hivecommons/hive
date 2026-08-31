@@ -61,6 +61,32 @@ HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
 
+# hive_harden_runtime_config tightens $1 to 0600.
+#
+# The PVC config copies carry dashboard.auth_token (and github.token in PAT
+# mode) and /data is world-traversable, so a 0644 copy hands the dashboard
+# owner credential to every unprivileged agent uid on the host (#5331).
+#
+# This is called in two places, and both are needed:
+#
+#   1. Once at boot over the copies that ALREADY exist, so hives deployed
+#      before the 0600 fix are remediated rather than waiting for a save.
+#   2. After every `cp` below that (re)creates $HIVE_CONFIG_RUNTIME. cp gives
+#      a newly created destination the SOURCE's mode, and both sources (the
+#      ConfigMap seed, the bind-mounted hive.yaml) are 0644 — so without this
+#      the file is re-widened to 0644 on every boot, undoing (1) on the very
+#      same boot and leaving a hive that never saves world-readable forever.
+#
+# Best-effort: on a read-only or foreign-owned PVC this must not abort boot.
+hive_harden_runtime_config() {
+  [ -f "$1" ] && chmod 600 "$1" 2>/dev/null || true
+}
+
+for _cfg in "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" /data/hive.yaml.dashboard; do
+  hive_harden_runtime_config "$_cfg"
+done
+unset _cfg
+
 # hive_runtime_config_read echoes the path to read the persisted runtime
 # config from: the new name when it is present and non-empty, else the
 # legacy name when that is, else empty. Read-only — it never creates,
@@ -255,6 +281,7 @@ PYEOF
     # Write the (merged) config as the disaster-recovery snapshot. Always
     # under the new name; the legacy file is left untouched on the PVC.
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" 2>/dev/null || true
+    hive_harden_runtime_config "$HIVE_CONFIG_RUNTIME"
     echo "[entrypoint] K8s mode — ConfigMap is the seed, runtime config written to $HIVE_CONFIG_RUNTIME"
   else
     # Neither source exists: no runtime config on the PVC (checked first,
@@ -278,6 +305,7 @@ else
   if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -z "$HIVE_CONFIG_SOURCE" ]; then
     # First boot: config exists but no PVC runtime config yet — seed it
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME"
+    hive_harden_runtime_config "$HIVE_CONFIG_RUNTIME"
     echo "[entrypoint] First boot — config seeded to PVC: $HIVE_CONFIG_RUNTIME"
   elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -n "$HIVE_CONFIG_SOURCE" ]; then
     # The PVC runtime config is the source of truth (updated by Save()).
@@ -294,6 +322,7 @@ else
     # as the untouched fallback until Save() takes over writing the new one.
     if [ "$HIVE_CONFIG_SOURCE" = "$HIVE_CONFIG_RUNTIME_LEGACY" ]; then
       if cp "$HIVE_CONFIG_RUNTIME_LEGACY" "$HIVE_CONFIG_RUNTIME" 2>/dev/null; then
+        hive_harden_runtime_config "$HIVE_CONFIG_RUNTIME"
         echo "[entrypoint] Migration — seeded $HIVE_CONFIG_RUNTIME from legacy $HIVE_CONFIG_RUNTIME_LEGACY (legacy left in place)"
       fi
     fi
