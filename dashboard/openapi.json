@@ -653,7 +653,7 @@
           "History"
         ],
         "summary": "Sparkline history",
-        "description": "Returns ~120 downsampled status snapshots from the in-memory 12-hour rolling window (5s intervals). Used for sparkline charts.",
+        "description": "Returns the governor's evaluation history (governor.EvalSnapshot entries) for sparkline charts. When /data/sparkline-history.json exists its seeded entries are prepended to the live in-memory history.",
         "responses": {
           "200": {
             "description": "Array of status snapshots",
@@ -663,21 +663,110 @@
                   "type": "array",
                   "items": {
                     "type": "object",
+                    "description": "governor.EvalSnapshot (src/pkg/governor/governor.go).",
                     "properties": {
                       "t": {
                         "type": "integer",
-                        "description": "Unix timestamp (ms)"
+                        "format": "int64",
+                        "description": "Unix timestamp (ms)."
                       },
                       "govMode": {
-                        "type": "string"
+                        "type": "string",
+                        "enum": [
+                          "idle",
+                          "quiet",
+                          "busy",
+                          "surge"
+                        ],
+                        "description": "Governor mode at this evaluation."
                       },
-                      "queue": {
+                      "govIssues": {
+                        "type": "integer",
+                        "description": "Actionable issue count. There is no single `queue` field."
+                      },
+                      "govPrs": {
+                        "type": "integer",
+                        "description": "Actionable PR count."
+                      },
+                      "govTotal": {
+                        "type": "integer",
+                        "description": "Combined queue depth the governor laddered on."
+                      },
+                      "govHold": {
+                        "type": "integer",
+                        "description": "Items held back from the queue."
+                      },
+                      "govActive": {
+                        "type": "integer",
+                        "description": "Items actively being worked."
+                      },
+                      "sla_violations": {
                         "type": "integer"
                       },
-                      "budgetPct": {
-                        "type": "number"
+                      "agents_kicked": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Agents the governor kicked at this evaluation."
+                      },
+                      "actionableCount": {
+                        "type": "integer"
+                      },
+                      "openPrCount": {
+                        "type": "integer"
+                      },
+                      "mergeableCount": {
+                        "type": "integer"
+                      },
+                      "beadsWorkers": {
+                        "type": "integer"
+                      },
+                      "beadsSupervisor": {
+                        "type": "integer"
+                      },
+                      "repos": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "description": "governor.RepoSnapshot.",
+                          "properties": {
+                            "issues": {
+                              "type": "integer"
+                            },
+                            "prs": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "issues",
+                            "prs"
+                          ]
+                        },
+                        "description": "Per-repo queue split, keyed by owner/name."
+                      },
+                      "agentStats": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object"
+                        },
+                        "description": "Untyped in the Go source (map[string]map[string]any): per-agent stat bag whose inner keys are not fixed by a Go struct."
                       }
-                    }
+                    },
+                    "required": [
+                      "t",
+                      "govMode",
+                      "govIssues",
+                      "govPrs",
+                      "govTotal",
+                      "govHold",
+                      "govActive",
+                      "actionableCount",
+                      "openPrCount",
+                      "mergeableCount",
+                      "beadsWorkers",
+                      "beadsSupervisor"
+                    ]
                   }
                 }
               }
@@ -692,7 +781,7 @@
           "History"
         ],
         "summary": "Persistent trend data",
-        "description": "Returns downsampled persistent history for the given range. Used for trend sparklines and governor mode distribution.",
+        "description": "Returns the governor's evaluation history (governor.EvalSnapshot entries) filtered to a time window. `range=day|week` or `hours=N` selects the window; hours is clamped to 720 (30 days) and defaults to 24.",
         "parameters": [
           {
             "name": "range",
@@ -701,12 +790,21 @@
               "type": "string",
               "enum": [
                 "day",
-                "week",
-                "month"
-              ],
-              "default": "week"
+                "week"
+              ]
             },
-            "description": "Time range to query"
+            "description": "Window preset. \"day\" is 24h, \"week\" is 168h. Any other value (including an absent one) falls through to `hours`, defaulting to 24h. Takes precedence over `hours`."
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 720,
+              "default": 24
+            },
+            "description": "Window length in hours, used only when `range` is not \"day\" or \"week\". Values above 720 (30 days) are clamped; values at or below 0 become 24."
           }
         ],
         "responses": {
@@ -718,21 +816,110 @@
                   "type": "array",
                   "items": {
                     "type": "object",
+                    "description": "governor.EvalSnapshot (src/pkg/governor/governor.go).",
                     "properties": {
                       "t": {
                         "type": "integer",
-                        "description": "Unix timestamp (ms)"
+                        "format": "int64",
+                        "description": "Unix timestamp (ms)."
                       },
                       "govMode": {
-                        "type": "string"
+                        "type": "string",
+                        "enum": [
+                          "idle",
+                          "quiet",
+                          "busy",
+                          "surge"
+                        ],
+                        "description": "Governor mode at this evaluation."
                       },
-                      "queue": {
+                      "govIssues": {
+                        "type": "integer",
+                        "description": "Actionable issue count. There is no single `queue` field."
+                      },
+                      "govPrs": {
+                        "type": "integer",
+                        "description": "Actionable PR count."
+                      },
+                      "govTotal": {
+                        "type": "integer",
+                        "description": "Combined queue depth the governor laddered on."
+                      },
+                      "govHold": {
+                        "type": "integer",
+                        "description": "Items held back from the queue."
+                      },
+                      "govActive": {
+                        "type": "integer",
+                        "description": "Items actively being worked."
+                      },
+                      "sla_violations": {
                         "type": "integer"
                       },
-                      "budgetPct": {
-                        "type": "number"
+                      "agents_kicked": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Agents the governor kicked at this evaluation."
+                      },
+                      "actionableCount": {
+                        "type": "integer"
+                      },
+                      "openPrCount": {
+                        "type": "integer"
+                      },
+                      "mergeableCount": {
+                        "type": "integer"
+                      },
+                      "beadsWorkers": {
+                        "type": "integer"
+                      },
+                      "beadsSupervisor": {
+                        "type": "integer"
+                      },
+                      "repos": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "description": "governor.RepoSnapshot.",
+                          "properties": {
+                            "issues": {
+                              "type": "integer"
+                            },
+                            "prs": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "issues",
+                            "prs"
+                          ]
+                        },
+                        "description": "Per-repo queue split, keyed by owner/name."
+                      },
+                      "agentStats": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object"
+                        },
+                        "description": "Untyped in the Go source (map[string]map[string]any): per-agent stat bag whose inner keys are not fixed by a Go struct."
                       }
-                    }
+                    },
+                    "required": [
+                      "t",
+                      "govMode",
+                      "govIssues",
+                      "govPrs",
+                      "govTotal",
+                      "govHold",
+                      "govActive",
+                      "actionableCount",
+                      "openPrCount",
+                      "mergeableCount",
+                      "beadsWorkers",
+                      "beadsSupervisor"
+                    ]
                   }
                 }
               }

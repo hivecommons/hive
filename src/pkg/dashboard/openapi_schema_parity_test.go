@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kubestellar/hive/pkg/governor"
 	"github.com/kubestellar/hive/pkg/tokens"
 )
 
@@ -76,6 +77,20 @@ func TestOpenAPISchemaFieldsExistOnGoTypes(t *testing.T) {
 			path:   "/api/audit",
 			goType: reflect.TypeOf(AuditEntry{}),
 		},
+		// /api/history and /api/trends both serve Governor.EvalHistory(), so
+		// both are arrays of the same element type. They carried the identical
+		// invented queue/budgetPct pair that #5077 reported under
+		// /api/status.governor.
+		{
+			name:   "GET /api/history",
+			path:   "/api/history",
+			goType: reflect.TypeOf([]governor.EvalSnapshot{}),
+		},
+		{
+			name:   "GET /api/trends",
+			path:   "/api/trends",
+			goType: reflect.TypeOf([]governor.EvalSnapshot{}),
+		},
 	}
 
 	raw, err := os.ReadFile(openAPISpecPath)
@@ -140,6 +155,12 @@ func checkSchemaAgainstType(t *testing.T, schema map[string]any, goType reflect.
 	where string, degenerate map[string]string, problems *[]string) {
 	t.Helper()
 
+	// Unwrap array schemas to their item schema, stepping the Go type down to
+	// its element in lockstep. Applies at the top level too, so an endpoint
+	// whose whole 200 response is an array (e.g. /api/history) is checked
+	// against its element type without a special case in the table.
+	schema, goType = unwrapArrays(schema, goType)
+
 	for goType.Kind() == reflect.Pointer {
 		goType = goType.Elem()
 	}
@@ -176,22 +197,7 @@ func checkSchemaAgainstType(t *testing.T, schema map[string]any, goType reflect.
 		}
 		// Descend through arrays to the item schema so []SessionSummary and
 		// friends are checked against their element type.
-		fieldType := field
-		itemSchema := subSchema
-		for itemSchema["type"] == "array" {
-			next, ok := itemSchema["items"].(map[string]any)
-			if !ok {
-				break
-			}
-			itemSchema = next
-			for fieldType.Kind() == reflect.Pointer {
-				fieldType = fieldType.Elem()
-			}
-			if fieldType.Kind() != reflect.Slice && fieldType.Kind() != reflect.Array {
-				break
-			}
-			fieldType = fieldType.Elem()
-		}
+		itemSchema, fieldType := unwrapArrays(subSchema, field)
 		// additionalProperties describes a map's VALUE type; descend into it
 		// so by_agent_detail's bucket schema is checked against
 		// tokens.AgentModelBucket.
@@ -207,6 +213,28 @@ func checkSchemaAgainstType(t *testing.T, schema map[string]any, goType reflect.
 		}
 		checkSchemaAgainstType(t, itemSchema, fieldType, where+"."+name, nil, problems)
 	}
+}
+
+// unwrapArrays steps a schema and its Go type down through matched array/slice
+// levels together, returning the innermost pair. It stops as soon as either
+// side stops being an array, so a mismatch is simply left unchecked rather
+// than reported as a phantom field problem.
+func unwrapArrays(schema map[string]any, goType reflect.Type) (map[string]any, reflect.Type) {
+	for schema["type"] == "array" {
+		next, ok := schema["items"].(map[string]any)
+		if !ok {
+			break
+		}
+		t := goType
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
+			break
+		}
+		schema, goType = next, t.Elem()
+	}
+	return schema, goType
 }
 
 // jsonFieldsOfStruct maps the JSON key each exported field of goType marshals
