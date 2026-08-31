@@ -67,6 +67,21 @@ name: Tagged Release
 #     consulting a status the repo does not require. This is the same
 #     "trust the SHA lookup, not the aggregate or branch-scoped view"
 #     reasoning as the wait-for-gate step, extended one step further.
+#   - KNOWN UNRESOLVED: THE PR ROLLUP HAS NO `gate` (#5339). The merge below
+#     evaluates required contexts against the PULL REQUEST's status rollup,
+#     not against the head commit's check-runs. A PR opened with GITHUB_TOKEN
+#     never gets its own workflow runs started (recursion guard), so nothing
+#     ever attaches a PR-associated `gate` — the rollup for a release PR is
+#     exactly `tide`, `dco` and nothing else, while `GET /commits/{sha}/
+#     check-runs` shows `gate` present and green. The two views disagree and
+#     only the PR-scoped one governs the merge, which is why this step fails
+#     with `Required status check "gate" is expected` on a commit whose gate
+#     is demonstrably satisfied. Resolving it needs a decision this workflow
+#     cannot make for itself: open the release PR with an identity whose PRs
+#     run workflows (a GitHub App installation token or PAT), or make the
+#     merge not depend on a PR-scoped evaluation. Do NOT "fix" it by skipping
+#     docker.yml's gate job on release-gate/* — that was tried and reverted;
+#     it removes the only path that could ever supply the missing context.
 #   - THE RELEASE PR MUST NOT RE-TRIGGER docker.yml (#5339, 7th). Opening the
 #     PR below fires docker.yml again on the SAME SHA under `pull_request`.
 #     That run is created by GITHUB_TOKEN, so GitHub's recursion guard never

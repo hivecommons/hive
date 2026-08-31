@@ -92,34 +92,18 @@ jobs:
   # release-line guard asserts this list against .github/release-lines.yml —
   # see the `env_lists` entry there and src/docs/release-line-guard.md.
   #
-  # EXCEPTION 2 (#5339, 7th release recurrence): do NOT run on a `pull_request`
-  # whose head is a `release-gate/*` scratch branch. tagged-release.yml earns
-  # `gate` on the release commit via an explicit `workflow_dispatch` of this
-  # workflow, THEN opens a PR from that scratch branch into v4. Opening that PR
-  # fires this workflow again on the SAME SHA under the `pull_request` event —
-  # and because the PR is opened with the job's GITHUB_TOKEN, GitHub's
-  # recursive-workflow guard creates the run but never starts its jobs, so it
-  # completes as `failure` with zero jobs within two seconds.
-  #
-  # Branch protection resolves a required context to the MOST RECENT check-run
-  # of that name on the SHA, so that instant failure supersedes the green
-  # `gate` earned seconds earlier and the merge is refused with
-  # `Required status check "gate" is expected` (HTTP 405) for the entire retry
-  # window. It can never recover: nothing will re-run the superseding suite.
-  # Observed on release runs 33432927303 (v4.0.1) and, masked behind the #5324
-  # tide failure, on the 16:53 attempt for PR #5319.
-  #
-  # Skipping the job entirely (rather than filtering the trigger) is deliberate:
-  # .github/release-lines.yml pins this workflow as `unpinned: '**'`, so adding
-  # a `branches:` filter to the `pull_request` trigger would fail the
-  # release-line guard. A job-level `if:` is invisible to that check, which only
-  # inspects `branches:`/`branches-ignore:`. The fork-PR contract (#4965) is
-  # unaffected: a fork PR's head is never `release-gate/*`, so it still gets its
-  # `gate` context exactly as before.
+  # NOTE (#5339): an earlier fix made this job skip `release-gate/*` on
+  # `pull_request`, on the theory that the release PR's own docker run
+  # superseded the green `gate` earned by the dispatched run. That theory was
+  # WRONG and the skip is reverted here. The release PR's `pull_request` runs
+  # are opened with GITHUB_TOKEN, so GitHub's recursion guard never starts
+  # their jobs — those suites contain ZERO check-runs, so they never produced
+  # a competing `gate` to supersede anything. Verified: the pre-fix release
+  # PR #5355 and the post-fix #5364 have byte-identical rollups (`tide`,
+  # `dco`, no `gate`) and both are BLOCKED. Skipping the job changed nothing
+  # except removing the one path that could ever attach a PR-associated
+  # `gate`, so it is a latent trap rather than a fix.
   gate:
-    if: >-
-      github.event_name != 'pull_request' ||
-      !startsWith(github.head_ref, 'release-gate/')
     runs-on: ubuntu-latest
     outputs:
       push: ${{ steps.decide.outputs.push }}

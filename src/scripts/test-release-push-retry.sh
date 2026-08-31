@@ -278,10 +278,15 @@ dpath = os.path.join(os.path.dirname(sys.argv[1]), "docker.yml")
 if os.path.exists(dpath):
     dw = yaml.safe_load(open(dpath))
     gate_if = (dw.get("jobs", {}).get("gate", {}) or {}).get("if") or ""
-    if "release-gate/" not in gate_if:
-        bad("docker.yml's gate job no longer skips release-gate/* pull_request "
-            "runs — the release PR will supersede its own green gate check and "
-            "the merge becomes unrecoverable (#5339)")
+    # #5339: the gate job must NOT skip release-gate/* — see the note in
+    # docker.yml. A prior fix added that skip on a supersession theory that was
+    # disproven (those pull_request suites contain zero check-runs, so they
+    # never superseded anything); the skip only removed the one path that could
+    # attach a PR-associated `gate`.
+    if "release-gate/" in gate_if:
+        bad("docker.yml's gate job skips release-gate/* again — that was "
+            "reverted in #5339: it fixes nothing (the release PR's runs never "
+            "start) and removes the only path to a PR-associated gate")
     # #5339 (8th): branch protection evaluates the whole check SUITE, not just
     # the `gate` check-run. The dispatched run on the scratch branch publishes
     # nothing (gate forces push=false), but while its multi-arch build jobs run
