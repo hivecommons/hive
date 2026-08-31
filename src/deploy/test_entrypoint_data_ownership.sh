@@ -41,6 +41,31 @@ check() {
 ok()   { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 bad()  { echo "  FAIL: $1"; [ -n "${2:-}" ] && echo "        $2"; FAIL=$((FAIL + 1)); }
 
+# ── Skipping is a result, and where it is wrong it must be fatal (#5380) ──
+#
+# The behavioural block below needs root and a `dev` account. On a bare
+# ubuntu-latest runner or a laptop it has neither, so it skips LOUDLY rather
+# than faking a pass — that stays, and this suite remains runnable anywhere.
+#
+# But a loud skip that nothing acts on is still a guard that cannot fail, and
+# that is #5380: the assertions which would catch a regression never executed
+# on any PR. So when the caller KNOWS the preconditions are met — the podman
+# arm64 lane runs this inside the image, as root, where `dev` exists — it sets
+# HIVE_TEST_REQUIRE_BEHAVIOURAL=1 and a skip becomes a FAILURE. There, a skip
+# does not mean "unsuitable environment", it means the test is broken.
+REQUIRE_BEHAVIOURAL="${HIVE_TEST_REQUIRE_BEHAVIOURAL:-0}"
+
+skip() {
+  if [ "$REQUIRE_BEHAVIOURAL" = "1" ]; then
+    bad "$1" \
+        "HIVE_TEST_REQUIRE_BEHAVIOURAL=1 — the caller asserts root and a 'dev' account are present, so this is a BROKEN TEST, not an unsuitable environment (#5380)"
+  else
+    echo "  SKIP: $1"
+    [ -n "${2:-}" ] && echo "        $2"
+  fi
+  return 0
+}
+
 echo "=== #5369: /data ownership invariant ==="
 
 # ── Structural: the guard must SURVIVE ───────────────────────────────────
@@ -206,12 +231,12 @@ echo
 echo "=== behavioural: swept paths are readable by the runtime user ==="
 
 if [ "$(id -u)" != "0" ]; then
-  echo "  SKIP: not root — cannot create root-owned files or drop to another uid"
-  echo "        (this is the case a container lane must run; see #5360/#5369)"
+  skip "not root — cannot create root-owned files or drop to another uid" \
+       "(this is the case a container lane must run; see #5360/#5369)"
 elif ! id -u dev >/dev/null 2>&1; then
-  echo "  SKIP: no 'dev' account on this host — cannot exercise the drop"
+  skip "no 'dev' account on this host — cannot exercise the drop"
 elif ! stat -c '%u' / >/dev/null 2>&1; then
-  echo "  SKIP: no GNU stat -c on this host — the helpers require it"
+  skip "no GNU stat -c on this host — the helpers require it"
 else
   SWEEP_FN="$SWEEP"
   ASSERT_FN="$(sed -n '/^hive_assert_runtime_readable() {/,/^}/p' "$ENTRYPOINT")"

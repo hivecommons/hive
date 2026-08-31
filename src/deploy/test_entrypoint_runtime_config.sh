@@ -31,6 +31,34 @@ check() {
   fi
 }
 
+# ── Skipping is a result, and where it is wrong it must be fatal (#5380) ──
+#
+# The behavioural block below needs root and a `dev` account. On a bare
+# ubuntu-latest runner or a laptop it has neither, so it skips LOUDLY rather
+# than faking a pass — that stays, and this suite remains runnable anywhere.
+#
+# But a loud skip that nothing acts on is still a guard that cannot fail, and
+# that is #5380: the assertions which would catch a regression never executed
+# on any PR. So when the caller KNOWS the preconditions are met — the podman
+# arm64 lane runs this inside the image, as root, where `dev` exists — it sets
+# HIVE_TEST_REQUIRE_BEHAVIOURAL=1 and a skip becomes a FAILURE. There, a skip
+# does not mean "unsuitable environment", it means the test is broken.
+REQUIRE_BEHAVIOURAL="${HIVE_TEST_REQUIRE_BEHAVIOURAL:-0}"
+
+skip() {
+  if [ "$REQUIRE_BEHAVIOURAL" = "1" ]; then
+    echo "  FAIL: $1"
+    echo "        HIVE_TEST_REQUIRE_BEHAVIOURAL=1 — the caller asserts root and a"
+    echo "        'dev' account are present, so this is a BROKEN TEST, not an"
+    echo "        unsuitable environment (#5380)."
+    FAIL=$((FAIL + 1))
+  else
+    echo "  SKIP: $1"
+    [ -n "${2:-}" ] && echo "        $2"
+  fi
+  return 0
+}
+
 echo "=== entrypoint runtime-config migration tests ==="
 
 # Extract the resolver verbatim from the entrypoint so this tests the shipped
@@ -155,10 +183,10 @@ fi
 # pass — a silent skip here is how the original gap shipped.
 RUNTIME_UID=1001
 if [ "$(id -u)" != "0" ]; then
-  echo "  SKIP: not root — cannot exercise the root-creates/dev-reads path"
-  echo "        (this is the case CI must run; see #5360)"
+  skip "not root — cannot exercise the root-creates/dev-reads path" \
+       "(this is the case CI must run; see #5360)"
 elif ! id -u dev >/dev/null 2>&1; then
-  echo "  SKIP: no 'dev' account on this host — cannot exercise the drop"
+  skip "no 'dev' account on this host — cannot exercise the drop"
 else
   tmpd="$(mktemp -d)"
   trap 'rm -rf "$tmpd"' EXIT

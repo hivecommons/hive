@@ -328,3 +328,95 @@ jobs:
           esac
 
           exit "$status"
+
+      # ── #5380: run the entrypoint behavioural suites where root exists ──
+      #
+      # THE PROBLEM THIS CLOSES. test_entrypoint_runtime_config.sh (#5368, for
+      # #5360) and test_entrypoint_data_ownership.sh (#5375, for #5369) each
+      # carry a behavioural block that is the whole reason the file exists: it
+      # creates a root-owned file and then really open()s it as the uid the
+      # hive process drops to. That is the assertion mode-checking could not
+      # make — #5360 shipped green behind a mode-only check and took four
+      # merges to diagnose.
+      #
+      # Both blocks need root AND a `dev` account. v2-ci.yml runs them on
+      # ubuntu-latest, which is neither: the runner user is uid 1001 but named
+      # `runner`, so `id -u dev` fails and BOTH blocks skip on every PR. They
+      # skip loudly rather than faking a pass — correct, and preserved — but a
+      # guard that cannot fail is not a guard. The strongest assertions in both
+      # files have never executed in CI.
+      #
+      # WHY HERE. This lane already builds the PR's own image (#5370, above)
+      # and starts a container from it. That image has root and has `dev` at
+      # uid 1001 (src/Dockerfile:165, `useradd -m -u 1001 -g node ... dev`), so
+      # it is the one place in CI where these blocks can actually run — and it
+      # runs the PR's code, so a regression is caught before merge rather than
+      # after.
+      #
+      # HOW. The suites are NOT baked into the image (they are test-only, and
+      # should stay out of a shipped artifact). They are bind-mounted in from
+      # the checkout instead. Both resolve the entrypoint under test as
+      # `$(dirname "$0")/entrypoint.sh`, so mounting src/deploy gives each
+      # suite the PR's own entrypoint.sh next to it — the same file the image
+      # was built from.
+      #
+      # AND A SKIP HERE IS FATAL. HIVE_TEST_REQUIRE_BEHAVIOURAL=1 turns every
+      # skip in those blocks into a FAILURE. This is the load-bearing half of
+      # #5380: in a container that DOES have root and DOES have `dev`, a skip
+      # cannot mean "unsuitable environment" — it means a precondition changed
+      # and the test silently stopped testing. Without this the whole problem
+      # recurs the moment someone edits the guard. The bare-runner path in
+      # v2-ci.yml is untouched and still skips loudly, so both suites stay
+      # runnable on a laptop and on an unprivileged runner.
+      #
+      # Only on the PR path, where a local image was built. On a push the image
+      # is a published registry reference and this lane's contract is the
+      # pull/startup probe above; the suites still run in v2-ci.yml there.
+      #
+      # --user root is explicit: the image's own USER is dev, and the entire
+      # point is to exercise the root-creates / dev-reads transition.
+      - name: Entrypoint behavioural suites, in-container (#5380)
+        if: github.event_name == 'pull_request' && steps.select.outputs.local == 'true'
+        env:
+          PR_IMAGE: localhost/hive-pr:arm64
+        run: |
+          set -euo pipefail
+
+          echo "Running the entrypoint behavioural suites inside ${PR_IMAGE}."
+          echo "Root and the 'dev' account both exist there, so the blocks that"
+          echo "skip on ubuntu-latest actually execute — and a skip is FATAL."
+
+          status=0
+          for suite in test_entrypoint_runtime_config test_entrypoint_data_ownership; do
+            echo ""
+            echo "── ${suite}.sh ─────────────────────────────────────────"
+            # The suite and the entrypoint it extracts functions from are
+            # mounted together, read-only. :ro,Z keeps SELinux relabelling
+            # correct and matches how the probe mounts hive.yaml.
+            if podman run --rm \
+                 --user root \
+                 --entrypoint /bin/bash \
+                 -e HIVE_TEST_REQUIRE_BEHAVIOURAL=1 \
+                 -v "${GITHUB_WORKSPACE}/src/deploy:/opt/hive-tests:ro,Z" \
+                 "${PR_IMAGE}" \
+                 "/opt/hive-tests/${suite}.sh"; then
+              echo "::notice::${suite}.sh passed IN-CONTAINER with behavioural blocks required"
+            else
+              rc=$?
+              echo "::error::${suite}.sh failed in-container (exit ${rc}). A skip counts as a failure here: this container has root and a 'dev' account, so a skipped behavioural block means the test stopped testing (#5380)."
+              status=1
+            fi
+          done
+
+          if [ "$status" -eq 0 ]; then
+            {
+              printf '\n✅ Entrypoint behavioural suites ran **inside the PR image** with '
+              printf '`HIVE_TEST_REQUIRE_BEHAVIOURAL=1` — the root-creates/dev-reads '
+              printf 'assertions for #5360 and #5369 actually executed, and a skip '
+              printf 'would have failed the lane.\n'
+            } >>"$GITHUB_STEP_SUMMARY"
+          else
+            printf '\n❌ An entrypoint behavioural suite failed in-container (#5380).\n' >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+          exit "$status"
