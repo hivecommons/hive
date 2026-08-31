@@ -162,7 +162,22 @@ jobs:
     # real `hive --version` smoke test (`docker`), plus `build-and-test`
     # (go build + go vet) and `overlayfs-exec-guard`. Building here too would
     # be a third image build of the same commit.
-    if: github.event_name != 'pull_request'
+    # `release-gate/*` is excluded for the same reason `merge*` already skips
+    # it (gate forces push=false there): these builds publish NOTHING for the
+    # scratch branch. They are not merely wasted — branch protection evaluates
+    # the whole check SUITE, so while any job in it runs the `gate` context is
+    # not treated as satisfied even though its check-run is already `success`.
+    # The release job's merge waits 120s and a multi-arch build takes ~10min,
+    # so the merge could never win that race (#5339, 8th recurrence).
+    #
+    # No coverage is lost. A release commit modifies CHANGELOG.md and nothing
+    # else — no source, no Dockerfile — so its tree is byte-identical to the v4
+    # tip whose images this workflow already built, published and freshness-
+    # checked minutes earlier. The `gate` job itself still runs on the scratch
+    # branch; that is the whole reason the branch exists.
+    if: >-
+      github.event_name != 'pull_request' &&
+      !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
         include:
@@ -397,7 +412,16 @@ jobs:
   build-contributor:
     needs: gate
     # Push-only, same as `build` above (#4965).
-    if: github.event_name != 'pull_request'
+    # `release-gate/*` is excluded for the same reason `merge*` already skips
+    # it (gate forces push=false there): these builds publish NOTHING for the
+    # scratch branch. They are not merely wasted — branch protection evaluates
+    # the whole check SUITE, so while any job in it runs the `gate` context is
+    # not treated as satisfied even though its check-run is already `success`.
+    # The release job's merge waits 120s and a multi-arch build takes ~10min,
+    # so the merge could never win that race (#5339, 8th recurrence).
+    if: >-
+      github.event_name != 'pull_request' &&
+      !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
         include:
@@ -495,7 +519,16 @@ jobs:
   build-hub:
     needs: gate
     # Push-only, same as `build` above (#4965).
-    if: github.event_name != 'pull_request'
+    # `release-gate/*` is excluded for the same reason `merge*` already skips
+    # it (gate forces push=false there): these builds publish NOTHING for the
+    # scratch branch. They are not merely wasted — branch protection evaluates
+    # the whole check SUITE, so while any job in it runs the `gate` context is
+    # not treated as satisfied even though its check-run is already `success`.
+    # The release job's merge waits 120s and a multi-arch build takes ~10min,
+    # so the merge could never win that race (#5339, 8th recurrence).
+    if: >-
+      github.event_name != 'pull_request' &&
+      !startsWith(github.ref_name, 'release-gate/')
     strategy:
       matrix:
         include:

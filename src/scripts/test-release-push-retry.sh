@@ -282,6 +282,17 @@ if os.path.exists(dpath):
         bad("docker.yml's gate job no longer skips release-gate/* pull_request "
             "runs — the release PR will supersede its own green gate check and "
             "the merge becomes unrecoverable (#5339)")
+    # #5339 (8th): branch protection evaluates the whole check SUITE, not just
+    # the `gate` check-run. The dispatched run on the scratch branch publishes
+    # nothing (gate forces push=false), but while its multi-arch build jobs run
+    # the suite stays in_progress and `gate` is not treated as satisfied — and
+    # a ~10min build can never fit the merge's 120s window.
+    for jb in ("build", "build-contributor", "build-hub"):
+        jif = (dw.get("jobs", {}).get(jb, {}) or {}).get("if") or ""
+        if "release-gate/" not in jif:
+            bad(f"docker.yml's {jb} job no longer skips release-gate/* — its "
+                "build keeps the check suite in_progress, so the release merge "
+                "waits out its window on an already-green gate (#5339)")
 else:
     bad("docker.yml not found next to the release workflow")
 

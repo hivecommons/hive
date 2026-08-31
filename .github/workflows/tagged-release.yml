@@ -78,6 +78,16 @@ name: Tagged Release
 #     events so no competing check-run is ever created. If a future change
 #     makes the release PR trigger a required check again, this failure comes
 #     back looking exactly like a green gate that protection refuses to see.
+#   - THE GATE SUITE MUST FINISH, NOT JUST THE GATE JOB (#5339, 8th). Branch
+#     protection evaluates the whole check SUITE, not just the `gate`
+#     check-run. docker.yml's heavyweight build jobs used to keep the
+#     dispatched run's suite in_progress for ~10 minutes after `gate` itself
+#     went green in seconds, and the merge below waits only 120s — so it lost
+#     that race every time while the API reported a perfectly green `gate`.
+#     Those builds publish nothing on a release-gate/* branch (push=false), so
+#     they now skip and the suite completes when `gate` does. If a job is ever
+#     added to docker.yml that runs on the scratch branch, it will re-block
+#     this merge in exactly the same invisible way.
 #
 # IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
 # dated section) is what empties Unreleased, which re-triggers docker.yml on
