@@ -176,7 +176,13 @@ jobs:
       # it retags an existing digest, so a tip whose docker.yml run is still
       # running (or was cancelled) has nothing to retag. Stand down and let
       # the next tick take it — by then the build has settled either way.
+      #
+      # This stands down GREEN (an output the release job gates on), not by
+      # failing. A tip whose build is still in flight is the ordinary state of
+      # a busy branch, and an hourly job that paints the repo red for it would
+      # be training everyone to ignore exactly the signal #5318 added.
       - name: Require published images for the backstop's target
+        id: images
         if: github.event_name != 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -188,12 +194,15 @@ jobs:
             --jq '[.workflow_runs[] | select(.event == "push")] | last | .conclusion // ""')"
           if [ "$conclusion" != "success" ]; then
             echo "::warning::Backstop standing down: docker.yml has no successful completed push run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
-            exit 1
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "docker.yml succeeded on ${sha} — images are published, safe to retag."
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Derive whether this merge warrants a release
         id: derive
+        if: github.event_name == 'workflow_run' || steps.images.outputs.published == 'true'
         run: src/scripts/derive-release-version.sh
 
   # Cheap supersession check BEFORE the expensive release job (#5142): if v4
