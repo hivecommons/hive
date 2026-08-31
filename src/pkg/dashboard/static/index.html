@@ -8045,12 +8045,55 @@
     // when the model is observed available again.
     const _modelHealFired = {};
 
+    // Auto-heal HEAL TARGETS, per backend. Appearing in a discovery catalog is
+    // NOT proof the backend's CLI can run a model, and auto-heal pins an agent
+    // to its target for real work — so the target is drawn from a known-good
+    // set rather than from `available[0]` (#5338).
+    //
+    // The claude catalog is the strict case that motivated this: it is
+    // discovered from api.anthropic.com/v1/models, which enumerates what the
+    // ACCOUNT may call over the HTTP API — a superset of what the bundled
+    // `claude` CLI can drive. A model the CLI advertises but whose adapter
+    // cannot build a request still lists cleanly, and because /v1/models is
+    // newest-first, that model lands at available[0] — exactly the slot the
+    // old code auto-assigned. On the reporting hive that pinned the only
+    // write-capable agent to a model whose every call died in the CLI's
+    // request builder, and re-applied it at each boot, defeating config-file
+    // remediation.
+    //
+    // The bare aliases are the safe targets: `claude --model opus|sonnet|haiku`
+    // resolves through the CLI's OWN current-model mapping, so the CLI can only
+    // ever select something it can actually drive. They are also in
+    // claudeAlwaysIncludeModels (cli_models.go), so they are present in every
+    // served claude list — live-discovered or static fallback.
+    //
+    // Backends absent from this map keep the previous first-available
+    // behavior: this narrows the blast radius to the backend the failure was
+    // reported against rather than re-tuning heal targets fleet-wide.
+    const MODEL_HEAL_PREFERRED_TARGETS = {
+      claude: ['sonnet', 'opus', 'haiku'],
+    };
+
+    // healTargetFor picks the model auto-heal should switch an agent TO.
+    // Returns '' when no vetted target is available, which SUPPRESSES the heal
+    // — leaving a model that is merely absent from one catalog beats pinning
+    // the agent to one its CLI cannot run.
+    function healTargetFor(backend, available) {
+      const preferred = MODEL_HEAL_PREFERRED_TARGETS[backend];
+      if (!preferred) return available[0] || '';
+      for (const want of preferred) {
+        const hit = available.find(v => _modelIdMatches(v, want));
+        if (hit) return hit;
+      }
+      return '';
+    }
+
     function reconcileModelsAfterDiscovery(backend, models, fallback) {
       // Guard: only act on a genuinely successful discovery. Never switch
       // based on unverified static aliases or an empty list.
       if (fallback || !models || !models.length) return;
       const available = models.map(m => m.value);
-      const first = available[0];
+      const first = healTargetFor(backend, available);
       const isAvailable = (m) => available.some(v => _modelIdMatches(v, m));
       const now = Date.now();
 
@@ -8087,6 +8130,14 @@
         if (isAutoModelSentinel(backend, a.model)) return; // auto-select value — never a concrete id, never healed
         const key = `${backend}|${a.name}`;
         if (isAvailable(a.model)) { _markAvailable(key, a.model); return; } // still valid — leave untouched (idempotent)
+        // No vetted heal target for this backend — keep the current model.
+        // Checked BEFORE _confirmAbsent so the absence clock and the
+        // once-per-disappearance guard are not consumed by a heal that cannot
+        // fire; a target appearing later still gets its chance (#5338).
+        if (!first) {
+          console.warn(`model ${a.model} missing from ${backend} discovery but no vetted heal target is available — keeping selection`);
+          return;
+        }
         if (!_confirmAbsent(key, a.model)) return; // unconfirmed or already healed — no switch
         const label = a.displayName || a.name;
         const pinNote = (a.pinnedModel || a.pinnedBoth) ? ' (was pinned — model gone from provider)' : '';
@@ -8104,7 +8155,7 @@
         const defKey = `${backend}|__defaultModel__`;
         if (saved && isAvailable(saved)) {
           _markAvailable(defKey, saved);
-        } else if (saved && _confirmAbsent(defKey, saved)) {
+        } else if (saved && first && _confirmAbsent(defKey, saved)) {
           _configState.data.litellm.defaultModel = first;
           fetch('/api/config/governor/litellm', {
             method: 'PUT',
