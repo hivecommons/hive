@@ -143,6 +143,35 @@ func uncollectibleUpgradeReason(lastHeartbeat string) string {
 		"an upgrade instruction"
 }
 
+// autoUpgradeBlocked reports whether the fleet row should say the hub has
+// REFUSED this hive's auto-upgrade, and why.
+//
+// It is the read-side twin of the upgradeCollectible() gate in
+// triggerAutoUpgrades(): same predicate, same reason string, so the badge and
+// the hub's actual behaviour cannot drift. Exposed on MyHiveEntry as
+// AutoUpgradeBlocked/AutoUpgradeBlockedReason precisely so the dashboard never
+// re-implements this in JavaScript — it previously derived "Queued for
+// auto-upgrade · 1pm ET" from autoUpgradeMode alone, which consults nothing
+// about eligibility and so kept promising an upgrade the hub had permanently
+// declined.
+//
+// autoUpgrade gates the whole thing: a hive that never asked for auto-upgrades
+// is manual, not blocked, and must not carry the badge.
+//
+// This covers ONLY the refusal. The other gates in triggerAutoUpgrades() —
+// claim in flight, wave cap, provisioning, the daily schedule — are transient
+// and clear without intervention, so "queued" eventually comes true for them.
+// Uncollectible is the one that never does.
+func autoUpgradeBlocked(autoUpgrade bool, lastHeartbeat string, now time.Time) (bool, string) {
+	if !autoUpgrade {
+		return false, ""
+	}
+	if upgradeCollectible(lastHeartbeat, now) {
+		return false, ""
+	}
+	return true, uncollectibleUpgradeReason(lastHeartbeat)
+}
+
 // noteUncollectibleUpgrade records — once per (hive, target) — that the hub
 // declined to arm an upgrade the hive could not collect, and why.
 //

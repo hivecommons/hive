@@ -3101,6 +3101,32 @@ type MyHiveEntry struct {
 	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
 	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
 
+	// AutoUpgradeBlocked is true when this hive has auto-upgrade ON but the hub
+	// will REFUSE to arm it: upgradeCollectible() is false, so the spoke cannot
+	// pull the instruction off its own heartbeat and triggerAutoUpgrades()
+	// declines every cycle. AutoUpgradeBlockedReason is the operator-facing
+	// cause from uncollectibleUpgradeReason() — the SAME string
+	// noteUncollectibleUpgrade() writes to the timeline, and documented there as
+	// free of credentials and kubeconfig paths, so it is safe as a tooltip.
+	//
+	// WHY THIS IS COMPUTED ON READ RATHER THAN RE-DERIVED IN JAVASCRIPT. The
+	// fleet row used to render "Queued for auto-upgrade · 1pm ET" from
+	// autoUpgradeMode alone, which consults nothing about eligibility. A hive
+	// the hub had permanently refused therefore advertised a queued upgrade
+	// while the timeline recorded the refusal — two surfaces, opposite stories,
+	// and no way to tell "waiting for the window" from "will never fire". The
+	// browser must not re-implement the predicate or its staleRemoveAge bound;
+	// sending the evaluated decision is what keeps badge and hub in agreement.
+	//
+	// DELIBERATELY ONLY THE REFUSED GATE. The other gates in
+	// triggerAutoUpgrades() (claim in flight, wave full, provisioning, the
+	// schedule itself) are TRANSIENT — they clear on their own, so a badge
+	// saying "queued" is eventually true. Uncollectible is the one state that
+	// never resolves without operator action, which is why it is the one worth
+	// naming distinctly.
+	AutoUpgradeBlocked       bool   `json:"autoUpgradeBlocked,omitempty"`
+	AutoUpgradeBlockedReason string `json:"autoUpgradeBlockedReason,omitempty"`
+
 	// The inference-backend auth-failure signal (InferenceAuthError) is NOT
 	// re-declared here: MyHiveEntry embeds RegistryEntry, which already carries
 	// the spoke-reported InferenceAuthError verbatim, so the promoted field is
@@ -3607,6 +3633,17 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if stale, reason := advisoryStale(result[i].RegistryEntry, journeyNow); stale {
 			result[i].AdvisoryStale = true
 			result[i].AdvisoryStaleReason = reason
+		}
+
+		// Auto-upgrade REFUSAL, computed on read for the same reason: the
+		// predicate and its staleRemoveAge bound live ONLY in Go, so the fleet
+		// badge cannot drift from what triggerAutoUpgrades() will actually do.
+		// Gated on AutoUpgrade because the state only means anything for a hive
+		// that has asked for auto-upgrades in the first place — a manual hive is
+		// not "blocked", it is simply manual.
+		if blocked, reason := autoUpgradeBlocked(result[i].AutoUpgrade, result[i].LastHeartbeat, journeyNow); blocked {
+			result[i].AutoUpgradeBlocked = true
+			result[i].AutoUpgradeBlockedReason = reason
 		}
 
 		// Running-but-inactive agents, computed on read for the same reason:
@@ -16406,6 +16443,21 @@ const dashboardHTML = `<!DOCTYPE html>
             var queuedTitle = queuedDaily
               ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint
               : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') shortly' + buildingHint;
+            /* REFUSED, not queued. autoUpgradeBlocked is the hub's own evaluated
+               decision (upgradeCollectible false), sent by the fleet API rather
+               than re-derived here — the badge must never claim an upgrade is
+               coming for a hive triggerAutoUpgrades() declines every cycle and
+               will keep declining until an operator intervenes. The mode-derived
+               label above says nothing about eligibility, which is exactly how a
+               hive sat 89 commits behind still advertising "· 1pm ET".
+               "Upgrade now" stays beside it: the manual path is pushed through a
+               different route and remains the operator's escape hatch. */
+            if (h.autoUpgradeBlocked) {
+              queuedLabel = 'Auto-upgrade blocked';
+              queuedTitle = 'The hub will not arm an auto-upgrade for this hive: ' +
+                (h.autoUpgradeBlockedReason || 'it cannot collect the upgrade instruction') +
+                '. It will not resolve on its own.' + buildingHint;
+            }
             /* escAttr, not esc, for the title: esc() leaves quotes intact and a
                branch name or commit subject carrying one would break out of the
                attribute. jsArg supplies its own quotes for the handler args. */
