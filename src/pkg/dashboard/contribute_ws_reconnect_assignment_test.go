@@ -358,7 +358,7 @@ func TestReconnect5322_GenuineDepartureStillReleases(t *testing.T) {
 	s.contributeHub.server = s
 	setStatusIssues(s, intgIssue(7777, "genuinely abandoned issue", "someone", nil))
 
-	conn, reg, assign := assignOverSocket(t, s, ts, "departer", 7777)
+	conn, reg, assign := assignOverSocket(t, s, ts, "leaver", 7777)
 	cid := reg["contributor_id"]
 	old := waitForLiveConn(t, s.contributeHub, cid, 2*time.Second)
 
@@ -373,7 +373,7 @@ func TestReconnect5322_GenuineDepartureStillReleases(t *testing.T) {
 	}
 	var sawRelease bool
 	for _, e := range s.contributeHub.RecentActivity() {
-		if e.Username == "departer" && e.Action == "released: connection lost" {
+		if e.Username == "leaver" && e.Action == "released: connection lost" {
 			sawRelease = true
 		}
 	}
