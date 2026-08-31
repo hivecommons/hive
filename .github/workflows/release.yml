@@ -23,23 +23,35 @@ name: Tagged Release
 # CHANGELOG.md `<!-- release: none|major|minor|patch -->` marker is the human
 # escape hatch when inference would be wrong.
 #
-# RACES (#5142): the gate-earning dance below takes minutes, and v4 can
-# advance underneath it. Two rules keep that from starving releases or
+# RACES (#5142, #5222): the gate-earning dance below takes minutes, and v4
+# can advance underneath it. Two rules keep that from starving releases or
 # painting red runs for normal traffic:
 #   - SUPERSESSION IS DEFERRAL, NOT FAILURE. If v4 has already advanced past
-#     this run's commit (precheck job), or advances mid-flight (a
-#     non-fast-forward rejection at the final push), this run steps aside
-#     cleanly: the very merge that won triggered its own docker.yml run,
-#     whose completion triggers a fresh release run for the NEWER tip — and
-#     Unreleased is untouched, so that successor derives the same release.
-#     Retrying here on the old tip could never succeed anyway: the images
-#     were built from THIS commit, so rebasing the release commit onto the
-#     new tip would tag content the published images do not contain.
-#   - PROTECTION PROPAGATION IS RETRIED. Branch protection can take a few
-#     seconds to ingest the gate check-run's conclusion; a push in that
-#     window is rejected with GH006 even though the check succeeded (observed
-#     live: success at T, rejection at T+5s). The final push retries GH006
-#     for a bounded window instead of failing on a timing artifact.
+#     this run's commit (precheck job), or advances mid-flight (the final
+#     step's PR merge becomes non-mergeable because the base moved), this run
+#     steps aside cleanly: the very merge that won triggered its own
+#     docker.yml run, whose completion triggers a fresh release run for the
+#     NEWER tip — and Unreleased is untouched, so that successor derives the
+#     same release. Retrying here on the old tip could never succeed anyway:
+#     the images were built from THIS commit, so rebasing the release commit
+#     onto the new tip would tag content the published images do not
+#     contain.
+#   - MERGEABILITY SETTLING IS RETRIED. A direct `git push` to v4 (the
+#     pre-#5222 approach) was retried on GH006 under the theory that branch
+#     protection just needed a few seconds to ingest the gate check-run's
+#     conclusion — but that check-run's check suite ran against the scratch
+#     branch, not v4, and a direct push's required-status evaluation never
+#     counts a check earned on a different ref for the same SHA, so no
+#     amount of retrying could ever have worked (confirmed live: 15 retries
+#     over 120s, gate green throughout, GH006 every time — run 33330740324).
+#     The final step now opens a PR from the scratch branch into v4 and
+#     merges it instead, which evaluates required status checks by SHA alone
+#     — the same lookup this workflow's own wait-for-gate step already uses,
+#     and the same path every ordinary contributor PR into v4 merges
+#     through. That merge call is still retried for a bounded window in case
+#     GitHub's mergeable_state computation needs a moment to settle after the
+#     gate check lands, which is a real (if short) async step on GitHub's
+#     side independent of the #5222 root cause.
 #
 # IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
 # dated section) is what empties Unreleased, which re-triggers docker.yml on
@@ -69,6 +81,16 @@ permissions:
   # scope on top of `contents: write`/`packages: write`, which only cover the
   # git push and image-tag operations this workflow already did.
   actions: write
+  # `pull-requests: write` is required for the `release` job's PR-merge path
+  # to v4 (#5222, 4th GH006 recurrence): a direct `git push` to v4 is
+  # evaluated against required status checks by the push event, and never
+  # sees the `gate` check-run earned on the scratch branch even though it is
+  # on the identical SHA (see the "Merge release commit to v4" step for the
+  # full mechanism). Merging a PR instead evaluates required status checks by
+  # SHA lookup against ALL check-runs for that commit, independent of which
+  # ref originally produced them — the same lookup every ordinary
+  # contributor PR into v4 already relies on.
+  pull-requests: write
 
 jobs:
   decide:
@@ -357,14 +379,9 @@ jobs:
       # fast-forward, on the first attempt or any retry, because nothing
       # about retrying produces the missing check.
       #
-      # Required-status-check evaluation is keyed on the commit SHA, not on
-      # which ref the check ran against (GitHub's own docs: a check "must
-      # have completed successfully" on that SHA — pushing to another branch
-      # first, then to the protected branch, is the documented pattern). So:
-      # push this release commit to a scratch branch first, make docker.yml
-      # run on that exact SHA, wait for `gate` to succeed, then push the SAME
-      # SHA to v4 — protection now finds an already-successful `gate` check
-      # on it and allows the fast-forward.
+      # So: push this release commit to a scratch branch first, make
+      # docker.yml run on that exact SHA, and wait for `gate` to succeed
+      # there.
       #
       # #5072: the scratch push below uses this job's default GITHUB_TOKEN
       # (persisted by actions/checkout). GitHub deliberately does not trigger
@@ -387,10 +404,10 @@ jobs:
           scratch="release-gate/v${VERSION}"
           commit_sha="$(git rev-parse HEAD)"
 
-          cleanup() {
-            git push origin --delete "refs/heads/${scratch}" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
+          # NOTE: no cleanup trap here — unlike the pre-#5222 version of this
+          # step, the scratch branch must survive past this step so the next
+          # step can open a PR from it. It is deleted after the PR merges (or
+          # on any failure exit) below, not here.
 
           echo "Pushing release commit ${commit_sha} to scratch branch ${scratch} to earn a 'gate' check..."
           git push origin "HEAD:refs/heads/${scratch}"
@@ -428,57 +445,116 @@ jobs:
               ;;
           esac
 
-      # The two live failure modes of this push, and their remedies (#5142):
+      # #5222 (4th GH006 recurrence): a raw `git push origin
+      # HEAD:refs/heads/v4` was retried here for up to 120s and rejected
+      # EVERY time, even though `gate` had already concluded 'success' on
+      # this exact SHA before the very first attempt (run 33330740324 — see
+      # the issue for the full timeline). That ruled out propagation lag:
+      # the check-runs API reported success from 19:28:18Z onward, and every
+      # push from 19:28:19Z to 19:30:26Z was still rejected.
       #
-      #   GH006 ("Required status check \"gate\" is expected"): branch
-      #   protection has not yet ingested the gate check-run's conclusion —
-      #   observed live as a rejection 5 seconds AFTER the check succeeded.
-      #   The check exists and passed; only propagation lags. Retried for a
-      #   bounded window rather than failing the release on a timing artifact.
+      # Root cause, confirmed via the Checks API on that run's commit: the
+      # `gate` check-run's check suite carries `head_branch:
+      # "release-gate/v4.0.1"` — the scratch branch — never `v4`, because
+      # that is genuinely the ref docker.yml ran against. A direct push to a
+      # protected branch evaluates required status checks against reports
+      # tied to THAT push/ref event; a check-run earned on a different
+      # branch's push, even for the byte-identical commit SHA, never
+      # registers as satisfying protection on v4 — there is no propagation
+      # window to wait out, because that check-run was never going to count.
       #
-      #   non-fast-forward ("fetch first"): v4 advanced mid-flight. Retrying
-      #   could never succeed — this release commit is parented on the old
-      #   tip, and rebasing it forward would tag source the already-published
-      #   images were not built from. Defer instead: exit green with a notice,
-      #   push nothing (tag included), and let the successor run — triggered
-      #   by the very merge that won — cut the release from ITS tip. The
-      #   `pushed` output gates the GitHub-Release step below so a deferred
-      #   run creates no release object either.
-      - name: Push release commit and tag to v4
+      # A pull-request MERGE evaluates required status checks differently:
+      # GitHub looks up check-runs by commit SHA alone (`GET
+      # /commits/{sha}/check-runs`) against the PR's head SHA, independent of
+      # which ref originally produced them — this is the exact lookup this
+      # workflow's own wait-for-gate step above already uses, and the same
+      # path every ordinary contributor PR into v4 merges through. So: open a
+      # PR from the scratch branch (whose head SHA already carries the
+      # successful `gate` check-run) into v4, then merge it via the API
+      # instead of pushing the ref directly.
+      - name: Open and merge a PR from the scratch branch into v4
         id: push_v4
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git tag "v${VERSION}" HEAD
+          scratch="release-gate/v${VERSION}"
+          commit_sha="$(git rev-parse HEAD)"
+          merged=false
+          pr_number=""
+
+          cleanup() {
+            # Only close the PR if it never merged (closing a merged PR is
+            # not meaningful and gh errors harmlessly on it). The scratch
+            # branch is always deleted here — it has no purpose once this
+            # step exits, merged or not.
+            if [ "$merged" != true ]; then
+              gh pr close "$pr_number" >/dev/null 2>&1 || true
+            fi
+            git push origin --delete "refs/heads/${scratch}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          echo "Opening a PR from ${scratch} into v4..."
+          pr_url="$(gh pr create \
+            --base v4 \
+            --head "${scratch}" \
+            --title "release: v${VERSION}" \
+            --body "Automated release PR (#5222). Merges the release commit for v${VERSION}, already carrying a successful gate check on ${commit_sha}." 2>&1)" \
+            || { echo "::error::gh pr create failed: ${pr_url}" >&2; exit 1; }
+          pr_number="$(grep -oE '[0-9]+$' <<<"$pr_url")"
+          echo "Opened PR #${pr_number}: ${pr_url}"
+
+          # The two live failure modes of a merge attempt, and their remedies
+          # (carried over from #5142's push-retry logic, now applied to the
+          # merge call instead of a raw push):
+          #
+          #   "not mergeable"/mergeable_state transients (e.g. `blocked`
+          #   momentarily while GitHub finishes recomputing mergeability
+          #   after the gate check landed): retried for a bounded window.
+          #
+          #   non-fast-forward equivalents (base branch moved, merge
+          #   conflict): v4 advanced mid-flight. Retrying could never
+          #   succeed — this release commit is parented on the old tip, and
+          #   rebasing it forward would tag source the already-published
+          #   images were not built from. Defer instead: exit green with a
+          #   notice, push nothing (tag included), and let the successor run
+          #   — triggered by the very merge that won — cut the release from
+          #   ITS tip. The `pushed` output gates the GitHub-Release step
+          #   below so a deferred run creates no release object either.
           # RELEASE_PUSH_GH006_WINDOW is a test seam (test-release-push-retry.sh
           # drives the exhaustion path with 0); production always uses 120s.
           deadline=$((SECONDS + ${RELEASE_PUSH_GH006_WINDOW:-120}))
           while true; do
-            if out="$(git push origin HEAD:refs/heads/v4 2>&1)"; then
+            if out="$(gh pr merge "$pr_number" --merge 2>&1)"; then
               echo "$out"
+              merged=true
               break
             fi
             echo "$out"
-            if grep -qiE 'non-fast-forward|fetch first|\[rejected\]' <<<"$out"; then
-              echo "::notice::v4 advanced past ${SHA} while this release run was in flight — deferring to the successor run for the newer merge (see the RACES note in this workflow's header, #5142). Nothing was pushed; Unreleased is untouched."
+            if grep -qiE 'not mergeable because the base branch was modified|base branch was modified|is out of date' <<<"$out"; then
+              echo "::notice::v4 advanced past ${SHA} while this release run was in flight — deferring to the successor run for the newer merge (see the RACES note in this workflow's header, #5142/#5222). Nothing was pushed; Unreleased is untouched."
               echo "pushed=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if grep -q 'GH006' <<<"$out"; then
-              if [ "$SECONDS" -lt "$deadline" ]; then
-                echo "Branch protection has not yet ingested the successful gate check (GH006 propagation lag) — retrying in 8s..."
-                sleep 8
-                continue
-              fi
-              echo "::error::push to v4 still rejected by branch protection 120s after gate succeeded — this is no longer propagation lag; check the required-status configuration." >&2
-              exit 1
+            if [ "$SECONDS" -lt "$deadline" ]; then
+              echo "PR #${pr_number} not mergeable yet (mergeable_state still settling after gate succeeded) — retrying in 8s..."
+              sleep 8
+              continue
             fi
-            echo "::error::push to v4 failed for an unrecognized reason (output above)." >&2
+            echo "::error::PR #${pr_number} still not mergeable 120s after gate succeeded on ${commit_sha} — this is no longer a settling-time artifact; inspect the PR's mergeable_state and required-status configuration." >&2
             exit 1
           done
-          # The tag only after the branch: if the branch push had failed, a
-          # pushed tag would point at a commit v4 never contained. A plain
-          # bounded retry — tag pushes have no protection race, only
-          # transient transport failures.
+
+          # The merge landed a NEW commit on v4 (a merge commit, or the same
+          # tree via fast-forward depending on PR mergeability), so re-derive
+          # the SHA actually on v4 before tagging — tagging the pre-merge
+          # commit_sha would tag a commit v4 may not contain verbatim.
+          git fetch origin v4
+          v4_sha="$(git rev-parse origin/v4)"
+          git tag "v${VERSION}" "$v4_sha"
+          # Tag pushes have no protection race, only transient transport
+          # failures — a plain bounded retry.
           for attempt in 1 2 3; do
             if git push origin "refs/tags/v${VERSION}"; then
               break

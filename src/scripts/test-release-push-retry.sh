@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # test-release-push-retry.sh — exercises the `push_v4` step of
-# .github/workflows/release.yml (#5142) by extracting its script from the
-# workflow file itself and driving it with a stubbed `git`, so the push
-# state machine is proven against the shipped source rather than a copy.
+# .github/workflows/release.yml (#5142, #5222) by extracting its script from
+# the workflow file itself and driving it with stubbed `git`/`gh`, so the
+# merge state machine is proven against the shipped source rather than a copy.
 #
-# The step distinguishes three ways a release push to v4 can fail:
-#   GH006          — branch protection has not yet ingested the gate check
-#                    (propagation lag): retry on a deadline, then hard-fail.
-#   non-fast-forward — v4 advanced past the release SHA: defer GREEN with
+# Since #5222 the step opens a PR from the scratch branch into v4 and merges
+# it via `gh pr merge` (SHA-keyed required-status evaluation) instead of a
+# raw `git push` to v4 (ref-keyed evaluation, which is why the raw push could
+# never succeed — see the workflow's RACES header comment). The step
+# distinguishes three ways that merge can fail:
+#   not-yet-mergeable — GitHub is still settling mergeable_state after the
+#                    gate check landed: retry on a deadline, then hard-fail.
+#   base moved       — v4 advanced past the release SHA: defer GREEN with
 #                    pushed=false, because the successor run releases the
 #                    newer merge and retagging here would publish images
 #                    built from a different tree.
-#   anything else  — hard-fail.
+#   anything else    — hard-fail.
 #
 # Usage: src/scripts/test-release-push-retry.sh
 set -uo pipefail
@@ -45,44 +49,26 @@ else:
     sys.exit("no step with id push_v4 in the release job")
 PY
 
-# --- stub git + sleep ---------------------------------------------------------
-# The stub reads its scenario from RPR_SCENARIO and counts branch-push attempts
-# in RPR_STATE. Outputs mimic real `git push` failure text so the ORDER of the
-# step's grep checks is exercised, not just their presence: GH006 rejections
-# arrive inside "! [remote rejected] ... (protected branch hook declined)",
-# which must NOT be captured by the non-fast-forward pattern.
+# --- stub git + gh + sleep -----------------------------------------------------
+# The stubs read their scenario from RPR_SCENARIO and count merge attempts in
+# RPR_STATE. `gh pr merge` output mimics real rejection text so the ORDER of
+# the step's grep checks is exercised, not just their presence: "base branch
+# was modified" must NOT be captured as a generic retry case, and a
+# not-yet-mergeable rejection must NOT be captured by the base-moved pattern.
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/git" <<'STUB'
 #!/usr/bin/env bash
 state="$RPR_STATE"
 case "$1 $2 ${3:-}" in
+  "rev-parse HEAD")
+    echo "deadbeefcafe0000000000000000000000000000"; exit 0 ;;
+  "rev-parse origin/v4")
+    echo "f00df00df00d0000000000000000000000000000"; exit 0 ;;
+  "fetch origin")
+    exit 0 ;;
   "tag "*) exit 0 ;;
-  "push origin HEAD:refs/heads/v4")
-    n=$(( $(cat "$state/branch" 2>/dev/null || echo 0) + 1 ))
-    echo "$n" > "$state/branch"
-    case "$RPR_SCENARIO" in
-      ok) echo "To github.com:kubestellar/hive.git"; exit 0 ;;
-      gh006_then_ok)
-        if [ "$n" -le 2 ]; then
-          echo " ! [remote rejected] HEAD -> v4 (protected branch hook declined)"
-          echo "remote: error: GH006: Protected branch update failed for refs/heads/v4."
-          echo "remote: error: Required status check \"gate\" is expected."
-          exit 1
-        fi
-        echo "To github.com:kubestellar/hive.git"; exit 0 ;;
-      gh006_forever)
-        echo " ! [remote rejected] HEAD -> v4 (protected branch hook declined)"
-        echo "remote: error: GH006: Protected branch update failed for refs/heads/v4."
-        exit 1 ;;
-      nonff)
-        echo " ! [rejected]        HEAD -> v4 (fetch first)"
-        echo "error: failed to push some refs to 'github.com:kubestellar/hive.git'"
-        echo "hint: Updates were rejected because the remote contains work that you do not"
-        exit 1 ;;
-      unknown)
-        echo "fatal: unable to access 'https://github.com/': The requested URL returned error: 500"
-        exit 1 ;;
-    esac ;;
+  "push origin --delete")
+    exit 0 ;;
   "push origin refs/tags/"*)
     n=$(( $(cat "$state/tag" 2>/dev/null || echo 0) + 1 ))
     echo "$n" > "$state/tag"
@@ -94,12 +80,45 @@ case "$1 $2 ${3:-}" in
   *) exit 0 ;;
 esac
 STUB
+cat > "$tmp/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+state="$RPR_STATE"
+case "$1 $2" in
+  "pr create")
+    echo "https://github.com/kubestellar/hive/pull/9999"
+    exit 0 ;;
+  "pr merge")
+    n=$(( $(cat "$state/merge" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$state/merge"
+    case "$RPR_SCENARIO" in
+      ok) echo "✓ Merged pull request #9999"; exit 0 ;;
+      settle_then_ok)
+        if [ "$n" -le 2 ]; then
+          echo "Pull request #9999 is not mergeable: the merge commit cannot be cleanly created."
+          exit 1
+        fi
+        echo "✓ Merged pull request #9999"; exit 0 ;;
+      settle_forever)
+        echo "Pull request #9999 is not mergeable: the merge commit cannot be cleanly created."
+        exit 1 ;;
+      base_moved)
+        echo "Pull request #9999 is not mergeable: the base branch was modified. Review the PR and try again."
+        exit 1 ;;
+      unknown)
+        echo "gh: connection reset by peer"
+        exit 1 ;;
+    esac ;;
+  "pr close")
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+STUB
 cat > "$tmp/bin/sleep" <<'STUB'
 #!/usr/bin/env bash
 echo "$1" >> "$RPR_STATE/sleeps"
 exit 0
 STUB
-chmod +x "$tmp/bin/git" "$tmp/bin/sleep"
+chmod +x "$tmp/bin/git" "$tmp/bin/gh" "$tmp/bin/sleep"
 
 # run_step <scenario> [tag-scenario] [gh006-window] — runs the extracted step;
 # sets rc, output, ghout (the $GITHUB_OUTPUT contents), state dir in $st.
@@ -116,38 +135,38 @@ run_step() {
   ghout=$(cat "$st/gh_output" 2>/dev/null || true)
 }
 
-echo "case: clean push succeeds first try"
+echo "case: clean merge succeeds first try"
 run_step ok
 [ "$rc" -eq 0 ] && note_ok "exit 0" || note_fail "exit $rc, want 0: $output"
 grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHUB_OUTPUT lacks pushed=true: $ghout"
 [ "$(cat "$st/tag" 2>/dev/null)" = 1 ] && note_ok "tag pushed once" || note_fail "tag not pushed exactly once"
 
-echo "case: GH006 propagation lag twice, then success"
-run_step gh006_then_ok
+echo "case: mergeable_state settling twice, then success"
+run_step settle_then_ok
 [ "$rc" -eq 0 ] && note_ok "exit 0 after retries" || note_fail "exit $rc, want 0: $output"
-[ "$(cat "$st/branch")" = 3 ] && note_ok "3 branch-push attempts" || note_fail "$(cat "$st/branch") attempts, want 3"
+[ "$(cat "$st/merge")" = 3 ] && note_ok "3 merge attempts" || note_fail "$(cat "$st/merge") attempts, want 3"
 grep -q '^pushed=true$' <<<"$ghout" && note_ok "pushed=true" || note_fail "GITHUB_OUTPUT lacks pushed=true"
-grep -qx '8' "$st/sleeps" && note_ok "waited between retries" || note_fail "no 8s sleep recorded between GH006 retries"
-# The [remote rejected] wrapper around GH006 must not have been eaten by the
-# non-fast-forward pattern — that would defer green on a protection race and
+grep -qx '8' "$st/sleeps" && note_ok "waited between retries" || note_fail "no 8s sleep recorded between retries"
+# A generic not-yet-mergeable rejection must not have been misread as the
+# base having moved — that would defer green on a settling-time artifact and
 # silently skip the release.
-grep -q 'pushed=false' <<<"$ghout" && note_fail "GH006 was misclassified as non-fast-forward and deferred" || note_ok "GH006 not misread as non-fast-forward"
+grep -q 'pushed=false' <<<"$ghout" && note_fail "settling rejection was misclassified as base-moved and deferred" || note_ok "settling rejection not misread as base-moved"
 
-echo "case: GH006 past the deadline hard-fails"
-run_step gh006_forever ok 0
-[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "exhausted GH006 retries must fail, got exit 0"
+echo "case: settling past the deadline hard-fails"
+run_step settle_forever ok 0
+[ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "exhausted retries must fail, got exit 0"
 grep -q '::error::' <<<"$output" && note_ok "::error:: emitted" || note_fail "no ::error:: on exhaustion: $output"
-[ -f "$st/tag" ] && note_fail "tag was pushed despite the branch push failing" || note_ok "no tag pushed"
+[ -f "$st/tag" ] && note_fail "tag was pushed despite the merge failing" || note_ok "no tag pushed"
 
-echo "case: non-fast-forward defers green with pushed=false"
-run_step nonff
+echo "case: base branch moved defers green with pushed=false"
+run_step base_moved
 [ "$rc" -eq 0 ] && note_ok "exit 0 (deferral is not a failure)" || note_fail "exit $rc, want 0: $output"
 grep -q '^pushed=false$' <<<"$ghout" && note_ok "pushed=false" || note_fail "GITHUB_OUTPUT lacks pushed=false: $ghout"
 grep -q '::notice::' <<<"$output" && note_ok "::notice:: explains the deferral" || note_fail "deferral is silent: $output"
 [ -f "$st/tag" ] && note_fail "tag was pushed for a release that deferred" || note_ok "no tag pushed"
-[ "$(cat "$st/branch")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "non-FF was retried; it can never succeed without a rebase"
+[ "$(cat "$st/merge")" = 1 ] && note_ok "no pointless retry of a lost race" || note_fail "base-moved was retried; it can never succeed without a rebase"
 
-echo "case: unrecognized push failure hard-fails"
+echo "case: unrecognized merge failure hard-fails"
 run_step unknown
 [ "$rc" -ne 0 ] && note_ok "non-zero exit" || note_fail "unknown failure must not be retried or deferred, got exit 0"
 grep -q 'pushed=' <<<"$ghout" && note_fail "unknown failure still wrote a pushed= output" || note_ok "no pushed= output"
@@ -193,6 +212,15 @@ if gh_release is None:
 elif "steps.push_v4.outputs.pushed == 'true'" not in (gh_release.get("if") or ""):
     bad("Create GitHub Release is not gated on pushed=true — a deferred run would "
         "publish a Release for a tag that was never pushed")
+perms = w.get("permissions", {})
+if perms.get("pull-requests") != "write":
+    bad("permissions no longer grant pull-requests: write — the #5222 PR-merge path needs it")
+push_step = next((s for s in rel.get("steps", [])
+                   if s.get("id") == "push_v4"), None)
+if push_step is None:
+    bad("no step with id push_v4 found")
+elif "gh pr merge" not in push_step.get("run", ""):
+    bad("push_v4 no longer merges via a PR (#5222) — check for a regression back to a raw v4 push")
 sys.exit(0 if ok else 1)
 PY
 
