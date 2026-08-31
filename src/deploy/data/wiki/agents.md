@@ -69,7 +69,7 @@ There is no built-in `tester` agent. Test suites, coverage gates, and
 regression checks are the `quality` lane's work. An operator who wants a
 separate tester must define it as a custom agent with its own metadata and
 policy template — see
-[acmm-policy-matrix.md](../../../docs/acmm-policy-matrix.md).
+[acmm-policy-matrix.md](https://github.com/kubestellar/hive/blob/v4/src/docs/acmm-policy-matrix.md).
 
 ## Adding a New Agent
 
