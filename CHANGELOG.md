@@ -11,6 +11,10 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+### Added
+
+- Reference pages for two previously-undocumented agent-side relay scripts: [`src/docs/hive-merge.md`](src/docs/hive-merge.md) for `bin/hive-merge.sh` (merges a PR as the App bot instead of the GitHub MCP `merge_pull_request` tool, which GitHub rejects for App installation tokens — covers the `--expect-sha` auto-resolution against the F4 TOCTOU guard, the governor merge-eligible-list target-binding, and the retry/re-engagement behavior when a required check is still red) and [`src/docs/hive-open-issue.md`](src/docs/hive-open-issue.md) for `bin/hive-open-issue.sh` (creates issues, comments, and claims as the App bot instead of `gh issue create`/`gh issue comment` — covers the three request shapes, exact-title dedupe, and the exponential-backoff retry-then-quarantine contract). Both scripts previously had no page even though each is larger than `bin/hive-open-pr.sh`, which already has one; both are indexed in `src/docs/README.md` alongside it ([#5238](https://github.com/kubestellar/hive/issues/5238)).
+
 ### Changed
 
 - Dashboard terminal controls now explain that tmux requires Shift-drag for browser text selection, with a dismissible baseline hint and a prominent, non-dismissible warning when an agent needs login and an OAuth URL must be copied. The warning also calls out wrapped-URL line breaks so operators can correct them before submitting ([#5188](https://github.com/kubestellar/hive/issues/5188)).
