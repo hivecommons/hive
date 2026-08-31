@@ -17,6 +17,16 @@ func TestValidateBackend_AcceptsWatsonx(t *testing.T) {
 	}
 }
 
+// Ranging over SupportedBackends() alone is tautological (#5388):
+// SupportedBackends() is exactly CLIBackends ++ InferenceBackends, and
+// ValidateBackend returns nil early iff IsCLIBackend(b) || IsInferenceBackend(b).
+// Every element it yields satisfies that disjunction by construction, so the
+// gateway branch and the error-formatting branch below it are unreachable for
+// these inputs and no edit to either list can fail the loop.
+//
+// The loop is kept — it is cheap and it does pin the early-return path — but
+// the assertions that can actually fail are the ones after it: a rejection
+// that must happen, and the gateway acceptance path the loop never reaches.
 func TestValidateBackend_AcceptsAllSupported(t *testing.T) {
 	var g GovernorConfig
 	// Empty means "hive default" and must stay valid.
@@ -27,6 +37,13 @@ func TestValidateBackend_AcceptsAllSupported(t *testing.T) {
 		if err := g.ValidateBackend(b); err != nil {
 			t.Errorf("ValidateBackend(%q) = %v, want nil", b, err)
 		}
+	}
+
+	// A name in NEITHER list and matching no gateway must be rejected. Without
+	// this, a ValidateBackend rewritten to `return nil` unconditionally would
+	// pass every assertion above.
+	if err := g.ValidateBackend("definitely-not-a-backend"); err == nil {
+		t.Error("ValidateBackend(definitely-not-a-backend) = nil, want an error — validation accepts anything")
 	}
 }
 

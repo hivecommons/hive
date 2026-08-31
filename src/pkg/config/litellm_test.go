@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -115,12 +116,38 @@ governor:
 // config.IsInferenceBackend — canonical list
 // ---------------------------------------------------------------------------
 
+// The want-set is written out literally rather than ranged over from
+// InferenceBackends. Ranging over the very slice IsInferenceBackend linearly
+// scans is tautological: every element is a member by construction, so the
+// scan always hits on that element and NO edit to the list can fail the test.
+// Verified (#5388) by replacing the list with
+// []string{"vllm", "totally-bogus-backend"} — dropping litellm and watsonx and
+// inventing a backend that does not exist — and watching the loop still pass.
+// An independent literal is what makes a wrong list a red test.
+//
+// Adding a real inference backend means adding it in BOTH places, which is the
+// point: the second edit is a deliberate confirmation, not a formality.
 func TestIsInferenceBackend_Config(t *testing.T) {
-	for _, b := range InferenceBackends {
+	want := []string{"vllm", "llm-d", "litellm", "watsonx"}
+
+	for _, b := range want {
 		if !IsInferenceBackend(b) {
 			t.Errorf("IsInferenceBackend(%q) = false, want true", b)
 		}
 	}
+
+	// The converse: nothing may quietly JOIN the canonical list either. Without
+	// this, adding a backend to InferenceBackends alone still passes.
+	if len(InferenceBackends) != len(want) {
+		t.Errorf("InferenceBackends = %v (%d entries), want %v (%d). A backend was added or removed without updating this test's want-set.",
+			InferenceBackends, len(InferenceBackends), want, len(want))
+	}
+	for _, b := range InferenceBackends {
+		if !slices.Contains(want, b) {
+			t.Errorf("InferenceBackends contains %q, which this test does not expect. Add it to want above if it is genuinely an inference backend.", b)
+		}
+	}
+
 	if IsInferenceBackend("claude") {
 		t.Error("IsInferenceBackend(claude) = true, want false")
 	}
