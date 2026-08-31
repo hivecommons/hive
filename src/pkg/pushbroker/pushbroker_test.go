@@ -140,6 +140,115 @@ func TestF5_PushTokenNeverAppearsInGitArgv(t *testing.T) {
 	}
 }
 
+// kubestellar/hive#5116: five agent-authored PRs across four languages
+// failed CI formatter gates (gofmt, cargo fmt, prettier) on a trailing blank
+// line the underlying coding CLI left at EOF. Hive has no writer of its own
+// in this path — the sandboxed CLI writes the file directly — so the broker
+// normalises it at the one point hive already controls: right before the
+// diff leaves the sandbox.
+func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if !res.Pushed {
+		t.Fatal("Pushed=false")
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "main.go"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if want := "package main\n\nfunc main() {}\n"; string(got) != want {
+		t.Fatalf("trailing blank line not stripped: got %q, want %q", got, want)
+	}
+}
+
+// A file already ending in a single newline — the common, correctly
+// formatted case — must be left byte-identical and must not needlessly
+// amend the commit.
+func TestBrokerLeavesCorrectlyFormattedFileAlone(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+	preAmendHead := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if res.Commit != preAmendHead {
+		t.Fatalf("commit changed for an already-clean file: before=%s after=%s", preAmendHead, res.Commit)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "main.go"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if want := "package main\n\nfunc main() {}\n"; string(got) != want {
+		t.Fatalf("file mutated when it should not have been: got %q", got)
+	}
+}
+
+// A file with no trailing newline at all is a different style question than
+// #5116's "...\n\n" defect and must not be touched by this normalisation.
+func TestBrokerDoesNotAddMissingTrailingNewline(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if !res.Pushed {
+		t.Fatal("Pushed=false")
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "main.go"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if want := "package main\n\nfunc main() {}"; string(got) != want {
+		t.Fatalf("file with no trailing newline was mutated: got %q", got)
+	}
+}
+
+// A binary file that happens to end in two 0x0a bytes must not be reinterpreted
+// as text and truncated — the NUL-sniff heuristic exists precisely so a binary
+// diff never gets treated like source.
+func TestBrokerLeavesBinaryFileWithTrailingNewlinesAlone(t *testing.T) {
+	dir := initRepo(t)
+	binary := []byte{0x00, 0x01, 0x02, '\n', '\n'}
+	path := filepath.Join(dir, "blob.bin")
+	if err := os.WriteFile(path, binary, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "blob.bin")
+	runGit(t, dir, "commit", "-m", "binary")
+	r := &recordingRunner{}
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !slices.Equal(got, binary) {
+		t.Fatalf("binary file mutated: got %v, want %v", got, binary)
+	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
 func TestProtectedPathViolationsTable(t *testing.T) {
 	files := []string{"policies/guard.yaml", "OWNERS", "hive.yaml.dashboard", "pkg/safe.go"}
 	got := ProtectedPathViolations(files, DefaultProtectedPaths)

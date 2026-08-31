@@ -139,6 +139,23 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 		res.ProtectedReject = rejected
 		return b.fail(res, fmt.Errorf("pushbroker: protected paths changed: %s", strings.Join(rejected, ", ")))
 	}
+	// The coding CLI running inside the sandbox writes files with its own
+	// tools, not hive's — hive has no writer of its own in this path, so it
+	// cannot fix a raw-output defect at the source. It can still normalise
+	// the one thing every formatter gate (gofmt, black, prettier, cargo fmt)
+	// agrees on before the diff leaves the sandbox: no blank line(s) trailing
+	// the final newline (kubestellar/hive#5116). Fixing it here, once, covers
+	// every backend and every target-repo language instead of teaching each
+	// coding CLI's own formatter to run first.
+	if amended, err := b.stripTrailingBlankLines(ctx, files); err != nil {
+		return b.fail(res, fmt.Errorf("normalising trailing newlines: %w", err))
+	} else if amended {
+		commit, err = b.git(ctx, "rev-parse", "HEAD")
+		if err != nil {
+			return b.fail(res, fmt.Errorf("reading HEAD after newline normalisation: %w", err))
+		}
+		res.Commit = strings.TrimSpace(string(commit))
+	}
 	diff, err := b.outgoingDiff(ctx)
 	if err != nil {
 		return b.fail(res, err)
@@ -212,6 +229,92 @@ func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	}
 	out, err := b.git(ctx, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD")
 	return splitLines(out), err
+}
+
+// stripTrailingBlankLines removes any blank line(s) trailing the final
+// newline of each changed, still-present, textual file, leaving exactly one
+// trailing newline. It reports whether it amended HEAD.
+//
+// Scope is deliberately narrow: a file with no trailing newline at all is
+// left untouched (that is a different, less universally-enforced style rule,
+// not the "...\n\n" defect #5116 reports), a file already ending in exactly
+// one newline is untouched, and a file containing a NUL byte in its first 8KB
+// — the same binary heuristic git itself uses — is never rewritten as text.
+// Only files still present on disk are considered — a changed file that was
+// deleted has nothing to normalise. This deliberately makes no additional git
+// call: everything it needs comes from the file list Run() already fetched
+// and the file content on disk.
+func (b *Broker) stripTrailingBlankLines(ctx context.Context, files []string) (bool, error) {
+	var touched []string
+	for _, rel := range files {
+		abs := filepath.Join(b.Workspace, rel)
+		info, err := os.Stat(abs)
+		if err != nil || info.IsDir() {
+			continue // deleted, or a directory entry from a rename — nothing to normalise
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return false, fmt.Errorf("reading %s: %w", rel, err)
+		}
+		if looksBinary(data) {
+			continue
+		}
+		normalized, changed := trimTrailingBlankLines(data)
+		if !changed {
+			continue
+		}
+		if err := os.WriteFile(abs, normalized, info.Mode().Perm()); err != nil {
+			return false, fmt.Errorf("writing %s: %w", rel, err)
+		}
+		touched = append(touched, rel)
+	}
+	if len(touched) == 0 {
+		return false, nil
+	}
+	addArgs := append([]string{"add", "--"}, touched...)
+	if _, err := b.git(ctx, addArgs...); err != nil {
+		return false, err
+	}
+	if _, err := b.git(ctx, "commit", "--amend", "--no-edit"); err != nil {
+		return false, err
+	}
+	if b.Logger != nil {
+		b.Logger.Info("pushbroker normalised trailing blank lines", "repo", b.Repo, "branch", b.Branch, "files", touched)
+	}
+	return true, nil
+}
+
+// looksBinary reports whether data appears to be non-text, using the same
+// "NUL byte in a leading sample" heuristic git itself applies (see git's
+// buffer_is_binary), so this classifies files the same way `git diff` would
+// without shelling out to ask it.
+func looksBinary(data []byte) bool {
+	const sample = 8000
+	if len(data) > sample {
+		data = data[:sample]
+	}
+	return bytes.IndexByte(data, 0) != -1
+}
+
+// trimTrailingBlankLines collapses one-or-more blank lines at end-of-file
+// down to a single trailing newline. It leaves data with no trailing newline
+// untouched entirely — that is not the defect being fixed here.
+func trimTrailingBlankLines(data []byte) ([]byte, bool) {
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		return data, false
+	}
+	trimmed := bytes.TrimRight(data, "\n")
+	// TrimRight on an all-newline file would strip everything; that is not a
+	// realistic agent-authored source file, but guard it anyway rather than
+	// emit an empty file.
+	want := append(append([]byte(nil), trimmed...), '\n')
+	if len(trimmed) == 0 {
+		want = []byte("\n")
+	}
+	if bytes.Equal(want, data) {
+		return data, false
+	}
+	return want, true
 }
 
 func (b *Broker) outgoingDiff(ctx context.Context) (string, error) {
