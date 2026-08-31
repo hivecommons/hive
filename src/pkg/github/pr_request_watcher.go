@@ -269,6 +269,18 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// Self-proposal gate (#5117): a PR that cites a bot-filed issue as its
+	// rationale, where no human has ever commented on that issue, is an agent
+	// implementing its own proposal on its own authority. Checked at the same
+	// choke point as every other gate above, for the same reason.
+	if reason, err := c.validateSelfProposalPRRequest(ctx, req); err != nil {
+		c.failPRRequest(path, req, err, nowFn)
+		return
+	} else if reason != "" {
+		c.rejectPRRequest(path, req, "self-proposal", reason, nowFn)
+		return
+	}
+
 	// Invocation-attribution trail (attribution.go): resolve what the hive
 	// invoked for this agent, append the visible trailer to the PR body when
 	// the toggle is on, and — below, on success — record the audit entry
