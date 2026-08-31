@@ -306,8 +306,16 @@ jobs:
 
           case "$status" in
             0)
-              echo "::notice::the arm64 image pulled and the service started"
-              printf '\n✅ The published arm64 image pulled, `/usr/local/bin/hive` ran, and the service answered `GET /api/health`.\n' >>"$GITHUB_STEP_SUMMARY"
+              # Say which image actually passed. Reporting "the published
+              # image" after probing a PR build would misdescribe the result
+              # in the same direction as the bug (#5370).
+              if [ "${LOCAL_BUILD}" = "true" ]; then
+                echo "::notice::the arm64 image built from this PR started"
+                printf '\n✅ The arm64 image **built from this PR** ran `/usr/local/bin/hive` and answered `GET /api/health`.\n' >>"$GITHUB_STEP_SUMMARY"
+              else
+                echo "::notice::the published arm64 image pulled and the service started"
+                printf '\n✅ The published arm64 image pulled, `/usr/local/bin/hive` ran, and the service answered `GET /api/health`.\n' >>"$GITHUB_STEP_SUMMARY"
+              fi
               ;;
             78)
               echo "::error::the probe could not run — a prerequisite is missing (EX_CONFIG). A lane that cannot run is not a lane that passed."
