@@ -300,6 +300,60 @@ else:
 sys.exit(0 if ok else 1)
 PY
 
+# #5356: the required context "gate" must be earned as a commit STATUS, not
+# only as a check-run. The release dance earns it on a `release-gate/*` scratch
+# branch, so the check-run's parent check-suite is bound to that branch and
+# protection evaluating a merge into v4 ignores it — the merge API answers
+# `Required status check "gate" is expected.` while the SHA-keyed wait sees it
+# green. A status carries no suite and no branch affinity, so it is the only
+# form of `gate` that satisfies protection here. This pins both halves: the
+# status must be posted, AND the check-run must survive (tagged-release.yml's
+# wait-for-gate step polls /commits/{sha}/check-runs for it).
+echo "case: docker.yml publishes gate as a commit status (#5356)"
+python3 - "$repo_root/.github/workflows/docker.yml" <<'PY' && note_ok "gate status wiring intact" || fail=1
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1]))
+ok = True
+def bad(msg):
+    global ok; ok = False; print(f"  FAIL: {msg}")
+gate = (w.get("jobs") or {}).get("gate")
+if not gate:
+    bad("docker.yml has no `gate` job — it produces the ONLY context v4 protection requires")
+    sys.exit(1)
+steps = gate.get("steps") or []
+status_step = next((s for s in steps
+                    if "commit status" in (s.get("name") or "").lower()), None)
+if status_step is None:
+    bad("the gate job no longer posts `gate` as a commit status — a check-run alone is "
+        "bound to its check-suite's branch, so a release earned on release-gate/* can "
+        "never satisfy protection on v4 (#5356)")
+else:
+    run = status_step.get("run", "")
+    if "/statuses/" not in run:
+        bad("the gate status step no longer POSTs to the statuses API (#5356)")
+    if "context=gate" not in run:
+        bad("the gate status step no longer posts the context `gate` — protection matches "
+            "the context name exactly (#5356)")
+    if "state=success" not in run:
+        bad("the gate status step no longer posts state=success (#5356)")
+    # The pull_request run's github.sha is an ephemeral merge commit, not the
+    # SHA protection evaluates. Posting there would leave the head SHA bare.
+    if "pull_request.head.sha" not in yaml.dump(status_step):
+        bad("the gate status step does not target the PR HEAD sha — on pull_request, "
+            "github.sha is the ephemeral merge commit and protection evaluates the head (#5356)")
+# statuses: write must be granted somewhere that covers this job.
+perms = gate.get("permissions") or w.get("permissions") or {}
+if perms.get("statuses") != "write":
+    bad("the gate job lacks statuses: write — the commit status POST will 403 (#5356)")
+# Additive, not a replacement: the job must keep its `gate` name so the
+# check-run tagged-release.yml's SHA-keyed wait polls for still appears, and
+# so the required context resolves. A `name:` override would rename both.
+if gate.get("name") not in (None, "gate"):
+    bad("the gate job carries a display name that is not `gate` — that renames the "
+        "check-run tagged-release.yml waits on AND the required context (#5356)")
+sys.exit(0 if ok else 1)
+PY
+
 if [ "$fail" -ne 0 ]; then
   echo "FAILED"
   exit 1

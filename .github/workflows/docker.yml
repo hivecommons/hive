@@ -93,6 +93,13 @@ jobs:
   # see the `env_lists` entry there and src/docs/release-line-guard.md.
   gate:
     runs-on: ubuntu-latest
+    # statuses: write is needed ONLY by the "Publish gate as a commit status"
+    # step below (#5356). Scoped to this job rather than raised on the whole
+    # workflow so the heavyweight build jobs keep the read-only contents /
+    # packages-write set they have today.
+    permissions:
+      contents: read
+      statuses: write
     outputs:
       push: ${{ steps.decide.outputs.push }}
     steps:
@@ -124,6 +131,59 @@ jobs:
           esac
           echo "push=$push" >> "$GITHUB_OUTPUT"
           echo "Push to GHCR: $push (branch=$REF_NAME event=$EVENT)"
+
+      # #5356 (7th distinct release-workflow failure): v4 branch protection
+      # requires the context "gate". This job already produces a check-run by
+      # that name, and tagged-release.yml's SHA-keyed wait sees it conclude
+      # 'success' on the release commit — yet the merge API still answers
+      # `Required status check "gate" is expected.` for the full retry window.
+      #
+      # The reason is check-SUITE branch affinity. The release dance earns gate
+      # on a throwaway `release-gate/v<version>` branch (see the EXCEPTION
+      # comment above), so the check-run's parent suite carries
+      # head_branch: release-gate/v<version>, never v4. Measured on release PR
+      # #5355's head c4c5f3db: gate was a check-run with conclusion success,
+      # suite 90594836071, suite head_branch release-gate/v4.0.1 — and gate was
+      # ABSENT from that commit's statuses, which held only dco and tide.
+      # Protection evaluating a merge INTO v4 does not honour a check-run whose
+      # suite is bound to a different branch, so no change to how the merge is
+      # performed can fix it. Reproduced identically on PR #5357 (95fd0b5b).
+      #
+      # A commit STATUS has no check-suite and therefore no branch affinity, so
+      # it satisfies contexts: ["gate"] whichever branch or workflow produced
+      # it. dco and tide already prove statuses work on this repo. v4's
+      # protection pins the context to app_id 15368 (github-actions), which is
+      # the app a GITHUB_TOKEN status from Actions is attributed to, so this
+      # status is accepted for that pin.
+      #
+      # Deliberately ADDITIVE: the gate check-run stays exactly as it was,
+      # because tagged-release.yml's wait-for-gate step polls
+      # /commits/{sha}/check-runs for it. Removing or replacing the check-run
+      # would break that wait.
+      #
+      # `continue-on-error` so a statuses API hiccup cannot turn a green build
+      # red: the check-run remains the primary signal, and a missing status
+      # fails LOUDLY and safely later (the release merge simply defers) rather
+      # than silently landing an unbuilt commit.
+      - name: Publish gate as a commit status
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # For pull_request the run's github.sha is the ephemeral merge
+          # commit, which is NOT the SHA protection evaluates; the PR head is.
+          # For push / workflow_dispatch github.sha IS the commit under test.
+          TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Posting 'gate' commit status on ${TARGET_SHA}..."
+          gh api -X POST "repos/${REPO}/statuses/${TARGET_SHA}" \
+            -f state=success \
+            -f context=gate \
+            -f target_url="${TARGET_URL}" \
+            -f description="gate passed" >/dev/null
+          echo "Posted 'gate' success status on ${TARGET_SHA}."
 
   build:
     needs: gate
