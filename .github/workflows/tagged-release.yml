@@ -67,6 +67,17 @@ name: Tagged Release
 #     consulting a status the repo does not require. This is the same
 #     "trust the SHA lookup, not the aggregate or branch-scoped view"
 #     reasoning as the wait-for-gate step, extended one step further.
+#   - THE RELEASE PR MUST NOT RE-TRIGGER docker.yml (#5339, 7th). Opening the
+#     PR below fires docker.yml again on the SAME SHA under `pull_request`.
+#     That run is created by GITHUB_TOKEN, so GitHub's recursion guard never
+#     starts its jobs and it fails with zero jobs in ~2s — and because
+#     protection resolves a required context to the MOST RECENT check-run of
+#     that name, it superseded the green `gate` earned seconds earlier and the
+#     merge was refused (405) for the whole retry window with no way to
+#     recover. docker.yml's `gate` job now skips `release-gate/*` pull_request
+#     events so no competing check-run is ever created. If a future change
+#     makes the release PR trigger a required check again, this failure comes
+#     back looking exactly like a green gate that protection refuses to see.
 #
 # IDEMPOTENCY: this workflow's own release commit (moving Unreleased into a
 # dated section) is what empties Unreleased, which re-triggers docker.yml on

@@ -266,6 +266,25 @@ if "schedule" not in triggers:
 # The backstop releases v4's CURRENT tip, so it must first prove docker.yml
 # published images for that tip; otherwise it would tag a commit whose
 # digest does not exist (this workflow retags, it never rebuilds).
+# #5339 (7th recurrence): opening the release PR re-triggers docker.yml on the
+# SAME SHA under `pull_request`. That run is created by GITHUB_TOKEN, so
+# GitHub's recursion guard never starts its jobs and it completes as `failure`
+# in ~2s — superseding the green `gate` this workflow just earned, because
+# protection resolves a required context to the most recent check-run of that
+# name. The merge is then refused for the whole retry window with no path to
+# recovery. docker.yml's `gate` job must therefore skip `release-gate/*` PRs.
+import os
+dpath = os.path.join(os.path.dirname(sys.argv[1]), "docker.yml")
+if os.path.exists(dpath):
+    dw = yaml.safe_load(open(dpath))
+    gate_if = (dw.get("jobs", {}).get("gate", {}) or {}).get("if") or ""
+    if "release-gate/" not in gate_if:
+        bad("docker.yml's gate job no longer skips release-gate/* pull_request "
+            "runs — the release PR will supersede its own green gate check and "
+            "the merge becomes unrecoverable (#5339)")
+else:
+    bad("docker.yml not found next to the release workflow")
+
 dec = jobs.get("decide", {})
 guard = next((s for s in dec.get("steps", [])
               if "Require published images" in (s.get("name") or "")), None)
