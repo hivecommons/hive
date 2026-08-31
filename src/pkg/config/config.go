@@ -953,6 +953,20 @@ type AgentConfig struct {
 	// Connections declares external service integrations (MCP servers, APIs, knowledge sources).
 	Connections []ConnectionConfig `yaml:"connections,omitempty" json:"connections,omitempty"`
 
+	// Skills names reusable "how to do X" skills to resolve out of the hive's
+	// skill registry (pkg/skillreg, loaded from the host-local skills directory)
+	// and inject into this agent's kick context. Names are resolved at kick
+	// time, so editing a skill file takes effect on the next kick without a
+	// restart. An unknown name is skipped, not fatal: a typo degrades the kick
+	// rather than blocking the agent.
+	//
+	// This is deliberately host-local rather than per-repo. Hive agents work
+	// over the GitHub API and have no guaranteed per-repo checkout, so a
+	// repo-declared skills directory would resolve to nothing on most kicks;
+	// the registry directory is the same kind of operator-managed volume as
+	// /data/policies and is present on every hive host.
+	Skills []string `yaml:"skills,omitempty" json:"skills,omitempty"`
+
 	// Managed is true for agents loaded from the overlay directory (not base config).
 	Managed bool `yaml:"-" json:"managed"`
 

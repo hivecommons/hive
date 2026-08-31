@@ -19,6 +19,7 @@ import (
 	"github.com/kubestellar/hive/pkg/policies"
 	"github.com/kubestellar/hive/pkg/promptsrc"
 	"github.com/kubestellar/hive/pkg/resolve"
+	"github.com/kubestellar/hive/pkg/skillreg"
 	"github.com/kubestellar/hive/pkg/worksource"
 )
 
@@ -248,6 +249,14 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 	// agentsmd.ParseNearest for closest-wins nested AGENTS.md.
 	if agentsSection := s.primeAgentsMd(s.agentsRepoRoot()); agentsSection != "" {
 		knowledgeSection = agentsSection + "\n" + knowledgeSection
+	}
+
+	// Registry skills are a separate, independently-wired path from the
+	// AGENTS.md block above. That one needs a repo checkout (see
+	// agentsRepoRoot); this one reads the hive-host-local skills directory, so
+	// it takes effect today without any per-repo provisioning.
+	if skillsSection := s.primeSkills(agentName); skillsSection != "" {
+		knowledgeSection = skillsSection + "\n" + knowledgeSection
 	}
 
 	inceptionIdea, inceptionPhase, inceptionMode, inceptionAnswers, inceptionSlug, inceptionRepoURL := s.inceptionVars()
@@ -1417,6 +1426,98 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 		)
 	}
 	return section
+}
+
+// skillsRegistryDir is the host-local directory the skill registry is loaded
+// from at kick time. It matches the directory the dashboard reports on, so the
+// count shown in the UI and the skills actually injected come from one place.
+// It is a var, not a const, only so tests can point it at a temp dir.
+var skillsRegistryDir = "/data/skills"
+
+// maxSkillsInjectionBytes caps how much registry skill text may be prepended to
+// a single kick. Skill bodies are operator-authored files of unbounded size, and
+// the kick prompt shares a context budget with the knowledge primer and the
+// issue/PR lists; without a cap one long skill file could crowd out the actual
+// work queue. Skills are dropped whole (never truncated mid-body) so an agent
+// never receives half an instruction.
+const maxSkillsInjectionBytes = 8192
+
+// primeSkills resolves the skills agentName declares in config against the
+// host-local skill registry and renders them for injection into the kick.
+//
+// It is tolerant at every step: no declared skills, a missing registry
+// directory, or a name with no matching skill all yield "" rather than an
+// error, so a misconfigured skill degrades the kick instead of blocking the
+// agent. Loading happens per kick (not once at startup) so an operator editing
+// a skill file sees it take effect on the next kick without a restart.
+func (s *Scheduler) primeSkills(agentName string) string {
+	if s.cfg == nil {
+		return ""
+	}
+	ac, ok := s.cfg.Agents[agentName]
+	if !ok || len(ac.Skills) == 0 {
+		return ""
+	}
+
+	reg := skillreg.NewRegistry()
+	loaded, err := reg.Load(skillsRegistryDir, s.logger)
+	if err != nil {
+		s.logger.Warn("skillreg: cannot load skills registry, skipping injection",
+			"dir", skillsRegistryDir, "error", err)
+		return ""
+	}
+	if loaded == 0 {
+		s.logger.Debug("skillreg: no skills in registry, skipping injection",
+			"dir", skillsRegistryDir, "requested", len(ac.Skills))
+		return ""
+	}
+
+	resolved := reg.ResolveRequested(nil, ac.Skills)
+	if len(resolved) == 0 {
+		s.logger.Warn("skillreg: none of the declared skills resolved",
+			"agent", agentName, "requested", ac.Skills, "registry_size", loaded)
+		return ""
+	}
+
+	kept, dropped := capSkills(resolved, maxSkillsInjectionBytes)
+	if len(kept) == 0 {
+		s.logger.Warn("skillreg: all resolved skills exceed the injection cap, skipping",
+			"agent", agentName, "cap_bytes", maxSkillsInjectionBytes)
+		return ""
+	}
+	section := skillreg.InjectionText(kept)
+	s.logger.Info("skillreg: injecting skills into kick",
+		"agent", agentName,
+		"dir", skillsRegistryDir,
+		"injected", len(kept),
+		"dropped", len(dropped),
+		"chars", len(section),
+	)
+	if len(dropped) > 0 {
+		s.logger.Warn("skillreg: dropped skills over the injection cap",
+			"agent", agentName, "dropped", dropped, "cap_bytes", maxSkillsInjectionBytes)
+	}
+	return section
+}
+
+// capSkills keeps skills in request order until adding the next one would push
+// the rendered body past capBytes. It returns the kept skills and the names of
+// those dropped. A single skill larger than capBytes is dropped rather than
+// truncated, so an agent never receives a partial instruction. Later, smaller
+// skills are still considered after a large one is dropped, so one oversized
+// file does not silently suppress everything declared after it.
+func capSkills(skills []skillreg.Skill, capBytes int) (kept []skillreg.Skill, dropped []string) {
+	used := 0
+	for _, sk := range skills {
+		size := len(sk.Body)
+		if used+size > capBytes {
+			dropped = append(dropped, sk.Name)
+			continue
+		}
+		used += size
+		kept = append(kept, sk)
+	}
+	return kept, dropped
 }
 
 // primeKnowledge queries the wiki layers for facts relevant to the given issues

@@ -498,9 +498,11 @@ func (r *Registry) ResolveRequested(cfg *agentsmd.AgentsConfig, requested []stri
 // contributes nothing. This is the guarded wire-in point for the kick-assembly
 // path.
 //
-// TODO(sdkskills): deep-wire this into the kick-assembly pipeline alongside
-// agentsmd.InjectionText so registry-resolved skills are appended to the injected
-// context. Kept as a standalone helper here to avoid rewriting the pipeline.
+// The kick-assembly pipeline calls this via the scheduler's primeSkills, which
+// resolves the skills an agent declares in config against a registry loaded from
+// the hive-host-local skills directory and prepends the result to ${KNOWLEDGE}.
+// It remains a standalone helper so other callers (e.g. a BYO-agent launcher
+// resolving AgentSpec.DefaultSkills) can render the same block.
 func InjectionText(skills []Skill) string {
 	if len(skills) == 0 {
 		return ""

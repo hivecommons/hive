@@ -28,9 +28,11 @@ import (
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard
-// probes for a skills registry. The skills registry (pkg/skillreg) is not yet
-// wired into the runtime, so this is a best-effort, optional load: an absent
-// directory reports "not configured" rather than an error.
+// probes for a skills registry. It is the same directory the scheduler loads at
+// kick time (scheduler.skillsRegistryDir), so the count reported here and the
+// skills actually injected into an agent's context come from one place. The
+// load stays best-effort and optional: an absent directory reports "not
+// configured" rather than an error.
 //
 // It is a var, not a const, purely so tests can point it at a temp dir.
 var skillsConventionalDir = dataVolumePath + "/skills"
