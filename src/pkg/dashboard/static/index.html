@@ -6193,6 +6193,11 @@
       input.value = url;
       input.className = 'terminal-copy-url-fallback';
       input.setAttribute('aria-label', `URL from ${agentName}'s terminal`);
+      /* An error toast is made sticky, and makeToastSticky puts a
+         dismiss-on-click listener on the WHOLE toast. Without this the first
+         click into the input — the one action this fallback exists to invite —
+         would close the toast and take the URL with it. */
+      input.addEventListener('click', e => e.stopPropagation());
       if (toast) toast.appendChild(input);
       else document.body.appendChild(input);
       input.focus();

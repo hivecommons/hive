@@ -70,6 +70,10 @@ func TestTerminalCopyUrlButton(t *testing.T) {
 		"showToast(`No URL on ${agentName}'s terminal right now`",
 		"showTerminalUrlFallback(agentName, url);",
 		"Clipboard access needs HTTPS or localhost",
+		// An error toast is sticky and dismisses on any click within it, so
+		// the fallback input must stop propagation or the first click into it
+		// closes the toast and takes the URL away.
+		"input.addEventListener('click', e => e.stopPropagation());",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("terminal copy-URL control is missing %q", want)
