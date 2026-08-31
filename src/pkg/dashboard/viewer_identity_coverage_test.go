@@ -279,30 +279,8 @@ func TestDetectedProjectObservability_DetectsPlatformsFromBeads(t *testing.T) {
 	}
 }
 
-// ---------- configuredDossierCacheMaxEntries (dossier.go) ----------
-//
-// configuredDossierCacheMaxEntries (42.9%) bounds the public dossier caches
-// against username-spray memory growth; only the unset branch was pinned.
-
-func TestConfiguredDossierCacheMaxEntries(t *testing.T) {
-	cases := []struct {
-		name string
-		raw  string
-		want int
-	}{
-		{"unset uses default", "", dossierCacheMaxEntriesDefault},
-		{"whitespace uses default", "   ", dossierCacheMaxEntriesDefault},
-		{"non-numeric uses default", "lots", dossierCacheMaxEntriesDefault},
-		{"zero uses default", "0", dossierCacheMaxEntriesDefault},
-		{"negative uses default", "-3", dossierCacheMaxEntriesDefault},
-		{"valid override honored", "64", 64},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(dossierCacheMaxEntriesEnv, tc.raw)
-			if got := configuredDossierCacheMaxEntries(); got != tc.want {
-				t.Fatalf("raw %q: got %d, want %d", tc.raw, got, tc.want)
-			}
-		})
-	}
-}
+// configuredDossierCacheMaxEntries is covered by
+// TestConfiguredDossierCacheMaxEntries in
+// role_convergence_replan_coverage_test.go. A duplicate declaration here
+// (merge skew between #5260 and #5265) broke the package test build; the
+// whitespace-only case unique to this file moved into the surviving test.

@@ -84,6 +84,7 @@ func TestConfiguredDossierCacheMaxEntries(t *testing.T) {
 		want int
 	}{
 		{"unset", "", dossierCacheMaxEntriesDefault},
+		{"whitespace-only", "   ", dossierCacheMaxEntriesDefault},
 		{"valid", "64", 64},
 		{"whitespace-padded valid", "  128  ", 128},
 		{"non-numeric", "lots", dossierCacheMaxEntriesDefault},
