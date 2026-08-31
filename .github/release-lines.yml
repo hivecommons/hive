@@ -46,6 +46,11 @@ pinned:
   # release lines and nothing else: a feature branch gets the same gate through
   # `pull_request`, and running it on every pushed branch would burn runner
   # minutes re-scanning code that has not reached a release line.
+  # Added with the docs link checker (#5278), after the v2 line was sunset
+  # (#5030-era). It gates src/docs/ links on v4 only; v2 is excluded rather
+  # than back-filled, because the workflow never ran there and adding it
+  # would gate a line no longer taking doc changes.
+  docs-link-check.yml: [-v2]
   go-security-analysis.yml: []
   podman-arm64-lane.yml: []
   podman-contract.yml: []
