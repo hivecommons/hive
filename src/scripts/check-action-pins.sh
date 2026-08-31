@@ -49,6 +49,23 @@ if command -v gh >/dev/null 2>&1; then
   done || fail=1
 fi
 
+# An EMPTY workflow-expression delimiter pair anywhere in a workflow file is a
+# hard parse error in GitHub's workflow parser ("An expression was expected"),
+# and the parser scans `run:` blocks in full without honouring shell comments —
+# so one written inside a comment, purely to illustrate a point, still kills the
+# file. The failure mode is why this is worth a CI gate rather than a code
+# review note (#5339): GitHub does not reject the push or annotate the file. It
+# silently falls back to naming the workflow by its PATH, never reads its `on:`
+# block, and stops firing its triggers. release.yml sat like that for four days
+# with the entire tagged-release pipeline dead, while its only visible symptom
+# was job-less "failed" runs that looked like unrelated CI flake.
+empty_expr=$(grep -rnE '\$\{\{[[:space:]]*\}\}' "$DIR" 2>/dev/null || true)
+if [ -n "$empty_expr" ]; then
+  echo "EMPTY-EXPRESSION an empty \${{ }} is a workflow parse error, not a comment:"
+  echo "$empty_expr"
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "action pin check FAILED"
   exit 1

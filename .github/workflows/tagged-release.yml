@@ -652,8 +652,19 @@ jobs:
             # $GITHUB_REPOSITORY (runner-provided) rather than the
             # ${{ github.repository }} expression other steps use: this step's
             # script is extracted verbatim and run under plain bash by
-            # test-release-push-retry.sh, where an unexpanded ${{ }} is a bash
-            # bad-substitution. Same value, and it keeps the step testable.
+            # test-release-push-retry.sh, where an unexpanded workflow
+            # expression is a bash bad-substitution. Same value, and it keeps
+            # the step testable.
+            #
+            # Do NOT write an empty workflow-expression delimiter pair in this
+            # comment to illustrate the point. GitHub's workflow parser scans
+            # the entire `run:` string for expressions and does not honour
+            # shell comments, so an empty one is a hard parse error
+            # ("An expression was expected") that fails the WHOLE workflow at
+            # registration — not at runtime. That is #5339: the workflow
+            # silently fell back to being named by its path, its `on:` block
+            # was never read, and the workflow_run trigger stopped firing for
+            # four days while every run looked merely "failed".
             if out="$(gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/merge" \
                         -f merge_method=merge -f sha="${commit_sha}" 2>&1)"; then
               echo "$out"
