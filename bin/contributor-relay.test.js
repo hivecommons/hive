@@ -3509,6 +3509,194 @@ test('#4267 redactTokens redacts a token even when glued to a preceding word', (
   } finally { teardown(relay); }
 });
 
+// ---------------------------------------------------------------------------
+// kubestellar/hive#5478 — redaction parity with src/pkg/logscrub.
+//
+// The relay used to redact GitHub token prefixes and nothing else, while the
+// Go path also scrubbed JWTs, AWS keys, `Bearer` values, PEM private-key
+// blocks and canary markers. Agent terminal output carrying any of those was
+// forwarded to the hub unredacted. The Go-side companion guard lives in
+// src/pkg/logscrub/redaction_parity_test.go and fails if either side gains a
+// category the other lacks.
+//
+// Every value below is obviously synthetic and shape-accurate; none of it is
+// copied from a real credential or log. Assertions are on the redacted OUTPUT
+// only — the pre-redaction input is never printed.
+// ---------------------------------------------------------------------------
+
+test('#5478 redactTokens scrubs a JWT', () => {
+  const relay = loadRelay({});
+  try {
+    const payload = 'b'.repeat(25);
+    const jwt = `eyJ${'a'.repeat(25)}.${payload}.${'c'.repeat(25)}`;
+    const out = relay.redactTokens(`authorization: ${jwt}`);
+    assert.ok(!out.includes(payload), 'JWT payload survived redaction');
+    assert.ok(out.includes('***REDACTED***'), `expected a redaction marker, got: ${out}`);
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens scrubs AWS access key IDs (AKIA and ASIA)', () => {
+  const relay = loadRelay({});
+  try {
+    for (const prefix of ['AKIA', 'ASIA']) {
+      const key = `${prefix}${'A'.repeat(16)}`;
+      const out = relay.redactTokens(`aws_access_key_id = ${key}`);
+      assert.ok(!out.includes(key), `${prefix} key survived redaction: ${out}`);
+    }
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens scrubs a Bearer value in any casing', () => {
+  const relay = loadRelay({});
+  try {
+    const secret = 'a'.repeat(32);
+    for (const word of ['Bearer', 'bearer', 'BEARER']) {
+      const out = relay.redactTokens(`curl -H 'Authorization: ${word} ${secret}'`);
+      assert.ok(!out.includes(secret), `${word} value survived redaction: ${out}`);
+    }
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens scrubs PEM private-key blocks', () => {
+  const relay = loadRelay({});
+  try {
+    const blocks = [
+      ['-----BEGIN PRIVATE KEY-----', '-----END PRIVATE KEY-----'],
+      ['-----BEGIN RSA PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----'],
+      ['-----BEGIN OPENSSH PRIVATE KEY-----', '-----END OPENSSH PRIVATE KEY-----'],
+      ['-----BEGIN ENCRYPTED PRIVATE KEY-----', '-----END ENCRYPTED PRIVATE KEY-----'],
+      ['-----BEGIN PGP PRIVATE KEY BLOCK-----', '-----END PGP PRIVATE KEY BLOCK-----'],
+    ];
+    for (const [begin, end] of blocks) {
+      const body = 'SYNTHETICKEYMATERIAL';
+      const out = relay.redactTokens(`cat id_key\n${begin}\n${body}\n${end}\ndone`);
+      assert.ok(!out.includes(body), `key body survived for ${begin}: ${out}`);
+      assert.ok(out.includes('***REDACTED***'), `expected a redaction marker for ${begin}`);
+    }
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens scrubs a HIVE-CANARY marker', () => {
+  const relay = loadRelay({});
+  try {
+    const canary = `HIVE-CANARY-${'ab'.repeat(24)}`;
+    const out = relay.redactTokens(`leaked ${canary} here`);
+    assert.ok(!out.includes(canary), `canary marker survived redaction: ${out}`);
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens redacts a gho_ token containing an underscore', () => {
+  // The relay's character class was [A-Za-z0-9] for gh*_ while Go's was
+  // [A-Za-z0-9_], so a token body containing an underscore was redacted by Go
+  // and passed through here.
+  const relay = loadRelay({});
+  try {
+    const body = `${'a'.repeat(16)}_${'b'.repeat(19)}`;
+    const out = relay.redactTokens(`token=gho_${body} end`);
+    assert.strictEqual(out, 'token=gho_***REDACTED*** end',
+      `underscore-bearing token leaked: ${out}`);
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens redacts a short (20-char) token body', () => {
+  // The relay's floor was 36 trailing characters and Go's was 10, so a
+  // truncated token-shaped run cleared the relay and was forwarded.
+  const relay = loadRelay({});
+  try {
+    const body = 'a'.repeat(20);
+    const out = relay.redactTokens(`token=ghp_${body} end`);
+    assert.strictEqual(out, 'token=ghp_***REDACTED*** end',
+      `short token body leaked: ${out}`);
+  } finally { teardown(relay); }
+});
+
+test('#5478 the lowered floor still does not redact ordinary prose', () => {
+  // Moving the floor from 36 to 10 widens what matches, so pin that plainly
+  // non-credential text is still passed through untouched. Redaction is
+  // fail-safe, but a floor low enough to eat normal output would make the
+  // forwarded pane text useless.
+  const relay = loadRelay({});
+  try {
+    for (const s of [
+      'plain output',
+      'ghost_stories are fine',
+      'ghp_short',
+      'git push origin main',
+      'see https://github.com/kubestellar/hive/pull/5478',
+      'Bearer with no value follows',
+      '',
+    ]) {
+      assert.strictEqual(relay.redactTokens(s), s, `must pass through unchanged: ${s}`);
+    }
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens redacts two adjacent PEM blocks separately', () => {
+  // The block pattern is lazy (.*?), so two blocks must not be swallowed as
+  // one span that also eats the text between them.
+  const relay = loadRelay({});
+  try {
+    const text = [
+      '-----BEGIN PRIVATE KEY-----', 'FIRSTKEYMATERIAL', '-----END PRIVATE KEY-----',
+      'KEEP-THIS-LINE',
+      '-----BEGIN PRIVATE KEY-----', 'SECONDKEYMATERIAL', '-----END PRIVATE KEY-----',
+    ].join('\n');
+    const out = relay.redactTokens(text);
+    assert.ok(!out.includes('FIRSTKEYMATERIAL'), 'first key body survived');
+    assert.ok(!out.includes('SECONDKEYMATERIAL'), 'second key body survived');
+    assert.ok(out.includes('KEEP-THIS-LINE'),
+      `the text between two key blocks was swallowed: ${out}`);
+  } finally { teardown(relay); }
+});
+
+test('#5478 redactTokens is stable across repeated calls (no lastIndex carry-over)', () => {
+  // The category regexes are module-level and /g, so they carry lastIndex.
+  // A stale lastIndex would make the SECOND call skip the start of its input
+  // and fail open — the exact silent-miss shape this issue is about.
+  const relay = loadRelay({});
+  try {
+    const input = `token=gho_${TOKEN_BODY} end`;
+    const first = relay.redactTokens(input);
+    for (let i = 0; i < 5; i++) {
+      assert.strictEqual(relay.redactTokens(input), first,
+        `redaction was not idempotent on call ${i + 2} — regex lastIndex carried over`);
+    }
+    assert.ok(!first.includes(TOKEN_BODY));
+  } finally { teardown(relay); }
+});
+
+test('#5478 every declared redaction category actually fires', () => {
+  // Anti-vacuity: a category could be declared with a regex that compiles and
+  // never matches, satisfying the Go-side NAME parity check while the material
+  // still leaked. Assert each declared category redacts a sample of its own
+  // shape, and that the declared set is non-empty to begin with.
+  const relay = loadRelay({});
+  try {
+    const samples = {
+      hive_canary: `HIVE-CANARY-${'ab'.repeat(24)}`,
+      github_token: `gho_${TOKEN_BODY}`,
+      jwt: `eyJ${'a'.repeat(25)}.${'b'.repeat(25)}.${'c'.repeat(25)}`,
+      aws_access_key: `AKIA${'A'.repeat(16)}`,
+      bearer: `Bearer ${'a'.repeat(32)}`,
+      pem_private_key: '-----BEGIN PRIVATE KEY-----\nSYNTHETIC\n-----END PRIVATE KEY-----',
+      pem_encrypted_private_key:
+        '-----BEGIN ENCRYPTED PRIVATE KEY-----\nSYNTHETIC\n-----END ENCRYPTED PRIVATE KEY-----',
+      pgp_private_key:
+        '-----BEGIN PGP PRIVATE KEY BLOCK-----\nSYNTHETIC\n-----END PGP PRIVATE KEY BLOCK-----',
+    };
+    const declared = relay.HIVE_REDACTION_CATEGORIES.map(c => c.category);
+    assert.ok(declared.length > 0,
+      'HIVE_REDACTION_CATEGORIES is empty — every assertion here would pass vacuously');
+    for (const name of declared) {
+      const sample = samples[name];
+      assert.ok(sample, `category ${name} has no sample here; add one so it is actually exercised`);
+      const out = relay.redactTokens(sample);
+      assert.ok(out.includes('***REDACTED***') && out !== sample,
+        `declared category ${name} did not redact its own sample — the pattern compiles but never fires`);
+    }
+  } finally { teardown(relay); }
+});
+
 // --- paneLooksBlockedOnHuman -------------------------------------------------
 
 test('#4267 blocked-on-human: trailing question mark on the last content line', () => {

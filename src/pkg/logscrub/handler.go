@@ -15,14 +15,66 @@ var TokenPattern = regexp.MustCompile(
 		`|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`,
 )
 
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`HIVE-CANARY-[A-Fa-f0-9]{48}`),
-	TokenPattern,
-	regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`),
-	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b`),
-	regexp.MustCompile(`(?s)-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----`),
-	regexp.MustCompile(`(?s)-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----`),
-	regexp.MustCompile(`(?s)-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----.*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----`),
+// secretPattern is one named redaction category. The Category name is not
+// cosmetic: it is the join key for the cross-language parity guard in
+// redaction_parity_test.go, which asserts that every category Go redacts is
+// also redacted by redactTokens() in bin/contributor-relay.sh. Before #5478
+// the two implementations were hand-maintained lists in different languages
+// with nothing failing when they drifted, and the relay had silently fallen
+// four categories behind — JWTs, PEM private-key blocks, Bearer values and
+// AWS access keys all reached the hub unredacted.
+//
+// Adding a pattern here without a matching HIVE_REDACTION_CATEGORY entry in
+// the relay (or a declared exception in the parity test) fails that test.
+type secretPattern struct {
+	// Category is the stable identifier shared with the relay. Renaming it is
+	// a breaking change to the parity guard on both sides.
+	Category string
+	Re       *regexp.Regexp
+}
+
+// Category identifiers. Declared as constants so a typo is a compile error on
+// the Go side rather than a silently-unmatched string in the parity test.
+const (
+	CategoryHiveCanary   = "hive_canary"
+	CategoryGitHubToken  = "github_token"
+	CategoryJWT          = "jwt"
+	CategoryAWSAccessKey = "aws_access_key"
+	CategoryBearer       = "bearer"
+	CategoryPEMPrivate   = "pem_private_key"
+	CategoryPEMEncrypted = "pem_encrypted_private_key"
+	CategoryPGPPrivate   = "pgp_private_key"
+)
+
+// jwtPattern is the JWT third of TokenPattern, broken out so the parity test
+// can name it as its own category. TokenPattern keeps both alternatives fused
+// because pkg/ioscan and pkg/pushbroker consume it as a single "is this string
+// credential-shaped?" probe.
+var jwtPattern = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`)
+
+// githubTokenPattern is the GitHub-prefix half of TokenPattern, likewise broken
+// out for category naming.
+var githubTokenPattern = regexp.MustCompile(`(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}`)
+
+var secretPatterns = []secretPattern{
+	{CategoryHiveCanary, regexp.MustCompile(`HIVE-CANARY-[A-Fa-f0-9]{48}`)},
+	{CategoryGitHubToken, githubTokenPattern},
+	{CategoryJWT, jwtPattern},
+	{CategoryAWSAccessKey, regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)},
+	{CategoryBearer, regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b`)},
+	{CategoryPEMPrivate, regexp.MustCompile(`(?s)-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----`)},
+	{CategoryPEMEncrypted, regexp.MustCompile(`(?s)-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----`)},
+	{CategoryPGPPrivate, regexp.MustCompile(`(?s)-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----.*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----`)},
+}
+
+// Categories returns the redaction category names Go covers, in declaration
+// order. The parity test compares this against the relay's declared set.
+func Categories() []string {
+	out := make([]string, 0, len(secretPatterns))
+	for _, p := range secretPatterns {
+		out = append(out, p.Category)
+	}
+	return out
 }
 
 const redacted = "[REDACTED]"
@@ -71,7 +123,7 @@ func scrub(s string) string {
 // GitHub tokens, AWS access keys, bearer tokens, JWTs, and private-key blocks.
 func ScrubString(s string) string {
 	for _, p := range secretPatterns {
-		s = p.ReplaceAllString(s, redacted)
+		s = p.Re.ReplaceAllString(s, redacted)
 	}
 	return s
 }

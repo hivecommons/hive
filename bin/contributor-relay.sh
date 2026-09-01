@@ -1609,20 +1609,114 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+// ── Redaction categories (kubestellar/hive#5478) ────────────────────────────
+//
+// HIVE_REDACTION_CATEGORIES is the relay's half of a cross-language contract
+// with src/pkg/logscrub. Each `category` name here must have a matching entry
+// in logscrub's secretPatterns, and vice versa; the parity guard in
+// src/pkg/logscrub/redaction_parity_test.go reads THIS array (by parsing the
+// `category:` fields out of this file) and fails when either side gains a
+// category the other lacks.
+//
+// It exists because the two redaction lists were previously hand-maintained
+// with no shared source of truth and nothing failing when they diverged. The
+// relay had fallen four categories behind the Go path: an agent terminal that
+// printed a JWT, an AWS access key, a `Bearer` value or a PEM private-key
+// block had it forwarded to the hub unredacted.
+//
+// Why the relay declares its own regexes rather than importing Go's: Go's RE2
+// and JavaScript's RegExp are different dialects. Go writes inline flags
+// (`(?s)`, `(?i)`) that JS expresses only as trailing flags, and Go's `\b` in
+// `\b(AKIA|ASIA)` sits next to character classes JS treats differently. A
+// generator would therefore have to translate dialects, and a translation bug
+// would fail OPEN — producing a JS regex that compiles and matches nothing,
+// which is exactly the silent-miss shape this guard exists to catch. Naming
+// the categories and asserting BEHAVIOUR on both sides (each side must
+// actually redact a synthetic sample of its own category — see the parity
+// test's anti-vacuity check) is the safer contract: it cannot pass on a
+// pattern that compiles but does not fire.
+//
+// Redaction is fail-safe: over-redacting a token-shaped string is far cheaper
+// than forwarding a real credential, so these lean deliberately broad.
+const HIVE_REDACTION_CATEGORIES = [
+  // Canary markers planted to detect exfiltration; their whole purpose is to
+  // be noticed, so they must never travel in cleartext.
+  { category: 'hive_canary', re: /HIVE-CANARY-[A-Fa-f0-9]{48}/g, to: '***REDACTED***' },
+
+  // GitHub tokens. Two deliberate alignments with logscrub (#5478):
+  //
+  //   1. Character class is [A-Za-z0-9_], not [A-Za-z0-9]. Go accepted the
+  //      underscore for every prefix; the relay accepted it only for
+  //      github_pat_, so a gho_ token CONTAINING an underscore was redacted by
+  //      Go and passed through here.
+  //
+  //   2. Floor is {10,}, not {36,}, matching Go. A short or truncated
+  //      token-shaped run — a token clipped by a terminal-width wrap, say —
+  //      cleared the old 36-character floor and survived.
+  //
+  // The bound stays OPEN-ENDED ({10,} not {10}) for the #4267 reason: an exact
+  // bound redacts only the first N characters and leaks a longer token's tail.
+  // The floor moved; the open-endedness is load-bearing and must stay.
+  //
+  // The replacement keeps the matched prefix ("gho_***REDACTED***") so hub-side
+  // log readers can still tell WHICH credential class appeared without seeing
+  // the secret — the #4267 contract, preserved.
+  {
+    category: 'github_token',
+    re: /(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}/g,
+    to: (_m, prefix) => `${prefix}***REDACTED***`,
+  },
+
+  // JWTs. header.payload.signature; the payload routinely carries an
+  // installation identity and the signature makes the whole thing bearer-usable.
+  {
+    category: 'jwt',
+    re: /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g,
+    to: '***REDACTED***',
+  },
+
+  // AWS access key IDs (long-lived AKIA, temporary ASIA).
+  { category: 'aws_access_key', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, to: '***REDACTED***' },
+
+  // `Bearer <value>` in any casing — the shape an agent prints when it echoes a
+  // curl invocation or an HTTP debug trace.
+  {
+    category: 'bearer',
+    re: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/gi,
+    to: '***REDACTED***',
+  },
+
+  // PEM private-key blocks. Matched across newlines (the `s` flag) and lazily
+  // (`*?`) so two adjacent blocks are redacted separately rather than as one
+  // span that swallows the text between them.
+  {
+    category: 'pem_private_key',
+    re: /-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----/gs,
+    to: '***REDACTED***',
+  },
+  {
+    category: 'pem_encrypted_private_key',
+    re: /-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----/gs,
+    to: '***REDACTED***',
+  },
+  {
+    category: 'pgp_private_key',
+    re: /-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----.*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----/gs,
+    to: '***REDACTED***',
+  },
+];
+
 function redactTokens(text) {
-  // {36,} not {36}: GitHub documents that token length may grow, and an exact
-  // bound would redact only the first 36 characters of a longer token, leaking
-  // its tail into the hub log line (kubestellar/hive#4267).
-  const githubRedacted = text.replace(/gho_[A-Za-z0-9]{36,}/g, 'gho_***REDACTED***')
-    .replace(/ghp_[A-Za-z0-9]{36,}/g, 'ghp_***REDACTED***')
-    .replace(/ghs_[A-Za-z0-9]{36,}/g, 'ghs_***REDACTED***')
-    .replace(/ghu_[A-Za-z0-9]{36,}/g, 'ghu_***REDACTED***')
-    .replace(/ghr_[A-Za-z0-9]{36,}/g, 'ghr_***REDACTED***')
-    // Fine-grained PATs: github_pat_ + 82 chars of [A-Za-z0-9_]. The Go-side
-    // redactors (dashboard, status_builder, prompt_history) already scrub this
-    // prefix; the relay must match or PAT material leaks into hub log lines.
-    .replace(/github_pat_[A-Za-z0-9_]{36,}/g, 'github_pat_***REDACTED***');
-  return BACKEND === 'pi' ? redactPiCredentials(githubRedacted, PI_SELECTION, PI_ENV) : githubRedacted;
+  let out = String(text == null ? '' : text);
+  for (const { re, to } of HIVE_REDACTION_CATEGORIES) {
+    // The regexes are /g and therefore stateful via lastIndex. String.replace
+    // resets lastIndex itself, but these literals are module-level and shared
+    // across calls, so reset defensively — a stale lastIndex would silently
+    // skip the start of the next line, i.e. fail open.
+    re.lastIndex = 0;
+    out = out.replace(re, to);
+  }
+  return BACKEND === 'pi' ? redactPiCredentials(out, PI_SELECTION, PI_ENV) : out;
 }
 
 function captureTmuxLines(n) {
@@ -3835,6 +3929,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     CONTAINER_RUNTIME,
     // Coverage for previously untested pure/isolated functions (#4267).
     redactTokens,
+    HIVE_REDACTION_CATEGORIES,
     detectNoWorkVerdict,
     detectPRURL,
     resolveBackend,
