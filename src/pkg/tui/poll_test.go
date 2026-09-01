@@ -438,6 +438,24 @@ type dashboardServer struct {
 	hiveID     atomic.Value // string body for /api/hive-id
 	tokens     atomic.Value // string body for /api/tokens
 	cost       atomic.Value // string body for /api/cost
+
+	// T31 adds /api/audit on the same per-path terms. auditStatus is a full
+	// status code rather than a bool because this endpoint's failure modes are
+	// not interchangeable: 403 is the EXPECTED state for a read-only token and
+	// 500 is a broken dashboard, and the pane must survive both identically —
+	// an assertion that only ever exercised one would leave the other untested.
+	auditStatus atomic.Int64
+	audit       atomic.Value // string body for /api/audit
+
+	// auditRequests counts /api/audit reads so a test can prove a later tick
+	// re-read the feed rather than replaying a cached snapshot.
+	auditRequests atomic.Int64
+
+	// eventsStreamRequests counts /api/events hits. The activity rows come from
+	// /api/audit BY DESIGN (see client.Event): /api/events is the SSE status
+	// stream and carries no audit entries. This counter is what turns that
+	// design note into an enforced boundary.
+	eventsStreamRequests atomic.Int64
 }
 
 func newDashboardServer(t *testing.T) *dashboardServer {
@@ -446,6 +464,8 @@ func newDashboardServer(t *testing.T) *dashboardServer {
 	s.hiveID.Store(hiveIDFixture)
 	s.tokens.Store(tokensFixture)
 	s.cost.Store(costFixture)
+	s.audit.Store(auditFixture)
+	s.auditStatus.Store(http.StatusOK)
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fail := func() {
 			w.WriteHeader(http.StatusForbidden)
@@ -488,6 +508,22 @@ func newDashboardServer(t *testing.T) *dashboardServer {
 			}
 			body, _ := s.cost.Load().(string)
 			_, _ = w.Write([]byte(body))
+		case "/api/audit":
+			s.auditRequests.Add(1)
+			if status := int(s.auditStatus.Load()); status != http.StatusOK {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"audit unavailable"}`))
+				return
+			}
+			body, _ := s.audit.Load().(string)
+			_, _ = w.Write([]byte(body))
+		case sseEventsPathForTest:
+			// Counted, then refused. The SSE stream is not what feeds the
+			// Events pane, and this handler answering it as if it were would
+			// let a regression that fetched activity rows from the wrong
+			// endpoint pass unnoticed.
+			s.eventsStreamRequests.Add(1)
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1637,5 +1673,503 @@ func TestTokenFrameDoesNotOverflowTheMinimumTerminal(t *testing.T) {
 		if got := lipgloss.Width(line); got > minWidth {
 			t.Errorf("line %d is %d columns wide, want at most %d", i, got, minWidth)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T31 (#5420): the Events pane's audit refresh.
+// ---------------------------------------------------------------------------
+
+// paneEventsIndex is the Events pane's slot in the model's pane array, for the
+// same reason paneTokensIndex exists: broadcast addresses every pane and never
+// one, so an index is a fact these tests need and production code does not.
+const paneEventsIndex = 3
+
+// eventsPlaceholder is the pre-data text the Events pane shows, and
+// eventsEmptyText is its LOADED-but-empty text. Two different strings for two
+// different facts is the entire distinction this task turns on, so the tests
+// name both rather than asserting on one and inferring the other.
+const (
+	eventsPlaceholder = "waiting for data"
+	eventsEmptyText   = "no events yet"
+)
+
+// sseEventsPathForTest is the streaming path the Events pane must NEVER be fed
+// from. It is spelled out here rather than imported so the assertion states the
+// wire path an operator would see in a proxy log; client.sseEventsPath is
+// unexported and, more to the point, a test that reused the very constant the
+// production code dials would still pass if both were changed together.
+const sseEventsPathForTest = "/api/events"
+
+// auditFixture is the /api/audit body. Entries are NEWEST FIRST, which is the
+// order the dashboard documents and the order the pane's anchoring assumes.
+//
+// The timestamps descend and the actions are all distinct, so a test can assert
+// on rendered order without depending on any field the pane happens to format.
+// Five entries so a viewport can hold them all at a comfortable test height and
+// an off-by-one in slicing is still visible.
+const auditFixture = `{"entries": [
+  {"ts": "2026-09-01T12:04:02Z", "user": "u_1", "user_name": "governor", "action": "kick",   "agent": "scanner"},
+  {"ts": "2026-09-01T12:03:41Z", "user": "u_2", "user_name": "andy",     "action": "resume", "agent": "quality"},
+  {"ts": "2026-09-01T12:01:58Z", "user": "u_2", "user_name": "andy",     "action": "pause",  "agent": "reviewer"},
+  {"ts": "2026-09-01T11:58:20Z", "user": "u_3", "user_name": "bob",      "action": "model",  "agent": "scanner", "detail": "opus"},
+  {"ts": "2026-09-01T11:57:03Z", "user": "u_1", "user_name": "governor", "action": "eval",   "detail": "QUIET to BUSY"}
+]}`
+
+// auditNewerFixture is auditFixture with one NEWER entry prepended, which is
+// exactly what the real endpoint returns one tick after new activity: the same
+// rows shifted down by one. The anchoring test needs the old rows to still be
+// present and identical, because the pane re-finds the operator's anchor by
+// value equality.
+const auditNewerFixture = `{"entries": [
+  {"ts": "2026-09-01T12:05:30Z", "user": "u_2", "user_name": "andy",     "action": "attach", "agent": "quality"},
+  {"ts": "2026-09-01T12:04:02Z", "user": "u_1", "user_name": "governor", "action": "kick",   "agent": "scanner"},
+  {"ts": "2026-09-01T12:03:41Z", "user": "u_2", "user_name": "andy",     "action": "resume", "agent": "quality"},
+  {"ts": "2026-09-01T12:01:58Z", "user": "u_2", "user_name": "andy",     "action": "pause",  "agent": "reviewer"},
+  {"ts": "2026-09-01T11:58:20Z", "user": "u_3", "user_name": "bob",      "action": "model",  "agent": "scanner", "detail": "opus"},
+  {"ts": "2026-09-01T11:57:03Z", "user": "u_1", "user_name": "governor", "action": "eval",   "detail": "QUIET to BUSY"}
+]}`
+
+// emptyAuditFixture is a SUCCESSFUL read from a hive with no recorded activity.
+// It is the case that must not be confused with a failed read: this one marks
+// the pane loaded, a failure must leave it exactly as it was.
+const emptyAuditFixture = `{"entries": []}`
+
+// auditActions are auditFixture's action names in wire order, newest first.
+var auditActions = []string{"kick", "resume", "pause", "model", "eval"}
+
+// findEventsMsg returns the delivered event snapshot, or nil when the poll
+// produced none.
+//
+// Unlike deliveredTokens and deliveredGovernor this reads the MESSAGE rather
+// than model state, and that asymmetry is the contract under test: an
+// EventsMsg needs no join and no cache, so the app holds no events field to
+// inspect. If this ever has to start reading model state, the pass-through
+// property this task is about has been lost.
+func findEventsMsg(msgs []tea.Msg) *panes.EventsMsg {
+	for _, m := range msgs {
+		if e, ok := m.(panes.EventsMsg); ok {
+			return &e
+		}
+	}
+	return nil
+}
+
+// findFetchErrFor returns the fetchErrMsg reporting source, or nil. findFetchErr
+// returns the FIRST error of any source, which in a batch where several reads
+// can fail is not necessarily the one a test means.
+func findFetchErrFor(msgs []tea.Msg, source string) *fetchErrMsg {
+	for _, m := range msgs {
+		if e, ok := m.(fetchErrMsg); ok && e.source == source {
+			return &e
+		}
+	}
+	return nil
+}
+
+// eventsView renders the Events pane at a size that holds auditFixture whole.
+func eventsView(m model) string {
+	return m.panes[paneEventsIndex].View(48, 10)
+}
+
+// TestStartupPollFillsTheEventsPane is the first acceptance criterion: a
+// startup poll alone replaces the pane's placeholder with newest-first rows.
+//
+// It asserts on the RENDERED PANE, not just the message, because "the client
+// and the pane are both correct and the operator still sees 'waiting for data'
+// forever" is the precise bug this task exists to fix — both halves were
+// already tested in isolation before T31 and nothing joined them.
+func TestStartupPollFillsTheEventsPane(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollTestModel(t, server.URL)
+
+	before := eventsView(m)
+	if !strings.Contains(before, eventsPlaceholder) {
+		t.Fatalf("the Events pane did not start on its placeholder; this test would pass vacuously.\n%s", before)
+	}
+
+	settled := pollAndApply(t, m)
+
+	view := eventsView(settled)
+	if strings.Contains(view, eventsPlaceholder) {
+		t.Fatalf("the Events pane still shows %q after a successful poll:\n%s", eventsPlaceholder, view)
+	}
+	for _, action := range auditActions {
+		if !strings.Contains(view, action) {
+			t.Errorf("rendered Events pane is missing action %q:\n%s", action, view)
+		}
+	}
+}
+
+// TestEventsArriveNewestFirstUnreordered pins that the app hands the pane the
+// server's order verbatim.
+//
+// It compares the delivered slice against the fixture's own order rather than
+// against a sorted copy, so an app that "helpfully" sorted or reversed the
+// entries fails here even though every entry is still present. Reordering
+// would also break the pane's anchoring, which re-finds the operator's row by
+// value — hence a dedicated assertion rather than trusting the render test to
+// notice.
+func TestEventsArriveNewestFirstUnreordered(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollTestModel(t, server.URL)
+
+	msg := findEventsMsg(drain(m.poll()))
+	if msg == nil {
+		t.Fatal("the poll delivered no EventsMsg; the Events pane would wait forever")
+	}
+	if len(msg.Events) != len(auditActions) {
+		t.Fatalf("delivered %d events, want %d", len(msg.Events), len(auditActions))
+	}
+	for i, want := range auditActions {
+		if got := msg.Events[i].Action; got != want {
+			t.Errorf("Events[%d].Action = %q, want %q (the app re-ordered the server's newest-first feed)", i, got, want)
+		}
+	}
+	// The newest entry's timestamp must sort above the oldest, which is what
+	// "newest first" means independently of the action names above.
+	if first, last := msg.Events[0].Timestamp, msg.Events[len(msg.Events)-1].Timestamp; first <= last {
+		t.Errorf("Events[0].Timestamp = %q is not newer than the last entry %q", first, last)
+	}
+}
+
+// TestSuccessfulEmptyAuditMarksThePaneLoaded is the second acceptance
+// criterion, and the near half of this task's central distinction: a successful
+// empty list is DATA, and it moves the pane off its placeholder onto "no events
+// yet".
+//
+// The far half is TestFailedAuditReadPreservesPriorEvents. The two together are
+// what stop an implementation from collapsing "the hive is quiet" and "the
+// fetch failed" into one blank pane.
+func TestSuccessfulEmptyAuditMarksThePaneLoaded(t *testing.T) {
+	server := newDashboardServer(t)
+	server.audit.Store(emptyAuditFixture)
+	m := pollTestModel(t, server.URL)
+
+	msg := findEventsMsg(drain(m.poll()))
+	if msg == nil {
+		t.Fatal("an empty-but-successful audit read delivered no EventsMsg; the pane would wait forever on a quiet hive")
+	}
+	if len(msg.Events) != 0 {
+		t.Fatalf("delivered %d events for an empty feed, want 0", len(msg.Events))
+	}
+
+	settled := pollAndApply(t, m)
+	view := eventsView(settled)
+	if strings.Contains(view, eventsPlaceholder) {
+		t.Errorf("a quiet hive still renders %q rather than a loaded empty pane:\n%s", eventsPlaceholder, view)
+	}
+	if !strings.Contains(view, eventsEmptyText) {
+		t.Errorf("the loaded empty state did not render %q:\n%s", eventsEmptyText, view)
+	}
+}
+
+// TestFailedAuditReadPreservesPriorEvents is the far half of the distinction
+// above, and the invariant most easily broken by an implementation that returns
+// a zero-valued EventsMsg on error.
+//
+// It asserts TWO things, because they fail separately. First, that no
+// EventsMsg is produced at all — an EventsMsg{Events: nil} is indistinguishable
+// to the pane from the quiet hive above, so the guarantee has to hold at the
+// message level rather than being patched up in the pane. Second, that the
+// rendered pane is byte-identical to what it was before the failure, which is
+// what "does not erase prior rows" means to an operator.
+func TestFailedAuditReadPreservesPriorEvents(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollAndApply(t, pollTestModel(t, server.URL))
+
+	good := eventsView(m)
+	if strings.Contains(good, eventsPlaceholder) {
+		t.Fatalf("no data to preserve; this test would pass vacuously:\n%s", good)
+	}
+
+	// The audit endpoint goes away. Every other read still answers, which is
+	// what makes this a test of failure ISOLATION and not of a dead dashboard.
+	server.auditStatus.Store(http.StatusInternalServerError)
+	msgs := drain(m.poll())
+
+	if msg := findEventsMsg(msgs); msg != nil {
+		t.Errorf("a FAILED audit read produced EventsMsg{Events: %#v}; the pane cannot tell that from a quiet hive and would blank", msg.Events)
+	}
+	if findFetchErrFor(msgs, eventsFetchSourceForTest) == nil {
+		t.Errorf("a failed audit read produced no fetchErrMsg with source %q; the failure was lost rather than reported", eventsFetchSourceForTest)
+	}
+
+	m = applyAll(m, msgs)
+	if after := eventsView(m); after != good {
+		t.Errorf("a failed /api/audit changed the Events pane.\nbefore:\n%s\nafter:\n%s", good, after)
+	}
+}
+
+// eventsFetchSourceForTest is the source string fetchEvents reports failures
+// under. Spelled out rather than shared with production so a rename shows up
+// here as a failing assertion rather than silently renaming both sides.
+const eventsFetchSourceForTest = "events"
+
+// TestAuditFailureModesAllPreserveTheFrame covers the acceptance criterion
+// listing 403, 500, malformed JSON and transport failure together.
+//
+// They are one table because the REQUIREMENT is that they are indistinguishable
+// to the pane: whatever went wrong, the previous rows stand and the program
+// keeps running. 403 in particular is the expected state for a read-only token
+// rather than an error condition — /api/audit is the only poll read needing
+// read-write access — so an implementation that treated it as fatal would exit
+// the TUI for a perfectly healthy hive.
+func TestAuditFailureModesAllPreserveTheFrame(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "forbidden", status: http.StatusForbidden},
+		{name: "server error", status: http.StatusInternalServerError},
+		{name: "malformed json", status: http.StatusOK, body: `{"entries": [ this is not json`},
+		{name: "wrong shape", status: http.StatusOK, body: `{"entries": "not an array"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newDashboardServer(t)
+			m := pollAndApply(t, pollTestModel(t, server.URL))
+
+			good := eventsView(m)
+			if strings.Contains(good, eventsPlaceholder) {
+				t.Fatalf("no data to preserve; this case would pass vacuously:\n%s", good)
+			}
+
+			server.auditStatus.Store(int64(tc.status))
+			if tc.body != "" {
+				server.audit.Store(tc.body)
+			}
+
+			msgs := drain(m.poll())
+			if msg := findEventsMsg(msgs); msg != nil {
+				t.Errorf("%s produced an EventsMsg with %d events; a failed read must send nothing", tc.name, len(msg.Events))
+			}
+			m = applyAll(m, msgs)
+			if after := eventsView(m); after != good {
+				t.Errorf("%s changed the Events pane.\nbefore:\n%s\nafter:\n%s", tc.name, good, after)
+			}
+		})
+	}
+}
+
+// TestAuditTransportFailurePreservesTheFrame is the transport half of the table
+// above, split out because it cannot be expressed as a status code: the
+// dashboard is not refusing, it is GONE. Closing the server mid-test is the only
+// way to produce the dial error a real network partition gives.
+func TestAuditTransportFailurePreservesTheFrame(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollAndApply(t, pollTestModel(t, server.URL))
+
+	good := eventsView(m)
+	if strings.Contains(good, eventsPlaceholder) {
+		t.Fatalf("no data to preserve; this test would pass vacuously:\n%s", good)
+	}
+
+	server.Close()
+	msgs := drain(m.poll())
+
+	if msg := findEventsMsg(msgs); msg != nil {
+		t.Errorf("an unreachable dashboard produced an EventsMsg with %d events", len(msg.Events))
+	}
+	if findFetchErrFor(msgs, eventsFetchSourceForTest) == nil {
+		t.Error("an unreachable dashboard produced no events fetchErrMsg")
+	}
+	m = applyAll(m, msgs)
+	if after := eventsView(m); after != good {
+		t.Errorf("an unreachable dashboard changed the Events pane.\nbefore:\n%s\nafter:\n%s", good, after)
+	}
+}
+
+// TestForbiddenAuditDoesNotStopTheOtherPanes pins the isolation property from
+// the other side: the read-only token that is refused /api/audit reaches every
+// other endpoint, and those panes must keep refreshing.
+//
+// This is the shape a real read-only operator has, and an implementation that
+// folded the audit read in with any other fetch would fail here.
+func TestForbiddenAuditDoesNotStopTheOtherPanes(t *testing.T) {
+	server := newDashboardServer(t)
+	server.auditStatus.Store(http.StatusForbidden)
+	m := pollAndApply(t, pollTestModel(t, server.URL))
+
+	if deliveredGovernor(m) == nil {
+		t.Error("a forbidden /api/audit blocked the governor frame")
+	}
+	if deliveredTokens(m) == nil {
+		t.Error("a forbidden /api/audit blocked the tokens frame")
+	}
+	if len(m.agents) == 0 {
+		t.Error("a forbidden /api/audit blocked the agent roster")
+	}
+	if m.hiveID == "" {
+		t.Error("a forbidden /api/audit blocked the hive identity")
+	}
+	// And the Events pane itself is untouched rather than blanked: it has
+	// never loaded, so it is still on its placeholder, not on "no events yet".
+	view := eventsView(m)
+	if !strings.Contains(view, eventsPlaceholder) {
+		t.Errorf("a forbidden audit read moved the Events pane off its placeholder:\n%s", view)
+	}
+	if strings.Contains(view, eventsEmptyText) {
+		t.Errorf("a forbidden audit read rendered %q, reporting a quiet hive where access was refused:\n%s", eventsEmptyText, view)
+	}
+}
+
+// TestNewerEventsPreserveTheAnchoredScroll is the third acceptance criterion.
+//
+// The operator scrolls back, a later poll brings a NEWER entry, and the row
+// they were reading must stay where it was rather than sliding. The pane owns
+// that behaviour (panes.Events.replace re-finds the anchor by value); what this
+// test proves is that the APP does not break it — which is precisely what
+// sorting, reversing, or appending to the previous snapshot in fetchEvents
+// would do, since the anchor is re-found by exact value in a slice whose order
+// the server chose.
+func TestNewerEventsPreserveTheAnchoredScroll(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollAndApply(t, pollTestModel(t, server.URL))
+
+	// Scroll back two rows. The Events pane must be focused for keys to reach
+	// it, so deliver the key straight to the pane rather than through the app's
+	// focus machinery, which is not what this test is about.
+	pane := m.panes[paneEventsIndex]
+	for i := 0; i < 2; i++ {
+		pane, _ = pane.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	m.panes[paneEventsIndex] = pane
+
+	scrolled := eventsView(m)
+	if strings.Contains(scrolled, auditActions[0]) {
+		t.Fatalf("scrolling did not move the viewport off the newest entry; this test would pass vacuously:\n%s", scrolled)
+	}
+	// The anchored row is the third entry, which is what offset 2 selects.
+	anchor := auditActions[2]
+	if !strings.Contains(scrolled, anchor) {
+		t.Fatalf("the anchored row %q is not visible before the refresh:\n%s", anchor, scrolled)
+	}
+
+	// A newer entry arrives. Every previously seen row is still in the feed,
+	// shifted down by one.
+	server.audit.Store(auditNewerFixture)
+	m = pollAndApply(t, m)
+
+	after := eventsView(m)
+	if !strings.Contains(after, anchor) {
+		t.Errorf("the anchored row %q vanished when newer entries arrived:\n%s", anchor, after)
+	}
+	// The anchored frame is expected to be byte-identical to the scrolled one:
+	// the rows the operator was reading did not move. That is why the check
+	// AFTER this one, not this one, is what proves the refresh landed.
+	if after != scrolled {
+		t.Errorf("the anchored viewport shifted when newer entries arrived.\nbefore:\n%s\nafter:\n%s", scrolled, after)
+	}
+	if strings.Contains(after, "attach") {
+		t.Errorf("the newest entry is visible in a scrolled-back viewport; the pane jumped to the top instead of holding the operator's position:\n%s", after)
+	}
+
+	// The refresh DID land even though the viewport is unchanged, and proving
+	// that is the whole difficulty of this test: a fetchEvents that silently
+	// dropped the new snapshot would leave an identical frame. Scrolling back
+	// to the top is what makes the new entry observable — it is present in the
+	// pane's data, just above where the operator was reading.
+	top := m.panes[paneEventsIndex]
+	for i := 0; i < 4; i++ {
+		top, _ = top.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	}
+	if view := top.View(48, 10); !strings.Contains(view, "attach") {
+		t.Errorf("the newer entry never reached the pane's snapshot; the refresh did not land:\n%s", view)
+	}
+}
+
+// TestActivityRowsNeverComeFromTheEventStream enforces the endpoint boundary in
+// the acceptance criteria: activity rows come from /api/audit, and the client is
+// the sole owner of that path.
+//
+// The SSE stream is deliberately NOT started here. Init subscribes to
+// /api/events for connection state, so a test that ran the whole model could not
+// tell a legitimate stream dial from an activity fetch aimed at the wrong path —
+// which is exactly the confusion this assertion has to survive. Driving poll()
+// alone makes any hit on /api/events unambiguously a misrouted activity read.
+func TestActivityRowsNeverComeFromTheEventStream(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollTestModel(t, server.URL)
+
+	if findEventsMsg(drain(m.poll())) == nil {
+		t.Fatal("the poll delivered no events at all; the endpoint assertions below would be vacuous")
+	}
+
+	if got := server.auditRequests.Load(); got != 1 {
+		t.Errorf("/api/audit was read %d times for one poll, want exactly 1", got)
+	}
+	if got := server.eventsStreamRequests.Load(); got != 0 {
+		t.Errorf("the poll made %d request(s) to %s for activity rows; that path is the SSE status stream and carries no audit entries", got, sseEventsPathForTest)
+	}
+}
+
+// TestEventsRefreshOnEveryTick pins that the feed is re-read on the existing
+// poll cadence rather than fetched once at startup.
+//
+// It uses the CURRENT refresh machinery deliberately: T32 (#5421) owns splitting
+// the refresh classes apart, and a second timer added here would be the
+// competing chain tickMsg's generation counter exists to prevent.
+func TestEventsRefreshOnEveryTick(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollTestModel(t, server.URL)
+
+	m = applyAll(m, drain(m.poll()))
+	first := server.auditRequests.Load()
+	if first != 1 {
+		t.Fatalf("the first poll made %d audit requests, want 1", first)
+	}
+
+	msgs := runTick(m)
+	if findEventsMsg(msgs) == nil {
+		t.Error("a tick delivered no EventsMsg; the pane would freeze on its first snapshot")
+	}
+	if got := server.auditRequests.Load(); got != first+1 {
+		t.Errorf("audit requests after a tick = %d, want %d (the feed was cached rather than re-read)", got, first+1)
+	}
+}
+
+// TestPollIssuesTheAuditRead extends TestPollIssuesEveryRead to the seventh
+// fetch. It is a separate test rather than an edit to that one so a regression
+// naming the Events pane fails a test that names the Events pane.
+func TestPollIssuesTheAuditRead(t *testing.T) {
+	server := newDashboardServer(t)
+	m := pollTestModel(t, server.URL)
+
+	if findEventsMsg(drain(m.poll())) == nil {
+		t.Error("poll did not fetch the activity feed; the Events pane would stay on its placeholder forever")
+	}
+}
+
+// TestEventsReachThePaneThroughTheRootUpdate proves ROOT DELIVERY, which the
+// poll-level tests above cannot: they assert the message exists, not that
+// anything routes it.
+//
+// panes.EventsMsg has no case in the app's Update switch and reaches the pane
+// through the default broadcast. That is correct — an EventsMsg needs no join,
+// unlike GovernorMsg and TokensMsg — but it is also fragile in a specific way:
+// adding a case for it that forgot to broadcast would compile, pass every test
+// that only inspects poll output, and silently freeze the pane. Feeding the
+// message through the model's Update is what catches that.
+func TestEventsReachThePaneThroughTheRootUpdate(t *testing.T) {
+	m := newModel()
+
+	before := eventsView(m)
+	if !strings.Contains(before, eventsPlaceholder) {
+		t.Fatalf("the Events pane did not start on its placeholder; this test would pass vacuously:\n%s", before)
+	}
+
+	next, _ := m.Update(panes.EventsMsg{Events: []client.Event{
+		{Timestamp: "2026-09-01T12:04:02Z", User: "u_1", UserName: "governor", Action: "kick", Agent: "scanner"},
+	}})
+	m = next.(model)
+
+	view := eventsView(m)
+	if strings.Contains(view, eventsPlaceholder) {
+		t.Fatalf("an EventsMsg delivered to the root model never reached the Events pane:\n%s", view)
+	}
+	if !strings.Contains(view, "kick") {
+		t.Errorf("the delivered event is not rendered:\n%s", view)
 	}
 }

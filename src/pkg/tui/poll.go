@@ -94,13 +94,14 @@ func (m model) scheduleTick() tea.Cmd {
 
 // poll issues every fetch the client can currently make, as one batch.
 //
-// Six reads today: /api/agents (T4, #5067), the three T29 wired for the
+// Seven reads today: /api/agents (T4, #5067), the three T29 wired for the
 // Governor pane and the header — /api/status for live governor state,
 // /api/config/governor for the evaluation cadence, and /api/hive-id for the
-// hive's identity — and the two T30 wires for the Tokens pane: /api/tokens for
-// the counts and /api/cost for the estimated spend joined onto them. The events
-// fetch (T10) adds one line here and one message type in pkg/tui/panes; the
-// loop, the error policy and the tick scheduling do not change when it lands.
+// hive's identity — the two T30 wires for the Tokens pane (/api/tokens for the
+// counts and /api/cost for the estimated spend joined onto them), and T31's
+// /api/audit for the Events pane. T31 was the one line this comment predicted
+// the events fetch would cost: the loop, the error policy and the tick
+// scheduling did not change when it landed.
 //
 // EACH FETCH FAILS ALONE. They are separate Cmds in one batch rather than one
 // Cmd making four calls, and that is the failure-isolation property T29 is
@@ -109,8 +110,14 @@ func (m model) scheduleTick() tea.Cmd {
 // hive with no configured identity must not stop the Governor pane loading.
 // Folding them together would make every value only as available as the least
 // available endpoint, because one error return would discard three good
-// results. Batched Cmds also run concurrently, so four reads cost one round
-// trip of wall time, not four.
+// results. Batched Cmds also run concurrently, so every read costs one round
+// trip of wall time, not one each.
+//
+// /api/audit is the sharpest case for that isolation rather than an exception
+// to it. It is the ONE read here that requires read-write or owner access, so
+// the read-only token that reaches every other endpoint gets a 403 from it and
+// nothing else. Folded in, that single authorization boundary would darken the
+// whole frame; kept separate, it costs exactly one pane its refresh.
 //
 // Deliberately NOT polled: /api/health. It exists and would succeed, but
 // nothing in the frame renders it — the header's `ws:` field is SSE connection
@@ -124,6 +131,7 @@ func (m model) poll() tea.Cmd {
 		m.fetchHiveID(),
 		m.fetchTokens(),
 		m.fetchCosts(),
+		m.fetchEvents(),
 	)
 }
 
@@ -407,4 +415,50 @@ func (m model) agentCosts() map[string]client.CostAgentEntry {
 		byAgent[entry.Name] = entry
 	}
 	return byAgent
+}
+
+// fetchEvents reads the operator activity feed for the Events pane.
+//
+// It resolves to panes.EventsMsg DIRECTLY rather than to an app-level message
+// the way fetchGovernor and fetchTokens do, and the asymmetry is the point:
+// those two exist because their pane's frame is a JOIN of two independently
+// failing endpoints, so a message sent straight from one fetch would carry a
+// zero for whatever the other knows. An EventsMsg is complete the moment
+// /api/audit answers — there is nothing to join it with and nothing to cache —
+// so routing it through the model would add a hop that could only lose or
+// reorder data. This is fetchAgents' shape, for fetchAgents' reason.
+//
+// THE SLICE IS PASSED THROUGH UNTOUCHED. client.Events documents that
+// /api/audit returns entries newest first, and panes.Events.replace copies what
+// it is handed and re-anchors the viewport on the event that was at the top.
+// Sorting, reversing, or appending to the previous snapshot here would each
+// break that: the pane would re-anchor against a slice whose order the server
+// never produced, and a scrolled-back operator would find the viewport jumping
+// on every tick. Collection is this file's job and display is the pane's, and
+// the boundary is exactly the slice.
+//
+// A FAILURE MUST NOT PRODUCE AN EMPTY MESSAGE. panes.Events cannot distinguish
+// EventsMsg{Events: nil} from a hive with no recorded activity — it sets
+// loaded and replaces the rows for both — so returning a zero-valued EventsMsg
+// on error would blank the pane to "no events yet" and reset the operator's
+// scroll position every time a fetch failed. Failure travels as fetchErrMsg,
+// which the app swallows, so the previous rows and offset survive by
+// construction. The successful empty list keeps its own meaning: it really does
+// mark the pane loaded and render "no events yet", because a quiet hive is
+// entitled to say so.
+//
+// 403 IS THE EXPECTED CASE, NOT A CRASH. /api/audit is the only poll read that
+// demands read-write or owner access, so a perfectly healthy TUI driven by a
+// read-only token is refused here on every tick. That returns the client's
+// typed APIError down the same fetchErrMsg path as any other non-2xx, carrying
+// its source so a later error-surface task can name this pane; nothing about it
+// terminates the program or is special-cased here.
+func (m model) fetchEvents() tea.Cmd {
+	return func() tea.Msg {
+		events, err := m.api.Events(context.Background())
+		if err != nil {
+			return fetchErrMsg{source: "events", err: err}
+		}
+		return panes.EventsMsg{Events: events}
+	}
 }
