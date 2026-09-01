@@ -328,7 +328,15 @@ done > "$sha_recheck_tmp"
 
 SHA_RECHECK_PARALLELISM=8
 if [ -s "$sha_recheck_tmp" ]; then
-  cat "$sha_recheck_tmp" | xargs -P "$SHA_RECHECK_PARALLELISM" -I {} bash -c '
+  # NOTE (#5528): the fan-out MUST NOT use `xargs -I {}`. -I substitutes every
+  # occurrence of the replacement string in the initial arguments — including
+  # the four python dict literals below (d.get("data",{}), (issue.get("author")
+  # or {}), issue.get("comments",{}), (c.get("author") or {})) which live
+  # inside this quoted script body. That rewrote them to the input line and
+  # made the child python a guaranteed SyntaxError on every entry, silently
+  # downgraded to the string "skip" — so SHA-UNHOLD never fired. `-n 1` passes
+  # the line as $1 and leaves the body untouched.
+  xargs -P "$SHA_RECHECK_PARALLELISM" -n 1 bash -c '
     entry="$1"
     repo="${entry%%:*}"
     rest="${entry#*:}"
@@ -347,6 +355,7 @@ if [ -s "$sha_recheck_tmp" ]; then
           }
         }
       }" 2>/dev/null) || { echo "${repo}:${num}:${marker_file}:skip"; exit 0; }
+    py_err=$(mktemp)
     state=$(echo "$result" | python3 -c "
 import json, sys, re
 d = json.load(sys.stdin)
@@ -364,9 +373,18 @@ reporter_text = body + \" \" + \" \".join(
 )
 SHA_RE = re.compile(r\"[0-9a-f]{7,40}\\b\")
 print(\"has_sha\" if SHA_RE.search(reporter_text) else \"no_sha\")
-" 2>/dev/null || echo "skip")
+" 2>"$py_err") || state="error"
+    # #5528 layer 2: a crashing classifier used to emit the same string as a
+    # legitimate "skip" verdict, so a total failure of this loop was
+    # indistinguishable from a run with nothing to do. Keep them separate and
+    # surface the interpreter error instead of discarding it with 2>/dev/null.
+    if [ "$state" = "error" ] || [ -z "$state" ]; then
+      state="error"
+      echo "SHA-RECHECK-ERROR: ${repo}#${num} classifier failed: $(tr "\n" " " < "$py_err" | tail -c 400)" >&2
+    fi
+    rm -f "$py_err"
     echo "${repo}:${num}:${marker_file}:${state}"
-  ' _ {} >> "$sha_recheck_results"
+  ' _ < "$sha_recheck_tmp" >> "$sha_recheck_results"
 fi
 
 while IFS=: read -r repo num marker_file state; do

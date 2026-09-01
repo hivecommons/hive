@@ -145,18 +145,36 @@ if ! xargs --version >/dev/null 2>&1; then
   # Sequential subset of GNU `xargs -P N -I REPL cmd args...`.
   cat >"${SHIM_DIR}/xargs" <<'XARGSEOF'
 #!/usr/bin/env bash
+# Sequential subset of GNU `xargs -P N [-I REPL | -n 1] cmd args...`.
+# -I REPL  : substitute REPL everywhere in the initial arguments (the GNU
+#            behaviour that caused #5528 — kept so the ADOPTERS batch at
+#            line ~208, which legitimately uses -I, still runs here).
+# -n 1     : append the line as one extra argument, leaving the initial
+#            arguments byte-for-byte untouched. The SHA re-check uses this
+#            form; a shim that only understood -I would silently fail the
+#            fixed script and make this whole section vacuous.
 repl=""
+nargs=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -P) shift 2 ;;
     -I) repl="$2"; shift 2 ;;
+    -n) nargs="$2"; shift 2 ;;
     *)  break ;;
   esac
 done
+if [ -z "$repl" ] && [ "$nargs" != "1" ]; then
+  echo "xargs shim: unsupported invocation (need -I REPL or -n 1)" >&2
+  exit 2
+fi
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   args=()
-  for a in "$@"; do args+=("${a//"$repl"/$line}"); done
+  if [ -n "$repl" ]; then
+    for a in "$@"; do args+=("${a//"$repl"/$line}"); done
+  else
+    args=("$@" "$line")
+  fi
   "${args[@]}"
 done
 exit 0
@@ -253,11 +271,13 @@ files src/other.go                >"${BASE}/repos_acme_primary_pulls_305_files.j
 files src/main.go                 >"${BASE}/repos_acme_secondary_pulls_401_files.json"
 files adopters.md                 >"${BASE}/repos_acme_secondary_pulls_402_files.json"
 
-# Re-check fixture for #109: the reporter later commented with a SHA.
+# Re-check fixture for #109, BASE state: the reporter has not answered yet, so
+# the re-check must find no SHA and leave the hold in place. This must agree
+# with the REST fixture that made #109 eligible for the hold — before #5528
+# was fixed the re-check never ran, so the two could disagree unnoticed.
 cat >"${BASE}/graphql_109.json" <<'EOF'
 {"data":{"repository":{"issue":{"state":"OPEN","body":"It crashes on startup","author":{"login":"newcomer"},
- "comments":{"nodes":[{"author":{"login":"hive-bot"},"body":"please add the SHA"},
-                      {"author":{"login":"newcomer"},"body":"sure: 9f8e7d6c5b4a"}]}}}}}
+ "comments":{"nodes":[{"author":{"login":"hive-bot"},"body":"please add the SHA"}]}}}}}
 EOF
 
 # ── Runner ───────────────────────────────────────────────────────────────────
@@ -389,39 +409,87 @@ assert_eq "run 2: hold label is NOT re-added (marker)" "$(gh_calls '--add-label 
 assert_eq "run 2: unresolved marker is re-checked via GraphQL" "$(gh_calls 'api graphql')" "1"
 assert_eq "run 2: POSITIVE CONTROL — the other issues are unchanged" "$(jget '[.issues.items[].number | select(. != 109)] | join(",")')" "201,101,110,111"
 
-# DOCUMENTS THE CURRENT STATE (BUG — see the PR body): the re-check fan-out is
-# `xargs -I {} bash -c '<script>' _ {}`, and -I substitutes EVERY `{}` in the
-# initial arguments — including the python literals d.get("data",{}),
-# (issue.get("author") or {}), issue.get("comments",{}) INSIDE the script
-# string. The child's python is a SyntaxError on every entry, the trailing
-# `|| echo "skip"` hides it, and the has_sha/closed branches below are
-# unreachable. GNU xargs in production behaves exactly like the harness. The
-# graphql_109 fixture says the reporter supplied a SHA in a comment, yet #109
-# is never unheld, never re-admitted, its marker never resolves, and it is
-# re-queried every cycle for as long as the marker exists. Pinned so the fix
-# flips these deliberately (to: unhold call once, marker resolved=, #109 back
-# in items, no GraphQL on run 3).
-if [ "$(gh_calls 'issue edit 109 --repo acme/primary --remove-label hold --add-label kind/bug')" = "0" ]; then
-  pass "run 2: [pinned bug] SHA in the reporter's comment does NOT unhold #109"
-else
-  fail "run 2: [pinned bug] SHA in the reporter's comment does NOT unhold #109" "unhold fired — the xargs {} clobber is fixed; flip these pins to the intended lifecycle"
-fi
+# ── #5528: the SHA re-check actually runs now ───────────────────────────────
+# These assertions were PINNED to the broken behaviour by #5527. The re-check
+# fan-out used to be `xargs -I {} bash -c '<script>' _ {}`; -I substitutes
+# EVERY `{}` in the initial arguments, including the python literals
+# d.get("data",{}), (issue.get("author") or {}), issue.get("comments",{}) and
+# (c.get("author") or {}) INSIDE the quoted script body, so the child python
+# was a SyntaxError on every entry and `2>/dev/null || echo "skip"` laundered
+# it into a plausible verdict. SHA-UNHOLD therefore never fired. The fan-out
+# now uses `-n 1` (the line arrives as $1, the body is untouched) and a
+# classifier crash reports `error` on stderr instead of masquerading as
+# `skip`.
+echo "-- SHA re-check: reporter supplies the SHA (#5528) --"
+SHAADDED="${FIX_ROOT}/shaadded"
+rm -rf "$SHAADDED"; cp -R "$BASE" "$SHAADDED"
+# Same GitHub state EXCEPT the reporter has now answered with a SHA. This is
+# the entry the re-check failed on for its entire existence.
+cat >"${SHAADDED}/graphql_109.json" <<'EOF'
+{"data":{"repository":{"issue":{"state":"OPEN","body":"It crashes on startup","author":{"login":"newcomer"},
+ "comments":{"nodes":[{"author":{"login":"hive-bot"},"body":"please add the SHA"},
+                      {"author":{"login":"newcomer"},"body":"sure: 9f8e7d6c5b4a"}]}}}}}
+EOF
+rc="$(run_enum "$SHAADDED" "${PROJ[@]}")"
+assert_eq "run 3 exits 0" "$rc" "0"
+assert_eq "run 3: SHA in the reporter's comment unholds #109 exactly once" \
+  "$(gh_calls 'issue edit 109 --repo acme/primary --remove-label hold --add-label kind/bug')" "1"
 if grep -q '^resolved=' "$MARKER"; then
-  fail "run 2: [pinned bug] marker is never stamped resolved=" "marker resolved — flip these pins to the intended lifecycle"
+  pass "run 3: marker is stamped resolved="
 else
-  pass "run 2: [pinned bug] marker is never stamped resolved="
+  fail "run 3: marker is stamped resolved=" "marker still unresolved: '$(cat "$MARKER" 2>/dev/null)'"
 fi
-ISSUE_NUMS2="$(jget '[.issues.items[].number] | join(",")')"
-if [[ ",${ISSUE_NUMS2}," == *",109,"* ]]; then
-  fail "run 2: [pinned bug] #109 is never re-admitted to actionable" "got $ISSUE_NUMS2 — flip these pins to the intended lifecycle"
+assert_eq "run 3: #109 is re-admitted to actionable" \
+  "$(jget '[.issues.items[].number] | sort | join(",")')" "101,109,110,111,201"
+
+# Run 4: the marker is resolved, so it costs NOTHING — no GraphQL call at all.
+# The unresolved marker used to be re-queried every cycle forever.
+rc="$(run_enum "$SHAADDED" "${PROJ[@]}")"
+assert_eq "run 4: a resolved marker is not re-queried (per-cycle cost is gone)" "${rc}:$(gh_calls 'api graphql')" "0:0"
+assert_eq "run 4: no further label churn on #109" "$(gh_calls 'issue edit 109')" "0"
+
+# Closed-issue branch: the other outcome the clobbered classifier could never
+# reach. A closed held issue must resolve its marker and stop being queried.
+echo "-- SHA re-check: closed issue resolves its marker (#5528) --"
+CLOSEDQL="${FIX_ROOT}/closedql"
+rm -rf "$CLOSEDQL"; cp -R "$BASE" "$CLOSEDQL"
+printf '%s\n' '{"data":{"repository":{"issue":{"state":"CLOSED","body":"nvm","author":{"login":"newcomer"},"comments":{"nodes":[]}}}}}' \
+  >"${CLOSEDQL}/graphql_109.json"
+rm -f "$RUN_DIR"/sha_hold_posted_*
+rc="$(run_enum "$CLOSEDQL" "${PROJ[@]}")"
+assert_eq "closed re-check exits 0" "$rc" "0"
+if grep -q '^resolved=.* closed' "$MARKER" 2>/dev/null; then
+  pass "closed issue stamps the marker resolved=... closed"
 else
-  pass "run 2: [pinned bug] #109 is never re-admitted to actionable"
+  fail "closed issue stamps the marker resolved=... closed" "marker: '$(cat "$MARKER" 2>/dev/null)'"
+fi
+assert_eq "closed issue is NOT unheld (no label writes beyond the initial hold)" \
+  "$(gh_calls 'issue edit 109 --repo acme/primary --remove-label hold')" "0"
+
+# NEGATIVE CONTROL for the second masking layer. A payload that is valid JSON
+# but has no data.repository.issue must NOT be laundered into a confident
+# verdict: no unhold, no resolved= stamp. Before the fix every entry produced
+# the string "skip" whether the classifier worked or crashed, so this case and
+# a total failure of the loop were indistinguishable.
+echo "-- SHA re-check: an unclassifiable payload does not act (#5528 layer 2) --"
+BADQL="${FIX_ROOT}/badql"
+rm -rf "$BADQL"; cp -R "$BASE" "$BADQL"
+printf '%s\n' '{"data":{"repository":{"issue":null}}}' >"${BADQL}/graphql_109.json"
+rm -f "$RUN_DIR"/sha_hold_posted_*
+rc="$(run_enum "$BADQL" "${PROJ[@]}")"
+assert_eq "unclassifiable re-check payload does not fail the run" "$rc" "0"
+assert_eq "unclassifiable re-check payload does not unhold #109" \
+  "$(gh_calls 'issue edit 109 --repo acme/primary --remove-label hold')" "0"
+if grep -q '^resolved=' "$MARKER" 2>/dev/null; then
+  fail "unclassifiable re-check payload leaves the marker unresolved" "marker was resolved on a null issue"
+else
+  pass "unclassifiable re-check payload leaves the marker unresolved"
 fi
 
-# Run 3: an unresolved marker keeps costing one GraphQL call per cycle.
+# Restore the plain held state for the sections below.
+rm -rf "$SHAADDED" "$CLOSEDQL" "$BADQL"
+rm -f "$RUN_DIR"/sha_hold_posted_*
 rc="$(run_enum "$BASE" "${PROJ[@]}")"
-assert_eq "run 3: [pinned bug] the same marker is re-queried again (unbounded per-cycle cost)" "${rc}:$(gh_calls 'api graphql')" "0:1"
-assert_eq "run 3: no label churn on #109" "$(gh_calls 'issue edit 109')" "0"
 
 # ── 7. Partial API failure: retry, degrade per repo, still publish ──────────
 echo "-- partial API failure --"
