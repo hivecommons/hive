@@ -20,23 +20,42 @@ import (
 //   - the namespace still had exactly 1 healthy Running pod, so the live spoke
 //     was unaffected in every case.
 //
-// That is the fingerprint of a node disappearing without draining. The API
-// server records the deletion and waits for the kubelet to confirm it; the
-// kubelet is gone, so confirmation never arrives, and because no finalizer and
-// no controller owns the remaining work the object persists forever. The
-// distribution — 15 namespaces with 1-4 orphans each rather than one bad
-// namespace with 27 — argues for a recurring cluster-level event (spot
-// reclaim, autoscaler scale-down, or a node lifecycle event) rather than a
-// single misbehaving spoke.
+// The ORIGINAL reading of that signature was "a node disappeared without
+// draining": the API server records the deletion and waits for the kubelet to
+// confirm it, the kubelet is gone, so confirmation never arrives, and with no
+// finalizer and no owning controller the object persists forever. That reading
+// was inferred from absent spec fields rather than measured, and MEASUREMENT
+// HAS SINCE DISPROVEN IT. Recorded here because the wrong cause is the kind of
+// thing that gets re-derived from the same signature by the next reader:
 //
-// WHY A REAPER IS THE RIGHT FIX EVEN THOUGH IT TREATS THE SYMPTOM. Finding and
-// fixing whatever removes nodes ungracefully is issue #5328 item 1 and is NOT
-// this lane. But ungraceful node loss can always recur — it is a property of
-// the infrastructure, not a bug that stays fixed — so a reaper remains useful
-// after the root cause lands. What makes the accumulation expensive is not any
-// single orphan but that NOTHING sweeps them: the condition is self-
-// perpetuating, so the count only ever grows between manual interventions, and
-// it grew for three weeks with no alert.
+//   - No node was lost in the orphan window. Every node on the affected
+//     cluster has been continuously Running with no Machine ever deleted, and
+//     the newest node predates the oldest orphan by weeks. There is no
+//     autoscaler and no spot/preemptible capacity in play.
+//   - Orphan onsets arrive in tight BATCHES — several within the same second,
+//     repeatedly, across ten separate days. Node loss would tie a batch to one
+//     node; these batches span namespaces spread over many nodes.
+//   - The largest batches land inside the hive AUTO-UPGRADE window (see
+//     autoUpgradeDailyHour in upgrade_schedule.go), and per-namespace
+//     ReplicaSet history shows one new ReplicaSet per namespace per day at
+//     that same moment.
+//
+// The actual mechanism is ORDINARY ROLLING REDEPLOY, not node loss. The daily
+// auto-upgrade re-applies each hosted spoke Deployment; the RollingUpdate
+// replaces the pod; and occasionally the outgoing pod's delete is never
+// confirmed, leaving exactly this signature. That is why the orphans recur on
+// a healthy, static cluster, and why they concentrate in the namespaces that
+// get redeployed most often.
+//
+// WHY A REAPER REMAINS THE RIGHT FIX. The trigger is a routine, deliberate,
+// recurring operation that the fleet depends on — not an infrastructure fault
+// to be engineered away. Slowing or suppressing redeploys to avoid a rare
+// unconfirmed delete would trade a cosmetic accounting problem for a real loss
+// of upgrade cadence. What makes the accumulation expensive is not any single
+// orphan but that NOTHING sweeps them: the condition is self-perpetuating, so
+// the count only ever grows between manual interventions, and it grew for
+// three weeks with no alert. A sweep is the proportionate response, and it
+// stays correct regardless of which delete goes unconfirmed or why.
 //
 // IMPACT. Orphans hold their scheduler slot until forcibly removed, and
 // anything counting pods per namespace sees phantom replicas — a namespace
