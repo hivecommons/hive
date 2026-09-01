@@ -228,3 +228,55 @@ func TestSweep_EscalatesWhenReEngagementBudgetExhaustedOnUnchangedSHA(t *testing
 		t.Fatalf("new SHA resets the budget; must not escalate yet: got %+v", got)
 	}
 }
+
+// Machinery amnesty: entries escalated under an older fix-dispatch generation
+// (pre-#4828 kicks carried no CI evidence and most attempts produced no
+// commit) get ONE fresh budget under the current generation — un-escalated,
+// counters cleared, distinct-SHA ledger restarted — instead of staying
+// human-parked forever. Entries already at the current generation keep their
+// state untouched.
+func TestSweep_MachineryAmnestyReleasesOldGenerationEscalations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "streaks.json")
+	s := Load(path)
+
+	// Simulate a generation-1 entry: escalated, budget exhausted, full ledger.
+	key := Key("org/repo", 9)
+	s.mu.Lock()
+	s.entries[key] = &Entry{
+		RedSHAs:       []string{"a", "b", "c"},
+		Escalated:     true,
+		CurRedSHA:     "c",
+		ReEngagements: MaxReEngagements,
+		Machinery:     1,
+	}
+	s.mu.Unlock()
+
+	// Next sweep under generation 2: amnesty fires — not escalated, ledger
+	// restarted at the observed SHA only, and it must NOT immediately
+	// re-escalate off the old ledger.
+	r := s.Sweep([]Observation{obs("org/repo", 9, "c", true)}, 3)
+	got := r[key]
+	if got.NewlyEscala {
+		t.Fatalf("amnestied entry must not re-escalate on the old ledger: %+v", got)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("ledger must restart: got %+v", got)
+	}
+	s.mu.Lock()
+	stillEscalated := s.entries[key].Escalated
+	s.mu.Unlock()
+	if stillEscalated {
+		t.Fatal("entry must be un-escalated after amnesty")
+	}
+	// Re-engagement budget is fresh.
+	if !s.TryReEngage("org/repo", 9, "c") {
+		t.Fatal("amnestied entry must have a fresh re-engagement budget")
+	}
+	// The amnesty fires ONCE: exhausting the fresh budget escalates again.
+	for i := 0; i < MaxReEngagements; i++ {
+		s.TryReEngage("org/repo", 9, "c")
+	}
+	if s.TryReEngage("org/repo", 9, "c") {
+		t.Fatal("cap must hold at the current generation — amnesty is one-shot")
+	}
+}

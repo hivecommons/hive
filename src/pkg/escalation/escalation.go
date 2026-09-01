@@ -47,7 +47,23 @@ const RedPRStaleAfter = 10 * time.Minute
 // re-dispatched every tick forever. Distinct from DefaultThreshold, which
 // counts distinct red SHAs (real fix attempts); this counts re-nudges of an
 // unchanged red SHA.
-const MaxReEngagements = 3
+const MaxReEngagements = 6
+
+// MachineryVersion identifies the GENERATION of the fix-dispatch machinery.
+// Bump it when the kick/repair pipeline changes materially enough that
+// attempts burned under the previous generation are no longer predictive of
+// the next attempt's success. Entries whose recorded generation is older get
+// ONE fresh set of re-engagements (and are un-escalated) on their next
+// TryReEngage — without this, a PR escalated under machinery that could not
+// possibly have fixed it (pre-#4828 kicks carried no CI evidence, no branch
+// name, no push-to-branch instruction, and most "attempts" never produced a
+// single commit) stays human-parked forever even after the machinery is
+// repaired. Observed on kubestellar/console 2026-09-01: nine split PRs
+// escalated under generation-1 no-op attempts, permanently outside the loop.
+//
+// Generation 2: evidence-rich FIX-BEFORE-NEW kicks (#4828) + per-agent
+// attribution + AGENTS.md repair contracts.
+const MachineryVersion = 2
 
 // Entry is the persisted per-PR attempt record.
 type Entry struct {
@@ -76,6 +92,10 @@ type Entry struct {
 	// PR goes green. The re-engagement cap (MaxReEngagements) reads this so a
 	// permanently-red, never-moving PR is not nudged forever.
 	ReEngagements int `json:"re_engagements,omitempty"`
+	// Machinery is the MachineryVersion under which this entry's attempts
+	// were burned. Older-generation entries are granted amnesty (see
+	// MachineryVersion).
+	Machinery int `json:"machinery,omitempty"`
 }
 
 // Store is the on-PVC attempt ledger. All methods are safe for concurrent use.
@@ -149,8 +169,19 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		}
 		e := s.entries[key]
 		if e == nil {
-			e = &Entry{}
+			e = &Entry{Machinery: MachineryVersion}
 			s.entries[key] = e
+		}
+		// Machinery amnesty (see MachineryVersion): attempts and escalations
+		// burned under an older fix-dispatch generation are wiped once, and
+		// the distinct-SHA ledger restarts, so the CURRENT machinery gets its
+		// own budget before a human is paged again. Without the RedSHAs reset
+		// the very next sweep would re-escalate on the old ledger.
+		if e.Machinery < MachineryVersion {
+			e.Machinery = MachineryVersion
+			e.ReEngagements = 0
+			e.Escalated = false
+			e.RedSHAs = nil
 		}
 		if o.HeadSHA != "" && !containsSHA(e.RedSHAs, o.HeadSHA) {
 			e.RedSHAs = append(e.RedSHAs, o.HeadSHA)
@@ -332,6 +363,16 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 		e.CurRedSHA = headSHA
 		e.FirstRedAt = s.now()
 		e.ReEngagements = 0
+	}
+	// Machinery amnesty: attempts burned under an older fix-dispatch
+	// generation don't count against the current one. Grant one fresh set
+	// and pull the PR back out of the escalated (needs-human) state so the
+	// current machinery gets its own chance before a human is paged again.
+	if e.Machinery < MachineryVersion {
+		e.Machinery = MachineryVersion
+		e.ReEngagements = 0
+		e.Escalated = false
+		e.RedSHAs = nil
 	}
 	if e.ReEngagements >= MaxReEngagements {
 		return false
