@@ -139,17 +139,19 @@ check_suite() {
 
   _case_n=$((_case_n + 1))
   bindir="${SANDBOX_ROOT}/case${_case_n}"
-  mkdir -p "$bindir"
 
-  # Symlink the farm into this case, omitting anything denied by name.
-  for entry in "$FULL_BIN"/*; do
-    name="${entry##*/}"
-    denied=0
-    for tool in "$@"; do
-      [ -n "$tool" ] && [ "$tool" != "NO_PYYAML" ] && [ "$name" = "$tool" ] && denied=1
-    done
-    [ "$denied" -eq 1 ] && continue
-    ln -s "$entry" "${bindir}/${name}" 2>/dev/null || true
+  # Copy the farm (symlinks only — cheap) and DELETE the denied names from the
+  # copy, then run the child with PATH set to it alone. Shadowing does not work
+  # and the alternatives were each verified to fail silently: an executable stub
+  # still RESOLVES so `command -v` succeeds; a non-executable placeholder and a
+  # dangling symlink are both skipped by the PATH search, which then finds the
+  # real binary further along. Only a PATH that does not contain the tool makes
+  # the lookup genuinely fail.
+  cp -R "$FULL_BIN" "$bindir"
+  for entry in "$@"; do
+    [ -z "$entry" ] && continue
+    [ "$entry" = "NO_PYYAML" ] && continue
+    rm -f "${bindir}/${entry}"
   done
 
   # The pseudo-tool NO_PYYAML denies the MODULE, not the interpreter: python3
