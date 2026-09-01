@@ -1689,28 +1689,16 @@ func TestReadCoveragePreamble_DefaultTarget(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// configHasTokens — write to actual path
+// configHasTokens — via the redirectable shared path
 // ---------------------------------------------------------------------------
 
 func TestConfigHasTokens_WithActualFile(t *testing.T) {
-	dir := filepath.Dir(sharedCopilotConfigPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Skipf("cannot create config dir %s: %v", dir, err)
-	}
-
-	// Save original if it exists
-	original, origErr := os.ReadFile(sharedCopilotConfigPath)
-	defer func() {
-		if origErr == nil {
-			os.WriteFile(sharedCopilotConfigPath, original, 0o660)
-		} else {
-			os.Remove(sharedCopilotConfigPath)
-		}
-	}()
+	cleanup := configTestHelper(t)
+	defer cleanup()
 
 	cfg := `{"copilotTokens": {"github.com": {"token": "gho_test"}}}`
 	if err := os.WriteFile(sharedCopilotConfigPath, []byte(cfg), 0o660); err != nil {
-		t.Skipf("cannot write config file: %v", err)
+		t.Fatalf("cannot write config file: %v", err)
 	}
 
 	if !configHasTokens() {
@@ -1718,20 +1706,21 @@ func TestConfigHasTokens_WithActualFile(t *testing.T) {
 	}
 }
 
+// configTestHelper redirects sharedCopilotConfigPath to a file inside
+// t.TempDir() and returns a cleanup that restores the original path.
+//
+// It must NEVER touch the production path: on a live hive host
+// /data/home/.copilot/config.json holds the real shared Copilot credentials,
+// and the previous save/overwrite/restore approach both clobbered them for the
+// duration of the test (or forever, if the test binary died mid-run) and made
+// these tests flaky — chmod/write on a foreign-owned live file fails with
+// EPERM. sharedCopilotConfigPath is a var precisely so tests can redirect it
+// (see the comment on its declaration in manager.go).
 func configTestHelper(t *testing.T) (cleanup func()) {
 	t.Helper()
-	dir := filepath.Dir(sharedCopilotConfigPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Skipf("cannot create config dir %s: %v", dir, err)
-	}
-	original, origErr := os.ReadFile(sharedCopilotConfigPath)
-	return func() {
-		if origErr == nil {
-			os.WriteFile(sharedCopilotConfigPath, original, 0o660)
-		} else {
-			os.Remove(sharedCopilotConfigPath)
-		}
-	}
+	orig := sharedCopilotConfigPath
+	sharedCopilotConfigPath = filepath.Join(t.TempDir(), "config.json")
+	return func() { sharedCopilotConfigPath = orig }
 }
 
 func TestConfigHasTokens_EmptyTokens_AtPath(t *testing.T) {

@@ -274,22 +274,27 @@ func TestTrajectoryAgents(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestConfigHasTokens_NoFiles(t *testing.T) {
-	// Neither /data/home/.claude nor /data/home/.copilot exists here.
+	// Redirect both shared credential paths to absent temp files so the
+	// negative assertion holds even on live hosts where /data/home/.claude
+	// and /data/home/.copilot exist.
+	emptySharedPaths(t)
 	if configHasTokens() {
-		t.Skip("shared token files present on this host; skipping negative assertion")
+		t.Error("configHasTokens should return false when neither shared file exists")
 	}
 }
 
 func TestCopilotConfigHasTokens_NoFile(t *testing.T) {
+	emptySharedPaths(t)
 	if copilotConfigHasTokens() {
-		t.Skip("shared copilot config present; skipping negative assertion")
+		t.Error("copilotConfigHasTokens should return false when the shared config is absent")
 	}
 }
 
 func TestClearExpiredTokens_NoFile(t *testing.T) {
 	// Missing config.json -> ReadFile error is returned.
+	emptySharedPaths(t)
 	if err := clearExpiredTokens(); err == nil {
-		t.Skip("shared copilot config present; clearExpiredTokens succeeded")
+		t.Error("clearExpiredTokens should return the ReadFile error when config.json is absent")
 	}
 }
 
