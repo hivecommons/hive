@@ -319,6 +319,19 @@ The code is authoritative and this table is hand-maintained, so it drifts unless
 PRs update it. **If your change adds, renames, or removes an environment
 variable lookup, update this file in the same PR.**
 
+A CI guard (`TestEnvVarsDocDocumentsOnlyRealVariables`, in
+`src/pkg/config/env_vars_doc_parity_test.go`) enforces **one** direction of
+this: every variable given a table row here must actually appear in the
+implementation, so the reference cannot document something nothing reads. It is
+one-directional on purpose — env var names reach `os.Getenv` through package
+constants, config-resolved struct fields, injected `getenv` parameters, and
+local wrapper helpers, so no static check can enumerate the full set of
+variables the code reads.
+
+**The converse is therefore not enforced: adding a lookup without adding a row
+here will not fail CI.** Keeping this file complete remains a human
+responsibility, which is what the rest of this section is for.
+
 What counts as a change that needs an entry:
 
 - A new `os.Getenv` or `os.LookupEnv` call in `src/` — most live in
