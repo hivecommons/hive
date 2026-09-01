@@ -1749,6 +1749,57 @@ func uidIsolationMarkersReady(markerDir, revision string, uid int) bool {
 	return true
 }
 
+// publishRuntimeUIDIsolationMarker publishes the per-agent completion marker
+// for an agent whose UID was allocated at RUNTIME (AddAgent/ReconcileAgents),
+// after the entrypoint's boot-time migration walk has already finished. The
+// walk only iterates the boot-time roster, so without this an agent added
+// post-boot waits in awaitUIDIsolation for an agent-<uid>.ready marker that
+// nothing will ever write — a permanent launch hold (observed live: an ACMM
+// pack update added `adjudicator` 31 minutes after boot and every governor
+// kick failed with "cannot be kicked: it is stopped" from then on).
+//
+// Semantics mirror the entrypoint's per-agent pass, including its fail-open
+// policy: a runtime-added agent normally has NO tree yet under /data/agents
+// (it is created at launch, owned by the launching UID), so there is nothing
+// to migrate and publishing the marker is the correct, safe resolution. When
+// a tree does exist and is foreign-owned, the entrypoint publishes after a
+// best-effort chown WARN — withholding the marker forever would turn a
+// permissions warning into a permanent agent outage, which is exactly the
+// failure this fixes. The hive process cannot chown (it dropped root), so the
+// ownership repair half is left to the next boot's walk; the marker unblocks
+// launch under the same fail-open contract.
+//
+// Never overwrites a marker that already carries the expected contents, and
+// does nothing on legacy deployments with no marker contract.
+func (m *Manager) publishRuntimeUIDIsolationMarker(name string) {
+	if m.uidMap == nil {
+		return
+	}
+	markerDir, revision, uid := m.uidMap.IsolationContract(name)
+	if markerDir == "" || revision == "" || uid <= 0 {
+		return
+	}
+	marker := filepath.Join(markerDir, fmt.Sprintf("agent-%d.ready", uid))
+	expected := revision + ":" + strconv.Itoa(uid)
+	if data, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(data)) == expected {
+		return
+	}
+	tmp := marker + ".tmp"
+	if err := os.WriteFile(tmp, []byte(expected+"\n"), 0o644); err != nil {
+		m.logger.Warn("could not publish runtime UID-isolation marker; agent launch will hold until the next boot's migration walk",
+			"agent", name, "uid", uid, "marker", marker, "error", err)
+		return
+	}
+	if err := os.Rename(tmp, marker); err != nil {
+		_ = os.Remove(tmp)
+		m.logger.Warn("could not publish runtime UID-isolation marker; agent launch will hold until the next boot's migration walk",
+			"agent", name, "uid", uid, "marker", marker, "error", err)
+		return
+	}
+	m.logger.Info("published UID-isolation marker for runtime-added agent",
+		"agent", name, "uid", uid, "marker", marker)
+}
+
 // awaitUIDIsolation keeps expensive PVC ownership walks off the pod startup
 // path without weakening per-agent UID isolation. The entrypoint starts the
 // root repair worker asynchronously, allowing the dashboard/startup probe to
@@ -4211,6 +4262,11 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 			tmuxSocket = "hive-" + name
 		}
 		_ = m.uidMap.Save(UIDMapPath)
+		// The boot-time migration walk has already finished; publish this
+		// agent's completion marker now or awaitUIDIsolation holds its launch
+		// forever. One tiny same-PVC write on a rare admin action — not the
+		// hot-path NFS I/O the m.mu discipline guards against.
+		m.publishRuntimeUIDIsolationMarker(name)
 	}
 	m.agents[name] = &AgentProcess{
 		Name:         name,
@@ -4300,6 +4356,10 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 				tmuxSocket = "hive-" + name
 			}
 			_ = m.uidMap.Save(UIDMapPath)
+			// Same contract as AddAgent: a reconcile-added agent gets its
+			// marker now, or its launch holds forever (the live adjudicator
+			// wedge came through exactly this path).
+			m.publishRuntimeUIDIsolationMarker(name)
 		}
 		m.agents[name] = &AgentProcess{
 			Name:         name,
