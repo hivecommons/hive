@@ -34,6 +34,14 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_FEDERATION_REGISTRY_PATH` | No | `/data/federation/registry.json` | Federation registry path override. |
 | `HIVE_WEBHOOK_SECRET` | No | none | HMAC secret for the spoke `/webhook` channel. |
 | `GITHUB_WEBHOOK_SECRET` | No | `/data/saas/webhook-secret.key` when present | Hub GitHub webhook HMAC secret. |
+| `HIVE_DASHBOARD_URL` | No | none | Base URL the `hive tui` client targets (`pkg/tui/client`). A bad value surfaces as a request error on the first call, not at startup. |
+| `HIVE_CONVERGENCE_MODE` | No | `convergence.mode` in `hive.yaml`, else `off` | Process-level override of the convergence mode (`off`, `shadow`, `enforce`) so an operator can flip shadow mode without editing `hive.yaml`. Any unrecognised value — a typo, or a mode this build does not know — resolves to `off`. |
+| `HIVE_WATCHDOG_PAUSE` | No | unset (not paused) | Fleet-wide watchdog kill switch (`1`, `true`, `yes`, `on`). Read at every config resolve, so it takes effect without a restart. It can only ever REDUCE authority: it never turns a watchdog on and never promotes observe to heal. |
+| `HIVE_DELEGATION_CHAIN_ENABLED` | No | disabled | Enables delegation chain minting (`1`, `true`, `yes`, `on` — same spelling as `HIVE_METRICS_ENABLED`). Read on each call rather than cached, so disabling it on a misbehaving spoke does not require a pod roll. |
+| `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` | Opt-in to knowledge Git sources whose host resolves to a private/internal address (self-hosted GitLab and similar). Off by default as SSRF protection. |
+| `HIVE_SHARED_AGENT_HOME` | No | per-agent HOME | Escape hatch (`1`) restoring the legacy shared-HOME layout for agents. |
+| `HIVE_WORKSPACE_CLEANUP_ENABLED` | No | enabled | Set `0` to opt out of automatic agent workspace cleanup. |
+| `HIVE_DOSSIER_CACHE_MAX_ENTRIES` | No | `512` | Caps each public dossier cache. Bounds username-spray memory while keeping normal contributor reuse hot. |
 
 ## Generating and rotating `HIVE_DASHBOARD_TOKEN`
 
@@ -110,6 +118,11 @@ new value at the same time.
 | `HIVE_PROXY_ADVISORY_OK` | No | `false` | Allows the spoke to start when the forced-proxy egress redirect cannot be installed (no `CAP_NET_ADMIN`/iptables). Enforcement becomes advisory-only — agents can bypass the proxy. Also gates whether the Go proxy trusts a self-asserted `Proxy-Authorization` header as agent identity when its UID map is unavailable (N7, #3841) — off by default, an unidentified caller is treated as `ADVISORY` (writes blocked) rather than whatever name it claims. See [security-model.md](security-model.md#forced-proxy-egress-and-cap_net_admin). |
 | `HIVE_TMUX_HISTORY_LIMIT` | No | `50000` | tmux scrollback depth applied when an agent session is created (positive integer; the authoritative knob for terminal scrollback and full-log capture). |
 | `HIVE_TTYD_HISTORY_LIMIT` | No | `50000` | Defense-in-depth history-limit raise applied at browser attach time; only affects panes created after attach. |
+| `HIVE_TMUX_PANE_WIDTH` | No | `200` | Column count agent tmux sessions are created with. A detached tmux session defaults to 80 columns because no attached client supplies a size. |
+| `HIVE_KICK_LOG_DIR` | No | `/data/logs/kicks` | Root directory per-kick log archives are written under. On the persistent volume so archives survive restarts, pod rolls, and image upgrades. |
+| `HIVE_KICK_LOG_RETENTION` | No | `10` | Archived kick logs kept per agent. `0` disables archiving entirely. |
+| `HIVE_KICK_LOG_MAX_BYTES` | No | `67108864` (64 MiB) | Per-agent total size cap across archived kick logs. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | none | OTLP trace exporter endpoint. Tracing stays disabled while unset. |
 | `HIVE_WIKI_GIT_URL` | No | none | Optional wiki vault URL cloned into `/data/vaults/hive-wiki` on first boot. |
 
 ## Inference, CLI backends, and agents
@@ -137,6 +150,13 @@ new value at the same time.
 | `HIVE_EXPLAIN_MODE` | No | `off` | **Fallback** for the hive-wide default agent explain mode (`off`, `brief`, `full`) — see [agent-configuration.md](agent-configuration.md#explain-mode-debugging-agent-behaviour). `governor.explain_mode` in `hive.yaml` (Settings → Governor → General in the dashboard) takes precedence; this variable applies only when that is unset. Either way it applies only to agents that leave `explain_mode` unset; an agent with an explicit value, including `off`, keeps it. Hive also injects the *resolved* mode into every agent process under this same name. An unrecognized value resolves to `off`. |
 | `BD_DIR` | No | current directory | `bd` beads CLI data directory. |
 | `BD_DASHBOARD_URL` | No | none | Dashboard URL used by `bd kb` integration. |
+| `OPENAI_API_KEY` | No | none | OpenAI-compatible API key consulted by backend/model resolution. |
+| `CODEX_API_KEY` | No | none | API key consulted for the Codex CLI backend. |
+| `HIVE_AGENT_TOKEN_REFRESH_INTERVAL` | No | `40m` | Go duration overriding the per-agent token refresh interval. Invalid or non-positive values fall back to the default. |
+| `HIVE_CREDENTIAL_WATCHDOG_INTERVAL` | No | `5m` | Go duration overriding how often the credential watchdog verifies each in-use backend credential file. `0` does NOT disable the watchdog — disabling is intentionally not offered. |
+| `HIVE_COPILOT_SESSION_REFRESH_INTERVAL` | No | `10m` | Go duration overriding the Copilot session refresh interval. |
+| `HIVE_COPILOT_SESSION_REFRESH_START_DELAY` | No | `30s` | Go duration overriding the delay before the first Copilot session refresh. |
+| `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | No | unset | Bypasses the Claude host-state isolation guard. As the name says, unsafe outside local development. |
 | `HIVE_CONN_<NAME>_URL` | No | generated from agent connection config | Agent API connection URI variable when a connection omits `env_name`; `<NAME>` is the uppercased connection name with `-` replaced by `_`. |
 | Custom connection auth env vars | No | none | If an agent API connection uses `auth.type: env`, Hive reads `auth.env_var` and injects that exact variable into the agent. |
 
@@ -181,6 +201,36 @@ Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONL
 | `OCI_AVAILABILITY_DOMAIN` | Required for OCI FSS provisioning | none | OCI availability domain. |
 | `OCI_MOUNT_TARGET_ID` | Required for OCI FSS provisioning | none | OCI mount target OCID. |
 | `OCI_EXPORT_SET_ID` | Required for OCI FSS provisioning | none | OCI export set OCID. |
+| `HIVE_HUB_ADMIN_USERNAME` | No | none | Single hub admin username. Consulted alongside `HIVE_HUB_ADMINS`. |
+| `HIVE_HUB_ADMINS` | No | none | Comma-separated hub admin usernames. |
+| `HIVE_HUB_GITHUB_TOKEN` | No | none | Hub-side GitHub token used by the dibs public-repo check. |
+| `HIVE_REACH_REPO_DIR` | No | none (GitHub compare API) | Local clone the reach ancestry check resolves against via `git merge-base --is-ancestor`. The hub image ships no clone, so the compare-API adapter is the default. |
+| `HIVE_REACH_NEVER_RAN_DAYS` | No | `3` | Never-ran grace period in days (integer, > 0). Absent or invalid values fall back to the default. |
+| `HIVE_PROVISION_WORKERS` | No | saved scale setting, else built-in default | Provision queue worker count. The saved dashboard scale setting takes precedence over this variable. |
+| `HIVE_PROVISION_PER_CLUSTER` | No | saved scale setting, else built-in default | Maximum concurrent provisions per cluster. |
+| `HIVE_KUBECTL_MAX_PER_CLUSTER` | No | saved scale setting, else built-in default | Maximum concurrent `kubectl` executions per cluster. |
+| `HIVE_UPGRADE_WAVE_SIZE` | No | saved scale setting, else built-in default | Number of spokes upgraded per wave. |
+| `HIVE_UPGRADE_DEBOUNCE_SECONDS` | No | built-in default | Debounce window before an upgrade wave starts. |
+| `HIVE_UPGRADE_MAX_HOLD_SECONDS` | No | built-in default | Maximum time an upgrade may be held before proceeding. |
+
+### Spoke-side derived keys
+
+A hub-hosted spoke is provisioned with only the derived sub-keys it needs and
+never receives the master `HIVE_HUB_SECRET`. When one of these is unset, the
+spoke derives the same domain-separated sub-key from `HIVE_HUB_SECRET`, so a
+spoke still rolling on an older Deployment keeps working. Both sources yield the
+identical key, so hub verification succeeds either way; a lookup fails closed
+only when neither is configured.
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_HEARTBEAT_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke heartbeat signing sub-key. |
+| `HIVE_SESSION_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke session-cookie signing sub-key. |
+| `HIVE_INVITE_KEY` | No | derived from `HIVE_HUB_SECRET` | Per-hive contributor-invite signing key. Symmetric: the spoke both mints and verifies invite tokens with it. |
+| `HIVE_TERMINAL_KEY` | No | self-derived per-hive from `HIVE_HUB_SECRET` + `HIVE_ID` | Per-hive terminal-assertion signing key. It never falls back to a fleet-uniform key. |
+| `HIVE_SSO_PUBLIC_KEY` | No | none | Ed25519 **public** key a spoke verifies hub-minted SSO handoff tokens with. Holding only the public key, a spoke can verify but cannot mint. |
+| `HIVE_SSO_PUBLIC_KEY_PREV` | No | none | Previous SSO public key, accepted during rotation so a spoke bridges a hub key change. |
+| `HIVE_SSO_KEY` | No | none | Legacy symmetric SSO key, still read for one release so spokes on a pre-cutover Deployment keep working. |
 
 ### Hub login providers
 
