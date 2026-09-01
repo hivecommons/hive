@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -77,6 +78,14 @@ func runBootPreludeRoot(t *testing.T, env map[string]string, files map[string]st
 	body = strings.ReplaceAll(body,
 		"/var/run/secrets/kubernetes.io/serviceaccount/token",
 		root+"/var/run/secrets/kubernetes.io/serviceaccount/token")
+	// Map the runtime uid onto the sandbox. The prelude's "is this file owned
+	// by the runtime user" fast paths compare against the literal uid 1001
+	// (dev in the shipped image). Under `go test` every seeded file is owned
+	// by the CURRENT uid, and a non-root test cannot chown, so on any host
+	// where tests do not happen to run as uid 1001 hive_harden_runtime_config
+	// takes its cannot-chown branch by design (#5360) and the 0600 assertions
+	// fail for a reason that has nothing to do with the hardening under test.
+	body = strings.ReplaceAll(body, `"1001"`, `"`+strconv.Itoa(os.Getuid())+`"`)
 
 	for _, rel := range readOnly {
 		p := filepath.Join(root, rel)
@@ -93,7 +102,18 @@ func runBootPreludeRoot(t *testing.T, env map[string]string, files map[string]st
 	}
 
 	cmd := exec.Command("bash", "-c", body)
-	cmd.Env = append(os.Environ(), "HIVE_CONFIG="+root+"/etc/hive/hive.yaml")
+	// Drop the host's own KUBERNETES_SERVICE_HOST so IS_KUBERNETES is decided
+	// by the case's env alone. On an in-cluster runner or a live hive host the
+	// inherited variable flips every "Docker mode" case into the K8s branch —
+	// the env-var half of the same leak the serviceaccount-token path rewrite
+	// above closes for the file half of the probe.
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "KUBERNETES_SERVICE_HOST=") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, kv)
+	}
+	cmd.Env = append(cmd.Env, "HIVE_CONFIG="+root+"/etc/hive/hive.yaml")
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
