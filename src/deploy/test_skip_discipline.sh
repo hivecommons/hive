@@ -110,6 +110,11 @@ while IFS= read -r _d; do
   done
 done <<<"$(printf '%s' "$PATH" | tr ':' '\n')"
 
+# A yaml.py that raises on import, shadowing the real PyYAML via PYTHONPATH.
+mkdir -p "${SANDBOX_ROOT}/yamlblock"
+printf 'raise ImportError("PyYAML masked by test_skip_discipline.sh")\n' \
+  >"${SANDBOX_ROOT}/yamlblock/yaml.py"
+
 if [ ! -x "${FULL_BIN}/bash" ]; then
   hive_test_fail "could not build a PATH sandbox" "no bash under ${FULL_BIN}"
   hive_test_report; exit $?
@@ -125,8 +130,25 @@ check_suite() {
   _case_n=$((_case_n + 1))
   bindir="${SANDBOX_ROOT}/case${_case_n}"
   cp -a "$FULL_BIN" "$bindir"
+
+  # The pseudo-tool NO_PYYAML denies the MODULE, not the interpreter: python3
+  # stays on PATH and works, but `import yaml` fails. This axis matters because
+  # these suites gate twice — once on python3, then on PyYAML — and denying
+  # python3 outright exits at the FIRST gate, leaving the second one untested.
+  # A regression in the PyYAML branch would then pass this guard.
   for tool in "$@"; do
-    [ -n "$tool" ] && rm -f "${bindir}/${tool}"
+    [ -z "$tool" ] && continue
+    if [ "$tool" = "NO_PYYAML" ]; then
+      mkdir -p "${bindir}/../noyaml${_case_n}"
+      cat >"${bindir}/python3" <<SHIM
+#!/bin/sh
+# python3 with PyYAML masked out, so 'import yaml' fails and nothing else does.
+PYTHONPATH="${SANDBOX_ROOT}/yamlblock:\${PYTHONPATH:-}" exec "$(command -v python3)" "\$@"
+SHIM
+      chmod +x "${bindir}/python3"
+      continue
+    fi
+    rm -f "${bindir}/${tool}"
   done
 
   if [ ! -f "${HERE}/${suite}" ]; then
@@ -138,6 +160,21 @@ check_suite() {
   # Anti-vacuity: if a denial did not take, this case would assert nothing.
   for tool in "$@"; do
     [ -z "$tool" ] && continue
+    if [ "$tool" = "NO_PYYAML" ]; then
+      # The interpreter must still WORK and `import yaml` must still FAIL —
+      # either half being wrong makes this case assert nothing.
+      if ! PATH="$bindir" python3 -c 'print(1)' >/dev/null 2>&1; then
+        hive_test_fail "${suite}: python3 is broken in the NO_PYYAML sandbox" \
+          "the suite would exit at the python3 gate, not the PyYAML one"
+        return 0
+      fi
+      if PATH="$bindir" python3 -c 'import yaml' >/dev/null 2>&1; then
+        hive_test_fail "${suite}: PyYAML is still importable in the sandbox" \
+          "the denial did not take, so this case proves nothing"
+        return 0
+      fi
+      continue
+    fi
     if PATH="$bindir" command -v "$tool" >/dev/null 2>&1; then
       hive_test_fail "${suite}: '${tool}' is still reachable in the sandbox" \
         "the denial did not take, so this case proves nothing"
@@ -174,6 +211,15 @@ check_suite test_standalone_service_contract.sh   "python3 is absent"  python3
 check_suite test_watchtower_socket_contract.sh    "python3 is absent"  python3
 check_suite test_standalone_runtime_parity.sh     "python3 is absent"  python3
 check_suite test_changelog_reminder.sh            "python3 is absent"  python3
+# Second axis: python3 present and working, PyYAML absent. These suites gate
+# twice, and the python3-absent cases above stop at the FIRST gate — without
+# these, a regression in the PyYAML branch passes unnoticed.
+check_suite test_entrypoint_dangling_keyfile.sh   "PyYAML is absent"   NO_PYYAML
+check_suite test_standalone_service_contract.sh   "PyYAML is absent"   NO_PYYAML
+check_suite test_watchtower_socket_contract.sh    "PyYAML is absent"   NO_PYYAML
+check_suite test_standalone_runtime_parity.sh     "PyYAML is absent"   NO_PYYAML
+check_suite test_changelog_reminder.sh            "PyYAML is absent"   NO_PYYAML
+
 check_suite test_contribute_k8s_workload.sh       "'just' is absent"   just
 check_suite test_entrypoint_system_gitconfig.sh   "git is absent"      git
 
