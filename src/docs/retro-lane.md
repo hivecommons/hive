@@ -27,7 +27,7 @@ Each finding is filed as an `advisory` bead attributed to actor `retro`, using t
 
 ## Optional LLM analysis
 
-Set `retro.analysis_model` to a model served by `governor.litellm` to enable bounded model analysis.
+Set `retro.analysis_model` to a model served by `governor.litellm` to enable bounded model analysis. The lane only calls the model for records that already triggered deterministic findings, keeping cost proportional to actionable anomalies. The prompt contains the compact record and finding types/details with hard truncation bounds.
 
 ### Prerequisites
 
@@ -57,7 +57,7 @@ retro:
   analysis_model: "" # a model ID from your gateway's /v1/models; empty = deterministic findings only
 ```
 
-Leaving `analysis_model` empty is the default and keeps the lane on deterministic findings alone. The lane only calls the model for records that already triggered deterministic findings, keeping cost proportional to actionable anomalies. The prompt contains the compact record and finding types/details with hard truncation bounds.
+Leaving `analysis_model` empty is the default and keeps the lane on deterministic findings alone.
 
 The model must return structured JSON:
 
