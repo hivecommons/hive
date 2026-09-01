@@ -495,9 +495,13 @@ open http://localhost:3001</code></pre>
       <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a href="/#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
     </div>
     <div class="alt-card">
-      <pre><code>npx @kubestellar/hive-contribute
+      <pre><code>git clone https://github.com/kubestellar/hive.git
+cd hive
 
-hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
+export HIVE_HUB=wss://HIVE_HOST/contribute
+just contribute-setup claude   # one-time: register + verify your CLI
+just contribute-hive           # start taking tasks</code></pre>
+      <p>Every hive also serves a landing page at <code>https://&lt;hive-dashboard&gt;/contribute</code> with live queue stats and copy-paste setup commands tailored to the CLI you pick.</p>
       <p style="margin-bottom:0">Your CLI runs agents locally. Tasks are assigned by the hive governor. You start as a <strong>newcomer</strong> and progress through contributor → trusted → advisor as you complete work.</p>
     </div>
   </section>
