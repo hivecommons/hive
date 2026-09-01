@@ -27,7 +27,37 @@ Each finding is filed as an `advisory` bead attributed to actor `retro`, using t
 
 ## Optional LLM analysis
 
-Set `retro.analysis_model` to a model served by `governor.litellm` to enable bounded model analysis. The lane only calls the model for records that already triggered deterministic findings, keeping cost proportional to actionable anomalies. The prompt contains the compact record and finding types/details with hard truncation bounds.
+Set `retro.analysis_model` to a model served by `governor.litellm` to enable bounded model analysis.
+
+### Prerequisites
+
+Retro LLM analysis has no inference backend of its own. It reuses the governor's LiteLLM gateway: the endpoint and API key are resolved from `governor.litellm` at startup, so that gateway must be configured **before** `retro.analysis_model` does anything. If the model is set but no endpoint resolves, analyzer construction fails with `retro analysis: no model endpoint resolved` and the lane continues filing deterministic advisory beads only.
+
+Configure the gateway by any of these routes:
+
+- **Environment** — `HIVE_LITELLM_ENDPOINT` (base URL) and `HIVE_LITELLM_API_KEY`. See [Inference, CLI backends, and agents](env-vars.md#inference-cli-backends-and-agents) in the environment variable reference.
+- **Dashboard API** — `PUT /api/config/governor/litellm` to save the endpoint and key reference, and `POST /api/config/governor/litellm/test` to verify reachability before enabling retro analysis. See [Configuration](api-reference.md#configuration) in the REST API reference.
+- **Config and concepts** — [Methods: subscription CLIs vs self-hosted inference](agent-configuration.md#methods-subscription-clis-vs-self-hosted-inference) explains the `litellm` method, the endpoint-plus-key-reference model, and why key values live in `/data/secrets/` rather than in YAML.
+
+The endpoint resolves from `HIVE_LITELLM_ENDPOINT` when set, otherwise from the YAML `governor.litellm.endpoint`. The API key is resolved from key files first (`governor.litellm.api_key_file`, then the mounted Secret, then the dashboard-written PVC copy) and only then from the env var.
+
+### Choosing an `analysis_model` value
+
+The value is a **model ID as advertised by your LiteLLM gateway** — it is passed through verbatim as the `model` field of an OpenAI-format `POST {endpoint}/v1/chat/completions` request. Hive applies no allowlist, prefix convention, or validation to it beyond trimming whitespace, so any string your gateway routes is acceptable and a string it does not recognise fails at request time rather than at config load.
+
+Because LiteLLM administrators choose their own `model_name` aliases, there is no single correct example: the right value is whatever your gateway's `GET /v1/models` returns for the key you configured. List them before setting the field rather than copying a name from elsewhere.
+
+```yaml
+governor:
+  litellm:
+    endpoint: https://litellm.example.com
+
+retro:
+  enabled: true
+  analysis_model: "" # a model ID from your gateway's /v1/models; empty = deterministic findings only
+```
+
+Leaving `analysis_model` empty is the default and keeps the lane on deterministic findings alone. The lane only calls the model for records that already triggered deterministic findings, keeping cost proportional to actionable anomalies. The prompt contains the compact record and finding types/details with hard truncation bounds.
 
 The model must return structured JSON:
 

@@ -44,6 +44,67 @@ review:
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
 ```
 
+## Reviewer selection
+
+An agent is *review-capable* when `dashboardAgentReviewCapable` (`pkg/dashboard/status_builder.go`) accepts it. The dashboard counts those agents and warns when the count is zero while `require_approval` is true. Selection runs in two stages, and the first stage applies to **both** configuration paths.
+
+### Stage 1 — availability gate (always applied)
+
+An agent is disqualified outright, before any name or keyword is examined, if any of the following is true:
+
+- it is not enabled (`enabled: false`),
+- it is paused (`paused: true`),
+- it is on-demand (`on_demand: true`).
+
+An on-demand agent is excluded even though it can be invoked manually: this count reflects agents available to the governor's automatic fan-out, not agents that exist.
+
+### Stage 2 — which agents qualify
+
+**When `review.reviewer_agents` is non-empty**, only agents whose names appear in that list qualify. Matching is an exact string comparison of the agent name against each list entry after trimming surrounding whitespace — it is *not* case-insensitive and *not* a substring match. A listed agent that fails the stage-1 gate still does not qualify, and no keyword scan is performed as a fallback: if every listed agent is missing, disabled, paused, or on-demand, the effective reviewer set is empty.
+
+**When `review.reviewer_agents` is empty or omitted**, an agent qualifies if the string `review` appears, case-insensitively, in any of these fields:
+
+- the agent's name,
+- `role`,
+- any entry in `aliases`,
+- any entry in `lane_keywords`,
+- any entry in `detect_keywords`.
+
+The match is a substring check, so `reviewer`, `pr-review`, and `code-reviewer` all qualify.
+
+### Making an agent review-capable
+
+The smallest change that works on the keyword path is a `role` containing `review`:
+
+```yaml
+agents:
+  reviewer:
+    enabled: true
+    role: reviewer
+```
+
+Or name the agent explicitly, which bypasses the keyword scan entirely:
+
+```yaml
+review:
+  require_approval: true
+  reviewer_agents: [reviewer]
+
+agents:
+  reviewer:
+    enabled: true
+```
+
+### Troubleshooting "no enabled review-capable agents were detected"
+
+The dashboard emits this warning whenever `require_approval` is true and zero agents pass both stages. Because the availability gate runs first, an operator who has a correctly named reviewer that is merely **paused** sees exactly the same message as one who has no reviewer at all. Check in this order:
+
+1. **Is your intended reviewer enabled, unpaused, and not on-demand?** This is the most common cause and it is invisible in the warning text. Verify all three flags before touching any review configuration — a correct `reviewer_agents` list cannot rescue a paused agent.
+2. **Is `review.reviewer_agents` set?** If it is, the keyword scan never runs. Every name in the list must match an existing agent's name exactly, after whitespace trimming; a typo, a case difference, or an alias instead of the real agent name silently contributes nothing.
+3. **If `reviewer_agents` is unset, does any enabled agent carry `review` somewhere?** Search the five fields listed above. An agent whose only connection to review is an English description elsewhere in its config does not qualify — the scan reads name, `role`, `aliases`, `lane_keywords`, and `detect_keywords` and nothing else.
+
+Until at least one agent passes, `require_approval: true` means no PR ever acquires the aggregate `approve` it needs, so merge-gate output stays empty rather than falling back to unreviewed merges.
+
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 
 `review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.
