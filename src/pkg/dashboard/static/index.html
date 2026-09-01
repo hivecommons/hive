@@ -1241,6 +1241,16 @@
     .repo-pr-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-pr-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-pr-pill .pill-merge-icon { font-size: 0.6rem; margin-left: 1px; }
+    /* needs-human: the escalation ledger (pkg/escalation) applies the
+       `needs-human` GitHub label to a PR once automated fix attempts are
+       exhausted. The pill turns status-alert orange (NOT brand amber) and a
+       compact companion badge names the state, so parked PRs stand out
+       instead of blending into the purple PR list — nine escalated PRs were
+       invisible to the operator for a week without this. */
+    .repo-pr-pill.needs-human { --pill-c: var(--orange); }
+    .pill-needs-human-badge { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
+    /* Section-header counter: "· N need human review" next to the host badge. */
+    .repos-needs-human-count { display: none; font-size: 0.62em; font-weight: 600; vertical-align: middle; margin-left: 6px; color: var(--orange); }
 
     /* Sparklines */
     .sparkline { display: inline-block; vertical-align: middle; margin-left: 6px; flex-shrink: 0; }
@@ -3219,7 +3229,7 @@
   <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
@@ -7454,6 +7464,22 @@
         badge.style.color = isPublic ? 'var(--green)' : 'var(--indigo)';
         badge.title = 'Every repo in this hive is on ' + hostLabel + (isPublic ? '' : ' (GitHub Enterprise)') + ' — this hive is single-host';
       }
+      // Section-header escalation counter: "· N need human review". Escalated
+      // PRs (needs-human label from the escalation ledger) previously had no
+      // section-level signal — nine parked PRs sat invisible to the operator
+      // for a week (kubestellar/console, 2026-09-01). Hidden at zero so a
+      // healthy hive shows nothing extra.
+      const needHumanTotal = repos.reduce((n, r) => n + (r.openPrs || []).filter(p => (p.labels || []).map(l => String(l)).includes('needs-human')).length, 0);
+      const nhEl = document.getElementById('repos-needs-human');
+      if (nhEl) {
+        if (needHumanTotal > 0) {
+          nhEl.textContent = '· ' + needHumanTotal + ' need' + (needHumanTotal === 1 ? 's' : '') + ' human review';
+          nhEl.style.display = 'inline';
+        } else {
+          nhEl.textContent = '';
+          nhEl.style.display = 'none';
+        }
+      }
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)');
@@ -7478,17 +7504,34 @@
           const prAge = pillAge(p.created_at);
           const labels = (p.labels || []).map(l => String(l));
           const queued = labels.includes(window._hiveAutoMergeLabel || 'lgtm');
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '');
+          // Escalated out of the automated fix lane: the escalation ledger
+          // (pkg/escalation) applies the `needs-human` label once automated
+          // fix attempts are exhausted. The label list is the single source
+          // of truth — the same signal the ledger writes to GitHub — so this
+          // view cannot drift from the ledger.
+          const needsHuman = labels.includes('needs-human');
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
           const repoName = parts.length > 1 ? parts.slice(1).join('/') : (r.name || '');
-          const queueBtn = canQueue
-            ? (queued
-                ? '<span class="repo-pr-pill mergeable" title="Already queued for Hive auto-merge on green CI">Queued</span>'
-                : `<button class="repo-pr-pill" style="cursor:pointer" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1">Queue auto-merge</button>`)
-            : '';
-          return `<a class="repo-pr-pill${mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${queueBtn}`;
+          // The action-chip slot after the PR pill. needs-human takes
+          // precedence over the Queue auto-merge action: an escalated PR is
+          // out of the automated lane by definition, so offering to queue it
+          // for auto-merge would contradict the escalation. Removing the
+          // needs-human label on GitHub returns the PR to the automated lane
+          // and brings the queue action back on the next refresh.
+          const queueBtn = needsHuman
+            ? '<span class="repo-pr-pill needs-human pill-needs-human-badge" title="Automated fix attempts exhausted — a human must review this PR. Remove the needs-human label after addressing the root cause to return it to the automated fix lane.">⚠ needs human</span>'
+            : (canQueue
+                ? (queued
+                    ? '<span class="repo-pr-pill mergeable" title="Already queued for Hive auto-merge on green CI">Queued</span>'
+                    : `<button class="repo-pr-pill" style="cursor:pointer" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1">Queue auto-merge</button>`)
+                : '');
+          // needs-human wins the pill tint over mergeable green: a PR can be
+          // technically mergeable AND escalated, and the escalation is what
+          // the operator must see.
+          return `<a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${queueBtn}`;
         }).join('');
         const allPills = issuePills + prPills;
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
