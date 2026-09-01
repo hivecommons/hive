@@ -151,6 +151,33 @@ const (
 	// this forces roughly one real write per hour — enough to keep the
 	// App-banner logic honest while still eliminating ~98% of the no-op edits.
 	advisoryDigestWriteThroughInterval = 60
+	// advisoryDigestCommentsPerPage is the page size used when scanning a
+	// target's comments for the bot's own digest. 100 is GitHub's maximum for
+	// this endpoint; using anything smaller only multiplies the number of
+	// round trips needed to cover the same history.
+	advisoryDigestCommentsPerPage = 100
+	// advisoryDigestScanMaxPages bounds that scan (#5522). findDigestComment
+	// used to read ONE page of 50 and stop, so on any target carrying more
+	// than ~50 comments the bot could not see its own digest and CREATEd a
+	// fresh one every cycle instead of EDITing — each new comment pushing the
+	// digest one position further out of reach. That is the mechanism that
+	// turned a repeat-post bug into 250 separate comments on
+	// ibm/alchemy-logging#686.
+	//
+	// The scan now walks pages NEWEST-FIRST (direction=desc), because the
+	// bot's own digest is overwhelmingly likely to be recent: the common case
+	// resolves on page 1 at the same one-call cost as before, and a target
+	// with thousands of ancient comments is still covered near its head.
+	//
+	// 10 pages x 100 = the most recent 1,000 comments per cycle. WHEN THE CAP
+	// IS HIT the scan stops and reports "not found" — the same answer it gives
+	// for a genuinely absent digest, so the post path CREATEs a new digest
+	// comment. That is a deliberate trade: a digest older than the 1,000 most
+	// recent comments on a target is effectively unreachable, and one new
+	// comment (which every later cycle then finds on page 1 and edits) is
+	// preferable to walking unbounded history on every ~60s cycle. The cap
+	// being hit is logged at Warn so the case is visible rather than silent.
+	advisoryDigestScanMaxPages = 10
 )
 
 // PostAdvisoryDigest updates the existing digest comment on the advisory issue,
@@ -414,14 +441,52 @@ type digestComment struct {
 func (d digestComment) found() bool { return d.id > 0 }
 
 func (c *Client) findDigestCommentDetail(ctx context.Context, owner, repo string, issueNum int) (digestComment, error) {
+	// #5522: scan newest-first and paginate. See advisoryDigestScanMaxPages
+	// for the bound and for what happens when it is reached.
 	opts := &gh.IssueListCommentsOptions{
-		ListOptions: gh.ListOptions{PerPage: 50},
-	}
-	comments, _, err := c.client.Issues.ListComments(ctx, owner, repo, issueNum, opts)
-	if err != nil {
-		return digestComment{}, err
+		Sort:      gh.Ptr("created"),
+		Direction: gh.Ptr("desc"),
+		ListOptions: gh.ListOptions{
+			PerPage: advisoryDigestCommentsPerPage,
+		},
 	}
 	var botAuthored digestComment
+	pages := 0
+	for {
+		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, issueNum, opts)
+		if err != nil {
+			// A partial scan that already found a usable fallback still
+			// beats creating a duplicate, so surface the error but keep
+			// whatever the earlier pages turned up.
+			return botAuthored, err
+		}
+		pages++
+		found, done := c.scanDigestPage(owner, repo, issueNum, comments, &botAuthored)
+		if done {
+			return found, nil
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return botAuthored, nil
+		}
+		if pages >= advisoryDigestScanMaxPages {
+			c.logger.Warn("advisory digest comment scan hit its page cap — treating the digest as absent, which will CREATE a new one",
+				slog.String("repo", owner+"/"+repo),
+				slog.Int("issue", issueNum),
+				slog.Int("pages_scanned", pages),
+				slog.Int("comments_scanned", pages*advisoryDigestCommentsPerPage))
+			return botAuthored, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// scanDigestPage applies the authorship rules to one page of comments. It
+// returns (comment, true) when it has found the definitive digest to edit and
+// the scan can stop, or (_, false) to continue to the next page. A
+// bot-authored-but-not-provably-ours comment is remembered in botAuthored as a
+// fallback rather than ending the scan, so a later page can still yield an
+// exact match.
+func (c *Client) scanDigestPage(owner, repo string, issueNum int, comments []*gh.IssueComment, botAuthored *digestComment) (digestComment, bool) {
 	for _, comment := range comments {
 		if !strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
 			continue
@@ -430,20 +495,22 @@ func (c *Client) findDigestCommentDetail(ctx context.Context, owner, repo string
 			// Token (PAT) client: historical prefix-only match. The credential
 			// may legitimately be the human who authored the comment, and
 			// authorship cannot be verified without an extra /user round trip.
-			return digestCommentFrom(comment), nil
+			return digestCommentFrom(comment), true
 		}
 		login := comment.GetUser().GetLogin()
 		if c.appBotLogin != "" && login == c.appBotLogin {
 			// Exactly our own bot comment — the one credential-safe choice.
-			return digestCommentFrom(comment), nil
+			return digestCommentFrom(comment), true
 		}
 		if strings.HasSuffix(login, "[bot]") || comment.GetUser().GetType() == "Bot" {
 			// Bot-authored but not provably ours (bot login unknown, or a slug
 			// mismatch between config and the real App). Remember the first as
 			// a fallback rather than skipping it: refusing our own comment on
 			// a misconfigured slug would create a duplicate every cycle.
+			// "First" is now the NEWEST such comment, since the scan runs
+			// newest-first.
 			if !botAuthored.found() {
-				botAuthored = digestCommentFrom(comment)
+				*botAuthored = digestCommentFrom(comment)
 			}
 			continue
 		}
@@ -461,7 +528,7 @@ func (c *Client) findDigestCommentDetail(ctx context.Context, owner, repo string
 			slog.Int64("comment_id", comment.GetID()),
 			slog.String("author", login))
 	}
-	return botAuthored, nil
+	return digestComment{}, false
 }
 
 // digestCommentFrom projects the fields the post path needs out of a forge
