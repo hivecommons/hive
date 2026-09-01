@@ -103,7 +103,7 @@ The dashboard emits this warning whenever `require_approval` is true and zero ag
 2. **Is `review.reviewer_agents` set?** If it is, the keyword scan never runs. Every name in the list must match an existing agent's name exactly, after whitespace trimming; a typo, a case difference, or an alias instead of the real agent name silently contributes nothing.
 3. **If `reviewer_agents` is unset, does any enabled agent carry `review` somewhere?** Search the five fields listed above. An agent whose only connection to review is an English description elsewhere in its config does not qualify — the scan reads name, `role`, `aliases`, `lane_keywords`, and `detect_keywords` and nothing else.
 
-Until at least one agent passes, `require_approval: true` means no PR ever acquires the aggregate `approve` it needs, so merge-gate output stays empty rather than falling back to unreviewed merges.
+Until at least one agent passes, no reviewer receives a perspective prompt, so no PR acquires the aggregate `approve` that `require_approval: true` requires (see [Configuration](#configuration) above).
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 
