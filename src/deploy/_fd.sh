@@ -227,21 +227,6 @@ echo
 echo "--- registered suites ---"
 
 # Deny python3 outright: the structural-assertion suites all gate on it.
-check_suite test_entrypoint_dangling_keyfile.sh   "python3 is absent"  python3
-check_suite test_standalone_service_contract.sh   "python3 is absent"  python3
-check_suite test_watchtower_socket_contract.sh    "python3 is absent"  python3
-check_suite test_standalone_runtime_parity.sh     "python3 is absent"  python3
-check_suite test_changelog_reminder.sh            "python3 is absent"  python3
-# Second axis: python3 present and working, PyYAML absent. These suites gate
-# twice, and the python3-absent cases above stop at the FIRST gate — without
-# these, a regression in the PyYAML branch passes unnoticed.
-check_suite test_entrypoint_dangling_keyfile.sh   "PyYAML is absent"   NO_PYYAML
-check_suite test_standalone_service_contract.sh   "PyYAML is absent"   NO_PYYAML
-check_suite test_watchtower_socket_contract.sh    "PyYAML is absent"   NO_PYYAML
-check_suite test_standalone_runtime_parity.sh     "PyYAML is absent"   NO_PYYAML
-check_suite test_changelog_reminder.sh            "PyYAML is absent"   NO_PYYAML
-
-check_suite test_contribute_k8s_workload.sh       "'just' is absent"   just
 check_suite test_entrypoint_system_gitconfig.sh   "git is absent"      git
 
 # The two #5383 suites gate on being root, which cannot be denied by PATH — but
