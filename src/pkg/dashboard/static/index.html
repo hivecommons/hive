@@ -16781,7 +16781,12 @@ function burnAreaChart() {
       // path/ref from whichever URL it receives, so keep the raw form here and
       // let the server round-trip it back in _importBody.
       var keepLinked = !!(document.getElementById('import-keep-linked') || {}).checked;
+      // Org migration: rewrite blob->raw for BOTH the new (hivecommons) org and
+      // the legacy (kubestellar) one, so pre-transfer links pasted from old
+      // docs/bookmarks still import; raw.githubusercontent follows the repo
+      // transfer for the old spelling.
       url = url.replace('github.com/hivecommons/hive/blob/', 'raw.githubusercontent.com/hivecommons/hive/');
+      url = url.replace('github.com/kubestellar/hive/blob/', 'raw.githubusercontent.com/kubestellar/hive/');
       try {
         var resp = await fetch('/api/agents/import', {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({source:'url',url:url,preview:true,keepLinked:keepLinked})});
         var d = await resp.json();
