@@ -187,6 +187,11 @@ type Server struct {
 
 	deviceFlowMu    sync.Mutex
 	deviceFlowState *github.DeviceFlowState
+	// deviceFlowID binds the in-progress device flow to the caller who started
+	// it: /start returns it, /poll must present it (both routes are public, and
+	// the session cookie is minted on the poll response — without this secret
+	// any anonymous poller could race the operator and steal the session).
+	deviceFlowID string
 
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
@@ -1539,14 +1544,16 @@ async function startFlow(){
     document.getElementById('user-code').textContent=d.user_code;
     document.getElementById('verify-link').href=d.verification_uri;
     showStep('step-code');
-    poll(d.interval||5);
+    poll(d.interval||5,d.flow_id||'');
   }catch(e){showError('Network error: '+e.message)}
 }
-async function poll(interval){
+async function poll(interval,flowId){
   var ms=interval*1000;
   async function check(){
     try{
-      var r=await fetch('/api/gh-user-auth/poll',{method:'POST'});
+      // flow_id proves this poll belongs to the flow WE started — the server
+      // refuses to mint the session for any poll that cannot present it.
+      var r=await fetch('/api/gh-user-auth/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:flowId})});
       var d=await r.json();
       if(d.status==='complete'){showStep('step-done');setTimeout(function(){location.href='/api/gh-user-auth/session'},1000);return}
       if(d.status==='error'){showError(d.error||'Authorization failed');return}

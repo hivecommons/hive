@@ -93,6 +93,11 @@ type deviceStartResponse struct {
 	VerificationURI string `json:"verification_uri"`
 	ExpiresIn       *int   `json:"expires_in"`
 	Interval        *int   `json:"interval"`
+	// FlowID binds the flow to this client: the server refuses to complete a
+	// poll (and mint the session) for any caller that cannot present it. Empty
+	// when talking to a server predating the binding, in which case no body is
+	// sent and the old contract applies.
+	FlowID string `json:"flow_id"`
 }
 
 // devicePollResponse mirrors handleGHUserAuthPoll's payload. Note the error
@@ -155,7 +160,7 @@ func (c *Client) DeviceLogin(ctx context.Context, opts DeviceLoginOptions) (*Log
 			return nil, err
 		}
 
-		poll, cookies, err := c.pollDeviceFlow(ctx)
+		poll, cookies, err := c.pollDeviceFlow(ctx, start.FlowID)
 		if err != nil {
 			return nil, err
 		}
@@ -205,9 +210,15 @@ func (c *Client) startDeviceFlow(ctx context.Context) (*deviceStartResponse, err
 
 // pollDeviceFlow needs the raw *http.Response — the session arrives as
 // Set-Cookie headers, which Client.do discards — so it drives the request
-// itself instead of going through do.
-func (c *Client) pollDeviceFlow(ctx context.Context) (*devicePollResponse, []*http.Cookie, error) {
-	req, err := c.request(ctx, http.MethodPost, ghAuthPollPath, nil, nil, nil)
+// itself instead of going through do. flowID (from the start response) is the
+// client-binding secret the server requires before it will complete the flow;
+// empty (an older server that minted none) sends no body.
+func (c *Client) pollDeviceFlow(ctx context.Context, flowID string) (*devicePollResponse, []*http.Cookie, error) {
+	var body any
+	if flowID != "" {
+		body = map[string]string{"flow_id": flowID}
+	}
+	req, err := c.request(ctx, http.MethodPost, ghAuthPollPath, nil, body, nil)
 	if err != nil {
 		return nil, nil, err
 	}

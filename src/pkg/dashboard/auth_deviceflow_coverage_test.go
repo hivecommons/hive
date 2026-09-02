@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -121,10 +122,74 @@ func TestCovDF_GHUserAuthPoll_NoFlow(t *testing.T) {
 	}
 }
 
-func TestCovDF_GHUserAuthPoll_Pending(t *testing.T) {
+// TestCovDF_GHUserAuthPoll_MissingFlowIDRejected: a poll that presents no
+// flow_id at all (an anonymous prober, or a pre-binding client) must be
+// rejected and must never complete a login.
+func TestCovDF_GHUserAuthPoll_MissingFlowIDRejected(t *testing.T) {
 	s, _, _ := dfServer(t, "authorization_pending", "octocat")
 	doPost(s, "/api/gh-user-auth/start", nil)
 	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("poll without flow_id: want 400, got %d", rec.Code)
+	}
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["status"] == "complete" {
+		t.Fatal("poll without flow_id must never complete a login")
+	}
+}
+
+// TestCovDF_GHUserAuthPoll_WrongFlowIDRejected pins the session-hijack fix: the
+// session cookie is minted on the POLL response and both routes are public, so
+// a poll that cannot present the flow_id returned by ITS OWN start must get
+// nothing — otherwise any anonymous poller could race the operator and steal
+// the freshly approved session.
+func TestCovDF_GHUserAuthPoll_WrongFlowIDRejected(t *testing.T) {
+	s, _, _ := dfServer(t, "complete", "octocat")
+	dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", map[string]string{"flow_id": "attacker-guess"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("poll with wrong flow_id: want 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if c := sessionCookie(rec); c != nil {
+		t.Fatal("session cookie minted for a poll that did not start the flow")
+	}
+	// The legitimate holder's flow must survive the attacker's attempt.
+	flow := map[string]string{}
+	s.deviceFlowMu.Lock()
+	if s.deviceFlowState == nil {
+		s.deviceFlowMu.Unlock()
+		t.Fatal("a rejected poll must not destroy the in-progress flow")
+	}
+	flow["flow_id"] = s.deviceFlowID
+	s.deviceFlowMu.Unlock()
+	rec = doPost(s, "/api/gh-user-auth/poll", flow)
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["status"] != "complete" && body["status"] != "error" {
+		t.Fatalf("legitimate poll after rejected one: got %v (%s)", body["status"], rec.Body.String())
+	}
+}
+
+// dfStartFlow starts a device flow through the public handler and returns the
+// poll body carrying the flow_id the server now requires (the client binding
+// that prevents the poll-race session hijack).
+func dfStartFlow(t *testing.T, s *Server) map[string]string {
+	t.Helper()
+	rec := doPost(s, "/api/gh-user-auth/start", nil)
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	id, _ := body["flow_id"].(string)
+	if id == "" {
+		t.Fatalf("start response carried no flow_id: %s", rec.Body.String())
+	}
+	return map[string]string{"flow_id": id}
+}
+
+func TestCovDF_GHUserAuthPoll_Pending(t *testing.T) {
+	s, _, _ := dfServer(t, "authorization_pending", "octocat")
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["status"] != "pending" {
@@ -134,8 +199,8 @@ func TestCovDF_GHUserAuthPoll_Pending(t *testing.T) {
 
 func TestCovDF_GHUserAuthPoll_SlowDown(t *testing.T) {
 	s, _, _ := dfServer(t, "slow_down", "octocat")
-	doPost(s, "/api/gh-user-auth/start", nil)
-	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["status"] != "slow_down" {
@@ -145,8 +210,8 @@ func TestCovDF_GHUserAuthPoll_SlowDown(t *testing.T) {
 
 func TestCovDF_GHUserAuthPoll_Error(t *testing.T) {
 	s, _, _ := dfServer(t, "error", "octocat")
-	doPost(s, "/api/gh-user-auth/start", nil)
-	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["status"] != "error" {
@@ -158,8 +223,8 @@ func TestCovDF_GHUserAuthPoll_CompleteOwner(t *testing.T) {
 	s, _, _ := dfServer(t, "complete", "octocat")
 	// Not direct-route (no allowlist) → role owner, token persisted only if
 	// userTokenPath is writable.
-	doPost(s, "/api/gh-user-auth/start", nil)
-	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	// Either "complete" (if /data writable) or an error about persisting token —
@@ -173,8 +238,8 @@ func TestCovDF_GHUserAuthPoll_CompleteOwner(t *testing.T) {
 func TestCovDF_GHUserAuthPoll_UnverifiableIdentity(t *testing.T) {
 	// login empty → /user returns 401 → ValidateToken fails → identity error.
 	s, _, _ := dfServer(t, "complete", "")
-	doPost(s, "/api/gh-user-auth/start", nil)
-	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["status"] != "error" {
@@ -187,8 +252,8 @@ func TestCovDF_GHUserAuthPoll_DirectRouteDenied(t *testing.T) {
 	// Direct-route allowlist that does NOT include octocat → denied.
 	deps.Config.Dashboard.AuthorizedUsers = []string{"someoneelse"}
 	deps.Config.Dashboard.HubProxied = false
-	doPost(s, "/api/gh-user-auth/start", nil)
-	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["status"] != "error" {
@@ -205,8 +270,8 @@ func TestCovDF_GHUserAuthPoll_DirectRouteViewer(t *testing.T) {
 	// role read (no token persistence).
 	deps.Config.Dashboard.AuthorizedUsers = []string{"owner1:owner", "viewer1:read"}
 	deps.Config.Dashboard.HubProxied = false
-	doPost(s, "/api/gh-user-auth/start", nil)
-	rec := doPost(s, "/api/gh-user-auth/poll", nil)
+	flow := dfStartFlow(t, s)
+	rec := doPost(s, "/api/gh-user-auth/poll", flow)
 	var body map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["status"] != "complete" {
@@ -238,12 +303,14 @@ func TestCovDF_GHUserAuthPoll_EmptyAuthTokenStillMintsSession(t *testing.T) {
 	t.Setenv("HIVE_HUB_SECRET", testHubSecret)
 	t.Setenv("HIVE_ID", testHiveID)
 
-	doPost(s, "/api/gh-user-auth/start", nil)
+	flow := dfStartFlow(t, s)
 
 	// Drive the poll with X-Forwarded-Proto set, mirroring production traffic
 	// behind the TLS-terminating proxy, so Secure cookie attributes are asserted.
+	flowBody, _ := json.Marshal(flow)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/gh-user-auth/poll", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/gh-user-auth/poll", bytes.NewReader(flowBody))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	s.mux.ServeHTTP(rec, req)
 

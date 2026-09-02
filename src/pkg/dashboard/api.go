@@ -2,7 +2,10 @@ package dashboard
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2312,21 +2315,62 @@ func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Bind the flow to THIS caller. Both start and poll are public
+	// (isPublicPath), and the session cookie is minted on the POLL response —
+	// so without a client-held secret, any unauthenticated poller could race
+	// the legitimate operator and walk away with their freshly approved
+	// session. flow_id is that secret: crypto-random, returned only to the
+	// caller who started the flow, and required (constant-time) on every poll.
+	// The GitHub device_code stays server-side as before.
+	flowID, err := newDeviceFlowID()
+	if err != nil {
+		jsonError(w, "failed to start device flow", http.StatusInternalServerError)
+		return
+	}
 	s.deviceFlowState = state
+	s.deviceFlowID = flowID
 	s.auditFromRequest(r, "gh_auth_start", "", "")
 	jsonResponse(w, map[string]interface{}{
 		"user_code":        state.UserCode,
 		"verification_uri": state.VerificationURI,
 		"expires_in":       state.ExpiresIn,
 		"interval":         state.Interval,
+		"flow_id":          flowID,
 	})
 }
 
+// newDeviceFlowID mints the opaque per-flow secret handed to the client that
+// starts a device flow. 128 bits of crypto randomness, hex-encoded.
+func newDeviceFlowID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := cryptorand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
+	// Read the caller's flow binding BEFORE taking the lock — decodeBody does
+	// network I/O and must not serialize behind another poll's GitHub call.
+	var pollReq struct {
+		FlowID string `json:"flow_id"`
+	}
+	_ = decodeBody(r, &pollReq) // absent/invalid body leaves FlowID empty; enforced below
+
 	s.deviceFlowMu.Lock()
 	defer s.deviceFlowMu.Unlock()
 
 	if s.deviceFlowState == nil {
+		jsonError(w, "no device flow in progress — call /api/gh-user-auth/start first", http.StatusBadRequest)
+		return
+	}
+	// Enforce the client binding whenever this flow was minted with one (every
+	// flow started through handleGHUserAuthStart is). A poll that cannot prove
+	// it started the flow gets nothing — in particular it must never be the
+	// request the session cookie is set on. Constant-time compare: flow_id is
+	// a secret. State stays intact so the legitimate holder's polls proceed.
+	if s.deviceFlowID != "" &&
+		subtle.ConstantTimeCompare([]byte(pollReq.FlowID), []byte(s.deviceFlowID)) != 1 {
 		jsonError(w, "no device flow in progress — call /api/gh-user-auth/start first", http.StatusBadRequest)
 		return
 	}
@@ -2335,6 +2379,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deviceFlowState = nil
+		s.deviceFlowID = ""
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": err.Error()})
 		return
 	}
@@ -2354,6 +2399,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil || user == nil || user.Login == "" {
 		s.deviceFlowState = nil
+		s.deviceFlowID = ""
 		// Audit the failed login so the owner can see attempts that never got
 		// far enough to resolve a GitHub identity. Actor is "unknown" because we
 		// could not verify who they are.
@@ -2362,6 +2408,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deviceFlowState = nil
+	s.deviceFlowID = ""
 	username := user.Login
 	avatarURL := user.AvatarURL
 
