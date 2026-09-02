@@ -552,6 +552,7 @@ type ContributeWSHub struct {
 	failedTasksFile    string
 	noPRStreaksFile    string
 	noWorkVerdictsFile string
+	leasesFile         string
 	asyncActivitySave  bool
 	persistActivity    bool
 	persistTaskLedgers bool
@@ -672,6 +673,7 @@ func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int,
 		expiresAt: now.Add(leaseTTL),
 	}
 	h.leaseMu.Unlock()
+	h.saveLeases()
 }
 
 // renewLease extends an identity's server-issued lease window when the relay proves
@@ -693,10 +695,15 @@ func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
 		return
 	}
 	h.leaseMu.Lock()
+	renewed := false
 	if l, ok := h.leases[identity]; ok && l.taskID == taskID {
 		l.expiresAt = now.Add(leaseTTL)
+		renewed = true
 	}
 	h.leaseMu.Unlock()
+	if renewed {
+		h.saveLeases()
+	}
 }
 
 // revokeLease removes the server-authoritative lease for an identity on any release
@@ -711,10 +718,15 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 		return
 	}
 	h.leaseMu.Lock()
+	revoked := false
 	if l, ok := h.leases[identity]; ok && (taskID == "" || l.taskID == taskID) {
 		delete(h.leases, identity)
+		revoked = true
 	}
 	h.leaseMu.Unlock()
+	if revoked {
+		h.saveLeases()
+	}
 }
 
 // lookupLease returns the active, unexpired server-issued lease for an identity that
@@ -741,6 +753,8 @@ func (h *ContributeWSHub) lookupLease(identity, taskID, repo string, number int,
 	}
 	if now.After(l.expiresAt) {
 		// Expired: drop it so it can never be re-adopted, and treat as no lease.
+		// saveLeases skips expired entries, so the ledger self-cleans on the
+		// next mutation; no extra write is needed here.
 		delete(h.leases, identity)
 		return nil
 	}
@@ -887,6 +901,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		failedTasksFile:       failedTasksFile,
 		noPRStreaksFile:       noPRStreaksFile,
 		noWorkVerdictsFile:    noWorkVerdictsPath(),
+		leasesFile:            taskLeasesPath(),
 		asyncActivitySave:     asyncActivitySave,
 		persistActivity:       activityPersistenceEnabled,
 		persistTaskLedgers:    taskLedgerPersistenceEnabled,
@@ -901,6 +916,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadFailedTasks()
 	hub.loadNoPRStreaks()
 	hub.loadNoWorkVerdicts()
+	hub.loadLeases()
 	hub.loadActivity()
 	go hub.cleanupLoop()
 	return hub
