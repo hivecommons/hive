@@ -1,0 +1,1 @@
+- NOTICE regeneration now retries the pinned `go-licenses` install before failing, so transient checksum database stream errors no longer fail the attribution gate without a code or module change ([#5716](https://github.com/kubestellar/hive/issues/5716)).
