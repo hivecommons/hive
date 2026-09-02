@@ -5,7 +5,7 @@ Listed below are organizations that have adopted, or benefitted from, KubeStella
 ## How to Add Yourself
 
 1. Fork this repository
-2. Add your organization to the table below using the schema: `| Organization | Description | Maturity Level | Further Information |`
+2. Add your organization to the table below using the schema: `| Organization | Description | Maturity Level | Further Information |`, where **Maturity Level** is one of the [adopter tiers](#adopter-tiers): `Production`, `Pre-production`, or `Evaluation`
 3. Open a pull request with the title: `📖 docs: add <Organization> to ADOPTERS.md`
 
 > ⚠️ **Maintainer note**: When opening PRs that restructure this file, always preserve existing adopter entries. Do not replace the file with a blank template.
@@ -25,13 +25,17 @@ Listed below are organizations that have adopted, or benefitted from, KubeStella
 
 ## Adopter Tiers
 
-### 🥇 Production Adopters
+These tiers define the allowed values for the **Maturity Level** column in the
+table above — they are not a separate list.
+
+### 🥇 Production
 Organizations running KubeStellar Hive in production environments.
 
-### 🥈 Development Adopters
-Organizations using KubeStellar Hive in development or staging environments.
+### 🥈 Pre-production
+Organizations using KubeStellar Hive in development, staging, or pilot
+environments.
 
-### 🥉 Evaluation Adopters
+### 🥉 Evaluation
 Organizations actively evaluating KubeStellar Hive for future use.
 
 ---
