@@ -1,0 +1,1 @@
+Retry the pinned go-licenses install in `src/scripts/generate-notice.sh` (3 bounded attempts with backoff) so transient sum.golang.org stream errors no longer fail the NOTICE gate on unrelated pushes.
