@@ -1468,6 +1468,10 @@ func (c *Client) PathExistsAtRef(ctx context.Context, owner, repo, path, ref str
 
 // SearchPRCount searches GitHub for PRs by author within an org.
 // state is "open" or "merged".
+// NOTE (org transfer): the org qualifier uses the CONFIGURED org verbatim.
+// Unlike the REST repo endpoints, GitHub SEARCH does not follow repository
+// transfers or redirects — after a repo moves orgs, a stale configured org
+// here quietly searches the old (now empty) org and returns 0.
 func (c *Client) SearchPRCount(ctx context.Context, author, org, state string) (int, error) {
 	qualifier := fmt.Sprintf("type:pr author:%s org:%s", author, org)
 	if state == "merged" {
@@ -1495,6 +1499,9 @@ func (c *Client) SearchOutreachPRCount(ctx context.Context, author, org, project
 	}
 	// Match the old hive query: author:X type:pr is:STATE "ProjectName" in:title -org:ORG
 	// The -org: prefix excludes PRs within the org, showing only external outreach PRs.
+	// NOTE (org transfer): like SearchPRCount, the -org: qualifier takes the
+	// CONFIGURED org verbatim — GitHub search does not follow repo transfers,
+	// so a stale org keeps counting PRs against the old org name.
 	// Without the projectName filter, this returns ALL external PRs by the author, inflating the count.
 	qualifier := fmt.Sprintf("type:pr author:%s -org:%s \"%s\" in:title", author, org, projectName)
 	if state == "merged" {

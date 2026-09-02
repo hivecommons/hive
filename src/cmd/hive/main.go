@@ -9358,7 +9358,7 @@ func runHub(logger *slog.Logger, configPath string) {
 	// endpoint reports 503 rather than serving fabricated data. The base
 	// branch is the hub's own running branch — the lineage its fleet runs.
 	if ghToken := os.Getenv("HIVE_GITHUB_TOKEN"); ghToken != "" {
-		reachGH := github.NewClient(ghToken, "kubestellar", []string{"hive"}, logger, "")
+		reachGH := github.NewClient(ghToken, "hivecommons", []string{"hive"}, logger, "")
 		hubSrv.SetReachPRSource(hub.NewGitHubPRSource(reachGH, gitBranch))
 	}
 	// Wire 2a's heartbeat-fed registry store into the /api/reach endpoint
