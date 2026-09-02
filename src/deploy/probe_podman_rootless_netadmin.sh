@@ -121,7 +121,27 @@ agents:
 EOF
 
 printf '== Hive rootless Podman startup / exit-77 probe ==\n'
-podman info --format 'podman={{.Version.Version}} rootless={{.Host.Security.Rootless}} cgroups={{.Host.CgroupsVersion}} netbackend={{.Host.NetworkBackend}} rootlessnet={{.Host.RootlessNetworkCmd}} runtime={{.Host.OCIRuntime.Name}}'
+# Field-by-field, each tolerating absence. A single combined Go template
+# hard-fails ENTIRELY (exit 125) the moment any one field leaves Podman's
+# info schema — newer Podman dropped .Host.RootlessNetworkCmd and this
+# report line, which is diagnostics rather than a result, lost every field
+# at once. Each read degrades to "unknown" on its own instead.
+pinfo() { podman info --format "{{$1}}" 2>/dev/null || printf 'unknown'; }
+rootlessnet="$(pinfo .Host.RootlessNetworkCmd)"
+if [[ "$rootlessnet" == "unknown" || -z "$rootlessnet" ]]; then
+  # The summary field is gone; name the provider from the tool entries.
+  if [[ -n "$(podman info --format '{{.Host.Pasta.Executable}}' 2>/dev/null)" ]]; then
+    rootlessnet="pasta"
+  elif [[ -n "$(podman info --format '{{.Host.Slirp4NetNS.Executable}}' 2>/dev/null)" ]]; then
+    rootlessnet="slirp4netns"
+  else
+    rootlessnet="unknown"
+  fi
+fi
+printf 'podman=%s rootless=%s cgroups=%s netbackend=%s rootlessnet=%s runtime=%s\n' \
+  "$(pinfo .Version.Version)" "$(pinfo .Host.Security.Rootless)" \
+  "$(pinfo .Host.CgroupsVersion)" "$(pinfo .Host.NetworkBackend)" \
+  "$rootlessnet" "$(pinfo .Host.OCIRuntime.Name)"
 printf 'store=%s\nimage=%s\n\n' "${CONTAINERS_STORAGE_CONF:-<caller default>}" "$IMAGE"
 
 podman pull -q "$IMAGE" >/dev/null 2>&1 || fail_prereq "cannot pull ${IMAGE}"

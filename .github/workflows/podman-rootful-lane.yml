@@ -110,13 +110,17 @@ jobs:
         env:
           RECORDED_PODMAN: '5.8.4'
         run: |
-          # shellcheck disable=SC2016 # the --format strings stay single-quoted:
-          # those are Go template braces for Podman, not shell expansions, and
-          # the shell must not touch them.
+          # shellcheck disable=SC2016 # the printf format strings below carry
+          # literal markdown backticks for the step summary, not expansions.
           set -euo pipefail
 
           if ! command -v podman >/dev/null 2>&1; then
             echo "::error::podman is not installed on this runner; #4211 recorded it preinstalled at /usr/local/bin/podman"
+            exit 1
+          fi
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "::error::jq is not installed on this runner; this step reads 'podman info --format json' with it"
             exit 1
           fi
 
@@ -127,12 +131,34 @@ jobs:
             exit 1
           fi
 
-          version="$(sudo -n podman info --format '{{.Version.Version}}')"
-          rootless="$(sudo -n podman info --format '{{.Host.Security.Rootless}}')"
-          cgroups="$(sudo -n podman info --format '{{.Host.CgroupsVersion}}')"
-          backend="$(sudo -n podman info --format '{{.Host.NetworkBackend}}')"
-          runtime="$(sudo -n podman info --format '{{.Host.OCIRuntime.Name}}')"
-          hoststore="$(sudo -n podman info --format '{{.Store.GraphRoot}}')"
+          # ONE JSON read, not per-field Go templates (#5678). A Go template
+          # hard-fails the whole `podman info` call (exit 125) the moment a
+          # field leaves Podman's info schema — a runner-image Podman bump
+          # without .Host.RootlessNetworkCmd did exactly that to the rootless
+          # and arm64 lanes, on a REPORT-ONLY field. jq with `// "unknown"`
+          # degrades per field instead; the load-bearing assertions below
+          # still fail loudly on a bad value.
+          info="$(sudo -n podman info --format json)"
+
+          version="$(jq -r '.version.Version // "unknown"' <<<"$info")"
+          # Boolean, so NOT `// "unknown"`: jq's `//` treats false as falsy
+          # and would turn a correct rootless=false — the one value this
+          # ROOTFUL lane requires — into "unknown". Type-check instead, so
+          # only a genuinely absent field degrades.
+          rootless="$(jq -r '.host.security.rootless | if type == "boolean" then tostring else "unknown" end' <<<"$info")"
+          cgroups="$(jq -r '.host.cgroupVersion // "unknown"' <<<"$info")"
+          backend="$(jq -r '.host.networkBackend // "unknown"' <<<"$info")"
+          runtime="$(jq -r '.host.ociRuntime.name // "unknown"' <<<"$info")"
+
+          # The host store path is handed to the post-run isolation check, so
+          # "unknown" is not an acceptable degraded value here: without the
+          # real path that check would compare against garbage and prove
+          # nothing. Missing means this step fails, loudly.
+          hoststore="$(jq -r '.store.graphRoot // empty' <<<"$info")"
+          if [ -z "$hoststore" ]; then
+            echo "::error::podman info did not report store.graphRoot; the post-run isolation check compares against this path and cannot run without it"
+            exit 1
+          fi
 
           printf 'podman       %s (%s)\n' "$version" "$(command -v podman)"
           printf 'rootless     %s\n' "$rootless"
@@ -140,6 +166,20 @@ jobs:
           printf 'backend      %s\n' "$backend"
           printf 'runtime      %s\n' "$runtime"
           printf 'host store   %s (the probe must NOT use this)\n' "$hoststore"
+
+          # If the FLAG left the schema, probe the PROPERTY before asserting:
+          # `sudo -n podman` running as euid 0 against the default rootful
+          # store is rootful by definition. This only rescues the
+          # field-missing case — an explicit rootless=true above stays a hard
+          # failure, because that is a real mode swap, not schema drift.
+          if [ "$rootless" = "unknown" ] && [ "$(sudo -n id -u)" = "0" ]; then
+            case "$hoststore" in
+              /var/lib/containers*)
+                echo "::notice::podman info no longer reports host.security.rootless; derived ROOTFUL from euid 0 and the default rootful store ${hoststore}"
+                rootless="false"
+                ;;
+            esac
+          fi
 
           # THE assertion of this lane. Rootless is #4334's lane; if `sudo
           # podman` ever came back rootless — a sudo/XDG_RUNTIME_DIR change is
@@ -153,9 +193,17 @@ jobs:
           fi
 
           # A floor, not a pin. 4.x is the oldest series with the --cap-add
-          # NET_ADMIN behaviour the whole matrix turns on.
+          # NET_ADMIN behaviour the whole matrix turns on. An unreadable
+          # version fails the floor check explicitly rather than as a bash
+          # integer-comparison error.
           major="${version%%.*}"
-          if [ "${major:-0}" -lt 4 ]; then
+          case "$major" in
+            ''|*[!0-9]*)
+              echo "::error::could not read a numeric Podman version from 'podman info --format json' (got '${version}'); the 4.x floor cannot be verified"
+              exit 1
+              ;;
+          esac
+          if [ "$major" -lt 4 ]; then
             echo "::error::podman ${version} is below the 4.x floor this lane needs for --cap-add NET_ADMIN"
             exit 1
           fi
