@@ -974,6 +974,16 @@ func (s *Server) Start() error {
 	} else {
 		s.logger.Warn("embedded index.html unavailable; falling back to plain file serving", "error", err)
 	}
+	// Operator branding override: an optional stylesheet on the data volume,
+	// served at the path the index document links to. Lets a deployment carry
+	// its own colours/logo without forking the embedded SPA or rebuilding the
+	// image — the override is data, not code.
+	//
+	// Read per request (not cached at startup) so dropping a file in takes
+	// effect on reload. It is a single small stylesheet on local disk; the
+	// index document itself remains startup-precompressed.
+	s.mux.HandleFunc("GET /branding/custom.css", s.handleBrandingCSS)
+
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
 
 	// authenticate is outermost so the identity headers it injects from a
