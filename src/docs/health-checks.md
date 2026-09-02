@@ -2,6 +2,8 @@
 
 Hive reports dashboard health from both the spoke and hub vantage points. The newer checks replace the old assumption that the public hub can always probe every spoke URL directly.
 
+For hive-level health verdicts on `/fleet` (green/amber/red states, the WHY chip, and remediation hints), see [fleet-health.md](fleet-health.md).
+
 ## Kubernetes RBAC
 
 Apply the dashboard route RBAC manifest with the other Kubernetes resources:
