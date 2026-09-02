@@ -206,7 +206,11 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 		result["contributors"] = contribs
 	}
 
-	if mc.org == "kubestellar" {
+	// Adopters/ACMM/outreach are flagship-project counters. The repo moved to
+	// the "hivecommons" org (org transfer), but hives configured before the
+	// transfer still report org "kubestellar" — accept BOTH so the migration
+	// does not silently zero these panels on older configs.
+	if mc.org == "kubestellar" || mc.org == "hivecommons" {
 		adopters := mc.countAdopters(ctx, mc.org, mc.repo)
 		result["adopters"] = adopters
 
