@@ -19,6 +19,7 @@ import (
 //   - no Content-Encoding (Go's file server never compresses),
 //   - no ETag, and
 //   - no Last-Modified (embed.FS files have a zero ModTime),
+//
 // so every dashboard visit re-downloaded the full 1.3 MB uncompressed. None of
 // the fleet's edges compress on our behalf (ingress-nginx ships with gzip off,
 // the OpenShift HAProxy router never compresses), so the spoke process is the
@@ -37,7 +38,35 @@ type indexDocument struct {
 	etag    string
 }
 
+// brandingLinkTag is injected into the served index document so an operator
+// can restyle the dashboard without forking the embedded SPA.
+//
+// It is injected UNCONDITIONALLY, not "only when the file exists": the index
+// document is built once at startup with a precomputed gzip body and a strong
+// ETag, so making its content depend on a file that can appear later would
+// mean either rebuilding it per request or serving a stale page forever. An
+// absent override simply 404s, and a 404'd stylesheet is inert.
+const brandingLinkTag = `<link rel="stylesheet" href="/branding/custom.css">`
+
+// injectBranding places the override link immediately before </head> so it
+// wins the cascade against everything the embedded document defines. Falls
+// back to returning the document untouched if there is no </head> to anchor
+// to, rather than corrupting the markup.
+func injectBranding(raw []byte) []byte {
+	marker := []byte("</head>")
+	i := bytes.Index(raw, marker)
+	if i < 0 {
+		return raw
+	}
+	out := make([]byte, 0, len(raw)+len(brandingLinkTag))
+	out = append(out, raw[:i]...)
+	out = append(out, []byte(brandingLinkTag)...)
+	out = append(out, raw[i:]...)
+	return out
+}
+
 func newIndexDocument(raw []byte) *indexDocument {
+	raw = injectBranding(raw)
 	sum := sha256.Sum256(raw)
 	// 16 hex bytes of the digest is plenty for cache validation and keeps the
 	// header short; the quotes are part of the ETag grammar (RFC 9110 §8.8.3).
