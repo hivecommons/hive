@@ -20,7 +20,7 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_LEVEL` | No | config/pack value | ACMM level bootstrap/override used by hosted flows and the entrypoint pack selection. |
 | `HIVE_ID` | No | config or generated id | Stable hive/spoke identifier override; passed through to launched agents. |
 | `HIVE_CLUSTER_ID` | No | config or hub-provisioned value | Hosted cluster identifier override. |
-| `HIVE_HUB_URL` | No | `hub.url` from config | Hub URL override for spoke heartbeats/registration. |
+| `HIVE_HUB_URL` | No | `hub.url` from config | Hub URL override for spoke heartbeats/registration. On the hub it is also the last environment variable consulted in the hub public-origin chain (see `HIVE_HUB_PUBLIC_URL`). |
 | `HIVE_HUB_SECRET` | Required for spokes registered to a protected hub; optional for a standalone hub with `/data/saas/hub-secret.key` | `/data/saas/hub-secret.key` on the hub when present; no fallback for spoke heartbeat auth | Bearer secret for spoke heartbeats and hub/spoke SaaS APIs. |
 | `HIVE_COVERAGE_BADGE_URL` | No | none | Optional coverage badge URL exposed in dashboard status. |
 | `HIVE_WORK_DIR` | No | `/data/agents` | Agent manager working directory. |
@@ -36,13 +36,15 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_FEDERATION_REGISTRY_PATH` | No | `/data/federation/registry.json` | Federation registry path override. |
 | `HIVE_WEBHOOK_SECRET` | No | none | HMAC secret for the spoke `/webhook` channel. |
 | `GITHUB_WEBHOOK_SECRET` | No | `/data/saas/webhook-secret.key` when present | Hub GitHub webhook HMAC secret. |
-| `HIVE_DASHBOARD_URL` | No | none | Base URL the `hive tui` client targets (`pkg/tui/client`). A bad value surfaces as a request error on the first call, not at startup. |
+| `HIVE_DASHBOARD_URL` | No | none | Base URL the `hive tui` client targets (`pkg/tui/client`). A bad value surfaces as a request error on the first call, not at startup. On the hub it is also consulted (fourth) in the hub public-origin chain (see `HIVE_HUB_PUBLIC_URL`). |
 | `HIVE_CONVERGENCE_MODE` | No | `convergence.mode` in `hive.yaml`, else `off` | Process-level override of the convergence mode (`off`, `shadow`, `enforce`) so an operator can flip shadow mode without editing `hive.yaml`. Any unrecognised value — a typo, or a mode this build does not know — resolves to `off`. |
 | `HIVE_WATCHDOG_PAUSE` | No | unset (not paused) | Fleet-wide watchdog kill switch (`1`, `true`, `yes`, `on`). Read at every config resolve, so it takes effect without a restart. It can only ever REDUCE authority: it never turns a watchdog on and never promotes observe to heal. |
 | `HIVE_DELEGATION_CHAIN_ENABLED` | No | disabled | Enables delegation chain minting (`1`, `true`, `yes`, `on` — same spelling as `HIVE_METRICS_ENABLED`). Read on each call rather than cached, so disabling it on a misbehaving spoke does not require a pod roll. |
 | `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` | Opt-in to knowledge Git sources whose host resolves to a private/internal address (self-hosted GitLab and similar). Off by default as SSRF protection. |
 | `HIVE_SHARED_AGENT_HOME` | No | per-agent HOME | Escape hatch (`1`) restoring the legacy shared-HOME layout for agents. |
 | `HIVE_WORKSPACE_CLEANUP_ENABLED` | No | enabled | Set `0` to opt out of automatic agent workspace cleanup. |
+| `HIVE_WORKSPACE_CLEANUP_INTERVAL` | No | `1h` | How often the workspace cleanup sweep runs (Go duration, e.g. `30m`). Unset, unparseable, or non-positive values fall back to the default. |
+| `HIVE_WORKSPACE_CLEANUP_MAX_AGE` | No | `2h` | How old an entry under `/data/agents/*/` must be before the cleanup sweep removes it (Go duration, e.g. `6h`). Unset, unparseable, or non-positive values fall back to the default. |
 | `HIVE_DOSSIER_CACHE_MAX_ENTRIES` | No | `512` | Caps each public dossier cache. Bounds username-spray memory while keeping normal contributor reuse hot. |
 
 ## Generating and rotating `HIVE_DASHBOARD_TOKEN`
@@ -214,6 +216,11 @@ Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONL
 | `HIVE_UPGRADE_WAVE_SIZE` | No | saved scale setting, else built-in default | Number of spokes upgraded per wave. |
 | `HIVE_UPGRADE_DEBOUNCE_SECONDS` | No | built-in default | Debounce window before an upgrade wave starts. |
 | `HIVE_UPGRADE_MAX_HOLD_SECONDS` | No | built-in default | Maximum time an upgrade may be held before proceeding. |
+| `HIVE_ADVISORY_ISSUE_AGING_AFTER` | No | `24h` | Age (Go duration) after which a hive's advisory/issue output is bucketed `aging` in hub activity reporting (`pkg/hub/advisory_issue_activity.go`). Must be set **below** `HIVE_ADVISORY_ISSUE_STALE_AFTER`: if stale ≤ aging, **both** thresholds silently revert to their defaults. |
+| `HIVE_ADVISORY_ISSUE_STALE_AFTER` | No | `72h` | Age (Go duration) after which advisory/issue output is bucketed `stale` — the operator-action threshold. Same pairing rule as above: a value ≤ the aging threshold makes both revert to defaults. |
+| `HIVE_HUB_PUBLIC_URL` | No | none (chain continues) | First variable in the hub public-origin chain used to build notification deep links and to match the hub domain suffix. Precedence: `HIVE_HUB_PUBLIC_URL` → `HIVE_PUBLIC_URL` → `HIVE_HUB_BASE_URL` → `HIVE_DASHBOARD_URL` → `HIVE_HUB_URL`, then the compiled-in canonical public origin (links) or the default cluster domain (suffix match). |
+| `HIVE_PUBLIC_URL` | No | none (chain continues) | Second variable in the hub public-origin chain — see `HIVE_HUB_PUBLIC_URL` for the full precedence order. |
+| `HIVE_HUB_BASE_URL` | No | none (chain continues) | Third variable in the hub public-origin chain — see `HIVE_HUB_PUBLIC_URL` for the full precedence order. |
 
 ### Spoke-side derived keys
 
