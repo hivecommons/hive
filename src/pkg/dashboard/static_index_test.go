@@ -17,7 +17,7 @@ var testIndexBody = []byte("<!DOCTYPE html><html>" + strings.Repeat("<div>hive d
 
 func newTestIndex(t *testing.T) *indexDocument {
 	t.Helper()
-	d := newIndexDocument(testIndexBody)
+	d := newIndexDocument(testIndexBody, Branding{})
 	if d.gzipped == nil {
 		t.Fatal("gzip precompression failed for test body")
 	}

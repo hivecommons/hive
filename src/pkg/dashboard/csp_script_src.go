@@ -106,6 +106,9 @@ func scriptSrcElemSources(doc []byte) string {
 var (
 	baseScriptSrcElemOnce    sync.Once
 	baseScriptSrcElemSources string
+
+	brandedIndexMu sync.RWMutex
+	brandedIndex   []byte
 )
 
 // baseScriptSrcElem returns the startup-computed script-src-elem source list
@@ -114,10 +117,37 @@ var (
 // static_index.go and the plain file server) and the device-flow login page
 // (a const, served to any unauthenticated browser path). Computed once, like
 // the #3863 gzip/ETag precomputation it must stay compatible with.
+// setBrandedIndex records the index document AS SERVED, so CSP hashes are
+// computed over the same bytes the browser receives.
+//
+// This matters because branding can rewrite inline SCRIPT content, not just
+// markup: the Getting Started flyer builds its DOM from a JavaScript string
+// literal that contains `<span class="wb-bee">&#x1F41D;</span>`. Replacing the
+// mark there changes a script's bytes, and hashes taken from the embedded
+// document would no longer authorise it — CSP would block the flyer on a
+// branded hive. Must be called before the first request is served.
+func setBrandedIndex(doc []byte) {
+	brandedIndexMu.Lock()
+	brandedIndex = append([]byte(nil), doc...)
+	// Invalidate any previously memoised source list. baseScriptSrcElem uses a
+	// sync.Once, so without this the hashes depend on whether anything happened
+	// to ask for them before the document was built — in production Start()
+	// builds it before serving, but that is an ordering assumption rather than
+	// a guarantee, and it is exactly the kind of thing that works until it
+	// silently does not. Safe because this runs at startup, before any request.
+	baseScriptSrcElemOnce = sync.Once{}
+	brandedIndexMu.Unlock()
+}
+
 func baseScriptSrcElem() string {
 	baseScriptSrcElemOnce.Do(func() {
 		var docs []byte
-		if raw, err := fs.ReadFile(staticFS, "static/index.html"); err == nil {
+		brandedIndexMu.RLock()
+		branded := brandedIndex
+		brandedIndexMu.RUnlock()
+		if len(branded) > 0 {
+			docs = append(docs, branded...)
+		} else if raw, err := fs.ReadFile(staticFS, "static/index.html"); err == nil {
 			docs = append(docs, raw...)
 		}
 		docs = append(docs, []byte(loginPage)...)
