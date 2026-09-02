@@ -78,11 +78,11 @@ For runtime precedence and provenance, see [config-layering.md](config-layering.
 
 ## Image provenance and tags
 
-Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/kubestellar/hive` (plus `hive-contributor` and `hive-hub`). A build of the mainline branch `v4` publishes, in one multi-architecture manifest operation:
+Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/kubestellar/hive` (plus `hive-contributor` and `hive-hub`) and mirrored to the matching `ghcr.io/hivecommons/*` packages. While `kubestellar` is the native publishing org before the Hive Commons transfer, the workflow retags the already-built digest into `hivecommons`, so both orgs serve digest-identical manifest lists for the same tag. A build of the mainline branch `v4` publishes, in one multi-architecture manifest operation:
 
-- `ghcr.io/kubestellar/hive:v4-latest` — rolling tag for the current HEAD of `origin/v4`;
-- `ghcr.io/kubestellar/hive:<git-short-sha>` — immutable per-commit tag;
-- `ghcr.io/kubestellar/hive:stable`, `:candidate`, `:edge` — the moving **release channels** (retags of the same digest; see [release-channels.md](release-channels.md)).
+- `ghcr.io/kubestellar/hive:v4-latest` and `ghcr.io/hivecommons/hive:v4-latest` — rolling tags for the current HEAD of `origin/v4`;
+- `ghcr.io/kubestellar/hive:<git-short-sha>` and `ghcr.io/hivecommons/hive:<git-short-sha>` — immutable per-commit tags;
+- `ghcr.io/kubestellar/hive:stable`, `:candidate`, `:edge` and the matching `ghcr.io/hivecommons/hive:*` tags — the moving **release channels** (retags of the same digest; see [release-channels.md](release-channels.md)).
 
 PR and short-lived branch builds compile the image as a CI gate but only long-lived branches push tags, and only `v4` moves the release channels. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 

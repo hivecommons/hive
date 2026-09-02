@@ -12,13 +12,13 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 
 ## How channels are published
 
-Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds its channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v4` publish `stable` and `candidate`; builds of branch `v5` publish `edge`. All three images get their line's channels:
+Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds its channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v4` publish `stable` and `candidate`; builds of branch `v5` publish `edge`. All three images get their line's channels in both published orgs:
 
-- `ghcr.io/kubestellar/hive`
-- `ghcr.io/kubestellar/hive-contributor`
-- `ghcr.io/kubestellar/hive-hub`
+- `ghcr.io/kubestellar/hive` and `ghcr.io/hivecommons/hive`
+- `ghcr.io/kubestellar/hive-contributor` and `ghcr.io/hivecommons/hive-contributor`
+- `ghcr.io/kubestellar/hive-hub` and `ghcr.io/hivecommons/hive-hub`
 
-Only builds of the release branches (`v4`, `v5`) publish channels — a feature-branch build can never move a production channel.
+The `hivecommons` packages are mirror tags of the same manifest digest as the native `kubestellar` packages during the org transfer, so operators can verify or pin the digest against either registry. Only builds of the release branches (`v4`, `v5`) publish channels — a feature-branch build can never move a production channel.
 
 Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. If that exact short-SHA tag already exists, a re-run leaves it untouched. Moving tags (the branch's `-latest` tag and its channels) advance only when that build is newer than the generation currently published; an older workflow that runs out of queue order publishes only any missing immutable tag. This avoids both failure modes of a HEAD-only guard: a merge burst cannot starve all tags, and an old queued build cannot move a channel backwards. Registry inspection failures fail the publish job instead of producing a silent green skip.
 
