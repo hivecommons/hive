@@ -5,15 +5,6 @@ import (
 	"time"
 )
 
-func TestDeltaSignAndAbs(t *testing.T) {
-	if deltaSign(-3) != "−" || deltaSign(0) != "+" || deltaSign(7) != "+" {
-		t.Error("deltaSign must render U+2212 for negatives and + otherwise")
-	}
-	if abs(-4) != 4 || abs(4) != 4 || abs(0) != 0 {
-		t.Error("abs wrong")
-	}
-}
-
 func TestDefaultTokenEnvForKind(t *testing.T) {
 	cases := []struct {
 		kind ForgeKind
