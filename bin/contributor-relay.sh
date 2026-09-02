@@ -1360,6 +1360,13 @@ function blockingPromptKey(text) {
   // persists, so this prompt stops coming back on every restart the way a
   // plain "Skip" would.
   if (/Update available!/.test(text) && /Skip until next version/.test(text)) return '3';
+  // agy: "Terms of Service & Data Use" ends on a [Previous] [Done] button row
+  // with focus on the CHECKBOX above it, where Enter toggles consent instead of
+  // advancing ("enter Toggle"). A bare Enter therefore never leaves this page.
+  // Down moves to the button row, Right selects [Done]; the caller appends
+  // Enter. The other two steps (theme picker, folder trust) do advance on a
+  // bare Enter and deliberately fall through to null.
+  if (/Terms of Service & Data Use/.test(text) && /\[Done\]/.test(text)) return 'Down Right';
   return null;
 }
 
@@ -1374,6 +1381,16 @@ function getCLIState() {
       if (/copilot login|gh auth login/.test(text)) return 'needs-login';
       if (/Confirm folder trust|trust the files|Do you trust/.test(text)) return 'onboarding';
       if (/\/ commands.*help/.test(text)) return 'ready';
+    } else if (BACKEND === 'agy') {
+      // Antigravity gates first run behind a THREE-step wizard, and every
+      // agent that shares a $HOME re-enters it whenever another agent writes
+      // antigravity-cli/cache/onboarding.json mode 600 (they symlink to one
+      // shared ~/.gemini, so the next agent gets EACCES and starts over).
+      // Without this branch the pane fell through to 'unknown', the relay
+      // waited out CLI_READY_TIMEOUT_MS and handed the task back.
+      if (/not signed in|Select login method/i.test(text)) return 'needs-login';
+      if (/Choose your color scheme|Terms of Service & Data Use|Do you trust the contents|I trust this folder|Welcome to (the )?Antigravity/i.test(text)) return 'onboarding';
+      if (/^>\s*$|❯|Antigravity CLI/m.test(text)) return 'ready';
     } else if (BACKEND === 'gemini') {
       if (/not authenticated|login required/i.test(text)) return 'needs-login';
       if (/>\s*$|❯/.test(text)) return 'ready';
