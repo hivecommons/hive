@@ -1121,6 +1121,34 @@ func TestContributeActivity(t *testing.T) {
 	}
 }
 
+func TestContributeActivityHonorsLimit(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	for i := 0; i < 7; i++ {
+		s.contributeHub.addActivity(fmt.Sprintf("user-%d", i), "task_complete", "scanner", "copilot", "gpt", "", fmt.Sprintf("repo#%d", i))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/activity?limit=3", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Activity []ActivityEntry `json:"activity"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if got := len(resp.Activity); got != 3 {
+		t.Fatalf("expected limit=3 to return 3 entries, got %d", got)
+	}
+	if resp.Activity[0].Username != "user-4" || resp.Activity[2].Username != "user-6" {
+		t.Fatalf("expected most recent tail user-4..user-6, got %#v", resp.Activity)
+	}
+}
+
 func TestHivesHeartbeat(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())

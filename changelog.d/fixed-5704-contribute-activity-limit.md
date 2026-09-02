@@ -1,0 +1,1 @@
+- `/api/contribute/activity` now honors its `limit` query parameter against the retained recent activity window, so dashboard and diagnostic callers can request a smaller tail without always receiving 50 entries ([#5704](https://github.com/kubestellar/hive/issues/5704)).

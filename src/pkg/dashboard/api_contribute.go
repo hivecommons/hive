@@ -6576,7 +6576,13 @@ func (s *Server) handleContributeActivity(w http.ResponseWriter, r *http.Request
 		jsonResponse(w, map[string]any{"activity": []any{}})
 		return
 	}
-	jsonResponse(w, map[string]any{"activity": s.contributeHub.RecentActivity()})
+	activity := s.contributeHub.RecentActivity()
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if limit, err := strconv.Atoi(raw); err == nil && limit >= 0 && limit < len(activity) {
+			activity = activity[len(activity)-limit:]
+		}
+	}
+	jsonResponse(w, map[string]any{"activity": activity})
 }
 
 // ContributeAdmissionPolicy is a read-only summary of the merge/automation
