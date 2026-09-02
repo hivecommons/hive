@@ -164,7 +164,7 @@ reset_env() {
   # The generated podman-run line, as `systemctl show -p ExecStart` renders it.
   # It carries the healthcheck, and the healthcheck is what `active` is worth
   # (#4476): the default names BOTH listeners.
-  export FAKE_ExecStart="/usr/bin/podman run --name hive --replace --rm --sdnotify=healthy -d --health-cmd curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health --health-interval 10s ghcr.io/kubestellar/hive:stable"
+  export FAKE_ExecStart="/usr/bin/podman run --name hive --replace --rm --sdnotify=healthy -d --health-cmd curl -sf http://127.0.0.1:3002/api/health && curl -sf http://127.0.0.1:3001/api/health --health-interval 10s ghcr.io/hivecommons/hive:stable"
   export FAKE_ActiveState=active
   export FAKE_SubState=running
   export FAKE_Result=success
@@ -233,7 +233,7 @@ reset_env; export FAKE_ExecStart="/usr/bin/podman run --name hive --sdnotify=hea
 case_expect "probing one listener is a finding" 78 "can report healthy while the dashboard is dead" check
 reset_env; export FAKE_ExecStart="/usr/bin/podman run --name hive --sdnotify=healthy -d --health-cmd \"curl\\x20-sf\\x20http://127.0.0.1:3002/api/health\\x20&&\\x20curl\\x20-sf\\x20http://127.0.0.1:3001/api/health\" --health-interval 10s img"
 case_expect "the Quadlet-escaped rendering is read the same way" 0 "probes both listeners" check
-reset_env; export FAKE_ExecStart="/usr/bin/podman run --name hive --sdnotify=healthy -d ghcr.io/kubestellar/hive:stable"
+reset_env; export FAKE_ExecStart="/usr/bin/podman run --name hive --sdnotify=healthy -d ghcr.io/hivecommons/hive:stable"
 case_expect "no healthcheck at all is a finding" 78 "reports started, not healthy" check
 
 echo "== the pairing: SuccessExitStatus only works with Restart=always =="

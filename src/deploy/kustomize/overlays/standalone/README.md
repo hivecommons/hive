@@ -89,10 +89,10 @@ kubectl -n hive-inference rollout status deploy/vllm
 
 ## Pinning / upgrading the image
 
-The base tracks `ghcr.io/kubestellar/hive:stable`. Pin so that upgrades are
+The base tracks `ghcr.io/hivecommons/hive:stable`. Pin so that upgrades are
 deliberate — there is no hub to auto-upgrade a standalone hive.
 
-**Which tags actually exist on `ghcr.io/kubestellar/hive`:**
+**Which tags actually exist on `ghcr.io/hivecommons/hive`:**
 
 - Channel tags (`stable`, `candidate`, `edge`, `v4-latest`) and an immutable
   7-character short-SHA tag for every merge to `v4`. These are what `docker.yml`
@@ -101,7 +101,7 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
   [tagged-release workflow](../../../../docs/releases.md)
   (`.github/workflows/tagged-release.yml`), which retags the just-published short-SHA
   images with the version it cut. That workflow landed *after* the `v4.0.0`
-  **git** tag, so **there is no `ghcr.io/kubestellar/hive:v4.0.0` image** — a
+  **git** tag, so **there is no `ghcr.io/hivecommons/hive:v4.0.0` image** — a
   `newTag: v4.0.0` pin goes straight to `ImagePullBackOff`. Before pinning a
   version tag, confirm the image exists:
 
@@ -130,17 +130,17 @@ DIGEST=$(curl -sI -H "Authorization: Bearer $TOKEN" \
 echo "$DIGEST"   # sha256:...
 
 kustomize edit set image \
-  ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive@"$DIGEST"
+  ghcr.io/hivecommons/hive=ghcr.io/hivecommons/hive@"$DIGEST"
 ```
 
-(`docker buildx imagetools inspect ghcr.io/kubestellar/hive:stable` or
-`crane digest ghcr.io/kubestellar/hive:stable` print the same digest if you
+(`docker buildx imagetools inspect ghcr.io/hivecommons/hive:stable` or
+`crane digest ghcr.io/hivecommons/hive:stable` print the same digest if you
 have those tools.)
 
 **Pin by version tag** — only once you have confirmed the tag exists as above:
 
 ```bash
-kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive:vX.Y.Z
+kustomize edit set image ghcr.io/hivecommons/hive=ghcr.io/hivecommons/hive:vX.Y.Z
 ```
 
 Either form writes an `images:` entry into `kustomization.yaml`. To upgrade,

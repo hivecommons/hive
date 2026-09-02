@@ -182,7 +182,7 @@ done < <(collect_assets)
 
 hive_ref="$(hive_standalone_image hive)"
 case "$hive_ref" in
-  ghcr.io/kubestellar/hive:stable|ghcr.io/kubestellar/hive@sha256:*|ghcr.io/kubestellar/hive:*@sha256:*)
+  ghcr.io/hivecommons/hive:stable|ghcr.io/hivecommons/hive@sha256:*|ghcr.io/hivecommons/hive:*@sha256:*)
     ok
     ;;
   *)
@@ -222,7 +222,7 @@ for script in "${PROBE_SCRIPTS[@]}"; do
     fail "${script} does not take its image default from src/deploy/standalone-images.sh (#4486)"
   fi
 
-  if grep -Eq 'ghcr\.io/kubestellar/hive[:@]' "${ROOT}/${script}"; then
+  if grep -Eq 'ghcr\.io/hivecommons/hive[:@]' "${ROOT}/${script}"; then
     fail "${script} hard-codes a Hive image reference; the default must come from standalone-images.sh, with --image / IMAGE as the overrides (#4486)"
   else
     ok

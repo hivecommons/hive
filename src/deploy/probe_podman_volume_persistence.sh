@@ -58,7 +58,7 @@
 
 set -uo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/kubestellar/hive:stable}"
+IMAGE="${IMAGE:-ghcr.io/hivecommons/hive:stable}"
 PREFIX="hive-volprobe-$$"
 STORE="${STORE:-}"
 KEEP="false"

@@ -170,7 +170,7 @@ spec:
               # the same way as releases roll unless someone remembers to
               # recompute it. Tracking the stable channel keeps the backup
               # binary in lockstep with the release the fleet actually runs.
-              image: ghcr.io/kubestellar/hive:stable
+              image: ghcr.io/hivecommons/hive:stable
               # `stable` is a moving tag: without Always, each node keeps
               # running whatever the tag resolved to on first pull and channel
               # promotions are silently ignored.

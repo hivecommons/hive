@@ -308,7 +308,7 @@ volume|hive-data|${OWNED_DEFAULT},io.kubestellar.hive.component=hive
 volume|my-pgdata|
 network|hive-net|${OWNED_DEFAULT},io.kubestellar.hive.component=hive
 network|distrobox-net|
-image|ghcr.io/kubestellar/hive:stable|${OWNED_DEFAULT},io.kubestellar.hive.component=hive
+image|ghcr.io/hivecommons/hive:stable|${OWNED_DEFAULT},io.kubestellar.hive.component=hive
 image|docker.io/library/postgres:16|
 EOF
   # The four Quadlet-generated services, loaded and running, as a healthy
@@ -387,7 +387,7 @@ done
 assert_unowned_survived "run --yes"
 
 # The image was not requested, so it is still there.
-assert_contains "$store_after" "image|ghcr.io/kubestellar/hive:stable|" "images survive without --images"
+assert_contains "$store_after" "image|ghcr.io/hivecommons/hive:stable|" "images survive without --images"
 
 # A deployment in another instance is not this deployment.
 assert_contains "$store_after" "container|hive-staging|" "run is scoped to one instance"
@@ -547,7 +547,7 @@ reset_store
 teardown "$BASH_BIN" "$TEARDOWN" run --yes --images
 assert_eq "0" "$RUN_STATUS" "run --images status (stderr: ${RUN_STDERR})"
 store_after="$(cat "$STORE")"
-assert_lacks "$store_after" "image|ghcr.io/kubestellar/hive:stable|" "--images removes the Hive image"
+assert_lacks "$store_after" "image|ghcr.io/hivecommons/hive:stable|" "--images removes the Hive image"
 assert_contains "$store_after" "image|docker.io/library/postgres:16|" "--images leaves unowned images"
 assert_unowned_survived "run --images"
 

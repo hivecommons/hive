@@ -158,7 +158,7 @@ good_dir="$(mkfixture good <<'EOF'
 Description=Quadlet gate fixture — known good
 
 [Container]
-Image=ghcr.io/kubestellar/hive:v4-latest
+Image=ghcr.io/hivecommons/hive:v4-latest
 ContainerName=hive-quadlet-gate-fixture
 PublishPort=127.0.0.1:13001:3001
 
@@ -170,14 +170,14 @@ EOF
 # Rejected outright by the generator (non-zero exit).
 badkey_dir="$(mkfixture unsupported-key <<'EOF'
 [Container]
-Image=ghcr.io/kubestellar/hive:v4-latest
+Image=ghcr.io/hivecommons/hive:v4-latest
 ThisKeyDoesNotExist=true
 EOF
 )"
 
 dangling_dir="$(mkfixture dangling-pod <<'EOF'
 [Container]
-Image=ghcr.io/kubestellar/hive:v4-latest
+Image=ghcr.io/hivecommons/hive:v4-latest
 Pod=no-such-unit.pod
 EOF
 )"
