@@ -269,6 +269,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `AGENT_BACKEND` | No | `claude` | Contributor/agent CLI backend selector. |
 | `AGENT_MODEL` | No | backend default, or `GOOSE_MODEL` for Goose fallback | Contributor/agent model override. |
 | `CONTRIBUTOR_MODE` | No | `interactive` | Contributor relay mode: `interactive` uses tmux; `headless` uses one-shot CLI execution for supported backends. |
+| `HIVE_SESSION` | No | backend name (`AGENT_BACKEND`) | Session label for multi-session-per-account: each distinct label gets an independent session-scoped hub identity (`ContributorID#session`) with its own task lease, cooldown, and failure streak, while auth/tier/rate limits stay per-account. Sanitized `[A-Za-z0-9._-]`, capped at 32 bytes; empty string opts out (bare per-account identity). See [contributor-relay.md](contributor-relay.md#running-multiple-backends-under-one-github-account). |
 | `HIVE_HEADLESS_STATUS_FILE` | No | `/tmp/contributor-headless-status.json` | Status file written by headless contributor relay. |
 | `HIVE_CONTRIBUTOR_IMAGE` | No | `ghcr.io/kubestellar/hive-contributor:latest` | Image used by `just contribute-hive`. |
 | `HIVE_CONTAINER_RUNTIME` | No | autodetect `docker` or `podman` | Container runtime override for contributor helpers. `just contribute-hive` also passes the runtime it resolved into the container, so the attach hints printed from inside it name the engine that actually launched it rather than assuming `docker` ([#5145](https://github.com/kubestellar/hive/issues/5145)). |

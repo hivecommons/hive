@@ -75,6 +75,7 @@ Important environment variables:
 | `AGENT_REASONING_EFFORT` | unset | Reasoning effort override. Consumed by `codex` (`-c model_reasoning_effort`) and by `agy` (`--effort low\|medium\|high`, required whenever a model is set, else agy ignores the model). Ignored by other backends. |
 | `CONTRIBUTOR_MODE` | `interactive` | `interactive` keeps a tmux/TTY session. `headless` is for one-shot/no-TTY task delivery. |
 | `HIVE_AGENT_SESSION` | `contributor` | tmux session name for interactive mode. |
+| `HIVE_SESSION` | backend name (`AGENT_BACKEND`) | Optional session label for running multiple relays under one GitHub account. Each distinct label gets an independent session-scoped identity (`ContributorID#session`) on the hub — its own task lease, assignment cooldown, and failure streak — while auth, trust tier, model admission, and rate-limit accounting stay per-account. Sanitized to `[A-Za-z0-9._-]`, capped at 32 bytes. Set it to the **empty string** to opt out: the identity is then the bare `ContributorID`, the single-active-task-per-account behavior from before commit `b34254e`. |
 | `HIVE_CODEX_APPROVALS_REVIEWER` | `auto_review` | Codex reviewer for boundary requests. The default prevents Hive-delivered work from waiting on an interactive operator while retaining `workspace-write`; set `user` only for an intentionally attended contributor. Set it to the **empty string** to omit the `-c approvals_reviewer=` key entirely — the escape hatch if a Codex release rejects that config key at startup. Doing so keeps the sandbox posture; it is not the same as the dangerous bypass. |
 | `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | unset | Drops the defense-in-depth Claude command denylist. In local mode the native filesystem sandbox still applies, so this does not grant host writes. |
 | `HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX` | unset | Restores the pre-#4918 unconfined Claude/LiteLLM local posture. Use only on a disposable or externally sandboxed host. |
@@ -86,6 +87,28 @@ Important environment variables:
 | `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive pi local` to launch at all. pi ships with no sandbox by default; directory confinement exists only via a third-party extension hive does not depend on. |
 | `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive aider local` to launch at all. aider has no sandbox or OS isolation option of any kind. |
 | `HIVE_KILO_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive kilo local` to launch at all. kilo's `--auto` is an unattended auto-approve flag, not a boundary; kilo has no verified sandbox, filesystem allowlist, or command deny-list hive can wire. |
+
+### Running multiple backends under one GitHub account
+
+One GitHub account maps to one contributor profile per hub — one auth token,
+one trust tier. Hub state that tracks *work*, however, is keyed on a
+session-scoped identity: with a session label set, each relay is
+`ContributorID#session` and gets its own active-task slot, assignment cooldown,
+and failure streak. Because `HIVE_SESSION` defaults to the backend name, the
+common case needs no configuration — start one relay per CLI backend and they
+run concurrently:
+
+```bash
+AGENT_BACKEND=claude just contribute-hive   # session "claude"
+AGENT_BACKEND=agy    just contribute-hive   # session "agy"
+AGENT_BACKEND=pi     just contribute-hive   # session "pi"
+```
+
+Two relays for the *same* backend need distinct explicit labels
+(`HIVE_SESSION=claude-a`, `HIVE_SESSION=claude-b`); with identical labels they
+collide on one task slot, exactly as if no label were set. Per-account limits
+still apply across all sessions: trust tier, model admission, and rate-limit
+accounting are shared, so more sessions does not mean more quota.
 
 ### Where each backend reads its instructions
 
