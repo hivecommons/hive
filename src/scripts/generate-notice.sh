@@ -79,7 +79,22 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 echo "Installing go-licenses@${GO_LICENSES_VERSION} (pinned)..." >&2
-go install "github.com/google/go-licenses@${GO_LICENSES_VERSION}"
+# Bounded retry: sum.golang.org intermittently returns HTTP/2 stream errors
+# (INTERNAL_ERROR) that fail an otherwise-deterministic pinned install and
+# turn the NOTICE gate red on unrelated pushes (see issue #5716). The pin is
+# untouched — only the network fetch gets resilience.
+install_attempts=3
+for attempt in $(seq 1 "${install_attempts}"); do
+  if go install "github.com/google/go-licenses@${GO_LICENSES_VERSION}"; then
+    break
+  fi
+  if [[ "${attempt}" -eq "${install_attempts}" ]]; then
+    echo "generate-notice.sh: go install go-licenses@${GO_LICENSES_VERSION} failed after ${install_attempts} attempts" >&2
+    exit 1
+  fi
+  echo "generate-notice.sh: go install attempt ${attempt}/${install_attempts} failed (likely transient module-proxy/sumdb error); retrying in $((attempt * 5))s..." >&2
+  sleep $((attempt * 5))
+done
 
 GOBIN="$(go env GOPATH)/bin"
 GO_LICENSES_BIN="${GOBIN}/go-licenses"
