@@ -65,7 +65,8 @@ func injectBranding(raw []byte) []byte {
 	return out
 }
 
-func newIndexDocument(raw []byte) *indexDocument {
+func newIndexDocument(raw []byte, b Branding) *indexDocument {
+	raw = applyBranding(raw, b)
 	raw = injectBranding(raw)
 	sum := sha256.Sum256(raw)
 	// 16 hex bytes of the digest is plenty for cache validation and keeps the
