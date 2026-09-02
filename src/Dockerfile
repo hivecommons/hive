@@ -536,7 +536,7 @@ RUN pip3 install --no-cache-dir --break-system-packages specify-cli 2>/dev/null 
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
-RUN npm install -g --ignore-scripts --no-fund --no-audit "@kubestellar/pluk@${PLUK_VERSION}" && npm cache clean --force
+RUN npm install -g --ignore-scripts --no-fund --no-audit "@hivecommons/pluk@${PLUK_VERSION}" && npm cache clean --force
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chown dev:node /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 2770 /var/run/pluk/logs /var/run/pluk/commands
