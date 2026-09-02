@@ -8,17 +8,17 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 | `candidate` | A build believed good, awaiting soak before promotion to stable. |
 | `edge` | The newest good build, with no soak period. |
 
-> **Note — current promotion policy:** today all three channels are retagged on **every merge to `v4`**, so `stable`, `candidate`, and `edge` all point at the same digest as `v4-latest`. The distinct meanings above take effect only once a soak/promotion policy lands in CI (see [#3702](https://github.com/kubestellar/hive/pull/3702)). Treat the channel names as forward-looking track selection, not as a guarantee of differing maturity yet.
+> **Note — current promotion policy:** the channels have begun to diverge by release line. Every merge to **`v4`** retags **`stable` and `candidate`** (so those two still point at the same digest as `v4-latest`), while every merge to **`v5`** retags **`edge`** — meaning `edge` is now an **active-development v5 build**, not a synonym for `stable`. What has *not* landed yet is the soak/promotion step between `candidate` and `stable` (see [#3702](https://github.com/kubestellar/hive/pull/3702) for the channel plumbing): within the `v4` line, treat those two names as forward-looking track selection, not as a guarantee of differing maturity yet.
 
 ## How channels are published
 
-Channels are **retags, not rebuilds**. The `docker.yml` workflow adds `stable`, `candidate`, and `edge` as extra tags in the same `docker buildx imagetools create` call that publishes `v4-latest` and the immutable short-SHA tag, so a channel always points at an already-built, multi-arch digest. All three images get all three channels:
+Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds its channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v4` publish `stable` and `candidate`; builds of branch `v5` publish `edge`. All three images get their line's channels:
 
 - `ghcr.io/kubestellar/hive`
 - `ghcr.io/kubestellar/hive-contributor`
 - `ghcr.io/kubestellar/hive-hub`
 
-Only builds of branch `v4` publish channels — a feature-branch build can never move a production channel.
+Only builds of the release branches (`v4`, `v5`) publish channels — a feature-branch build can never move a production channel.
 
 Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. If that exact short-SHA tag already exists, a re-run leaves it untouched. Moving tags (`v4-latest` and the three channels) advance only when that build is newer than the generation currently published; an older workflow that runs out of queue order publishes only any missing immutable tag. This avoids both failure modes of a HEAD-only guard: a merge burst cannot starve all tags, and an old queued build cannot move a channel backwards. Registry inspection failures fail the publish job instead of producing a silent green skip.
 
