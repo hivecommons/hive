@@ -270,6 +270,29 @@ test('bob never receives --model even when AGENT_MODEL is set', () => {
   } finally { teardown(relay); }
 });
 
+test('#5652 relaunch reuses the entrypoint launch command instead of container defaults', () => {
+  for (const [backend, launch] of [
+    ['claude', 'claude --permission-mode dontAsk --settings {sandbox:true} --add-dir /home/me/workspace'],
+    ['copilot', 'copilot --sandbox --add-dir /home/me/workspace'],
+    ['opencode', 'opencode run --permission.bash=deny-host-state'],
+  ]) {
+    const relay = loadRelay({
+      backend,
+      backendPerm: '--dangerously-skip-permissions --permission-mode bypassPermissions',
+      env: { AGENT_LAUNCH_CMD: launch },
+    });
+    try {
+      assert.strictEqual(relay.buildLaunchCommand(), launch,
+        `${backend} relaunch must preserve the original local-mode posture`);
+      relay.relaunchCLI();
+      const sent = relay.__tmuxSends().find(c => c.includes(launch));
+      assert.ok(sent, `${backend} relaunch did not send the entrypoint command to tmux`);
+      assert.ok(!sent.includes('bypassPermissions'),
+        `${backend} relaunch fell back to the container posture: ${sent}`);
+    } finally { teardown(relay); }
+  }
+});
+
 // --- agy pane classification: stale narration must not pin WORKING ---------
 //
 // Verbatim shape of a real wedged pane (kubestellar/hive): agy had finished the

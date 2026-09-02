@@ -76,6 +76,10 @@ const AGENT_SESSION = (process.env.HIVE_SESSION !== undefined
 // the cwd on relaunch; see launchCommandWithCwd for why the relay's own cwd is
 // the wrong answer in local mode.
 const AGENT_CWD = (process.env.HIVE_AGENT_CWD || '').trim();
+// AGENT_LAUNCH_CMD is the launch line resolved by the entrypoint that started
+// the pane. Local mode uses stricter sandbox flags than container mode; a relay
+// restart must reuse that exact posture instead of deriving container defaults.
+const ENTRYPOINT_LAUNCH_CMD = (process.env.AGENT_LAUNCH_CMD || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 // Where the hub-delivered, task-scoped token is written (injectGhToken). This
 // deliberately does NOT default to /var/run/hive-metrics/gh-app-token.cache:
@@ -692,10 +696,10 @@ const AGY_EFFORTS = ['low', 'medium', 'high'];
 const agyEffort = AGY_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : AGY_DEFAULT_EFFORT;
 
 // Single source of truth for the CLI launch command (issue #2203, bug 1).
-// contributor-agent.sh builds "$CMD $PERM_FLAG $MODEL_FLAG" for the FIRST
-// launch; every restart path in this file previously rebuilt only "$CMD $PERM"
-// inline, silently dropping the resolved model for the rest of the container's
-// life. Build it once here and reuse it everywhere so the paths cannot drift.
+// The entrypoint may export AGENT_LAUNCH_CMD with the exact command used for
+// the FIRST launch. Prefer it so local mode keeps its sandbox/allowlist posture
+// across restarts instead of rebuilding the more-permissive container default
+// (#5652). Older entrypoints fall back to resolving backend flags here.
 let cachedLaunchCommand = null;
 let cachedBackendResolution = null;
 
@@ -969,6 +973,10 @@ function progressModelFields() {
 
 function buildLaunchCommand() {
   if (cachedLaunchCommand) return cachedLaunchCommand;
+  if (ENTRYPOINT_LAUNCH_CMD) {
+    cachedLaunchCommand = ENTRYPOINT_LAUNCH_CMD;
+    return cachedLaunchCommand;
+  }
   const { cmd, perm } = resolveBackend();
   const modelFlag = modelFlagFor();
   const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT

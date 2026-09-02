@@ -83,13 +83,13 @@ func requireCdBeforeCmd(t *testing.T, block, label string) {
 	t.Helper()
 	sendKeys := ""
 	for _, line := range strings.Split(block, "\n") {
-		if strings.Contains(line, "send-keys") && strings.Contains(line, "$CMD") {
+		if strings.Contains(line, "send-keys") && (strings.Contains(line, "$CMD") || strings.Contains(line, "$AGENT_LAUNCH_CMD")) {
 			sendKeys = line
 			break
 		}
 	}
 	if sendKeys == "" {
-		t.Fatalf("%s: no send-keys line launching $CMD found in the block", label)
+		t.Fatalf("%s: no send-keys line launching the CLI found in the block", label)
 	}
 	if !strings.Contains(sendKeys, "cd ") {
 		t.Errorf("%s: the CLI launch must cd into a durable directory first — a tmux server can hand the pane a "+
@@ -146,5 +146,18 @@ func TestContributorAgentPinsPaneWorkingDirectory(t *testing.T) {
 	// Defense in depth, correct on a healthy server (but not sufficient alone).
 	if !strings.Contains(block, "new-session") || !strings.Contains(block, "-c ") {
 		t.Error("new-session should also pass -c so a healthy server starts the pane in the right directory")
+	}
+}
+
+func TestContributeHiveExportsLaunchCommandForRelayRelaunch(t *testing.T) {
+	block := contributeHiveLaunchBlock(t)
+	if !strings.Contains(block, "export AGENT_LAUNCH_CMD=") {
+		t.Fatal("local contribute-hive must export the exact launch command for contributor-relay.sh relaunches")
+	}
+	if !strings.Contains(block, "$AGENT_LAUNCH_CMD") {
+		t.Fatal("the first local launch must use the same AGENT_LAUNCH_CMD value the relay will reuse")
+	}
+	if !strings.Contains(block, "PERM_FLAG") || !strings.Contains(block, "LITELLM_ENV") {
+		t.Fatal("AGENT_LAUNCH_CMD must include the resolved permission flags and backend environment prefix")
 	}
 }

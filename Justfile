@@ -1131,9 +1131,10 @@ contribute-hive backend="" mode="docker": check-version
       # costs nothing and keeps the default blast radius off the user's home.
       export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
       mkdir -p "$HIVE_AGENT_CWD"
+      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }$CMD${PERM_FLAG:+ $PERM_FLAG}"
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
-      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && ${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
+      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter
 
       # Surface a poisoned tmux server rather than letting the backend die a
       # silent, unexplained death 30 seconds into its first task.

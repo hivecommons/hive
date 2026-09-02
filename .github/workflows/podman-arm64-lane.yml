@@ -151,7 +151,8 @@ jobs:
           cgroups="$(podman info --format '{{.Host.CgroupsVersion}}')"
           runtime="$(podman info --format '{{.Host.OCIRuntime.Name}}')"
           backend="$(podman info --format '{{.Host.NetworkBackend}}')"
-          rootlessnet="$(podman info --format '{{.Host.RootlessNetworkCmd}}')"
+          rootlessnet="$(podman info --format '{{.Host.RootlessNetworkCmd}}' 2>/dev/null || true)"
+          rootlessnet="${rootlessnet:-unreported}"
 
           printf 'podman       %s (%s)\n' "$version" "$(command -v podman)"
           printf 'arch         %s (uname %s)\n' "$arch" "$(uname -m)"

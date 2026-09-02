@@ -136,6 +136,9 @@ file edits may write only to `HIVE_AGENT_CWD` and `HIVE_WORKSPACE_DIR`.
 Network domains are unrestricted because assigned third-party repositories
 must be able to fetch arbitrary test/build dependencies; this is write
 confinement, not a claim that the process can read or exfiltrate nothing.
+The local launcher exports the resolved `AGENT_LAUNCH_CMD`, and the relay reuses
+that exact command for post-task, revoke, and recovery relaunches so the
+stricter host-mode sandbox flags cannot drift back to container defaults.
 
 On Linux/WSL2 the native sandbox requires `bubblewrap` and `socat`; macOS uses
 Seatbelt. Missing dependencies are a hard launch failure, never a silent
