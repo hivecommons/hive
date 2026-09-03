@@ -1209,7 +1209,7 @@ print('\n'.join(sorted(names)))
       # the agent UID. A derived gid (e.g. uid+1000) can collide with an
       # existing group; letting groupadd pick from the system range cannot.
       #
-      # Verified in ghcr.io/kubestellar/hive:v2-latest: dev writes in place OK,
+      # Verified in ghcr.io/hivecommons/hive:v2-latest: dev writes in place OK,
       # the owning agent reads its own token OK, and a second agent gets
       # EACCES on the first agent's token.
       AGENT_TOKEN_GROUP="hive-${agent_name}"

@@ -48,7 +48,7 @@ docker compose -f src/docker-compose.yaml up -d
 
 ### Pre-built image
 
-The default `src/docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/hive:stable`, the operator-blessed release channel. To build from source instead, run `docker compose -f src/docker-compose.yaml build` before `docker compose -f src/docker-compose.yaml up -d`.
+The default `src/docker-compose.yaml` uses the pre-built image `ghcr.io/hivecommons/hive:stable`, the operator-blessed release channel. To build from source instead, run `docker compose -f src/docker-compose.yaml build` before `docker compose -f src/docker-compose.yaml up -d`.
 
 Every standalone image reference comes from one source of truth, [`deploy/standalone-images.sh`](deploy/standalone-images.sh), so the Docker assets and the Podman assets cannot drift apart. Change a reference there, not in an individual asset.
 
@@ -57,7 +57,7 @@ For tag provenance, digest pinning, and the release/tagging flow, see [docs/oper
 ### Troubleshooting
 
 - **Rancher Desktop / Lima**: Volume mounts from `/tmp` may fail silently (file appears as directory inside container). Clone the repo under your home directory instead.
-- **Gateway won't start**: The gateway depends on the hive health check (120s start period). If it times out, run the hive container directly: `docker run -d --name hive --cap-add NET_ADMIN -p 3001:3001 -v ./src/hive.yaml:/etc/hive/hive.yaml -e HIVE_GITHUB_TOKEN=$HIVE_GITHUB_TOKEN ghcr.io/kubestellar/hive:stable` (the `--cap-add NET_ADMIN` enables the full forced-proxy-egress gate — see below).
+- **Gateway won't start**: The gateway depends on the hive health check (120s start period). If it times out, run the hive container directly: `docker run -d --name hive --cap-add NET_ADMIN -p 3001:3001 -v ./src/hive.yaml:/etc/hive/hive.yaml -e HIVE_GITHUB_TOKEN=$HIVE_GITHUB_TOKEN ghcr.io/hivecommons/hive:stable` (the `--cap-add NET_ADMIN` enables the full forced-proxy-egress gate — see below).
 - **Forced-proxy-egress gate is degraded / `SO_MARK unavailable` in logs**: the container runs fine without `NET_ADMIN`, but the proxy's SO_MARK self-exemption needs it. Grant `NET_ADMIN` (`--cap-add NET_ADMIN` for docker/podman, `securityContext.capabilities.add: ["NET_ADMIN"]` for Kubernetes) for the full egress gate; without it the spoke stays in best-effort/degraded egress mode. See [docs/net-admin-requirement.md](docs/net-admin-requirement.md).
 - **Policy clone errors in logs**: The example config has a placeholder policy repo. Comment out the `policies:` section in `src/hive.yaml` if you don't have a custom policy repo.
 

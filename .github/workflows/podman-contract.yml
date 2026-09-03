@@ -15,7 +15,7 @@ name: Podman Rootless Contract
 # asserted against .github/release-lines.yml by release-line-guard.yml (#4405),
 # so cutting the next release line fails CI until this block is updated too.
 on:
-  # v5 (kubestellar/hive#4000/#4001/#4002 implementation line) intentionally NOT
+  # v5 (hivecommons/hive#4000/#4001/#4002 implementation line) intentionally NOT
   # added here: this contract has only ever run on v2, was never extended to v4
   # when development moved there, and this task's scope is "mirror v4's CI onto
   # v5" — there is no v4 behavior to mirror for this workflow.

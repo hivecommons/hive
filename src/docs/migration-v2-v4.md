@@ -18,8 +18,8 @@ from source) the directory layout:
 
 | | v2 | v4 |
 | --- | --- | --- |
-| Compose image | `ghcr.io/kubestellar/hive:v2-latest` | `ghcr.io/kubestellar/hive:stable` |
-| Kubernetes image | `hive:latest` | `ghcr.io/kubestellar/hive:stable` |
+| Compose image | `ghcr.io/hivecommons/hive:v2-latest` | `ghcr.io/hivecommons/hive:stable` |
+| Kubernetes image | `hive:latest` | `ghcr.io/hivecommons/hive:stable` |
 | Compose published ports | `3001`, `7681` | `3001` only |
 | Source tree | `v2/` | `src/` |
 | Build context | `v2/Dockerfile` | `src/Dockerfile` |
@@ -76,8 +76,8 @@ mapping to "fix" the breakage — doing so restores an unauthenticated shell.
 ### Image and build context
 
 ```diff
--    image: ghcr.io/kubestellar/hive:v2-latest
-+    image: ghcr.io/kubestellar/hive:stable
+-    image: ghcr.io/hivecommons/hive:v2-latest
++    image: ghcr.io/hivecommons/hive:stable
      build:
        context: ..
 -      dockerfile: v2/Dockerfile
@@ -85,7 +85,7 @@ mapping to "fix" the breakage — doing so restores an unauthenticated shell.
 ```
 
 `stable` is the operator-blessed release channel. For a reproducible deployment,
-pin a digest instead — `ghcr.io/kubestellar/hive@sha256:<digest>` — and manage
+pin a digest instead — `ghcr.io/hivecommons/hive@sha256:<digest>` — and manage
 upgrades yourself.
 
 ### Other compose changes worth knowing
@@ -109,7 +109,7 @@ needs unless you carry them across.
 
 ```diff
 -          image: hive:latest
-+          image: ghcr.io/kubestellar/hive:stable
++          image: ghcr.io/hivecommons/hive:stable
 ```
 
 **Pod securityContext** — `fsGroup: 1002` is added:

@@ -23,8 +23,8 @@ resources:
 # EXAMPLE: pin a reviewed digest. Replace with a digest you have reviewed, or
 # remove to track the `stable` channel.
 images:
-  - name: ghcr.io/kubestellar/hive
-    newName: ghcr.io/kubestellar/hive
+  - name: ghcr.io/hivecommons/hive
+    newName: ghcr.io/hivecommons/hive
     newTag: stable
 
 patches:

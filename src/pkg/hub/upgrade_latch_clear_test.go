@@ -11,7 +11,7 @@ import (
 // ============================================================================
 //
 // The live wedge these cover (z-mlz-manager, 2026-08-13): the hub armed an
-// upgrade to 815d7e4, the spoke rolled onto ghcr.io/kubestellar/hive:v4-latest
+// upgrade to 815d7e4, the spoke rolled onto ghcr.io/hivecommons/hive:v4-latest
 // and came back ready and heartbeating, and the hub still showed the spinner,
 // "Starting up after upgrade" and the OLD sha 35+ minutes later. Nothing on the
 // fleet was actually mid-upgrade.
@@ -33,7 +33,7 @@ func liveWedgeEntry(now time.Time, gitHash, target string) *RegistryEntry {
 		GitHash:          gitHash,
 		UpgradeStartedAt: now.Add(-35 * time.Minute),
 		LastHeartbeat:    now.Add(-2 * time.Minute).Format(time.RFC3339),
-		ImageRef:         "ghcr.io/kubestellar/hive:v4-latest",
+		ImageRef:         "ghcr.io/hivecommons/hive:v4-latest",
 		GitBranch:        "v4",
 	}
 }

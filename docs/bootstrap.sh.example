@@ -5,7 +5,7 @@
 #
 # USAGE:
 #   # Interactive — bootstrap stops so you can edit config, then run hive supervisor yourself
-#   curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/main/bin/bootstrap.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/main/bin/bootstrap.sh | sudo bash
 #
 #   # Fully automated — pass config inline, supervisor starts immediately
 #   curl -fsSL .../bootstrap.sh | sudo bash -s -- \
@@ -33,7 +33,7 @@
 # With --repos + a notification channel + --start, steps 2 and 3 collapse into one.
 set -euo pipefail
 
-HIVE_REPO="https://github.com/kubestellar/hive.git"
+HIVE_REPO="https://github.com/hivecommons/hive.git"
 HIVE_INSTALL_DIR="/opt/hive"
 HIVE_CONF_DIR="/etc/hive"
 HIVE_CONF="$HIVE_CONF_DIR/agent.env"

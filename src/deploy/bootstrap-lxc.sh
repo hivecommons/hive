@@ -19,7 +19,7 @@ set -euo pipefail
 #
 # Usage:
 #   apt-get update -qq && apt-get install -y -qq curl
-#   curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash
 #
 # After bootstrap, edit /opt/hive/.env and run:
 #   cd /opt/hive/src/deploy && docker compose -f docker-compose.yaml --env-file /opt/hive/.env up -d

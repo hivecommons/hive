@@ -4607,7 +4607,7 @@ func main() {
 			// the in-cluster K8s API — the pod has no kubectl binary, but its
 			// SA holds the hive-self-upgrade role (patch on deployment/hive).
 			// K8s then rolls the pod onto the new tag.
-			image := "ghcr.io/kubestellar/hive:" + tag
+			image := "ghcr.io/hivecommons/hive:" + tag
 			if err := hub.SwitchImageSelf(logger, image); err != nil {
 				logger.Warn("branch switch via heartbeat failed", "tag", tag, "image", image, "error", err)
 				return

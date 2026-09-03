@@ -303,7 +303,7 @@ func parseRFC3339(s string) (time.Time, bool) {
 }
 
 // imageTagOf extracts the tag from an image reference
-// ("ghcr.io/kubestellar/hive:v2-latest" → "v2-latest"). Returns "" when the ref
+// ("ghcr.io/hivecommons/hive:v2-latest" → "v2-latest"). Returns "" when the ref
 // carries no tag or is a digest pin, since neither is a tag-drift question.
 // The registry host may itself contain a ':' port, so only a colon AFTER the
 // last '/' delimits a tag.

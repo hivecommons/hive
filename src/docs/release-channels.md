@@ -14,9 +14,9 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 
 Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds its channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v4` publish `stable` and `candidate`; builds of branch `v5` publish `edge`. All three images get their line's channels:
 
-- `ghcr.io/kubestellar/hive`
-- `ghcr.io/kubestellar/hive-contributor`
-- `ghcr.io/kubestellar/hive-hub`
+- `ghcr.io/hivecommons/hive`
+- `ghcr.io/hivecommons/hive-contributor`
+- `ghcr.io/hivecommons/hive-hub`
 
 Only builds of the release branches (`v4`, `v5`) publish channels — a feature-branch build can never move a production channel.
 
@@ -35,7 +35,7 @@ POST /api/saas/hives/{id}/switch-branch
 {"branch": "stable"}
 ```
 
-The hive's image is set to `ghcr.io/kubestellar/hive:stable` (via kubectl for reachable hosted spokes, or delivered on the next heartbeat otherwise). The switch is considered complete when the spoke's heartbeat reports an image ref whose tag matches the channel ([#3761](https://github.com/kubestellar/hive/pull/3761)).
+The hive's image is set to `ghcr.io/hivecommons/hive:stable` (via kubectl for reachable hosted spokes, or delivered on the next heartbeat otherwise). The switch is considered complete when the spoke's heartbeat reports an image ref whose tag matches the channel ([#3761](https://github.com/kubestellar/hive/pull/3761)).
 
 Because a channel tag is a moving (mutable) tag, a channel-tracking hive gets the same floating-tag auto-upgrade treatment as a `-latest` branch tag: upgrades roll the pod but keep the `:stable` image string rather than pinning a SHA ([#3757](https://github.com/kubestellar/hive/pull/3757)).
 

@@ -17,7 +17,7 @@ for.
 ## The short version
 
 1. **The shipped unit cannot be rolled back to.** `hive.container` names
-   `ghcr.io/kubestellar/hive:stable`, a floating tag, and today's `:stable` and
+   `ghcr.io/hivecommons/hive:stable`, a floating tag, and today's `:stable` and
    last week's `:stable` are different images with the same name. The pin
    therefore lives in a Quadlet **drop-in**, `hive.container.d/10-image.conf`,
    which sets `Image=` to a digest without editing the file the repo owns.
@@ -42,8 +42,8 @@ for.
 
 ```sh
 bin/hive-podman-update.sh status                       # read-only
-bin/hive-podman-update.sh resolve ghcr.io/kubestellar/hive:stable
-bin/hive-podman-update.sh pin ghcr.io/kubestellar/hive:stable    # RESTARTS HIVE
+bin/hive-podman-update.sh resolve ghcr.io/hivecommons/hive:stable
+bin/hive-podman-update.sh pin ghcr.io/hivecommons/hive:stable    # RESTARTS HIVE
 bin/hive-podman-update.sh rollback                               # RESTARTS HIVE
 bin/hive-podman-update.sh unpin
 ```
@@ -66,7 +66,7 @@ ones, because a rollback that only works from a healthy unit is not a rollback.
 `src/deploy/standalone-images.sh` is the one image-reference source of truth
 (#4206) and `src/deploy/test_standalone_image_refs.sh` fails the build when a
 deployment asset stops agreeing with it. `hive.container` must keep naming
-`ghcr.io/kubestellar/hive:stable`, so the operator's pin cannot live there.
+`ghcr.io/hivecommons/hive:stable`, so the operator's pin cannot live there.
 
 Quadlet supports systemd-style drop-ins on its own source files: for
 `hive.container` it scans `hive.container.d/` for `*.conf` and merges them into
@@ -79,7 +79,7 @@ the base file, in alphabetical order, on every `daemon-reload`. So:
 
 ```ini
 [Container]
-Image=ghcr.io/kubestellar/hive@sha256:ec8e69bc00ff044bf893c8828966bc9d70bdb8661297cc72e949b5de86a37bc3
+Image=ghcr.io/hivecommons/hive@sha256:ec8e69bc00ff044bf893c8828966bc9d70bdb8661297cc72e949b5de86a37bc3
 ```
 
 Update and rollback are then the same two-line operation on one file. The base
@@ -91,7 +91,7 @@ auto-update slice has an obvious file to manage.
 `bin/hive-podman-update.sh` writes comment lines Quadlet ignores:
 
 ```
-# HIVE-PIN healthy 2026-08-21T10:25:49Z sha256:ec8e69bc... ghcr.io/kubestellar/hive:stable
+# HIVE-PIN healthy 2026-08-21T10:25:49Z sha256:ec8e69bc... ghcr.io/hivecommons/hive:stable
 # HIVE-PIN failed  2026-08-21T10:31:02Z sha256:4a73073b... docker.io/library/nginx@sha256:4a73073b...
 ```
 
@@ -107,11 +107,11 @@ rolling back twice returns you to the broken image.
 The obvious way to turn a tag into a digest is wrong:
 
 ```
-$ podman image inspect ghcr.io/kubestellar/hive:stable --format '{{index .RepoDigests 0}}'
-ghcr.io/kubestellar/hive@sha256:5d3f442fd7c59d3e453a9447501ff1662751ba8dd0564cff51188330b13dbc77
+$ podman image inspect ghcr.io/hivecommons/hive:stable --format '{{index .RepoDigests 0}}'
+ghcr.io/hivecommons/hive@sha256:5d3f442fd7c59d3e453a9447501ff1662751ba8dd0564cff51188330b13dbc77
 
 $ podman images --digests | grep stable
-ghcr.io/kubestellar/hive  stable  sha256:ec8e69bc00ff044bf893c8828966bc9d70bdb8661297cc72e949b5de86a37bc3
+ghcr.io/hivecommons/hive  stable  sha256:ec8e69bc00ff044bf893c8828966bc9d70bdb8661297cc72e949b5de86a37bc3
 ```
 
 Both are real digests of the same tag, and only the second is the **manifest
@@ -125,7 +125,7 @@ column, never to `RepoDigests`.
 ## What was measured
 
 Fedora 44, Podman 5.8.4, systemd 259, cgroup v2, SELinux **enforcing**, against
-the real `ghcr.io/kubestellar/hive` image, in **both** root modes. The two Hive
+the real `ghcr.io/hivecommons/hive` image, in **both** root modes. The two Hive
 digests are genuine consecutive-ish builds of `v4`, not synthetic tags:
 
 | build | digest | `hive --version` inside the container |
@@ -141,14 +141,14 @@ the running code rather than only the reference: the image carries no
 ### A healthy update
 
 ```
-$ bin/hive-podman-update.sh pin ghcr.io/kubestellar/hive:stable
-  PASS  ghcr.io/kubestellar/hive:stable resolves to sha256:ec8e69bc…
-  PASS  ghcr.io/kubestellar/hive@sha256:ec8e69bc… is present locally
+$ bin/hive-podman-update.sh pin ghcr.io/hivecommons/hive:stable
+  PASS  ghcr.io/hivecommons/hive:stable resolves to sha256:ec8e69bc…
+  PASS  ghcr.io/hivecommons/hive@sha256:ec8e69bc… is present locally
   PASS  wrote …/hive.container.d/10-image.conf
   PASS  daemon-reload: the generated unit now names …@sha256:ec8e69bc…
         the running container is still …@sha256:2326e85d… -- a reload does not restart
   PASS  restart returned 0 after 11s, state active/running/success
-        running  ghcr.io/kubestellar/hive@sha256:ec8e69bc…
+        running  ghcr.io/hivecommons/hive@sha256:ec8e69bc…
         version  hive 3.0.0 (commit 77300c8, branch v4)
 ```
 
@@ -267,19 +267,19 @@ read `1`. A check that runs once and sees 0 has not shown the unit is fine.
 
 Pin history (newest first)
         failed  2026-08-21T10:26:15Z sha256:4a73073b… docker.io/library/nginx@sha256:4a73073b…
-        healthy 2026-08-21T10:25:49Z sha256:ec8e69bc… ghcr.io/kubestellar/hive:stable
-        healthy 2026-08-21T10:25:35Z sha256:2326e85d… ghcr.io/kubestellar/hive@sha256:2326e85d…
+        healthy 2026-08-21T10:25:49Z sha256:ec8e69bc… ghcr.io/hivecommons/hive:stable
+        healthy 2026-08-21T10:25:35Z sha256:2326e85d… ghcr.io/hivecommons/hive@sha256:2326e85d…
 
 Rollback
-  PASS  rollback would return to sha256:ec8e69bc…  (ghcr.io/kubestellar/hive:stable)
+  PASS  rollback would return to sha256:ec8e69bc…  (ghcr.io/hivecommons/hive:stable)
 ```
 
 Then, from that failed state and without waiting for anything:
 
 ```
 $ bin/hive-podman-update.sh rollback
-  PASS  returning to sha256:ec8e69bc… (first pinned from ghcr.io/kubestellar/hive:stable)
-  PASS  ghcr.io/kubestellar/hive@sha256:ec8e69bc… is present locally
+  PASS  returning to sha256:ec8e69bc… (first pinned from ghcr.io/hivecommons/hive:stable)
+  PASS  ghcr.io/hivecommons/hive@sha256:ec8e69bc… is present locally
   PASS  wrote …/hive.container.d/10-image.conf
   PASS  daemon-reload: the generated unit now names …@sha256:ec8e69bc…
         stopped the failing unit first: inactive/dead/timeout
@@ -371,18 +371,18 @@ The script is convenience; this is what it does. `%E/containers/systemd` is
 
 ```sh
 # 1. Resolve the target to a digest. NOT `podman image inspect ... RepoDigests`.
-skopeo inspect --format '{{.Digest}}' docker://ghcr.io/kubestellar/hive:stable
+skopeo inspect --format '{{.Digest}}' docker://ghcr.io/hivecommons/hive:stable
 # -> sha256:ec8e69bc…
 
 # 2. Pull it BEFORE touching the unit. The Hive image measured 3.8GB, and a
 #    pull done by the generated ExecStart is spent inside TimeoutStartSec.
-podman pull ghcr.io/kubestellar/hive@sha256:ec8e69bc…
+podman pull ghcr.io/hivecommons/hive@sha256:ec8e69bc…
 
 # 3. Write the pin, keeping a note of the digest you are leaving.
 mkdir -p ~/.config/containers/systemd/hive.container.d
 cat > ~/.config/containers/systemd/hive.container.d/10-image.conf <<'EOF'
 [Container]
-Image=ghcr.io/kubestellar/hive@sha256:ec8e69bc…
+Image=ghcr.io/hivecommons/hive@sha256:ec8e69bc…
 EOF
 
 # 4. Regenerate and restart. The reload alone does nothing visible.
@@ -405,7 +405,7 @@ systemctl --user stop hive.service
 # 2. Put the previous digest back.
 cat > ~/.config/containers/systemd/hive.container.d/10-image.conf <<'EOF'
 [Container]
-Image=ghcr.io/kubestellar/hive@sha256:2326e85d…
+Image=ghcr.io/hivecommons/hive@sha256:2326e85d…
 EOF
 systemctl --user daemon-reload
 systemctl --user start hive.service

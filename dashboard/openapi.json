@@ -3269,7 +3269,7 @@
           "Agents"
         ],
         "summary": "Kick (message) an agent",
-        "description": "Queues a message/prompt for delivery to the agent's running session and returns immediately. If no prompt/message is given, an auto-generated message is built from the agent's last actionable item.\n\nASYNCHRONOUS (kubestellar/hive#5325). Delivery waits for the CLI's input prompt, which can take up to 120s and therefore used to outlive a typical 60s ingress idle timeout, making a proxy answer 504 for a kick that actually succeeded. Fast, deterministic preconditions (unknown agent, paused, stopped, missing tmux session) are still evaluated inline and still return 400. Everything slower runs in the background; poll GET /api/kick/{agent}/status for the delivery outcome.\n\nDelivery is exactly-once per agent: a second POST while a delivery is in flight is deduplicated and answers status \"in-flight\" without typing the prompt again.",
+        "description": "Queues a message/prompt for delivery to the agent's running session and returns immediately. If no prompt/message is given, an auto-generated message is built from the agent's last actionable item.\n\nASYNCHRONOUS (hivecommons/hive#5325). Delivery waits for the CLI's input prompt, which can take up to 120s and therefore used to outlive a typical 60s ingress idle timeout, making a proxy answer 504 for a kick that actually succeeded. Fast, deterministic preconditions (unknown agent, paused, stopped, missing tmux session) are still evaluated inline and still return 400. Everything slower runs in the background; poll GET /api/kick/{agent}/status for the delivery outcome.\n\nDelivery is exactly-once per agent: a second POST while a delivery is in flight is deduplicated and answers status \"in-flight\" without typing the prompt again.",
         "parameters": [
           {
             "name": "agent",
@@ -3344,7 +3344,7 @@
           "Agents"
         ],
         "summary": "Set an agent's model",
-        "description": "Sets and persists the agent's model override, claims operator ownership of the field (so a pack re-apply on restart cannot revert it), and restarts the agent's session so the change takes effect immediately. Rejects a model the agent's effective backend does not serve.\n\nThat rejection is checked against the agent's CURRENT effective backend and fails OPEN when the backend's model list cannot be enumerated, so it cannot validate a backend+model pair you are changing in the same operation. To change both, use PUT /api/config/agent/{name}/models (kubestellar/hive#5698).",
+        "description": "Sets and persists the agent's model override, claims operator ownership of the field (so a pack re-apply on restart cannot revert it), and restarts the agent's session so the change takes effect immediately. Rejects a model the agent's effective backend does not serve.\n\nThat rejection is checked against the agent's CURRENT effective backend and fails OPEN when the backend's model list cannot be enumerated, so it cannot validate a backend+model pair you are changing in the same operation. To change both, use PUT /api/config/agent/{name}/models (hivecommons/hive#5698).",
         "parameters": [
           {
             "name": "agent",
@@ -3617,7 +3617,7 @@
           "Agents"
         ],
         "summary": "Switch an agent's backend",
-        "description": "Sets and persists the agent's backend override, claims operator ownership of the field, and restarts the agent's session so the new backend takes effect immediately.\n\nChanging the backend alone is what this route is for. To change backend AND model, use PUT /api/config/agent/{name}/models instead \u2014 pairing this call with POST /api/model is not atomic and can leave an unlaunchable backend/model combination (kubestellar/hive#5698).",
+        "description": "Sets and persists the agent's backend override, claims operator ownership of the field, and restarts the agent's session so the new backend takes effect immediately.\n\nChanging the backend alone is what this route is for. To change backend AND model, use PUT /api/config/agent/{name}/models instead \u2014 pairing this call with POST /api/model is not atomic and can leave an unlaunchable backend/model combination (hivecommons/hive#5698).",
         "parameters": [
           {
             "name": "agent",
@@ -4493,7 +4493,7 @@
           "Agents"
         ],
         "summary": "Update an agent's backend/model",
-        "description": "Owner-only. Sets backend and/or model (either may be omitted/empty to leave unchanged), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. Does not restart the agent itself; syncs the change into the live process config.\n\nPREFERRED when changing BOTH backend and model (kubestellar/hive#5698). This is the only route that applies the pair in one request. Doing it as POST /api/switch/{agent}/{backend} followed by POST /api/model/{agent}/{model} has no transaction across the two calls: if the second fails or times out the agent is left with the new backend and the previous backend's model \u2014 an unlaunchable pair such as `codex --model claude-opus-5` \u2014 which surfaces later as a dead pane rather than as an error at set time. The two-call path also restarts the agent once per call.\n\nKnown gap: this route validates the BACKEND but does not yet validate the model id against live inventory before persisting (kubestellar/hive#5698 phase 2). POST /api/model does validate, but only against the agent's current effective backend and only when that backend's model list can be enumerated, so it cannot check the pair either.",
+        "description": "Owner-only. Sets backend and/or model (either may be omitted/empty to leave unchanged), claiming operator ownership of whichever field is set so a pack re-apply cannot revert it. Does not restart the agent itself; syncs the change into the live process config.\n\nPREFERRED when changing BOTH backend and model (hivecommons/hive#5698). This is the only route that applies the pair in one request. Doing it as POST /api/switch/{agent}/{backend} followed by POST /api/model/{agent}/{model} has no transaction across the two calls: if the second fails or times out the agent is left with the new backend and the previous backend's model \u2014 an unlaunchable pair such as `codex --model claude-opus-5` \u2014 which surfaces later as a dead pane rather than as an error at set time. The two-call path also restarts the agent once per call.\n\nKnown gap: this route validates the BACKEND but does not yet validate the model id against live inventory before persisting (hivecommons/hive#5698 phase 2). POST /api/model does validate, but only against the agent's current effective backend and only when that backend's model list can be enumerated, so it cannot check the pair either.",
         "parameters": [
           {
             "name": "name",
@@ -10816,7 +10816,7 @@
           "Contribute"
         ],
         "summary": "Recent contributor activity",
-        "description": "Returns the recent contributor activity feed held by the contribute hub. Public (no auth) \u2014 lives under the /api/contribute prefix which isPublicPath treats as public, read-only, no side effects. Returns an empty activity list if the contribute hub is not initialized. The feed is a BOUNDED RING, not a full history: the hub keeps at most `capacity` events across ALL contributors and evicts older ones. `retained` reports how many it currently holds, so a caller can tell three cases apart \u2014 activity.length < retained means this response was cut short by `limit`; retained == capacity means the ring is full and older events are gone; retained < capacity means the hive really has produced only this many. Before kubestellar/hive#5704 `limit` was accepted and silently ignored, and the response carried neither count, so a truncated read was indistinguishable from a short history.",
+        "description": "Returns the recent contributor activity feed held by the contribute hub. Public (no auth) \u2014 lives under the /api/contribute prefix which isPublicPath treats as public, read-only, no side effects. Returns an empty activity list if the contribute hub is not initialized. The feed is a BOUNDED RING, not a full history: the hub keeps at most `capacity` events across ALL contributors and evicts older ones. `retained` reports how many it currently holds, so a caller can tell three cases apart \u2014 activity.length < retained means this response was cut short by `limit`; retained == capacity means the ring is full and older events are gone; retained < capacity means the hive really has produced only this many. Before hivecommons/hive#5704 `limit` was accepted and silently ignored, and the response carried neither count, so a truncated read was indistinguishable from a short history.",
         "responses": {
           "200": {
             "description": "Recent activity",
@@ -17485,7 +17485,7 @@
           "Agents"
         ],
         "summary": "Outcome of the most recent kick",
-        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (kubestellar/hive#5325). This is where kick success or failure is decided \u2014 POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
+        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (hivecommons/hive#5325). This is where kick success or failure is decided \u2014 POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
         "parameters": [
           {
             "name": "agent",

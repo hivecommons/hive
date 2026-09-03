@@ -93,7 +93,7 @@ Allowed, because they are scoped:
 ```bash
 podman rm --force hive hive-gateway
 podman volume prune --force --filter label=io.kubestellar.hive.owned=true
-podman rmi ghcr.io/kubestellar/hive:v4
+podman rmi ghcr.io/hivecommons/hive:v4
 buildah rm hive-build
 ```
 

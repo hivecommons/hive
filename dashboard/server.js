@@ -2817,7 +2817,7 @@ app.get('/contribute', (_req, res) => {
     <ol>
       <li><strong>Register</strong> — click the button above to authenticate with GitHub</li>
       <li><strong>Install just</strong> — <code>brew install just</code> (macOS) or <code>cargo install just</code></li>
-      <li><strong>Clone the hive repo</strong> — <code>git clone https://github.com/kubestellar/hive</code></li>
+      <li><strong>Clone the hive repo</strong> — <code>git clone https://github.com/hivecommons/hive</code></li>
       <li><strong>Run</strong> — <code>just contribute-hive</code> (defaults to Claude Code, or <code>just contribute-hive gemini</code>)</li>
       <li><strong>Log into your CLI</strong> — the container prompts you if needed</li>
       <li><strong>Walk away</strong> — your agent pulls work from the queue automatically</li>
@@ -3108,7 +3108,7 @@ app.post('/api/hives/onboard', (req, res) => {
 
 services:
   hive:
-    image: ghcr.io/kubestellar/hive:latest
+    image: ghcr.io/hivecommons/hive:latest
     container_name: ${project_name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-hive
     restart: unless-stopped
     ports:

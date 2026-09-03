@@ -253,7 +253,7 @@ func TestSwitchImageSelfSuccess(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	if err := SwitchImageSelf(slog.Default(), "ghcr.io/kubestellar/hive:dev-latest"); err != nil {
+	if err := SwitchImageSelf(slog.Default(), "ghcr.io/hivecommons/hive:dev-latest"); err != nil {
 		t.Fatalf("SwitchImageSelf: %v", err)
 	}
 }
@@ -287,7 +287,7 @@ func TestSwitchImageSelfNoNamespace(t *testing.T) {
 // rollout is forced AND the requested target is recorded on the deployment.
 func TestUpgradeSelfMutableTagForcesRollout(t *testing.T) {
 	const (
-		currentImage = "ghcr.io/kubestellar/hive:v2-latest"
+		currentImage = "ghcr.io/hivecommons/hive:v2-latest"
 		targetSHA    = "07ccca1"
 	)
 	var patchBody string
@@ -344,7 +344,7 @@ func TestUpgradeSelfMutableTagPatchFailureIsReported(t *testing.T) {
 			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:v2-latest"}]}}}}`))
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:v2-latest"}]}}}}`))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
@@ -367,7 +367,7 @@ func TestUpgradeSelfPinnedStillPatchesImage(t *testing.T) {
 			_, _ = w.Write([]byte(`{}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:c11643a"}]}}}}`))
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:c11643a"}]}}}}`))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
@@ -379,7 +379,7 @@ func TestUpgradeSelfPinnedStillPatchesImage(t *testing.T) {
 	if needsRestart {
 		t.Error("a pinned upgrade rolls via the image patch")
 	}
-	if !strings.Contains(patchBody, "ghcr.io/kubestellar/hive:07ccca1") {
+	if !strings.Contains(patchBody, "ghcr.io/hivecommons/hive:07ccca1") {
 		t.Errorf("pinned upgrade must rewrite the image to the target, got: %s", patchBody)
 	}
 }

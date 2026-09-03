@@ -1,6 +1,6 @@
 'use strict';
 
-// Pi contributor adapter contract (kubestellar/hive#5039).
+// Pi contributor adapter contract (hivecommons/hive#5039).
 //
 // AGENT_MODEL is the one contributor-owned selection input and MUST be the
 // canonical provider/model spelling Pi itself understands.  There is

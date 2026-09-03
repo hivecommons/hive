@@ -58,7 +58,7 @@ A restore operator should inspect the extracted `MANIFEST.json`, re-apply the ca
 
 - ServiceAccount `hive-hub-backup` in namespace `hive-hub`;
 - a namespaced Role granting `get` (only) on exactly four named Secrets — `hive-hub-secrets`, `oci-api-key`, `hive-hub-kubeconfigs`, `hive-hub-tls` — plus a ClusterRole limited to `pods [get,list]` and `pods/exec [create]` for reading spoke PVC state (hardened in [#3719](https://github.com/kubestellar/hive/pull/3719) and [#3810](https://github.com/kubestellar/hive/pull/3810); the unused `namespaces` grant was removed — spoke namespaces derive as `hive-hosted-<id>` from the registry);
-- a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/kubestellar/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/kubestellar/hive/pull/3810));
+- a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/hivecommons/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/kubestellar/hive/pull/3810));
 - ConfigMap `hive-hub-backup-config` with object-storage bucket (default `hive-hub-backups`, inherited silently if you don't edit it) and retention.
 
 Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment. Archives upload to OCI Object Storage, so allow egress to `objectstorage.<region>.oraclecloud.com` from the hub.
@@ -403,7 +403,7 @@ Also copy the Docker deployment's `src/hive.yaml` to `%E/hive/hive.yaml` and `sr
 
 ## Podman: what was observed
 
-Fedora 44, Podman 5.8.4, systemd 259, cgroup v2, SELinux **enforcing**, Docker 29.7.2, against the real `ghcr.io/kubestellar/hive:stable` image (`sha256:ec8e69bc…`). Three separate deployments, each with its own identity, so a restore returning the wrong data would be visible rather than plausible.
+Fedora 44, Podman 5.8.4, systemd 259, cgroup v2, SELinux **enforcing**, Docker 29.7.2, against the real `ghcr.io/hivecommons/hive:stable` image (`sha256:ec8e69bc…`). Three separate deployments, each with its own identity, so a restore returning the wrong data would be visible rather than plausible.
 
 ### Backup, wipe, and restore — executed in both root modes
 

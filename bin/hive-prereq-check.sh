@@ -141,7 +141,7 @@ if [[ -d "${HIVE_DIR}/.git" ]]; then
   pass "Hive repo: ${HIVE_DIR} (branch: ${HIVE_BRANCH})"
 else
   fail "Hive repo: not found at ${HIVE_DIR}"
-  try_fix "git clone --branch ${HIVE_BRANCH:-v4} --single-branch https://github.com/kubestellar/hive.git ${HIVE_DIR}" \
+  try_fix "git clone --branch ${HIVE_BRANCH:-v4} --single-branch https://github.com/hivecommons/hive.git ${HIVE_DIR}" \
     && pass "Hive repo: cloned"
 fi
 

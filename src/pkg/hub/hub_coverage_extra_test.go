@@ -394,7 +394,7 @@ func TestHandleHubAutoUpgradeEnable(t *testing.T) {
 // the pod's ServiceAccount holds patch on the hub Deployment. Combined with a
 // sibling test seeding latestSHAByBranch["v2"] = "target1", it issued a real
 //
-//	kubectl set image deployment/hive-hub hub=ghcr.io/kubestellar/hive-hub:target1
+//	kubectl set image deployment/hive-hub hub=ghcr.io/hivecommons/hive-hub:target1
 //
 // against production, leaving the hub serving stale code behind an
 // ImagePullBackOff. See TestMain, which removes the in-cluster credentials

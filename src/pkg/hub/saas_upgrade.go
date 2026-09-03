@@ -613,7 +613,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	ns := "hive-hosted-" + id
 	// A channel IS the tag ("stable"); a branch's moving tag is "<branch>-latest".
 	imageTag := upgradeTargetTag(body.Branch)
-	image := "ghcr.io/kubestellar/hive:" + imageTag
+	image := "ghcr.io/hivecommons/hive:" + imageTag
 	// Refuse a branch name that sanitizes into something that is not a valid
 	// channel tag, rather than stranding the spoke on ImagePullBackOff behind a
 	// still-serving old ReplicaSet.

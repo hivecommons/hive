@@ -270,7 +270,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `AGENT_MODEL` | No | backend default, or `GOOSE_MODEL` for Goose fallback | Contributor/agent model override. |
 | `CONTRIBUTOR_MODE` | No | `interactive` | Contributor relay mode: `interactive` uses tmux; `headless` uses one-shot CLI execution for supported backends. |
 | `HIVE_HEADLESS_STATUS_FILE` | No | `/tmp/contributor-headless-status.json` | Status file written by headless contributor relay. |
-| `HIVE_CONTRIBUTOR_IMAGE` | No | `ghcr.io/kubestellar/hive-contributor:latest` | Image used by `just contribute-hive`. |
+| `HIVE_CONTRIBUTOR_IMAGE` | No | `ghcr.io/hivecommons/hive-contributor:latest` | Image used by `just contribute-hive`. |
 | `HIVE_CONTAINER_RUNTIME` | No | autodetect `docker` or `podman` | Container runtime override for contributor helpers. `just contribute-hive` also passes the runtime it resolved into the container, so the attach hints printed from inside it name the engine that actually launched it rather than assuming `docker` ([#5145](https://github.com/kubestellar/hive/issues/5145)). |
 | `HIVE_CONTAINER_NAME` | No | `hive-contributor` | Set by `just contribute-hive` on the container it starts. The contributor entrypoint and relay read it for their attach hints; unset means the relay is running in local mode, where the hint is a plain `tmux attach`. |
 | `HIVE_SKIP_VERSION_CHECK` | No | `false` | Skips `just` version freshness check when set to `true`. |

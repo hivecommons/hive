@@ -16,7 +16,7 @@ Import a definition from the dashboard: **+ agent → Import from URL**, and pas
 the raw file URL, for example:
 
 ```
-https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/examples/agents/customized-agent.yaml
+https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/examples/agents/customized-agent.yaml
 ```
 
 Or copy a file into your hive's agents overlay directory (`data.agents_dir`) and

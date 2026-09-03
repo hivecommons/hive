@@ -1,0 +1,1 @@
+- Documentation, scripts, and CI examples now point operators at the transferred `hivecommons/hive` repository and GHCR packages instead of stale `kubestellar/hive` locations.

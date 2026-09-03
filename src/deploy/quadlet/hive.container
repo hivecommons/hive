@@ -85,7 +85,7 @@ Wants=hive-gateway.service
 # overwritten by the next sync with it. See #4378 and
 # src/docs/podman-quadlet-update-rollback.md; bin/hive-podman-update.sh writes
 # the drop-in and reads its own pin history back for `rollback`.
-Image=ghcr.io/kubestellar/hive:stable
+Image=ghcr.io/hivecommons/hive:stable
 ContainerName=hive
 
 # The #4210 ownership labels, matching hive_podman_labels in

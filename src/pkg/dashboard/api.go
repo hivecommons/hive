@@ -815,7 +815,7 @@ func (s *Server) fetchCommitMessage(sha string) string {
 	return msg
 }
 
-// ghcrTagExistsCached checks whether a container tag exists on ghcr.io/kubestellar/hive,
+// ghcrTagExistsCached checks whether a container tag exists on ghcr.io/hivecommons/hive,
 // caching the result to avoid repeated network calls on each version poll.
 var (
 	ghcrCacheMu     sync.RWMutex
@@ -857,7 +857,7 @@ func ghcrTagExists(tag string) bool {
 		return false
 	}
 
-	manifestURL := fmt.Sprintf("https://ghcr.io/v2/kubestellar/hive/manifests/%s", tag)
+	manifestURL := fmt.Sprintf("https://ghcr.io/v2/hivecommons/hive/manifests/%s", tag)
 	req, _ := http.NewRequest("HEAD", manifestURL, nil)
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
 	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")

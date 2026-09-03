@@ -62,7 +62,7 @@ var (
 // a stale cached image.
 const (
 	ghcrRepoSpoke = "kubestellar/hive"
-	ghcrRepoHub   = "kubestellar/hive-hub"
+	ghcrRepoHub   = "hivecommons/hive-hub"
 
 	// hubDeploymentName / hubContainerName / hubNamespace identify the hub's own
 	// Kubernetes objects for self-upgrade. NOTE the container is named "hub", not
@@ -170,7 +170,7 @@ var (
 const imageBranchCacheTTL = 5 * time.Minute
 
 // discoveredImageBranches returns branch names inferred from published
-// ghcr.io/kubestellar/hive:<branch>-latest tags (cached). A tag with a '-'
+// ghcr.io/hivecommons/hive:<branch>-latest tags (cached). A tag with a '-'
 // that our sanitizer would have produced can't be reversed unambiguously, so
 // we only surface tags that round-trip: the tag minus the "-latest" suffix.
 // Slashless branches (v2, mk) round-trip exactly; slashed branches
@@ -263,7 +263,7 @@ func nextGitHubLink(link string) string {
 }
 
 // listLatestImageBranches queries the GHCR tag list for
-// ghcr.io/kubestellar/hive and returns the branch name of every "<x>-latest"
+// ghcr.io/hivecommons/hive and returns the branch name of every "<x>-latest"
 // tag (the "<x>" part).
 func listLatestImageBranches(client *http.Client) []string {
 	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:kubestellar/hive:pull")
@@ -283,7 +283,7 @@ func listLatestImageBranches(client *http.Client) []string {
 	// "<branch>-latest" tags we want may live on a later page — follow Link
 	// until exhausted (bounded) rather than reading only the first page.
 	branchSet := map[string]struct{}{}
-	next := ghcrBase + "/v2/kubestellar/hive/tags/list?n=1000"
+	next := ghcrBase + "/v2/hivecommons/hive/tags/list?n=1000"
 	const maxPages = 20 // bound: up to ~20k tags
 	for page := 0; next != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", next, nil)
@@ -854,7 +854,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 }
 
 // dockerWorkflowFile is the workflow that builds and pushes the container
-// images (ghcr.io/kubestellar/hive:<branch>-latest and :<short-sha>) on
+// images (ghcr.io/hivecommons/hive:<branch>-latest and :<short-sha>) on
 // every push to a tracked branch.
 const dockerWorkflowFile = "docker.yml"
 

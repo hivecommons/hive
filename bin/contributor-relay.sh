@@ -36,7 +36,7 @@ const {
 } = require('./pi-backend.js');
 
 const rawHub = process.env.HIVE_HUB || 'wss://hive.kubestellar.io:3001/contribute';
-// Multi-hub (kubestellar/hive#multi-hive): HIVE_HUB and HIVE_REGISTRATION_TOKEN
+// Multi-hub (hivecommons/hive#multi-hive): HIVE_HUB and HIVE_REGISTRATION_TOKEN
 // may each be a comma-separated list, one token per hub in the same order, so
 // one relay/CLI session can hold work from more than one hive without running
 // duplicate contributor processes. A single value of each (the common case)
@@ -76,13 +76,13 @@ const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 // detectCapabilities() would misreport the hub's own cache as this relay's
 // credential. Distinct filename, same directory, so the contributor container
 // (which owns /var/run/hive-metrics — src/Dockerfile.contributor) behaves as
-// before. See kubestellar/hive#1861 / #3842 (audit N14).
+// before. See hivecommons/hive#1861 / #3842 (audit N14).
 const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
   ? '/var/run/hive-metrics/contributor-gh-token.cache'
   : '/tmp/hive-gh-token.cache');
 const TASK_FILE = process.env.HIVE_TASK_FILE || '/tmp/contributor-task.json';
 
-// --- Delivery mode (kubestellar/hive#2538) -------------------------------
+// --- Delivery mode (hivecommons/hive#2538) -------------------------------
 // The relay can deliver a task to the backend CLI in one of two ways:
 //
 //   interactive (default) — the legacy path: type the prompt into a live
@@ -133,7 +133,7 @@ const PANE_STATE_WORKING = 'WORKING';
 const PANE_STATE_BLOCKED_ON_HUMAN = 'BLOCKED_ON_HUMAN';
 const PANE_STATE_IDLE_COMPLETE = 'IDLE_COMPLETE';
 // A retryable API failure left the CLI parked at its idle prompt with the
-// response truncated (kubestellar/hive#5094). This is NOT completion and NOT a
+// response truncated (hivecommons/hive#5094). This is NOT completion and NOT a
 // stall: the turn ended, but it ended in an error, and the same request can
 // succeed on a retry.
 const PANE_STATE_TRANSIENT_API_ERROR = 'TRANSIENT_API_ERROR';
@@ -143,14 +143,14 @@ const PANE_STATE_TRANSIENT_API_ERROR = 'TRANSIENT_API_ERROR';
 // so this is failed at once rather than nudged.
 const PANE_STATE_FATAL_API_ERROR = 'FATAL_API_ERROR';
 // An API failure matching NEITHER curated list ended the turn at the idle
-// prompt (kubestellar/hive#5121). Still not completion: the turn shipped
+// prompt (hivecommons/hive#5121). Still not completion: the turn shipped
 // nothing. Nobody can say from a pattern table whether a retry clears it, so
 // it takes the bounded transient path — if it was retryable the retry wins,
 // and if not the budget runs out and the task is handed back as an honest
 // environment failure. Either way, never a fabricated completion.
 const PANE_STATE_UNKNOWN_API_ERROR = 'UNKNOWN_API_ERROR';
 
-// ── Transient API-error recovery (kubestellar/hive#5094) ─────────────────────
+// ── Transient API-error recovery (hivecommons/hive#5094) ─────────────────────
 //
 // THE DEFECT: Claude Code prints a turn-duration summary ("✻ Cogitated for
 // 9m 24s") whenever a turn ENDS — including when it ends in an API error — and
@@ -206,7 +206,7 @@ const TRANSIENT_API_ERROR_MAX_NUDGES = 3;
 const TRANSIENT_API_ERROR_NUDGE_COOLDOWN_MS = 90000;
 
 // What the relay types at an unattended pane that stopped to ask a question
-// (kubestellar/hive#5281). The task prompts already tell agents to decide for
+// (hivecommons/hive#5281). The task prompts already tell agents to decide for
 // themselves — an agent that stops to ask is one that forgot, and a human
 // watching would type exactly this line. When nobody is watching, nobody does.
 //
@@ -230,7 +230,7 @@ const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
 // MAX_TASK_DURATION_MS is a PROGRESS lease, not a wall-clock budget
-// (kubestellar/hive#5321). It bounds how long a task may go without the relay
+// (hivecommons/hive#5321). It bounds how long a task may go without the relay
 // observing forward progress; every tick that sees new pane output re-arms it
 // from now. It is NOT "the longest a task may take".
 //
@@ -262,7 +262,7 @@ const MAX_TASK_DURATION_MS = 1800000;
 // failure (see the failCurrentTask contract).
 const ABSOLUTE_TASK_DEADLINE_MS = Number(process.env.HIVE_ABSOLUTE_TASK_DEADLINE_MS) || 4 * 60 * 60 * 1000;
 
-// Hard ceiling on a single headless one-shot invocation (kubestellar/hive#2538).
+// Hard ceiling on a single headless one-shot invocation (hivecommons/hive#2538).
 // The interactive path has no pane to scrape for progress on the headless path,
 // so a headless child cannot use the progress lease above: there is no
 // equivalent signal. It gets the ABSOLUTE bound enforced directly on the
@@ -273,12 +273,12 @@ const HEADLESS_TASK_TIMEOUT_MS = Number(process.env.HIVE_HEADLESS_TASK_TIMEOUT_M
 const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // After the hub sends an explicit task_unavailable negative-ack (no admissible
 // work, a disabled tier, a concurrency limit, or a token-mint failure — see
-// kubestellar/hive#2436), wait before re-asking so we neither hang forever
+// hivecommons/hive#2436), wait before re-asking so we neither hang forever
 // (the old silent-nil behaviour) nor busy-loop the hub.
 const TASK_UNAVAILABLE_RETRY_MS = 30000;
 
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
-// (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
+// (hivecommons/hive#2567). It is DECLARED to the hub in auth_response (additive,
 // optional — an older hub simply ignores it) and the hub advertises its own
 // version + capability set back on auth_ok.
 //
@@ -333,7 +333,7 @@ const hubs = rawHubList.map((url, i) => ({
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
 // explicit task_unavailable from the active hub; sticks with the same hub
 // across a completed/failed/revoked task rather than switching eagerly, since
-// task_unavailable is the only signal (kubestellar/hive#2436/#2546 — the hub
+// task_unavailable is the only signal (hivecommons/hive#2436/#2546 — the hub
 // always sends it, never stays silent) that a hub genuinely has no work.
 let activeHubIndex = 0;
 
@@ -346,7 +346,7 @@ function nextSeq() { return ++seq; }
 
 // LOCAL_TASK_ID_PREFIX marks a task the RELAY invented rather than one the hub
 // assigned: today that is the PR review cycle built after every
-// PR_REVIEW_EVERY_N completions (kubestellar/hive#5715).
+// PR_REVIEW_EVERY_N completions (hivecommons/hive#5715).
 //
 // Identity is the ID PREFIX, deliberately, and NOT `number === 0`. External work
 // items — Linear, Jira — legitimately carry number 0 and put their identity in
@@ -465,7 +465,7 @@ const CONTAINER_NAME = process.env.HIVE_CONTAINER_NAME || 'hive-contributor';
 // pane. It is computed once, here, because it is printed at the one moment a
 // wrong answer really costs: the "needs authentication" banner fires when the
 // agent is BLOCKED and a person must intervene, so a command that fails is
-// worse than no command at all (kubestellar/hive#5145).
+// worse than no command at all (hivecommons/hive#5145).
 //
 // Two facts the relay cannot infer and so is told:
 //
@@ -484,7 +484,7 @@ const ATTACH_COMMAND = process.env.HIVE_CONTAINER_NAME
   : `tmux attach -t ${TMUX_SESSION}`;
 
 // detectCapabilities builds the OPTIONAL, client-declared capability object the
-// relay reports in auth_response (kubestellar/hive#2547, declare half). Every
+// relay reports in auth_response (hivecommons/hive#2547, declare half). Every
 // entry is a cheap, honest self-report the hub STORES + SURFACES read-only and
 // NEVER routes/gates on. It is best-effort: any probe that throws is simply
 // omitted, so a constrained environment still authenticates unchanged. Computed
@@ -623,7 +623,7 @@ function classifyPeerProtocol(peer, self) {
 
 // warnOnProtocolDrift reports, once per hub for the life of this process, that
 // the hub speaks a
-// different contributor-protocol version than this relay (kubestellar/hive#2547).
+// different contributor-protocol version than this relay (hivecommons/hive#2547).
 // Purely informational: nothing below changes what we send, what we ask for, or
 // whether we stay connected — a version is not a gate on either side. Silent when
 // the versions agree or the hub is unversioned, so a healthy connection logs
@@ -952,7 +952,7 @@ function buildLaunchCommand() {
   return cachedLaunchCommand;
 }
 
-// --- Headless (non-interactive) one-shot dispatch (kubestellar/hive#2538) ---
+// --- Headless (non-interactive) one-shot dispatch (hivecommons/hive#2538) ---
 //
 // Backends whose CLI supports a one-shot / print invocation that takes the
 // prompt on the command line, runs to completion, and EXITS with a meaningful
@@ -1005,7 +1005,7 @@ const HEADLESS_BACKENDS = {
   // image. The capability and the credential are separate questions.
   agy: { flag: '-p' },
   // opencode run "<prompt>" — opencode's one-shot headless invocation
-  // (kubestellar/hive#4970). Unlike agy, opencode is the ONLY launch mode
+  // (hivecommons/hive#4970). Unlike agy, opencode is the ONLY launch mode
   // this backend gets: there is no interactive-tmux wiring for it (see the
   // getCLIState()/classifyTmuxPane() backend lists below, which opencode
   // deliberately does not join), so it is only ever reached through
@@ -1668,7 +1668,7 @@ function shellQuote(s) {
 function redactTokens(text) {
   // {36,} not {36}: GitHub documents that token length may grow, and an exact
   // bound would redact only the first 36 characters of a longer token, leaking
-  // its tail into the hub log line (kubestellar/hive#4267).
+  // its tail into the hub log line (hivecommons/hive#4267).
   const githubRedacted = text.replace(/gho_[A-Za-z0-9]{36,}/g, 'gho_***REDACTED***')
     .replace(/ghp_[A-Za-z0-9]{36,}/g, 'ghp_***REDACTED***')
     .replace(/ghs_[A-Za-z0-9]{36,}/g, 'ghs_***REDACTED***')
@@ -1696,7 +1696,7 @@ function captureTmuxLines(n) {
 // Best-effort scan of the agent's recent output for a GitHub pull-request URL
 // it opened for this task. Reported on task_complete as pr_url so the hub can
 // tell "work shipped" from "agent merely went idle" and pick the right issue
-// cooldown (kubestellar/hive#2393 item 7). This is intentionally best-effort:
+// cooldown (hivecommons/hive#2393 item 7). This is intentionally best-effort:
 // when no PR link is visible we return '' and the hub applies its short no-PR
 // cooldown. When `repo` is known (owner/repo) we prefer a URL under that repo
 // so an unrelated PR mentioned in passing does not get attributed to the task.
@@ -1721,7 +1721,7 @@ function detectPRURL(lines, repo) {
   return repoMatch || anyMatch;
 }
 
-// ── The HIVE_VERDICT: sentinel family (kubestellar/hive#3987, #5376) ─────────
+// ── The HIVE_VERDICT: sentinel family (hivecommons/hive#3987, #5376) ─────────
 //
 // The hub's task prompt asks the agent to end a task by printing ONE line of
 // the exact form
@@ -1841,7 +1841,7 @@ function recentPaneLines(text, limit = 12) {
     .slice(-limit);
 }
 
-// Why a blocked pane is blocked (kubestellar/hive#5281). BLOCKED_ON_HUMAN
+// Why a blocked pane is blocked (hivecommons/hive#5281). BLOCKED_ON_HUMAN
 // conflates two populations, and only one of them can be helped without a
 // person:
 //
@@ -1897,7 +1897,7 @@ function classifyBlockedOnHumanReason(text) {
     currentMenuLine &&
     (recent.match(/(?:^|\n)\s*(?:[❯>]\s*)?\d+[\).]\s+\S+/g) || []).length >= 2;
 
-  // Elicitation / fill-in-a-form prompt (kubestellar/hive#2844). Goose (and any
+  // Elicitation / fill-in-a-form prompt (hivecommons/hive#2844). Goose (and any
   // backend that raises an MCP elicitation) can pause mid-turn and render a form
   // for the operator to fill in. Such a pane usually ends in a bare "> " or
   // still shows goose's "> Enter to send" hint, so the per-backend classifier
@@ -2026,7 +2026,7 @@ function paneShowsLoginRequiredError(text) {
 }
 
 // How long an attached tmux client must have been silent before the relay
-// stops treating it as a person who owns the pane (kubestellar/hive#5277).
+// stops treating it as a person who owns the pane (hivecommons/hive#5277).
 //
 // The guard this feeds exists so a watchdog never types over someone
 // mid-keystroke, and that is worth keeping. But "a client is connected" is not
@@ -2047,7 +2047,7 @@ const HUMAN_PRESENCE_IDLE_MS = Number(process.env.HIVE_HUMAN_PRESENCE_IDLE_MS) |
 
 // HUMAN_PRESENCE_MAX_DEFERRALS bounds how many consecutive progress ticks a
 // presence reading may park a retryable API error before the relay retries
-// anyway (kubestellar/hive#5685).
+// anyway (hivecommons/hive#5685).
 //
 // It exists because presence is the one input here the relay cannot verify. If
 // the signal is wrong — and #5685 is the second time it has been, after #5277 —
@@ -2113,7 +2113,7 @@ function tmuxSessionHumanPresence() {
 // lastPresencePaneFingerprint is the pane as it looked the last time a presence
 // question was asked, and presenceDeferralCount how many consecutive ticks that
 // answer has parked a retry. Both are scoped to the CURRENT task and reset with
-// the rest of the transient-error state (kubestellar/hive#5685).
+// the rest of the transient-error state (hivecommons/hive#5685).
 //
 // The fingerprint is deliberately SEPARATE from lastPaneFingerprint, which the
 // stall backstop owns. That one is consumed destructively — the first read that
@@ -2199,7 +2199,7 @@ function tmuxSendNudge(message) {
 // carries Claude Code's own error rendering — a line-leading "● API Error:" —
 // or null. Reached only after the three curated detectors above have NOT
 // matched (classifyTmuxPane's ordering), so a hit here is an API failure the
-// tables cannot name (kubestellar/hive#5121): a 400, a 404, a 429 phrased in a
+// tables cannot name (hivecommons/hive#5121): a 400, a 404, a 429 phrased in a
 // way nobody anticipated, a brand-new gateway message.
 //
 // The anchor is deliberately STRICTER than the curated detectors' anywhere-in-
@@ -2269,7 +2269,7 @@ function classifyTmuxPane(text) {
     // finishing a task depend on which English word it happened to reach for.
     //
     // Observed live: a task that ran to completion and opened
-    // kubestellar/hive#4259 ready for review summarised itself as "Opened
+    // hivecommons/hive#4259 ready for review summarised itself as "Opened
     // ready-for-review PR #4259 … Conclusion: direct .kube reuse is not viable
     // … Branch is pushed and clean … Worked for 6m 22s". None of the three
     // words appear, and there is no no_work_needed verdict either (it shipped a
@@ -2349,7 +2349,7 @@ function classifyTmuxPane(text) {
     //
     // The input box is CLOSED by a second box-drawing rule between the ">" and
     // the footer, so the gap is not pure whitespace and "\s*" cannot cross it.
-    // Observed live: a turn that finished and opened kubestellar/hive#4127 sat
+    // Observed live: a turn that finished and opened hivecommons/hive#4127 sat
     // at this exact idle chrome, classified WORKING, and was killed 20 minutes
     // later by the progressTick() stall backstop and reported as an
     // `environment` FAILURE — for a task that had shipped a real PR. Allow the
@@ -2366,7 +2366,7 @@ function classifyTmuxPane(text) {
     // The bare verb scan below is a case-insensitive word match, and agy
     // narrates in plain English — including in the summary it prints when a
     // turn FINISHES. Observed live: a completed task that opened
-    // kubestellar/hive#4181 ended with "Replaced inline token export
+    // hivecommons/hive#4181 ended with "Replaced inline token export
     // instructions with writing HIVE_GITHUB_TOKEN to a local .env file". That
     // "writing" is in the last 15 lines by construction (it is the summary),
     // so isWorking stayed true, and because isWorking short-circuits before
@@ -2397,7 +2397,7 @@ function classifyTmuxPane(text) {
   if (paneLooksBlockedOnHuman(text)) return PANE_STATE_BLOCKED_ON_HUMAN;
   if (isWorking) return PANE_STATE_WORKING;
   // A turn that ended in a RETRYABLE API failure is not a completed turn
-  // (kubestellar/hive#5094). This must sit above the completion test: the
+  // (hivecommons/hive#5094). This must sit above the completion test: the
   // completion markers below are "the turn stopped" signals — claude's
   // "✻ …ed for 9m 24s" duration summary is printed for an errored turn exactly
   // as for a successful one — so without this check an API error reads as
@@ -2521,7 +2521,7 @@ function dropTaskCredential() {
 }
 
 // stopAgentForTaskExit ends the AGENT, not just the bookkeeping, when a task
-// stops being ours (kubestellar/hive#5353 cause B).
+// stops being ours (hivecommons/hive#5353 cause B).
 //
 // Reporting task_complete or task_failed tells the hub to revoke the lease,
 // book a cooldown and offer the issue to someone else. Before this existed,
@@ -2605,7 +2605,7 @@ function stopAgentForTaskExit(opts) {
 // test suite, a slow clone) for many minutes without drawing anything new.
 const PANE_STALL_TIMEOUT_MS = Number(process.env.HIVE_PANE_STALL_TIMEOUT_MS) || 20 * 60 * 1000;
 
-// Observed live (kubestellar/hive): a task crossed PANE_STALL_TIMEOUT_MS while
+// Observed live (hivecommons/hive): a task crossed PANE_STALL_TIMEOUT_MS while
 // agy sat blocked on a slow `gh pr create` network round trip. The relay
 // declared it a failure and moved on to the next task, and the pane then, only
 // seconds to minutes later, printed the CLI's real completion summary — with a
@@ -2699,7 +2699,7 @@ let lastPaneChangeAt = 0;
 // where paneStalled() is false (new output resets the whole stall story).
 let stallConfirmCount = 0;
 
-// Transient-API-error nudge state (kubestellar/hive#5094), scoped to the
+// Transient-API-error nudge state (hivecommons/hive#5094), scoped to the
 // CURRENT task: how many retries we have typed and when the last one went out.
 // Both are reset at task start — a previous task's exhausted budget must not
 // deny this one its retries.
@@ -2716,7 +2716,7 @@ function resetTransientNudgeState() {
   resetHumanPresenceEvidence();
 }
 
-// Autonomy-nudge state (kubestellar/hive#5281), scoped to the CURRENT task.
+// Autonomy-nudge state (hivecommons/hive#5281), scoped to the CURRENT task.
 // Budget of exactly one: a question the agent re-asks AFTER being told to
 // proceed autonomously is a question it genuinely cannot answer itself, and
 // re-nudging it would loop until the max-duration ceiling. Once spent, the pane
@@ -2759,7 +2759,7 @@ function paneStalled(tmuxLines) {
 
 // paneChangedSince reports whether the pane differs from the last fingerprint
 // paneStalled() recorded — i.e. whether the agent produced output since the
-// previous tick (kubestellar/hive#5321).
+// previous tick (hivecommons/hive#5321).
 //
 // PURE BY CONSTRUCTION: it must not update lastPaneFingerprint or
 // lastPaneChangeAt. paneStalled() is destructive — the first call that sees new
@@ -2853,7 +2853,7 @@ function restartBackoffMs(attempt) {
 
 // failCurrentTask reports the active task as failed.
 //
-// opts.kind (kubestellar/hive#2547) optionally states WHY: 'environment' when
+// opts.kind (hivecommons/hive#2547) optionally states WHY: 'environment' when
 // this client's own runtime could not run the work (the CLI never started, it
 // crashed, the backend has no headless mode) versus 'task' when the work was
 // attempted and failed on its merits. Omit it when the cause is genuinely
@@ -2863,7 +2863,7 @@ function restartBackoffMs(attempt) {
 // It is advisory: the hub records and displays it and does not route, gate, or
 // change the work item's failure cooldown on it. Older hubs ignore the field.
 //
-// opts.skipCLI (kubestellar/hive#5353) says the CALLER has already dealt with
+// opts.skipCLI (hivecommons/hive#5353) says the CALLER has already dealt with
 // the pane — it quit and relaunched the CLI itself, or the CLI is already gone.
 // The credential is still dropped; only the quit/relaunch is skipped, so a
 // relaunch already in flight is not nested inside another one.
@@ -2930,7 +2930,7 @@ function startProgressReporting() {
 //
 // Called once at task start and again from every tick that observes forward
 // progress, which is what turns MAX_TASK_DURATION_MS from a wall-clock budget
-// into a lease (kubestellar/hive#5321). An agent producing output keeps its
+// into a lease (hivecommons/hive#5321). An agent producing output keeps its
 // lease; a silent one lets it run down.
 //
 // Deliberately mirrors the sibling per-task clocks armed alongside it —
@@ -2993,7 +2993,7 @@ function onTaskProgressLeaseExpired() {
 // One iteration of the progress/completion/crash-detection loop. Extracted from
 // the setInterval body so it can be driven deterministically from tests.
 // handleTransientAPIError recovers a task whose turn ended in a retryable API
-// failure (kubestellar/hive#5094).
+// failure (hivecommons/hive#5094).
 //
 // Before this existed the pane classified as IDLE_COMPLETE and the relay
 // reported the task COMPLETED — the hub booked a completion that shipped
@@ -3131,7 +3131,7 @@ function paneHasPresentHuman() {
 
 // maybeSendAutonomyNudge types a one-shot reminder at an unattended pane that
 // stopped to ask a question it was already instructed to answer for itself
-// (kubestellar/hive#5281), and reports whether it did.
+// (hivecommons/hive#5281), and reports whether it did.
 //
 // Detection without recovery is what this fixes. The relay already SEES the
 // question and raises `attention`, but an attention flag only helps someone who
@@ -3317,7 +3317,7 @@ function progressTick() {
     cliRestartCounts.delete(taskKey(currentTask));
     // Best-effort: report the PR the agent opened, if one is visible in its
     // recent output, so the hub can distinguish "shipped a PR" from "just went
-    // idle" and pick the right issue cooldown (kubestellar/hive#2393 item 7).
+    // idle" and pick the right issue cooldown (hivecommons/hive#2393 item 7).
     // Empty when no PR link is found — the hub then applies the short cooldown.
     const prURL = detectPRURL(tmuxLines, currentTask.repo);
     if (prURL) console.log(`Detected PR for ${currentTask.task_id}: ${prURL}`);
@@ -3427,7 +3427,7 @@ function progressTick() {
     // the bounded transient path — retry up to the budget, honest environment
     // failure after it, blocked_on_human if someone is attached. Shared budget
     // and cooldown with the transient state: it is the same task either way.
-    console.warn(`Unrecognised API error (kubestellar/hive#5121) — treating as transient: ` +
+    console.warn(`Unrecognised API error (hivecommons/hive#5121) — treating as transient: ` +
       `${paneUnknownAPIErrorLine(tmuxLines.join('\n')) || '(line scrolled away)'}`);
     handleTransientAPIError(tmuxLines);
   } else if (paneState === PANE_STATE_FATAL_API_ERROR) {
@@ -3628,13 +3628,13 @@ function handleMessage(data, hub) {
       // GH_TOKEN_CACHE written by injectGhToken above. Strip it and keep the
       // file owner-only (chmod covers overwriting a pre-existing 0644 file)
       // so a task-scoped GitHub token never sits world-readable under /tmp
-      // (kubestellar/hive#5065).
+      // (hivecommons/hive#5065).
       const { github_token: _omittedToken, ...taskFileRecord } = msg;
       fs.writeFileSync(TASK_FILE, JSON.stringify(taskFileRecord, null, 2), { mode: 0o600 });
       try { fs.chmodSync(TASK_FILE, 0o600); } catch (_) { /* content is already token-free */ }
       send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
-        // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
+        // Non-interactive path (hivecommons/hive#2538): drive a one-shot CLI
         // invocation and report completion/failure from its exit status — no
         // tmux, no pane scraping, no watchdog waiting on an invisible prompt.
         runHeadlessTask(msg);
@@ -3782,7 +3782,7 @@ const WS_CLOSE_CODE_NAMES = {
 
 // describeWsClose renders the close code and reason for the log line.
 //
-// THE GAP THIS FILLS (kubestellar/hive#5090): this handler used to ignore both
+// THE GAP THIS FILLS (hivecommons/hive#5090): this handler used to ignore both
 // arguments and log only "closed. Reconnecting in 1000ms...", so a contributor
 // whose socket flapped every 30-90 seconds had no way to tell a deliberate
 // server hangup from a network drop — the two produce identical output, and the
@@ -3826,7 +3826,7 @@ function connectHub(hub) {
         return;
       }
       sendTo(hub, { type: 'ping', seq: nextSeq() });
-      // Also emit a PROTOCOL-level Ping control frame (kubestellar/hive#5090).
+      // Also emit a PROTOCOL-level Ping control frame (hivecommons/hive#5090).
       // The JSON ping above is an ordinary text frame; an L7 proxy that scores
       // tunnel idleness on control-frame traffic does not count it, so a
       // connection heartbeating every 30s was still reaped as idle — the
@@ -3845,7 +3845,7 @@ function connectHub(hub) {
   });
 
   // A PROTOCOL-level Pong counts as liveness exactly as the JSON 'pong' does
-  // (kubestellar/hive#5090), so a hub answering only control frames cannot trip
+  // (hivecommons/hive#5090), so a hub answering only control frames cannot trip
   // this relay's HEARTBEAT_TIMEOUT_MS sweep. An inbound Ping is likewise
   // evidence the hub is alive; `ws` auto-replies with a Pong for us.
   hub.ws.on('pong', () => {
@@ -3946,7 +3946,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     paneChangedSince,
     resetPaneStallClock,
     PANE_STALL_CONFIRM_TICKS,
-    // Completion-signal surface (kubestellar/hive#5376).
+    // Completion-signal surface (hivecommons/hive#5376).
     CHROME_IDLE_GRACE_TICKS,
     HIVE_VERDICT_COMPLETE,
     HIVE_VERDICT_NO_WORK,
@@ -3955,7 +3955,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     recordChromeIdleTick,
     resetChromeIdleGrace,
     getChromeIdleTicks: () => chromeIdleTicks,
-    // Max-duration lease surface (kubestellar/hive#5321).
+    // Max-duration lease surface (hivecommons/hive#5321).
     MAX_TASK_DURATION_MS,
     ABSOLUTE_TASK_DEADLINE_MS,
     HEADLESS_TASK_TIMEOUT_MS,
@@ -4012,7 +4012,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
     getHubs: () => hubs,
-    // Peer-protocol compatibility (kubestellar/hive#2547). Exported so the
+    // Peer-protocol compatibility (hivecommons/hive#2547). Exported so the
     // relay-side half of "both sides can detect an incompatible peer" is tested
     // behaviourally here, not just asserted to exist from the Go side.
     RELAY_PROTOCOL_VERSION,
@@ -4020,7 +4020,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     classifyPeerProtocol,
     warnOnProtocolDrift,
     describeWsClose,
-    // Headless (non-interactive) mode surface (kubestellar/hive#2538).
+    // Headless (non-interactive) mode surface (hivecommons/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,
     MODE_HEADLESS,
@@ -4033,7 +4033,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     buildHeadlessArgv,
     runHeadlessTask,
     getHeadlessChild: () => headlessChild,
-    // Attach-hint surface (kubestellar/hive#5145): the exact command the
+    // Attach-hint surface (hivecommons/hive#5145): the exact command the
     // needs-authentication banner tells a human to paste.
     ATTACH_COMMAND,
     CONTAINER_NAME,

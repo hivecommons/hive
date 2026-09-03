@@ -143,7 +143,7 @@ kubectl -n hive rollout status deploy/hive
 kubectl -n hive-inference rollout status deploy/vllm
 ```
 
-**Upgrading the image.** The base tracks `ghcr.io/kubestellar/hive:stable`. To
+**Upgrading the image.** The base tracks `ghcr.io/hivecommons/hive:stable`. To
 pin (so upgrades are deliberate — there is no hub to auto-upgrade you), resolve
 the channel you reviewed to a **digest** and write it in from the overlay
 directory, then re-apply:
@@ -152,13 +152,13 @@ directory, then re-apply:
 TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:kubestellar/hive:pull" | jq -r .token)
 DIGEST=$(curl -sI -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
-  https://ghcr.io/v2/kubestellar/hive/manifests/stable \
+  https://ghcr.io/v2/hivecommons/hive/manifests/stable \
   | awk 'tolower($1)=="docker-content-digest:" {print $2}' | tr -d '\r')
-kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive@"$DIGEST"
+kustomize edit set image ghcr.io/hivecommons/hive=ghcr.io/hivecommons/hive@"$DIGEST"
 kubectl apply -k .
 ```
 
-> **Which image tags exist.** `ghcr.io/kubestellar/hive` carries the channel
+> **Which image tags exist.** `ghcr.io/hivecommons/hive` carries the channel
 > tags (`stable`, `candidate`, `edge`, `v4-latest`) and a short-SHA tag per
 > merge. A `vX.Y.Z` **image** tag exists only when the automated tagged-release
 > workflow (`.github/workflows/tagged-release.yml`, see
@@ -167,7 +167,7 @@ kubectl apply -k .
 > **no `:v4.0.0` image**; `newTag: v4.0.0` is an `ImagePullBackOff`. Pin a
 > version tag only after confirming it on the
 > [Releases page](https://github.com/kubestellar/hive/releases) or with
-> `curl -sI -H "Authorization: Bearer $TOKEN" https://ghcr.io/v2/kubestellar/hive/manifests/vX.Y.Z`
+> `curl -sI -H "Authorization: Bearer $TOKEN" https://ghcr.io/v2/hivecommons/hive/manifests/vX.Y.Z`
 > (200 = exists). Digests always work.
 
 **Storage.** The base `hive-data` PVC is `ReadWriteOnce`. That is correct for
@@ -291,14 +291,14 @@ resources:
   - route.yaml
 
 # Pin the image for extra safety. Without this the base tracks
-# `ghcr.io/kubestellar/hive:stable`; pinning means upgrades are deliberate —
+# `ghcr.io/hivecommons/hive:stable`; pinning means upgrades are deliberate —
 # you bump this in git, review, and apply. Pin by DIGEST: a git tag does not
 # imply an image tag (there is no `:v4.0.0` image — see "Upgrading the image"
 # above for how to resolve `stable` to a digest and how to check whether a
 # `vX.Y.Z` image tag exists before using one).
 images:
-  - name: ghcr.io/kubestellar/hive
-    newName: ghcr.io/kubestellar/hive
+  - name: ghcr.io/hivecommons/hive
+    newName: ghcr.io/hivecommons/hive
     digest: sha256:<digest-you-resolved-from-stable>
 
 patches:
@@ -541,7 +541,7 @@ kubectl apply -k overlays/spyre/
 #    resources:
 #      - https://github.com/kubestellar/hive//src/deploy/kustomize/overlays/standalone?ref=<new git tag or sha>
 #    images:
-#      - name: ghcr.io/kubestellar/hive
+#      - name: ghcr.io/hivecommons/hive
 #        digest: sha256:<digest resolved from stable, or from the release's image tag>
 #    (use `newTag: vX.Y.Z` only after confirming that IMAGE tag exists — see
 #    "Which image tags exist" above)
@@ -897,7 +897,7 @@ CTX=<heartbeat-only-cluster>    # kubectl context for the target cluster
 ID=hosted-myorg-myrepo          # the hive ID
 NS=hive-hosted-$ID              # namespace is always hive-hosted-<id>
 ROUTE_HOST=$ID.apps.<your-cluster-domain>
-IMAGE=ghcr.io/kubestellar/hive:v4-latest   # what the hub provisioner stamps by default (saas_provision.go); use `stable` for production
+IMAGE=ghcr.io/hivecommons/hive:v4-latest   # what the hub provisioner stamps by default (saas_provision.go); use `stable` for production
 SC=ocs-storagecluster-cephfs
 
 # The hub heartbeat secret — the SAME for every spoke on a given hub. Copy it

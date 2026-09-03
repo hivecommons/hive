@@ -1467,7 +1467,7 @@
     <ul class="sidebar-links">
       <li><a href="https://arxiv.org/abs/2504.07459" target="_blank" rel="noopener">&#128196; ACMM Paper</a></li>
       <li><a href="https://console.kubestellar.io" target="_blank" rel="noopener">&#128421; Console Live Demo</a></li>
-      <li><a href="https://github.com/kubestellar/hive" target="_blank" rel="noopener">&#128230; Source Code</a></li>
+      <li><a href="https://github.com/hivecommons/hive" target="_blank" rel="noopener">&#128230; Source Code</a></li>
       <li><a href="https://kubestellar.io/en/acmm-leaderboard" target="_blank" rel="noopener">&#128202; ACMM Leaderboard</a></li>
       <li><a href="https://kubestellar.io/en/leaderboard" target="_blank" rel="noopener">&#127942; Contributor Leaderboard</a></li>
     </ul>
@@ -4112,7 +4112,7 @@ function burnAreaChart() {
         const v = await res.json();
         const el = document.getElementById('git-version');
         const ocEl = document.getElementById('oc-git-version');
-        let html = `<a href="https://github.com/kubestellar/hive/commit/${v.hash}" target="_blank" style="color:inherit;text-decoration:none" title="${v.hash}">${v.short}</a>`;
+        let html = `<a href="https://github.com/hivecommons/hive/commit/${v.hash}" target="_blank" style="color:inherit;text-decoration:none" title="${v.hash}">${v.short}</a>`;
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         if (v.behind > 0) html += ` <span class="git-behind">${v.behind} behind</span>`;
         el.innerHTML = html;

@@ -102,7 +102,7 @@ const bulkDefaultBranch = "v2"
 
 // bulkHiveImageRepo is the container image repository the hosted hives run,
 // matching the image handleSwitchBranch sets and docker.yml publishes.
-const bulkHiveImageRepo = "ghcr.io/kubestellar/hive"
+const bulkHiveImageRepo = "ghcr.io/hivecommons/hive"
 
 // registerBulkRoutes wires the bulk endpoint. Kept separate from
 // registerSaaSRoutes so this feature's diff does not collide with the

@@ -4,8 +4,8 @@ import "testing"
 
 // TestSanitizeImageRefRoundTrip pins the bug that made 11 healthy hives render
 // a CRITICAL "pinned-image" badge: the shared heartbeat sanitizer's allowlist
-// omitted the colon, so "ghcr.io/kubestellar/hive:v2-latest" arrived at the
-// drift rule as "ghcr.io/kubestellar/hivev2-latest". With no tag separator left
+// omitted the colon, so "ghcr.io/hivecommons/hive:v2-latest" arrived at the
+// drift rule as "ghcr.io/hivecommons/hivev2-latest". With no tag separator left
 // imageTagIsMutable said "not mutable", and the hub told the operator a rolling
 // hive could never be upgraded.
 //
@@ -20,20 +20,20 @@ func TestSanitizeImageRefRoundTrip(t *testing.T) {
 	}{
 		{
 			name: "mutable branch tag survives verbatim",
-			in:   "ghcr.io/kubestellar/hive:v2-latest",
-			want: "ghcr.io/kubestellar/hive:v2-latest",
+			in:   "ghcr.io/hivecommons/hive:v2-latest",
+			want: "ghcr.io/hivecommons/hive:v2-latest",
 			why:  "the live ref on every vllm-d and hive-oke deployment",
 		},
 		{
 			name: "digest pin survives verbatim",
-			in:   "ghcr.io/kubestellar/hive@sha256:9f2c1ab34de5",
-			want: "ghcr.io/kubestellar/hive@sha256:9f2c1ab34de5",
+			in:   "ghcr.io/hivecommons/hive@sha256:9f2c1ab34de5",
+			want: "ghcr.io/hivecommons/hive@sha256:9f2c1ab34de5",
 			why:  "both @ and : are legal in an OCI digest reference",
 		},
 		{
 			name: "sha tag pin survives verbatim",
-			in:   "ghcr.io/kubestellar/hive:63d8902",
-			want: "ghcr.io/kubestellar/hive:63d8902",
+			in:   "ghcr.io/hivecommons/hive:63d8902",
+			want: "ghcr.io/hivecommons/hive:63d8902",
 			why:  "a genuine pin must reach the drift rule intact so it is still flagged",
 		},
 		{
@@ -98,14 +98,14 @@ func TestImageRefTagParseFailureIsSilent(t *testing.T) {
 		pinned bool
 		why    string
 	}{
-		{"mutable tag", "ghcr.io/kubestellar/hive:v2-latest", false, "rolling tag, no signal"},
-		{"mangled colonless ref", "ghcr.io/kubestellar/hivev2-latest", false, "unparseable — unknown, not pinned"},
-		{"bare repo, no tag", "ghcr.io/kubestellar/hive", false, "implicit :latest — do not guess"},
+		{"mutable tag", "ghcr.io/hivecommons/hive:v2-latest", false, "rolling tag, no signal"},
+		{"mangled colonless ref", "ghcr.io/hivecommons/hivev2-latest", false, "unparseable — unknown, not pinned"},
+		{"bare repo, no tag", "ghcr.io/hivecommons/hive", false, "implicit :latest — do not guess"},
 		{"registry port but no tag", "registry.internal:5000/kubestellar/hive", false, "port is not a tag"},
 		{"empty", "", false, "unknown image"},
-		{"sha tag pin", "ghcr.io/kubestellar/hive:63d8902", true, "genuine pin — MUST still be flagged"},
-		{"release tag pin", "ghcr.io/kubestellar/hive:v2.1.0", true, "immutable release tag is a real pin"},
-		{"digest pin", "ghcr.io/kubestellar/hive@sha256:abc123", true, "digest pin is a real pin"},
+		{"sha tag pin", "ghcr.io/hivecommons/hive:63d8902", true, "genuine pin — MUST still be flagged"},
+		{"release tag pin", "ghcr.io/hivecommons/hive:v2.1.0", true, "immutable release tag is a real pin"},
+		{"digest pin", "ghcr.io/hivecommons/hive@sha256:abc123", true, "digest pin is a real pin"},
 		{"port plus sha pin", "registry.internal:5000/kubestellar/hive:63d8902", true, "genuine pin behind a port"},
 	}
 	for _, c := range cases {
@@ -129,10 +129,10 @@ func TestComputeDriftNoPinnedSignalForMangledRef(t *testing.T) {
 		ref        string
 		wantSignal bool
 	}{
-		{"healthy rolling tag", "ghcr.io/kubestellar/hive:v2-latest", false},
-		{"mangled colonless ref", "ghcr.io/kubestellar/hivev2-latest", false},
-		{"genuine sha pin", "ghcr.io/kubestellar/hive:63d8902", true},
-		{"genuine digest pin", "ghcr.io/kubestellar/hive@sha256:abc123", true},
+		{"healthy rolling tag", "ghcr.io/hivecommons/hive:v2-latest", false},
+		{"mangled colonless ref", "ghcr.io/hivecommons/hivev2-latest", false},
+		{"genuine sha pin", "ghcr.io/hivecommons/hive:63d8902", true},
+		{"genuine digest pin", "ghcr.io/hivecommons/hive@sha256:abc123", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -155,7 +155,7 @@ func TestComputeDriftNoPinnedSignalForMangledRef(t *testing.T) {
 // actually lived at: the ref written into the registry entry by the heartbeat
 // handler's sanitization must still parse as a rolling tag.
 func TestHeartbeatImageRefSurvivesIngest(t *testing.T) {
-	const live = "ghcr.io/kubestellar/hive:v2-latest"
+	const live = "ghcr.io/hivecommons/hive:v2-latest"
 	stored := sanitizeImageRef(live)
 	if stored != live {
 		t.Fatalf("ingest mangled the ref: %q -> %q", live, stored)

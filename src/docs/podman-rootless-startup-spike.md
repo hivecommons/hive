@@ -34,7 +34,7 @@ would have been wrong.
 | Network backend | netavark, rootless helper `pasta` |
 | cgroups | v2 |
 | Kernel / host | 7.1.4-200.fc44.x86_64, Aurora (Fedora) 44.20260815.1, SELinux enforcing |
-| Image | `ghcr.io/kubestellar/hive:v4-latest`, digest `sha256:e1479d76c453cdd8271be76913a1544d5b70fd3569adebdd388bdd4632b4a263` |
+| Image | `ghcr.io/hivecommons/hive:v4-latest`, digest `sha256:e1479d76c453cdd8271be76913a1544d5b70fd3569adebdd388bdd4632b4a263` |
 | Architecture | `amd64` only |
 
 Every container, image, and volume went into a throwaway store with a private

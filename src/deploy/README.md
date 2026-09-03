@@ -70,7 +70,7 @@ them keeps a second copy that could drift.
 bash src/deploy/test_ambient_cap_runtime.sh
 bash src/deploy/test_manifest_caps_runtime.sh
 bash src/deploy/test_image_suid_inventory.sh
-bash src/deploy/test_image_suid_inventory.sh --image ghcr.io/kubestellar/hive:stable
+bash src/deploy/test_image_suid_inventory.sh --image ghcr.io/hivecommons/hive:stable
 ```
 
 `test_image_suid_inventory.sh` builds its fixture **twice** — once without

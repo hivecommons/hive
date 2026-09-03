@@ -36,7 +36,7 @@ func deploymentJSON(image string) string {
 
 func TestSelfDeploymentImageReadsContainerImage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(deploymentJSON("ghcr.io/kubestellar/hive-hub:abc123")))
+		w.Write([]byte(deploymentJSON("ghcr.io/hivecommons/hive-hub:abc123")))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
@@ -45,7 +45,7 @@ func TestSelfDeploymentImageReadsContainerImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selfDeploymentImage: %v", err)
 	}
-	if got != "ghcr.io/kubestellar/hive-hub:abc123" {
+	if got != "ghcr.io/hivecommons/hive-hub:abc123" {
 		t.Fatalf("image = %q", got)
 	}
 }
@@ -154,14 +154,14 @@ func TestSelfDeploymentImageIsMemoised(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		w.Write([]byte(deploymentJSON("ghcr.io/kubestellar/hive-hub:cached")))
+		w.Write([]byte(deploymentJSON("ghcr.io/hivecommons/hive-hub:cached")))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
 	first := SelfDeploymentImage()
 	second := SelfDeploymentImage()
-	if first != "ghcr.io/kubestellar/hive-hub:cached" || second != first {
+	if first != "ghcr.io/hivecommons/hive-hub:cached" || second != first {
 		t.Fatalf("image = %q / %q", first, second)
 	}
 	if calls != 1 {
@@ -201,7 +201,7 @@ func TestHubRolloutFailureReasonReportsWaitingState(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"echo ''\n" +
-		"echo 'ImagePullBackOff Back-off pulling image \"ghcr.io/kubestellar/hive-hub:target1\"'\n" +
+		"echo 'ImagePullBackOff Back-off pulling image \"ghcr.io/hivecommons/hive-hub:target1\"'\n" +
 		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)

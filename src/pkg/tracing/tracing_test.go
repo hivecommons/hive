@@ -390,7 +390,7 @@ func TestNewResource_StampsCommitAndImage(t *testing.T) {
 		HiveID:      "hive-abc",
 		Branch:      "v4",
 		Commit:      "eede356",
-		Image:       "ghcr.io/kubestellar/hive@sha256:deadbeef",
+		Image:       "ghcr.io/hivecommons/hive@sha256:deadbeef",
 	})
 
 	if got := attrs["service.version"]; got != "eede356" {
@@ -399,7 +399,7 @@ func TestNewResource_StampsCommitAndImage(t *testing.T) {
 	if got := attrs["hive.commit"]; got != "eede356" {
 		t.Errorf("hive.commit = %q, want eede356", got)
 	}
-	if got := attrs["hive.image"]; got != "ghcr.io/kubestellar/hive@sha256:deadbeef" {
+	if got := attrs["hive.image"]; got != "ghcr.io/hivecommons/hive@sha256:deadbeef" {
 		t.Errorf("hive.image = %q", got)
 	}
 	// Pre-existing identity attributes must survive the refactor.

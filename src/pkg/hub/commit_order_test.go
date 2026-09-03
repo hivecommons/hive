@@ -155,7 +155,7 @@ func TestHandleHeartbeatFloatingTagLandedOnLatestNotTarget(t *testing.T) {
 	s.heartbeatUpgrade["h1"] = "aaaaaaa"
 
 	rec := postHeartbeat(t, s,
-		`{"hive_id":"h1","git_hash":"bbbbbbb","git_branch":"v2","upgrading":false,"image_ref":"ghcr.io/kubestellar/hive:v2-latest"}`)
+		`{"hive_id":"h1","git_hash":"bbbbbbb","git_branch":"v2","upgrading":false,"image_ref":"ghcr.io/hivecommons/hive:v2-latest"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
