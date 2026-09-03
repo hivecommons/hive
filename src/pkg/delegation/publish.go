@@ -100,10 +100,6 @@ type KeyDocument struct {
 	// generation still inside its acceptance window. EMPTY when disabled.
 	Keys []PublishedKey `json:"keys"`
 
-	// ChainVersion is the token format these keys verify, so a verifier can
-	// reject a chain of an unexpected shape before spending a signature check.
-	ChainVersion string `json:"chain_version"`
-
 	// GeneratedAt is when this document was rendered. Advisory only — it is NOT
 	// a freshness guarantee and a verifier must not treat a stale document as
 	// invalid. Keys leave the set on their own schedule (VerifyUntil), so a
@@ -124,11 +120,10 @@ type KeyDocument struct {
 // in the document rather than inferred from silence.
 func BuildKeyDocument(enabled bool, currentGen int, currentPub string, previous []PublishedKey, now time.Time) KeyDocument {
 	doc := KeyDocument{
-		Version:      "hive-delegation-keys-v1",
-		Enabled:      enabled,
-		ChainVersion: ChainVersion,
-		GeneratedAt:  now.UTC().Format(time.RFC3339),
-		Keys:         []PublishedKey{},
+		Version:     "hive-delegation-keys-v1",
+		Enabled:     enabled,
+		GeneratedAt: now.UTC().Format(time.RFC3339),
+		Keys:        []PublishedKey{},
 	}
 	if !enabled {
 		return doc
@@ -156,16 +151,6 @@ func BuildKeyDocument(enabled bool, currentGen int, currentPub string, previous 
 		doc.Keys = append(doc.Keys, p)
 	}
 	return doc
-}
-
-// PublicKeysFrom extracts the hex keys from a document, for a verifier that
-// wants to hand them straight to VerifyTokenAcrossKeys.
-func (d KeyDocument) PublicKeysFrom() []string {
-	out := make([]string, 0, len(d.Keys))
-	for _, k := range d.Keys {
-		out = append(out, k.PublicKey)
-	}
-	return out
 }
 
 // ServeKeys writes a KeyDocument as JSON.
