@@ -337,6 +337,9 @@ type WSMessage struct {
 	// backends are still relying on it. Absent from relays predating #5376 and
 	// from the headless path, which takes the CLI's exit code instead.
 	CompletionSignal string `json:"completion_signal,omitempty"`
+	// TurnEnvelopeID identifies the durable pkg/turn envelope written for this
+	// assignment when the re-entrant-turn rollout gate is enabled.
+	TurnEnvelopeID string `json:"turn_envelope_id,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
 	// bin/contributor-relay.sh). Reassigning the same work item to the same
@@ -519,7 +522,8 @@ type ContributeWSHub struct {
 	// taskLeasesFile is where the server-issued lease registry is persisted so it
 	// survives a hub restart (#5681). Overridable per hub for tests, like the
 	// sibling ledgers.
-	taskLeasesFile string
+	taskLeasesFile  string
+	turnEnvelopeDir string
 	// startedAt is when this hub process came up. It bounds the window in which a
 	// lease restored from the previous process is honoured as a hold on its work
 	// item (#5681, leaseHoldGraceAfterStart). Written once at construction and only
@@ -1142,6 +1146,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		failedTasksFile:       failedTasksFile,
 		noPRStreaksFile:       noPRStreaksFile,
 		taskLeasesFile:        taskLeasesFile,
+		turnEnvelopeDir:       turnEnvelopeDirPath,
 		startedAt:             time.Now(),
 		noWorkVerdictsFile:    noWorkVerdictsPath(),
 		asyncActivitySave:     asyncActivitySave,
@@ -1318,6 +1323,7 @@ var noPRStreaksFile = "/data/contributors/no-pr-streaks.json"
 // (#5681). It sits beside the other contributor ledgers, but is written 0600: it is
 // the C4 authorization record a resume is matched against, not a report.
 var taskLeasesFile = "/data/contributors/task-leases.json"
+var turnEnvelopeDirPath = "/data/contributors/turn-envelopes"
 
 // noPRStreakRecord is the in-memory and on-disk shape of one no-PR completion
 // streak (#3980). LastAt is the most recent no-PR completion; the streak is
@@ -5753,8 +5759,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// later stale-worker completion carrying an older generation is fenced out.
 	gen := h.nextTaskGen()
 
-	c.mu.Lock()
-	c.currentTask = &WSTaskAssign{
+	assignment := &WSTaskAssign{
 		TaskID:     taskID,
 		Kind:       "issue",
 		Role:       requestedRole,
@@ -5773,6 +5778,8 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			return &req
 		}(),
 	}
+	c.mu.Lock()
+	c.currentTask = assignment
 	c.currentTaskGen = gen
 	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
 	// auto-releases the task if it is not renewed within wsTaskTimeout.
@@ -5794,6 +5801,8 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	c.credentialDelivered = false
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
+
+	turnEnvelopeID := h.persistTurnEnvelopeForAssignment(c, assignment, gen, prompt, chosen.labels)
 
 	// C4: record the SERVER-AUTHORITATIVE lease for this assignment so a later
 	// reconnect can be validated against what the hub actually issued — the exact
@@ -5849,8 +5858,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		// The chosen issue's own labels — the Labels envelope field was declared
 		// but never populated, so a client reading it got nothing (kubestellar/
 		// hive#2393 item 8). Carried on the candidate from the scan above.
-		Labels:        chosen.labels,
-		ContribLabels: []string{"contributor/" + c.profile.GitHubUsername},
+		Labels:         chosen.labels,
+		ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},
+		TurnEnvelopeID: turnEnvelopeID,
 	}
 }
 

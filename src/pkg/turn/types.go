@@ -69,6 +69,9 @@ type SessionEnvelope struct {
 	WorkingRepo      string                    `json:"working_repo,omitempty"`
 	WorkingBranch    string                    `json:"working_branch,omitempty"`
 	BeadID           string                    `json:"bead_id,omitempty"`
+	Owner            string                    `json:"owner,omitempty"`
+	Epoch            uint64                    `json:"epoch,omitempty"`
+	LeaseExpiry      time.Time                 `json:"lease_expiry,omitempty"`
 	Variables        map[string]string         `json:"variables,omitempty"`
 	Subagents        map[string]string         `json:"subagents,omitempty"` // subagent sessionID -> status
 	PendingApprovals []PendingApproval         `json:"pending_approvals,omitempty"`
