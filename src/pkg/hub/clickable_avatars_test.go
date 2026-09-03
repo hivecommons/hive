@@ -27,7 +27,7 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		// <img> — is unchanged; userAvatar is the other shared helper.
 		{"inline per-hive faces", "? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)"},
 		{"status-dot hover panel rows", "linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,"},
-		{"per-hive pending request rows", "var avatar = linkedAvatar(pr.username, LIST_AVATAR_PX, pr.username, 'margin-right:6px');"},
+		{"per-hive pending request rows", "userAvatar({display_name: userLabel, avatar_url: pr.avatar_url, github_username: rawUser}, LIST_AVATAR_PX,"},
 		{"past requests table", "provisionRequesterAvatar(pr, PANEL_ACCESS_AVATAR_PX, 'margin-right:6px')"},
 		{"pending provision cards", "var avatar = provisionRequesterAvatar(pr, TABLE_AVATAR_PX, 'margin-right:8px');"},
 		// The admin users table routes GitHub users through linkedAvatar and OIDC
@@ -35,7 +35,7 @@ func TestAvatarSitesUseSharedHelper(t *testing.T) {
 		// real display name — provider:sub is not a github.com login).
 		{"admin users table (github path)", "? linkedAvatar(u.github_username, TABLE_AVATAR_PX,"},
 		{"admin users table (oidc path)", ": userAvatar(u, TABLE_AVATAR_PX, 'margin-right:6px');"},
-		{"access modal pending requests", "var avatar = linkedAvatar(r.username, LIST_AVATAR_PX, r.username, 'margin-right:6px');"},
+		{"access modal pending requests", "userAvatar({display_name: userLabel, avatar_url: r.avatar_url, github_username: rawUser}, LIST_AVATAR_PX,"},
 		{"access modal access list", "? linkedAvatar(u.github_username, TABLE_AVATAR_PX,"},
 		{"nav bar viewer avatar", "avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,"},
 	}
