@@ -3243,14 +3243,16 @@
       <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
         <div class="kb-stat-grid" id="acmm-eval-stats">
           <div class="kb-stat" data-action="acmmShowCodebaseDialog" style="cursor:pointer"><div class="val" id="acmm-codebase-level">--</div><div class="lbl">Codebase Readiness</div></div>
-          <div class="kb-stat" data-action="acmmShowOpsDialog" style="cursor:pointer"><div class="val" id="acmm-ops-level">--</div><div class="lbl">Operational Autonomy</div></div>
+          <div class="kb-stat" data-action="acmmShowOpsDialog" style="cursor:pointer"><div class="val" id="acmm-ops-level">--</div><div class="lbl">Operational Autonomy <span style="font-weight:400;color:var(--muted)">(hive)</span></div></div>
           <div class="kb-stat" data-action="acmmShowOverallDialog" style="cursor:pointer"><div class="val" id="acmm-overall-level">--</div><div class="lbl">Overall ACMM</div></div>
           <div class="kb-stat" data-action="acmmShowAllCriteriaDialog" style="cursor:pointer"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl">Criteria Passed</div></div>
         </div>
-        <div id="acmm-repo-selector" style="display:none;margin-top:8px;font-size:0.75rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <div id="acmm-repo-selector" style="display:none;margin-top:8px;font-size:0.75rem;align-items:center;gap:6px;flex-wrap:wrap">
           <span class="muted">Repo:</span>
           <button data-action="gh2" id="acmm-repo-btn-all" class="repo-chip-btn" style="font-weight:600">All (aggregate)</button>
         </div>
+        <div id="acmm-eval-scope" style="display:none;margin-top:8px;font-size:0.72rem;color:var(--muted)"></div>
+        <div id="acmm-repo-summary" style="display:none;margin-top:10px;font-size:0.75rem"></div>
         <div id="acmm-level-bars" style="margin-top:12px"></div>
         <div id="acmm-eval-meta" style="margin-top:10px;font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between">
           <span id="acmm-eval-source"></span>
@@ -15612,10 +15614,11 @@ function burnAreaChart() {
       const active = acmmGetActiveData();
       const codeLevel = active.codebase_level !== undefined ? active.codebase_level : active.CodebaseLevel;
       const name = ACMM_LEVEL_NAMES[codeLevel] || 'None';
+      const scopeNote = _acmmSelectedRepo ? ' Showing ' + escapeHtml(_acmmSelectedRepo) + '.' : (hasMultiRepo ? ' A criterion passes if it exists in <em>any</em> repo.' : '');
 
       let html = '<div style="margin-bottom:14px">' +
         '<p style="font-size:0.78rem;color:var(--muted);margin:0 0 10px">Each level requires ≥70% of its criteria to pass. Levels must pass in order.' +
-        (hasMultiRepo ? ' A criterion passes if it exists in <em>any</em> repo.' : '') + '</p></div>';
+        scopeNote + '</p></div>';
 
       // Find first failing level for the "blocked at" callout
       const levels = active.levels || active.Levels || [];
@@ -15630,7 +15633,7 @@ function burnAreaChart() {
           '<span data-action="acmmShowLevelDialog" data-arg0="' + firstFail.level + '" data-arg-types="j" style="color:var(--blue);cursor:pointer;text-decoration:underline">View missing criteria →</span></div>';
       }
 
-      if (hasMultiRepo) {
+      if (hasMultiRepo && !_acmmSelectedRepo) {
         // Multi-repo: level bars only inside each repo's expandable
         html += '<div>';
         for (let ri = 0; ri < d.repo_results.length; ri++) {
@@ -15703,18 +15706,23 @@ function burnAreaChart() {
     function acmmShowOverallDialog() {
       if (!_acmmEvalData) return;
       const d = _acmmEvalData;
-      const overallName = ACMM_LEVEL_NAMES[d.overall_level] || 'None';
-      const lower = d.codebase_level <= d.operational_level ? 'codebase readiness' : 'operational autonomy';
-      acmmShowDialog('Overall ACMM Level — L' + d.overall_level + ' ' + escapeHtml(overallName),
+      const active = acmmGetActiveData();
+      const codebaseLevel = Number.isFinite(active.codebase_level) ? active.codebase_level : d.codebase_level;
+      const overallLevel = Math.min(codebaseLevel, d.operational_level);
+      const scope = _acmmSelectedRepo ? escapeHtml(_acmmSelectedRepo) : 'all repos (union aggregate)';
+      const overallName = ACMM_LEVEL_NAMES[overallLevel] || 'None';
+      const lower = codebaseLevel <= d.operational_level ? 'codebase readiness' : 'operational autonomy';
+      acmmShowDialog('Overall ACMM Level — L' + overallLevel + ' ' + escapeHtml(overallName),
         '<p class="dialog-note">The overall ACMM level is the <strong>minimum</strong> of codebase readiness and operational autonomy. Both dimensions must align — a high operational level means nothing if the repo lacks foundational tooling, and vice versa.</p>' +
+        '<p class="dialog-note">Codebase scope: ' + scope + '. Operational autonomy is hive-wide.</p>' +
         '<div style="display:flex;gap:12px;margin-bottom:12px">' +
         '<div class="card-tile" data-action="gh23">' +
-        '<div class="stat-num">L' + d.codebase_level + '</div><div class="muted-xs">Codebase</div></div>' +
+        '<div class="stat-num">L' + codebaseLevel + '</div><div class="muted-xs">Codebase</div></div>' +
         '<div class="card-tile" data-action="gh24">' +
         '<div class="stat-num">L' + d.operational_level + '</div><div class="muted-xs">Operational</div></div>' +
         '</div>' +
         '<div style="padding:10px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:0.8rem">' +
-        '→ Overall is <strong>L' + d.overall_level + '</strong> because ' + lower + ' is the limiting factor.</div>'
+        '→ Overall is <strong>L' + overallLevel + '</strong> because ' + lower + ' is the limiting factor.</div>'
       );
     }
 
@@ -15727,7 +15735,8 @@ function burnAreaChart() {
       const totalPassed = results.filter(c => c.passed).length;
       const hasMultiRepo = (d.repo_results || []).length > 1;
 
-      let html = '<p class="dialog-note">' + totalPassed + ' of ' + results.length + ' criteria detected' + (hasMultiRepo ? ' (aggregate across ' + d.repo_results.length + ' repos)' : '') + '. Click a level row to see details.</p>';
+      const criteriaScope = _acmmSelectedRepo ? ' for ' + escapeHtml(_acmmSelectedRepo) : (hasMultiRepo ? ' (union aggregate across ' + d.repo_results.length + ' repos)' : '');
+      let html = '<p class="dialog-note">' + totalPassed + ' of ' + results.length + ' criteria detected' + criteriaScope + '. Click a level row to see details.</p>';
 
       for (const lvl of levels) {
         const criteria = results.filter(c => c.level === lvl.level);
@@ -15785,44 +15794,100 @@ function burnAreaChart() {
     function acmmRenderCard() {
       const d = _acmmEvalData;
       if (!d) return;
+      const active = acmmGetActiveData();
 
       const fmtLevel = (lvl) => {
         const name = ACMM_LEVEL_NAMES[lvl] || ('L'+lvl);
         return '<span class="stat-num">L' + lvl + '</span><br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(name) + '</span>';
       };
+      const activeCodebaseLevel = Number.isFinite(active.codebase_level) ? active.codebase_level : d.codebase_level;
+      const activeCriteriaPassed = Number.isFinite(active.criteria_passed) ? active.criteria_passed : d.criteria_passed;
+      const activeCriteriaTotal = Number.isFinite(active.criteria_total) ? active.criteria_total : d.criteria_total;
+      const activeOverallLevel = Math.min(activeCodebaseLevel, d.operational_level);
 
-      setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(d.codebase_level));
+      setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(activeCodebaseLevel));
       setIfChanged(document.getElementById('acmm-ops-level'), fmtLevel(d.operational_level));
-      setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(d.overall_level));
+      setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(activeOverallLevel));
       setIfChanged(document.getElementById('acmm-criteria-ratio'),
-        '<span class="stat-num">' + d.criteria_passed + '/' + d.criteria_total + '</span>');
+        '<span class="stat-num">' + activeCriteriaPassed + '/' + activeCriteriaTotal + '</span>');
 
       // Repo selector
       const selectorEl = document.getElementById('acmm-repo-selector');
-      if (selectorEl && d.repo_results && d.repo_results.length > 1) {
+      const repos = d.repo_results || [];
+      const hasMultiRepo = repos.length > 1;
+      if (selectorEl && hasMultiRepo) {
         selectorEl.style.display = 'flex';
         const allBtn = document.getElementById('acmm-repo-btn-all');
         if (allBtn) allBtn.style.fontWeight = _acmmSelectedRepo ? '400' : '600';
         const existing = selectorEl.querySelectorAll('.acmm-repo-btn-repo');
         existing.forEach(b => b.remove());
-        for (const rr of d.repo_results) {
-          let btn = selectorEl.querySelector('[data-acmm-repo="' + rr.repo + '"]');
-          if (!btn) {
-            btn = document.createElement('button');
-            btn.className = 'acmm-repo-btn-repo repo-chip-btn';
-            btn.setAttribute('data-acmm-repo', rr.repo);
-            btn.onclick = () => acmmSelectRepo(rr.repo);
-            selectorEl.appendChild(btn);
-          }
-          btn.textContent = rr.repo + ' (L' + rr.codebase_level + ')';
+        for (const rr of repos) {
+          const btn = document.createElement('button');
+          btn.className = 'acmm-repo-btn-repo repo-chip-btn';
+          btn.setAttribute('data-acmm-repo', rr.repo);
+          btn.onclick = () => acmmSelectRepo(rr.repo);
+          const ratio = rr.criteria_total ? ' ' + rr.criteria_passed + '/' + rr.criteria_total : '';
+          btn.textContent = rr.repo + ' (L' + rr.codebase_level + ratio + ')';
           btn.style.fontWeight = _acmmSelectedRepo === rr.repo ? '600' : '400';
+          selectorEl.appendChild(btn);
         }
       } else if (selectorEl) {
         selectorEl.style.display = 'none';
       }
 
+      const scopeEl = document.getElementById('acmm-eval-scope');
+      if (scopeEl) {
+        if (_acmmSelectedRepo) {
+          scopeEl.style.display = 'block';
+          scopeEl.textContent = 'Showing codebase, overall, criteria, and bars for ' + _acmmSelectedRepo + '. Operational autonomy is hive-wide.';
+        } else if (hasMultiRepo) {
+          scopeEl.style.display = 'block';
+          scopeEl.textContent = 'Showing all repos as a union aggregate: a criterion passes if any watched repo has it. Operational autonomy is hive-wide.';
+        } else {
+          scopeEl.style.display = 'none';
+        }
+      }
+
+      const summaryEl = document.getElementById('acmm-repo-summary');
+      if (summaryEl) {
+        if (hasMultiRepo) {
+          const sortedRepos = repos.slice().sort((a, b) => {
+            const aMissing = (a.criteria_total || 0) - (a.criteria_passed || 0);
+            const bMissing = (b.criteria_total || 0) - (b.criteria_passed || 0);
+            if (a.codebase_level !== b.codebase_level) return a.codebase_level - b.codebase_level;
+            if (aMissing !== bMissing) return bMissing - aMissing;
+            return String(a.repo).localeCompare(String(b.repo));
+          });
+          const blockedAt = (rr) => {
+            if (Number.isFinite(rr.blocked_at_level)) return rr.blocked_at_level;
+            const fail = (rr.levels || []).find(lvl => !lvl.passed);
+            return fail ? fail.level : -1;
+          };
+          const blockedLabel = (rr) => {
+            const level = blockedAt(rr);
+            return level >= 0 ? 'L' + level : 'none';
+          };
+          const weakest = sortedRepos[0];
+          let html = '';
+          if (weakest) {
+            html += '<div style="margin-bottom:6px;color:var(--muted)">Lagging repo: <strong style="color:var(--text)">' + escapeHtml(weakest.repo) + '</strong> — L' + weakest.codebase_level + ', ' + weakest.criteria_passed + '/' + weakest.criteria_total + ', blocked at ' + blockedLabel(weakest) + '.</div>';
+          }
+          html += '<div style="border:1px solid var(--border);border-radius:6px;overflow:hidden">' +
+            '<div style="display:grid;grid-template-columns:minmax(120px,1fr) 58px 78px 78px;gap:8px;padding:5px 8px;background:var(--bg);color:var(--muted);font-weight:600">' +
+            '<span>Repo</span><span>Level</span><span>Passed</span><span>Blocked</span></div>';
+          for (const rr of sortedRepos) {
+            html += '<div data-action="acmmSelectRepo" data-arg0="' + escapeHtml(rr.repo) + '" data-arg-types="s" style="display:grid;grid-template-columns:minmax(120px,1fr) 58px 78px 78px;gap:8px;padding:5px 8px;border-top:1px solid var(--border);cursor:pointer;background:' + (_acmmSelectedRepo === rr.repo ? 'color-mix(in srgb, var(--blue) 10%, transparent)' : 'transparent') + '">' +
+              '<span>' + escapeHtml(rr.repo) + '</span><span>L' + rr.codebase_level + '</span><span>' + rr.criteria_passed + '/' + rr.criteria_total + '</span><span>' + blockedLabel(rr) + '</span></div>';
+          }
+          html += '</div>';
+          summaryEl.innerHTML = html;
+          summaryEl.style.display = 'block';
+        } else {
+          summaryEl.style.display = 'none';
+        }
+      }
+
       // Per-level bars from active data
-      const active = acmmGetActiveData();
       const levels = active.levels || active.Levels || d.levels || [];
       const barsEl = document.getElementById('acmm-level-bars');
       if (barsEl) {
