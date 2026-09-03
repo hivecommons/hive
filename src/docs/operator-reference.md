@@ -176,7 +176,10 @@ Minimum practical PAT permissions for full PAT-authenticated operation:
   - Metadata: read-only (required by GitHub)
 
 If you use a GitHub App, configure equivalent repository permissions on the App
-installation instead of broadening the PAT.
+installation instead of broadening the PAT. A `repo-moved` GitHub App verdict
+means the App/key/installation are healthy, but the hive still names the old
+repository owner after an org transfer; update the configured project org rather
+than trying to add the moved repository back to the old installation.
 
 ## `cmd/hive` flags and environment
 

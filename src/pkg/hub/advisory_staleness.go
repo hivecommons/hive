@@ -46,7 +46,18 @@ func appCanWriteForAdvisory(e RegistryEntry) bool {
 		"wrong-installation", "insufficient-permissions",
 		// #2353: a write returned 403 on an otherwise-healthy install — the App
 		// demonstrably cannot write this repo, so it is NOT writable here.
-		"write-forbidden":
+		"write-forbidden",
+		// #5774: the configured repositories were transferred to another
+		// account and the installation covers NOTHING under the configured
+		// owner (that is a required clause of the classification, see
+		// InstallationCoverage.MovedTo) — so no repo this hive is pointed at,
+		// including the advisory repo, is writable.
+		//
+		// This is deliberately NOT extended to "repo-not-covered", which sits
+		// outside this list on purpose: that state fires when ANY configured
+		// repo is unticked, which need not be the advisory one, so it is not
+		// evidence that the digest post cannot land.
+		"repo-moved":
 		return false
 	default:
 		// "ok", "unknown", or empty (spoke too old to classify) — the App is

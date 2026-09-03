@@ -159,6 +159,129 @@ func (c InstallationCoverage) Missing(owner string, configured []string) []strin
 	return missing
 }
 
+// RepoMove is one configured repository that the installation does not cover
+// under the configured owner, but DOES cover under a different one.
+type RepoMove struct {
+	// Configured is the "owner/name" the hive is pointed at, lowercased.
+	Configured string
+	// CoveredAs is the "owner/name" the installation actually covers,
+	// lowercased — the same repository name under a different account.
+	CoveredAs string
+}
+
+// MovedTo detects the org-transfer shape of a coverage miss (#5774).
+//
+// WHY THIS IS NOT JUST A SUBSET OF Missing. Missing answers "which configured
+// repos does this installation not cover", and its fix — tick the repo in the
+// installation's repository access — is right for the case it was written for
+// (#4360: a second repo in the RIGHT org that was never ticked). Applied to a
+// repository that has been TRANSFERRED to another account, that same copy sends
+// an operator to tick a repo that no longer exists under the owner they are
+// looking at. That is not a less precise version of the right answer; it is a
+// wrong one. Preferring deterministic coverage over 403/404 inference exists in
+// this file precisely to stop issuing that class of confident misdirection.
+//
+// The kubestellar to hivecommons migration is the live case. Once the App is
+// installed on the new org while a hive's config still names the old one, every
+// configured repo reads as "not covered" and the banner points at a settings
+// page for an org the repository has left.
+//
+// THE RULE — deliberately narrow, all three clauses required:
+//
+//  1. The listing is complete. A truncated set proves no absence — the same
+//     rule Missing already follows, for the same reason.
+//  2. The installation covers NOTHING AT ALL under the configured owner. A
+//     transfer moves the whole repository out of that account; if the
+//     installation still covers other repos there, the account is reachable and
+//     a single missing repo is an ordinary scope gap, which is Missing's story
+//     and not this one.
+//  3. Exactly ONE covered repository carries the configured repo's name. Two
+//     accounts owning a repo called "tools" is unremarkable, and picking one of
+//     them would be a guess. With no candidate, or more than one, this returns
+//     nothing and Missing's verdict stands.
+//
+// Returns nil when nothing matches, so a caller can simply prefer a non-empty
+// result over the not-covered verdict.
+func (c InstallationCoverage) MovedTo(owner string, configured []string) []RepoMove {
+	if c.Truncated {
+		return nil
+	}
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" || len(c.Repos) == 0 {
+		return nil
+	}
+
+	// Clause 2: the configured owner must be entirely absent from coverage.
+	ownerPrefix := owner + "/"
+	for full := range c.Repos {
+		if strings.HasPrefix(full, ownerPrefix) {
+			return nil
+		}
+	}
+
+	// Index coverage by bare repository name, so a change of OWNER is visible
+	// as "same name, different account".
+	byName := map[string][]string{}
+	for full := range c.Repos {
+		i := strings.LastIndex(full, "/")
+		if i <= 0 || i == len(full)-1 {
+			continue
+		}
+		byName[full[i+1:]] = append(byName[full[i+1:]], full)
+	}
+
+	seen := map[string]struct{}{}
+	var moves []RepoMove
+	for _, ref := range configured {
+		full := NormalizeRepoRef(owner, ref)
+		if full == "" {
+			continue
+		}
+		if _, covered := c.Repos[full]; covered {
+			continue
+		}
+		if _, dup := seen[full]; dup {
+			continue
+		}
+		i := strings.LastIndex(full, "/")
+		if i <= 0 || i == len(full)-1 {
+			continue
+		}
+		candidates := byName[full[i+1:]]
+		// Clause 3: exactly one candidate, or this would be a guess.
+		if len(candidates) != 1 {
+			continue
+		}
+		seen[full] = struct{}{}
+		moves = append(moves, RepoMove{Configured: full, CoveredAs: candidates[0]})
+	}
+
+	sort.Slice(moves, func(i, j int) bool { return moves[i].Configured < moves[j].Configured })
+	return moves
+}
+
+// MovedOwner returns the single account every move in the set points at, or ""
+// when the set is empty or the moves disagree. Copy that names one destination
+// org must never be composed from a set that names several.
+func MovedOwner(moves []RepoMove) string {
+	owner := ""
+	for _, m := range moves {
+		i := strings.Index(m.CoveredAs, "/")
+		if i <= 0 {
+			return ""
+		}
+		acct := m.CoveredAs[:i]
+		if owner == "" {
+			owner = acct
+			continue
+		}
+		if !strings.EqualFold(owner, acct) {
+			return ""
+		}
+	}
+	return owner
+}
+
 // webBaseFromAPIURL turns a GitHub API base into the web base an operator can
 // click. github.com and GitHub Enterprise spell these differently, and a
 // hardcoded github.com link on a GHE hive sends the operator to an account

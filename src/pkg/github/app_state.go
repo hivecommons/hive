@@ -106,6 +106,26 @@ const (
 	// USER-ACTIONABLE (by an org owner): tick the repo in the App
 	// installation's repository access.
 	AppStateRepoNotCovered
+
+	// AppStateRepoMoved (#5774) means the installation is healthy and covers
+	// the configured repository — but under a DIFFERENT account than the hive
+	// is configured for, because the repository was transferred to another org.
+	//
+	// It is the transfer-shaped case of AppStateRepoNotCovered, split out
+	// because the two need opposite instructions. That state tells an operator
+	// to tick the repo in the configured org's installation; after a transfer
+	// there is nothing to tick there, because the repository has left that
+	// account. Issuing that instruction is not a vaguer version of the right
+	// answer, it is a wrong one, and sending an operator to a settings page for
+	// an org the repo no longer belongs to is exactly the confident
+	// misdirection the deterministic coverage check (#4360) was built to stop.
+	//
+	// The live case is the kubestellar to hivecommons migration: once the App
+	// is installed on the new org while a hive's config still names the old
+	// one, every configured repo reads as "not covered".
+	//
+	// USER-ACTIONABLE: point the hive's configured org at the new account.
+	AppStateRepoMoved
 )
 
 // String returns the stable wire token for a state. These tokens cross the
@@ -131,6 +151,8 @@ func (s AppAuthState) String() string {
 		return "write-forbidden"
 	case AppStateRepoNotCovered:
 		return "repo-not-covered"
+	case AppStateRepoMoved:
+		return "repo-moved"
 	default:
 		return "unknown"
 	}
@@ -149,7 +171,7 @@ func (s AppAuthState) OperatorActionable() bool {
 func (s AppAuthState) UserActionable() bool {
 	switch s {
 	case AppStateNotInstalled, AppStateWrongInstallation, AppStateInsufficientPerms,
-		AppStateWriteForbidden, AppStateRepoNotCovered:
+		AppStateWriteForbidden, AppStateRepoNotCovered, AppStateRepoMoved:
 		return true
 	default:
 		return false
@@ -179,6 +201,8 @@ func ParseAppAuthState(s string) AppAuthState {
 		return AppStateRepoNotCovered
 	case "write-forbidden":
 		return AppStateWriteForbidden
+	case "repo-moved":
+		return AppStateRepoMoved
 	default:
 		return AppStateUnknown
 	}
@@ -292,10 +316,35 @@ type AppAuthDiagnosis struct {
 	// GrantsVisualHiveExecution for why observing them still matters.
 	ActionsPerm  string
 	StatusesPerm string
+	// ContentsPerm, PullRequestsPerm and WorkflowsPerm are the granted
+	// Contents, Pull-requests and Workflows permissions, when the installation
+	// resolved. Empty means GitHub reported no grant.
+	//
+	// These are the grants the AGENT PR FLOW actually runs on, and until #5774
+	// none of them was even read. A branch push needs Contents: write; opening
+	// the PR needs Pull requests: write; a push whose diff touches
+	// .github/workflows/** additionally needs Workflows: write or GitHub
+	// rejects the ref update outright. DiagnoseAppAuth classified solely on
+	// Issues, so an installation that could file issues and could not push a
+	// single branch reported "ok" — which is how an org migration took out
+	// every agent PR flow in the fleet while the credential surface stayed
+	// green.
+	//
+	// Like ActionsPerm/StatusesPerm they are RECORDED, never enforced. See
+	// GrantsAgentPushFlow for why observing without requiring is the right
+	// posture here.
+	ContentsPerm     string
+	PullRequestsPerm string
+	WorkflowsPerm    string
 	// Repo, when set, is the repository whose write attempt was forbidden.
 	// Only AppStateWriteForbidden (#2353) populates it, so the banner can name
 	// the exact repo the operator must add to the App installation.
 	Repo string
+	// RepoMoves, when set, are the configured repositories the installation
+	// covers under a DIFFERENT account. Only AppStateRepoMoved (#5774)
+	// populates it, so the copy can name where each repository actually lives
+	// now instead of pointing at the account it left.
+	RepoMoves []RepoMove
 	// Repos, when set, are the configured repositories the installation does
 	// not cover, in "owner/name" form. Only AppStateRepoNotCovered (#4360)
 	// populates it, so the banner can name every repo that needs ticking
@@ -367,6 +416,59 @@ func (d AppAuthDiagnosis) ExecutionGrants() string {
 		return p
 	}
 	return fmt.Sprintf("actions=%s statuses=%s", grant(d.ActionsPerm), grant(d.StatusesPerm))
+}
+
+// GrantsAgentPushFlow reports whether this installation currently grants the
+// two permissions an agent needs to open a pull request under its own identity:
+// Contents (to push the branch) and Pull requests (to open the PR).
+//
+// It answers a QUESTION; it does not impose a requirement, and it is not part
+// of the classification. Enforcing it would be wrong in both directions. A
+// read-only advisory hive — the L2 guide tier, which by design receives a token
+// scoped to Contents: read and never pushes anything — would flip to
+// AppStateInsufficientPerms for operating exactly as intended. And a hive that
+// legitimately holds both grants can still be unable to push for a reason no
+// permission bit describes, which is what AppStateRepoNotCovered and
+// AppStateRepoMoved exist to say.
+//
+// What it is FOR is making the write path COUNTABLE. #5774's failure mode was
+// not that the hub misjudged a permission — it was that nothing on the
+// credential surface described the write path at all. Issue creation kept
+// working, every branch push died, and DiagnoseAppAuth reported "ok" for both,
+// because it read Issues and nothing else. An installation that cannot push is
+// now distinguishable from one that can, before a single agent tries and fails.
+//
+// This mirrors GrantsVisualHiveExecution's posture deliberately: observe the
+// grant, log it on every verdict including the healthy one, and let the fault
+// states stay the ones that are genuinely faults.
+func (d AppAuthDiagnosis) GrantsAgentPushFlow() bool {
+	return d.ContentsPerm == grantWrite && d.PullRequestsPerm == grantWrite
+}
+
+// PushFlowGrants renders the three write-path grants as a stable, log-safe
+// "contents=<grant> pull_requests=<grant> workflows=<grant>" triple.
+//
+// Like ExecutionGrants it carries only permission LEVELS that GitHub already
+// reports — never account names, repository names, or error text — so it is
+// safe to log unconditionally at info level. That is the point: emitting it
+// only on a faulty verdict would never emit it for the case that motivated it,
+// an installation which reports "ok" and cannot push.
+//
+// Workflows is reported alongside the two GrantsAgentPushFlow consults, and
+// deliberately not folded into that predicate. It is needed only by a push
+// whose diff touches .github/workflows/**, so requiring it would misreport
+// every installation that never edits a workflow; but when a push is rejected
+// with "refusing to allow a GitHub App to create or update workflow", this
+// field is the one that explains it, and it is free on the same API call.
+func (d AppAuthDiagnosis) PushFlowGrants() string {
+	grant := func(p string) string {
+		if strings.TrimSpace(p) == "" {
+			return grantNone
+		}
+		return p
+	}
+	return fmt.Sprintf("contents=%s pull_requests=%s workflows=%s",
+		grant(d.ContentsPerm), grant(d.PullRequestsPerm), grant(d.WorkflowsPerm))
 }
 
 // keyFileReadable reports whether path exists and holds non-empty content.
@@ -449,6 +551,13 @@ func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, key
 	// and still turns solely on issues. See AppAuthDiagnosis.ActionsPerm.
 	d.ActionsPerm = perms.GetActions()
 	d.StatusesPerm = perms.GetStatuses()
+	// #5774: the write-path grants. Recorded on the same call that already
+	// fetched the installation, so this costs nothing and makes an
+	// installation that cannot push distinguishable from one that can. The
+	// classification below is deliberately unchanged — see GrantsAgentPushFlow.
+	d.ContentsPerm = perms.GetContents()
+	d.PullRequestsPerm = perms.GetPullRequests()
+	d.WorkflowsPerm = perms.GetWorkflows()
 
 	if expectedOwner != "" && d.Account != "" && !strings.EqualFold(d.Account, expectedOwner) {
 		d.State = AppStateWrongInstallation
@@ -551,6 +660,33 @@ func (d AppAuthDiagnosis) Message() string {
 			"Add them under the org's App configuration (Settings → Applications → Configure → Repository access).", owner, repos)
 		if link := d.InstallationSettingsURL(); link != "" {
 			msg += " " + link
+		}
+		return msg
+
+	case AppStateRepoMoved:
+		// #5774. Nothing is wrong with the App, the key, the installation, or
+		// the repository access — the repository simply lives somewhere else
+		// now. Say where, and do NOT reuse AppStateRepoNotCovered's "tick the
+		// repo in this org's installation" instruction: there is nothing to
+		// tick under an account the repository has left, and sending an
+		// operator there costs them the same debugging time the coverage check
+		// was written to give back.
+		newOwner := MovedOwner(d.RepoMoves)
+		var pairs []string
+		for _, m := range d.RepoMoves {
+			pairs = append(pairs, fmt.Sprintf("%s is now %s", m.Configured, m.CoveredAs))
+		}
+		detail := strings.Join(pairs, "; ")
+		if detail == "" {
+			detail = "the configured repositories now live under a different account"
+		}
+		msg := fmt.Sprintf("This hive is configured for '%s', but its GitHub App installation covers those repositories under a different account: %s. "+
+			"The App, its private key, and the installation are all healthy — the repositories were transferred, so there is nothing to add under '%s'.",
+			owner, detail, owner)
+		if newOwner != "" {
+			msg += fmt.Sprintf(" Point this hive's configured organization at '%s'.", newOwner)
+		} else {
+			msg += " Point this hive's configured organization at the account shown above."
 		}
 		return msg
 

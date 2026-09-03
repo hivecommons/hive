@@ -249,7 +249,8 @@ func TestAppAuthState_WireRoundTrip(t *testing.T) {
 	all := []AppAuthState{
 		AppStateUnknown, AppStateOK, AppStateNotInstalled, AppStateWrongInstallation,
 		AppStateInsufficientPerms, AppStateKeyMissing, AppStateKeyInvalid,
-		AppStateNoAppAssigned, AppStateWriteForbidden,
+		AppStateNoAppAssigned, AppStateWriteForbidden, AppStateRepoNotCovered,
+		AppStateRepoMoved,
 	}
 	for _, s := range all {
 		if got := ParseAppAuthState(s.String()); got != s {
@@ -270,7 +271,8 @@ func TestAppAuthState_ActionabilityIsExclusive(t *testing.T) {
 	all := []AppAuthState{
 		AppStateUnknown, AppStateOK, AppStateNotInstalled, AppStateWrongInstallation,
 		AppStateInsufficientPerms, AppStateKeyMissing, AppStateKeyInvalid,
-		AppStateNoAppAssigned, AppStateWriteForbidden,
+		AppStateNoAppAssigned, AppStateWriteForbidden, AppStateRepoNotCovered,
+		AppStateRepoMoved,
 	}
 	for _, s := range all {
 		if s.OperatorActionable() && s.UserActionable() {
