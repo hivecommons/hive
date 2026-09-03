@@ -617,6 +617,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					})
 				}
 			}
+			pending = s.decoratePendingAccessRequests(pending)
 			result[i].PendingRequestCount = len(pending)
 			result[i].PendingRequests = pending
 		}

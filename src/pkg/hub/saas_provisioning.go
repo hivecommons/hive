@@ -88,9 +88,11 @@ type ProvisionRequest struct {
 	// for an approval — which hive the requester actually got. That made the
 	// history unauditable: an approved request and a denied one looked equally
 	// anonymous. Empty on records decided before these fields existed.
-	DecidedBy    string `json:"decided_by,omitempty"`
-	DecidedAt    string `json:"decided_at,omitempty"`
-	AssignedHive string `json:"assigned_hive,omitempty"`
+	DecidedBy string `json:"decided_by,omitempty"`
+	// DecidedByName is the display-only label for DecidedBy, resolved on read.
+	DecidedByName string `json:"decided_by_name,omitempty"`
+	DecidedAt     string `json:"decided_at,omitempty"`
+	AssignedHive  string `json:"assigned_hive,omitempty"`
 	// DenyReason is the optional free-text explanation shown back to the
 	// requester when a request is turned down.
 	DenyReason string `json:"deny_reason,omitempty"`
@@ -245,6 +247,7 @@ func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
 		return requests
 	}
 	users := listAllSaaSUsers()
+	label := (&HubServer{}).identityLabeler()
 	for i := range requests {
 		if requests[i].UserID == "" {
 			requests[i].UserID, requests[i].UserIDSource = provisionRequestUserIdentity(requests[i].Username, provisionRequestUserFromRoster(requests[i].Username, users), requests[i].FullName)
@@ -252,6 +255,9 @@ func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
 			if requests[i].UserID == requests[i].Username {
 				requests[i].UserIDSource = "native"
 			}
+		}
+		if l := label(requests[i].DecidedBy); l != requests[i].DecidedBy {
+			requests[i].DecidedByName = l
 		}
 		requests[i].AssignedRole = roleForUserOnHive(requests[i].Username, requests[i].AssignedHive, users)
 		requests[i].OtherHives = hivesForUser(requests[i].Username, requests[i].AssignedHive, users)
