@@ -728,8 +728,8 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 // saying nothing calls it in production, deliberately, because a spoke that
 // cannot parse the shape breaks /terminal fleet-wide — incident #2773, the
 // v2-hub/v4-spoke split. That condition no longer holds: the fleet is v4, and
-// the spoke-side verifier in src/proxy/server.js tries lanes v3 → v2 → legacy
-// (verifyHubUserCookieEither), so a spoke accepts a V3 cookie today. This is
+// the spoke-side verifier in src/proxy/server.js tries the modern lanes first,
+// so a spoke accepts a V3 cookie today. This is
 // therefore the verify-both/mint-new cutover the N2 change already rehearsed,
 // with the verifier side shipped well ahead of the minter — not a flag day.
 //
@@ -786,10 +786,9 @@ func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue strin
 	// The audit asks for a host-only `__Host-` session cookie. That is correct
 	// in the abstract and NOT safely applicable here, because this cookie is
 	// load-bearing across a trust boundary: it is minted by the hub (Go) and
-	// verified INDEPENDENTLY by every spoke's Node proxy
-	// (src/proxy/server.js — verifyHubUserCookieEither, and the WebSocket
-	// terminal path). The proxy can only verify a cookie the browser actually
-	// sends it, and the browser only sends this one to <id>.hive.kubestellar.io
+	// verified INDEPENDENTLY by every spoke's Node proxy on the WebSocket
+	// terminal path (src/proxy/server.js). The proxy can only verify a cookie
+	// the browser actually sends it, and the browser only sends this one to <id>.hive.kubestellar.io
 	// BECAUSE of the Domain attribute below. Dropping Domain (which __Host-
 	// additionally forbids outright) would stop the cookie reaching any spoke
 	// and log every hosted tenant out of their own dashboard and terminal —
