@@ -360,6 +360,81 @@ func TestHiveHealth_LiveFleetCauseShapes(t *testing.T) {
 	}
 }
 
+func TestHiveHealth_LiveFleetDetectorCoverageFromRawSignals(t *testing.T) {
+	now := time.Date(2026, 9, 3, 3, 30, 0, 0, time.UTC)
+	base := RegistryEntry{Online: true, ACMMLevel: 3}
+	agent := func(name string) AgentSummary {
+		a := modernWorking(now)
+		a.Name = name
+		a.CanMerge = false
+		return a
+	}
+
+	tests := []struct {
+		name         string
+		entry        RegistryEntry
+		agents       []AgentSummary
+		blockers     hiveBlockers
+		wantProblems int
+		wantReason   string
+	}{
+		{
+			name: "provider-side spend limit reported by spoke",
+			entry: func() RegistryEntry {
+				e := base
+				e.ProviderLimitReason = "litellm refused the request on a spending limit (429)"
+				e.ProviderLimitRebuffs = 682
+				return e
+			}(),
+			agents: []AgentSummary{agent("quality"), agent("scanner")},
+			blockers: hiveBlockers{
+				ProviderLimitReason: "litellm refused the request on a spending limit (429)",
+			},
+			wantProblems: 2,
+			wantReason:   "provider spending limit reached — 682 refused calls",
+		},
+		{
+			name:  "agent-level provider quota from heartbeat",
+			entry: base,
+			agents: func() []AgentSummary {
+				a := agent("guide")
+				a.QuotaExhausted = true
+				return []AgentSummary{a}
+			}(),
+			wantProblems: 1,
+			wantReason:   "1 agent(s) out of provider quota",
+		},
+		{
+			name:  "missed cadence with queued work",
+			entry: base,
+			agents: func() []AgentSummary {
+				a := agent("quality")
+				a.KickIntervalSec = int64(30 * time.Minute / time.Second)
+				a.LastActivityAt = activeAt(now, 2*time.Hour)
+				return []AgentSummary{a}
+			}(),
+			wantProblems: 1,
+			wantReason:   "1 agent(s) idle with work queued",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := tc.entry
+			e.Agents = tc.agents
+			rollup := rollupAgents(tc.agents, tc.blockers, 9, now)
+			if rollup.Problems != tc.wantProblems {
+				t.Fatalf("problems = %d, want %d; rollup=%+v", rollup.Problems, tc.wantProblems, rollup)
+			}
+			v := hiveHealthFor(e, rollup, okApp(), 9, now)
+			if v.State != HealthStateRed || v.Reason != tc.wantReason {
+				t.Fatalf("verdict = (%s, %q), want (red, %q); rollup=%+v",
+					v.State, v.Reason, tc.wantReason, rollup)
+			}
+		})
+	}
+}
+
 func TestMaxRFC3339(t *testing.T) {
 	early, late := "2026-08-22T01:00:00Z", "2026-08-22T09:00:00Z"
 	cases := []struct{ a, b, want string }{
