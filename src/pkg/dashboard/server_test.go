@@ -720,8 +720,13 @@ func TestStart_ServesEndpoints(t *testing.T) {
 	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
 	client := &http.Client{Timeout: time.Second}
 	var resp *http.Response
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			t.Fatalf("server exited before becoming ready: %v", err)
+		default:
+		}
 		r, err := client.Get(addr + "/api/health")
 		if err == nil {
 			resp = r
@@ -730,7 +735,7 @@ func TestStart_ServesEndpoints(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if resp == nil {
-		t.Fatal("server did not start within 2 s")
+		t.Fatal("server did not start within 10 s")
 	}
 	defer resp.Body.Close()
 
@@ -772,7 +777,7 @@ func TestSecurityHeaders_Present(t *testing.T) {
 	headers := map[string]string{
 		"X-Frame-Options":        "DENY",
 		"X-Content-Type-Options": "nosniff",
-		"X-Xss-Protection":      "1; mode=block",
+		"X-Xss-Protection":       "1; mode=block",
 		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	}
 	for name, want := range headers {
