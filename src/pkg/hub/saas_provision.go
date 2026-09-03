@@ -3595,8 +3595,21 @@ func reconciledDashboardURLDomain(stored string, h *SaaSHive, cluster *ClusterCo
 	if host == want {
 		return "" // already correct
 	}
-	// Only the provisioning shape "<hiveID>.<anything>" is ours to re-domain.
-	if !strings.HasPrefix(host, h.ID+".") {
+	// Two shapes are ours to re-derive:
+	//
+	//  1. "<hiveID>.<old-domain>" — the shape provisioning mints, so only the
+	//     domain drifted.
+	//  2. An UNASSIGNED placeholder pointing at some other hive's host. Pool
+	//     slots are recycled, and a recycled slot kept the previous tenant's
+	//     URL, so placeholders were advertising a foreign hive's hostname
+	//     (e.g. available-oke-01-placeholder-bb95 -> hosted-tradingasbuddies-...).
+	//     A slot nobody has claimed has no legitimate vanity name, so the hive
+	//     ID is authoritative and the foreign host is always wrong.
+	//
+	// A CLAIMED hive whose host is not <hiveID>.* is a real vanity host and is
+	// left to reconcileStaleVanityURL, which validates against the live route
+	// before adopting; re-deriving it here would churn the user-visible name.
+	if !strings.HasPrefix(host, h.ID+".") && !isUnassignedPlaceholder(h.Org, h.Status) {
 		return ""
 	}
 	u.Host = want

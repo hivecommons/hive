@@ -39,6 +39,28 @@ func TestReconciledDashboardURLDomain(t *testing.T) {
 		}
 	})
 
+	t.Run("re-derives an unassigned placeholder pointing at another hive's host", func(t *testing.T) {
+		// Pool slots are recycled, and a recycled slot kept the previous
+		// tenant's URL — placeholders were advertising a foreign hive's
+		// hostname. An unclaimed slot has no legitimate vanity name, so the
+		// hive ID is authoritative.
+		ph := &SaaSHive{ID: "hosted-available-oke-01-placeholder-bb95", Status: statusAvailable}
+		got := reconciledDashboardURLDomain("https://hosted-tradingasbuddies-falcon-core-k2zn."+oldDomain, ph, cluster)
+		want := "https://hosted-available-oke-01-placeholder-bb95." + newDomain
+		if got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("re-derives a placeholder identified by its available- org", func(t *testing.T) {
+		ph := &SaaSHive{ID: "hosted-available-oke-07-placeholder-wlj4", Org: "available-oke-07"}
+		got := reconciledDashboardURLDomain("https://hosted-mattsweetibm-s1netops-lzkm."+oldDomain, ph, cluster)
+		want := "https://hosted-available-oke-07-placeholder-wlj4." + newDomain
+		if got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
 	t.Run("preserves path and port while swapping the domain", func(t *testing.T) {
 		got := reconciledDashboardURLDomain("https://"+hiveID+"."+oldDomain+"/snapshot", hive, cluster)
 		want := "https://" + hiveID + "." + newDomain + "/snapshot"
