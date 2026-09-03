@@ -8,7 +8,7 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 | `candidate` | A build believed good, awaiting soak before promotion to stable. |
 | `edge` | The newest good build, with no soak period. |
 
-> **Note — current promotion policy:** the channels have begun to diverge by release line. Every merge to **`v4`** retags **`stable` and `candidate`** (so those two still point at the same digest as `v4-latest`), while every merge to **`v5`** retags **`edge`** — meaning `edge` is now an **active-development v5 build**, not a synonym for `stable`. What has *not* landed yet is the soak/promotion step between `candidate` and `stable` (see [#3702](https://github.com/kubestellar/hive/pull/3702) for the channel plumbing): within the `v4` line, treat those two names as forward-looking track selection, not as a guarantee of differing maturity yet.
+> **Note — current promotion policy:** the channels have begun to diverge by release line. Every merge to **`v4`** retags **`stable` and `candidate`** (so those two still point at the same digest as `v4-latest`), while every merge to **`v5`** retags **`edge`** — meaning `edge` is now an **active-development v5 build**, not a synonym for `stable`. What has *not* landed yet is the soak/promotion step between `candidate` and `stable` (see [#3702](https://github.com/kubestellar/hive/pull/3702) for the channel plumbing): within the `v4` line, treat those two names as forward-looking track selection, not as a guarantee of differing maturity yet. The proposed v4 gate is documented in [v4 stable soak and promotion policy](stable-soak-policy.md).
 
 ## How channels are published
 

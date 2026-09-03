@@ -27,6 +27,7 @@ order, not priority rank.
 | Retrospective learning lane | Build from deterministic post-completion advisory beads toward LLM-assisted retro summaries and knowledge extraction. | [#2809](https://github.com/kubestellar/hive/issues/2809), [retro lane](retro-lane.md) |
 | ADR back-fill for remaining subsystems | **Done.** Back-filled accepted ADRs capture the knowledge system, skill registry, CEL/channel triggers, and hub/spoke mechanics, so architecture decisions stay auditable. | [ADR-0011](adr/0011-knowledge-system.md), [ADR-0012](adr/0012-skill-registry.md), [ADR-0013](adr/0013-cel-triggers.md), [ADR-0014](adr/0014-hub-spoke.md) |
 | HiveCommons org migration | Make the kubestellar-to-hivecommons migration auditable before package or repository defaults change, including image mirror phases, docs sweeps, v5 edge coverage, and operator communications. | [migration tracker](hivecommons-migration.md), [#5686](https://github.com/kubestellar/hive/issues/5686) |
+| v4 stable soak gate | Define the candidate-to-stable soak window, emergency exception path, and CI promotion shape so bursty v4 merge days do not immediately advance the operator-facing stable tag. | [stable soak policy](stable-soak-policy.md), [#5744](https://github.com/kubestellar/hive/issues/5744) |
 
 ## Next
 

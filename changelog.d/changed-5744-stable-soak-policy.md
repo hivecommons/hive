@@ -1,0 +1,1 @@
+- The release-channel docs now publish a v4 stable soak proposal that separates fast candidate retags from deliberate stable promotion, giving operators clear guardrails for burst release days and emergency exceptions ([#5744](https://github.com/kubestellar/hive/issues/5744)).
