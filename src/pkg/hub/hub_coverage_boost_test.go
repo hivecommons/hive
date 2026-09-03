@@ -1834,17 +1834,28 @@ func TestLoadClustersDefault(t *testing.T) {
 // ============================================================
 
 func TestKubectlForCluster(t *testing.T) {
-	// In-cluster
+	// In-cluster, in a REAL pod: the ServiceAccount env vars are present, so
+	// the command is pinned to the API server and must NOT carry --kubeconfig.
+	//
+	// This test previously asserted only "in-cluster never uses --kubeconfig"
+	// with the env vars UNSET, which is the assumption that caused #5768: with
+	// no SA env vars and no --kubeconfig, the argv pins nothing and kubectl
+	// resolves against the ambient ~/.kube/config. The InCluster flag is a
+	// CLAIM, and outside a pod it is a false one. See
+	// kubectl_ambient_guard_test.go for the invariant.
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "443")
+
 	inCluster := &ClusterConfig{InCluster: true}
 	cmd := kubectlForCluster(inCluster, "get", "pods")
 	args := cmd.Args
 	if args[0] != "kubectl" {
 		t.Error("should use kubectl")
 	}
-	// Should NOT have --kubeconfig
+	// Should NOT have --kubeconfig when genuinely running in a pod.
 	for _, a := range args {
 		if a == "--kubeconfig" {
-			t.Error("in-cluster should not use --kubeconfig")
+			t.Error("in-cluster (real pod) should not use --kubeconfig")
 		}
 	}
 

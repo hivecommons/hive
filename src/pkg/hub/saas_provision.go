@@ -433,6 +433,36 @@ func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 				"--certificate-authority", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 				"--token", readSAToken(),
 			)
+		} else {
+			// NOT ACTUALLY IN A CLUSTER (issue #5768).
+			//
+			// InCluster==true is a CLAIM, not a fact. It is true for the
+			// default cluster registry entry that loadClustersChecked
+			// synthesises whenever clusters.json is absent — which is exactly
+			// what happens in every unit test, because the test helpers point
+			// clustersConfigPath at an empty t.TempDir(). A test that drives
+			// any provisioning entry point therefore reaches this branch with
+			// a cluster claiming to be in-cluster while running on a laptop or
+			// a CI runner.
+			//
+			// Without this guard, no connection flag is added at all, and
+			// kubectl falls back to its AMBIENT configuration: ~/.kube/config,
+			// $KUBECONFIG, whatever the runner happens to be pointed at. The
+			// hub then issues a REAL `kubectl apply` — creating a real
+			// namespace, Deployment and PVC — against a real cluster, using
+			// fixture orgs. That is the measured cause of the leaked
+			// hive-hosted-hosted-{acme,apporg,myorg}-* namespaces: their names
+			// are this package's own unit-test fixtures, character for
+			// character.
+			//
+			// The absence of the ServiceAccount env vars is a POSITIVE,
+			// reliable signal that this process is not running in a pod, so
+			// there is no legitimate in-cluster call to break here: a real hub
+			// pod always has both set. Aim at the unreachable sentinel so the
+			// command fails loudly and locally instead of silently succeeding
+			// against somebody else's cluster. This is the same reasoning, and
+			// the same sentinel, the pull-only branch above already uses.
+			fullArgs = append(fullArgs, "--kubeconfig", unreachableKubeconfigSentinel)
 		}
 	}
 	fullArgs = append(fullArgs, args...)
