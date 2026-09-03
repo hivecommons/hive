@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -254,5 +256,22 @@ func TestAuditDetailFormatsKeyValuePairs(t *testing.T) {
 	}
 	if got := auditDetail("file", "hive.yaml", "dangling"); got != "file=hive.yaml" {
 		t.Fatalf("auditDetail with dangling key = %q, want dangling key ignored", got)
+	}
+}
+
+func TestAuditLogLoadFromDiskPathUsesInjectedPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	data := `{"ts":"2026-09-03T00:00:00Z","user":"alice","action":"saved"}` + "\n" +
+		`{"ts":"2026-09-03T00:01:00Z","user":"system","action":"ignored"}` + "\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+	audit := &AuditLog{ring: make([]AuditEntry, 0, auditRingCap), lastAction: make(map[string]time.Time)}
+	audit.loadFromDiskPath(path)
+	if len(audit.ring) != 2 {
+		t.Fatalf("loaded entries = %d, want 2", len(audit.ring))
+	}
+	if audit.lastAction["alice"].IsZero() {
+		t.Fatalf("real user last action was not rebuilt from injected path")
 	}
 }

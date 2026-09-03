@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -3981,5 +3982,19 @@ func TestHandleGovernorBudget_EmptyPayloadPreservesAll(t *testing.T) {
 	b := deps.Config.Governor.Budget
 	if b.TotalTokens != 1000 || b.PeriodDays != budgetTestPeriodDays || b.CriticalPct != budgetTestCriticalPct {
 		t.Errorf("empty payload mutated config: %+v", b)
+	}
+}
+
+func TestSidebarDiskUsesInjectablePath(t *testing.T) {
+	old := sidebarFile
+	sidebarFile = filepath.Join(t.TempDir(), "sidebar.json")
+	t.Cleanup(func() { sidebarFile = old })
+	s, _ := apiServer(t)
+	want := map[string]interface{}{"items": []interface{}{"audit", "fleet"}}
+	s.saveSidebarToDisk(want)
+	s.sidebar = nil
+	s.loadSidebarFromDisk()
+	if s.sidebar == nil {
+		t.Fatal("sidebar was not loaded from injected path")
 	}
 }

@@ -826,6 +826,11 @@ var (
 const ghcrCacheTTL = 2 * time.Minute
 const ghcrCheckTimeout = 5 * time.Second
 
+var (
+	ghcrCheckBaseURL = "https://ghcr.io"
+	ghcrCheckClient  = &http.Client{Timeout: ghcrCheckTimeout}
+)
+
 func ghcrTagExistsCached(tag string) bool {
 	ghcrCacheMu.RLock()
 	if exp, ok := ghcrCacheExpiry[tag]; ok && time.Now().Before(exp) {
@@ -844,8 +849,15 @@ func ghcrTagExistsCached(tag string) bool {
 }
 
 func ghcrTagExists(tag string) bool {
-	client := &http.Client{Timeout: ghcrCheckTimeout}
-	tokenResp, err := client.Get("https://ghcr.io/token?scope=repository:kubestellar/hive:pull")
+	return ghcrTagExistsWithClient(ghcrCheckClient, ghcrCheckBaseURL, tag)
+}
+
+func ghcrTagExistsWithClient(client *http.Client, baseURL, tag string) bool {
+	if client == nil {
+		client = &http.Client{Timeout: ghcrCheckTimeout}
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	tokenResp, err := client.Get(baseURL + "/token?scope=repository:kubestellar/hive:pull")
 	if err != nil {
 		return false
 	}
@@ -857,7 +869,7 @@ func ghcrTagExists(tag string) bool {
 		return false
 	}
 
-	manifestURL := fmt.Sprintf("https://ghcr.io/v2/kubestellar/hive/manifests/%s", tag)
+	manifestURL := fmt.Sprintf("%s/v2/kubestellar/hive/manifests/%s", baseURL, tag)
 	req, _ := http.NewRequest("HEAD", manifestURL, nil)
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
 	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
@@ -6944,7 +6956,7 @@ func (s *Server) handleSidebarSet(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
-const sidebarFile = "/data/sidebar.json"
+var sidebarFile = "/data/sidebar.json"
 
 func (s *Server) loadSidebarFromDisk() {
 	data, err := os.ReadFile(sidebarFile)
