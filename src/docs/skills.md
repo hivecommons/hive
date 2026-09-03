@@ -47,7 +47,7 @@ caller to compare by identity.
 | `name` | no | the filename |
 | `version` | no | `0.0.0` (`DefaultVersion`) |
 | `description` | no | empty |
-| `tags` | no | none — free-form labels used by `Search` |
+| `tags` | no | none — free-form metadata |
 
 `version` is dotted numeric (`major.minor.patch`); **missing parts read as
 zero**, so `1.2` is `1.2.0`.
@@ -128,10 +128,7 @@ large file does not silently suppress everything behind it.
 ## Versions
 
 When several files declare the same `name` with different `version` values,
-the **highest version wins** for a plain name reference. `Registry.Resolve`
-additionally understands `^1.2.0` (highest sharing that major) and `>=1.2.0`
-constraints; agent config uses plain names today, which resolve to the highest
-version.
+the **highest version wins** for an agent skill reference.
 
 ## Package surface
 
@@ -140,17 +137,10 @@ version.
 | `NewRegistry()` | empty registry |
 | `Registry.Load(dir, logger)` | reads `*.md` from a directory, returns the count loaded |
 | `Registry.Add(skill)` | adds one skill |
-| `Registry.Get` / `Resolve` / `Search` / `List` | look skills up by name, constraint, or term |
+| `Registry.Get(name)` | looks up the newest loaded version for a name |
 | `Registry.ResolveRequested(cfg, names)` | resolves names, preferring registry skills over an `AGENTS.md` inline fallback |
 | `InjectionText(skills)` | renders resolved skills as the Markdown block injected into a kick |
-| `ParseAgentSpec` / `LoadAgentSpec` | parse a BYO-agent spec that can name `DefaultSkills` |
 
-## Still not wired
-
-**`AgentSpec.DefaultSkills`** remains unconnected. The BYO-agent contract can
-declare default skills, but no BYO-agent launcher consumes `AgentSpec` yet; use
-the agent `skills:` config above. This is separate from the scheduler path,
-which now resolves those configured names across both registry and repo-local
 sources.
 
 ## Related

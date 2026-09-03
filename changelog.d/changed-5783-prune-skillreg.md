@@ -1,0 +1,1 @@
+- Removed the unused skill registry query and agent-spec loader surfaces, leaving the live load/resolve-requested/injection path intact.
