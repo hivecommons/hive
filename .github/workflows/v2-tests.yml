@@ -308,8 +308,8 @@ jobs:
           # and their contract tests, such as the time.Sleep ratchet in
           # sleep_ratchet_test.go.
           go list ./pkg/... ./cmd/... ./internal/... \
-            | grep -Ev '^github\.com/kubestellar/hive/pkg/hub$' \
-            | grep -Ev '^github\.com/kubestellar/hive/pkg/agent$' \
+            | grep -Ev '^github\.com/hivecommons/hive/pkg/hub$' \
+            | grep -Ev '^github\.com/hivecommons/hive/pkg/agent$' \
             | LC_ALL=C sort > rest-pkgs.txt
           if [ ! -s rest-pkgs.txt ]; then
             echo "::error::go list produced no rest packages — failing closed"

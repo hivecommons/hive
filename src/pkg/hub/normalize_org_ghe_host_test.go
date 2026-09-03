@@ -56,11 +56,11 @@ func TestNormalizeProjectRef_GHEHostDoesNotBecomeOrg(t *testing.T) {
 		wantOrg   string
 		wantRepos []string
 	}{
-		{"public org repo", "kubestellar/hive", "", "kubestellar", []string{"hive"}},
+		{"public org repo", "hivecommons/hive", "", "hivecommons", []string{"hive"}},
 		{"ghe host org repo", "github.ibm.com/lee-cooper/toolkit", "github.ibm.com", "lee-cooper", []string{"toolkit"}},
 		{"ghe host org", "github.ibm.com/lee-cooper", "github.ibm.com", "lee-cooper", nil},
 		{"ghe trailing slash", "https://github.ibm.com/lee-cooper/toolkit/", "github.ibm.com", "lee-cooper", []string{"toolkit"}},
-		{"public trailing slash", "kubestellar/hive/", "", "kubestellar", []string{"hive"}},
+		{"public trailing slash", "hivecommons/hive/", "", "hivecommons", []string{"hive"}},
 		{"dotted org is not host", "my.org/repo", "", "my.org", []string{"repo"}},
 	}
 	for _, tc := range tests {

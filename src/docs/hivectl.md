@@ -21,7 +21,7 @@ off the container's PATH — it is a client of the dashboard API, not part of
 the runtime; run it on the host, never inside the container):
 
 ```bash
-podman create --name hivectl-extract ghcr.io/kubestellar/hive:stable
+podman create --name hivectl-extract ghcr.io/hivecommons/hive:stable
 podman cp hivectl-extract:/usr/local/share/hive/hivectl ~/.local/bin/hivectl
 podman rm hivectl-extract
 ```
@@ -47,7 +47,7 @@ hivectl system status
 hivectl --server http://127.0.0.1:3001 system status
 
 # Enroll a repository in clusterless, zero-secret Hive lite mode.
-hivectl enroll kubestellar/hive
+hivectl enroll hivecommons/hive
 ```
 
 (From a source checkout the binary is `bin/hivectl` instead.)

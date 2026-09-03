@@ -26,7 +26,7 @@ workspace refusal) — the exact failure class it exists for. See the
 
 | Piece | Runs where | Who acts on it |
 | --- | --- | --- |
-| Scheduled live smoke ([`backend-smoke.yml`](https://github.com/hivecommons/hive/blob/v4/.github/workflows/backend-smoke.yml)) | kubestellar/hive's own GitHub Actions, every 6h — gated to this repo, so forks and downstream deployments never run it | hive maintainers, via the issues it files |
+| Scheduled live smoke ([`backend-smoke.yml`](https://github.com/hivecommons/hive/blob/v4/.github/workflows/backend-smoke.yml)) | hivecommons/hive's own GitHub Actions, every 6h — gated to this repo, so forks and downstream deployments never run it | hive maintainers, via the issues it files |
 | Keyless subset | v2-ci, merge-gating on every PR | the PR author, like any red check |
 | `just backend-smoke` | any laptop or hive host, opt-in, with that machine's own credentials | whoever ran it |
 | Run telemetry (below) | **every hive hub, passively** — no setup, no model spend | the hive's operator; fleet-level aggregation is a planned follow-up |
@@ -73,7 +73,7 @@ distinction is the point:
   Red means **vendor drift is incoming**: shipped contributor images still
   work, but the next pin bump will break. Fix the integration before bumping.
 - **pinned** — runs the suite inside
-  `ghcr.io/kubestellar/hive-contributor:latest`, against the CLI versions
+  `ghcr.io/hivecommons/hive-contributor:latest`, against the CLI versions
   contributors actually get. Red means **contributors are likely broken right
   now**.
 

@@ -1833,7 +1833,7 @@ func TestClearExpiredTokens_ClearsAndPreservesOther(t *testing.T) {
 	// who was logged in, and the interactive CLI refuses to treat a seeded
 	// token as a signed-in session without it — wiping identity here is what
 	// left agents at "Please use /login" over a perfectly valid restored token
-	// (kubestellar/hive, 2026-08-22).
+	// (hivecommons/hive, 2026-08-22).
 	users := result["loggedInUsers"].([]interface{})
 	if len(users) != 1 || users[0] != "github.com" {
 		t.Errorf("loggedInUsers must be preserved across a token clear, got %v", users)

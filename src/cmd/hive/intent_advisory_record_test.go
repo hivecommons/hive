@@ -35,7 +35,7 @@ func TestRecordIntentAlignmentAdvisoryCreatesAndDedupes(t *testing.T) {
 	store := newAdvisoryTestStore(t)
 	stores := map[string]*beads.Store{"intent": store}
 
-	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 42, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(stores, "hivecommons/hive", 42, misalignedVerdict(), restoreTestLogger())
 
 	all := store.List(beads.ListFilter{})
 	if len(all) != 1 {
@@ -45,8 +45,8 @@ func TestRecordIntentAlignmentAdvisoryCreatesAndDedupes(t *testing.T) {
 	if b.Type != beads.TypeAdvisory {
 		t.Errorf("bead type = %q, want %q", b.Type, beads.TypeAdvisory)
 	}
-	if b.ExternalRef != "gh-kubestellar/hive#42" {
-		t.Errorf("external ref = %q, want %q", b.ExternalRef, "gh-kubestellar/hive#42")
+	if b.ExternalRef != "gh-hivecommons/hive#42" {
+		t.Errorf("external ref = %q, want %q", b.ExternalRef, "gh-hivecommons/hive#42")
 	}
 	if !strings.Contains(b.Notes, "diff exceeds linked issue scope") ||
 		!strings.Contains(b.Notes, "unrelated-files") {
@@ -54,13 +54,13 @@ func TestRecordIntentAlignmentAdvisoryCreatesAndDedupes(t *testing.T) {
 	}
 
 	// Same PR again: the open advisory suppresses a duplicate.
-	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 42, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(stores, "hivecommons/hive", 42, misalignedVerdict(), restoreTestLogger())
 	if got := len(store.List(beads.ListFilter{})); got != 1 {
 		t.Errorf("got %d beads after re-record of the same PR, want 1 (no duplicate open advisory)", got)
 	}
 
 	// A DIFFERENT PR is a different drift and gets its own advisory.
-	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 43, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(stores, "hivecommons/hive", 43, misalignedVerdict(), restoreTestLogger())
 	if got := len(store.List(beads.ListFilter{})); got != 2 {
 		t.Errorf("got %d beads after recording a second PR, want 2", got)
 	}
@@ -74,18 +74,18 @@ func TestRecordIntentAlignmentAdvisoryStoreFallback(t *testing.T) {
 	qualityStore := newAdvisoryTestStore(t)
 
 	stores := map[string]*beads.Store{"intent": intentStore, "quality": qualityStore}
-	recordIntentAlignmentAdvisory(stores, "kubestellar/hive", 7, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(stores, "hivecommons/hive", 7, misalignedVerdict(), restoreTestLogger())
 	if len(intentStore.List(beads.ListFilter{})) != 1 || len(qualityStore.List(beads.ListFilter{})) != 0 {
 		t.Error("advisory not routed to the dedicated intent store")
 	}
 
 	fallback := map[string]*beads.Store{"intent": nil, "quality": qualityStore}
-	recordIntentAlignmentAdvisory(fallback, "kubestellar/hive", 8, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(fallback, "hivecommons/hive", 8, misalignedVerdict(), restoreTestLogger())
 	if len(qualityStore.List(beads.ListFilter{})) != 1 {
 		t.Error("nil intent store did not fall back to the quality store")
 	}
 
 	// No usable store anywhere: must be a quiet no-op, not a panic.
-	recordIntentAlignmentAdvisory(map[string]*beads.Store{"x": nil}, "kubestellar/hive", 9, misalignedVerdict(), restoreTestLogger())
-	recordIntentAlignmentAdvisory(nil, "kubestellar/hive", 10, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(map[string]*beads.Store{"x": nil}, "hivecommons/hive", 9, misalignedVerdict(), restoreTestLogger())
+	recordIntentAlignmentAdvisory(nil, "hivecommons/hive", 10, misalignedVerdict(), restoreTestLogger())
 }

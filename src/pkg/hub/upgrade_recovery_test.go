@@ -220,7 +220,7 @@ func TestTriggerAutoUpgradesClearsFloatingTagAtLatest(t *testing.T) {
 	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
 	s.registry.Hives = []RegistryEntry{{
 		ID: "floating-1", GitBranch: "v4", GitHash: "9999abc", // already at branch-latest
-		ImageRef:      "ghcr.io/kubestellar/hive:v4-latest",
+		ImageRef:      "ghcr.io/hivecommons/hive:v4-latest",
 		Upgrading:     true,
 		UpgradeTarget: "fc32ae4", // older armed target the floating tag never lands on
 		// Stale on purpose: without the fix this triggers the advance+rollout.

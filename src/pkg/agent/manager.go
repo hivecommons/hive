@@ -1923,7 +1923,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// prompt is on screen right now") that cannot outlive the pane — after
 		// a restart/pod roll there is no pane, so restoring the pause just
 		// strands the agent forever with nothing left to re-evaluate it
-		// (kubestellar/hive, 2026-08-22: four copilot agents stayed
+		// (hivecommons/hive, 2026-08-22: four copilot agents stayed
 		// persisted-paused across every roll). Drop it on startup and let the
 		// agent launch; if the condition still holds, the detector re-pauses
 		// within one tick — and with PaneShowsBlockingPrompt it now only
@@ -3095,7 +3095,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// where a user authenticates via one agent's terminal and other
 			// agents don't pick up the new token automatically.
 			//
-			// THREE guards, each traced to a live failure (kubestellar/hive,
+			// THREE guards, each traced to a live failure (hivecommons/hive,
 			// 2026-08-22, scanner restart_count=28 with every kick destroyed):
 			//   1. loginStreak: the login line must persist across consecutive
 			//      polls (~9s). The CLI flashes "Please use /login" during its
@@ -3295,7 +3295,7 @@ var blockingPrompts = []blockingPrompt{
 		// Deliberately NOT "2. Yes, and remember": remembering makes the CLI
 		// rewrite the SHARED ~/.copilot/config.json from its own in-memory
 		// snapshot, which stomps every other agent's state in that file — traced
-		// live on kubestellar/hive (2026-08-22): each agent's "remember" wiped
+		// live on hivecommons/hive (2026-08-22): each agent's "remember" wiped
 		// the others' trustedFolders entries, and one stale rewrite resurrected
 		// a dead token over the operator's fresh login, which is why re-logins
 		// never stuck. Session-only trust writes NOTHING; the watcher now runs
@@ -3392,7 +3392,7 @@ func blockingPromptKey(backend, pane string) (key, label string, ok bool) {
 // known startup-blocking modal (folder trust, codex update, …) for the given
 // backend. The login-detector uses it to stand down: a trust-wedged pane is
 // NOT a login problem, and pausing the agent for it kills the very watcher
-// that would answer the prompt — the deadlock that kept kubestellar/hive's
+// that would answer the prompt — the deadlock that kept hivecommons/hive's
 // copilot agents "sitting at login prompt" through every re-login (2026-08-22).
 func PaneShowsBlockingPrompt(backend, pane string) bool {
 	_, _, ok := blockingPromptKey(backend, pane)
@@ -3471,7 +3471,7 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 	// per-launch context). The old 120s window assumed the trust prompt only
 	// appears at startup, but Copilot ≥1.0.78 can render it later than that on
 	// a slow first start — and an unanswered prompt wedges the agent, which the
-	// login-detector then misreads as "needs login" (live on kubestellar/hive,
+	// login-detector then misreads as "needs login" (live on hivecommons/hive,
 	// 2026-08-22). A 2s poll of an in-memory pane capture is too cheap to need
 	// a deadline.
 	ticker := time.NewTicker(trustPollInterval)
@@ -6755,7 +6755,7 @@ func writeCopilotConfig(path string, cfg map[string]interface{}) error {
 // interactive CLI refuses to consider itself signed in without an identity —
 // a later restoreCopilotTokens seed of a perfectly valid token still showed
 // "Please use /login" because this function had wiped the identity alongside
-// the token (kubestellar/hive, 2026-08-22).
+// the token (hivecommons/hive, 2026-08-22).
 func clearExpiredTokens() error {
 	cfg, err := readCopilotConfig(sharedCopilotConfigPath)
 	if err != nil {
@@ -6861,7 +6861,7 @@ var githubTokenLogin = func(token string) string {
 //
 // VALIDATION is the point, not just shape conversion: the shared config's
 // lineage accumulates junk identities (a bare "github.com" string was observed
-// live — kubestellar/hive, 2026-08-22 — inherited from stale rewrites), and a
+// live — hivecommons/hive, 2026-08-22 — inherited from stale rewrites), and a
 // junk identity keyed a seeded VALID token under a key the CLI rejects, leaving
 // every agent at "Please use /login" over working credentials. Only a
 // "https://<host>:<login>" string (scheme + host + login = at least two
@@ -9664,7 +9664,7 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	// WithCancel context was born dead — launchInTmux still typed the CLI, but
 	// pollTmuxOutputForAgent and watchForTrustPromptForAgent exited instantly,
 	// leaving every restarted agent with NO pane monitors. Live signature
-	// (kubestellar/hive, 2026-08-22): exactly one auto-answered trust prompt
+	// (hivecommons/hive, 2026-08-22): exactly one auto-answered trust prompt
 	// per agent per pod boot, then wedged panes forever after the first
 	// token-detected restart. A relaunch must never be aborted by the
 	// cancellation of the launch it replaces. (Nil-guarded: WithoutCancel

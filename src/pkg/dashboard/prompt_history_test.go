@@ -69,9 +69,9 @@ func TestRedactPromptSecrets(t *testing.T) {
 		},
 		{
 			name:        "ordinary prompt text is untouched",
-			in:          "Review issue #42 in kubestellar/hive and open a PR.",
+			in:          "Review issue #42 in hivecommons/hive and open a PR.",
 			wantAbsent:  []string{secretRedactionPlaceholder},
-			wantPresent: []string{"Review issue #42", "kubestellar/hive"},
+			wantPresent: []string{"Review issue #42", "hivecommons/hive"},
 		},
 		{
 			name:        "empty stays empty",
@@ -83,15 +83,15 @@ func TestRedactPromptSecrets(t *testing.T) {
 		// content, or the view becomes misleading.
 		{
 			name:        "issue list line is untouched",
-			in:          "  12m kubestellar/hive#2166 [kind/feature,triage/accepted] Add prompt history",
+			in:          "  12m hivecommons/hive#2166 [kind/feature,triage/accepted] Add prompt history",
 			wantAbsent:  []string{secretRedactionPlaceholder},
-			wantPresent: []string{"kubestellar/hive#2166", "Add prompt history"},
+			wantPresent: []string{"hivecommons/hive#2166", "Add prompt history"},
 		},
 		{
 			name:        "authorized repos section is untouched",
-			in:          "AUTHORIZED REPOS (you may ONLY interact with these):\n  kubestellar/hive\n",
+			in:          "AUTHORIZED REPOS (you may ONLY interact with these):\n  hivecommons/hive\n",
 			wantAbsent:  []string{secretRedactionPlaceholder},
-			wantPresent: []string{"kubestellar/hive"},
+			wantPresent: []string{"hivecommons/hive"},
 		},
 		{
 			name:        "prose containing the word token is untouched",

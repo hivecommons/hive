@@ -334,7 +334,7 @@ func TestSanitizeImageRef(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"ghcr.io/kubestellar/hive:v2-latest", "ghcr.io/kubestellar/hive:v2-latest"},
+		{"ghcr.io/hivecommons/hive:v2-latest", "ghcr.io/hivecommons/hive:v2-latest"},
 		{"registry:5000/org/repo:tag", "registry:5000/org/repo:tag"},
 		{"repo@sha256:abc123", "repo@sha256:abc123"},
 		{"has spaces and <html>", "hasspacesandhtml"},

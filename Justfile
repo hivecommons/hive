@@ -12,7 +12,7 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/kubestellar/hive-contributor:latest")
+hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:latest")
 hive_hub := env("HIVE_HUB", "wss://hive.kubestellar.io/contribute")
 config_dir := env("HOME") + "/.config/hive"
 # Container runtime for containerized mode. Empty = auto-detect (docker, then
@@ -1687,7 +1687,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     readonly ENV_FILE="{{config_dir}}/contributor.env"
     readonly GH_AUTH_FILE="{{config_dir}}/gh-auth.env"
     # Published multi-arch image (.github/workflows/docker.yml build-contributor).
-    readonly IMAGE_REPO="ghcr.io/kubestellar/hive-contributor"
+    readonly IMAGE_REPO="ghcr.io/hivecommons/hive-contributor"
     # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.sh.
     readonly MODE_HEADLESS="headless"
     # Where the headless relay writes its coarse lifecycle state as JSON

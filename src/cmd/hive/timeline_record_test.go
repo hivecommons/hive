@@ -148,11 +148,11 @@ func TestTimelineRef(t *testing.T) {
 		number    int
 		want      string
 	}{
-		{"kubestellar", "kubestellar/hive", 7, "hive#7"},
-		{"kubestellar", "hive", 7, "hive#7"},
-		{"kubestellar", "otherorg/tool", 7, "otherorg/tool#7"},
+		{"hivecommons", "hivecommons/hive", 7, "hive#7"},
+		{"hivecommons", "hive", 7, "hive#7"},
+		{"hivecommons", "otherorg/tool", 7, "otherorg/tool#7"},
 		{"", "hive", 7, "hive#7"},
-		{"kubestellar", "", 7, ""},
+		{"hivecommons", "", 7, ""},
 	}
 	for _, c := range cases {
 		if got := timelineRef(c.org, c.repo, c.number); got != c.want {

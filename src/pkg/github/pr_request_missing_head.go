@@ -59,7 +59,7 @@ func (e *errMissingHead) Error() string {
 			e.repo, e.head)
 	}
 	return fmt.Sprintf(
-		"branch %q was never pushed to %s — the commits exist only in the agent's working copy. This is almost always a PUSH AUTHENTICATION failure, not a branch-creation problem: check (1) that the git credential helper is reachable from the agent's UID (`su -s /bin/sh hive-<agent> -c 'git config --get-regexp credential'` must list /usr/local/bin/git-credential-hive.sh; it is wired system-wide in /etc/gitconfig because agents do not share the dev user's $HOME — see kubestellar/hive#5343), and (2) that the agent's scoped token file ($HIVE_AGENT_TOKEN_CACHE) exists and is readable by that UID. Re-push the branch and this request succeeds on retry",
+		"branch %q was never pushed to %s — the commits exist only in the agent's working copy. This is almost always a PUSH AUTHENTICATION failure, not a branch-creation problem: check (1) that the git credential helper is reachable from the agent's UID (`su -s /bin/sh hive-<agent> -c 'git config --get-regexp credential'` must list /usr/local/bin/git-credential-hive.sh; it is wired system-wide in /etc/gitconfig because agents do not share the dev user's $HOME — see hivecommons/hive#5343), and (2) that the agent's scoped token file ($HIVE_AGENT_TOKEN_CACHE) exists and is readable by that UID. Re-push the branch and this request succeeds on retry",
 		e.head, e.repo)
 }
 

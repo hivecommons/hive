@@ -37,7 +37,7 @@ func reachBody(t *testing.T, n int) string {
 	if err != nil {
 		t.Fatalf("marshal reach report: %v", err)
 	}
-	return fmt.Sprintf(`{"hive_id":"h1","org":"kubestellar","component_reach":%s}`, data)
+	return fmt.Sprintf(`{"hive_id":"h1","org":"hivecommons","component_reach":%s}`, data)
 }
 
 // storedReach fetches the stored report for hive id from the registry.
@@ -171,7 +171,7 @@ func TestHeartbeatComponentReach_CarriedForwardWhenOmitted(t *testing.T) {
 	if rec := postHeartbeat(t, s, reachBody(t, 2)); rec.Code != http.StatusOK {
 		t.Fatalf("first heartbeat status = %d", rec.Code)
 	}
-	if rec := postHeartbeat(t, s, `{"hive_id":"h1","org":"kubestellar"}`); rec.Code != http.StatusOK {
+	if rec := postHeartbeat(t, s, `{"hive_id":"h1","org":"hivecommons"}`); rec.Code != http.StatusOK {
 		t.Fatalf("second heartbeat status = %d", rec.Code)
 	}
 

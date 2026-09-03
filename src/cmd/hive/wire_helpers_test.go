@@ -23,7 +23,7 @@ func TestBuildRepoActivityWireMapsEveryStat(t *testing.T) {
 	at := func(i int) string { return fmt.Sprintf("2026-08-26T04:0%d:00Z", i) }
 	in := []dashboard.RepoActivity{
 		{
-			Repo:       "kubestellar/hive",
+			Repo:       "hivecommons/hive",
 			Issues:     dashboard.ActivityActionStat{Count: 1, NewestAt: at(0)},
 			PRs:        dashboard.ActivityActionStat{Count: 2, NewestAt: at(1)},
 			Comments:   dashboard.ActivityActionStat{Count: 3, NewestAt: at(2)},
@@ -47,7 +47,7 @@ func TestBuildRepoActivityWireMapsEveryStat(t *testing.T) {
 	}
 
 	got := out[0]
-	if got.Repo != "kubestellar/hive" {
+	if got.Repo != "hivecommons/hive" {
 		t.Errorf("Repo = %q", got.Repo)
 	}
 	checks := []struct {

@@ -11,9 +11,9 @@ import (
 
 func boundObs(desired, observed int) Observation {
 	return Observation{
-		Subject: Subject{Repo: "kubestellar/hive", Number: 42},
+		Subject: Subject{Repo: "hivecommons/hive", Number: 42},
 		Outcome: &OutcomeStatus{
-			Key:                "default/kubestellar/hive@nightly-green",
+			Key:                "default/hivecommons/hive@nightly-green",
 			DesiredGeneration:  desired,
 			ObservedGeneration: observed,
 		},

@@ -22,13 +22,13 @@ func TestAdmissionStatus_DefaultOffProjectsNothing(t *testing.T) {
 }
 
 func TestAdmissionStatus_ShadowProjectsCopiedValues(t *testing.T) {
-	rec := Record{Ref: Ref{Project: "default", Repo: "kubestellar/hive", Outcome: "nightly-green"}, Generation: 2}
+	rec := Record{Ref: Ref{Project: "default", Repo: "hivecommons/hive", Outcome: "nightly-green"}, Generation: 2}
 	for _, mode := range []string{ModeShadow, " Shadow "} {
 		st := rec.AdmissionStatus(mode, 1)
 		if st == nil {
 			t.Fatalf("mode %q projected nothing", mode)
 		}
-		if st.Key != "default/kubestellar/hive@nightly-green" ||
+		if st.Key != "default/hivecommons/hive@nightly-green" ||
 			st.DesiredGeneration != 2 || st.ObservedGeneration != 1 {
 			t.Fatalf("projection = %+v", st)
 		}
@@ -41,7 +41,7 @@ func TestAdmissionStatus_ShadowProjectsCopiedValues(t *testing.T) {
 // candidate is byte-identically legacy.
 func TestAdmissionStatus_EndToEndThroughEvaluate(t *testing.T) {
 	l, _ := testLedger(t, Options{})
-	r := ref("default", "kubestellar/hive", "nightly-green")
+	r := ref("default", "hivecommons/hive", "nightly-green")
 	if _, err := l.Create(r, "g1", nil, maintainer); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestAdmissionStatus_EndToEndThroughEvaluate(t *testing.T) {
 	}
 	rec, _ := l.Get(r)
 
-	subject := convergence.Subject{Repo: "kubestellar/hive", Number: 42}
+	subject := convergence.Subject{Repo: "hivecommons/hive", Number: 42}
 
 	stale := convergence.Evaluate(convergence.Observation{
 		Subject: subject, Outcome: rec.AdmissionStatus(ModeShadow, 1),

@@ -15,13 +15,13 @@ func TestDispatchStateRoundTrip(t *testing.T) {
 	state := DispatchState{
 		GeneratedAt: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC),
 		Pending: []PendingReview{
-			{Repo: "kubestellar/hive", Number: 42, HeadSHA: testSHA, Perspective: PerspectiveSecurity, Agent: "sec-check"},
+			{Repo: "hivecommons/hive", Number: 42, HeadSHA: testSHA, Perspective: PerspectiveSecurity, Agent: "sec-check"},
 		},
 		Fixes: []PendingFix{
-			{Repo: "kubestellar/hive", Number: 42, HeadSHA: testSHA, Agent: "scanner", Attempts: 2},
+			{Repo: "hivecommons/hive", Number: 42, HeadSHA: testSHA, Agent: "scanner", Attempts: 2},
 		},
 		Human: []HumanReviewHold{
-			{Repo: "kubestellar/hive", Number: 43, HeadSHA: testSHA, Reason: "high severity finding"},
+			{Repo: "hivecommons/hive", Number: 43, HeadSHA: testSHA, Reason: "high severity finding"},
 		},
 	}
 	if err := WriteDispatchState(path, state); err != nil {
@@ -69,8 +69,8 @@ func TestWriteDispatchStateMkdirError(t *testing.T) {
 }
 
 func TestUpsertHuman(t *testing.T) {
-	first := HumanReviewHold{Repo: "kubestellar/hive", Number: 7, HeadSHA: testSHA, Reason: "initial"}
-	other := HumanReviewHold{Repo: "kubestellar/hive", Number: 8, HeadSHA: testSHA, Reason: "different PR"}
+	first := HumanReviewHold{Repo: "hivecommons/hive", Number: 7, HeadSHA: testSHA, Reason: "initial"}
+	other := HumanReviewHold{Repo: "hivecommons/hive", Number: 8, HeadSHA: testSHA, Reason: "different PR"}
 
 	items := upsertHuman(nil, first)
 	if len(items) != 1 || items[0].Reason != "initial" {
@@ -90,15 +90,15 @@ func TestUpsertHuman(t *testing.T) {
 
 func TestRemovePendingForHead(t *testing.T) {
 	pending := []PendingReview{
-		{Repo: "kubestellar/hive", Number: 5, HeadSHA: testSHA, Perspective: PerspectiveSecurity},
-		{Repo: "kubestellar/hive", Number: 5, HeadSHA: testSHA, Perspective: PerspectiveCorrectness},
-		{Repo: "kubestellar/hive", Number: 6, HeadSHA: testSHA, Perspective: PerspectiveSecurity},
+		{Repo: "hivecommons/hive", Number: 5, HeadSHA: testSHA, Perspective: PerspectiveSecurity},
+		{Repo: "hivecommons/hive", Number: 5, HeadSHA: testSHA, Perspective: PerspectiveCorrectness},
+		{Repo: "hivecommons/hive", Number: 6, HeadSHA: testSHA, Perspective: PerspectiveSecurity},
 	}
-	out := removePendingForHead(pending, PullRequest{Repo: "kubestellar/hive", Number: 5, HeadSHA: testSHA})
+	out := removePendingForHead(pending, PullRequest{Repo: "hivecommons/hive", Number: 5, HeadSHA: testSHA})
 	if len(out) != 1 || out[0].Number != 6 {
 		t.Errorf("removePendingForHead = %+v, want only PR 6", out)
 	}
-	out = removePendingForHead(out, PullRequest{Repo: "kubestellar/hive", Number: 99, HeadSHA: testSHA})
+	out = removePendingForHead(out, PullRequest{Repo: "hivecommons/hive", Number: 99, HeadSHA: testSHA})
 	if len(out) != 1 {
 		t.Errorf("non-matching PR must remove nothing, got %+v", out)
 	}

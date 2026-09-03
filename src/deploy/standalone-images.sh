@@ -25,7 +25,7 @@
 # src/docs/release-channels.md. Do NOT use `v2-latest`: it was the rolling tag
 # of the retired v2 branch. src/deploy/k8s/backup-cronjob.yaml already moved
 # off it for the same reason (#3709).
-HIVE_STANDALONE_IMAGE_HIVE="ghcr.io/kubestellar/hive:stable"
+HIVE_STANDALONE_IMAGE_HIVE="ghcr.io/hivecommons/hive:stable"
 
 # The authenticating gateway. Digest-pinned against floating-tag supply-chain
 # risk; refresh the tag and the digest together, as src/docker-compose.yaml

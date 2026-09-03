@@ -276,14 +276,14 @@ func TestMatchAllowsRealisticOperatorRuleWithinCostLimit(t *testing.T) {
 	engine, err := Compile([]Rule{{
 		Name:  "realistic",
 		Agent: "scanner",
-		Expr:  `event.repo.startsWith("kubestellar/") && event.title.matches("(?i).*(bug|fix|security).*") && event.labels.exists(l, l == "security")`,
+		Expr:  `event.repo.startsWith("hivecommons/") && event.title.matches("(?i).*(bug|fix|security).*") && event.labels.exists(l, l == "security")`,
 	}})
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
 	got := engine.Match(NormalizedEvent{
 		Kind:   KindIssueOpened,
-		Repo:   "kubestellar/hive",
+		Repo:   "hivecommons/hive",
 		Title:  "Security fix for CEL trigger limits",
 		Labels: []string{"help wanted", "security", "v4"},
 	})

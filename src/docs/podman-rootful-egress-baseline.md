@@ -36,7 +36,7 @@ weaker than the baseline on this configuration.
 | Network backend | netavark (bridge; the container has its own netns) |
 | cgroups | v2 |
 | Kernel / host | 7.1.4-200.fc44.x86_64, Aurora 44.20260815.1 (Kinoite), SELinux enforcing |
-| Image | `ghcr.io/kubestellar/hive:v4-latest`, digest `sha256:654d835632ab1e813a3157c901319056f85c62417cc63e95e2764ee29c94adfa` |
+| Image | `ghcr.io/hivecommons/hive:v4-latest`, digest `sha256:654d835632ab1e813a3157c901319056f85c62417cc63e95e2764ee29c94adfa` |
 | Architecture | `amd64` only |
 
 The image digest differs from the one the rootless spike recorded

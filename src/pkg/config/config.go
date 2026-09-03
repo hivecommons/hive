@@ -561,7 +561,7 @@ func (p *ProjectConfig) ForgeKind() string {
 
 // CheckoutRootFor returns the host-local checkout root for one monitored repo,
 // or "" when none is configured. repo may be a bare name ("hive") or an
-// org-qualified slug ("kubestellar/hive"); only the name portion is used, since
+// org-qualified slug ("hivecommons/hive"); only the name portion is used, since
 // CheckoutsDir is keyed by bare repo name.
 //
 // Returning "" is the no-op case and is deliberately the default: a hive that

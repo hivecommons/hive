@@ -83,7 +83,7 @@ Useful flags:
 
 | Flag | Use |
 | --- | --- |
-| `--image REF` | qualify a specific release image (default: the hive reference in `src/deploy/standalone-images.sh`, the #4206 source of truth — `ghcr.io/kubestellar/hive:stable` today) |
+| `--image REF` | qualify a specific release image (default: the hive reference in `src/deploy/standalone-images.sh`, the #4206 source of truth — `ghcr.io/hivecommons/hive:stable` today) |
 | `--store DIR` | pull into a throwaway store instead of the host's own |
 | `--fixture DIR` | parent directory for the throwaway fixture (default `$HOME`) |
 | `--skip-preflight` | do not run `bin/hive-podman-preflight-host.sh` |
@@ -214,7 +214,7 @@ One row per release. Paste the block the script prints.
 | _pre-release, first execution_ | 2026-08-20 | Fedora 44 (Aurora/Kinoite 44.20260815.1, ostree) | targeted | 7.1.4-200.fc44 | 5.8.4, rootless | **PASS** |
 
 The first row is the run that accompanied #4337, against
-`ghcr.io/kubestellar/hive:v4-latest`. Every check passed, including the
+`ghcr.io/hivecommons/hive:v4-latest`. Every check passed, including the
 enforcement control, and #4209's preflight detected Enforcing and changed
 nothing. Two things about it are worth carrying forward rather than reading as
 broader than they are:

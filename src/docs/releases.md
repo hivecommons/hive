@@ -393,7 +393,7 @@ end-to-end:
 - **The running binary's `--version` output does not yet say `v1.2.3` for a
   release build.** Because `tagged-release.yml` retags rather than rebuilds (by
   design — see "How a release is actually built"), the image GHCR now calls
-  `ghcr.io/kubestellar/hive:v1.2.3` still reports whatever `main.version`
+  `ghcr.io/hivecommons/hive:v1.2.3` still reports whatever `main.version`
   the original `docker.yml` build embedded, which today is always the
   `0.0.0-dev` fallback since `docker.yml` never passes `VERSION`. Closing
   this cleanly means either (a) teaching `docker.yml` to pass a

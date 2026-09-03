@@ -15,7 +15,7 @@
 #   latest — installs the vendor's current CLI release on the runner. A red
 #            here means vendor drift is incoming: the next pin bump will break,
 #            but shipped images still work.
-#   pinned — runs the suite inside ghcr.io/kubestellar/hive-contributor:latest,
+#   pinned — runs the suite inside ghcr.io/hivecommons/hive-contributor:latest,
 #            against the CLI versions hive actually ships. A red here means
 #            contributors are broken TODAY.
 #
@@ -70,12 +70,12 @@ jobs:
   smoke:
     # Forks have no model credentials; a scheduled run there would only
     # produce a permanently red workflow.
-    # Match BOTH homes: the repo is moving kubestellar/hive → hivecommons/hive
+    # Match BOTH homes: the repo is moving hivecommons/hive → hivecommons/hive
     # (split-consensus + CNCF Sandbox prep). An equality guard on the old name
     # would make this job skip SILENTLY on transfer day — smoke coverage gone
     # with no red anywhere. Both names listed explicitly (rather than
     # github.repository_owner) so forks still skip as before.
-    if: github.repository == 'kubestellar/hive' || github.repository == 'hivecommons/hive'
+    if: github.repository == 'hivecommons/hive' || github.repository == 'hivecommons/hive'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -138,7 +138,7 @@ jobs:
       # ── pinned lane: the CLI versions hive ships, inside the image ─────────
       - name: Pull the contributor image
         if: steps.scope.outputs.run == 'true' && matrix.lane == 'pinned'
-        run: podman pull ghcr.io/kubestellar/hive-contributor:latest
+        run: podman pull ghcr.io/hivecommons/hive-contributor:latest
 
       - name: Backend smoke (pinned ${{ matrix.backend }}, in-container)
         if: steps.scope.outputs.run == 'true' && matrix.lane == 'pinned'
@@ -153,7 +153,7 @@ jobs:
             -e HIVE_SMOKE_CLAUDE_CREDENTIALS_B64 \
             -e HIVE_SMOKE_CODEX_AUTH_B64 \
             -v "${GITHUB_WORKSPACE}:/opt/hive-src:ro,Z" \
-            ghcr.io/kubestellar/hive-contributor:latest \
+            ghcr.io/hivecommons/hive-contributor:latest \
             -lc 'bash /opt/hive-src/bin/test_backend_smoke.sh' |& tee smoke.log
 
       - name: Upload evidence

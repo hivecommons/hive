@@ -23,11 +23,11 @@ func newTestGitLab(t *testing.T, serverURL, org string) *gitLabForge {
 const cankedProjectJSON = `{
 	"id": 42,
 	"path": "hive",
-	"path_with_namespace": "kubestellar/hive",
-	"web_url": "https://gitlab.com/kubestellar/hive",
+	"path_with_namespace": "hivecommons/hive",
+	"web_url": "https://gitlab.com/hivecommons/hive",
 	"default_branch": "main",
 	"description": "Fleet automation",
-	"namespace": {"full_path": "kubestellar", "path": "kubestellar"}
+	"namespace": {"full_path": "hivecommons", "path": "hivecommons"}
 }`
 
 const cannedIssuesJSON = `[
@@ -36,7 +36,7 @@ const cannedIssuesJSON = `[
 		"title": "Fix the widget",
 		"state": "opened",
 		"labels": ["kind/bug", "priority/high"],
-		"web_url": "https://gitlab.com/kubestellar/hive/-/issues/7",
+		"web_url": "https://gitlab.com/hivecommons/hive/-/issues/7",
 		"created_at": "2026-07-01T12:00:00Z",
 		"author": {"username": "alice"},
 		"assignees": [{"username": "bob"}, {"username": "carol"}]
@@ -46,7 +46,7 @@ const cannedIssuesJSON = `[
 		"title": "Add docs",
 		"state": "opened",
 		"labels": [],
-		"web_url": "https://gitlab.com/kubestellar/hive/-/issues/8",
+		"web_url": "https://gitlab.com/hivecommons/hive/-/issues/8",
 		"created_at": "2026-07-02T09:30:00Z",
 		"author": {"username": "dave"},
 		"assignees": []
@@ -59,7 +59,7 @@ const cannedMRsJSON = `[
 		"title": "Implement forge abstraction",
 		"state": "opened",
 		"labels": ["enhancement"],
-		"web_url": "https://gitlab.com/kubestellar/hive/-/merge_requests/101",
+		"web_url": "https://gitlab.com/hivecommons/hive/-/merge_requests/101",
 		"created_at": "2026-07-05T08:00:00Z",
 		"draft": false,
 		"work_in_progress": false,
@@ -73,7 +73,7 @@ const cannedMRsJSON = `[
 		"title": "WIP: refactor",
 		"state": "opened",
 		"labels": [],
-		"web_url": "https://gitlab.com/kubestellar/hive/-/merge_requests/102",
+		"web_url": "https://gitlab.com/hivecommons/hive/-/merge_requests/102",
 		"created_at": "2026-07-06T10:15:00Z",
 		"draft": true,
 		"work_in_progress": true,
@@ -96,7 +96,7 @@ func TestGitLabGetRepo(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
 	repo, err := f.GetRepo(context.Background(), "hive")
 	if err != nil {
 		t.Fatalf("GetRepo: %v", err)
@@ -109,14 +109,14 @@ func TestGitLabGetRepo(t *testing.T) {
 	if !strings.Contains(gotPath, "/api/v4/projects/") {
 		t.Errorf("path = %q, want /api/v4/projects/...", gotPath)
 	}
-	if !strings.Contains(gotPath, "kubestellar%2Fhive") {
-		t.Errorf("path = %q, want URL-encoded kubestellar%%2Fhive", gotPath)
+	if !strings.Contains(gotPath, "hivecommons%2Fhive") {
+		t.Errorf("path = %q, want URL-encoded hivecommons%%2Fhive", gotPath)
 	}
 
-	if repo.FullName != "kubestellar/hive" {
+	if repo.FullName != "hivecommons/hive" {
 		t.Errorf("FullName = %q", repo.FullName)
 	}
-	if repo.Owner != "kubestellar" {
+	if repo.Owner != "hivecommons" {
 		t.Errorf("Owner = %q", repo.Owner)
 	}
 	if repo.Name != "hive" {
@@ -125,7 +125,7 @@ func TestGitLabGetRepo(t *testing.T) {
 	if repo.DefaultBranch != "main" {
 		t.Errorf("DefaultBranch = %q", repo.DefaultBranch)
 	}
-	if repo.URL != "https://gitlab.com/kubestellar/hive" {
+	if repo.URL != "https://gitlab.com/hivecommons/hive" {
 		t.Errorf("URL = %q", repo.URL)
 	}
 	if repo.Description != "Fleet automation" {
@@ -146,8 +146,8 @@ func TestGitLabListOpenIssues(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	issues, err := f.ListOpenIssues(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	issues, err := f.ListOpenIssues(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestGitLabListOpenIssues(t *testing.T) {
 	if len(i0.Assignees) != 2 || i0.Assignees[0] != "bob" {
 		t.Errorf("issue[0].Assignees = %v", i0.Assignees)
 	}
-	if i0.Repo != "kubestellar/hive" {
+	if i0.Repo != "hivecommons/hive" {
 		t.Errorf("issue[0].Repo = %q", i0.Repo)
 	}
 	if i0.CreatedAt.IsZero() {
@@ -198,8 +198,8 @@ func TestGitLabListOpenChangeRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	crs, err := f.ListOpenChangeRequests(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	crs, err := f.ListOpenChangeRequests(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenChangeRequests: %v", err)
 	}
@@ -248,8 +248,8 @@ func TestGitLabPagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	issues, err := f.ListOpenIssues(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	issues, err := f.ListOpenIssues(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestGitLabErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
 	_, err := f.GetRepo(context.Background(), "kubestellar/missing")
 	if err == nil {
 		t.Fatal("expected error for 404, got nil")
@@ -324,7 +324,7 @@ func TestGitLabAPIPathAppended(t *testing.T) {
 			_, _ = w.Write([]byte(cankedProjectJSON))
 		}))
 		// Point the adapter at the test server, optionally with a trailing slash.
-		f := newTestGitLab(t, srv.URL+base, "kubestellar")
+		f := newTestGitLab(t, srv.URL+base, "hivecommons")
 		if _, err := f.GetRepo(context.Background(), "hive"); err != nil {
 			srv.Close()
 			t.Fatalf("GetRepo (base suffix %q): %v", base, err)
@@ -378,18 +378,18 @@ func TestGitLabErrorStatuses(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := newTestGitLab(t, srv.URL, "kubestellar")
+			f := newTestGitLab(t, srv.URL, "hivecommons")
 			ctx := context.Background()
 
-			if _, err := f.GetRepo(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.GetRepo(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("GetRepo: expected error for status %d", status)
 			} else if !strings.Contains(err.Error(), strconv.Itoa(status)) {
 				t.Errorf("GetRepo error should mention %d: %v", status, err)
 			}
-			if _, err := f.ListOpenIssues(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenIssues(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenIssues: expected error for status %d", status)
 			}
-			if _, err := f.ListOpenChangeRequests(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenChangeRequests(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenChangeRequests: expected error for status %d", status)
 			}
 		})
@@ -413,21 +413,21 @@ func TestGitLabMalformedJSON(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := newTestGitLab(t, srv.URL, "kubestellar")
+			f := newTestGitLab(t, srv.URL, "hivecommons")
 			ctx := context.Background()
 
 			// GetRepo decodes an object; list ops decode arrays. "wrong type"
 			// (a valid object) only breaks the array decoders, so skip GetRepo
 			// there. Every other body must break all three.
 			if name != "wrong type" {
-				if _, err := f.GetRepo(ctx, "kubestellar/hive"); err == nil {
+				if _, err := f.GetRepo(ctx, "hivecommons/hive"); err == nil {
 					t.Errorf("GetRepo: expected decode error for %q body", name)
 				}
 			}
-			if _, err := f.ListOpenIssues(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenIssues(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenIssues: expected decode error for %q body", name)
 			}
-			if _, err := f.ListOpenChangeRequests(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenChangeRequests(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenChangeRequests: expected decode error for %q body", name)
 			}
 		})
@@ -455,8 +455,8 @@ func TestGitLabPaginationCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	issues, err := f.ListOpenIssues(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	issues, err := f.ListOpenIssues(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
@@ -480,8 +480,8 @@ func TestGitLabPaginationBadNextPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	issues, err := f.ListOpenIssues(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	issues, err := f.ListOpenIssues(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
@@ -542,8 +542,8 @@ func TestGitLabReadBodyError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	_, err := f.GetRepo(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	_, err := f.GetRepo(context.Background(), "hivecommons/hive")
 	if err == nil {
 		t.Fatal("expected read error for truncated body, got nil")
 	}
@@ -588,7 +588,7 @@ func TestGitLabTokenHeaderPresence(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f, err := newGitLabForge(tt.token, Options{BaseURL: srv.URL, Org: "kubestellar"})
+			f, err := newGitLabForge(tt.token, Options{BaseURL: srv.URL, Org: "hivecommons"})
 			if err != nil {
 				t.Fatalf("newGitLabForge: %v", err)
 			}
@@ -667,8 +667,8 @@ func TestGitLabTruncatedErrorBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
-	_, err := f.GetRepo(context.Background(), "kubestellar/hive")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	_, err := f.GetRepo(context.Background(), "hivecommons/hive")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -684,9 +684,9 @@ func TestGitLabProjectSlug(t *testing.T) {
 		repo string
 		want string
 	}{
-		{"bare name with org", "kubestellar", "hive", "kubestellar/hive"},
-		{"already namespaced", "kubestellar", "other/hive", "other/hive"},
-		{"nested namespace", "kubestellar", "group/sub/proj", "group/sub/proj"},
+		{"bare name with org", "hivecommons", "hive", "hivecommons/hive"},
+		{"already namespaced", "hivecommons", "other/hive", "other/hive"},
+		{"nested namespace", "hivecommons", "group/sub/proj", "group/sub/proj"},
 		{"bare name no org", "", "hive", "hive"},
 	}
 	for _, tt := range tests {
@@ -717,7 +717,7 @@ func TestGitLabCreateIssueComment(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
 	if err := f.CreateIssueComment(context.Background(), "hive", 7, "hello world"); err != nil {
 		t.Fatalf("CreateIssueComment: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestGitLabCreateIssueComment(t *testing.T) {
 	if gotCT != "application/json" {
 		t.Errorf("Content-Type = %q", gotCT)
 	}
-	if !strings.Contains(gotPath, "kubestellar%2Fhive/issues/7/notes") {
+	if !strings.Contains(gotPath, "hivecommons%2Fhive/issues/7/notes") {
 		t.Errorf("path = %q, want .../issues/7/notes", gotPath)
 	}
 	if !strings.Contains(gotBody, `"body":"hello world"`) {
@@ -754,7 +754,7 @@ func TestGitLabAddLabels(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
 
 	// Empty labels => no-op, no HTTP call.
 	if err := f.AddLabels(context.Background(), "hive", 7, nil); err != nil {
@@ -770,7 +770,7 @@ func TestGitLabAddLabels(t *testing.T) {
 	if gotMethod != http.MethodPut {
 		t.Errorf("method = %q, want PUT", gotMethod)
 	}
-	if !strings.Contains(gotPath, "kubestellar%2Fhive/issues/7") {
+	if !strings.Contains(gotPath, "hivecommons%2Fhive/issues/7") {
 		t.Errorf("path = %q", gotPath)
 	}
 	if !strings.Contains(gotBody, `"add_labels":"triage/accepted,kind/bug"`) {
@@ -790,7 +790,7 @@ func TestGitLabRemoveLabel(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
 	if err := f.RemoveLabel(context.Background(), "hive", 7, "hold"); err != nil {
 		t.Fatalf("RemoveLabel: %v", err)
 	}
@@ -814,7 +814,7 @@ func TestGitLabSetHold(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitLab(t, srv.URL, "kubestellar")
+	f := newTestGitLab(t, srv.URL, "hivecommons")
 
 	if err := f.SetHold(context.Background(), "hive", 7, true); err != nil {
 		t.Fatalf("SetHold(true): %v", err)
@@ -843,7 +843,7 @@ func TestGitLabWriteErrorStatus(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := newTestGitLab(t, srv.URL, "kubestellar")
+			f := newTestGitLab(t, srv.URL, "hivecommons")
 			ctx := context.Background()
 
 			if err := f.CreateIssueComment(ctx, "hive", 7, "x"); err == nil {
@@ -883,7 +883,7 @@ func TestGitLabWriteNoToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f, err := newGitLabForge("", Options{BaseURL: srv.URL, Org: "kubestellar"})
+	f, err := newGitLabForge("", Options{BaseURL: srv.URL, Org: "hivecommons"})
 	if err != nil {
 		t.Fatalf("newGitLabForge: %v", err)
 	}

@@ -23,6 +23,9 @@ func TestHandleSwitchBranchSuccess(t *testing.T) {
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "abc1234"}
 	latestSHAMu.Unlock()
+	oldSpokeImageExists := spokeImageExists
+	spokeImageExists = func(string, *slog.Logger) bool { return true }
+	t.Cleanup(func() { spokeImageExists = oldSpokeImageExists })
 
 	s := newHandlerHub2()
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}

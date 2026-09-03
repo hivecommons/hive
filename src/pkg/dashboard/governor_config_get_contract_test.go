@@ -160,7 +160,7 @@ func TestHandleGovernorConfigGet_ThresholdsExcludeIdleAndEffectiveThresholdsMatc
 
 func TestHandleGovernorConfigGet_ReposOrgQualifiesBareNamesOnly(t *testing.T) {
 	srv := newFullServer(t)
-	srv.deps.Config.Project.Org = "kubestellar"
+	srv.deps.Config.Project.Org = "hivecommons"
 	srv.deps.Config.Project.Repos = []string{"hive", "otherorg/already-qualified"}
 	srv.deps.Config.Project.PrimaryRepo = "hive"
 
@@ -174,7 +174,7 @@ func TestHandleGovernorConfigGet_ReposOrgQualifiesBareNamesOnly(t *testing.T) {
 	for _, v := range raw {
 		got = append(got, v.(string))
 	}
-	want := []string{"kubestellar/hive", "otherorg/already-qualified"}
+	want := []string{"hivecommons/hive", "otherorg/already-qualified"}
 	if len(got) != len(want) {
 		t.Fatalf("repos = %v, want %v", got, want)
 	}
@@ -190,14 +190,14 @@ func TestHandleGovernorConfigGet_ReposOrgQualifiesBareNamesOnly(t *testing.T) {
 		}
 	}
 
-	if got, want := result["primaryRepo"].(string), "kubestellar/hive"; got != want {
+	if got, want := result["primaryRepo"].(string), "hivecommons/hive"; got != want {
 		t.Errorf("primaryRepo = %q, want %q", got, want)
 	}
 }
 
 func TestHandleGovernorConfigGet_PrimaryRepoAlreadyQualifiedUnchangedAndEmptyStaysEmpty(t *testing.T) {
 	srv := newFullServer(t)
-	srv.deps.Config.Project.Org = "kubestellar"
+	srv.deps.Config.Project.Org = "hivecommons"
 	srv.deps.Config.Project.PrimaryRepo = "otherorg/already-qualified"
 
 	result := decodeGovernorConfigGet(t, srv)
@@ -206,7 +206,7 @@ func TestHandleGovernorConfigGet_PrimaryRepoAlreadyQualifiedUnchangedAndEmptySta
 	}
 
 	srv2 := newFullServer(t)
-	srv2.deps.Config.Project.Org = "kubestellar"
+	srv2.deps.Config.Project.Org = "hivecommons"
 	srv2.deps.Config.Project.PrimaryRepo = ""
 	result2 := decodeGovernorConfigGet(t, srv2)
 	if got := result2["primaryRepo"].(string); got != "" {

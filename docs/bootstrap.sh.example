@@ -5,7 +5,7 @@
 #
 # USAGE:
 #   # Interactive — bootstrap stops so you can edit config, then run hive supervisor yourself
-#   curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/main/bin/bootstrap.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/main/bin/bootstrap.sh | sudo bash
 #
 #   # Fully automated — pass config inline, supervisor starts immediately
 #   curl -fsSL .../bootstrap.sh | sudo bash -s -- \

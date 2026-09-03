@@ -53,7 +53,7 @@ const (
 // src/pkg/forge is a complete, tested adapter package with THREE implementations
 // (GitHub, GitLab, Gitea) and ZERO non-test importers:
 //
-//	$ grep -rn "kubestellar/hive/pkg/forge" --include="*.go" src/ \
+//	$ grep -rn "hivecommons/hive/pkg/forge" --include="*.go" src/ \
 //	    | grep -v _test | grep -v "^src/pkg/forge/"
 //	(no output)
 //

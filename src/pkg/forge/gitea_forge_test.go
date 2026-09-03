@@ -24,11 +24,11 @@ func newTestGitea(t *testing.T, serverURL, org string) *giteaForge {
 
 const giteaRepoJSON = `{
 	"name": "hive",
-	"full_name": "kubestellar/hive",
-	"html_url": "https://gitea.example.com/kubestellar/hive",
+	"full_name": "hivecommons/hive",
+	"html_url": "https://gitea.example.com/hivecommons/hive",
 	"default_branch": "main",
 	"description": "Fleet automation",
-	"owner": {"login": "kubestellar"}
+	"owner": {"login": "hivecommons"}
 }`
 
 const giteaIssuesJSON = `[
@@ -37,7 +37,7 @@ const giteaIssuesJSON = `[
 		"title": "Fix the widget",
 		"state": "open",
 		"labels": [{"name": "kind/bug"}, {"name": "priority/high"}],
-		"html_url": "https://gitea.example.com/kubestellar/hive/issues/7",
+		"html_url": "https://gitea.example.com/hivecommons/hive/issues/7",
 		"created_at": "2026-07-01T12:00:00Z",
 		"user": {"login": "alice"},
 		"assignees": [{"login": "bob"}, {"login": "carol"}]
@@ -47,7 +47,7 @@ const giteaIssuesJSON = `[
 		"title": "Add docs",
 		"state": "open",
 		"labels": [],
-		"html_url": "https://gitea.example.com/kubestellar/hive/issues/8",
+		"html_url": "https://gitea.example.com/hivecommons/hive/issues/8",
 		"created_at": "2026-07-02T09:30:00Z",
 		"user": {"login": "dave"},
 		"assignees": []
@@ -68,7 +68,7 @@ const giteaPullsJSON = `[
 		"title": "Implement forge abstraction",
 		"state": "open",
 		"labels": [{"name": "enhancement"}],
-		"html_url": "https://gitea.example.com/kubestellar/hive/pulls/101",
+		"html_url": "https://gitea.example.com/hivecommons/hive/pulls/101",
 		"created_at": "2026-07-05T08:00:00Z",
 		"draft": false,
 		"user": {"login": "frank"},
@@ -80,7 +80,7 @@ const giteaPullsJSON = `[
 		"title": "WIP refactor",
 		"state": "open",
 		"labels": [],
-		"html_url": "https://gitea.example.com/kubestellar/hive/pulls/102",
+		"html_url": "https://gitea.example.com/hivecommons/hive/pulls/102",
 		"created_at": "2026-07-06T10:15:00Z",
 		"draft": true,
 		"user": {"login": "grace"},
@@ -155,7 +155,7 @@ func TestGiteaGetRepo(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 	repo, err := f.GetRepo(context.Background(), "hive")
 	if err != nil {
 		t.Fatalf("GetRepo: %v", err)
@@ -163,10 +163,10 @@ func TestGiteaGetRepo(t *testing.T) {
 	if gotAuth != giteaTokenScheme+"test-token" {
 		t.Errorf("Authorization = %q, want %q", gotAuth, giteaTokenScheme+"test-token")
 	}
-	if !strings.HasPrefix(gotPath, giteaAPIPath+"/repos/kubestellar/hive") {
-		t.Errorf("path = %q, want %s/repos/kubestellar/hive", gotPath, giteaAPIPath)
+	if !strings.HasPrefix(gotPath, giteaAPIPath+"/repos/hivecommons/hive") {
+		t.Errorf("path = %q, want %s/repos/hivecommons/hive", gotPath, giteaAPIPath)
 	}
-	if repo.FullName != "kubestellar/hive" || repo.Owner != "kubestellar" || repo.Name != "hive" {
+	if repo.FullName != "hivecommons/hive" || repo.Owner != "hivecommons" || repo.Name != "hive" {
 		t.Errorf("repo = %+v", repo)
 	}
 	if repo.DefaultBranch != "main" || repo.URL == "" || repo.Description != "Fleet automation" {
@@ -206,12 +206,12 @@ func TestGiteaBareRepoUsesOrg(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 	if _, err := f.GetRepo(context.Background(), "hive"); err != nil {
 		t.Fatalf("GetRepo: %v", err)
 	}
-	if !strings.Contains(gotPath, "/repos/kubestellar/hive") {
-		t.Errorf("path = %q, want /repos/kubestellar/hive", gotPath)
+	if !strings.Contains(gotPath, "/repos/hivecommons/hive") {
+		t.Errorf("path = %q, want /repos/hivecommons/hive", gotPath)
 	}
 }
 
@@ -228,8 +228,8 @@ func TestGiteaListOpenIssues(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
-	issues, err := f.ListOpenIssues(context.Background(), "kubestellar/hive")
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	issues, err := f.ListOpenIssues(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestGiteaListOpenIssues(t *testing.T) {
 	if len(i0.Assignees) != 2 || i0.Assignees[0] != "bob" {
 		t.Errorf("issue[0].Assignees = %v", i0.Assignees)
 	}
-	if i0.Repo != "kubestellar/hive" {
+	if i0.Repo != "hivecommons/hive" {
 		t.Errorf("issue[0].Repo = %q", i0.Repo)
 	}
 	if i0.CreatedAt.IsZero() {
@@ -275,8 +275,8 @@ func TestGiteaListOpenChangeRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
-	crs, err := f.ListOpenChangeRequests(context.Background(), "kubestellar/hive")
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	crs, err := f.ListOpenChangeRequests(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenChangeRequests: %v", err)
 	}
@@ -322,8 +322,8 @@ func TestGiteaPagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
-	issues, err := f.ListOpenIssues(context.Background(), "kubestellar/hive")
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	issues, err := f.ListOpenIssues(context.Background(), "hivecommons/hive")
 	if err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
@@ -347,8 +347,8 @@ func TestGiteaPaginationCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
-	if _, err := f.ListOpenIssues(context.Background(), "kubestellar/hive"); err != nil {
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	if _, err := f.ListOpenIssues(context.Background(), "hivecommons/hive"); err != nil {
 		t.Fatalf("ListOpenIssues: %v", err)
 	}
 	if requests != giteaMaxPages {
@@ -367,17 +367,17 @@ func TestGiteaReadErrorStatuses(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := newTestGitea(t, srv.URL, "kubestellar")
+			f := newTestGitea(t, srv.URL, "hivecommons")
 			ctx := context.Background()
-			if _, err := f.GetRepo(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.GetRepo(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("GetRepo: expected error for %d", status)
 			} else if !strings.Contains(err.Error(), strconv.Itoa(status)) {
 				t.Errorf("GetRepo error should mention %d: %v", status, err)
 			}
-			if _, err := f.ListOpenIssues(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenIssues(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenIssues: expected error for %d", status)
 			}
-			if _, err := f.ListOpenChangeRequests(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenChangeRequests(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenChangeRequests: expected error for %d", status)
 			}
 		})
@@ -400,17 +400,17 @@ func TestGiteaMalformedJSON(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := newTestGitea(t, srv.URL, "kubestellar")
+			f := newTestGitea(t, srv.URL, "hivecommons")
 			ctx := context.Background()
 			if name != "wrong type" {
-				if _, err := f.GetRepo(ctx, "kubestellar/hive"); err == nil {
+				if _, err := f.GetRepo(ctx, "hivecommons/hive"); err == nil {
 					t.Errorf("GetRepo: expected decode error for %q", name)
 				}
 			}
-			if _, err := f.ListOpenIssues(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenIssues(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenIssues: expected decode error for %q", name)
 			}
-			if _, err := f.ListOpenChangeRequests(ctx, "kubestellar/hive"); err == nil {
+			if _, err := f.ListOpenChangeRequests(ctx, "hivecommons/hive"); err == nil {
 				t.Errorf("ListOpenChangeRequests: expected decode error for %q", name)
 			}
 		})
@@ -436,8 +436,8 @@ func TestGiteaReadBodyError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
-	_, err := f.GetRepo(context.Background(), "kubestellar/hive")
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	_, err := f.GetRepo(context.Background(), "hivecommons/hive")
 	if err == nil {
 		t.Fatal("expected read error for truncated body")
 	}
@@ -471,7 +471,7 @@ func TestGiteaCreateIssueComment(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 	if err := f.CreateIssueComment(context.Background(), "hive", 7, "hello"); err != nil {
 		t.Fatalf("CreateIssueComment: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestGiteaCreateIssueComment(t *testing.T) {
 	if gotCT != "application/json" {
 		t.Errorf("Content-Type = %q", gotCT)
 	}
-	if !strings.HasSuffix(gotPath, "/repos/kubestellar/hive/issues/7/comments") {
+	if !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/comments") {
 		t.Errorf("path = %q", gotPath)
 	}
 	if !strings.Contains(gotBody, `"body":"hello"`) {
@@ -505,7 +505,7 @@ func TestGiteaAddLabels(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 
 	// Empty labels => no-op.
 	if err := f.AddLabels(context.Background(), "hive", 7, nil); err != nil {
@@ -521,7 +521,7 @@ func TestGiteaAddLabels(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Errorf("method = %q, want POST", gotMethod)
 	}
-	if !strings.HasSuffix(gotPath, "/repos/kubestellar/hive/issues/7/labels") {
+	if !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels") {
 		t.Errorf("path = %q", gotPath)
 	}
 	// Verify the labels array round-trips.
@@ -544,14 +544,14 @@ func TestGiteaRemoveLabel(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 	if err := f.RemoveLabel(context.Background(), "hive", 7, "hold"); err != nil {
 		t.Fatalf("RemoveLabel: %v", err)
 	}
 	if gotMethod != http.MethodDelete {
 		t.Errorf("method = %q, want DELETE", gotMethod)
 	}
-	if !strings.HasSuffix(gotPath, "/repos/kubestellar/hive/issues/7/labels/hold") {
+	if !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels/hold") {
 		t.Errorf("path = %q", gotPath)
 	}
 }
@@ -565,7 +565,7 @@ func TestGiteaRemoveLabelNotFoundIsOK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 	if err := f.RemoveLabel(context.Background(), "hive", 7, "absent"); err != nil {
 		t.Errorf("RemoveLabel on 404 should be nil, got %v", err)
 	}
@@ -582,7 +582,7 @@ func TestGiteaSetHold(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := newTestGitea(t, srv.URL, "kubestellar")
+	f := newTestGitea(t, srv.URL, "hivecommons")
 
 	if err := f.SetHold(context.Background(), "hive", 7, true); err != nil {
 		t.Fatalf("SetHold(true): %v", err)
@@ -611,7 +611,7 @@ func TestGiteaWriteErrorStatuses(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			f := newTestGitea(t, srv.URL, "kubestellar")
+			f := newTestGitea(t, srv.URL, "hivecommons")
 			ctx := context.Background()
 			if err := f.CreateIssueComment(ctx, "hive", 7, "x"); err == nil {
 				t.Errorf("CreateIssueComment: expected error for %d", status)
@@ -650,7 +650,7 @@ func TestGiteaNoTokenNoAuthHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f, err := newGiteaForge("", Options{BaseURL: srv.URL, Org: "kubestellar"})
+	f, err := newGiteaForge("", Options{BaseURL: srv.URL, Org: "hivecommons"})
 	if err != nil {
 		t.Fatalf("newGiteaForge: %v", err)
 	}

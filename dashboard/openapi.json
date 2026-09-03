@@ -3072,7 +3072,7 @@
           "Agents"
         ],
         "summary": "Kick (message) an agent",
-        "description": "Queues a message/prompt for delivery to the agent's running session and returns immediately. If no prompt/message is given, an auto-generated message is built from the agent's last actionable item.\n\nASYNCHRONOUS (kubestellar/hive#5325). Delivery waits for the CLI's input prompt, which can take up to 120s and therefore used to outlive a typical 60s ingress idle timeout, making a proxy answer 504 for a kick that actually succeeded. Fast, deterministic preconditions (unknown agent, paused, stopped, missing tmux session) are still evaluated inline and still return 400. Everything slower runs in the background; poll GET /api/kick/{agent}/status for the delivery outcome.\n\nDelivery is exactly-once per agent: a second POST while a delivery is in flight is deduplicated and answers status \"in-flight\" without typing the prompt again.",
+        "description": "Queues a message/prompt for delivery to the agent's running session and returns immediately. If no prompt/message is given, an auto-generated message is built from the agent's last actionable item.\n\nASYNCHRONOUS (hivecommons/hive#5325). Delivery waits for the CLI's input prompt, which can take up to 120s and therefore used to outlive a typical 60s ingress idle timeout, making a proxy answer 504 for a kick that actually succeeded. Fast, deterministic preconditions (unknown agent, paused, stopped, missing tmux session) are still evaluated inline and still return 400. Everything slower runs in the background; poll GET /api/kick/{agent}/status for the delivery outcome.\n\nDelivery is exactly-once per agent: a second POST while a delivery is in flight is deduplicated and answers status \"in-flight\" without typing the prompt again.",
         "parameters": [
           {
             "name": "agent",
@@ -17358,7 +17358,7 @@
           "Agents"
         ],
         "summary": "Outcome of the most recent kick",
-        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (kubestellar/hive#5325). This is where kick success or failure is decided \u2014 POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
+        "description": "Read-only; any authenticated role. Reports whether the most recent asynchronous kick reached the agent's CLI (hivecommons/hive#5325). This is where kick success or failure is decided \u2014 POST /api/kick only promises the message was queued.\n\nWhile status is \"in-flight\" the outcome is INDETERMINATE: the prompt may still be delivered, and a client must not render it as a failure. \"unknown\" means no asynchronous kick has been dispatched for this agent in the current process lifetime, which is not an error.",
         "parameters": [
           {
             "name": "agent",

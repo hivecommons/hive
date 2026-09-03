@@ -295,7 +295,7 @@ test('#5652 relaunch reuses the entrypoint launch command instead of container d
 
 // --- agy pane classification: stale narration must not pin WORKING ---------
 //
-// Verbatim shape of a real wedged pane (kubestellar/hive): agy had finished the
+// Verbatim shape of a real wedged pane (hivecommons/hive): agy had finished the
 // turn and printed its no_work_needed verdict, and was sitting at its idle
 // prompt. One line of narration left over from the PREVIOUS task — "I am
 // running the pkg/agent tests…" — kept the whole-pane isWorking scan true, so
@@ -328,7 +328,7 @@ const AGY_WEDGED_PANE = [
 // box, and the footer padding, so it matched a regex that the real pane did
 // not. That is how the wedge below shipped green.
 const AGY_GEMINI_IDLE_PANE = [
-  '● Bash(gh pr create --repo kubestellar/hive ...)',
+  '● Bash(gh pr create --repo hivecommons/hive ...)',
   ...Array.from({ length: 20 }, (_, i) => `  completed test step ${i}`),
   '',
   '  • Opened https://github.com/foo/bar/pull/9 targeting v4.',
@@ -344,8 +344,8 @@ const AGY_GEMINI_IDLE_PANE = [
 // with "esc to cancel" on the footer line, so this must NOT read as idle: a
 // busy agent reported complete is the worse direction of this bug.
 const AGY_GEMINI_WORKING_PANE = [
-  '● Read(/home/dev/workspace/kubestellar/hive/.github/workflows/prune-ghcr.yml)',
-  '● Edit(/home/dev/workspace/kubestellar/hive/.github/workflows/prune-ghcr.yml) (ctrl+o to expand)',
+  '● Read(/home/dev/workspace/hivecommons/hive/.github/workflows/prune-ghcr.yml)',
+  '● Edit(/home/dev/workspace/hivecommons/hive/.github/workflows/prune-ghcr.yml) (ctrl+o to expand)',
   '⣷  Editing files...',
   '└ Tip: Use /diff to view uncommitted changes in your workspace.',
   '────────────────────────────────────────────',
@@ -595,7 +595,7 @@ test('agy idle pane with a closing rule under the input box is COMPLETE', () => 
 // turn as busy — and isWorking short-circuits before hasIdlePrompt is
 // consulted, so the idle chrome below never gets a vote.
 const AGY_DONE_SUMMARY_WITH_VERB = [
-  '  I have completed work on issue kubestellar/hive#4179 and submitted pull request kubestellar/hive#4181.',
+  '  I have completed work on issue hivecommons/hive#4179 and submitted pull request hivecommons/hive#4181.',
   '  ### Key Updates',
   '  • Docker Compose Quick Start: Updated commands across README.md and get-started.html.',
   '  • Environment file (.env): Replaced inline token export instructions with writing',
@@ -1171,7 +1171,7 @@ test('task_assign queues rather than typing when the CLI is not ready', () => {
   } finally { teardown(relay); }
 });
 
-test('task_assign never persists github_token to the task file (kubestellar/hive#5065)', () => {
+test('task_assign never persists github_token to the task file (hivecommons/hive#5065)', () => {
   const relay = loadRelay({ backend: 'copilot' });
   try {
     relay.setCliReady(false);
@@ -2043,7 +2043,7 @@ test('#5281 a failed send still spends the budget', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Multi-hub (kubestellar/hive#multi-hive) — one relay/CLI session subscribed
+// Multi-hub (hivecommons/hive#multi-hive) — one relay/CLI session subscribed
 // to more than one hub via comma-separated HIVE_HUB/HIVE_REGISTRATION_TOKEN.
 // ---------------------------------------------------------------------------
 
@@ -2548,7 +2548,7 @@ test('interactive mode still delivers via tmux send-keys (unchanged default path
 
 
 // Verbatim capture of a genuinely READY codex pane from a running
-// ghcr.io/kubestellar/hive-contributor container. Note what it does NOT
+// ghcr.io/hivecommons/hive-contributor container. Note what it does NOT
 // contain: no "codex>", no line ending in ">", and the banner says "OpenAI
 // Codex", not "Codex CLI". The pre-fix patterns matched none of it, so this
 // pane classified as 'starting' forever.
@@ -2618,7 +2618,7 @@ const AGY_LOGIN_PANE = [
 ].join('\n');
 
 const CODEX_COMPLETED_NO_WORK_PANE = [
-  '• Running GH_TOKEN=... gh issue view 4065 --repo kubestellar/hive',
+  '• Running GH_TOKEN=... gh issue view 4065 --repo hivecommons/hive',
   '',
   // Codex may leave many old tool rows above the completed turn.
   ...Array.from({ length: 20 }, (_, i) => `  checked upstream evidence ${i}`),
@@ -2807,7 +2807,7 @@ test('codex still reads as WORKING while activity is in the tail', () => {
       'HIVE_VERDICT: no_work_needed — an older, finished turn',
       '',
       '› ',
-      '• Running gh issue view 4066 --repo kubestellar/hive',
+      '• Running gh issue view 4066 --repo hivecommons/hive',
     ].join('\n');
     assert.strictEqual(
       relay.classifyTmuxPane(busy), relay.PANE_STATE_WORKING,
@@ -2946,7 +2946,7 @@ test('an ordinary task failure still re-advertises ready (skipReady is opt-in)',
   } finally { teardown(relay); }
 });
 
-// Multi-hub (kubestellar/hive#multi-hive) — one relay/CLI session subscribed
+// Multi-hub (hivecommons/hive#multi-hive) — one relay/CLI session subscribed
 // to more than one hub via comma-separated HIVE_HUB/HIVE_REGISTRATION_TOKEN.
 // ---------------------------------------------------------------------------
 
@@ -4130,12 +4130,12 @@ test('#4267 detectPRURL prefers the task repo and falls back to the first URL', 
 test('#4267 isGivenUp remembers a give-up and expires it after GIVE_UP_MEMORY_MS', () => {
   const relay = loadRelay({});
   try {
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#1'), false, 'unknown key');
-    relay.__setGivenUp('kubestellar/hive#1', Date.now());
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#1'), true, 'fresh give-up');
-    relay.__setGivenUp('kubestellar/hive#2', Date.now() - relay.GIVE_UP_MEMORY_MS - 1);
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#2'), false, 'stale give-up expires');
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#2'), false, 'and stays pruned');
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#1'), false, 'unknown key');
+    relay.__setGivenUp('hivecommons/hive#1', Date.now());
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#1'), true, 'fresh give-up');
+    relay.__setGivenUp('hivecommons/hive#2', Date.now() - relay.GIVE_UP_MEMORY_MS - 1);
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#2'), false, 'stale give-up expires');
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#2'), false, 'and stays pruned');
   } finally { teardown(relay); }
 });
 

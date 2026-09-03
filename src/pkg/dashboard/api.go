@@ -751,7 +751,7 @@ func (s *Server) commitsBehindStableTip(base, head string) (int, bool) {
 	if s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
 		return 0, false
 	}
-	count, err := s.deps.GHClient.CompareAheadBy(s.deps.Ctx, "kubestellar", "hive", base, head)
+	count, err := s.deps.GHClient.CompareAheadBy(s.deps.Ctx, "hivecommons", "hive", base, head)
 	if err != nil {
 		s.logger.Warn("failed to compare commits behind stable tip", "base", base, "head", head, "error", err)
 		return 0, false
@@ -798,7 +798,7 @@ func (s *Server) fetchRemoteHashForBranch(branch string) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("no context")
 	}
-	return s.deps.GHClient.LatestCommitHash(ctx, "kubestellar", "hive", branch)
+	return s.deps.GHClient.LatestCommitHash(ctx, "hivecommons", "hive", branch)
 }
 
 // fetchCommitMessage returns the first line of the commit message for a given SHA.
@@ -807,7 +807,7 @@ func (s *Server) fetchCommitMessage(sha string) string {
 	if s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
 		return ""
 	}
-	msg, err := s.deps.GHClient.CommitMessage(s.deps.Ctx, "kubestellar", "hive", sha)
+	msg, err := s.deps.GHClient.CommitMessage(s.deps.Ctx, "hivecommons", "hive", sha)
 	if err != nil {
 		s.logger.Warn("failed to fetch commit message", "sha", sha, "error", err)
 		return ""
@@ -815,7 +815,7 @@ func (s *Server) fetchCommitMessage(sha string) string {
 	return msg
 }
 
-// ghcrTagExistsCached checks whether a container tag exists on ghcr.io/kubestellar/hive,
+// ghcrTagExistsCached checks whether a container tag exists on ghcr.io/hivecommons/hive,
 // caching the result to avoid repeated network calls on each version poll.
 var (
 	ghcrCacheMu     sync.RWMutex
@@ -857,7 +857,7 @@ func ghcrTagExistsWithClient(client *http.Client, baseURL, tag string) bool {
 		client = &http.Client{Timeout: ghcrCheckTimeout}
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
-	tokenResp, err := client.Get(baseURL + "/token?scope=repository:kubestellar/hive:pull")
+	tokenResp, err := client.Get(baseURL + "/token?scope=repository:hivecommons/hive:pull")
 	if err != nil {
 		return false
 	}
@@ -869,7 +869,7 @@ func ghcrTagExistsWithClient(client *http.Client, baseURL, tag string) bool {
 		return false
 	}
 
-	manifestURL := fmt.Sprintf("%s/v2/kubestellar/hive/manifests/%s", baseURL, tag)
+	manifestURL := fmt.Sprintf("%s/v2/hivecommons/hive/manifests/%s", baseURL, tag)
 	req, _ := http.NewRequest("HEAD", manifestURL, nil)
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
 	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")

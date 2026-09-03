@@ -238,7 +238,7 @@ func TestApplyTopNSkipsVerifyForIssueRefs(t *testing.T) {
 	byAgent := map[string][]Finding{
 		"scanner": {
 			finding("scanner", "critical", "issue-ref", "gh-4581", 1),
-			finding("scanner", "critical", "inline-ref", "kubestellar/hive#3344", 2),
+			finding("scanner", "critical", "inline-ref", "hivecommons/hive#3344", 2),
 			finding("scanner", "critical", "no-ref", "", 3),
 			finding("scanner", "critical", "path-ref", "src/real.go", 4),
 		},
@@ -306,7 +306,7 @@ func TestBuildDigestRanksFreshOverStale(t *testing.T) {
 	d := BuildDigestFromBeads(map[string]*beads.Store{"quality": store}, "advisory", DigestOptions{
 		MaxFindings: 2,
 		VerifyPath:  verify,
-		Snapshot:    &Snapshot{Owner: "kubestellar", Repo: "hive", SHA: "deadbeef"},
+		Snapshot:    &Snapshot{Owner: "hivecommons", Repo: "hive", SHA: "deadbeef"},
 	})
 
 	if !d.Capped || d.OverflowCount != 2 {
@@ -338,7 +338,7 @@ func TestBuildDigestVerifiesPathsWhenUnderCap(t *testing.T) {
 	d := BuildDigestFromBeads(map[string]*beads.Store{"quality": store}, "advisory", DigestOptions{
 		MaxFindings: 10,
 		VerifyPath:  verify,
-		Snapshot:    &Snapshot{Owner: "kubestellar", Repo: "hive", SHA: "deadbeef"},
+		Snapshot:    &Snapshot{Owner: "hivecommons", Repo: "hive", SHA: "deadbeef"},
 	})
 
 	if d.Capped {

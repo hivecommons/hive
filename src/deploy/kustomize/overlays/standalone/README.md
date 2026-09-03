@@ -89,10 +89,10 @@ kubectl -n hive-inference rollout status deploy/vllm
 
 ## Pinning / upgrading the image
 
-The base tracks `ghcr.io/kubestellar/hive:stable`. Pin so that upgrades are
+The base tracks `ghcr.io/hivecommons/hive:stable`. Pin so that upgrades are
 deliberate — there is no hub to auto-upgrade a standalone hive.
 
-**Which tags actually exist on `ghcr.io/kubestellar/hive`:**
+**Which tags actually exist on `ghcr.io/hivecommons/hive`:**
 
 - Channel tags (`stable`, `candidate`, `edge`, `v4-latest`) and an immutable
   7-character short-SHA tag for every merge to `v4`. These are what `docker.yml`
@@ -101,16 +101,16 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
   [tagged-release workflow](../../../../docs/releases.md)
   (`.github/workflows/tagged-release.yml`), which retags the just-published short-SHA
   images with the version it cut. That workflow landed *after* the `v4.0.0`
-  **git** tag, so **there is no `ghcr.io/kubestellar/hive:v4.0.0` image** — a
+  **git** tag, so **there is no `ghcr.io/hivecommons/hive:v4.0.0` image** — a
   `newTag: v4.0.0` pin goes straight to `ImagePullBackOff`. Before pinning a
   version tag, confirm the image exists:
 
   ```bash
   # Anonymous pull token, then ask the registry for that tag's manifest.
-  TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:kubestellar/hive:pull" | jq -r .token)
+  TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:hivecommons/hive:pull" | jq -r .token)
   curl -sI -H "Authorization: Bearer $TOKEN" \
     -H "Accept: application/vnd.oci.image.index.v1+json" \
-    https://ghcr.io/v2/kubestellar/hive/manifests/v4.1.0 | head -1   # 200 = exists, 404 = not published
+    https://ghcr.io/v2/hivecommons/hive/manifests/v4.1.0 | head -1   # 200 = exists, 404 = not published
   ```
 
   Version tags that do exist are listed on the
@@ -122,25 +122,25 @@ channel you reviewed to its digest, then write it into `kustomization.yaml`
 (git-tracked) from this overlay directory:
 
 ```bash
-TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:kubestellar/hive:pull" | jq -r .token)
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:hivecommons/hive:pull" | jq -r .token)
 DIGEST=$(curl -sI -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
-  https://ghcr.io/v2/kubestellar/hive/manifests/stable \
+  https://ghcr.io/v2/hivecommons/hive/manifests/stable \
   | awk 'tolower($1)=="docker-content-digest:" {print $2}' | tr -d '\r')
 echo "$DIGEST"   # sha256:...
 
 kustomize edit set image \
-  ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive@"$DIGEST"
+  ghcr.io/hivecommons/hive=ghcr.io/hivecommons/hive@"$DIGEST"
 ```
 
-(`docker buildx imagetools inspect ghcr.io/kubestellar/hive:stable` or
-`crane digest ghcr.io/kubestellar/hive:stable` print the same digest if you
+(`docker buildx imagetools inspect ghcr.io/hivecommons/hive:stable` or
+`crane digest ghcr.io/hivecommons/hive:stable` print the same digest if you
 have those tools.)
 
 **Pin by version tag** — only once you have confirmed the tag exists as above:
 
 ```bash
-kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive:vX.Y.Z
+kustomize edit set image ghcr.io/hivecommons/hive=ghcr.io/hivecommons/hive:vX.Y.Z
 ```
 
 Either form writes an `images:` entry into `kustomization.yaml`. To upgrade,

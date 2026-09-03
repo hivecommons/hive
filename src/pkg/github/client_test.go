@@ -569,13 +569,13 @@ func TestIsExempt(t *testing.T) {
 
 func TestIssueResultFromItemsPinsGitHubSLAThreshold(t *testing.T) {
 	result := IssueResultFromItems([]Issue{
-		{Repo: "kubestellar/hive", Number: 1, AgeMinutes: slaThresholdMinutes},
-		{Repo: "kubestellar/hive", Number: 2, AgeMinutes: slaThresholdMinutes + 1},
+		{Repo: "hivecommons/hive", Number: 1, AgeMinutes: slaThresholdMinutes},
+		{Repo: "hivecommons/hive", Number: 2, AgeMinutes: slaThresholdMinutes + 1},
 	})
 	if result.Count != 2 || len(result.Items) != 2 {
 		t.Fatalf("summary count/items = %d/%d, want 2/2", result.Count, len(result.Items))
 	}
-	if result.Items[0].Repo != "kubestellar/hive" || result.Items[0].Number != 1 {
+	if result.Items[0].Repo != "hivecommons/hive" || result.Items[0].Number != 1 {
 		t.Fatalf("GitHub issue identity changed: %+v", result.Items[0])
 	}
 	if result.SLAViolations != 1 {
@@ -585,15 +585,15 @@ func TestIssueResultFromItemsPinsGitHubSLAThreshold(t *testing.T) {
 
 func TestFilterExemptIssuesPinsGitHubIdentityAndExemptRules(t *testing.T) {
 	items := []Issue{
-		{Repo: "kubestellar/hive", Number: 1, Labels: []string{"kind/bug"}},
-		{Repo: "kubestellar/hive", Number: 2, Labels: []string{"LFX"}},
-		{Repo: "kubestellar/hive", Number: 3, Labels: []string{"do-not-merge/hold"}},
+		{Repo: "hivecommons/hive", Number: 1, Labels: []string{"kind/bug"}},
+		{Repo: "hivecommons/hive", Number: 2, Labels: []string{"LFX"}},
+		{Repo: "hivecommons/hive", Number: 3, Labels: []string{"do-not-merge/hold"}},
 	}
 	got := FilterExemptIssues(items, []string{"LFX"})
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1: %+v", len(got), got)
 	}
-	if got[0].Repo != "kubestellar/hive" || got[0].Number != 1 {
+	if got[0].Repo != "hivecommons/hive" || got[0].Number != 1 {
 		t.Fatalf("GitHub issue identity changed: %+v", got[0])
 	}
 }

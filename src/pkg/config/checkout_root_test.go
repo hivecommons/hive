@@ -18,7 +18,7 @@ func TestCheckoutRootFor(t *testing.T) {
 		want string
 	}{
 		{"bare repo name", "/data/checkouts", "hive", filepath.Join("/data/checkouts", "hive")},
-		{"org-qualified slug uses name only", "/data/checkouts", "kubestellar/hive", filepath.Join("/data/checkouts", "hive")},
+		{"org-qualified slug uses name only", "/data/checkouts", "hivecommons/hive", filepath.Join("/data/checkouts", "hive")},
 		{"deep slug uses last segment", "/data/checkouts", "gitlab.com/group/sub/repo", filepath.Join("/data/checkouts", "repo")},
 		{"empty checkouts dir is a no-op", "", "hive", ""},
 		{"whitespace-only checkouts dir is a no-op", "   ", "hive", ""},
@@ -46,7 +46,7 @@ func TestCheckoutRootFor(t *testing.T) {
 // no-op sentinel — never a partial path the caller might join or stat.
 func TestCheckoutRootFor_NoOpIsEmptyString(t *testing.T) {
 	p := &ProjectConfig{}
-	if got := p.CheckoutRootFor("kubestellar/hive"); got != "" {
+	if got := p.CheckoutRootFor("hivecommons/hive"); got != "" {
 		t.Fatalf("unconfigured CheckoutRootFor = %q, want empty string", got)
 	}
 }

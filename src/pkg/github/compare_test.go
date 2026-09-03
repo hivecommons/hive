@@ -11,14 +11,14 @@ import (
 
 func TestCompareAheadBy(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kubestellar/hive/compare/base111...head999", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/compare/base111...head999", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ahead_by": 4})
 	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	c := NewClientForTest(ts.URL, "kubestellar", []string{"hive"}, slog.Default())
-	got, err := c.CompareAheadBy(context.Background(), "kubestellar", "hive", "base111", "head999")
+	c := NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, slog.Default())
+	got, err := c.CompareAheadBy(context.Background(), "hivecommons", "hive", "base111", "head999")
 	if err != nil {
 		t.Fatalf("CompareAheadBy: %v", err)
 	}

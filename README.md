@@ -170,7 +170,7 @@ HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh
 
 # Pull before starting. The generated ExecStart pulls a missing image itself and
 # that pull is spent inside TimeoutStartSec; the Hive image is ~3.8GB.
-podman pull ghcr.io/kubestellar/hive:stable
+podman pull ghcr.io/hivecommons/hive:stable
 
 # All four Quadlet units — the gateway will not generate without the network it
 # names — plus the plain units that wire the stack to boot (#4478).
@@ -236,7 +236,7 @@ To build from source instead of pulling the pre-built image, build and tag it
 under the name the unit already names, then start as above:
 
 ```bash
-podman build -t ghcr.io/kubestellar/hive:stable -f src/Dockerfile .
+podman build -t ghcr.io/hivecommons/hive:stable -f src/Dockerfile .
 ```
 
 Full install detail — unit search paths, the traps behind each step above, boot

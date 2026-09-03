@@ -81,7 +81,7 @@ OUT="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" just contribute
 contains "emits a Deployment"                 "$OUT" "kind: Deployment"
 contains "workload runs headless (#2660)"     "$OUT" "CONTRIBUTOR_MODE: \"headless\""
 contains "status file env for the probe"      "$OUT" "HIVE_HEADLESS_STATUS_FILE:"
-contains "uses the published contributor image" "$OUT" "image: ghcr.io/kubestellar/hive-contributor:v4"
+contains "uses the published contributor image" "$OUT" "image: ghcr.io/hivecommons/hive-contributor:v4"
 contains "wires the ConfigMap via envFrom"    "$OUT" "configMapRef:"
 contains "wires the Secret via secretRef"     "$OUT" "secretRef:"
 contains "has a readiness probe"              "$OUT" "readinessProbe:"
@@ -207,7 +207,7 @@ fi
 
 # ── Image pinning via the 3rd argument. ──
 PINNED="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" just contribute-k8s hive-contributor "" abc1234 2>/dev/null)"
-contains "3rd arg pins the image tag" "$PINNED" "image: ghcr.io/kubestellar/hive-contributor:abc1234"
+contains "3rd arg pins the image tag" "$PINNED" "image: ghcr.io/hivecommons/hive-contributor:abc1234"
 
 echo
 echo "=== $PASS passed, $FAIL failed ==="

@@ -47,7 +47,7 @@ func TestUpgradeSelfToSHA_SelfImageError_FallsBackToRestart(t *testing.T) {
 }
 
 func TestUpgradeSelfToSHA_PinnedAlreadyOnTarget(t *testing.T) {
-	const currentImage = "ghcr.io/kubestellar/hive:abc1234"
+	const currentImage = "ghcr.io/hivecommons/hive:abc1234"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// GET returns deployment with image already at target
 		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + currentImage + `"}]}}}}`))
@@ -66,7 +66,7 @@ func TestUpgradeSelfToSHA_PinnedAlreadyOnTarget(t *testing.T) {
 
 func TestUpgradeSelfToSHA_PinnedNoColon_FallsBackToRestart(t *testing.T) {
 	// An image with no colon (no tag) can't be split — returns needsRestart=true.
-	const currentImage = "ghcr.io/kubestellar/hive"
+	const currentImage = "ghcr.io/hivecommons/hive"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + currentImage + `"}]}}}}`))
 	}))
@@ -87,7 +87,7 @@ func TestUpgradeSelfToSHA_PinnedSwitchFails_ErrorSurfaced(t *testing.T) {
 	// surface (not be swallowed).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:oldsha"}]}}}}`))
+			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:oldsha"}]}}}}`))
 			return
 		}
 		// PATCH fails
@@ -111,7 +111,7 @@ func TestUpgradeSelfToSHA_PinnedSwitchFails_ErrorSurfaced(t *testing.T) {
 
 func TestUpgradeSelfMutableToSHA_EmptyTarget_FallsBackToRestart(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:v2-latest"}]}}}}`))
+		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:v2-latest"}]}}}}`))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
@@ -128,7 +128,7 @@ func TestUpgradeSelfMutableToSHA_EmptyTarget_FallsBackToRestart(t *testing.T) {
 func TestUpgradeSelfMutableToSHA_NamespaceFileMissing_FallsBackToRestart(t *testing.T) {
 	// upgradeSelfMutableToSHA reads k8sNamespacePath a SECOND time (independently
 	// of selfDeploymentImage). If that read fails, it falls back to restart.
-	const currentImage = "ghcr.io/kubestellar/hive:v2-latest"
+	const currentImage = "ghcr.io/hivecommons/hive:v2-latest"
 
 	// We need the GET to succeed (so selfDeploymentImage works) but the
 	// second namespace read inside upgradeSelfMutableToSHA to fail.
@@ -191,7 +191,7 @@ func TestUpgradeSelfMutableToSHA_EmptyNamespace_FallsBackToRestart(t *testing.T)
 	k8sNamespacePath = nsPath
 	defer func() { k8sNamespacePath = oldNS }()
 
-	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest", "target1")
+	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/hivecommons/hive:v2-latest", "target1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,14 +271,14 @@ func TestSelfDeploymentImageCached(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:v2-latest"}]}}}}`))
+		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:v2-latest"}]}}}}`))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
 	// First call should hit the server.
 	img := SelfDeploymentImage()
-	if img != "ghcr.io/kubestellar/hive:v2-latest" {
+	if img != "ghcr.io/hivecommons/hive:v2-latest" {
 		t.Fatalf("first call: got %q", img)
 	}
 	if hits != 1 {
@@ -371,7 +371,7 @@ func TestSwitchImageSelf_PatchFails(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	err := SwitchImageSelf(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest")
+	err := SwitchImageSelf(slog.Default(), "ghcr.io/hivecommons/hive:v2-latest")
 	if err == nil {
 		t.Fatal("expected error when PATCH fails")
 	}
@@ -390,7 +390,7 @@ func TestSwitchImageSelf_EmptyNamespaceContent(t *testing.T) {
 	k8sNamespacePath = nsPath
 	defer func() { k8sNamespacePath = oldNS }()
 
-	err := SwitchImageSelf(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest")
+	err := SwitchImageSelf(slog.Default(), "ghcr.io/hivecommons/hive:v2-latest")
 	if err == nil {
 		t.Fatal("expected error when namespace is empty")
 	}
@@ -407,7 +407,7 @@ func TestSwitchImageSelf_GetFails(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	err := SwitchImageSelf(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest")
+	err := SwitchImageSelf(slog.Default(), "ghcr.io/hivecommons/hive:v2-latest")
 	if err == nil {
 		t.Fatal("expected error when GET deployment fails")
 	}
@@ -432,7 +432,7 @@ func TestUpgradeSelfMutableToSHA_DirectCall_Success(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/kubestellar/hive:mk-latest", "deadbeef")
+	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/hivecommons/hive:mk-latest", "deadbeef")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -36,12 +36,12 @@ func TestTaskDescOfRendersGitHubWorkLikeItsPickup(t *testing.T) {
 	task := &WSTaskAssign{
 		TaskID: "t-1",
 		Kind:   "issue",
-		Repo:   "kubestellar/hive",
+		Repo:   "hivecommons/hive",
 		Number: 5061,
 		Title:  "✨ tui T12: poll loop",
 	}
 	got := taskDescOf(task)
-	want := "issue kubestellar/hive#5061: ✨ tui T12: poll loop"
+	want := "issue hivecommons/hive#5061: ✨ tui T12: poll loop"
 	if got != want {
 		t.Errorf("taskDescOf() = %q, want %q (the same shape as the picked-up entry)", got, want)
 	}
@@ -83,7 +83,7 @@ func TestTaskDescOfUsesSourceAwareIdentity(t *testing.T) {
 // have no work item behind them. A pr-review sweep carries no canonical key at
 // all — not merely no number — and its task id is all it has ever had.
 func TestTaskDescOfHandlesSyntheticAndNilTasks(t *testing.T) {
-	synthetic := &WSTaskAssign{TaskID: "pr-review-1730", Kind: "review", Repo: "kubestellar/hive"}
+	synthetic := &WSTaskAssign{TaskID: "pr-review-1730", Kind: "review", Repo: "hivecommons/hive"}
 	if got := taskDescOf(synthetic); got != "pr-review-1730" {
 		t.Errorf("a synthetic task should fall back to its id, got %q", got)
 	}

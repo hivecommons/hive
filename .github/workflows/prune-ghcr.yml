@@ -70,7 +70,7 @@ jobs:
           # Live branch names -> their sanitized tag form (/ -> -), the same
           # transform the docker workflow applies to build <branch>-latest.
           mapfile -t BRANCHES < <(
-            gh api --paginate /repos/kubestellar/hive/branches --jq '.[].name'
+            gh api --paginate /repos/hivecommons/hive/branches --jq '.[].name'
           )
           declare -A LIVE
           for b in "${BRANCHES[@]}"; do LIVE["${b//\//-}"]=1; done

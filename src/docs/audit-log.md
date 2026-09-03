@@ -38,7 +38,7 @@ object. It is built by `InvocationMeta.AuditDetail` from a generic pair list, so
 **the keys present vary by action** and there is no typed accessor.
 
 ```
-repo=kubestellar/hive, number=4911, agent=guide, backend=copilot
+repo=hivecommons/hive, number=4911, agent=guide, backend=copilot
 ```
 
 Consequences worth knowing before you build on it:

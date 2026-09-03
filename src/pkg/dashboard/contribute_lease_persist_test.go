@@ -36,9 +36,9 @@ func persistHub(t *testing.T, leasesPath string) *ContributeWSHub {
 			"clanker-7": {
 				identity:  "clanker-7",
 				taskID:    "task-5681",
-				repo:      "kubestellar/hive",
+				repo:      "hivecommons/hive",
 				number:    5681,
-				key:       "kubestellar/hive#5681",
+				key:       "hivecommons/hive#5681",
 				tier:      "C4",
 				gen:       3,
 				expiresAt: time.Now().Add(30 * time.Minute),
@@ -104,7 +104,7 @@ func TestLeasePersist_ExpiredLeaseNeverWritten(t *testing.T) {
 	h.leases["expired-1"] = &taskLease{
 		identity:  "expired-1",
 		taskID:    "task-old",
-		repo:      "kubestellar/hive",
+		repo:      "hivecommons/hive",
 		number:    1,
 		gen:       1,
 		expiresAt: time.Now().Add(-time.Minute),
@@ -212,8 +212,8 @@ func TestLeasePersist_SaveThenLoadRestoresLease(t *testing.T) {
 	if !lease.restored {
 		t.Error("round-tripped lease not marked restored")
 	}
-	if lease.gen != 3 || lease.taskID != "task-5681" || lease.key != "kubestellar/hive#5681" {
-		t.Errorf("restored lease = %+v, want gen=3 taskID=task-5681 key=kubestellar/hive#5681", lease)
+	if lease.gen != 3 || lease.taskID != "task-5681" || lease.key != "hivecommons/hive#5681" {
+		t.Errorf("restored lease = %+v, want gen=3 taskID=task-5681 key=hivecommons/hive#5681", lease)
 	}
 	if got := h2.taskGen.Load(); got < 3 {
 		t.Errorf("taskGen = %d after restore, want >= 3 so new assignments cannot alias restored gens", got)

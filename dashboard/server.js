@@ -3108,7 +3108,7 @@ app.post('/api/hives/onboard', (req, res) => {
 
 services:
   hive:
-    image: ghcr.io/kubestellar/hive:latest
+    image: ghcr.io/hivecommons/hive:latest
     container_name: ${project_name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-hive
     restart: unless-stopped
     ports:

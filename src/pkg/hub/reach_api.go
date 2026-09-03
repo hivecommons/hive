@@ -30,7 +30,7 @@ import (
 // reachRepoOwner / reachRepoName pin the repo the reach join is defined
 // over — the same repo commit_order.go compares against.
 const (
-	reachRepoOwner = "kubestellar"
+	reachRepoOwner = "hivecommons"
 	reachRepoName  = "hive"
 )
 

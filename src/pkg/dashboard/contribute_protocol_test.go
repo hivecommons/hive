@@ -576,7 +576,7 @@ func TestSelectionPathsDoNotReadDeclaredCapabilities(t *testing.T) {
 		}
 		if strings.Contains(strings.ToLower(body), "capabilit") {
 			t.Errorf("%s references the client-declared capability map — ROUTE is intentionally "+
-				"NOT implemented (kubestellar/hive#2547 DECLARE/ROUTE split). If routing has now been "+
+				"NOT implemented (hivecommons/hive#2547 DECLARE/ROUTE split). If routing has now been "+
 				"decided and recorded by a maintainer, update this test in that same PR; otherwise "+
 				"remove the read.", name)
 		}

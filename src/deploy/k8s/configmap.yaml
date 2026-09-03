@@ -8,7 +8,7 @@ metadata:
 data:
   hive.yaml: |
     project:
-      org: kubestellar
+      org: hivecommons
       repos:
         - console
         - docs

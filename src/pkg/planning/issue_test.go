@@ -41,8 +41,8 @@ func TestIssueRef(t *testing.T) {
 		issue github.Issue
 		want  string
 	}{
-		{"repo+number", github.Issue{Repo: "kubestellar/hive", Number: 42}, "gh-kubestellar/hive#42"},
-		{"number zero falls to url", github.Issue{Repo: "kubestellar/hive", Number: 0, URL: "https://x/1"}, "https://x/1"},
+		{"repo+number", github.Issue{Repo: "hivecommons/hive", Number: 42}, "gh-hivecommons/hive#42"},
+		{"number zero falls to url", github.Issue{Repo: "hivecommons/hive", Number: 0, URL: "https://x/1"}, "https://x/1"},
 		{"no repo falls to url", github.Issue{Number: 42, URL: "https://x/2"}, "https://x/2"},
 		{"nothing", github.Issue{}, ""},
 		{"whitespace repo", github.Issue{Repo: "  ", Number: 5, URL: "https://x/3"}, "https://x/3"},
@@ -59,7 +59,7 @@ func TestIssueRef(t *testing.T) {
 func TestEpicFromIssue_CreatesEpic(t *testing.T) {
 	store := newStore(t)
 	issue := github.Issue{
-		Repo:   "kubestellar/hive",
+		Repo:   "hivecommons/hive",
 		Number: 7,
 		Title:  "Add planning intelligence phase 4",
 		URL:    "https://github.com/hivecommons/hive/issues/7",
@@ -76,7 +76,7 @@ func TestEpicFromIssue_CreatesEpic(t *testing.T) {
 	if epic.Title != issue.Title {
 		t.Errorf("title = %q", epic.Title)
 	}
-	if epic.ExternalRef != "gh-kubestellar/hive#7" {
+	if epic.ExternalRef != "gh-hivecommons/hive#7" {
 		t.Errorf("external ref = %q", epic.ExternalRef)
 	}
 	if epic.Notes != "Detailed body describing the work." {
@@ -85,7 +85,7 @@ func TestEpicFromIssue_CreatesEpic(t *testing.T) {
 	if epic.Meta(MetaSource) != SourceGitHubIssue {
 		t.Errorf("source meta = %q", epic.Meta(MetaSource))
 	}
-	if epic.Meta(MetaIssueRepo) != "kubestellar/hive" {
+	if epic.Meta(MetaIssueRepo) != "hivecommons/hive" {
 		t.Errorf("issue_repo = %q", epic.Meta(MetaIssueRepo))
 	}
 	if epic.Meta(MetaIssueNumber) != "7" {

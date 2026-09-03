@@ -158,7 +158,7 @@ both `status` and `autoupdate status` flag the combination when it exists.
 There is a worse case. If the pinned digest stops resolving in the registry —
 garbage-collected, or pinned across repositories, which #4378's own failure run
 did when it pinned `docker.io/library/nginx@sha256:…` onto a unit whose tag is
-`ghcr.io/kubestellar/hive:stable` — auto-update does not skip it:
+`ghcr.io/hivecommons/hive:stable` — auto-update does not skip it:
 
 ```
 hivefixture.service  0fd250ba7b08  localhost:5000/hivefixture@sha256:3775a702…  registry  failed
@@ -231,7 +231,7 @@ retries) and let the bad tag be fixed upstream:
 
 ```sh
 bin/hive-podman-update.sh autoupdate off
-bin/hive-podman-update.sh pin ghcr.io/kubestellar/hive@sha256:<last good>
+bin/hive-podman-update.sh pin ghcr.io/hivecommons/hive@sha256:<last good>
 ```
 
 ## Rootful, under the system manager

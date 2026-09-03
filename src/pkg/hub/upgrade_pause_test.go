@@ -300,7 +300,7 @@ func TestSpokePauseBlocksTrackedChannelReArm(t *testing.T) {
 	s.registry.Hives = []RegistryEntry{{ID: "h1"}}
 
 	pauseSpokes(t, s, true)
-	rec := postHeartbeat(t, s, `{"hive_id":"h1","image_ref":"ghcr.io/kubestellar/hive:v4-latest"}`)
+	rec := postHeartbeat(t, s, `{"hive_id":"h1","image_ref":"ghcr.io/hivecommons/hive:v4-latest"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -316,7 +316,7 @@ func TestSpokePauseBlocksTrackedChannelReArm(t *testing.T) {
 
 	// POSITIVE CONTROL: resumed, the drift re-arms and instructs the channel.
 	pauseSpokes(t, s, false)
-	rec = postHeartbeat(t, s, `{"hive_id":"h1","image_ref":"ghcr.io/kubestellar/hive:v4-latest"}`)
+	rec = postHeartbeat(t, s, `{"hive_id":"h1","image_ref":"ghcr.io/hivecommons/hive:v4-latest"}`)
 	s.mu.RLock()
 	armed = s.heartbeatSwitchTag["h1"]
 	s.mu.RUnlock()

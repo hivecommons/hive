@@ -26,7 +26,7 @@ import (
 func promptFor(t *testing.T, hubBranch, title string) string {
 	t.Helper()
 	withGitBranch(t, hubBranch)
-	return buildTaskPrompt("kubestellar/hive", 101, title)
+	return buildTaskPrompt("hivecommons/hive", 101, title)
 }
 
 // TestBuildTaskPrompt_NamesTheBaseBranch is the core assertion: the prompt has
@@ -109,7 +109,7 @@ func TestBuildTaskPrompt_UnknownBuildBranchFallsBack(t *testing.T) {
 // leave the agent to inherit one — a silent wrong base is precisely the failure
 // this change exists to remove — so it names the substitute instead.
 func TestBuildTaskPromptBody_UnresolvedBaseStillForbidsInheritance(t *testing.T) {
-	prompt := buildTaskPromptBody("kubestellar/hive", "kubestellar/hive#101", "a title", "", "")
+	prompt := buildTaskPromptBody("hivecommons/hive", "hivecommons/hive#101", "a title", "", "")
 
 	if !strings.Contains(prompt, "Do not assume the branch the checkout is currently on") {
 		t.Errorf("prompt with no resolvable base must still forbid inheriting one; got: %q", prompt)

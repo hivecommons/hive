@@ -20,7 +20,7 @@ import (
 // beats blanked org/primaryRepo/repos: the public-directory row lost its repo
 // link (contributors had nothing to contribute to) and the hive rendered as
 // "org/" until the next full collect landed. Observed live on the
-// kubestellar/hive spoke, which auto-upgrades several times a day.
+// hivecommons/hive spoke, which auto-upgrades several times a day.
 
 // degradedCarryTestServer isolates the SaaS store and registry on disk and
 // returns a hub server with no bearer requirement, mirroring the other
@@ -71,8 +71,8 @@ func TestHeartbeatUpgradingBeatCarriesProjectIdentityForward(t *testing.T) {
 	srv := degradedCarryTestServer(t)
 	const hiveID = "carry-upgrading-hive"
 
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","primary_repo":"hive","repos":["hive"]}`)
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","upgrading":true,"git_hash":"abc1234"}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"]}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","upgrading":true,"git_hash":"abc1234"}`)
 
 	entry := registryEntryByID(t, srv, hiveID)
 	if entry.PrimaryRepo != "hive" {
@@ -81,8 +81,8 @@ func TestHeartbeatUpgradingBeatCarriesProjectIdentityForward(t *testing.T) {
 	if len(entry.Repos) != 1 || entry.Repos[0] != "hive" {
 		t.Errorf("Repos = %v after upgrading beat, want [hive] carried forward", entry.Repos)
 	}
-	if entry.Name != "kubestellar/hive" {
-		t.Errorf("Name = %q after upgrading beat, want %q — the name must be recomputed from the carried fields, not the payload's empty ones", entry.Name, "kubestellar/hive")
+	if entry.Name != "hivecommons/hive" {
+		t.Errorf("Name = %q after upgrading beat, want %q — the name must be recomputed from the carried fields, not the payload's empty ones", entry.Name, "hivecommons/hive")
 	}
 	if !entry.Upgrading {
 		t.Error("Upgrading = false; the carry-forward must not eat the beat's actual upgrade signal")
@@ -96,15 +96,15 @@ func TestHeartbeatStatsStaleBeatCarriesProjectIdentityForward(t *testing.T) {
 	srv := degradedCarryTestServer(t)
 	const hiveID = "carry-minimal-hive"
 
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","primary_repo":"hive","repos":["hive"]}`)
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","stats_stale":true}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"]}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","stats_stale":true}`)
 
 	entry := registryEntryByID(t, srv, hiveID)
 	if entry.PrimaryRepo != "hive" || len(entry.Repos) != 1 {
 		t.Errorf("after stats_stale beat PrimaryRepo = %q, Repos = %v; want hive/[hive] carried forward", entry.PrimaryRepo, entry.Repos)
 	}
-	if entry.Name != "kubestellar/hive" {
-		t.Errorf("Name = %q, want kubestellar/hive", entry.Name)
+	if entry.Name != "hivecommons/hive" {
+		t.Errorf("Name = %q, want hivecommons/hive", entry.Name)
 	}
 }
 
@@ -115,18 +115,18 @@ func TestHeartbeatUpgradeFailedBeatCarriesOrgForward(t *testing.T) {
 	srv := degradedCarryTestServer(t)
 	const hiveID = "carry-upgradefailed-hive"
 
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","primary_repo":"hive","repos":["hive"]}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"]}`)
 	postBeat(t, srv, `{"hive_id":"`+hiveID+`","upgrade_failed":true,"upgrade_error":"image pull failed"}`)
 
 	entry := registryEntryByID(t, srv, hiveID)
-	if entry.Org != "kubestellar" {
-		t.Errorf("Org = %q after upgrade-failure beat, want kubestellar carried forward", entry.Org)
+	if entry.Org != "hivecommons" {
+		t.Errorf("Org = %q after upgrade-failure beat, want hivecommons carried forward", entry.Org)
 	}
 	if entry.PrimaryRepo != "hive" || len(entry.Repos) != 1 {
 		t.Errorf("PrimaryRepo = %q, Repos = %v after upgrade-failure beat; want hive/[hive] carried forward", entry.PrimaryRepo, entry.Repos)
 	}
-	if entry.Name != "kubestellar/hive" {
-		t.Errorf("Name = %q, want kubestellar/hive", entry.Name)
+	if entry.Name != "hivecommons/hive" {
+		t.Errorf("Name = %q, want hivecommons/hive", entry.Name)
 	}
 	if !entry.UpgradeFailed {
 		t.Error("UpgradeFailed = false; the carry-forward must not eat the failure signal itself")
@@ -140,8 +140,8 @@ func TestHeartbeatHealthyBeatStillOverwrites(t *testing.T) {
 	srv := degradedCarryTestServer(t)
 	const hiveID = "carry-healthy-hive"
 
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","primary_repo":"hive","repos":["hive"]}`)
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar"}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"]}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons"}`)
 
 	entry := registryEntryByID(t, srv, hiveID)
 	if entry.PrimaryRepo != "" {
@@ -160,7 +160,7 @@ func TestHeartbeatDegradedBeatUnderNewOrgDropsOldRepos(t *testing.T) {
 	srv := degradedCarryTestServer(t)
 	const hiveID = "carry-reset-hive"
 
-	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"kubestellar","primary_repo":"hive","repos":["hive"]}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"hivecommons","primary_repo":"hive","repos":["hive"]}`)
 	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"available-`+hiveID+`","stats_stale":true}`)
 
 	entry := registryEntryByID(t, srv, hiveID)

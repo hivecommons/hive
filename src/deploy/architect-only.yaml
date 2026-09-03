@@ -3,7 +3,7 @@
 # Runs inside Docker on a Proxmox LXC.
 
 project:
-  org: kubestellar
+  org: hivecommons
   repos:
     - console
     - docs

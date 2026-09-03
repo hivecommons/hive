@@ -107,9 +107,9 @@ trap cleanup EXIT
 # it install and creates agent UID 2001 (HIVE_UID_BASE) for the dials below.
 cat >"${WORK}/hive.yaml" <<'EOF'
 project:
-  org: kubestellar
+  org: hivecommons
   repos:
-    - kubestellar/hive
+    - hivecommons/hive
 github:
   token: "ghp_probe_not_a_real_token"
 agents:

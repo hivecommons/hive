@@ -34,7 +34,7 @@ func (r *recordingRunner) Run(ctx context.Context, dir string, env []string, nam
 func TestBrokerRejectsTokenLikeSecretInOutgoingDiff(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "secret.txt", "token=ghp_abcdefghijklmnopqrstuvwxyz\n")
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}}).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected secret rejection")
 	}
@@ -46,7 +46,7 @@ func TestBrokerRejectsTokenLikeSecretInOutgoingDiff(t *testing.T) {
 func TestBrokerRejectsProtectedPaths(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, ".github/workflows/ci.yaml", "name: ci\n")
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}}).Run(context.Background())
 	if err == nil {
 		t.Fatal("expected protected path rejection")
 	}
@@ -61,7 +61,7 @@ func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 	r := &recordingRunner{}
 	t.Setenv("GITHUB_TOKEN", "ghp_should_not_leave_hive")
 	t.Setenv("HIVE_GITHUB_TOKEN", "ghp_full_token")
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_minted_push_token"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_minted_push_token"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -104,7 +104,7 @@ func TestF5_PushTokenNeverAppearsInGitArgv(t *testing.T) {
 	r := &recordingRunner{}
 	const token = "ghs_f5_secret_push_token"
 
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{token}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{token}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -156,7 +156,7 @@ func TestBrokerStripsTrailingBlankLineBeforePush(t *testing.T) {
 	r := &recordingRunner{}
 	var buf strings.Builder
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r, Logger: logger}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r, Logger: logger}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -193,7 +193,7 @@ func TestBrokerLeavesCorrectlyFormattedFileAlone(t *testing.T) {
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 	preAmendHead := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -215,7 +215,7 @@ func TestBrokerDoesNotAddMissingTrailingNewline(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}")
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -244,7 +244,7 @@ func TestBrokerLeavesBinaryFileWithTrailingNewlinesAlone(t *testing.T) {
 	runGit(t, dir, "add", "blob.bin")
 	runGit(t, dir, "commit", "-m", "binary")
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -271,7 +271,7 @@ func TestBrokerNormalisesLargeCleanTextFile(t *testing.T) {
 	body := b.String()                        // > 8000 bytes, well-formed text, single trailing newline
 	writeCommit(t, dir, "big.txt", body+"\n") // add one extra blank line at EOF
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -303,7 +303,7 @@ func TestBrokerDetectsBinaryWithinLeadingSample(t *testing.T) {
 	runGit(t, dir, "add", "blob.bin")
 	runGit(t, dir, "commit", "-m", "large binary")
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -324,7 +324,7 @@ func TestBrokerCollapsesAllNewlineFileToOneNewline(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "blank.txt", "\n\n\n\n")
 	r := &recordingRunner{}
-	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
 	}
@@ -364,7 +364,7 @@ func TestBrokerSurfacesGitAddFailureDuringNormalisation(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
 	r := &failingRunner{failSubstr: "add --", failErr: errors.New("disk full")}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
 		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
 	}
@@ -376,7 +376,7 @@ func TestBrokerSurfacesGitAmendFailureDuringNormalisation(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
 	r := &failingRunner{failSubstr: "commit --amend", failErr: errors.New("hook rejected")}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
 		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
 	}
@@ -413,7 +413,7 @@ func TestBrokerSurfacesReadHeadFailureAfterAmend(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
 	r := &nthCallFailingRunner{failSubstr: "rev-parse HEAD", failOnCall: 2, failErr: errors.New("index corrupt")}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "reading HEAD after newline normalisation") {
 		t.Fatalf("Run error = %v, want it to mention reading HEAD after newline normalisation", err)
 	}
@@ -435,7 +435,7 @@ func TestBrokerSurfacesReadFailureDuringNormalisation(t *testing.T) {
 	}
 	defer os.Chmod(path, 0o644)
 	r := &recordingRunner{}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
 		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
 	}
@@ -460,7 +460,7 @@ func TestBrokerSurfacesWriteFailureDuringNormalisation(t *testing.T) {
 	}
 	defer os.Chmod(path, 0o644)
 	r := &recordingRunner{}
-	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "normalising trailing newlines") {
 		t.Fatalf("Run error = %v, want it to mention normalising trailing newlines", err)
 	}

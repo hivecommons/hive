@@ -51,10 +51,10 @@ func TestCollectAndWriteRoundTrip(t *testing.T) {
 	if len(loaded.Items) != 1 || !loaded.Items[0].MergeEligible {
 		t.Fatalf("loaded artifact lost merge eligibility: %+v", loaded.Items)
 	}
-	if !loaded.HasAggregateApproval("kubestellar/hive", 2807, testSHA) {
+	if !loaded.HasAggregateApproval("hivecommons/hive", 2807, testSHA) {
 		t.Fatal("HasAggregateApproval = false after round trip")
 	}
-	if loaded.HasAggregateApproval("kubestellar/hive", 2807, "deadbeef") {
+	if loaded.HasAggregateApproval("hivecommons/hive", 2807, "deadbeef") {
 		t.Fatal("HasAggregateApproval matched a different head SHA")
 	}
 	// WriteArtifact persists atomically (write temp, rename); the temp file

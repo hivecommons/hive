@@ -63,7 +63,7 @@ func renderProvisionManifestWithAuth(t *testing.T, useApp, useAppFull bool, toke
 		"Owner":             "alice",
 		"Org":               "kubestellar",
 		"Repos":             "[]",
-		"PrimaryRepo":       "kubestellar/hive",
+		"PrimaryRepo":       "hivecommons/hive",
 		"HubURL":            "https://hive.kubestellar.io",
 		"DashboardURL":      "https://test-hive.hive.kubestellar.io",
 		"HiveType":          "hosted",
@@ -130,7 +130,7 @@ func TestProvisionManifestKeyFileAssertion(t *testing.T) {
 }
 
 func TestProvisionManifestPlaceholderSeedUsesClusterApp(t *testing.T) {
-	h := &SaaSHive{ID: "hosted-available-test", Org: "kubestellar", PrimaryRepo: "kubestellar/hive"}
+	h := &SaaSHive{ID: "hosted-available-test", Org: "kubestellar", PrimaryRepo: "hivecommons/hive"}
 	req := &CreateHiveRequest{}
 	cluster := &ClusterConfig{GitHubAppID: 3568013}
 

@@ -95,7 +95,7 @@ func TestVerifyGitHubRepoAccess_PermissionOutcomes(t *testing.T) {
 			srv, got := repoAccessServer(t, http.StatusOK, tc.body)
 			swapDefaultTransport(t, srv)
 
-			ok, err := verifyGitHubRepoAccess(context.Background(), "tok-123", "", "kubestellar", "hive")
+			ok, err := verifyGitHubRepoAccess(context.Background(), "tok-123", "", "hivecommons", "hive")
 			if err != nil {
 				t.Fatalf("verifyGitHubRepoAccess: %v", err)
 			}
@@ -106,8 +106,8 @@ func TestVerifyGitHubRepoAccess_PermissionOutcomes(t *testing.T) {
 			if got.URL == nil {
 				t.Fatal("no request reached the test server")
 			}
-			if got.URL.Path != "/repos/kubestellar/hive" {
-				t.Errorf("path = %q, want /repos/kubestellar/hive", got.URL.Path)
+			if got.URL.Path != "/repos/hivecommons/hive" {
+				t.Errorf("path = %q, want /repos/hivecommons/hive", got.URL.Path)
 			}
 			if auth := got.Header.Get("Authorization"); auth != "Bearer tok-123" {
 				t.Errorf("Authorization = %q, want the enrolling user's bearer token", auth)

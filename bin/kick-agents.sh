@@ -458,7 +458,7 @@ render_policy() {
     -e "s|\${PROJECT_AI_AUTHOR}|${PROJECT_AI_AUTHOR}|g" \
     -e "s|\${PROJECT_REPOS_LIST}|${PROJECT_REPOS}|g" \
     -e "s|\${GA4_PROPERTY_ID}|${OUTREACH_GA4_PROPERTY_ID}|g" \
-    -e "s|\${HIVE_REPO}|${PROJECT_HIVE_REPO:-kubestellar/hive}|g" \
+    -e "s|\${HIVE_REPO}|${PROJECT_HIVE_REPO:-hivecommons/hive}|g" \
     -e "s|\${HIVE_ID}|${HIVE_ID:-}|g" \
     -e "s|\${AGENTS_WORKDIR}|${AGENTS_WORKDIR}|g" \
     -e "s|\${BEADS_BASE}|${BEADS_BASE}|g" \

@@ -132,7 +132,7 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 	// Included: public hive on public github.com with a real org/repo, plus a
 	// secondary repo and a duplicate of the primary that must be deduped.
 	mkDibsHive(t, SaaSHive{
-		ID: "hosted-good-1", Owner: "octocat", Org: "kubestellar",
+		ID: "hosted-good-1", Owner: "octocat", Org: "hivecommons",
 		PrimaryRepo: "hive", Repos: []string{"hive", "dibs"},
 		ProjectName: "KubeStellar Hive", IsPublic: true,
 	})
@@ -205,8 +205,8 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 		t.Fatalf("body is not the expected JSON array: %v (body %s)", err, rec.Body.String())
 	}
 	want := map[string]struct{ hive, owner string }{
-		"kubestellar/hive":   {"hosted-good-1", "octocat"},
-		"kubestellar/dibs":   {"hosted-good-1", "octocat"},
+		"hivecommons/hive":   {"hosted-good-1", "octocat"},
+		"hivecommons/dibs":   {"hosted-good-1", "octocat"},
 		"other-owner/tool":   {"hosted-good-2", "hubber"},
 		"prod-org/prod-repo": {"hosted-good-3", "prodder"},
 	}
@@ -224,7 +224,7 @@ func TestDibsReposShapeAndFiltering(t *testing.T) {
 		}
 	}
 	for _, e := range got {
-		if e.RepoID == "kubestellar/hive" && e.Description != "KubeStellar Hive" {
+		if e.RepoID == "hivecommons/hive" && e.Description != "KubeStellar Hive" {
 			t.Errorf("description = %q, want the hive's public project name", e.Description)
 		}
 	}

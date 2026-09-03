@@ -49,8 +49,8 @@ func TestParseClaimedIssues(t *testing.T) {
 		},
 		{
 			name: "cross-repo form",
-			text: "Fixes kubestellar/hive#2149",
-			want: []ClaimedRef{{"kubestellar/hive", 2149}},
+			text: "Fixes hivecommons/hive#2149",
+			want: []ClaimedRef{{"hivecommons/hive", 2149}},
 		},
 		{
 			name: "multiple refs, one per keyword",

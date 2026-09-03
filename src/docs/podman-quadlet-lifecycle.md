@@ -72,7 +72,7 @@ so the suite runs on a host with no Podman and no lingering user.
 ## What was measured
 
 Fedora 44, Podman 5.8.4, cgroup v2, SELinux **enforcing**, against the real
-`ghcr.io/kubestellar/hive:stable` image, in **both** root modes. Rootless
+`ghcr.io/hivecommons/hive:stable` image, in **both** root modes. Rootless
 config in `~/.config/hive`, rootful in `/etc/hive`, both with
 `dashboard.port: 3002` as [#4367](podman-standalone-quadlet.md) requires.
 
@@ -105,7 +105,7 @@ which is on the `hive-data` volume and not in the image:
 ```
 $ podman exec hive sh -c 'echo lifecycle-marker-... > /data/.lifecycle-probe'
 $ ls -l .../volumes/hive-data/_data/.lifecycle-probe     # present on the host
-$ podman run --rm --entrypoint sh ghcr.io/kubestellar/hive:stable -c 'ls /data/.lifecycle-probe'
+$ podman run --rm --entrypoint sh ghcr.io/hivecommons/hive:stable -c 'ls /data/.lifecycle-probe'
 ls: cannot access '/data/.lifecycle-probe': No such file or directory
 ```
 
@@ -440,7 +440,7 @@ losing the decoupling, never losing the deployment.
 
 ### The tag moved mid-experiment, and that is why the rows are pinned
 
-`ghcr.io/kubestellar/hive:stable` was pulled twice, once per store:
+`ghcr.io/hivecommons/hive:stable` was pulled twice, once per store:
 
 ```
 rootful  store, pulled 17:46:43Z -> sha256:73d88c4c…  (image d46528705417)
@@ -456,7 +456,7 @@ The rootless row was therefore pinned to the digest the rootful row had already
 run, through the documented drop-in rather than an edit to the unit:
 
 ```
-$ bin/hive-podman-update.sh pin ghcr.io/kubestellar/hive@sha256:73d88c4c…
+$ bin/hive-podman-update.sh pin ghcr.io/hivecommons/hive@sha256:73d88c4c…
   PASS  wrote ~/.config/containers/systemd/hive.container.d/10-image.conf
   PASS  restart returned 0 after 10s, state active/running/success
 $ podman inspect hive --format '{{.Image}}'

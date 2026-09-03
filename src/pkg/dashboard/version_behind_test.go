@@ -29,16 +29,16 @@ func TestHandleVersionIncludesCommitsBehindAndCaches(t *testing.T) {
 
 	compareCalls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kubestellar/hive/git/ref/heads/v4", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/git/ref/heads/v4", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ref":    "refs/heads/v4",
 			"object": map[string]any{"sha": "abc1234567890abcdef1234567890abcdef123456"},
 		})
 	})
-	mux.HandleFunc("/repos/kubestellar/hive/commits/abc1234567890abcdef1234567890abcdef123456", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/commits/abc1234567890abcdef1234567890abcdef123456", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]any{"message": "tip\nbody"}})
 	})
-	mux.HandleFunc("/repos/kubestellar/hive/compare/old1111...abc1234", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/compare/old1111...abc1234", func(w http.ResponseWriter, r *http.Request) {
 		compareCalls++
 		_ = json.NewEncoder(w).Encode(map[string]any{"ahead_by": 5})
 	})
@@ -93,16 +93,16 @@ func TestHandleVersionUnbuiltTipReportsImageNotReady(t *testing.T) {
 
 	compareCalls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kubestellar/hive/git/ref/heads/v4", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/git/ref/heads/v4", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ref":    "refs/heads/v4",
 			"object": map[string]any{"sha": "abc1234567890abcdef1234567890abcdef123456"},
 		})
 	})
-	mux.HandleFunc("/repos/kubestellar/hive/commits/abc1234567890abcdef1234567890abcdef123456", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/commits/abc1234567890abcdef1234567890abcdef123456", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]any{"message": "tip\nbody"}})
 	})
-	mux.HandleFunc("/repos/kubestellar/hive/compare/old1111...abc1234", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/compare/old1111...abc1234", func(w http.ResponseWriter, r *http.Request) {
 		compareCalls++
 		_ = json.NewEncoder(w).Encode(map[string]any{"ahead_by": 5})
 	})
@@ -157,16 +157,16 @@ func TestHandleVersionBuiltTipReportsImageReady(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kubestellar/hive/git/ref/heads/v4", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/git/ref/heads/v4", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ref":    "refs/heads/v4",
 			"object": map[string]any{"sha": "abc1234567890abcdef1234567890abcdef123456"},
 		})
 	})
-	mux.HandleFunc("/repos/kubestellar/hive/commits/abc1234567890abcdef1234567890abcdef123456", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/commits/abc1234567890abcdef1234567890abcdef123456", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]any{"message": "tip\nbody"}})
 	})
-	mux.HandleFunc("/repos/kubestellar/hive/compare/old1111...abc1234", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/compare/old1111...abc1234", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ahead_by": 5})
 	})
 	ghSrv := httptest.NewServer(mux)

@@ -76,7 +76,7 @@ func TestResolveCommitBehindErrorNotCached(t *testing.T) {
 func TestFetchCommitBehindCountHTTP(t *testing.T) {
 	oldBase := githubAPIBase
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/kubestellar/hive/compare/base111...head999" {
+		if r.URL.Path != "/repos/hivecommons/hive/compare/base111...head999" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`{"ahead_by":7}`))

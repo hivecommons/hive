@@ -129,71 +129,71 @@ func TestWriteMergeEligible_BucketDecisions(t *testing.T) {
 	}{
 		{
 			name: "green and mergeable is eligible",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 1, CIStatus: "success", Mergeable: github.MergeableYes},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 1, CIStatus: "success", Mergeable: github.MergeableYes},
 			want: bucketEligible,
 		},
 		{
 			name: "draft is never listed anywhere",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 2, Draft: true, CIStatus: "success", Mergeable: github.MergeableYes},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 2, Draft: true, CIStatus: "success", Mergeable: github.MergeableYes},
 			want: bucketNeither,
 		},
 		{
 			name: "held PR is never listed anywhere",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 3, CIStatus: "success", Mergeable: github.MergeableYes},
-			in:   mergeEligibleInputs{hold: github.HoldResult{Items: []github.HoldItem{{Repo: "kubestellar/hive", Number: 3}}}},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 3, CIStatus: "success", Mergeable: github.MergeableYes},
+			in:   mergeEligibleInputs{hold: github.HoldResult{Items: []github.HoldItem{{Repo: "hivecommons/hive", Number: 3}}}},
 			want: bucketNeither,
 		},
 		{
 			name:     "red with no required-check set fails closed into ci_failing",
-			pr:       github.PullRequest{Repo: "kubestellar/hive", Number: 4, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright"}},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 4, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright"}},
 			want:     bucketFailing,
 			guarding: "no required set → cannot tell optional from required → old fail-closed behavior",
 		},
 		{
 			name:     "red only on optional checks and mergeable is eligible",
-			pr:       github.PullRequest{Repo: "kubestellar/hive", Number: 5, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright", "coverage"}},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 5, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright", "coverage"}},
 			in:       mergeEligibleInputs{requiredChecks: required},
 			want:     bucketEligible,
 			guarding: "2026-08-28: 16 dependabot PRs parked in ci-failing.json for 11 days behind perma-red optional shards",
 		},
 		{
 			name: "red on a required check is ci_failing even with the set configured",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 6, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright", "test"}},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 6, CIStatus: "failure", Mergeable: github.MergeableYes, FailingChecks: []string{"playwright", "test"}},
 			in:   mergeEligibleInputs{requiredChecks: required},
 			want: bucketFailing,
 		},
 		{
 			name:     "red only on optional checks but mergeability unknown stays ci_failing",
-			pr:       github.PullRequest{Repo: "kubestellar/hive", Number: 7, CIStatus: "failure", Mergeable: github.MergeableUnknown, FailingChecks: []string{"playwright"}},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 7, CIStatus: "failure", Mergeable: github.MergeableUnknown, FailingChecks: []string{"playwright"}},
 			in:       mergeEligibleInputs{requiredChecks: required},
 			want:     bucketFailing,
 			guarding: "the optional-red carve-out needs GitHub's own mergeable verdict, not just the check names",
 		},
 		{
 			name:     "pending but mergeable is eligible",
-			pr:       github.PullRequest{Repo: "kubestellar/hive", Number: 8, CIStatus: "pending", Mergeable: github.MergeableYes},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 8, CIStatus: "pending", Mergeable: github.MergeableYes},
 			want:     bucketEligible,
 			guarding: "2026-08-04: three green console PRs frozen for hours waiting on tide/coverage that never complete",
 		},
 		{
 			name: "pending with unknown mergeability is neither",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 9, CIStatus: "pending", Mergeable: github.MergeableUnknown},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 9, CIStatus: "pending", Mergeable: github.MergeableUnknown},
 			want: bucketNeither,
 		},
 		{
 			name: "pending and conflicting is neither",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 10, CIStatus: "pending", Mergeable: github.MergeableNo},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 10, CIStatus: "pending", Mergeable: github.MergeableNo},
 			want: bucketNeither,
 		},
 		{
 			name:     "green but conflicting is neither",
-			pr:       github.PullRequest{Repo: "kubestellar/hive", Number: 11, CIStatus: "success", Mergeable: github.MergeableNo},
+			pr:       github.PullRequest{Repo: "hivecommons/hive", Number: 11, CIStatus: "success", Mergeable: github.MergeableNo},
 			want:     bucketNeither,
 			guarding: "2026-08-31: DIRTY go.mod bumps pinned the eligible count at N while nothing could merge",
 		},
 		{
 			name: "green with unknown mergeability is eligible (list endpoint never populates it)",
-			pr:   github.PullRequest{Repo: "kubestellar/hive", Number: 12, CIStatus: "success", Mergeable: github.MergeableUnknown},
+			pr:   github.PullRequest{Repo: "hivecommons/hive", Number: 12, CIStatus: "success", Mergeable: github.MergeableUnknown},
 			want: bucketEligible,
 		},
 	}
@@ -226,13 +226,13 @@ func TestWriteMergeEligible_FailingEntryCarriesEvidenceAndEscalation(t *testing.
 		Repo: "hive", Number: 42, CIStatus: "failure", Mergeable: github.MergeableYes,
 		HeadSHA: "deadbeef", FailingChecks: []string{"build-and-test"}, CIFailureExcerpt: "main.go:12: undefined: foo",
 	}
-	escalated := map[string]bool{escalation.Key("kubestellar/hive", 42): true}
-	eligible, failing := runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "kubestellar", escalated: escalated})
+	escalated := map[string]bool{escalation.Key("hivecommons/hive", 42): true}
+	eligible, failing := runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", escalated: escalated})
 	if len(eligible) != 0 || len(failing) != 1 {
 		t.Fatalf("eligible=%+v failing=%+v, want exactly one failing entry", eligible, failing)
 	}
 	got := failing[0]
-	if got.Repo != "kubestellar/hive" {
+	if got.Repo != "hivecommons/hive" {
 		t.Errorf("bare repo %q was not org-qualified: got %q", pr.Repo, got.Repo)
 	}
 	if got.HeadSHA != "deadbeef" {
@@ -251,7 +251,7 @@ func TestWriteMergeEligible_FailingEntryCarriesEvidenceAndEscalation(t *testing.
 	// Positive control for the escalation lookup: the same PR without an
 	// escalation record must NOT be flagged, or the assertion above would pass
 	// for a function that flags everything.
-	_, failing = runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "kubestellar"})
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons"})
 	if len(failing) != 1 || failing[0].Escalated {
 		t.Fatalf("un-escalated PR reported escalated: %+v", failing)
 	}
@@ -267,7 +267,7 @@ func TestWriteMergeEligible_EligibleEntryFields(t *testing.T) {
 		{Repo: "kubestellar/console", Number: 2, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco-signoff: no"}},
 		{Repo: "hive", Number: 3, CIStatus: "success", Mergeable: github.MergeableUnknown},
 	}
-	eligible, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "kubestellar"})
+	eligible, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "hivecommons"})
 	if len(failing) != 0 {
 		t.Fatalf("unexpected ci_failing entries: %+v", failing)
 	}
@@ -278,7 +278,7 @@ func TestWriteMergeEligible_EligibleEntryFields(t *testing.T) {
 	for _, e := range eligible {
 		byNumber[e.Number] = e
 	}
-	if e := byNumber[1]; e.Repo != "kubestellar/hive" || e.HeadSHA != "abc123" || e.Mergeable != string(github.MergeableYes) || e.DCO != "yes" || len(e.Labels) != 2 {
+	if e := byNumber[1]; e.Repo != "hivecommons/hive" || e.HeadSHA != "abc123" || e.Mergeable != string(github.MergeableYes) || e.DCO != "yes" || len(e.Labels) != 2 {
 		t.Errorf("PR #1 entry = %+v", e)
 	}
 	if e := byNumber[2]; e.Repo != "kubestellar/console" || e.DCO != "no" {
@@ -299,8 +299,8 @@ func TestWriteMergeEligible_ReviewApprovalFailsClosed(t *testing.T) {
 	review.ReviewVerdictsPath = filepath.Join(dir, "review-verdicts.json")
 
 	prs := []github.PullRequest{
-		{Repo: "kubestellar/hive", Number: 1, CIStatus: "success", Mergeable: github.MergeableYes, HeadSHA: "sha-1"},
-		{Repo: "kubestellar/hive", Number: 2, CIStatus: "success", Mergeable: github.MergeableYes, HeadSHA: "sha-2-moved"},
+		{Repo: "hivecommons/hive", Number: 1, CIStatus: "success", Mergeable: github.MergeableYes, HeadSHA: "sha-1"},
+		{Repo: "hivecommons/hive", Number: 2, CIStatus: "success", Mergeable: github.MergeableYes, HeadSHA: "sha-2-moved"},
 	}
 
 	// No artifact on disk: every green PR is withheld.
@@ -318,8 +318,8 @@ func TestWriteMergeEligible_ReviewApprovalFailsClosed(t *testing.T) {
 
 	// Approval for #1 at its head, and for #2 at a head that has since moved.
 	artifact := review.Artifact{GeneratedAt: time.Now(), Items: []review.Aggregate{
-		{Repo: "kubestellar/hive", Number: 1, HeadSHA: "sha-1", Verdict: review.VerdictApprove, MergeEligible: true},
-		{Repo: "kubestellar/hive", Number: 2, HeadSHA: "sha-2-reviewed", Verdict: review.VerdictApprove, MergeEligible: true},
+		{Repo: "hivecommons/hive", Number: 1, HeadSHA: "sha-1", Verdict: review.VerdictApprove, MergeEligible: true},
+		{Repo: "hivecommons/hive", Number: 2, HeadSHA: "sha-2-reviewed", Verdict: review.VerdictApprove, MergeEligible: true},
 	}}
 	raw, err := json.Marshal(artifact)
 	if err != nil {

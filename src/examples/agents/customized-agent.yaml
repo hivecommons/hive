@@ -1,6 +1,6 @@
 # Example Agent Definition for Hive v2
 # Import this via the dashboard: + agent → Import from URL
-# URL: https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/examples/agents/customized-agent.yaml
+# URL: https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/examples/agents/customized-agent.yaml
 apiVersion: hive.kubestellar.io/v1
 kind: AgentDefinition
 metadata:

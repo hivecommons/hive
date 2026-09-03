@@ -17,7 +17,7 @@ func TestSource_Slug(t *testing.T) {
 		src  Source
 		want string
 	}{
-		{"both set", Source{Owner: "kubestellar", Repo: "hive"}, "kubestellar/hive"},
+		{"both set", Source{Owner: "hivecommons", Repo: "hive"}, "hivecommons/hive"},
 		{"owner empty", Source{Owner: "", Repo: "hive"}, ""},
 		{"repo empty", Source{Owner: "kubestellar", Repo: ""}, ""},
 		{"both empty", Source{}, ""},
@@ -260,7 +260,7 @@ func TestResolve_ProvenanceWithExplicitRef(t *testing.T) {
 	if !res.Ok {
 		t.Fatalf("expected ok, got %+v", res)
 	}
-	want := "github:kubestellar/hive@v2"
+	want := "github:hivecommons/hive@v2"
 	if res.Source != want {
 		t.Errorf("source = %q, want %q", res.Source, want)
 	}
@@ -271,12 +271,12 @@ func TestResolve_ProvenanceWithExplicitRef(t *testing.T) {
 func TestResolve_ProvenanceDefaultRef(t *testing.T) {
 	f := &stubFetcher{body: validDef}
 	r := NewResolver(f, allowAll, nil)
-	src := Source{Owner: "kubestellar", Repo: "hive", Path: "agents/scanner.yaml"} // Ref unset
+	src := Source{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml"} // Ref unset
 	res := r.Resolve(context.Background(), src, bakedAgent())
 	if !res.Ok {
 		t.Fatalf("expected ok, got %+v", res)
 	}
-	want := "github:kubestellar/hive@default"
+	want := "github:hivecommons/hive@default"
 	if res.Source != want {
 		t.Errorf("source = %q, want %q", res.Source, want)
 	}
@@ -334,7 +334,7 @@ func TestApplyToConfig_UnresolvableKeepsBakedAndLogs(t *testing.T) {
 	cfg := &config.Config{Agents: map[string]config.AgentConfig{
 		"broken": {
 			DisplayName:      "Baked Broken",
-			DefinitionSource: &config.DefinitionSourceConfig{Owner: "kubestellar", Repo: "hive", Path: "agents/broken.yaml"},
+			DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/broken.yaml"},
 		},
 	}}
 
@@ -363,7 +363,7 @@ func TestApplyToConfig_LogsOnSuccess(t *testing.T) {
 	cfg := &config.Config{Agents: map[string]config.AgentConfig{
 		"scanner": {
 			DisplayName:      "Baked Scanner",
-			DefinitionSource: &config.DefinitionSourceConfig{Owner: "kubestellar", Repo: "hive", Path: "agents/scanner.yaml"},
+			DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml"},
 		},
 	}}
 	logger := &stubLogger{}

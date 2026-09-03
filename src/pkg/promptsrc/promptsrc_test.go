@@ -37,7 +37,7 @@ func allowAll(string) bool  { return true }
 func allowNone(string) bool { return false }
 
 func fullSource() Source {
-	return Source{Owner: "kubestellar", Repo: "hive", Path: "prompts/scanner.md", Ref: "v2"}
+	return Source{Owner: "hivecommons", Repo: "hive", Path: "prompts/scanner.md", Ref: "v2"}
 }
 
 // TestResolve_HappyPath: a valid, allowlisted source is fetched and returned.
@@ -48,8 +48,8 @@ func TestResolve_HappyPath(t *testing.T) {
 	if !res.Ok || res.Body != "you are the scanner" {
 		t.Fatalf("want ok body, got ok=%v body=%q", res.Ok, res.Body)
 	}
-	if !strings.HasPrefix(res.Source, "github:kubestellar/hive@v2") {
-		t.Errorf("provenance = %q, want github:kubestellar/hive@v2", res.Source)
+	if !strings.HasPrefix(res.Source, "github:hivecommons/hive@v2") {
+		t.Errorf("provenance = %q, want github:hivecommons/hive@v2", res.Source)
 	}
 	if f.lastRef != "v2" {
 		t.Errorf("ref not passed through: %q", f.lastRef)
@@ -228,13 +228,13 @@ func TestResolve_NilFetcherServesCache(t *testing.T) {
 func TestResolve_DefaultRefProvenance(t *testing.T) {
 	f := &stubFetcher{body: "on default branch"}
 	r := NewResolver(f, allowAll, nil)
-	src := Source{Owner: "kubestellar", Repo: "hive", Path: "prompts/scanner.md"} // Ref unset
+	src := Source{Owner: "hivecommons", Repo: "hive", Path: "prompts/scanner.md"} // Ref unset
 	res := r.Resolve(context.Background(), src)
 	if !res.Ok {
 		t.Fatalf("resolve should succeed, got %+v", res)
 	}
-	if res.Source != "github:kubestellar/hive@default" {
-		t.Errorf("source = %q, want github:kubestellar/hive@default", res.Source)
+	if res.Source != "github:hivecommons/hive@default" {
+		t.Errorf("source = %q, want github:hivecommons/hive@default", res.Source)
 	}
 }
 

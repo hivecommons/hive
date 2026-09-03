@@ -368,14 +368,14 @@ func TestACMMRedeliversOnPreDeliveredClaim(t *testing.T) {
 
 	// Beat 1: the spoke still reports L2. The requested level must be restored
 	// in meta rather than the stale report adopted.
-	s.adoptSpokeProjectConfig("oke11", "kubestellar", []string{"hive"}, "hive", 2)
+	s.adoptSpokeProjectConfig("oke11", "hivecommons", []string{"hive"}, "hive", 2)
 	h := loadSaaSHive("oke11")
 	if h == nil || h.ACMMLevel != 3 || h.ACMMDelivered {
 		t.Fatalf("beat 1: meta = %+v, want acmm=3 restored and ACMMDelivered=false", h)
 	}
 
 	// ...and the push must actually fire, despite ClaimDelivered being true.
-	got := projectConfigForHiveID("oke11", "kubestellar", []string{"hive"}, "hive", 2, "", "")
+	got := projectConfigForHiveID("oke11", "hivecommons", []string{"hive"}, "hive", 2, "", "")
 	if got == nil {
 		t.Fatal("no push for a pre-delivered claim whose level never landed — this is the exact production silence")
 	}
@@ -384,25 +384,25 @@ func TestACMMRedeliversOnPreDeliveredClaim(t *testing.T) {
 	}
 
 	// Beat 2: the spoke has applied L3 and reports it. Delivery completes.
-	s.adoptSpokeProjectConfig("oke11", "kubestellar", []string{"hive"}, "hive", 3)
+	s.adoptSpokeProjectConfig("oke11", "hivecommons", []string{"hive"}, "hive", 3)
 	h = loadSaaSHive("oke11")
 	if h == nil || !h.ACMMDelivered || h.ACMMLevel != 3 {
 		t.Fatalf("beat 2: meta = %+v, want ACMMDelivered=true acmm=3", h)
 	}
 
 	// IDEMPOTENCE: with the level delivered the push stops for good.
-	if got := projectConfigForHiveID("oke11", "kubestellar", []string{"hive"}, "hive", 3, "", ""); got != nil {
+	if got := projectConfigForHiveID("oke11", "hivecommons", []string{"hive"}, "hive", 3, "", ""); got != nil {
 		t.Errorf("delivered level must never push again, got %+v", got)
 	}
 
 	// ...and the spoke now owns the level: an operator raising it to L5 on the
 	// dashboard is adopted, not reverted (the #2061 spyre behaviour).
-	s.adoptSpokeProjectConfig("oke11", "kubestellar", []string{"hive"}, "hive", 5)
+	s.adoptSpokeProjectConfig("oke11", "hivecommons", []string{"hive"}, "hive", 5)
 	h = loadSaaSHive("oke11")
 	if h == nil || h.ACMMLevel != 5 || h.RequestedACMMLevel != 5 {
 		t.Fatalf("post-delivery operator edit: meta = %+v, want acmm=5 adopted and requested kept in step", h)
 	}
-	if got := projectConfigForHiveID("oke11", "kubestellar", []string{"hive"}, "hive", 5, "", ""); got != nil {
+	if got := projectConfigForHiveID("oke11", "hivecommons", []string{"hive"}, "hive", 5, "", ""); got != nil {
 		t.Errorf("operator edit must not be reverted on the next beat, got %+v", got)
 	}
 }

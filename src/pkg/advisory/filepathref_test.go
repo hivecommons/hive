@@ -38,7 +38,7 @@ func TestIsFilePathRef(t *testing.T) {
 		{"empty is not a path", "", false},
 		{"gh-number ref", "gh-123", false},
 		{"repo#number ref", "hive#123", false},
-		{"owner/repo#number ref", "kubestellar/hive#123", false},
+		{"owner/repo#number ref", "hivecommons/hive#123", false},
 		{"plain file path", "docs/install.md", true},
 		{"path with line", "pkg/advisory/advisory.go:812", true},
 	}

@@ -246,7 +246,7 @@ func TestSandboxExecutorRun_PRSuccessAttachesResult(t *testing.T) {
 func TestSandboxExecutorCloneAuthArgs(t *testing.T) {
 	t.Run("no minter at all is anonymous", func(t *testing.T) {
 		e := &SandboxExecutor{}
-		args, cleanup, err := e.cloneAuthArgs(context.Background(), "kubestellar/hive", t.TempDir())
+		args, cleanup, err := e.cloneAuthArgs(context.Background(), "hivecommons/hive", t.TempDir())
 		if err != nil {
 			t.Fatalf("cloneAuthArgs: %v", err)
 		}
@@ -257,14 +257,14 @@ func TestSandboxExecutorCloneAuthArgs(t *testing.T) {
 	})
 	t.Run("mint error propagates", func(t *testing.T) {
 		e := &SandboxExecutor{CloneMinter: errMinter{err: errors.New("mint offline")}}
-		_, _, err := e.cloneAuthArgs(context.Background(), "kubestellar/hive", t.TempDir())
+		_, _, err := e.cloneAuthArgs(context.Background(), "hivecommons/hive", t.TempDir())
 		if err == nil || !strings.Contains(err.Error(), "minting clone token") {
 			t.Fatalf("error = %v, want minting clone token wrap", err)
 		}
 	})
 	t.Run("empty token rejected", func(t *testing.T) {
 		e := &SandboxExecutor{CloneMinter: errMinter{}}
-		_, _, err := e.cloneAuthArgs(context.Background(), "kubestellar/hive", t.TempDir())
+		_, _, err := e.cloneAuthArgs(context.Background(), "hivecommons/hive", t.TempDir())
 		if err == nil || !strings.Contains(err.Error(), "empty clone token") {
 			t.Fatalf("error = %v, want empty clone token rejection", err)
 		}

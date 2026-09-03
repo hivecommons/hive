@@ -76,7 +76,7 @@ func TestHeartbeatProseFieldsKeepSpaces(t *testing.T) {
 	s := newHeartbeatHub()
 
 	const permIssue = "The GitHub App is configured but has no installation. Install the app on your org to enable agents."
-	body := fmt.Sprintf(`{"hive_id":"prose-hive","org":"kubestellar","primary_repo":"hive",`+
+	body := fmt.Sprintf(`{"hive_id":"prose-hive","org":"hivecommons","primary_repo":"hive",`+
 		`"github_app_perm_issue":%q,"advisory_error":"advisory post failed: HTTP 403 from GitHub",`+
 		`"git_branch":"v 2"}`, permIssue)
 	rec := postHeartbeat(t, s, body)

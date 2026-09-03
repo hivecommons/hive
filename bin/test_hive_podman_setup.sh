@@ -535,7 +535,7 @@ if [[ ! -e "${CONF}/hive.yaml" ]]; then pass "wrote nothing"; else fail "wrote c
 # ---------------------------------------------------------------------------
 new_case "the image is pre-pulled by default"
 SETUP_ARGS="" run_setup
-assert_contains "$(cat "$CALL_LOG")" "podman pull ghcr.io/kubestellar/hive" "pulled the image named by the unit"
+assert_contains "$(cat "$CALL_LOG")" "podman pull ghcr.io/hivecommons/hive" "pulled the image named by the unit"
 
 new_case "--skip-pull skips it, and says what that costs"
 SETUP_ARGS="--skip-pull" run_setup

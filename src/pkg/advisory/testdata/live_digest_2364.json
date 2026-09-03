@@ -39,7 +39,7 @@
   "agent": "quality",
   "type": "regression-risk",
   "severity": "critical",
-  "title": "PR #3344 removes SSRF guards and deletes 869 test lines \u2014 security+coverage regression [kubestellar/hive#3344](https://github.com/hivecommons/hive/issues/3344)"
+  "title": "PR #3344 removes SSRF guards and deletes 869 test lines \u2014 security+coverage regression [hivecommons/hive#3344](https://github.com/hivecommons/hive/issues/3344)"
  },
  {
   "agent": "quality",

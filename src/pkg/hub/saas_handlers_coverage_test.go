@@ -333,6 +333,9 @@ func TestHandleSwitchBranchValidation(t *testing.T) {
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "abc1234"}
 	latestSHAMu.Unlock()
+	oldSpokeImageExists := spokeImageExists
+	spokeImageExists = func(string, *slog.Logger) bool { return true }
+	t.Cleanup(func() { spokeImageExists = oldSpokeImageExists })
 	// Point the hive's registry entry at the tracked branch so it's in the list.
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
 	rec = httptest.NewRecorder()

@@ -88,7 +88,7 @@ The probe `.container` unit and the relevant part of its generated service:
 ```ini
 # probe unit
 [Container]
-Image=ghcr.io/kubestellar/hive:v2-latest
+Image=ghcr.io/hivecommons/hive:v2-latest
 ContainerName=hive
 Pod=hive.pod
 AddCapability=NET_ADMIN
@@ -117,7 +117,7 @@ ExecStart=/usr/bin/podman run --name hive --replace --rm --cgroups=split \
   --sdnotify=healthy -d --cap-add net_admin -v hive-data:/data \
   -v %h/hive/hive.yaml:/etc/hive/hive.yaml:ro,Z --env HIVE_LEVEL=2 \
   --health-cmd "curl\x20-sf\x20http://127.0.0.1:3002/api/health" \
-  --health-start-period 120s ... --pod hive ghcr.io/kubestellar/hive:v2-latest
+  --health-start-period 120s ... --pod hive ghcr.io/hivecommons/hive:v2-latest
 ExecStop=/usr/bin/podman rm -v -f -i hive
 ```
 
@@ -293,7 +293,7 @@ WantedBy=default.target
 
 # hive-app.container
 [Container]
-Image=ghcr.io/kubestellar/hive:v2-latest
+Image=ghcr.io/hivecommons/hive:v2-latest
 ContainerName=hive
 Pod=hive.pod
 AddCapability=NET_ADMIN

@@ -65,7 +65,7 @@ func reviewSwarmConfig() *config.Config {
 func actionableWithPR(author string) *github.ActionableResult {
 	return &github.ActionableResult{
 		PRs: github.PRResult{Items: []github.PullRequest{{
-			Repo:    "kubestellar/hive",
+			Repo:    "hivecommons/hive",
 			Number:  4321,
 			Title:   "test: add coverage",
 			Author:  author,
@@ -92,8 +92,8 @@ func TestPlanReviewDispatch_KicksReviewerForAgentAuthoredPR(t *testing.T) {
 	if kick.Agent != "reviewer" {
 		t.Errorf("kick agent = %q, want %q", kick.Agent, "reviewer")
 	}
-	if kick.Repo != "kubestellar/hive" || kick.Number != 4321 || kick.HeadSHA != reviewTestSHA {
-		t.Errorf("kick PR identity = %s#%d@%s, want kubestellar/hive#4321@%s",
+	if kick.Repo != "hivecommons/hive" || kick.Number != 4321 || kick.HeadSHA != reviewTestSHA {
+		t.Errorf("kick PR identity = %s#%d@%s, want hivecommons/hive#4321@%s",
 			kick.Repo, kick.Number, kick.HeadSHA, reviewTestSHA)
 	}
 	if kick.Kind != "review" {
@@ -134,7 +134,7 @@ func TestPlanReviewDispatch_ChangesRequestedVerdictDispatchesFixer(t *testing.T)
 	artifact := review.Artifact{
 		GeneratedAt: time.Now().UTC(),
 		Items: []review.Aggregate{{
-			Repo:    "kubestellar/hive",
+			Repo:    "hivecommons/hive",
 			Number:  4321,
 			HeadSHA: reviewTestSHA,
 			Verdict: review.VerdictChangesRequested,
@@ -192,7 +192,7 @@ func TestRefreshReviewVerdicts_CollectsReportsIntoArtifact(t *testing.T) {
 		},
 		Perspective: review.PerspectiveSecurity,
 		Verdict:     review.VerdictApprove,
-		Repo:        "kubestellar/hive",
+		Repo:        "hivecommons/hive",
 		Number:      4321,
 		HeadSHA:     reviewTestSHA,
 	}
@@ -216,8 +216,8 @@ func TestRefreshReviewVerdicts_CollectsReportsIntoArtifact(t *testing.T) {
 		t.Fatalf("artifact aggregates = %d, want 1", len(artifact.Items))
 	}
 	agg := artifact.Items[0]
-	if agg.Repo != "kubestellar/hive" || agg.Number != 4321 || agg.HeadSHA != reviewTestSHA {
-		t.Errorf("aggregate identity = %s#%d@%s, want kubestellar/hive#4321@%s",
+	if agg.Repo != "hivecommons/hive" || agg.Number != 4321 || agg.HeadSHA != reviewTestSHA {
+		t.Errorf("aggregate identity = %s#%d@%s, want hivecommons/hive#4321@%s",
 			agg.Repo, agg.Number, agg.HeadSHA, reviewTestSHA)
 	}
 	if agg.Perspectives[review.PerspectiveSecurity] != review.VerdictApprove {
@@ -237,11 +237,11 @@ func TestPersistReviewDispatchState_KeepsOnlyDeliveredKicks(t *testing.T) {
 	redirectReviewPaths(t)
 	now := time.Now().UTC()
 	delivered := review.DispatchKick{
-		Kind: "review", Agent: "reviewer", Repo: "kubestellar/hive",
+		Kind: "review", Agent: "reviewer", Repo: "hivecommons/hive",
 		Number: 4321, HeadSHA: reviewTestSHA, Perspective: review.PerspectiveSecurity,
 	}
 	dropped := review.DispatchKick{
-		Kind: "review", Agent: "reviewer", Repo: "kubestellar/hive",
+		Kind: "review", Agent: "reviewer", Repo: "hivecommons/hive",
 		Number: 4321, HeadSHA: reviewTestSHA, Perspective: review.PerspectiveStyle,
 	}
 	plan := review.DispatchPlan{

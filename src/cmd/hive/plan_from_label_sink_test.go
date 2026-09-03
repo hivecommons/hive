@@ -22,7 +22,7 @@ func sinkTestLogger(buf *bytes.Buffer) *slog.Logger {
 }
 
 func sinkTestEpic() *beads.Bead {
-	return &beads.Bead{ID: "hive-epic-1", ExternalRef: "kubestellar/hive#42"}
+	return &beads.Bead{ID: "hive-epic-1", ExternalRef: "hivecommons/hive#42"}
 }
 
 // KickedPlan must record the kick against the ARCHITECT in the governor (that
@@ -49,7 +49,7 @@ func TestLabelPlanSinkKickedPlanRecordsKickAndAudit(t *testing.T) {
 	for _, e := range srv.GetAudit().Recent(0) {
 		if e.Action == "plan_from_label" &&
 			strings.Contains(e.Detail, "hive-epic-1") &&
-			strings.Contains(e.Detail, "kubestellar/hive#42") {
+			strings.Contains(e.Detail, "hivecommons/hive#42") {
 			found = true
 		}
 	}

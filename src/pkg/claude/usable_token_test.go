@@ -25,7 +25,7 @@ func writeCredFile(t *testing.T, tokens *OAuthTokens) string {
 func ms(d time.Duration) int64 { return time.Now().Add(d).UnixMilli() }
 
 // TestHasUsableToken_ExpiredButRefreshable pins the incident this function was
-// added for (kubestellar/hive, 2026-09-01): a six-agent fleet went to
+// added for (hivecommons/hive, 2026-09-01): a six-agent fleet went to
 // "needs re-authentication" overnight because every hive predicate read the
 // aged-out access token as "logged out", while the refresh grant beside it was
 // four weeks from expiring and a single CLI restart recovered the fleet.

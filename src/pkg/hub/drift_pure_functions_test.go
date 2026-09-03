@@ -95,13 +95,13 @@ func TestImageRefIsPinned(t *testing.T) {
 		want bool
 	}{
 		{name: "empty is not pinned", ref: "", want: false},
-		{name: "digest pin is pinned", ref: "ghcr.io/kubestellar/hive@sha256:abc123", want: true},
-		{name: "mutable tag is not pinned", ref: "ghcr.io/kubestellar/hive:v2-latest", want: false},
-		{name: "immutable sha tag is pinned", ref: "ghcr.io/kubestellar/hive:abc1234", want: true},
+		{name: "digest pin is pinned", ref: "ghcr.io/hivecommons/hive@sha256:abc123", want: true},
+		{name: "mutable tag is not pinned", ref: "ghcr.io/hivecommons/hive:v2-latest", want: false},
+		{name: "immutable sha tag is pinned", ref: "ghcr.io/hivecommons/hive:abc1234", want: true},
 		{name: "registry port is not confused as tag", ref: "registry:5000/org/repo", want: false},
 		{name: "registry port with tag", ref: "registry:5000/org/repo:v1.0", want: true},
-		{name: "whitespace trimmed", ref: "  ghcr.io/kubestellar/hive:abc123  ", want: true},
-		{name: "branch-latest is mutable", ref: "ghcr.io/kubestellar/hive:main-latest", want: false},
+		{name: "whitespace trimmed", ref: "  ghcr.io/hivecommons/hive:abc123  ", want: true},
+		{name: "branch-latest is mutable", ref: "ghcr.io/hivecommons/hive:main-latest", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

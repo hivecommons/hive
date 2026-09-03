@@ -25,7 +25,7 @@ import (
 // a fencing failure rather than merely a duplicate grant.
 func TestTwoOpenLedgersBothAcquireTheSameClaim(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claims.json")
-	claim := TaskClaim("kubestellar/hive", "kubestellar/hive#4002")
+	claim := TaskClaim("hivecommons/hive", "hivecommons/hive#4002")
 	now := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
 
 	// Both handles are opened BEFORE either acquires — the handoff shape, where
@@ -73,8 +73,8 @@ func TestTwoOpenLedgersBothAcquireTheSameClaim(t *testing.T) {
 // mentions the first holder.
 func TestReopeningAfterAConcurrentAcquireSeesOnlyTheLastWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claims.json")
-	other := TaskClaim("kubestellar/hive", "kubestellar/hive#4000")
-	claim := TaskClaim("kubestellar/hive", "kubestellar/hive#4002")
+	other := TaskClaim("hivecommons/hive", "hivecommons/hive#4000")
+	claim := TaskClaim("hivecommons/hive", "hivecommons/hive#4002")
 	now := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
 
 	first, err := OpenLedger(path, 8)

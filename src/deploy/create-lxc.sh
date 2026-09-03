@@ -16,7 +16,7 @@ set -euo pipefail
 #   sshpass -p <pw> ssh root@<proxmox-ip> 'bash -s' < create-lxc.sh
 #
 # After creation, run bootstrap-lxc.sh inside the container:
-#   pct exec <CTID> -- bash -c 'curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'
+#   pct exec <CTID> -- bash -c 'curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'
 
 CTID="${CTID:-111}"
 HOSTNAME="${LXC_HOSTNAME:-hive}"
@@ -149,11 +149,11 @@ else
 fi
 echo ""
 echo "Next: run the bootstrap script inside the LXC:"
-echo "  pct exec ${CTID} -- bash -c 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'"
+echo "  pct exec ${CTID} -- bash -c 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'"
 echo ""
 echo "Or via SSH:"
 if [[ "${KEY_ONLY}" -eq 1 ]]; then
-  echo "  ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'"
+  echo "  ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'"
 else
-  echo "  sshpass -p ${PASSWORD} ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'"
+  echo "  sshpass -p ${PASSWORD} ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/deploy/bootstrap-lxc.sh | bash'"
 fi

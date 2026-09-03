@@ -75,7 +75,7 @@ func testEnvelope() SessionEnvelope {
 		Version:   EnvelopeVersion,
 		SessionID: "session-4002",
 		Agent:     "contributor",
-		TaskRef:   "kubestellar/hive#4002",
+		TaskRef:   "hivecommons/hive#4002",
 		Status:    StatusActive,
 		Messages: []Message{{
 			Role:      RoleUser,
@@ -88,10 +88,10 @@ func testEnvelope() SessionEnvelope {
 func testPlan() *TurnPlan {
 	return &TurnPlan{
 		Operations: []PlannedOperation{
-			{Intent: OpIntent{Kind: OpComment, Repo: "kubestellar/hive", Target: "4002", Body: "starting"}},
-			{Intent: OpIntent{Kind: OpPush, Repo: "kubestellar/hive", Target: "feat/4002", Body: "abc123"}},
-			{Intent: OpIntent{Kind: OpPRCreate, Repo: "kubestellar/hive", Target: "feat/4002", Body: "re-entrant turn spike"}},
-			{Intent: OpIntent{Kind: OpLabel, Repo: "kubestellar/hive", Target: "4002", Body: "needs-review"}},
+			{Intent: OpIntent{Kind: OpComment, Repo: "hivecommons/hive", Target: "4002", Body: "starting"}},
+			{Intent: OpIntent{Kind: OpPush, Repo: "hivecommons/hive", Target: "feat/4002", Body: "abc123"}},
+			{Intent: OpIntent{Kind: OpPRCreate, Repo: "hivecommons/hive", Target: "feat/4002", Body: "re-entrant turn spike"}},
+			{Intent: OpIntent{Kind: OpLabel, Repo: "hivecommons/hive", Target: "4002", Body: "needs-review"}},
 		},
 		Verdict:   VerdictShipped,
 		Rationale: "prototype completed",
@@ -238,7 +238,7 @@ func TestFileStoreRoundTripIsAtomicPrivateAndScrubbed(t *testing.T) {
 	env.Messages[0].Content += " token=" + testToken
 	env.Messages[0].Metadata = map[string]string{"failure": "credential " + testToken}
 	env.Plan = bindPlan(env.SessionID, &TurnPlan{
-		Operations: []PlannedOperation{{Intent: OpIntent{Kind: OpPush, Repo: "kubestellar/hive", Target: "branch-" + testToken, Body: "push " + testToken}}},
+		Operations: []PlannedOperation{{Intent: OpIntent{Kind: OpPush, Repo: "hivecommons/hive", Target: "branch-" + testToken, Body: "push " + testToken}}},
 		Verdict:    VerdictShipped,
 		Rationale:  "used " + testToken,
 	})
@@ -347,7 +347,7 @@ func TestValidationAndConfigurationErrors(t *testing.T) {
 }
 
 func TestIdempotencyKeySemanticIdentity(t *testing.T) {
-	base := OpIntent{Kind: OpComment, Repo: "kubestellar/hive", Target: "4002", Body: "hello", ToolCallID: "call-1"}
+	base := OpIntent{Kind: OpComment, Repo: "hivecommons/hive", Target: "4002", Body: "hello", ToolCallID: "call-1"}
 	key := DeriveIdempotencyKey("session", base)
 	reentered := base
 	reentered.ToolCallID = "new-model-call"
