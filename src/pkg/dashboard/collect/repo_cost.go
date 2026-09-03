@@ -34,11 +34,10 @@ package collect
 //     tokens whose timestamp could not be determined. The LEADING interval is
 //     never given to the first repo seen: there is no closing event for it, and
 //     inventing one is how a per-repo cost number becomes plausibly wrong.
-//   - `backend_unsupported` — every non-Claude backend's tokens. Copilot accrues
-//     all usage in one lump at session.shutdown and bob parses no per-message
-//     timestamps, so neither has an intra-session time distribution to join
-//     against. Their spend is REAL and is reported here in full; it is simply
-//     not placeable against a repo.
+//   - `backend_unsupported` — every backend slice without a timestamped usage
+//     timeline. Historical Copilot session.shutdown lumps and bob sessions land
+//     here; Copilot usage captured live by the MITM proxy carries a timeline and
+//     can be joined the same way Claude usage is.
 //
 // The invariant `Σ by_repo + unattributed + backend_unsupported == hive total`
 // holds by construction and is asserted by test. Any token the hive counted
@@ -163,7 +162,7 @@ type RepoCostResponse struct {
 // caveats alongside the numbers rather than burying them in code comments.
 func RepoCostLimitations() []string {
 	return []string{
-		"Claude sessions only. Copilot records all token usage in a single lump at session shutdown and bob parses no per-message timestamps, so neither can be placed in time. Their spend is real and is reported in full under backend_unsupported — it is not missing, it is not attributable.",
+		"Claude sessions and MITM-captured Copilot completions carry timestamped usage timelines. Historical Copilot session.shutdown totals and bob sessions without per-message timestamps are reported in full under backend_unsupported — their spend is real, just not placeable in time.",
 		"Attribution is inferred from TIMING, not measured. Tokens spent between two audited repo= events are billed to the repo named by the later event.",
 		"KNOWN BIAS: an agent that investigates repo A, finds nothing to file, then files on repo B bills ALL of A's investigation to B. This is the method's failure mode, not a rounding error — treat a repo's figure as an upper bound when neighbouring repos show activity but little cost.",
 		"Tokens before an agent's first repo= event, after its last, or from agents with no repo events at all are reported as unattributed and are NEVER spread across repos.",
@@ -318,13 +317,13 @@ func ComputeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 	for i := range summary.Sessions {
 		sess := &summary.Sessions[i]
 
-		// Any backend that cannot produce a per-message timeline contributes
+		// Any backend that cannot produce a per-request/per-message timeline contributes
 		// its FULL session total to backend_unsupported. This is the branch
 		// that keeps the invariant honest: those tokens are counted, just not
 		// placed. A Claude session that somehow carries no timeline (an older
 		// persisted snapshot from before phase 2, say) lands here too — the
 		// tokens are real and must not vanish.
-		if sess.Backend != tokens.BackendClaude || len(sess.Usage) == 0 {
+		if !repoCostBackendSupportsTimeline(sess.Backend) || len(sess.Usage) == 0 {
 			backendUnsupported.add(repoUsagePoint{
 				agent: sess.Agent,
 				model: sess.Model,
@@ -338,10 +337,9 @@ func ComputeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 			continue
 		}
 
-		// A Claude session's retained timeline sums to its session total
-		// exactly (pkg/tokens asserts this), so iterating the timeline
-		// accounts for the whole session and never double-counts it against
-		// the summed fields.
+		// Supported timelines sum to their session total exactly (pkg/tokens
+		// asserts this), so iterating the timeline accounts for the whole
+		// session and never double-counts it against the summed fields.
 		events := byAgentEvents[sess.Agent]
 		for _, u := range sess.Usage {
 			model := u.Model
@@ -387,6 +385,10 @@ func ComputeRepoCost(summary *tokens.AggregateSummary, entries []AuditEntry, now
 	resp.TotalTokens = resp.AttributedTokens + resp.Unattributed.Tokens + resp.BackendUnsupported.Tokens
 
 	return resp
+}
+
+func repoCostBackendSupportsTimeline(backend string) bool {
+	return backend == tokens.BackendClaude || backend == tokens.BackendCopilot
 }
 
 // attributeRepo finds the repo that owns the usage at tsMs: the first audited

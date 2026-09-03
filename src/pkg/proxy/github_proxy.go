@@ -2351,7 +2351,7 @@ func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *htt
 			}
 		}
 		if resolvedModel != "" && resolvedModel != copilotAutoModelSentinel {
-			p.tokenSink.Record(agentName, resolvedModel, in, out)
+			p.tokenSink.RecordCopilot(agentName, resolvedModel, in, out)
 			p.logger.Info("copilot usage recorded",
 				"agent", agentName,
 				"host", host,

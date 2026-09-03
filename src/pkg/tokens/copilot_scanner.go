@@ -166,9 +166,9 @@ func parseCopilotSessionFile(path string) (*SessionSummary, error) {
 	summary := &SessionSummary{
 		Agent: "unknown",
 		Model: "unknown",
-		// All token usage lands in one lump at session.shutdown, so there is no
-		// intra-session time distribution to recover. Repo attribution reports
-		// copilot tokens as backend_unsupported.
+		// Native session-file token usage lands in one lump at session.shutdown,
+		// so there is no intra-session time distribution to recover here. Live
+		// MITM capture writes separate BackendCopilot sessions with timelines.
 		Backend: BackendCopilot,
 	}
 

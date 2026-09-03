@@ -10,10 +10,9 @@ const (
 	// per-assistant-message usage WITH a per-entry timestamp, so it is the only
 	// backend that currently yields a UsageEvent timeline.
 	BackendClaude = "claude"
-	// BackendCopilot is the Copilot CLI. Its events.jsonl accrues all token
-	// usage in a single lump at session.shutdown, so no intra-session time
-	// distribution exists to recover. Interval attribution is structurally
-	// impossible for it without proxy-side capture.
+	// BackendCopilot is the Copilot CLI. Its native events.jsonl accrues all
+	// token usage in a single lump at session.shutdown, while MITM live capture
+	// writes timestamped per-completion usage under the same backend.
 	BackendCopilot = "copilot"
 	// BackendBob is the bobshell backend. Its messages carry per-message usage
 	// but the parser does not currently read per-message timestamps, and

@@ -67,7 +67,7 @@ func TestRepoCostPartitionInvariant(t *testing.T) {
 			),
 			// Agent with no repo events at all -> entirely unattributed.
 			rcSession("s2", "lonely", rcUsage(rcTime(base, 15), 400, 40)),
-			// Non-Claude backend -> backend_unsupported, in full.
+			// Non-time-resolved Copilot backend -> backend_unsupported, in full.
 			{SessionID: "s3", Agent: "reviewer", Model: "gpt-5", Backend: tokens.BackendCopilot,
 				InputTokens: 500, OutputTokens: 50, TotalTokens: 550},
 			// Claude session with NO timeline (e.g. a pre-phase-2 persisted
@@ -100,6 +100,59 @@ func TestRepoCostPartitionInvariant(t *testing.T) {
 	}
 	if resp.AttributedTokens+resp.Unattributed.Tokens+resp.BackendUnsupported.Tokens != hiveTotal {
 		t.Fatalf("AttributedTokens does not complete the partition")
+	}
+}
+
+func TestRepoCostPartitionInvariantWithCopilotLiveCapture(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	base := now.Add(-24 * time.Hour)
+
+	liveCopilot := rcSession("copilot-live-scanner", "scanner",
+		tokens.UsageEvent{TimestampMs: rcTime(base, 15).UnixMilli(), Model: "gpt-5", Coalesced: 1, Input: 300, Output: 30},
+		tokens.UsageEvent{TimestampMs: rcTime(base, 25).UnixMilli(), Model: "gpt-5", Coalesced: 1, Input: 200, Output: 20},
+	)
+	liveCopilot.Backend = tokens.BackendCopilot
+	liveCopilot.Model = "gpt-5"
+
+	summary := &tokens.AggregateSummary{
+		Sessions: []tokens.SessionSummary{
+			liveCopilot,
+			// The scanner's session.shutdown copy for the same active Copilot
+			// session is zeroed once live capture starts; if repo-cost summed
+			// scanner and sink totals independently, this test would exceed the
+			// hive total below.
+			{SessionID: "copilot-shutdown-active", Agent: "scanner", Model: "gpt-5", Backend: tokens.BackendCopilot},
+			// Historical Copilot sessions without live per-request capture still
+			// contribute once, under backend_unsupported.
+			{SessionID: "copilot-before-live", Agent: "scanner", Model: "gpt-5", Backend: tokens.BackendCopilot, InputTokens: 50, OutputTokens: 5, TotalTokens: 55},
+		},
+	}
+	var hiveTotal int64
+	for _, s := range summary.Sessions {
+		hiveTotal += s.TotalTokens
+	}
+
+	entries := []AuditEntry{
+		rcEvent(rcTime(base, 10), "scanner", "org/repo-a"),
+		rcEvent(rcTime(base, 20), "scanner", "org/repo-b"),
+	}
+	resp := ComputeRepoCost(summary, entries, now)
+
+	if got := findRepo(t, resp, "org/repo-b").Tokens; got != 330 {
+		t.Fatalf("repo-b Copilot tokens = %d, want 330", got)
+	}
+	if resp.Unattributed.Tokens != 220 {
+		t.Fatalf("unattributed Copilot tokens = %d, want trailing live event 220", resp.Unattributed.Tokens)
+	}
+	if resp.BackendUnsupported.Tokens != 55 {
+		t.Fatalf("backend_unsupported tokens = %d, want historical Copilot 55", resp.BackendUnsupported.Tokens)
+	}
+	sum := resp.Unattributed.Tokens + resp.BackendUnsupported.Tokens
+	for _, e := range resp.ByRepo {
+		sum += e.Tokens
+	}
+	if sum != hiveTotal {
+		t.Fatalf("partition broken with Copilot live capture: got %d, hive total %d", sum, hiveTotal)
 	}
 }
 

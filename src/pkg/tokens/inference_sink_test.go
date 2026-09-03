@@ -200,3 +200,39 @@ func TestInferenceSinkFirstSeenSurvivesRestart(t *testing.T) {
 		t.Errorf("LastActive = %d, want post-restart Record %d", sess.LastActive, t1.UnixMilli())
 	}
 }
+
+func TestInferenceSinkRecordsCopilotTimeline(t *testing.T) {
+	dir := t.TempDir()
+	sink := NewInferenceSink(dir, nil)
+
+	t0 := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	current := t0
+	sink.now = func() time.Time { return current }
+	sink.RecordCopilot("scanner", "gpt-5", 100, 25)
+	current = t0.Add(5 * time.Minute)
+	sink.RecordCopilot("scanner", "gpt-5", 40, 10)
+
+	agg, err := CollectFromDir(dir, nil)
+	if err != nil {
+		t.Fatalf("CollectFromDir: %v", err)
+	}
+	if len(agg.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(agg.Sessions))
+	}
+	sess := agg.Sessions[0]
+	if sess.Backend != BackendCopilot {
+		t.Fatalf("Backend = %q, want %q", sess.Backend, BackendCopilot)
+	}
+	if sess.TotalTokens != 175 {
+		t.Fatalf("TotalTokens = %d, want 175", sess.TotalTokens)
+	}
+	if got := sess.UsageTotal(); got != sess.TotalTokens {
+		t.Fatalf("UsageTotal = %d, want session total %d", got, sess.TotalTokens)
+	}
+	if len(sess.Usage) != 2 {
+		t.Fatalf("usage events = %d, want 2: %+v", len(sess.Usage), sess.Usage)
+	}
+	if sess.Usage[0].TimestampMs != t0.UnixMilli() || sess.Usage[1].TimestampMs != t0.Add(5*time.Minute).UnixMilli() {
+		t.Fatalf("usage timestamps = %+v, want capture-time stamps", sess.Usage)
+	}
+}
