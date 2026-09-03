@@ -45,6 +45,7 @@ permissions:
   contents: read
   issues: write
 
+
 # Cancel superseded PR runs only (#4623). A new push to a PR makes the
 # in-flight run's verdict irrelevant, so cancelling it is pure runner-minute
 # savings. Scheduled and workflow_dispatch runs must NEVER be cancelable:

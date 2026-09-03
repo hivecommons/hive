@@ -53,6 +53,7 @@ type RepoEvaluation struct {
 	Repo            string            `json:"repo"`
 	CodebaseLevel   int               `json:"codebase_level"`
 	LevelName       string            `json:"level_name"`
+	BlockedAtLevel  int               `json:"blocked_at_level"`
 	CriteriaTotal   int               `json:"criteria_total"`
 	CriteriaPassed  int               `json:"criteria_passed"`
 	Levels          []ACMMLevelScore  `json:"levels"`
@@ -488,6 +489,7 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 			Repo:            repo,
 			CodebaseLevel:   scored.CodebaseLevel,
 			LevelName:       scored.CodebaseLevelName,
+			BlockedAtLevel:  acmmBlockedAtLevel(scored.Levels),
 			CriteriaTotal:   scored.CriteriaTotal,
 			CriteriaPassed:  scored.CriteriaPassed,
 			Levels:          scored.Levels,
@@ -687,4 +689,13 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func acmmBlockedAtLevel(levels []ACMMLevelScore) int {
+	for _, level := range levels {
+		if !level.Passed {
+			return level.Level
+		}
+	}
+	return -1
 }
