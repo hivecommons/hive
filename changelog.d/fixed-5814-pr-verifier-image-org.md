@@ -1,0 +1,1 @@
+- Repointed the PR verifier image to `ghcr.io/hivecommons/pr-verifier` (same digest) so `verify PR contents` stops failing on every PR after the GHCR org move retired the `kubestellar` package.

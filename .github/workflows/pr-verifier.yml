@@ -15,7 +15,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     env:
-      PR_VERIFIER_IMAGE: ghcr.io/kubestellar/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
+      PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
     steps:
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
