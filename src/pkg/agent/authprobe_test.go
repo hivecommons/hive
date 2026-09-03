@@ -446,44 +446,6 @@ func TestAgentAuthAvailableResolvesProcessState(t *testing.T) {
 	}
 }
 
-func TestCheckBlockedThrashPausesLoopingAgent(t *testing.T) {
-	m := &Manager{
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		agents: map[string]*AgentProcess{
-			"writer": {Name: "writer", State: StateStopped},
-		},
-	}
-
-	m.checkBlockedThrash("writer", "ordinary output")
-	if m.thrash != nil {
-		t.Fatalf("non-matching output should not initialize thrash state: %#v", m.thrash)
-	}
-
-	for i := 0; i < thrashThreshold-1; i++ {
-		m.checkBlockedThrash("writer", "git push blocked: advisory mode")
-	}
-	if m.agents["writer"].Paused {
-		t.Fatal("agent paused before blocked-action threshold")
-	}
-
-	m.checkBlockedThrash("writer", "blocked by hive policy: push denied")
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		m.mu.RLock()
-		paused := m.agents["writer"].Paused
-		trigger := m.agents["writer"].PausedTrigger
-		m.mu.RUnlock()
-		if paused {
-			if trigger != "thrash-breaker" {
-				t.Fatalf("pause trigger = %q, want thrash-breaker", trigger)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("agent was not paused after repeated blocked-action output")
-}
-
 func TestPermissionsWatcherRepairsBobStateDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), bobStateDirBase)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

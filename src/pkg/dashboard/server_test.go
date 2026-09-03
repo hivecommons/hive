@@ -707,6 +707,11 @@ func freePort(t *testing.T) int {
 }
 
 func TestStart_ServesEndpoints(t *testing.T) {
+	const (
+		startReadinessTimeout = 15 * time.Second
+		startReadinessPoll    = 25 * time.Millisecond
+	)
+
 	port := freePort(t)
 	s := NewServer(port, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 	s.UpdateStatus(minimalPayload())
@@ -720,17 +725,22 @@ func TestStart_ServesEndpoints(t *testing.T) {
 	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
 	client := &http.Client{Timeout: time.Second}
 	var resp *http.Response
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(startReadinessTimeout)
 	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			t.Fatalf("server exited before becoming ready: %v", err)
+		default:
+		}
 		r, err := client.Get(addr + "/api/health")
 		if err == nil {
 			resp = r
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(startReadinessPoll)
 	}
 	if resp == nil {
-		t.Fatal("server did not start within 2 s")
+		t.Fatalf("server did not start within %s", startReadinessTimeout)
 	}
 	defer resp.Body.Close()
 

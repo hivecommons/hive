@@ -679,50 +679,6 @@ func TestPauseNotFound(t *testing.T) {
 	}
 }
 
-func TestFilteredEnvUnit(t *testing.T) {
-	m := NewManager(map[string]config.AgentConfig{
-		"scanner": {Backend: "claude"},
-	}, slog.Default(), ProjectContext{})
-
-	m.mu.RLock()
-	agent := m.agents["scanner"]
-	m.mu.RUnlock()
-
-	result := m.filteredEnv(agent)
-	for _, v := range result {
-		if len(v) > 13 && v[:13] == "GITHUB_TOKEN=" {
-			t.Errorf("should filter out GITHUB_TOKEN")
-		}
-	}
-	_ = result
-}
-
-func TestAgentCanWrite(t *testing.T) {
-	m := NewManager(map[string]config.AgentConfig{
-		"scanner": {Backend: "claude", Role: "scanner"},
-	}, slog.Default(), ProjectContext{ACMMLevel: 6})
-
-	m.mu.RLock()
-	agent := m.agents["scanner"]
-	m.mu.RUnlock()
-
-	if !m.agentCanWrite(agent) {
-		t.Error("L6 scanner should allow writes")
-	}
-
-	m2 := NewManager(map[string]config.AgentConfig{
-		"scanner": {Backend: "claude", Role: "scanner"},
-	}, slog.Default(), ProjectContext{ACMMLevel: 2})
-
-	m2.mu.RLock()
-	agent2 := m2.agents["scanner"]
-	m2.mu.RUnlock()
-
-	if m2.agentCanWrite(agent2) {
-		t.Error("L2 scanner should not allow writes")
-	}
-}
-
 func TestDefaultAgentModeByRole(t *testing.T) {
 	tests := []struct {
 		role  string
@@ -738,40 +694,6 @@ func TestDefaultAgentModeByRole(t *testing.T) {
 		got := DefaultAgentMode(tt.role, tt.level)
 		if got != tt.want {
 			t.Errorf("DefaultAgentMode(%q, %d) = %s, want %s", tt.role, tt.level, got, tt.want)
-		}
-	}
-}
-
-func TestNormalizeModelNameUnit(t *testing.T) {
-	// Claude CLI keeps hyphens: claude-opus-4-7 must pass through unchanged.
-	if got := normalizeModelName("claude-opus-4-7", "claude"); got != "claude-opus-4-7" {
-		t.Errorf("claude backend: got %q, want claude-opus-4-7", got)
-	}
-	// Copilot and other backends convert the trailing hyphen-digit group to a dot.
-	if got := normalizeModelName("claude-sonnet-4-6", "copilot"); got != "claude-sonnet-4.6" {
-		t.Errorf("copilot backend: got %q, want claude-sonnet-4.6", got)
-	}
-	// No trailing digit group — unchanged for any backend.
-	if got := normalizeModelName("gpt-next", "copilot"); got != "gpt-next" {
-		t.Errorf("no digit suffix: got %q, want gpt-next", got)
-	}
-
-	// Inference backends must pass the model through VERBATIM: it becomes the
-	// outbound gateway "model" field and must match an entitled model exactly.
-	// Rewriting it (e.g. "Azure/gpt-4" -> "Azure/gpt.4") makes the gateway 403
-	// with "team not allowed to access model" even on entitled models.
-	for _, backend := range config.InferenceBackends {
-		for _, model := range []string{
-			"Azure/gpt-4o",
-			"Azure/gpt-4.1",
-			"Azure/gpt-4",       // trailing "-4" would become "gpt.4" if normalized
-			"gpt-4o-2024-08-06", // trailing "-06" would become "-08.06" if normalized
-			"Qwen/Qwen2.5-1.5B-Instruct",
-			"aws/anthropic.claude-3-5-sonnet",
-		} {
-			if got := normalizeModelName(model, backend); got != model {
-				t.Errorf("inference backend %q must pass %q through verbatim, got %q", backend, model, got)
-			}
 		}
 	}
 }

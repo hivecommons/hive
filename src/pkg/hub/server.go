@@ -1474,14 +1474,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
-	// Delegation-chain verification material (JWKS-equivalent). Registered
-	// WITHOUT requireAuth on purpose: the whole point of a verifiable chain is
-	// that a TENANT — or an auditor they delegate to, holding no hive
-	// credential at all — can check it without asking the operator to vouch for
-	// it. The response is Ed25519 PUBLIC keys plus generation numbers, both
-	// already non-secret in this codebase (a generation ID names a key; it is
-	// not a key), so there is nothing here for auth to protect. Observe-only:
-	// no hub decision reads a chain. See src/docs/delegation-chain.md.
+	// Delegation public-key material (JWKS-equivalent). Registered WITHOUT
+	// requireAuth because the response contains only Ed25519 public keys and
+	// generation numbers, both non-secret in this codebase.
 	s.mux.HandleFunc("GET "+delegation.KeysPath, s.handleDelegationKeys)
 	s.mux.HandleFunc("DELETE /api/hub/registry/{id}", s.handleRegistryDelete)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeProxy)

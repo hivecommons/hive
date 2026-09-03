@@ -79,6 +79,17 @@ func LegacyBaseDecision(req Request, acmmLevel int) Verdict {
 		Agent:     req.Agent.Name,
 	}
 
+	if req.HasLegacyAllowed {
+		if req.LegacyAllowed {
+			v.Decision = DecisionAutoApprove
+			v.Rationale = fmt.Sprintf("legacy %s gate allowed request; approval desk records and audits the explicit operation", req.Kind)
+		} else {
+			v.Decision = DecisionOperatorApprove
+			v.Rationale = fmt.Sprintf("legacy %s gate did not allow request: routed to operator approval", req.Kind)
+		}
+		return v
+	}
+
 	switch req.Kind {
 	case KindSelfMerge:
 		// Parity note: the legacy gate ALSO requires AutoMergeConfig.Enabled and

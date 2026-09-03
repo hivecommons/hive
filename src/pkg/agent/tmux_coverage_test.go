@@ -486,45 +486,6 @@ func TestCaptureVisiblePane_And_WaitForInputPrompt(t *testing.T) {
 	}
 }
 
-func TestWaitForInputPrompt_Session(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covwait"
-	newRawTmuxSession(t, session)
-	m := NewManager(nil, discardLogger(), ProjectContext{})
-	// "goose is ready" satisfies the input-prompt check AND contains the
-	// "goose" cliPaneMarker so the CLI-ready / has-CLI checks also pass.
-	paneInject(t, session, "goose is ready")
-	if !m.waitForInputPrompt(session) {
-		t.Error("waitForInputPrompt should return true")
-	}
-	if !m.waitForCLIReady(session) {
-		t.Error("waitForCLIReady should return true")
-	}
-	if !m.tmuxPaneHasCLI(session) {
-		t.Error("tmuxPaneHasCLI should be true")
-	}
-	if m.captureTmuxPane(session) == "" {
-		t.Error("captureTmuxPane returned empty")
-	}
-}
-
-func TestTmuxSessionExists(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covexists"
-	newRawTmuxSession(t, session)
-	m := NewManager(nil, discardLogger(), ProjectContext{})
-	if !m.tmuxSessionExists(session) {
-		t.Error("session should exist")
-	}
-	if m.tmuxSessionExists("hive-does-not-exist-xyz") {
-		t.Error("nonexistent session should not exist")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // confirmMenuOption — drives a menu rendered in a real pane
 // ---------------------------------------------------------------------------
@@ -631,33 +592,6 @@ func TestWatchForTrustPromptForAgent_Cancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	m.watchForTrustPromptForAgent(agent, ctx)
-}
-
-func TestWatchForTrustPrompt_Session(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covtrust2"
-	newRawTmuxSession(t, session)
-	m := NewManager(nil, discardLogger(), ProjectContext{})
-	paneInject(t, session, "Do you trust the files")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	m.watchForTrustPrompt(session, ctx)
-}
-
-func TestPollTmuxOutput_Session(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covpoll2"
-	newRawTmuxSession(t, session)
-	m := NewManager(nil, discardLogger(), ProjectContext{})
-	paneInject(t, session, "git commit -s")
-	buf := NewRingBuffer(50)
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	m.pollTmuxOutput("covpoll2", session, buf, ctx)
 }
 
 // ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ func newWatchdogTestManager(t *testing.T, backends map[string]string) (*Manager,
 	m := NewManager(cfgs, discardLogger(), ProjectContext{})
 
 	panes := make(map[string]string)
-	m.visiblePaneCapture = func(a *AgentProcess) string { return panes[a.Name] }
+	m.terminal = funcTerminal{captureVisiblePane: func(a *AgentProcess) string { return panes[a.Name] }}
 
 	origExists := tmuxSessionExists
 	tmuxSessionExists = func(_ *Manager, _ *AgentProcess) bool { return true }

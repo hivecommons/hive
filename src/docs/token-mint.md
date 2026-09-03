@@ -110,25 +110,16 @@ too — treat it as effectively immutable once anything trusts it.
 
 ## The JWKS endpoint — and what is NOT wired
 
-ADR-0007 and the mint package describe a `.well-known/jwks.json` endpoint
-that downstream WIF providers fetch to verify tokens (`Minter.JWKS`,
-`mint.go:237-254`). **As of this branch, nothing in the hive process serves
-that endpoint.** `pkg/mint/README.md` states this explicitly:
-
-> `Server.Handler()` returns a handler; it does not listen. Nothing in this
-> repo currently serves it — the mint is used in-process through
-> `AgentMinter`. Whoever wires a listener owns the short-term hardening the
-> finding asks for: bind it to localhost or a pod-internal interface, and do
-> not expose `/mint` beyond the pod network.
-
-Confirmed by search: no route registers `jwks` or `well-known` anywhere
-under `pkg/dashboard/` or `cmd/hive/`. Today, `mint.enabled: true` only
-wires the in-process `AgentMinter` that stamps agent-scoped tokens
-(`main.go:1743-1750`) — it does **not** stand up an HTTP `/mint` endpoint or
-a public JWKS endpoint. If your use case needs an *external* WIF broker
-(GCP/AWS/Azure/registry) to independently verify hive-minted tokens over
-HTTP, that transport does not exist yet in this codebase; enabling `mint:`
-today only benefits in-process consumers of `AgentMinter`.
+ADR-0007 and the mint package describe a `.well-known/jwks.json` document
+that downstream WIF providers use to verify tokens (`Minter.JWKS`,
+`mint.go`). **As of this branch, nothing in the hive process serves that
+document and no HTTP mint server is compiled in.** Today, `mint.enabled: true`
+only wires the in-process `AgentMinter` that stamps agent-scoped tokens — it
+does **not** stand up an HTTP `/mint` endpoint or a public JWKS endpoint. If
+your use case needs an external WIF broker to independently verify
+hive-minted tokens over HTTP, that transport does not exist yet in this
+codebase; enabling `mint:` today only benefits in-process consumers of
+`AgentMinter`.
 
 ## Trust boundary — read this before enabling
 
@@ -137,14 +128,9 @@ turning `mint.enabled: true` on:
 
 1. **Who can obtain a token today**: only in-process callers holding an
    `*mint.AgentMinter` — currently the agent manager, which mints a token
-   per agent on the same refresh cadence as its GitHub App token
-   (`main.go:1747`, `agent.go:80-97`). There is no exposed HTTP endpoint for
-   an external caller to request a mint token from this hive (see JWKS
-   section above) — the "front door" described in `pkg/mint/README.md`
-   (`SharedSecretAuthenticator` / `TokenReviewAuthenticator` /
-   `MultiAuthenticator`) is real code but is not wired into `cmd/hive/main.go`
-   in this branch. Do not assume caller-identity checking is active just
-   because it exists in the package.
+   per agent on the same refresh cadence as its GitHub App token. There is no
+   exposed HTTP endpoint for an external caller to request a mint token from
+   this hive (see JWKS section above).
 2. **What a token grants**: exactly the scopes for the subject's tier —
    never more (fail-closed on unknown tiers, `agent.go:53-58`) — for the
    fixed `hive-agent` audience, for at most `min(max_ttl_seconds,

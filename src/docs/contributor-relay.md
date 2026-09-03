@@ -46,6 +46,12 @@ just contribute-hive claude local  # host mode — relay + CLI directly on your 
 ```
 
 Containerized mode auto-detects the runtime — docker first, then podman — and can be forced with `export HIVE_CONTAINER_RUNTIME=podman`.
+
+### Capability-aware routing
+
+The relay self-reports runtime capabilities during `auth_response`: container runtime, OS/arch, backend CLI version, credential type, protocol version, and Pi readiness where applicable. These values are self-reported and advisory, never a trust or credential-enforcement signal.
+
+The hub may use them only to avoid explicit task mismatches. Task requirements are derived from issue labels such as `needs-container`, `needs-docker`, `needs-podman`, `os/linux`, `arch/amd64`, `backend/copilot`, and `credential/app`. If a client explicitly declares a contradictory value, the hub skips that task for the client; if every otherwise-admissible task is skipped this way, the relay receives `task_unavailable` with reason `capability_mismatch`. A relay that declares nothing, or leaves a field unknown, continues to receive work as before.
 The resolved runtime is passed into the container, so the "attach to the CLI" hints printed from inside it (the status line, and the banner shown when the CLI needs a login) name the engine that actually launched it ([#5145](https://github.com/kubestellar/hive/issues/5145)). In host mode there is no container, and those hints are a plain `tmux attach -t <session>`.
 
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.

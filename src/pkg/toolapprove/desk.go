@@ -203,6 +203,13 @@ type Request struct {
 	// IdempotencyKey de-duplicates a re-delivered request. Empty means the
 	// caller accepts a derived key (see DeriveIdempotencyKey).
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// LegacyAllowed carries the call site's existing gate result when migrating
+	// a non-tool lane. It lets the desk preserve day-one behavior exactly while
+	// adding rules, ceiling, inbox, and audit semantics around that result.
+	LegacyAllowed bool `json:"legacy_allowed,omitempty"`
+	// HasLegacyAllowed distinguishes an explicit false legacy gate result from
+	// a request that did not provide one.
+	HasLegacyAllowed bool `json:"has_legacy_allowed,omitempty"`
 }
 
 // Request kinds. Each corresponds to one of the gates RFC #4000 inventoried,

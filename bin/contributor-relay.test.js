@@ -1016,6 +1016,25 @@ test('#5090 a normal closure with no text still identifies itself', () => {
   } finally { teardown(relay); }
 });
 
+test('#5090 close diagnostics include hub connection id and keepalive timing', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const hub = relay.getHubs()[0];
+    hub.connectionId = 'abc123';
+    hub.lastPong = 1_000;
+    hub.lastPingSentAt = 3_000;
+    hub.reconnectDelay = 4_000;
+
+    const out = relay.wsCloseCorrelation(hub, 5_500);
+    assert.ok(out.includes('conn=abc123'), 'hub connection id must be present for log correlation');
+    assert.ok(out.includes('last_pong_age_ms=4500'), 'last pong age connects the flap to keepalive state');
+    assert.ok(out.includes('last_ping_age_ms=2500'), 'last ping age connects the flap to ping cadence');
+    assert.ok(out.includes('reconnect_delay_ms=4000'), 'backoff state must be visible in the close log');
+    assert.ok(out.includes('heartbeat_interval_ms=30000'));
+    assert.ok(out.includes('heartbeat_timeout_ms=90000'));
+  } finally { teardown(relay); }
+});
+
 test('task prompt is queued, not typed, while cliReady is false', () => {
   const relay = loadRelay({ backend: 'copilot' });
   try {

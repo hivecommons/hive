@@ -71,56 +71,6 @@ func TestTruncateTail(t *testing.T) {
 // readCoveragePreamble — with actual temp files
 // ---------------------------------------------------------------------------
 
-func TestReadCoveragePreamble_ValidFile(t *testing.T) {
-	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
-
-	metrics := map[string]map[string]json.Number{
-		"ci-maintainer": {
-			"coverage":       json.Number("85"),
-			"coverageTarget": json.Number("91"),
-		},
-	}
-	data, _ := json.Marshal(metrics)
-	os.WriteFile(cacheFile, data, 0o644)
-
-	orig := metricsCachePath
-	metricsCachePath = cacheFile
-	t.Cleanup(func() { metricsCachePath = orig })
-
-	got := (&Manager{logger: discardLogger()}).readCoveragePreamble()
-	if got != "[COVERAGE] Current: 85% | Target: 91%." {
-		t.Errorf("readCoveragePreamble = %q, want '[COVERAGE] Current: 85%% | Target: 91%%.'", got)
-	}
-}
-
-func TestReadCoveragePreamble_MissingFile(t *testing.T) {
-	orig := metricsCachePath
-	metricsCachePath = filepath.Join(t.TempDir(), "missing-agent-metrics-cache.json")
-	t.Cleanup(func() { metricsCachePath = orig })
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	if got != "" {
-		t.Errorf("missing file should return empty, got %q", got)
-	}
-}
-
-func TestReadCoveragePreamble_InvalidJSON(t *testing.T) {
-	orig := metricsCachePath
-	metricsCachePath = filepath.Join(t.TempDir(), "agent-metrics-cache.json")
-	t.Cleanup(func() { metricsCachePath = orig })
-	if err := os.WriteFile(metricsCachePath, []byte("not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	if got != "" {
-		t.Errorf("should return empty for missing/invalid file, got %q", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // checkKickRefusal
 // ---------------------------------------------------------------------------
@@ -625,147 +575,6 @@ func TestFilterPaneOutput_NoPrompt(t *testing.T) {
 // buildProjectPreamble
 // ---------------------------------------------------------------------------
 
-func TestBuildProjectPreamble_EmptyOrg(t *testing.T) {
-	m := &Manager{
-		logger:  discardLogger(),
-		project: ProjectContext{Org: "", Repos: []string{"repo"}},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if got != "" {
-		t.Errorf("empty org should return empty preamble, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_EmptyRepos(t *testing.T) {
-	m := &Manager{
-		logger:  discardLogger(),
-		project: ProjectContext{Org: "testorg", Repos: nil},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if got != "" {
-		t.Errorf("empty repos should return empty preamble, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_PRsNotAllowed(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  3,
-			PRsAllowed: false,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "PRs NOT allowed") {
-		t.Errorf("should say PRs NOT allowed, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_PRsAllowed_Advisory(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  2,
-			PRsAllowed: true,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "Advisory") {
-		t.Errorf("L2 scanner should be advisory, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_PRsAllowed_IssuesAndPRs_L5(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  5,
-			PRsAllowed: true,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "hold-labeled") {
-		t.Errorf("L5 should mention hold-labeled, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_PRsAllowed_IssuesAndPRs_L4(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  4,
-			PRsAllowed: true,
-		},
-	}
-	agent := &AgentProcess{Name: "quality", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "Issues + PRs allowed") {
-		t.Errorf("L4 quality should allow Issues + PRs, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_IssuesPRsMerge(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  6,
-			PRsAllowed: true,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "auto-merge") {
-		t.Errorf("L6 scanner should mention auto-merge, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_UnknownLevel(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:       "testorg",
-			Repos:     []string{"repo1"},
-			ACMMLevel: 99,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "Level 99") {
-		t.Errorf("unknown level should show 'Level 99', got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_MultipleRepos(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:       "testorg",
-			Repos:     []string{"repo1", "repo2", "repo3"},
-			ACMMLevel: 3,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "testorg/repo1, testorg/repo2, testorg/repo3") {
-		t.Errorf("should list all repos, got %q", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // paneShowsLoginPrompt
 // ---------------------------------------------------------------------------
@@ -1042,39 +851,6 @@ func TestIsInferenceBackend(t *testing.T) {
 // ---------------------------------------------------------------------------
 // normalizeModelName — additional edge cases
 // ---------------------------------------------------------------------------
-
-func TestNormalizeModelName_EdgeCases(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"no-hyphen", "no-hyphen"},
-		{"trailing-", "trailing-"},
-		{"-leading", "-leading"},
-		// Unknown copilot ids pass through VERBATIM (#4262): the old blind
-		// digit-suffix dot-rewrite is what corrupted the known claude-fable-5
-		// into the CLI-rejected claude-fable.5. Copilot ids are canonicalized
-		// against the CLI-accepted list instead (see CanonicalizeCopilotModel).
-		{"a-b-c-1", "a-b-c-1"},
-		{"just-123", "just-123"},
-		{"model", "model"},
-	}
-	for _, tt := range tests {
-		got := normalizeModelName(tt.input, "copilot")
-		if got != tt.want {
-			t.Errorf("normalizeModelName(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-
-	// The digit-suffix dot-rewrite still applies to non-copilot CLI backends.
-	for _, tt := range []struct{ input, want string }{
-		{"a-b-c-1", "a-b-c.1"},
-		{"just-123", "just.123"},
-	} {
-		if got := normalizeModelName(tt.input, "gemini"); got != tt.want {
-			t.Errorf("normalizeModelName(%q, gemini) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // diffNewLines — additional edge cases
@@ -1361,43 +1137,6 @@ func TestClearAllModeOverrides_ClearsAll(t *testing.T) {
 // filteredEnv — write-capable agent keeps all tokens
 // ---------------------------------------------------------------------------
 
-func TestFilteredEnv_WriteAgent(t *testing.T) {
-	m := NewManager(map[string]config.AgentConfig{
-		"quality": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
-	}, discardLogger(), ProjectContext{ACMMLevel: 4})
-
-	m.mu.RLock()
-	agent := m.agents["quality"]
-	m.mu.RUnlock()
-
-	env := m.filteredEnv(agent)
-	// Should not filter anything
-	if len(env) == 0 {
-		t.Error("write agent should get full env")
-	}
-}
-
-func TestFilteredEnv_AdvisoryStripsTokens(t *testing.T) {
-	m := NewManager(map[string]config.AgentConfig{
-		"scanner": {Backend: "claude"},
-	}, discardLogger(), ProjectContext{ACMMLevel: 2})
-
-	m.mu.RLock()
-	agent := m.agents["scanner"]
-	m.mu.RUnlock()
-
-	// Set tokens in env
-	t.Setenv("GH_TOKEN", "ghp_test123")
-	t.Setenv("GITHUB_TOKEN", "ghp_test456")
-
-	env := m.filteredEnv(agent)
-	for _, e := range env {
-		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
-			t.Errorf("advisory agent should have %q filtered out", e)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // truncateStr (already has some coverage, verify edge cases)
 // ---------------------------------------------------------------------------
@@ -1445,26 +1184,6 @@ func TestIsBufferNoise_PromptChars(t *testing.T) {
 	}
 	if !isBufferNoise(">") {
 		t.Error("bare prompt should be noise")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// acmmLevelNames
-// ---------------------------------------------------------------------------
-
-func TestACMMLevelNames(t *testing.T) {
-	expected := map[int]string{
-		1: "Inception",
-		2: "Advisory",
-		3: "Quality-Gated",
-		4: "Security-Aware",
-		5: "Semi-Autonomous",
-		6: "Fully Autonomous",
-	}
-	for level, name := range expected {
-		if acmmLevelNames[level] != name {
-			t.Errorf("acmmLevelNames[%d] = %q, want %q", level, acmmLevelNames[level], name)
-		}
 	}
 }
 

@@ -2,7 +2,6 @@ package hub
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 )
@@ -27,18 +26,13 @@ func TestHeartbeatPayloadCarriesRepoTargetMisconfig(t *testing.T) {
 }
 
 func TestMyHivesHealthBadgeShowsRepoTargetMisconfig(t *testing.T) {
-	body, err := os.ReadFile("saas_dashboard_html.go")
-	if err != nil {
-		t.Fatalf("read saas_dashboard_html.go: %v", err)
-	}
-	html := string(body)
 	for _, snippet := range []string{
 		"h.repoTargetMisconfigured",
 		"h.repoTargetIssue",
 		"var repoTargetBad = !isPlaceholderHive(h) && !!h.repoTargetMisconfigured",
 		"Repo target misconfigured — expected org/repo. Fix in Settings → Repos.",
 	} {
-		if !strings.Contains(html, snippet) {
+		if !strings.Contains(dashboardHTML, snippet) {
 			t.Fatalf("saas health badge missing %q", snippet)
 		}
 	}

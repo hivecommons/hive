@@ -321,6 +321,8 @@ const hubs = rawHubList.map((url, i) => ({
   reconnectDelay: BASE_RECONNECT_DELAY_MS,
   heartbeatInterval: null,
   lastPong: Date.now(),
+  lastPingSentAt: 0,
+  connectionId: '',
   connectGeneration: 0,
   reconnectTimer: null,
   authenticated: false,
@@ -3513,6 +3515,7 @@ function handleMessage(data, hub) {
       break;
 
     case 'auth_ok':
+      hub.connectionId = msg.connection_id || '';
       console.log(`Authenticated with ${hub.url} as ${msg.contributor_id} (tier: ${msg.trust_tier})`);
       // #2567: the hub advertises its protocol version + capability set here. We
       // log them (forward-compatible: unknown/absent fields are simply skipped)
@@ -3804,6 +3807,15 @@ function describeWsClose(code, reason) {
   return text ? `${label}: ${text}` : label;
 }
 
+function wsCloseCorrelation(hub, now = Date.now()) {
+  const lastPongAge = hub.lastPong ? Math.max(0, now - hub.lastPong) : -1;
+  const lastPingAge = hub.lastPingSentAt ? Math.max(0, now - hub.lastPingSentAt) : -1;
+  return `conn=${hub.connectionId || 'unknown'} ` +
+    `last_pong_age_ms=${lastPongAge} last_ping_age_ms=${lastPingAge} ` +
+    `reconnect_delay_ms=${hub.reconnectDelay} ` +
+    `heartbeat_interval_ms=${HEARTBEAT_INTERVAL_MS} heartbeat_timeout_ms=${HEARTBEAT_TIMEOUT_MS}`;
+}
+
 function connectHub(hub) {
   if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
   if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
@@ -3817,14 +3829,17 @@ function connectHub(hub) {
     console.log(`Connected to ${hub.url}`);
     hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
     hub.lastPong = Date.now();
+    hub.lastPingSentAt = 0;
+    hub.connectionId = '';
 
     hub.heartbeatInterval = setInterval(() => {
       if (gen !== hub.connectGeneration) { clearInterval(hub.heartbeatInterval); return; }
       if (Date.now() - hub.lastPong > HEARTBEAT_TIMEOUT_MS) {
-        console.error(`Heartbeat timeout on ${hub.url} — reconnecting`);
+        console.error(`Heartbeat timeout on ${hub.url} (${wsCloseCorrelation(hub)}) — reconnecting`);
         hub.ws.terminate();
         return;
       }
+      hub.lastPingSentAt = Date.now();
       sendTo(hub, { type: 'ping', seq: nextSeq() });
       // Also emit a PROTOCOL-level Ping control frame (hivecommons/hive#5090).
       // The JSON ping above is an ordinary text frame; an L7 proxy that scores
@@ -3860,7 +3875,7 @@ function connectHub(hub) {
   hub.ws.on('close', (code, reason) => {
     if (gen !== hub.connectGeneration) return;
     console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
-      `Reconnecting in ${hub.reconnectDelay}ms...`);
+      `${wsCloseCorrelation(hub)}. Reconnecting in ${hub.reconnectDelay}ms...`);
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
     hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
     hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
@@ -4020,6 +4035,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     classifyPeerProtocol,
     warnOnProtocolDrift,
     describeWsClose,
+    wsCloseCorrelation,
     // Headless (non-interactive) mode surface (hivecommons/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,

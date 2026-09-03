@@ -1,0 +1,1 @@
+- Added RFC #5691 documenting constellation hub/spoke coordination, including the repo-overlap phase delivered by #5705 and follow-on charter, headroom, App-budget, credential, and routing contracts.

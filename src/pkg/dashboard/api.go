@@ -6163,8 +6163,11 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	// restore it — the "always exactly one default" guard below runs once the
 	// final repos+primary are known, and a reject must not leave a half-applied
 	// config in memory (which would then be persisted on the next unrelated save).
+	prevOrg := s.deps.Config.Project.Org
 	prevRepos := append([]string(nil), s.deps.Config.Project.Repos...)
 	prevPrimary := s.deps.Config.Project.PrimaryRepo
+	prevBaseURL := s.deps.Config.GitHub.BaseURL
+	prevAPIURL := s.deps.Config.GitHub.APIURL
 
 	spokeHost := s.hiveForgeHost()
 	validateRepos := prevRepos
@@ -6175,18 +6178,26 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	if body.PrimaryRepo != nil {
 		validatePrimary = *body.PrimaryRepo
 	}
-	// Normalize org-qualified entries ("myorg/myrepo" under org "myorg") to the
-	// bare repo name BEFORE validating, so the accepted value and the persisted
-	// value are the same shape. Without this an owner pasting the org/repo form
-	// GitHub shows everywhere is rejected with a 400 here, or — worse, on paths
-	// that skip this handler — persisted org-qualified and then resolved as
-	// "org/org/repo", which fails every agent. An entry qualified with a
-	// different org is left untouched and still 400s below.
-	validateRepos, _ = config.NormalizeProjectRepos(org, validateRepos)
-	validatePrimary, _ = config.NormalizeRepoForOrg(org, validatePrimary)
-	if issue := config.ValidateProjectRepoTargets(org, validateRepos, validatePrimary, spokeHost); issue != nil {
+	adoptOrg := org
+	if nextOrg, errMsg := governorReposAdoptOrg(org, validateRepos, validatePrimary, spokeHost); errMsg != "" {
+		jsonError(w, errMsg, http.StatusBadRequest)
+		return
+	} else if nextOrg != "" {
+		adoptOrg = nextOrg
+	}
+	validateRepos = normalizeGovernorRepoRefs(adoptOrg, validateRepos)
+	validatePrimary = normalizeGovernorRepoRef(adoptOrg, validatePrimary)
+	if issue := config.ValidateProjectRepoTargets(adoptOrg, validateRepos, validatePrimary, spokeHost); issue != nil {
 		jsonError(w, issue.Message, http.StatusBadRequest)
 		return
+	}
+	if adoptOrg != org {
+		s.logger.Info("project org changed from repo paste", "from", org, "to", adoptOrg)
+		org = adoptOrg
+		s.deps.Config.Project.Org = adoptOrg
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetOrg(adoptOrg)
+		}
 	}
 	// Feed the normalized values back into the body so the persistence code
 	// below stores bare names even when its own url-parse branch does not fire.
@@ -6195,18 +6206,6 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.PrimaryRepo != nil {
 		body.PrimaryRepo = &validatePrimary
-	}
-	for _, ref := range body.Repos {
-		if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
-			jsonError(w, fmt.Sprintf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host. Remove the mismatched repo or use a repo on %s.", strings.TrimSpace(ref), h, spokeHost, spokeHost), http.StatusBadRequest)
-			return
-		}
-	}
-	if body.PrimaryRepo != nil {
-		if h := repoRefHostLabel(*body.PrimaryRepo); h != "" && !sameForgeHost(h, spokeHost) {
-			jsonError(w, fmt.Sprintf("default repo %q is on %s but this hive is on %s — the default must live on this hive's forge.", strings.TrimSpace(*body.PrimaryRepo), h, spokeHost), http.StatusBadRequest)
-			return
-		}
 	}
 
 	if len(body.Repos) > 0 {
@@ -6279,9 +6278,13 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if primary == "" || !inList {
+			s.deps.Config.Project.Org = prevOrg
 			s.deps.Config.Project.Repos = prevRepos
 			s.deps.Config.Project.PrimaryRepo = prevPrimary
+			s.deps.Config.GitHub.BaseURL = prevBaseURL
+			s.deps.Config.GitHub.APIURL = prevAPIURL
 			if s.deps.GHClient != nil {
+				s.deps.GHClient.SetOrg(prevOrg)
 				s.deps.GHClient.SetRepos(prevRepos)
 			}
 			jsonError(w, "set a default repo before saving — one of the monitored repos must be marked as the default (the repo where the advisory issue is maintained)", http.StatusBadRequest)
@@ -6306,6 +6309,79 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 // against, and mirrors config.GitHubConfig.HostLabel() (the same value the
 // dashboard reads as github_base_url's host). Falls back to public github.com
 // when no config is loaded (tests/early boot).
+
+type parsedGovernorRepoRef struct {
+	Owner string
+	Name  string
+	Host  string
+	OK    bool
+}
+
+func parseGovernorRepoRef(ref string) parsedGovernorRepoRef {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return parsedGovernorRepoRef{}
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parts := strings.SplitN(strings.TrimPrefix(parsed.Path, "/"), "/", 3)
+		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+			return parsedGovernorRepoRef{Owner: parts[0], Name: parts[1], Host: strings.ToLower(parsed.Host), OK: true}
+		}
+		return parsedGovernorRepoRef{Host: strings.ToLower(parsed.Host)}
+	}
+	stripped := strings.Trim(trimmed, "/")
+	parts := strings.Split(stripped, "/")
+	if len(parts) >= 3 && strings.Contains(parts[0], ".") && parts[1] != "" && parts[2] != "" {
+		return parsedGovernorRepoRef{Owner: parts[1], Name: parts[2], Host: strings.ToLower(parts[0]), OK: true}
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.Contains(parts[0], ".") {
+		return parsedGovernorRepoRef{Owner: parts[0], Name: parts[1], OK: true}
+	}
+	return parsedGovernorRepoRef{}
+}
+
+func governorReposAdoptOrg(currentOrg string, repos []string, primary, spokeHost string) (string, string) {
+	adoptOrg := strings.TrimSpace(currentOrg)
+	refs := append([]string{}, repos...)
+	if strings.TrimSpace(primary) != "" {
+		refs = append(refs, primary)
+	}
+	for _, ref := range refs {
+		parsed := parseGovernorRepoRef(ref)
+		if parsed.Host != "" && !sameForgeHost(parsed.Host, spokeHost) {
+			return "", fmt.Sprintf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host. Remove the mismatched repo or use a repo on %s.", strings.TrimSpace(ref), parsed.Host, spokeHost, spokeHost)
+		}
+		if !parsed.OK || parsed.Owner == "" || strings.EqualFold(parsed.Owner, currentOrg) {
+			continue
+		}
+		if adoptOrg != "" && !strings.EqualFold(adoptOrg, currentOrg) && !strings.EqualFold(adoptOrg, parsed.Owner) {
+			return "", fmt.Sprintf("repos name multiple GitHub orgs (%s and %s). A hive can monitor one org at a time; submit repos from a single destination org to migrate.", adoptOrg, parsed.Owner)
+		}
+		adoptOrg = parsed.Owner
+	}
+	return adoptOrg, ""
+}
+
+func normalizeGovernorRepoRefs(org string, repos []string) []string {
+	if len(repos) == 0 {
+		return repos
+	}
+	out := make([]string, len(repos))
+	for i, repo := range repos {
+		out[i] = normalizeGovernorRepoRef(org, repo)
+	}
+	return out
+}
+
+func normalizeGovernorRepoRef(org, ref string) string {
+	parsed := parseGovernorRepoRef(ref)
+	if parsed.OK && parsed.Name != "" && (parsed.Owner == "" || strings.EqualFold(parsed.Owner, org)) {
+		return parsed.Name
+	}
+	normalized, _ := config.NormalizeRepoForOrg(org, ref)
+	return normalized
+}
+
 func (s *Server) hiveForgeHost() string {
 	if s.deps != nil && s.deps.Config != nil {
 		return s.deps.Config.GitHub.HostLabel()

@@ -195,11 +195,7 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 }
 
 func (m *Manager) sleepDuringPromptDismiss(d time.Duration) {
-	if m.promptDismissSleep != nil {
-		m.promptDismissSleep(d)
-		return
-	}
-	time.Sleep(d)
+	m.terminalSession().SleepDuringPromptDismiss(d)
 }
 
 // selectedMenuOption returns the trimmed text of the "❯"-selected line of an

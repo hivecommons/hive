@@ -45,6 +45,46 @@ func buildApprovalDesk(cfg *config.Config, logger *slog.Logger) (*toolapprove.De
 	return desk, inbox
 }
 
+// approvalDeskAllowsLegacyOperation wraps an existing legacy gate result in the
+// RFC #4000 decision point. Callers invoke it only after their legacy gate has
+// allowed the operation, so a nil/disabled desk preserves old behavior and an
+// enabled desk may record, audit, or withhold but never widen authority.
+func approvalDeskAllowsLegacyOperation(
+	ctx context.Context,
+	desk *toolapprove.Desk,
+	cfg *config.Config,
+	kind string,
+	tool string,
+	agentName string,
+	logger *slog.Logger,
+) bool {
+	if desk == nil {
+		return true
+	}
+	req := toolapprove.Request{
+		Kind: kind,
+		Tool: toolapprove.ToolRequest{
+			Tool: tool,
+		},
+		Agent: toolapprove.AgentIdentity{
+			Name: agentName,
+		},
+		LegacyAllowed:    true,
+		HasLegacyAllowed: true,
+	}
+	acmmLevel := toolapprove.ACMMLevelOf(cfg)
+	v := desk.Resolve(ctx, req, acmmLevel)
+	if v.Decision == toolapprove.DecisionAutoApprove {
+		return true
+	}
+	if logger != nil {
+		logger.Info("tool-approval: legacy operation withheld",
+			"kind", kind, "tool", tool, "agent", agentName,
+			"decision", string(v.Decision), "rationale", v.Rationale)
+	}
+	return false
+}
+
 // newSelfMergeDeskHook adapts the desk to the GitHub client's narrow
 // ApprovalDeskHook signature, for the self-authored auto-merge sweep — the one
 // real producer wired in this slice.
@@ -79,10 +119,18 @@ func newSelfMergeDeskHook(
 			Title:       in.Title,
 			Labels:      in.Labels,
 			ChecksGreen: in.ChecksGreen,
+			// The GitHub sweep calls this hook only after its legacy
+			// eligibility checks have passed. Preserve that result exactly; the
+			// desk adds policy/audit/queue semantics and may only withhold.
+			LegacyAllowed:    true,
+			HasLegacyAllowed: true,
 			Tool: toolapprove.ToolRequest{
 				Tool:   "hive-merge",
 				Target: in.HeadSHA,
 			},
+		}
+		if in.Kind != "" {
+			req.Kind = in.Kind
 		}
 
 		// A verdict this operator already granted must merge, and must merge

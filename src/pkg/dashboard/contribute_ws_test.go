@@ -110,6 +110,9 @@ func TestWSAuthValid(t *testing.T) {
 	if authOk.ContributorID == "" {
 		t.Fatal("missing contributor_id")
 	}
+	if authOk.ConnectionID == "" {
+		t.Fatal("missing connection_id for relay/hub close-log correlation")
+	}
 	if authOk.TrustTier != "newcomer" {
 		t.Fatalf("expected newcomer, got %s", authOk.TrustTier)
 	}

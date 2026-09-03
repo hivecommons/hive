@@ -219,9 +219,6 @@ func TestAdd_SameVersionReplaces(t *testing.T) {
 	if got.Body != "new" {
 		t.Errorf("body = %q, want new (same version replaces)", got.Body)
 	}
-	if len(r.List()) != 1 {
-		t.Errorf("List len = %d, want 1", len(r.List()))
-	}
 }
 
 func TestGet_HighestVersion(t *testing.T) {
@@ -235,120 +232,6 @@ func TestGet_HighestVersion(t *testing.T) {
 	}
 }
 
-func TestResolve_ConstraintHitAndMiss(t *testing.T) {
-	r := NewRegistry()
-	_ = r.Add(Skill{Name: "a", Version: "1.0.0"})
-	_ = r.Add(Skill{Name: "a", Version: "1.5.0"})
-	_ = r.Add(Skill{Name: "a", Version: "2.1.0"})
-
-	cases := []struct {
-		name       string
-		constraint string
-		wantVer    string
-		wantOK     bool
-	}{
-		{"empty->highest", "", "2.1.0", true},
-		{"wildcard->highest", "*", "2.1.0", true},
-		{"exact hit", "1.5.0", "1.5.0", true},
-		{"exact miss", "9.9.9", "", false},
-		{"caret major1", "^1.0.0", "1.5.0", true},
-		{"caret major2", "^2.0.0", "2.1.0", true},
-		{"caret above all in major", "^1.9.0", "", false},
-		{"gte spanning", ">=1.5.0", "2.1.0", true},
-		{"gte too high", ">=3.0.0", "", false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, ok := r.Resolve("a", c.constraint)
-			if ok != c.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, c.wantOK)
-			}
-			if ok && got.Version != c.wantVer {
-				t.Errorf("version = %q, want %q", got.Version, c.wantVer)
-			}
-		})
-	}
-}
-
-func TestResolve_UnknownName(t *testing.T) {
-	r := NewRegistry()
-	if _, ok := r.Resolve("nope", "1.0.0"); ok {
-		t.Error("unknown name should not resolve")
-	}
-	if _, ok := r.Resolve("nope", ""); ok {
-		t.Error("unknown name should not resolve (empty constraint)")
-	}
-}
-
-func TestList_SortedNameThenDescVersion(t *testing.T) {
-	r := NewRegistry()
-	_ = r.Add(Skill{Name: "b", Version: "1.0.0"})
-	_ = r.Add(Skill{Name: "a", Version: "1.0.0"})
-	_ = r.Add(Skill{Name: "a", Version: "2.0.0"})
-	list := r.List()
-	if len(list) != 3 {
-		t.Fatalf("len = %d, want 3", len(list))
-	}
-	// a@2.0.0, a@1.0.0, b@1.0.0
-	if list[0].Name != "a" || list[0].Version != "2.0.0" {
-		t.Errorf("list[0] = %v", list[0])
-	}
-	if list[1].Name != "a" || list[1].Version != "1.0.0" {
-		t.Errorf("list[1] = %v", list[1])
-	}
-	if list[2].Name != "b" {
-		t.Errorf("list[2] = %v", list[2])
-	}
-}
-
-func TestList_Empty(t *testing.T) {
-	r := NewRegistry()
-	if got := r.List(); len(got) != 0 {
-		t.Errorf("empty List = %v", got)
-	}
-}
-
-func TestSearch(t *testing.T) {
-	r := NewRegistry()
-	_ = r.Add(Skill{Name: "go-testing", Description: "Go test rules", Tags: []string{"go", "testing"}})
-	_ = r.Add(Skill{Name: "pr-etiquette", Description: "PR conventions", Tags: []string{"git"}})
-	_ = r.Add(Skill{Name: "go-lint", Description: "linting", Tags: []string{"go"}})
-
-	// Tag match.
-	if got := r.Search("go"); len(got) != 2 {
-		t.Errorf("search go = %d results, want 2", len(got))
-	}
-	// Name substring.
-	if got := r.Search("etiquette"); len(got) != 1 || got[0].Name != "pr-etiquette" {
-		t.Errorf("search etiquette = %v", got)
-	}
-	// Description substring, case-insensitive.
-	if got := r.Search("LINT"); len(got) != 1 || got[0].Name != "go-lint" {
-		t.Errorf("search LINT = %v", got)
-	}
-	// Empty term matches everything.
-	if got := r.Search(""); len(got) != 3 {
-		t.Errorf("search '' = %d, want 3", len(got))
-	}
-	// No match.
-	if got := r.Search("zzz"); len(got) != 0 {
-		t.Errorf("search zzz = %v", got)
-	}
-}
-
-func TestSearch_HighestVersionOnly(t *testing.T) {
-	r := NewRegistry()
-	_ = r.Add(Skill{Name: "a", Version: "1.0.0", Tags: []string{"x"}})
-	_ = r.Add(Skill{Name: "a", Version: "2.0.0", Tags: []string{"x"}})
-	got := r.Search("x")
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1 (highest only)", len(got))
-	}
-	if got[0].Version != "2.0.0" {
-		t.Errorf("version = %q, want 2.0.0", got[0].Version)
-	}
-}
-
 func TestResolveRequested_Precedence(t *testing.T) {
 	r := NewRegistry()
 	// Registry has a curated go-testing; config has an inline one too.
@@ -356,9 +239,9 @@ func TestResolveRequested_Precedence(t *testing.T) {
 
 	cfg := &agentsmd.AgentsConfig{
 		Skills: map[string]string{
-			"go-testing":  "INLINE body",   // registry wins
-			"repo-only":   "repo local",    // only in config -> fallback
-			"empty-inline": "   ",          // empty inline -> skipped
+			"go-testing":   "INLINE body", // registry wins
+			"repo-only":    "repo local",  // only in config -> fallback
+			"empty-inline": "   ",         // empty inline -> skipped
 		},
 		RequestedSkills: []string{"go-testing", "repo-only", "unknown", "empty-inline"},
 	}
@@ -457,9 +340,6 @@ func TestConcurrency(t *testing.T) {
 				_ = r.Add(Skill{Name: "shared", Version: "1.0.0", Body: "x"})
 				_ = r.Add(Skill{Name: nameFor(w), Version: verFor(i), Body: "y"})
 				_, _ = r.Get("shared")
-				_, _ = r.Resolve("shared", ">=1.0.0")
-				_ = r.List()
-				_ = r.Search("y")
 			}
 		}(w)
 	}

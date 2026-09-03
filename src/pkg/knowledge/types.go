@@ -1,6 +1,9 @@
 package knowledge
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // LayerType identifies the scope and privacy of a knowledge wiki layer.
 type LayerType string
@@ -110,11 +113,57 @@ func (b BeadSynthesizerConfig) IsEnabled() bool {
 	return *b.Enabled
 }
 
-// CuratorConfig controls automated knowledge extraction from merged PRs.
+// CuratorConfig controls promotion of verified knowledge facts between layers.
 type CuratorConfig struct {
-	Schedule              string   `yaml:"schedule"                json:"schedule"`
-	ExtractFrom           []string `yaml:"extract_from"            json:"extract_from"`
-	AutoPromoteThreshold  float64  `yaml:"auto_promote_threshold"  json:"auto_promote_threshold"`
+	AutoPromoteThreshold float64 `yaml:"auto_promote_threshold" json:"auto_promote_threshold"`
+}
+
+// ExtractedFact is a fact candidate ready to ingest into a knowledge layer.
+type ExtractedFact struct {
+	Title      string    `json:"title"`
+	Body       string    `json:"body"`
+	Type       FactType  `json:"type"`
+	Confidence float64   `json:"confidence"`
+	Tags       []string  `json:"tags"`
+	Related    []string  `json:"related,omitempty"`
+	SourcePR   string    `json:"source_pr"`
+	SourceDate time.Time `json:"source_date"`
+}
+
+func containsAny(s string, needles ...string) bool {
+	for _, n := range needles {
+		if strings.Contains(s, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractTags(comment string) []string {
+	lower := strings.ToLower(comment)
+	var tags []string
+	tagKeywords := map[string]string{
+		"typescript": "typescript",
+		"react":      "react",
+		"go ":        "go",
+		"golang":     "go",
+		"test":       "testing",
+		"ci":         "ci",
+		"docker":     "docker",
+		"kubernetes": "kubernetes",
+		"k8s":        "kubernetes",
+		"helm":       "helm",
+		"security":   "security",
+		"auth":       "auth",
+	}
+	seen := make(map[string]bool)
+	for keyword, tag := range tagKeywords {
+		if strings.Contains(lower, keyword) && !seen[tag] {
+			tags = append(tags, tag)
+			seen[tag] = true
+		}
+	}
+	return tags
 }
 
 // PrimerConfig controls how facts are selected and injected into agent kicks.
@@ -304,19 +353,19 @@ type Question struct {
 
 // InceptionState tracks the progress of a Level 1 ideation workflow.
 type InceptionState struct {
-	Phase          InceptionPhase    `json:"phase"`
-	Mode           InceptionMode     `json:"mode"`
-	IdeaText       string            `json:"idea_text"`
-	IdeaSlug       string            `json:"idea_slug"`
-	RepoURL        string            `json:"repo_url,omitempty"`
-	Questions      []Question        `json:"questions"`
-	Answers        map[string]string `json:"answers"`
-	FactSlugs      []string          `json:"fact_slugs"`
-	StartedAt      time.Time         `json:"started_at"`
-	PhaseChangedAt *time.Time        `json:"phase_changed_at,omitempty"`
-	WikiName       string            `json:"wiki_name,omitempty"`
-	AutoFactCount     int            `json:"auto_fact_count,omitempty"`
-	AutoQuestionCount int            `json:"auto_question_count,omitempty"`
+	Phase             InceptionPhase    `json:"phase"`
+	Mode              InceptionMode     `json:"mode"`
+	IdeaText          string            `json:"idea_text"`
+	IdeaSlug          string            `json:"idea_slug"`
+	RepoURL           string            `json:"repo_url,omitempty"`
+	Questions         []Question        `json:"questions"`
+	Answers           map[string]string `json:"answers"`
+	FactSlugs         []string          `json:"fact_slugs"`
+	StartedAt         time.Time         `json:"started_at"`
+	PhaseChangedAt    *time.Time        `json:"phase_changed_at,omitempty"`
+	WikiName          string            `json:"wiki_name,omitempty"`
+	AutoFactCount     int               `json:"auto_fact_count,omitempty"`
+	AutoQuestionCount int               `json:"auto_question_count,omitempty"`
 }
 
 // ScaffoldFile is a single generated file in the scaffold output.

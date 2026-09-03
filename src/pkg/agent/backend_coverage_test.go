@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/kubestellar/hive/pkg/config"
 )
@@ -114,92 +113,12 @@ func TestAgentAuthAvailable_UsesBackendOverride(t *testing.T) {
 // through checkBlockedThrash (the marker-matching + state-bookkeeping wrapper),
 // not just the pure sliding-window helper. Below the threshold the agent must
 // NOT be paused; the breaker only fires once the loop is established.
-func TestCheckBlockedThrash_TripsOnlyAtThreshold(t *testing.T) {
-	m := &Manager{
-		agents: map[string]*AgentProcess{},
-		logger: discardLogger(),
-	}
-
-	// A line containing no blocked-action marker must be ignored entirely — it
-	// must not even allocate thrash state for the agent.
-	m.checkBlockedThrash("ci-maintainer", "everything is fine, pushing now")
-	if len(m.thrash) != 0 {
-		t.Errorf("a non-blocked line recorded thrash state: %v", m.thrash)
-	}
-
-	// Feed threshold-1 real blocked lines: recorded, but not yet tripped.
-	marker := blockedActionMarkers[0]
-	for i := 0; i < thrashThreshold-1; i++ {
-		m.checkBlockedThrash("ci-maintainer", marker+" refusing to push to main")
-	}
-	st := m.thrash["ci-maintainer"]
-	if st == nil {
-		t.Fatal("blocked lines did not record thrash state")
-	}
-	if len(st.times) != thrashThreshold-1 {
-		t.Errorf("recorded %d blocked lines, want %d", len(st.times), thrashThreshold-1)
-	}
-	if !st.lastTrip.IsZero() {
-		t.Error("breaker tripped before reaching the threshold")
-	}
-}
-
 // TestCheckBlockedThrash_MatchesEveryMarker: every marker in
 // blockedActionMarkers must actually be recognised. A marker that silently
 // stopped matching would disable the breaker for that whole class of block.
-func TestCheckBlockedThrash_MatchesEveryMarker(t *testing.T) {
-	for _, marker := range blockedActionMarkers {
-		m := &Manager{agents: map[string]*AgentProcess{}, logger: discardLogger()}
-		m.checkBlockedThrash("a", "prefix text "+marker+" suffix text")
-		if st := m.thrash["a"]; st == nil || len(st.times) != 1 {
-			t.Errorf("marker %q was not recognised as a blocked-action line", marker)
-		}
-	}
-}
-
 // TestRecordBlockedAndCheck_WindowAndCooldown pins the pure decision function:
 // stale entries fall out of the sliding window, and after a trip the cooldown
 // suppresses a second trip so one bad loop does not pause an agent repeatedly.
-func TestRecordBlockedAndCheck_WindowAndCooldown(t *testing.T) {
-	now := time.Now()
-
-	// Entries older than the window must not count toward the threshold.
-	st := &thrashState{}
-	for i := 0; i < thrashThreshold-1; i++ {
-		st.times = append(st.times, now.Add(-2*thrashWindow))
-	}
-	if recordBlockedAndCheck(st, now, thrashWindow, thrashThreshold, thrashCooldown) {
-		t.Error("tripped on stale entries that should have aged out of the window")
-	}
-	if len(st.times) != 1 {
-		t.Errorf("stale entries were not pruned: %d remain, want 1", len(st.times))
-	}
-
-	// Threshold reached inside the window: must trip.
-	st = &thrashState{}
-	var tripped bool
-	for i := 0; i < thrashThreshold; i++ {
-		tripped = recordBlockedAndCheck(st, now, thrashWindow, thrashThreshold, thrashCooldown)
-	}
-	if !tripped {
-		t.Fatalf("did not trip after %d blocked lines inside the window", thrashThreshold)
-	}
-
-	// Immediately after a trip, the cooldown must suppress another trip.
-	if recordBlockedAndCheck(st, now, thrashWindow, thrashThreshold, thrashCooldown) {
-		t.Error("tripped again inside the cooldown")
-	}
-	// Past the cooldown, it may trip again.
-	later := now.Add(thrashCooldown + time.Second)
-	st.times = nil
-	for i := 0; i < thrashThreshold-1; i++ {
-		st.times = append(st.times, later)
-	}
-	if !recordBlockedAndCheck(st, later, thrashWindow, thrashThreshold, thrashCooldown) {
-		t.Error("did not trip after the cooldown expired")
-	}
-}
-
 // TestBackendBinary_GatewayBackendsAllLaunchClaude pins the derivation added by
 // this PR: every model-gateway backend launches the SAME claude CLI, because the
 // backend name selects the upstream route (via ANTHROPIC_BASE_URL), not the

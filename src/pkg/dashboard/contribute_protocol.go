@@ -22,11 +22,10 @@
 //     supports (e.g. token_refresh, task_unavailable reasons, prompt preview)
 //     instead of probing and reacting to silence.
 //
-//   - This is the DECLARE half of #2547 only. Clients may DECLARE their runtime
-//     posture (container runtime, OS/arch, agent/relay versions, credential
-//     type); the hub PARSES, STORES, and SURFACES it read-only. It does NOT
-//     ROUTE or gate work on any declared capability — that is the deferred Gate
-//     half and is deliberately out of scope here.
+//   - Client capabilities are self-reported. The hub may use an explicit
+//     "cannot fit" declaration to avoid wasting an assignment on a matching
+//     task requirement, but it must never treat the declaration as a trust or
+//     security signal. Unknown/absent still means unknown, not incapable.
 package dashboard
 
 import (
@@ -79,6 +78,11 @@ const (
 	// offer-pool suppression instead of the short idle cooldown loop. Purely
 	// additive: a relay that never sends the field behaves exactly as before.
 	capCompletionVerdict = "completion_verdict"
+	// capCapabilityRouting: the hub can derive task requirements from labels and
+	// avoid assigning a task to a client that explicitly declared it cannot fit.
+	// Self-reported, advisory, and backward-compatible: undeclared clients still
+	// receive work as before.
+	capCapabilityRouting = "capability_routing"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -93,6 +97,7 @@ func serverCapabilities() []string {
 		capCredentialAfterAccept,
 		capAgentRoleClaim,
 		capCompletionVerdict,
+		capCapabilityRouting,
 	}
 }
 
@@ -109,11 +114,11 @@ const (
 )
 
 // ContributorCapabilities is the OPTIONAL, client-declared runtime posture a
-// contributor relay may report in its auth_response (#2547 declare half). Every
+// contributor relay may report in its auth_response (#2547). Every
 // field is omitempty: a client that declares nothing sends an absent/empty
 // object and is treated exactly as an unversioned client. The hub STORES this on
-// the connection and SURFACES it read-only (FleetClanker) so the Operations tab
-// COULD show it — it is NEVER used to route or gate work.
+// the connection and SURFACES it. Routing may only use it to avoid tasks whose
+// requirements the client explicitly cannot satisfy; it is NEVER a trust signal.
 //
 // Fields are honest self-reports the relay can cheaply determine; none is
 // trusted for a security decision (server-side policy still governs what a
@@ -144,6 +149,99 @@ type ContributorCapabilities struct {
 	PiConfiguration  string `json:"pi_configuration,omitempty"`
 	PiAuthentication string `json:"pi_authentication,omitempty"`
 	PiInvocation     string `json:"pi_invocation,omitempty"`
+}
+
+// ContributorTaskRequirements is the hub-derived task-side vocabulary used for
+// the ROUTE half of #2547. It is intentionally tiny and label-derived: operators
+// can add labels without changing issue bodies, and old relays remain compatible
+// because an undeclared client is treated as unknown rather than incapable.
+type ContributorTaskRequirements struct {
+	ContainerRuntime string `json:"container_runtime,omitempty"`
+	OS               string `json:"os,omitempty"`
+	Arch             string `json:"arch,omitempty"`
+	CLIBackend       string `json:"cli_backend,omitempty"`
+	CredentialType   string `json:"credential_type,omitempty"`
+}
+
+// IsZero reports whether a task has no explicit capability requirements.
+func (r ContributorTaskRequirements) IsZero() bool {
+	return r.ContainerRuntime == "" && r.OS == "" && r.Arch == "" &&
+		r.CLIBackend == "" && r.CredentialType == ""
+}
+
+// TaskRequirementsFromLabels derives hard routing requirements from issue
+// labels. The vocabulary is deliberately explicit: labels outside these forms
+// remain ordinary triage labels and do not affect assignment.
+func TaskRequirementsFromLabels(labels []string) ContributorTaskRequirements {
+	var out ContributorTaskRequirements
+	for _, raw := range labels {
+		l := strings.ToLower(strings.TrimSpace(raw))
+		switch {
+		case l == "needs-container" || l == "requires-container":
+			if out.ContainerRuntime == "" {
+				out.ContainerRuntime = "container"
+			}
+		case l == "needs-docker" || l == "requires-docker" || l == "runtime/docker":
+			out.ContainerRuntime = "docker"
+		case l == "needs-podman" || l == "requires-podman" || l == "runtime/podman":
+			out.ContainerRuntime = "podman"
+		case strings.HasPrefix(l, "os/"):
+			out.OS = strings.TrimSpace(strings.TrimPrefix(l, "os/"))
+		case strings.HasPrefix(l, "arch/"):
+			out.Arch = strings.TrimSpace(strings.TrimPrefix(l, "arch/"))
+		case strings.HasPrefix(l, "backend/"):
+			out.CLIBackend = strings.TrimSpace(strings.TrimPrefix(l, "backend/"))
+		case strings.HasPrefix(l, "credential/"):
+			out.CredentialType = strings.TrimSpace(strings.TrimPrefix(l, "credential/"))
+		}
+	}
+	return out
+}
+
+// ContributorCanRunTask reports whether a self-declared client fits the task's
+// requirements. Unknown always fits for backward compatibility; only an explicit
+// contradictory declaration excludes the client.
+func ContributorCanRunTask(caps *ContributorCapabilities, cliBackend string, req ContributorTaskRequirements) bool {
+	if req.IsZero() || caps == nil || caps.IsZero() {
+		return true
+	}
+	if req.ContainerRuntime != "" {
+		have := strings.ToLower(strings.TrimSpace(caps.ContainerRuntime))
+		want := strings.ToLower(req.ContainerRuntime)
+		if want == "container" {
+			if have == "none" {
+				return false
+			}
+		} else if have != "" && have != want {
+			return false
+		}
+	}
+	if !capabilityFieldFits(caps.OS, req.OS) {
+		return false
+	}
+	if !capabilityFieldFits(caps.Arch, req.Arch) {
+		return false
+	}
+	if !capabilityFieldFits(caps.CredentialType, req.CredentialType) {
+		return false
+	}
+	if req.CLIBackend != "" {
+		have := strings.ToLower(strings.TrimSpace(cliBackend))
+		want := strings.ToLower(req.CLIBackend)
+		if have != "" && have != want {
+			return false
+		}
+	}
+	return true
+}
+
+func capabilityFieldFits(have, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if want == "" {
+		return true
+	}
+	have = strings.ToLower(strings.TrimSpace(have))
+	return have == "" || have == want
 }
 
 // IsZero reports whether the client declared no capabilities at all, so the hub

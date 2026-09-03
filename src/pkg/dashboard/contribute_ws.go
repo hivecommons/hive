@@ -11,6 +11,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -76,6 +77,7 @@ var wsUpgrader = websocket.Upgrader{
 
 type ContributorConnection struct {
 	ws              *websocket.Conn
+	connID          string
 	profile         *ContributorProfile
 	cliBackend      string
 	model           string
@@ -229,6 +231,10 @@ type WSMessage struct {
 	URL     string   `json:"url,omitempty"`
 	Labels  []string `json:"labels,omitempty"`
 	Prompt  string   `json:"prompt,omitempty"`
+	// Requirements carries the hub-derived task-side capability requirements
+	// used by #2547 routing. Additive and advisory: older relays ignore it, and
+	// enforcement already happened server-side before assignment.
+	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
 	// TaskKey, SourceType and ExternalID carry the assigned item's canonical,
 	// source-aware identity (kubestellar/hive#4245). All additive and omitempty:
 	// a GitHub task_assign is byte-for-byte unchanged, and Repo/Number keep
@@ -257,10 +263,10 @@ type WSMessage struct {
 	// wire until a concrete client contract exists. (kubestellar/hive#2393 item 8.)
 	Restrictions json.RawMessage `json:"restrictions,omitempty"`
 	// Capabilities is the OPTIONAL client-declared runtime posture a contributor
-	// relay may report in its auth_response (kubestellar/hive#2547, declare half).
+	// relay may report in its auth_response (kubestellar/hive#2547).
 	// It is additive and purely advisory: a client that omits it authenticates
-	// and runs exactly as before, and the hub NEVER routes or gates work on it —
-	// it is only stored and surfaced read-only. Distinct from the RESERVED,
+	// and runs exactly as before. Routing may only use it to avoid explicit
+	// task-requirement mismatches; it is not a trust signal. Distinct from the RESERVED,
 	// server-side-only Restrictions field above: Capabilities flows client→server
 	// as an honest self-report, Restrictions is a reservation that stays empty.
 	Capabilities *ContributorCapabilities `json:"capabilities,omitempty"`
@@ -275,13 +281,16 @@ type WSMessage struct {
 	// probing (e.g. token_refresh, task_unavailable_reasons). Additive; old
 	// clients ignore the unknown field.
 	ServerCapabilities []string `json:"server_capabilities,omitempty"`
-	Role               string   `json:"role,omitempty"`
-	ContribLabels      []string `json:"contributor_labels,omitempty"`
-	Status             string   `json:"status,omitempty"`
-	Result             string   `json:"result,omitempty"`
-	Summary            string   `json:"summary,omitempty"`
-	TmuxOutput         []string `json:"tmux_output,omitempty"`
-	AcceptedModels     []string `json:"accepted_models,omitempty"`
+	// ConnectionID is the hub's per-socket id, advertised on auth_ok so relay
+	// close logs can be correlated with hub disconnect/cleanup logs for #5090.
+	ConnectionID   string   `json:"connection_id,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	ContribLabels  []string `json:"contributor_labels,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	Result         string   `json:"result,omitempty"`
+	Summary        string   `json:"summary,omitempty"`
+	TmuxOutput     []string `json:"tmux_output,omitempty"`
+	AcceptedModels []string `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -356,6 +365,9 @@ type WSTaskAssign struct {
 	SourceType string `json:"source_type,omitempty"`
 	ExternalID string `json:"external_id,omitempty"`
 	URL        string `json:"url,omitempty"`
+	// Requirements is the task-side capability requirement set used for
+	// contributor routing. Nil means this task carried no explicit requirements.
+	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
 }
 
 // identityKey returns the canonical identity of the assigned item. It prefers
@@ -3272,6 +3284,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			// deliberately leaving kubestellar/hive#5151's accounting untouched).
 			if abandonedTask != nil && h.taskReadoptedByLiveConnection(contributor, abandonedTask) {
 				h.logger.Info("[contribute-ws] disconnect release skipped: task already re-adopted on a live connection",
+					"id", connID,
 					"username", contributor.profile.GitHubUsername,
 					"task", abandonedTask.TaskID,
 					"repo", abandonedTask.Repo,
@@ -3282,6 +3295,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 			if abandonedTask != nil {
 				h.logger.Warn("[contribute-ws] task released on disconnect",
+					"id", connID,
 					"username", contributor.profile.GitHubUsername,
 					"task", abandonedTask.TaskID,
 				)
@@ -3325,7 +3339,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.role, contributor.cliBackend, contributor.model,
 					contributor.reasoningEffort, taskDescOf(abandonedTask))
 			}
-			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
+			h.logger.Info("[contribute-ws] disconnected", "id", connID, "username", contributor.profile.GitHubUsername)
 			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
 		}
 		_ = conn.Close()
@@ -3335,7 +3349,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				h.logger.Warn("[contribute-ws] read error", "id", connID, "error", err)
+				code, reason, source := websocketCloseErrorDetails(err)
+				h.logger.Warn("[contribute-ws] read error",
+					"id", connID,
+					"username", contributorUsername(contributor),
+					"close_source", source,
+					"close_code", code,
+					"close_reason", reason,
+					"error", err)
 			}
 			return
 		}
@@ -3470,6 +3491,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 			contributor = &ContributorConnection{
 				ws:              conn,
+				connID:          connID,
 				profile:         profile,
 				cliBackend:      msg.CLIBackend,
 				model:           msg.Model,
@@ -3523,12 +3545,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// probing. Additive — an existing client ignores these unknown fields.
 				ProtocolVersion:    contributorProtocolVersion,
 				ServerCapabilities: serverCapabilities(),
+				ConnectionID:       connID,
 			}); err != nil {
 				h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 				return
 			}
 
 			h.logger.Info("[contribute-ws] authenticated",
+				"id", connID,
 				"username", profile.GitHubUsername,
 				"tier", profile.TrustTier,
 				"cli", msg.CLIBackend,
@@ -4184,7 +4208,12 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 		c.mu.Unlock()
 
 		if time.Since(lastPong) > wsHeartbeatTimeout {
-			h.logger.Info("[contribute-ws] heartbeat timeout", "username", c.profile.GitHubUsername)
+			h.logger.Info("[contribute-ws] heartbeat timeout",
+				"id", c.connID,
+				"username", c.profile.GitHubUsername,
+				"last_pong_age_ms", time.Since(lastPong).Milliseconds(),
+				"heartbeat_timeout_ms", wsHeartbeatTimeout.Milliseconds(),
+			)
 			closeWithReason(c.ws, websocket.CloseGoingAway, "heartbeat timeout: no pong within the heartbeat window")
 			return
 		}
@@ -4192,7 +4221,11 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 		h.maybeRefreshToken(c)
 
 		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
-			h.logger.Info("[contribute-ws] heartbeat ping failed, closing", "username", c.profile.GitHubUsername)
+			h.logger.Info("[contribute-ws] heartbeat ping failed, closing",
+				"id", c.connID,
+				"username", c.profile.GitHubUsername,
+				"error", err,
+			)
 			closeWithReason(c.ws, websocket.CloseGoingAway, "heartbeat ping write failed")
 			return
 		}
@@ -4205,7 +4238,7 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 		// heartbeat-timeout check remains the authority on when to hang up.
 		if err := writeProtocolPing(c.ws); err != nil {
 			h.logger.Debug("[contribute-ws] protocol ping failed",
-				"username", c.profile.GitHubUsername, "error", err)
+				"id", c.connID, "username", c.profile.GitHubUsername, "error", err)
 		}
 	}
 }
@@ -4749,6 +4782,11 @@ const (
 	// all filters (cooldown, disabled repos, allow/deny, skip-assigned, own-work),
 	// the candidate set is empty. There is simply nothing admissible to do now.
 	taskUnavailableNoMatchingWork = "no_matching_work"
+	// taskUnavailableCapabilityMismatch: work exists, but every otherwise
+	// admissible candidate had explicit task requirements contradicted by this
+	// client's self-declared capabilities. Undeclared/unknown clients do not hit
+	// this path; absence is not incapability.
+	taskUnavailableCapabilityMismatch = "capability_mismatch"
 	// taskUnavailableRoleNotPermitted: the relay requested a spoke agent role, but
 	// the hive config/tier/grant policy does not allow this contributor to claim it.
 	taskUnavailableRoleNotPermitted = "agent_role_not_permitted"
@@ -5018,6 +5056,20 @@ func promptInvocationMeta(c *ContributorConnection) ghpkg.InvocationMeta {
 		Effort:  c.reasoningEffort,
 	}
 	return meta
+}
+
+func capabilityRoutingInputs(c *ContributorConnection) (*ContributorCapabilities, string) {
+	if c == nil {
+		return nil, ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var caps *ContributorCapabilities
+	if c.capabilities != nil {
+		cp := *c.capabilities
+		caps = &cp
+	}
+	return caps, c.cliBackend
 }
 
 // canonicalRepoKey maps an arbitrary, possibly client-supplied repo string to the
@@ -5334,6 +5386,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		}
 		return false
 	}
+	declaredCaps, declaredBackend := capabilityRoutingInputs(c)
 
 	type candidate struct {
 		repoFull string
@@ -5353,6 +5406,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		// work is offered first, but a contributor with no match still gets other
 		// work. Off entirely when the contributor set no interests.
 		interestMatch bool
+		requirements  ContributorTaskRequirements
 		// recentFailures is the issue's current consecutive-failure count (#2435).
 		// It is a stable tie-break in the ordering below: among equally-admissible
 		// candidates, fewer-recent-failures first. Issues in an active failure
@@ -5362,6 +5416,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		recentFailures int
 	}
 	var candidates []candidate
+	capabilityMismatchSeen := false
 
 	// One ledger snapshot for this whole selection pass (#3845), shared with the
 	// contributor-neutral admission gate below so ReadyQueue and selectTask judge
@@ -5431,6 +5486,18 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				continue
 			}
 			labels := stringSliceFromAny(issue["labels"])
+			requirements := TaskRequirementsFromLabels(labels)
+			if !ContributorCanRunTask(declaredCaps, declaredBackend, requirements) {
+				capabilityMismatchSeen = true
+				h.logger.Info("[contribute-ws] skip: issue requirements do not fit declared client capabilities",
+					"repo", repo.Full, "number", number,
+					"required_container_runtime", requirements.ContainerRuntime,
+					"required_os", requirements.OS,
+					"required_arch", requirements.Arch,
+					"required_backend", requirements.CLIBackend,
+					"required_credential", requirements.CredentialType)
+				continue
+			}
 			// #3768: skip an issue that an open PR — from ANYONE, hive agent or
 			// human contributor — already claims to fix. The activeIssues guard
 			// above only covers tasks held by LIVE connections, and the
@@ -5561,6 +5628,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// ordering untouched.
 				isOwn:         ownUsername != "" && strings.EqualFold(author, ownUsername),
 				interestMatch: interestMatchesLabels(labels),
+				requirements:  requirements,
 				// #2435: carry any lingering failure history so the ordering below
 				// can deprioritise a recently-failed issue within its bucket.
 				recentFailures: h.recentFailureCountKey(itemKey),
@@ -5573,6 +5641,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		// now (everything is in cooldown, filtered out, disabled, or already held).
 		// Previously a bare nil — indistinguishable on the wire from "suspended" or
 		// "hub not ready". Send an explicit no_matching_work negative-ack.
+		if capabilityMismatchSeen {
+			return h.taskUnavailable(taskUnavailableCapabilityMismatch)
+		}
 		return h.taskUnavailable(taskUnavailableNoMatchingWork)
 	}
 
@@ -5694,6 +5765,13 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		SourceType: chosen.ref.SourceType,
 		ExternalID: chosen.ref.ExternalID,
 		URL:        chosen.url,
+		Requirements: func() *ContributorTaskRequirements {
+			if chosen.requirements.IsZero() {
+				return nil
+			}
+			req := chosen.requirements
+			return &req
+		}(),
 	}
 	c.currentTaskGen = gen
 	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
@@ -5753,6 +5831,13 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		TaskKey:    chosen.ref.Key(),
 		SourceType: chosen.ref.SourceType,
 		ExternalID: chosen.ref.ExternalID,
+		Requirements: func() *ContributorTaskRequirements {
+			if chosen.requirements.IsZero() {
+				return nil
+			}
+			req := chosen.requirements
+			return &req
+		}(),
 		// #2537: NO github_token / token_expires_at here. The scoped credential is
 		// split out of task_assign and delivered only after acceptance (see
 		// pendingToken / deliverTaskCredential). task_assign now carries exactly the
@@ -5866,6 +5951,25 @@ func writeProtocolPing(conn *websocket.Conn) error {
 		nil,
 		time.Now().Add(wsProtocolPingDeadline),
 	)
+}
+
+func websocketCloseErrorDetails(err error) (code int, reason, source string) {
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		source = "close-frame"
+		if closeErr.Code == websocket.CloseAbnormalClosure {
+			source = "abnormal-no-close-frame"
+		}
+		return closeErr.Code, closeErr.Text, source
+	}
+	return 0, "", "read-error"
+}
+
+func contributorUsername(c *ContributorConnection) string {
+	if c == nil || c.profile == nil {
+		return ""
+	}
+	return c.profile.GitHubUsername
 }
 
 // closeWithReason closes a contributor socket after telling the client WHY.

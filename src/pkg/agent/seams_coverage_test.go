@@ -219,64 +219,6 @@ func TestFixSharedConfigPerms_AlreadyCorrectSeam(t *testing.T) {
 // readCoveragePreamble — via redirected metricsCachePath.
 // ---------------------------------------------------------------------------
 
-func TestReadCoveragePreamble_Valid(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "metrics.json")
-	os.WriteFile(p, []byte(`{"ci-maintainer":{"coverage":85,"coverageTarget":92}}`), 0o644)
-	orig := metricsCachePath
-	metricsCachePath = p
-	t.Cleanup(func() { metricsCachePath = orig })
-
-	got := (&Manager{}).readCoveragePreamble()
-	if got == "" {
-		t.Error("expected a coverage preamble")
-	}
-	if !containsBoot(got, "85") || !containsBoot(got, "92") {
-		t.Errorf("preamble = %q", got)
-	}
-}
-
-func TestReadCoveragePreamble_MissingTargetDefaults(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "m.json")
-	os.WriteFile(p, []byte(`{"ci-maintainer":{"coverage":70}}`), 0o644)
-	orig := metricsCachePath
-	metricsCachePath = p
-	t.Cleanup(func() { metricsCachePath = orig })
-	if got := (&Manager{}).readCoveragePreamble(); !containsBoot(got, "91") {
-		t.Errorf("expected default target 91, got %q", got)
-	}
-}
-
-func TestReadCoveragePreamble_BadInputs(t *testing.T) {
-	orig := metricsCachePath
-	t.Cleanup(func() { metricsCachePath = orig })
-	m := &Manager{}
-
-	dir := t.TempDir()
-	// Invalid JSON.
-	p1 := filepath.Join(dir, "bad.json")
-	os.WriteFile(p1, []byte("{bad"), 0o644)
-	metricsCachePath = p1
-	if m.readCoveragePreamble() != "" {
-		t.Error("invalid json -> empty")
-	}
-	// Missing ci-maintainer key.
-	p2 := filepath.Join(dir, "nokey.json")
-	os.WriteFile(p2, []byte(`{"other":{"coverage":1}}`), 0o644)
-	metricsCachePath = p2
-	if m.readCoveragePreamble() != "" {
-		t.Error("missing ci-maintainer -> empty")
-	}
-	// Missing coverage field.
-	p3 := filepath.Join(dir, "nocov.json")
-	os.WriteFile(p3, []byte(`{"ci-maintainer":{"other":1}}`), 0o644)
-	metricsCachePath = p3
-	if m.readCoveragePreamble() != "" {
-		t.Error("missing coverage -> empty")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Permissions watcher against a writable temp tree.
 // ---------------------------------------------------------------------------

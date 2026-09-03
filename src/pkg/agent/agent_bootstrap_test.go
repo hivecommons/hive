@@ -131,71 +131,6 @@ func TestBuildBootstrapPromptWithACMMFragments(t *testing.T) {
 	}
 }
 
-func TestFindACMMFragmentsWithFiles(t *testing.T) {
-	dir := t.TempDir()
-	policyDir := filepath.Join(dir, "policies", "agents")
-	acmmDir := filepath.Join(dir, "policies", "examples", "acmm")
-	os.MkdirAll(policyDir, 0755)
-	os.MkdirAll(acmmDir, 0755)
-	os.WriteFile(filepath.Join(acmmDir, "base.md"), []byte("# Base ACMM Rules"), 0644)
-	os.WriteFile(filepath.Join(acmmDir, "l3.md"), []byte("# Level 3 Rules"), 0644)
-
-	m := &Manager{
-		logger: slog.Default(),
-		project: ProjectContext{
-			ACMMLevel: 3,
-			PolicyDir: policyDir,
-		},
-	}
-
-	files := m.findACMMFragments()
-	if len(files) != 2 {
-		t.Errorf("expected 2 ACMM files, got %d: %v", len(files), files)
-	}
-}
-
-func TestFindACMMFragmentsBaseOnly(t *testing.T) {
-	dir := t.TempDir()
-	policyDir := filepath.Join(dir, "policies", "agents")
-	acmmDir := filepath.Join(dir, "policies", "examples", "acmm")
-	os.MkdirAll(policyDir, 0755)
-	os.MkdirAll(acmmDir, 0755)
-	os.WriteFile(filepath.Join(acmmDir, "base.md"), []byte("# Base"), 0644)
-
-	m := &Manager{
-		logger: slog.Default(),
-		project: ProjectContext{
-			ACMMLevel: 5,
-			PolicyDir: policyDir,
-		},
-	}
-
-	files := m.findACMMFragments()
-	if len(files) != 1 {
-		t.Errorf("expected 1 ACMM file (base only), got %d", len(files))
-	}
-}
-
-func TestFindACMMFragmentsNoDir(t *testing.T) {
-	orig := acmmFragmentFallbackDirs
-	acmmFragmentFallbackDirs = nil
-	t.Cleanup(func() { acmmFragmentFallbackDirs = orig })
-
-	policyDir := filepath.Join(t.TempDir(), "policies", "agents")
-	m := &Manager{
-		logger: slog.Default(),
-		project: ProjectContext{
-			ACMMLevel: 3,
-			PolicyDir: policyDir,
-		},
-	}
-
-	files := m.findACMMFragments()
-	if len(files) != 0 {
-		t.Errorf("no ACMM dir should return empty, got %d", len(files))
-	}
-}
-
 func TestBuildBootstrapPromptWithACMMFound(t *testing.T) {
 	dir := t.TempDir()
 	policyDir := filepath.Join(dir, "policies", "agents")
@@ -221,24 +156,6 @@ func TestBuildBootstrapPromptWithACMMFound(t *testing.T) {
 	got := m.buildBootstrapPrompt(agent)
 	// boot prompt is now empty — agents get kicked by governor
 	_ = got
-}
-
-func TestBuildProjectPreambleIssuesOnly(t *testing.T) {
-	m := testManager(4)
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{Role: "scanner"}}
-	got := m.buildProjectPreamble(agent)
-	if !containsBoot(got, "ISSUES_ONLY") {
-		t.Errorf("L4 scanner should be ISSUES_ONLY, got: %s", got)
-	}
-}
-
-func TestBuildProjectPreambleNoGithub(t *testing.T) {
-	m := testManager(4)
-	agent := &AgentProcess{Name: "supervisor", Config: config.AgentConfig{Role: "supervisor"}}
-	got := m.buildProjectPreamble(agent)
-	if !containsBoot(got, "ADVISORY") {
-		t.Errorf("L4 supervisor should be ADVISORY, got: %s", got)
-	}
 }
 
 func TestNewManager(t *testing.T) {
@@ -297,18 +214,6 @@ func TestLogOutputSignalsLong(t *testing.T) {
 	m := &Manager{logger: slog.Default()}
 	long := "created file " + strings.Repeat("x", 300)
 	m.logOutputSignals("scanner", long)
-}
-
-func TestReadCoveragePreamble(t *testing.T) {
-	orig := metricsCachePath
-	metricsCachePath = filepath.Join(t.TempDir(), "missing-agent-metrics-cache.json")
-	t.Cleanup(func() { metricsCachePath = orig })
-
-	m := &Manager{logger: slog.Default()}
-	got := m.readCoveragePreamble()
-	if got != "" {
-		t.Fatalf("missing coverage metrics should return empty, got %q", got)
-	}
 }
 
 func TestIsBufferNoisePatterns(t *testing.T) {

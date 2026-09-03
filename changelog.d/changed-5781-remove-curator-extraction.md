@@ -1,0 +1,1 @@
+- Removed the unwired merged-PR curator extraction pipeline and its advertised scheduling/source-list config surface while retaining the live auto-promotion threshold.

@@ -267,10 +267,6 @@ func normalizeModelNameForBackend(model, backend string, inferenceRoutable bool)
 	return model
 }
 
-func normalizeModelName(model, backend string) string {
-	return normalizeModelNameForBackend(model, backend, IsInferenceBackend(backend))
-}
-
 func (m *Manager) PinCLI(name, version string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

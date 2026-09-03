@@ -435,19 +435,11 @@ func TestContributeStatus_CarriesSurfaceAndVersion(t *testing.T) {
 	}
 }
 
-// ── #2547 DECLARE-half guard: declarations must NEVER influence selection ─────
+// ── #2547 ROUTE: declarations may avoid explicit task mismatches only ─────
 //
-// The accepted design split on kubestellar/hive#2547 is DECLARE only: a client
-// may describe its execution environment, and the hub records and DISPLAYS it —
-// but acting on a declaration when choosing what to assign (the ROUTE half) is
-// explicitly undecided and NOT implemented. The tests below pin that invariant
-// the same way the F14 owner-gate tests do — behaviourally (selection output is
-// identical with and without a declaration) AND at source level (the selection
-// code cannot even see the field) — because the failure mode to defend against
-// is a future change, or a sync merge, quietly wiring the self-reported posture
-// into dispatch. A declaration is unverified self-description; the moment it
-// influences assignment it becomes a value the client controls steering the
-// hub, which #2547 records as an explicit non-goal until ROUTE is decided.
+// ROUTE is now deliberately narrow: a client declaration may only withhold a
+// task whose labels state explicit requirements contradicted by the client.
+// Unlabeled work and undeclared clients preserve the previous assignment path.
 
 // richDeclaration returns a fully-populated, privileged-LOOKING capability
 // declaration. Nothing in it may buy — or cost — an assignment.
@@ -462,12 +454,9 @@ func richDeclaration() *ContributorCapabilities {
 	}
 }
 
-// TestSelectTask_DeclaredCapabilitiesDoNotAffectSelection asserts the ROUTE
-// half is genuinely unimplemented: contributors identical in every input
-// selectTask may legitimately read (tier, role, username, label interests) but
-// differing in what they declared are offered exactly the same work item, and a
-// single contributor's pick does not move when it starts declaring mid-session.
-func TestSelectTask_DeclaredCapabilitiesDoNotAffectSelection(t *testing.T) {
+// TestSelectTask_DeclaredCapabilitiesDoNotAffectUnrequiredWork asserts that
+// plain work is unchanged by a capability declaration.
+func TestSelectTask_DeclaredCapabilitiesDoNotAffectUnrequiredWork(t *testing.T) {
 	hub, s := covK2Hub(t)
 	s.statusMu.Lock()
 	s.status = &StatusPayload{
@@ -548,13 +537,110 @@ func selectionFuncBody(t *testing.T, src, name string) string {
 	return src[i : i+j]
 }
 
-// TestSelectionPathsDoNotReadDeclaredCapabilities is the source-level half of
-// the guard: the assignment/selection code paths must not even MENTION the
-// declared capability map. A behavioural test alone could pass while a routing
-// read hides behind config that is off in tests; a merge that wires the field
-// into selectTask trips this immediately (the exact way the F14 owner-gate
-// regression was caught).
-func TestSelectionPathsDoNotReadDeclaredCapabilities(t *testing.T) {
+func TestSelectTask_SkipsExplicitCapabilityMismatch(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{{
+			Name: "repo1",
+			Full: "myorg/repo1",
+			ActionableIssues: []any{
+				map[string]any{
+					"number": float64(10),
+					"title":  "Needs containers",
+					"url":    "https://github.com/myorg/repo1/issues/10",
+					"labels": []string{"needs-container"},
+					"author": "someone",
+				},
+				map[string]any{
+					"number": float64(20),
+					"title":  "Plain work",
+					"url":    "https://github.com/myorg/repo1/issues/20",
+					"author": "someone",
+				},
+			},
+		}},
+	}
+	s.statusMu.Unlock()
+
+	conn := &ContributorConnection{
+		profile:      &ContributorProfile{GitHubUsername: "cap-none", ContributorID: "c-cap-none", TrustTier: "contributor"},
+		lastPong:     time.Now(),
+		cliBackend:   "copilot",
+		capabilities: &ContributorCapabilities{ContainerRuntime: "none", OS: "linux", Arch: "amd64"},
+	}
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_assign" {
+		t.Fatalf("expected fallback task_assign, got %+v", msg)
+	}
+	if msg.Number != 20 {
+		t.Fatalf("assigned issue #%d, want #20 after skipping needs-container mismatch", msg.Number)
+	}
+}
+
+func TestSelectTask_AllCapabilityMismatchesReturnsReason(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{{
+			Name: "repo1",
+			Full: "myorg/repo1",
+			ActionableIssues: []any{map[string]any{
+				"number": float64(10),
+				"title":  "Needs Docker",
+				"url":    "https://github.com/myorg/repo1/issues/10",
+				"labels": []string{"needs-docker"},
+				"author": "someone",
+			}},
+		}},
+	}
+	s.statusMu.Unlock()
+
+	conn := &ContributorConnection{
+		profile:      &ContributorProfile{GitHubUsername: "podman", ContributorID: "c-podman", TrustTier: "contributor"},
+		lastPong:     time.Now(),
+		cliBackend:   "copilot",
+		capabilities: &ContributorCapabilities{ContainerRuntime: "podman"},
+	}
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_unavailable" || msg.Reason != taskUnavailableCapabilityMismatch {
+		t.Fatalf("expected task_unavailable/%s, got %+v", taskUnavailableCapabilityMismatch, msg)
+	}
+}
+
+func TestSelectTask_UndeclaredCapabilitiesStillReceiveRequiredWork(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{{
+			Name: "repo1",
+			Full: "myorg/repo1",
+			ActionableIssues: []any{map[string]any{
+				"number": float64(10),
+				"title":  "Needs Docker",
+				"url":    "https://github.com/myorg/repo1/issues/10",
+				"labels": []string{"needs-docker"},
+				"author": "someone",
+			}},
+		}},
+	}
+	s.statusMu.Unlock()
+
+	conn := &ContributorConnection{
+		profile:    &ContributorProfile{GitHubUsername: "old", ContributorID: "c-old", TrustTier: "contributor"},
+		lastPong:   time.Now(),
+		cliBackend: "copilot",
+	}
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_assign" || msg.Number != 10 {
+		t.Fatalf("undeclared client must keep receiving work, got %+v", msg)
+	}
+}
+
+// TestSelectionPathsUseDeclaredCapabilitiesOnlyThroughRouteHelper is the
+// source-level guard: selection may consult declarations only through the
+// explicit #2547 fit helper, not through ad-hoc field reads.
+func TestSelectionPathsUseDeclaredCapabilitiesOnlyThroughRouteHelper(t *testing.T) {
 	raw, err := os.ReadFile("contribute_ws.go")
 	if err != nil {
 		t.Fatalf("read contribute_ws.go: %v", err)
@@ -574,11 +660,9 @@ func TestSelectionPathsDoNotReadDeclaredCapabilities(t *testing.T) {
 		if name == "selectTask" && !strings.Contains(body, "candidates") {
 			t.Fatal("extracted selectTask body has no candidate collection — extraction is wrong; fix the test")
 		}
-		if strings.Contains(strings.ToLower(body), "capabilit") {
-			t.Errorf("%s references the client-declared capability map — ROUTE is intentionally "+
-				"NOT implemented (kubestellar/hive#2547 DECLARE/ROUTE split). If routing has now been "+
-				"decided and recorded by a maintainer, update this test in that same PR; otherwise "+
-				"remove the read.", name)
+		lower := strings.ToLower(body)
+		if strings.Contains(lower, "capabilit") && !strings.Contains(body, "capabilityRoutingInputs") {
+			t.Errorf("%s references client capabilities outside the route helper", name)
 		}
 	}
 }

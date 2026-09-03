@@ -273,13 +273,18 @@ enabled — a hive that has not opted in sees no new chrome.
 
 ## 8. What is wired today
 
-One real producer, **behind a default-OFF flag**: the self-authored auto-merge
-sweep (`pkg/github/automerge_desk.go`).
+Three real producers, **behind a default-OFF flag**:
 
-It is the cheapest honest producer — already exactly the shape the desk
-generalizes, it is the gate whose incident history the RFC cites, and it needs
-no new call site because the sweep already computes repo, number, author, and a
-real `ChecksGreen` from `commitGreen`.
+- The self-authored auto-merge sweep (`pkg/github/automerge_desk.go`).
+- The trusted human merge queue (`trySweepQueuedPR`).
+- The plan-from-label trigger in the governor evaluation cycle.
+
+The merge producers were the cheapest honest starting point: they already have
+the shape the desk generalizes and compute repo, number, author, reviewed SHA,
+and a real `ChecksGreen` from `commitGreen`. The plan-from-label producer wraps
+the existing `PlanningConfig.PlanFromLabelEnabled` result so the desk can
+withhold or audit the operation without making the label trigger more
+permissive.
 
 The consultation happens **after** the sweep's own eligibility checks, so the
 desk can only ever *withhold* a merge the legacy gate already permitted — it can
@@ -327,9 +332,9 @@ Two deliberate choices:
 
 ### Remaining
 
-- Migrate the other three gates (plan approval, plan-from-label, queued merge)
-  onto the desk at their call sites. Parity functions and tests already exist
-  for all three; only the call-site swap remains.
+- Wire any future production caller of the decomposition `plan_auto_approve`
+  gate through the desk. The parity function exists, but the current v5 tree has
+  no long-running hive call site beyond direct `bd decompose --auto-approve`.
 - Route `security-scan` through the sec-check agent surface
   (`buildSecCheckMessage`) rather than the in-process `DefaultSecurityScanner`,
   with the async/post-hoc path for pattern-matched-known-safe requests that

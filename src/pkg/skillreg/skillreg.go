@@ -1,8 +1,8 @@
 // Package skillreg is a local, shareable registry of named, versioned agent
 // "skills" plus a minimal bring-your-own-agent (BYO) contract. It extends the
 // agentsmd package, which parses skills inline in a single AGENTS.md, into a
-// reusable registry so skills can be named, versioned, listed, searched, and
-// resolved across repos and agents — the seed of a community catalog.
+// reusable registry so skills can be named, versioned, loaded, and
+// injected into agent kicks.
 //
 // # Relationship to agentsmd
 //
@@ -10,8 +10,8 @@
 // in one AGENTS.md (or adjacent skills/*.md files) with no version or metadata.
 // This package does not re-parse AGENTS.md; instead it holds richer Skill values
 // (name, version, description, tags, source) and provides a bridge
-// (ResolveRequested) that folds an AgentsConfig's inline skills together with
-// registry skills under a documented precedence.
+// that folds an AgentsConfig's inline skills together with registry skills under
+// a documented precedence.
 //
 // # Skill file format
 //
@@ -41,13 +41,6 @@
 // shared catalog override ad-hoc inline snippets while still honoring repo-local
 // skills the catalog has never heard of.
 //
-// # Agent SDK contract (BYO-agent)
-//
-// AgentSpec is the minimal contract a third party implements (or declares in
-// YAML) to plug a custom agent into Hive: a name, a backend identifier, a model,
-// an operating mode/policy, and a list of default skills. LoadAgentSpec reads
-// such a declaration from YAML. The contract is intentionally small and stable.
-//
 // # Concurrency
 //
 // Registry is safe for concurrent use by multiple goroutines.
@@ -58,7 +51,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -79,16 +71,6 @@ const (
 
 	// injectionHeader titles the resolved-skills block produced by InjectionText.
 	injectionHeader = "## Requested Skills"
-
-	// versionWildcard, as a constraint, matches any version.
-	versionWildcard = "*"
-
-	// versionPrefixCaret requests the newest version sharing a major with the
-	// constraint (semver-caret style, e.g. "^1.2.0").
-	versionPrefixCaret = "^"
-
-	// versionPrefixGTE requests the newest version at or above the constraint.
-	versionPrefixGTE = ">="
 )
 
 // SkillSource identifies where a Skill came from, for provenance and precedence.
@@ -121,7 +103,7 @@ type Skill struct {
 	Body string
 	// Source records provenance (see SkillSource).
 	Source SkillSource
-	// Tags are free-form labels for Search.
+	// Tags are free-form labels kept for metadata and future displays.
 	Tags []string
 }
 
@@ -309,59 +291,6 @@ func (r *Registry) highestLocked(name string) (Skill, bool) {
 	return best, true
 }
 
-// Resolve selects the skill named name whose version satisfies constraint. An
-// empty constraint or the wildcard "*" selects the highest version. A "^X.Y.Z"
-// constraint selects the highest version sharing X's major component. A ">=X.Y.Z"
-// constraint selects the highest version at or above X.Y.Z. Any other constraint
-// is treated as an exact version match. Returns false when nothing satisfies it.
-func (r *Registry) Resolve(name, constraint string) (Skill, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	constraint = strings.TrimSpace(constraint)
-	if constraint == "" || constraint == versionWildcard {
-		return r.highestLocked(name)
-	}
-
-	versions := r.byName[name]
-	if len(versions) == 0 {
-		return Skill{}, false
-	}
-
-	var best Skill
-	found := false
-	for _, s := range versions {
-		if !satisfies(s.Version, constraint) {
-			continue
-		}
-		if !found || compareVersions(s.Version, best.Version) > 0 {
-			best = s
-			found = true
-		}
-	}
-	return best, found
-}
-
-// satisfies reports whether version meets constraint. See Resolve for the
-// supported constraint grammar.
-func satisfies(version, constraint string) bool {
-	switch {
-	case strings.HasPrefix(constraint, versionPrefixCaret):
-		want := strings.TrimSpace(strings.TrimPrefix(constraint, versionPrefixCaret))
-		return sameMajor(version, want) && compareVersions(version, want) >= 0
-	case strings.HasPrefix(constraint, versionPrefixGTE):
-		want := strings.TrimSpace(strings.TrimPrefix(constraint, versionPrefixGTE))
-		return compareVersions(version, want) >= 0
-	default:
-		return compareVersions(version, constraint) == 0
-	}
-}
-
-// sameMajor reports whether a and b share a major version component.
-func sameMajor(a, b string) bool {
-	return versionParts(a)[0] == versionParts(b)[0]
-}
-
 // versionParts splits a dotted version into three numeric components; missing or
 // non-numeric parts read as zero.
 func versionParts(v string) [3]int {
@@ -396,61 +325,6 @@ func compareVersions(a, b string) int {
 		}
 	}
 	return 0
-}
-
-// List returns every skill (all versions) sorted by name then descending
-// version, so the newest version of each name comes first.
-func (r *Registry) List() []Skill {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	var out []Skill
-	for _, versions := range r.byName {
-		out = append(out, versions...)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-		return compareVersions(out[i].Version, out[j].Version) > 0
-	})
-	return out
-}
-
-// Search returns the highest version of every skill whose name, description, or
-// any tag contains term (case-insensitively). An empty term matches everything.
-// Results are sorted by name.
-func (r *Registry) Search(term string) []Skill {
-	term = strings.ToLower(strings.TrimSpace(term))
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var out []Skill
-	for name := range r.byName {
-		best, ok := r.highestLocked(name)
-		if !ok {
-			continue
-		}
-		if term == "" || skillMatches(best, term) {
-			out = append(out, best)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-// skillMatches reports whether s contains term (already lowercased) in its name,
-// description, or any tag.
-func skillMatches(s Skill, term string) bool {
-	if strings.Contains(strings.ToLower(s.Name), term) ||
-		strings.Contains(strings.ToLower(s.Description), term) {
-		return true
-	}
-	for _, t := range s.Tags {
-		if strings.Contains(strings.ToLower(t), term) {
-			return true
-		}
-	}
-	return false
 }
 
 // ResolveRequested bridges an agentsmd.AgentsConfig to the registry. For each
@@ -501,8 +375,7 @@ func (r *Registry) ResolveRequested(cfg *agentsmd.AgentsConfig, requested []stri
 // The kick-assembly pipeline calls this via the scheduler's primeSkills, which
 // resolves the skills an agent declares in config against a registry loaded from
 // the hive-host-local skills directory and prepends the result to ${KNOWLEDGE}.
-// It remains a standalone helper so other callers (e.g. a BYO-agent launcher
-// resolving AgentSpec.DefaultSkills) can render the same block.
+// It remains a standalone helper so other callers can render the same block.
 func InjectionText(skills []Skill) string {
 	if len(skills) == 0 {
 		return ""

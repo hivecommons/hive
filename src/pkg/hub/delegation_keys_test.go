@@ -136,20 +136,6 @@ func TestDelegationKeyEndpointServesOnlyPublicMaterial(t *testing.T) {
 		t.Errorf("published algorithm/curve = %q/%q", doc.Keys[0].Algorithm, doc.Keys[0].Curve)
 	}
 
-	// End to end: a chain minted by this hub's key verifies against the served
-	// document, with nothing but the response body.
-	c, err := delegation.ScheduledWorkChain("acme", "scanner", "cadence:scanner")
-	if err != nil {
-		t.Fatalf("building chain: %v", err)
-	}
-	now := time.Now()
-	token := delegation.MintToken(s.delegationSigningSeed(), c, now)
-	if token == "" {
-		t.Fatal("hub minted nothing")
-	}
-	if _, _, err := delegation.VerifyTokenAcrossKeys(doc.PublicKeysFrom(), token, now); err != nil {
-		t.Fatalf("a chain minted by this hub failed to verify against its own published material: %v", err)
-	}
 }
 
 // TestDelegationKeyEndpointIsAnonymous pins that the endpoint requires no
@@ -225,20 +211,6 @@ func TestDelegationKeyDocumentRotationWindow(t *testing.T) {
 	doc := s.delegationKeyDocument(now)
 	if len(doc.Keys) != 2 {
 		t.Fatalf("during the acceptance window the document should carry 2 keys, got %d", len(doc.Keys))
-	}
-
-	// A chain minted under generation 1 verifies during the window.
-	c, err := delegation.ScheduledWorkChain("acme", "scanner", "cadence:scanner")
-	if err != nil {
-		t.Fatalf("building chain: %v", err)
-	}
-	c.Generation = 1
-	token := delegation.MintToken(delegation.SeedFromMaster("gen-one-secret"), c, now)
-	if token == "" {
-		t.Fatal("minted nothing under generation 1")
-	}
-	if _, _, err := delegation.VerifyTokenAcrossKeys(doc.PublicKeysFrom(), token, now); err != nil {
-		t.Fatalf("a generation-1 chain failed during its acceptance window: %v", err)
 	}
 
 	// After the window closes, generation 1 leaves the document.

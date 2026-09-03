@@ -160,30 +160,14 @@ func (m *Manager) agentKickLogDir(name string) string {
 // CaptureFullLog (live "full log") and archiveKickLogLocked (durable
 // snapshot), so both always see the same bytes.
 func (m *Manager) captureScrollbackForAgent(agent *AgentProcess) (string, error) {
-	if m.captureFullLogFn != nil {
-		return m.captureFullLogFn(agent)
-	}
-	// -S -<n>: start n lines back into history; -E -: through the last visible
-	// line; -J: join wrapped lines so copied text is not hard-wrapped at the
-	// pane width; -p: print to stdout.
-	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
-		"-S", fmt.Sprintf("-%d", fullLogCaptureLines), "-E", "-")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("capturing pane for %s: %w", agent.Name, err)
-	}
-	return string(out), nil
+	return m.terminalSession().CaptureFullLog(agent)
 }
 
 // clearScrollbackForAgent drops the session's scrollback history (the visible
 // pane is untouched) so the NEXT archive covers only the kick being delivered
 // now. Only called after its content has been archived.
 func (m *Manager) clearScrollbackForAgent(agent *AgentProcess) {
-	if m.clearHistoryFn != nil {
-		m.clearHistoryFn(agent)
-		return
-	}
-	_ = m.tmuxCmd(agent, "clear-history", "-t", agent.tmuxSession).Run()
+	m.terminalSession().ClearHistory(agent)
 }
 
 // archiveKickLogLocked snapshots the agent's current scrollback to a durable

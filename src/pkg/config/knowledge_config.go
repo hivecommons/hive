@@ -206,9 +206,7 @@ type KnowledgeLayer struct {
 }
 
 type KnowledgeCurator struct {
-	Schedule             string   `yaml:"schedule"`
-	ExtractFrom          []string `yaml:"extract_from"`
-	AutoPromoteThreshold float64  `yaml:"auto_promote_threshold"`
+	AutoPromoteThreshold float64 `yaml:"auto_promote_threshold"`
 }
 
 type KnowledgePrimer struct {

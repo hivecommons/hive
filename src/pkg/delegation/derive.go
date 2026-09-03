@@ -26,7 +26,7 @@ import (
 //
 // Returns "" for an empty master so callers keep the fail-closed contract every
 // other derivation site in hive relies on: no secret configured means no key,
-// which means MintToken returns "" and no chain is emitted.
+// which means no public key is emitted.
 func deriveDomainKey(master, info string) string {
 	if master == "" {
 		return ""

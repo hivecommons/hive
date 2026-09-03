@@ -126,12 +126,6 @@ func DefaultAgentMode(agentName string, level int) AgentMode {
 	}
 }
 
-// agentCanWrite returns true if this agent is allowed to push branches and create PRs.
-// Deprecated: use agentMode() for granular mode checks.
-func (m *Manager) agentCanWrite(agent *AgentProcess) bool {
-	return m.agentMode(agent).CanPush()
-}
-
 // AuthorizePROpen enforces the policy for the hive-opens-PR watcher: an agent
 // may open a PR (by dropping a request file) only if BOTH hold:
 //
