@@ -29,15 +29,14 @@ that status is the thing to check before treating a page as current behaviour:
   (`src/pkg/hub/hub_generations*.go`, `hub_cookie_generations.go`); the
   remaining per-domain adoptions listed under "Follow-on PRs" are still pending.
 - [Wrapped master delivery to pull-only spokes](master-delivery-wrapped.md) —
-  **partly shipped**, and page-level **design only**. Read it after
-  master-key-rotation.md: rotation is complete on the hub and delivers nothing to
-  the two thirds of the fleet on pull-only clusters, which the hub cannot write
-  to by design. Records Option D — the spoke generates a keypair, publishes the
-  public half over its own outbound heartbeat, and the hub seals each new master
-  to it — and why Options A and B were rejected. The sealing primitive and the
-  spoke-side wrapping-key lifecycle have since landed (`src/pkg/hub/wrapkey.go`,
-  `wrapkey_store.go`); the page is not updated post hoc as later stages ship, so
-  its own header still reads DESIGN ONLY.
+  **design only**. Read it after master-key-rotation.md: rotation is complete on
+  the hub and delivers nothing to the two thirds of the fleet on pull-only
+  clusters, which the hub cannot write to by design. Records Option D — the spoke
+  generates a keypair, publishes the public half over its own outbound heartbeat,
+  and the hub seals each new master to it — and why Options A and B were
+  rejected. Earlier unwired wrapkey primitives were removed as dead code in
+  [#5697](https://github.com/kubestellar/hive/pull/5697), so no sealing
+  primitive or spoke-side wrapping-key lifecycle is currently implemented.
 - [PR reach telemetry](pr-reach-telemetry.md) — **partly shipped.** The design
   behind attributing merged code to what is actually running, and the anchoring
   rule that governs it: **merged ≠ deployed ≠ running**, so reach must attribute
