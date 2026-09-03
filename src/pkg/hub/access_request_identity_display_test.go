@@ -67,3 +67,20 @@ func TestPendingAccessRequestRowsPreferDisplayLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingAccessPanelExpansionSurvivesFleetRefresh(t *testing.T) {
+	checks := []string{
+		"var _expandedPendingRows = new Set();",
+		"function pruneExpandedPendingRows(allHives) {",
+		"pruneExpandedPendingRows(allHives);",
+		"var pendingRowStyle = _expandedPendingRows.has(String(h.id || '')) ? '' : 'display:none';",
+		"style=\"' + pendingRowStyle + '\"",
+		"if (opening) _expandedPendingRows.add(key);",
+		"else _expandedPendingRows.delete(key);",
+	}
+	for _, snippet := range checks {
+		if !strings.Contains(dashboardHTML, snippet) {
+			t.Errorf("dashboardHTML missing pending access expansion snippet %q", snippet)
+		}
+	}
+}

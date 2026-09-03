@@ -12845,6 +12845,7 @@ const dashboardHTML = `<!DOCTYPE html>
        paint are stored, but a huge fleet could still overflow the ~5 MB quota
        and make every write fail. */
     var HIVES_CACHE_MAX_ROWS = 200;
+    var _expandedPendingRows = new Set();
 
     function readHivesCache() {
       try {
@@ -16269,6 +16270,19 @@ const dashboardHTML = `<!DOCTYPE html>
         '<div style="margin-top:10px;text-align:left;max-height:220px;overflow:auto">' + failedRows + '</div>', true);
     }
 
+    function pruneExpandedPendingRows(allHives) {
+      if (!_expandedPendingRows || !_expandedPendingRows.size) return;
+      var pendingHiveIds = new Set();
+      (allHives || []).forEach(function(h) {
+        if (h && h.id && h.pendingRequestCount > 0 && roleAtLeast(h.role, 'read-write') && (h.pending_requests || []).length > 0) {
+          pendingHiveIds.add(String(h.id));
+        }
+      });
+      _expandedPendingRows.forEach(function(hiveId) {
+        if (!pendingHiveIds.has(hiveId)) _expandedPendingRows.delete(hiveId);
+      });
+    }
+
     /* True while any row's branch/channel dropdown is open. renderHives
        rebuilds the row DOM, which would destroy the open menu mid-click —
        the fleet heartbeats change some hive field on nearly every poll, so
@@ -16319,6 +16333,7 @@ const dashboardHTML = `<!DOCTYPE html>
          next render call (poll tick, or the catch-up fired when the menu
          closes) sees a stale _lastHivesJSON and repaints normally. */
       if (branchMenuOpen()) return;
+      pruneExpandedPendingRows(allHives);
       /* The signature must include EVERY piece of render-affecting view state,
          otherwise changing it while the hive data is unchanged is silently a
          no-op — toggling a chip, drilling into an alert type, expanding the
@@ -16893,7 +16908,8 @@ const dashboardHTML = `<!DOCTYPE html>
               '<button onclick="inlineDenyAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
               '</div></div>' + noteHtml + '</div>';
           }).join('');
-          pendingExpandRow = '<tr id="pending-row-' + esc(h.id) + '"' + ((i % 2 === 1) ? ' class="hive-row-alt"' : '') + ' style="display:none"><td colspan="' + TOTAL_COLUMNS + '"><div style="padding:8px 16px;background:rgba(59,130,246,0.05);border-radius:6px;margin:4px 0">' + prItems + '</div></td></tr>';
+          var pendingRowStyle = _expandedPendingRows.has(String(h.id || '')) ? '' : 'display:none';
+          pendingExpandRow = '<tr id="pending-row-' + esc(h.id) + '"' + ((i % 2 === 1) ? ' class="hive-row-alt"' : '') + ' style="' + pendingRowStyle + '"><td colspan="' + TOTAL_COLUMNS + '"><div style="padding:8px 16px;background:rgba(59,130,246,0.05);border-radius:6px;margin:4px 0">' + prItems + '</div></td></tr>';
         }
         /* Stable per-hive anchor so the "Attention needed" panel can scroll a
            specific row into view and highlight it. Built from the hive id, which
@@ -17849,8 +17865,16 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     function togglePendingRow(hiveId) {
+      var key = String(hiveId || '');
       var row = document.getElementById('pending-row-' + hiveId);
-      if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+      if (!row) {
+        _expandedPendingRows.delete(key);
+        return;
+      }
+      var opening = row.style.display === 'none';
+      row.style.display = opening ? '' : 'none';
+      if (opening) _expandedPendingRows.add(key);
+      else _expandedPendingRows.delete(key);
     }
 
     async function inlineApproveAccess(hiveId, username, btn) {
