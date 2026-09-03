@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TriggerContext carries metadata about what triggered a kick.

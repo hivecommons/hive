@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 func TestInflight_HeldItemsWithheldAndNoted(t *testing.T) {

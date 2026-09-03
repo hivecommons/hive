@@ -1,7 +1,7 @@
 package hooks
 
 import (
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // This file is the ONLY place pkg/hooks touches pkg/config, mirroring

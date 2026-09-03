@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/resolve"
 	"gopkg.in/yaml.v3"
 )
 

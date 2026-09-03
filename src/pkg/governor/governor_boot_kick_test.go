@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Regression tests for #2573 (boot-kick cadence bypass): startup used to call

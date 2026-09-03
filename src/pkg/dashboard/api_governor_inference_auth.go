@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // inferenceAuthSectionResponse builds the safe JSON shape for one backend's

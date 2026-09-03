@@ -5,7 +5,7 @@
 > On **GitLab, Gitea, and Forgejo** it does not. The adapters exist in the source
 > tree and are tested, but they are **still not on a path a non-GitHub hive can
 > reach**. One caller now constructs an adapter from `project.forge` — the
-> governor's escalation writes ([#5259](https://github.com/kubestellar/hive/issues/5259))
+> governor's escalation writes ([#5259](https://github.com/hivecommons/hive/issues/5259))
 > — and it is a genuine first step, but nothing feeds it on a GitLab or Gitea
 > hive, because enumeration still requires a GitHub client. There is no
 > non-GitHub setup path to follow yet, and this page exists so you can establish

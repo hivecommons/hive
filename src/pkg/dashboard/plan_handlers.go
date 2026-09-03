@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/planning"
 )
 
 // planEpicStore returns the bead store to mint issue-sourced epics into: the

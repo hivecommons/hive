@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // advisoryGQL is a fake Linear GraphQL endpoint that serves one issue with a

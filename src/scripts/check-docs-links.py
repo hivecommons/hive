@@ -42,7 +42,7 @@ relative link is resolved against the vault root as its containment boundary,
 and any target that escapes it is rejected outright regardless of whether the
 file exists in the repo. In-vault links (siblings, subdirectories) are still
 resolved and anchor-checked exactly as in src/docs/ mode. Outbound references
-from the wiki must use absolute https://github.com/kubestellar/hive/blob/v4/
+from the wiki must use absolute https://github.com/hivecommons/hive/blob/v4/
 URLs, which work identically in the repo view and the deployed vault (#5308).
 
 Usage: src/scripts/check-docs-links.py [docs-dir] [--vault-root]
@@ -172,7 +172,7 @@ def check_file(
                     f"{path}: link '{raw}' escapes the wiki vault root; the vault is "
                     f"seeded flat at /data/wiki/, so this cannot resolve in a running "
                     f"hive even though the target exists in the repo. Use an absolute "
-                    f"https://github.com/kubestellar/hive/blob/v4/... URL instead."
+                    f"https://github.com/hivecommons/hive/blob/v4/... URL instead."
                 )
                 continue
         else:

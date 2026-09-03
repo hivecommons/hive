@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hubbackup"
-	"github.com/kubestellar/hive/pkg/spokebackup"
+	"github.com/hivecommons/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/spokebackup"
 )
 
 // Self-service spoke backup.

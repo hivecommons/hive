@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // The two commits from #5130: the digest's analyzed-at HEAD, and the older

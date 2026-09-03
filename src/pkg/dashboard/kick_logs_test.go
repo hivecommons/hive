@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // kickHistoryServer wires apiServer's manager at a temp archive dir and

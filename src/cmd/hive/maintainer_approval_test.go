@@ -11,7 +11,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
-	"github.com/kubestellar/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/intent"
 )
 
 // newReviewsTestClient serves canned pages of PR reviews for

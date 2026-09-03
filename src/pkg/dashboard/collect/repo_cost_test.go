@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/tokens"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 func rcTime(base time.Time, min int) time.Time { return base.Add(time.Duration(min) * time.Minute) }

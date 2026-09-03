@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // allModes is every ACMM tier, lowest first. Tests that assert "at every tier"

@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
 )
 
 // activityTestConfig builds the minimal config agentActivityFor needs: one

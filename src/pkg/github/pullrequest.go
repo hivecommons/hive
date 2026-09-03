@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.

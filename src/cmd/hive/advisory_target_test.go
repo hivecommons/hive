@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // TestResolveAdvisoryDigestRoute pins the dispatch contract for

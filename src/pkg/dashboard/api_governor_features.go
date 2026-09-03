@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Sampling-ratio bounds for the tracing head-based sampler. The config treats a

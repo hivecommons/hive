@@ -1,15 +1,15 @@
 # Linear agent integration
 
-Part 2 of [RFC #4492](https://github.com/kubestellar/hive/issues/4492)
+Part 2 of [RFC #4492](https://github.com/hivecommons/hive/issues/4492)
 ("converse capability + Linear agents as first-class workspace members").
 With this integration a hive joins a Linear workspace **as an agent**: it can
 be assigned or @-mentioned on issues, it acknowledges each agent session
 within Linear's 10-second budget, kicks a configured hive agent to do the
 work, and narrates completion back into the session as agent activities.
 
-Part 1 ([#4515](https://github.com/kubestellar/hive/pull/4515)) added the
+Part 1 ([#4515](https://github.com/hivecommons/hive/pull/4515)) added the
 `converse` capability; the `api.linear.app` proxy enforcement (component F)
-merged in [#4522](https://github.com/kubestellar/hive/pull/4522).
+merged in [#4522](https://github.com/hivecommons/hive/pull/4522).
 
 ## Architecture
 

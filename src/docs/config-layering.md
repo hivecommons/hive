@@ -107,7 +107,7 @@ ConfigMap and no overlay in that mode, so the entrypoint restores this file over
 the config path on every boot (or points `HIVE_CONFIG` straight at it, and
 pins the same path into the launch argv as `--config`, when the config path is
 read-only — the argv half is required, because the image's `CMD` passes an
-explicit `--config` that would otherwise outrank the variable, [#4973](https://github.com/kubestellar/hive/issues/4973)). It is also the only reason a dashboard save survives
+explicit `--config` that would otherwise outrank the variable, [#4973](https://github.com/hivecommons/hive/issues/4973)). It is also the only reason a dashboard save survives
 a container recreation: `Config.saveDashboardOverlay` deliberately early-returns
 outside Kubernetes because this file already plays that role.
 
@@ -131,7 +131,7 @@ So **Docker, Podman (rootful or rootless) and LXC all behave identically here**,
 as does any other container runtime and a bare binary on a host. This document
 says "outside Kubernetes" rather than naming runtimes, because naming a subset
 of them is how a Podman operator concludes the section is about someone else's
-deployment ([#5220](https://github.com/kubestellar/hive/issues/5220)).
+deployment ([#5220](https://github.com/hivecommons/hive/issues/5220)).
 
 Ask the running hive which file actually decides a field:
 

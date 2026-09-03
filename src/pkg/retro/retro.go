@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/escalation"
-	"github.com/kubestellar/hive/pkg/knowledge"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 const (

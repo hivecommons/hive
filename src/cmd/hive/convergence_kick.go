@@ -5,11 +5,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/convergence"
-	"github.com/kubestellar/hive/pkg/dashboard"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/notify"
 )
 
 // applyConvergenceKickAdmission is the #4247 eval-cycle seam, formalised by

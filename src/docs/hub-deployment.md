@@ -113,7 +113,7 @@ See `api-reference.md` and the dashboard OpenAPI file for route details, and `ma
 
 ## Running several spokes under one hub
 
-Splitting one large hive into several subject-scoped spokes stops agents competing over unrelated work. It also surfaces things that are fleet-wide in reality but per-hive in the implementation — provider quota, the shared GitHub App rate limit, agent credentials, and repo ownership ([#5691](https://github.com/kubestellar/hive/issues/5691) is the RFC tracking those).
+Splitting one large hive into several subject-scoped spokes stops agents competing over unrelated work. It also surfaces things that are fleet-wide in reality but per-hive in the implementation — provider quota, the shared GitHub App rate limit, agent credentials, and repo ownership ([#5691](https://github.com/hivecommons/hive/issues/5691) is the RFC tracking those).
 
 The first of those the hub now checks for you is **repo ownership**.
 

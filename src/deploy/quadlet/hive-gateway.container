@@ -26,7 +26,7 @@
 
 [Unit]
 Description=Hive authenticating gateway
-Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
+Documentation=https://github.com/hivecommons/hive/blob/v4/src/docs/podman-standalone-quadlet.md
 
 # The Compose equivalent is `depends_on: hive: condition: service_healthy`, and
 # this is the same statement in systemd's vocabulary. It works because

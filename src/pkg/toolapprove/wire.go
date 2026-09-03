@@ -7,7 +7,7 @@ package toolapprove
 import (
 	"log/slog"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // DeskFromConfig builds a Desk and its operator Inbox from loaded config.

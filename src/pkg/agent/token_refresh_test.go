@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // syncedMinter is a race-safe fake for tests where the refresh loop mints

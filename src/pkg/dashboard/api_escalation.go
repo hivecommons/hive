@@ -3,7 +3,7 @@ package dashboard
 import (
 	"net/http"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // handleEscalationGet returns the top-level escalation breaker settings

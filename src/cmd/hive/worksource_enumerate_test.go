@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // A Linear-sourced hive must not abort the eval cycle when GitHub cannot

@@ -8,7 +8,7 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 | `candidate` | A build believed good, awaiting soak before promotion to stable. |
 | `edge` | The newest good build, with no soak period. |
 
-> **Note — current promotion policy:** the channels have begun to diverge by release line. Every merge to **`v4`** retags **`stable` and `candidate`** (so those two still point at the same digest as `v4-latest`), while every merge to **`v5`** retags **`edge`** — meaning `edge` is now an **active-development v5 build**, not a synonym for `stable`. What has *not* landed yet is the soak/promotion step between `candidate` and `stable` (see [#3702](https://github.com/kubestellar/hive/pull/3702) for the channel plumbing): within the `v4` line, treat those two names as forward-looking track selection, not as a guarantee of differing maturity yet.
+> **Note — current promotion policy:** the channels have begun to diverge by release line. Every merge to **`v4`** retags **`stable` and `candidate`** (so those two still point at the same digest as `v4-latest`), while every merge to **`v5`** retags **`edge`** — meaning `edge` is now an **active-development v5 build**, not a synonym for `stable`. What has *not* landed yet is the soak/promotion step between `candidate` and `stable` (see [#3702](https://github.com/hivecommons/hive/pull/3702) for the channel plumbing): within the `v4` line, treat those two names as forward-looking track selection, not as a guarantee of differing maturity yet.
 
 ## How channels are published
 
@@ -35,9 +35,9 @@ POST /api/saas/hives/{id}/switch-branch
 {"branch": "stable"}
 ```
 
-The hive's image is set to `ghcr.io/kubestellar/hive:stable` (via kubectl for reachable hosted spokes, or delivered on the next heartbeat otherwise). The switch is considered complete when the spoke's heartbeat reports an image ref whose tag matches the channel ([#3761](https://github.com/kubestellar/hive/pull/3761)).
+The hive's image is set to `ghcr.io/kubestellar/hive:stable` (via kubectl for reachable hosted spokes, or delivered on the next heartbeat otherwise). The switch is considered complete when the spoke's heartbeat reports an image ref whose tag matches the channel ([#3761](https://github.com/hivecommons/hive/pull/3761)).
 
-Because a channel tag is a moving (mutable) tag, a channel-tracking hive gets the same floating-tag auto-upgrade treatment as a `-latest` branch tag: upgrades roll the pod but keep the `:stable` image string rather than pinning a SHA ([#3757](https://github.com/kubestellar/hive/pull/3757)).
+Because a channel tag is a moving (mutable) tag, a channel-tracking hive gets the same floating-tag auto-upgrade treatment as a `-latest` branch tag: upgrades roll the pod but keep the `:stable` image string rather than pinning a SHA ([#3757](https://github.com/hivecommons/hive/pull/3757)).
 
 ## The version pill: `stable (v4)`
 
@@ -47,7 +47,7 @@ A channel is a moving pointer, so the dashboard shows what it currently points a
 - `stable (49e53e6)` — the channel resolves to a digest the hub could not attribute to a tracked branch (short digest shown);
 - `stable (?)` — the channel tag could not be resolved on GHCR at all.
 
-Resolution is live: the hub HEADs the GHCR manifests for each tracked branch's `-latest` tag and each channel tag, and matches digests ([#3742](https://github.com/kubestellar/hive/pull/3742)). Results are cached for 5 minutes; an unresolved refresh is never cached, so a transient GHCR blip retries on the next poll rather than latching `unknown` for the TTL ([#3721](https://github.com/kubestellar/hive/pull/3721)). If channel rows render as `unknown`, grep the hub log for `channel resolve:` — each failure path logs a WARN naming the cause (token failure, 401/403 package permission, 404 tag never published).
+Resolution is live: the hub HEADs the GHCR manifests for each tracked branch's `-latest` tag and each channel tag, and matches digests ([#3742](https://github.com/hivecommons/hive/pull/3742)). Results are cached for 5 minutes; an unresolved refresh is never cached, so a transient GHCR blip retries on the next poll rather than latching `unknown` for the TTL ([#3721](https://github.com/hivecommons/hive/pull/3721)). If channel rows render as `unknown`, grep the hub log for `channel resolve:` — each failure path logs a WARN naming the cause (token failure, 401/403 package permission, 404 tag never published).
 
 The **My Hives** page also shows a `Release channels:` block above the per-branch `Latest available images:` rows, mapping each channel to its currently resolved branch/digest. Each branch row also carries a compact per-line image-pulls bar chart (package pulls landing during each of that line's release windows; `—` when the line has no closed window yet), and the header's "Pulls per release" chart follows the **active** line — the branch `stable` currently resolves to — rather than any hard-coded branch.
 
@@ -55,12 +55,12 @@ The **My Hives** page also shows a `Release channels:` block above the per-branc
 
 The hive's tracked channel is stored hub-side in the per-hive metadata record (`tracked_channel` in `/data/saas/hives/<hive-id>/meta.json`, on the hub PVC). It is set when you switch to a channel and cleared when you switch to a plain branch. Two failure modes are specifically handled:
 
-- **Heartbeats do not erase it.** A channel image is a build of `v4`, so the spoke heartbeats `git_branch=v4`; the pill overlays the persisted channel at read time instead of trusting the reported branch ([#3750](https://github.com/kubestellar/hive/pull/3750)).
-- **Hub restarts do not drop an in-flight switch.** The in-memory switch instruction is re-armed from the persisted record on the next heartbeat, as long as the spoke is not mid-upgrade and its reported image tag differs from the tracked channel ([#3771](https://github.com/kubestellar/hive/pull/3771)). This also self-heals a hive whose delivered upgrade drifted it off the channel tag.
+- **Heartbeats do not erase it.** A channel image is a build of `v4`, so the spoke heartbeats `git_branch=v4`; the pill overlays the persisted channel at read time instead of trusting the reported branch ([#3750](https://github.com/hivecommons/hive/pull/3750)).
+- **Hub restarts do not drop an in-flight switch.** The in-memory switch instruction is re-armed from the persisted record on the next heartbeat, as long as the spoke is not mid-upgrade and its reported image tag differs from the tracked channel ([#3771](https://github.com/hivecommons/hive/pull/3771)). This also self-heals a hive whose delivered upgrade drifted it off the channel tag.
 
 ## Spoke navbar badge
 
-A spoke running a channel image shows the channel in its own dashboard version badge — `stable (v4)` — with the tooltip `Tracking release channel stable (currently a v4 build)` ([#3762](https://github.com/kubestellar/hive/pull/3762)). The spoke learns its channel by reading its own Deployment's image tag via the in-cluster API; a spoke that cannot read its Deployment (for example a plain docker run) shows only the branch badge.
+A spoke running a channel image shows the channel in its own dashboard version badge — `stable (v4)` — with the tooltip `Tracking release channel stable (currently a v4 build)` ([#3762](https://github.com/hivecommons/hive/pull/3762)). The spoke learns its channel by reading its own Deployment's image tag via the in-cluster API; a spoke that cannot read its Deployment (for example a plain docker run) shows only the branch badge.
 
 ## Known limitations
 
@@ -70,4 +70,4 @@ A spoke running a channel image shows the channel in its own dashboard version b
 
 ## Grouping hives by upgrade state
 
-The My Hives **GROUP BY** selector includes an `Upgrade state` dimension ([#3805](https://github.com/kubestellar/hive/pull/3805)) with three buckets: `Queued (ready, not yet upgrading)` (auto-upgrade on and a target armed), `Upgrading`, and `Up to date`. Note that `Queued` requires auto-upgrade to be enabled — a hive that is behind latest with auto-upgrade off sorts under `Up to date`.
+The My Hives **GROUP BY** selector includes an `Upgrade state` dimension ([#3805](https://github.com/hivecommons/hive/pull/3805)) with three buckets: `Queued (ready, not yet upgrading)` (auto-upgrade on and a target armed), `Upgrading`, and `Up to date`. Note that `Queued` requires auto-upgrade to be enabled — a hive that is behind latest with auto-upgrade off sorts under `Up to date`.

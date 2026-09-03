@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // TestEventsGolden pins the events pane's complete 48x12 render. The fixture

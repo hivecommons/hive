@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // fakeKicker records kicks and can be made to fail.

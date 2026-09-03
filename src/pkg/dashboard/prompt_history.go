@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 

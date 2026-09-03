@@ -15,7 +15,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 const (

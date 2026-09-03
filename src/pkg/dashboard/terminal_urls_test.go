@@ -113,8 +113,8 @@ func TestFilterAuthURLs(t *testing.T) {
 		// Exactly what the issue observed: with no auth URL on the pane the
 		// control offered a repo URL from the agent's own output.
 		for _, u := range []string{
-			"https://github.com/kubestellar/hive",
-			"https://github.com/kubestellar/hive/pull/5315",
+			"https://github.com/hivecommons/hive",
+			"https://github.com/hivecommons/hive/pull/5315",
 			"https://pkg.go.dev/net/http",
 			"https://example.com/docs/getting-started",
 		} {
@@ -135,7 +135,7 @@ func TestFilterAuthURLs(t *testing.T) {
 	t.Run("preserves newest-first order", func(t *testing.T) {
 		got := filterAuthURLs([]string{
 			"https://a.test/oauth/authorize?n=1",
-			"https://github.com/kubestellar/hive",
+			"https://github.com/hivecommons/hive",
 			"https://b.test/login/oauth?n=2",
 		})
 		if len(got) != 2 || got[0] != "https://a.test/oauth/authorize?n=1" {

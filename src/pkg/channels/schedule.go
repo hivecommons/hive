@@ -6,7 +6,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // CronScheduler manages cron-based channel triggers.

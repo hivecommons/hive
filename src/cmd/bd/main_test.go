@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // captureStdout runs fn while capturing os.Stdout, returning what was written.

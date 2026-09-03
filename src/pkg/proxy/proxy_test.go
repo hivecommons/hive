@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 func TestIsGitHubHostExtended(t *testing.T) {

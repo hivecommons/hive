@@ -7,7 +7,7 @@ package dashboard
 import (
 	"net/http"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 )
 
 type repoActivityResponse struct {

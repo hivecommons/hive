@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Regression coverage for kubestellar/hive#4928 on the sandbox path: the

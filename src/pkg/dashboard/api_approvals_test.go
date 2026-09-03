@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // approvalServer wires a dashboard server with an enabled desk over a temp

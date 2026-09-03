@@ -3,9 +3,9 @@ package main
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/forge"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // forgeKindOf reports the forge kind of a writer, or "" when the writer is not

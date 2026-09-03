@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/worksource"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // ── Source-aware task identity, proven on the production path (#4245) ────────

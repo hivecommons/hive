@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"github.com/kubestellar/hive/pkg/tui"
+	"github.com/hivecommons/hive/pkg/tui"
 	"github.com/spf13/cobra"
 )
 

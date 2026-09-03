@@ -11,8 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // agentsFixture is the /api/agents body the poll tests serve. Three agents so

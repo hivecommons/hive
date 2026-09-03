@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 // cli_models_agent_creds_test.go pins the #4699 fix on the dashboard side:

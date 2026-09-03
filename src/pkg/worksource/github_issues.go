@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // githubIssuesSource is the default WorkSource: it delegates to the existing

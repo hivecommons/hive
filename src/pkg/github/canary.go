@@ -1,6 +1,6 @@
 package github
 
-import "github.com/kubestellar/hive/pkg/ioscan"
+import "github.com/hivecommons/hive/pkg/ioscan"
 
 func (c *Client) scanCanaryText(text, source string) (ioscan.CanaryLeak, bool) {
 	if c == nil || !c.canariesEnabled || c.canaryRegistry == nil || text == "" {

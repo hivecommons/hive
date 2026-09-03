@@ -55,7 +55,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // CostEstimateDisclaimer travels with every estimated-cost payload (moved here

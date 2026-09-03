@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // fakeWikiLayer is a minimal llm-wiki-compatible endpoint: GET

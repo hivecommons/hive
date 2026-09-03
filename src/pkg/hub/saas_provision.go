@@ -20,7 +20,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 var saasHivesDir = "/data/saas/hives"

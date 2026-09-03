@@ -24,7 +24,7 @@ import (
 // GitHub exposes exactly ONE adoption number for a container package: a single
 // CUMULATIVE "Total downloads" counter, rendered on the public package page
 //
-//	https://github.com/kubestellar/hive/pkgs/container/hive
+//	https://github.com/hivecommons/hive/pkgs/container/hive
 //
 // as `<h3 title="127576">128K</h3>` under a "Total downloads" label. There is
 // NO public per-day metric and NO unique-IP / unique-puller metric anywhere in

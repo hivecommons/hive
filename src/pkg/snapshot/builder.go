@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
 var safeClassRe = regexp.MustCompile(`[^a-zA-Z0-9-]`)

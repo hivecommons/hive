@@ -49,7 +49,7 @@ func TestValidateGitSourceURL_RejectsPrivateHosts(t *testing.T) {
 func TestValidateGitSourceURL_AllowsPublicHosts(t *testing.T) {
 	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
 	ok := []string{
-		"https://github.com/kubestellar/hive.git",
+		"https://github.com/hivecommons/hive.git",
 		"https://gitlab.com/group/project.git",
 		"https://8.8.8.8/repo.git", // public IP literal
 		"https://[2001:4860:4860::8888]/repo.git",
@@ -94,7 +94,7 @@ func TestF8_RejectsHostnameResolvingToPrivateAddress(t *testing.T) {
 	}
 	// Positive control: a hostname resolving to a public address must still be
 	// allowed, or the fix is just a blanket denial of every non-literal host.
-	if err := ValidateGitSourceURL("https://github.com/kubestellar/hive.git"); err != nil {
+	if err := ValidateGitSourceURL("https://github.com/hivecommons/hive.git"); err != nil {
 		t.Fatalf("a public hostname was rejected, which would break every legitimate git source: %v", err)
 	}
 }

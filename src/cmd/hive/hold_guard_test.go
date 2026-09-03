@@ -16,8 +16,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/holdguard"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/holdguard"
 )
 
 func swapHoldGuardStore(t *testing.T, s *holdguard.Store) {

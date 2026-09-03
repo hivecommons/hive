@@ -165,7 +165,7 @@ Note the command's own `--help` text describes an event feed — that is the
 end-state design, not what ships today.
 
 Track progress under the `hive tui` epic
-([#4907](https://github.com/kubestellar/hive/issues/4907)); the open `tui T*`
+([#4907](https://github.com/hivecommons/hive/issues/4907)); the open `tui T*`
 issues list what is still missing. Prefer the web dashboard or the
 non-interactive subcommands above for anything you need today.
 

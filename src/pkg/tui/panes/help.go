@@ -5,7 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/kubestellar/hive/pkg/tui/theme"
+	"github.com/hivecommons/hive/pkg/tui/theme"
 )
 
 // Binding is one row of the help overlay's key table.

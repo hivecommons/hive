@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // These tests cover the Repos-tab add-form backend guards:

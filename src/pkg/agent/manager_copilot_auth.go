@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 // sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)

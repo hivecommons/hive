@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
 type workSourceAPIResponse struct {

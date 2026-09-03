@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // These tests cover the per-agent launch guard that lets Manager.Start run its

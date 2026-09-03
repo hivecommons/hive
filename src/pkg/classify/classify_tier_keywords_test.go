@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // resetTierKeywords restores the default (unconfigured) tier keyword state so

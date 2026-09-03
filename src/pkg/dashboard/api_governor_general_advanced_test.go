@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // generalAdvancedValue reads the general-advanced payload from its GET

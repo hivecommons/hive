@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/escalation"
-	"github.com/kubestellar/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 const (

@@ -27,9 +27,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/ioscan"
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 const (

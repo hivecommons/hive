@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/delegation"
+	"github.com/hivecommons/hive/pkg/delegation"
 )
 
 const delegationTestMaster = "test-master-for-delegation-keys"

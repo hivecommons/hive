@@ -3,7 +3,7 @@ package worksource_test
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 func TestTaskKey_GitHub(t *testing.T) {

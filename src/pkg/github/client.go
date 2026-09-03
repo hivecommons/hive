@@ -16,9 +16,9 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/ioscan"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.

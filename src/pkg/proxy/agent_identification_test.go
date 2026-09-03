@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // agentUIDFixture is the UID the fake /proc/net/tcp table attributes the

@@ -3,11 +3,11 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/convergence"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/planning"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/convergence"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 func externalItemWithDependency(id, blocker string, resolved bool) map[string]any {

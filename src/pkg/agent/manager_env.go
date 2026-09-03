@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {

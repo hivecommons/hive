@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Lifecycle replay for #3980, wiring a REAL ClaimLedger in as the

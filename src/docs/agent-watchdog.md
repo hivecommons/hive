@@ -1,6 +1,6 @@
 # Agent Self-Healing Watchdog
 
-Implements [RFC #4665](https://github.com/kubestellar/hive/issues/4665):
+Implements [RFC #4665](https://github.com/hivecommons/hive/issues/4665):
 k8s-style liveness/readiness reconciliation for hive agents. Before the
 watchdog, an agent's dashboard state was a config echo — an agent could sit
 dead at a shell prompt (or at a login screen, or behind a first-run modal)

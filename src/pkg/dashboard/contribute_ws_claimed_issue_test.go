@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // These tests are the #3768 regression suite: projectbluefin/dakota#353

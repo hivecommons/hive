@@ -162,7 +162,7 @@ Concretely, per release:
 `v4`'s only required context is `gate` (`docker.yml`). The release commit is
 created inside `tagged-release.yml`, so it has no check when it first exists;
 a direct push to `v4` is rejected (`GH006: Required status check "gate" is
-expected`, [#5026](https://github.com/kubestellar/hive/issues/5026)). Retrying
+expected`, [#5026](https://github.com/hivecommons/hive/issues/5026)). Retrying
 does not create the missing evidence, so every attempt fails identically.
 
 The workflow first pushes the commit to `release-gate/v<version>`, dispatches
@@ -171,7 +171,7 @@ That verifies the same code path as an ordinary PR gate, but a
 `workflow_dispatch` check-run has no pull-request association: its
 `pull_requests` list remains empty even if it is dispatched after the release
 PR exists. Consequently GitHub's protected-PR rollup omits it and the merge
-API still reports `gate` as expected ([#5356](https://github.com/kubestellar/hive/issues/5356)).
+API still reports `gate` as expected ([#5356](https://github.com/hivecommons/hive/issues/5356)).
 
 After the check-run succeeds, the workflow posts a `gate: success` commit
 status on the same SHA using its `GITHUB_TOKEN` and `statuses: write`
@@ -247,7 +247,7 @@ multi-arch coverage.
 `docker/build-push-action` step, on purpose, and
 `.github/workflows/image-attestation-guard.yml` +
 `src/scripts/check-no-image-attestations.sh` guard those four sites in CI so
-a well-meaning revert fails loudly instead of shipping. The reason ([#3760](https://github.com/kubestellar/hive/issues/3760),
+a well-meaning revert fails loudly instead of shipping. The reason ([#3760](https://github.com/hivecommons/hive/issues/3760),
 documented at length directly above each flag in `docker.yml`): `build-push-action`
 attaches provenance/SBOM attestations by *default*, and an attestation can
 only be carried by an OCI image **index** — so turning it on changes the

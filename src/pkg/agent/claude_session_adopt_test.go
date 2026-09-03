@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // fakeAgentUserRunner stands in for su-exec. Unit tests cannot create files

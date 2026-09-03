@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // TestTokensGolden pins the tokens pane's complete 48x12 render, byte for

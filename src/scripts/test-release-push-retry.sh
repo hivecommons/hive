@@ -153,7 +153,7 @@ case "$1 $2" in
       echo "gh: a pull request for branch release-gate/v4.0.1 already exists"
       exit 1
     fi
-    echo "https://github.com/kubestellar/hive/pull/9999"
+    echo "https://github.com/hivecommons/hive/pull/9999"
     exit 0 ;;
   "pr close")
     exit 0 ;;

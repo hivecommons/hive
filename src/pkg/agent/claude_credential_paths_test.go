@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // claude_credential_paths_test.go covers ClaudeCredentialCandidatePaths, the

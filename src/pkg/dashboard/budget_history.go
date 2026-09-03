@@ -8,7 +8,7 @@ package dashboard
 import (
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 )
 
 // budgetWindows guards lazy construction so a zero-value Server — as used in

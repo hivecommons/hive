@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
 // loadNousState builds the dashboard's nous panel state from optional on-disk

@@ -3,7 +3,7 @@ package turn
 import (
 	"context"
 
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // LLMResponse is the output returned from an LLM model invocation.

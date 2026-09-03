@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // contribute_activity_external_identity_test.go pins the fix for

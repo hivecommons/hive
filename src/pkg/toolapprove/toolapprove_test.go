@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 type fakeAuditSink struct {

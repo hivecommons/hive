@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Agent logs are tmux pane scrapes, so explanation (#3887) cannot go to a real
@@ -17,7 +17,7 @@ EXPLAIN: Checking for uncommitted work before branching, so I do not strand edit
 On branch v4
 > Bash(go test ./pkg/agent/)
 EXPLAIN: Running the package suite because my change touches kick composition.
-ok  	github.com/kubestellar/hive/v2/pkg/agent	0.4s
+ok  	github.com/hivecommons/hive/v2/pkg/agent	0.4s
 `
 
 func TestFilterExplainLines_Only(t *testing.T) {
@@ -49,7 +49,7 @@ func TestFilterExplainLines_Hide(t *testing.T) {
 	}
 	// Hiding explanation must reproduce exactly what an operator would see with
 	// explain mode off — nothing of the real work may be lost with it.
-	for _, want := range []string{"Bash(git status --porcelain)", "On branch v4", "Bash(go test ./pkg/agent/)", "ok  	github.com/kubestellar/hive/v2/pkg/agent"} {
+	for _, want := range []string{"Bash(git status --porcelain)", "On branch v4", "Bash(go test ./pkg/agent/)", "ok  	github.com/hivecommons/hive/v2/pkg/agent"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("hide view dropped real output %q", want)
 		}

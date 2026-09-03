@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // handleRepoCost serves GET /api/repo-cost from the cached RepoCostCollector

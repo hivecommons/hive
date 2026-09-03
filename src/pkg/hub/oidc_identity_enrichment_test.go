@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/kubestellar/hive/pkg/auth"
+	"github.com/hivecommons/hive/pkg/auth"
 )
 
 // oidcCallbackRequest builds a nonce-consistent callback request for provider p.

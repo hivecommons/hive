@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // rcTime/rcEvent/rcUsage/rcSession mirror the fixture helpers that moved to

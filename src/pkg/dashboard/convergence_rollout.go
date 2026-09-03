@@ -3,7 +3,7 @@ package dashboard
 import (
 	"sync"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // ── #4263: off/shadow/enforce rollout — captured mode + configuration generation

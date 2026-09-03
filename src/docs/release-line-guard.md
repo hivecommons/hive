@@ -6,7 +6,7 @@ Nine workflows pin their `push` / `pull_request` triggers to a hardcoded list of
 version-branch names. That list is hand-maintained, and it has already gone
 stale once. `podman-contract.yml` named `v2` alone, mainline moved to `v4`, and
 the workflow stopped running entirely
-([#4339](https://github.com/kubestellar/hive/issues/4339)). Its own header
+([#4339](https://github.com/hivecommons/hive/issues/4339)). Its own header
 records the lesson:
 
 > a guard that never executes reports green forever, which is the one failure
@@ -23,7 +23,7 @@ on every branch, while both CI workflows, both security contract gates and all
 five Podman guards report nothing at all. Not red — *absent*.
 
 And the image that keeps building is never published
-([#4462](https://github.com/kubestellar/hive/issues/4462)). The release-line
+([#4462](https://github.com/hivecommons/hive/issues/4462)). The release-line
 names are hand-written a **second** time outside any trigger: `docker.yml`'s
 gate job carries them in a `LONG_LIVED` env var, its GHCR push policy. Only
 branches named there publish a `<branch>-latest` tag. That list going stale is
@@ -42,7 +42,7 @@ Three files:
 | `src/scripts/check-release-lines.sh` | Asserts every workflow's branch filters against that manifest. |
 | `.github/workflows/release-line-guard.yml` | Runs it, on **every** branch. |
 
-The [issue](https://github.com/kubestellar/hive/issues/4405) offered two shapes.
+The [issue](https://github.com/hivecommons/hive/issues/4405) offered two shapes.
 This is shape 1, *assert the set*, and not shape 2, *remove the pins* (trigger
 on `v*`). Three reasons:
 
@@ -139,7 +139,7 @@ The workflow runs the self-test *before* the check, because a checker that has
 quietly stopped detecting anything would otherwise pass the real check for the
 wrong reason.
 
-## The infra workflow sync ([#4616](https://github.com/kubestellar/hive/issues/4616))
+## The infra workflow sync ([#4616](https://github.com/hivecommons/hive/issues/4616))
 
 `scorecard.yml` is not only pinned — it is also one of the files the automated
 workflow sync from [kubestellar/infra](https://github.com/kubestellar/infra)
@@ -161,7 +161,7 @@ hardening (immutable-SHA pins on the cross-repo reusable workflows back to
 this guard does not check — a red guard on a sync branch is a reason to review
 the whole sync diff, not just the line the guard names.
 
-The resolution ([#4616](https://github.com/kubestellar/hive/issues/4616),
+The resolution ([#4616](https://github.com/hivecommons/hive/issues/4616),
 recommendation 2): the sync tool supports per-repo exclusions in
 kubestellar/infra `caller-workflows/workflow-exclusions.yml`, and hive's
 `scorecard.yml` is excluded there

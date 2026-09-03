@@ -3,7 +3,7 @@ package classify
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // makeIssue is a helper to build a github.Issue with only the fields relevant

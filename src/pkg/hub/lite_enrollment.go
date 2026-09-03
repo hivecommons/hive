@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	hivegithub "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	hivegithub "github.com/hivecommons/hive/pkg/github"
 )
 
 const (

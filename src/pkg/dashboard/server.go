@@ -14,15 +14,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/acmmadvisor"
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
-	"github.com/kubestellar/hive/pkg/dashboard/webstatic"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/hub"
-	"github.com/kubestellar/hive/pkg/planning"
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 //go:embed static

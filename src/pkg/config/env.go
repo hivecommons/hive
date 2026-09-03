@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/resolve"
 )
 
 func findConfigEnv(yamlPath string) string {

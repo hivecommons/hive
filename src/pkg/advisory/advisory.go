@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const advisoryDir = "/data/advisory"
@@ -906,7 +906,7 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 		}
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
-		b.WriteString("> Automated code review findings from [Hive](https://github.com/kubestellar/hive) agents. ")
+		b.WriteString("> Automated code review findings from [Hive](https://github.com/hivecommons/hive) agents. ")
 		b.WriteString("This comment is updated periodically.\n\n")
 		if len(d.RecentlyResolved) == 0 {
 			b.WriteString(fmt.Sprintf("**Findings:** 0 — ✅ No open advisory findings · evaluated %s.\n\n", d.GeneratedAt.Format(time.RFC3339)))
@@ -936,7 +936,7 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
-	b.WriteString("> Automated code review findings from [Hive](https://github.com/kubestellar/hive) agents. ")
+	b.WriteString("> Automated code review findings from [Hive](https://github.com/hivecommons/hive) agents. ")
 	b.WriteString("Each finding includes a file reference and suggested fix. This comment is updated periodically.\n\n")
 	b.WriteString(fmt.Sprintf("**Findings:** %d\n\n", d.TotalCount))
 	writeCapNote(&b, d)

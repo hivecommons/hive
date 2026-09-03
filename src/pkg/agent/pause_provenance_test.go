@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // #4041: pause provenance — WHO paused WHAT WHEN — must live on the agent

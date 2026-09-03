@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/acmmadvisor"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // TestHandleACMMRecommendationEmpty verifies the endpoint is safe with a

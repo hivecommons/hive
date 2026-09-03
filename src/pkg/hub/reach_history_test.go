@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 // newTestHistoryStore builds a store persisting under t.TempDir, returning

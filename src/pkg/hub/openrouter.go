@@ -24,7 +24,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/openrouter"
+	"github.com/hivecommons/hive/pkg/openrouter"
 )
 
 const (

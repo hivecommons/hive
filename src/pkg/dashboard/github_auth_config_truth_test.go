@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // These tests pin the config-truth rule for github_auth: when the spoke knows

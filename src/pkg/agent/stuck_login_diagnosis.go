@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 // diagnoseStuckLogin explains why an agent is still sitting at a login prompt

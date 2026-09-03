@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 const (

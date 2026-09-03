@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/sandbox"
+	"github.com/hivecommons/hive/pkg/sandbox"
 )
 
 const (

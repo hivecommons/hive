@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // The `converse` capability (#4492) is an ORTHOGONAL grant: it widens the two

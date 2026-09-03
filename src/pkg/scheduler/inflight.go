@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // In-flight work filter.

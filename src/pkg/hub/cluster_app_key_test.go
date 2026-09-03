@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // testRSAKeyBits matches the smallest size GitHub Apps actually use. These keys

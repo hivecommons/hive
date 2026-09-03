@@ -28,7 +28,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // Severity ranks a finding's risk. Higher values are more severe.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 type mockLLM struct {

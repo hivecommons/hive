@@ -11,7 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 func TestFormatReachTime(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // kubestellar/hive#1861 asks that agents hold no GitHub token material at all.

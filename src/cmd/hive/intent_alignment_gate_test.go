@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/intent"
 )
 
 func TestWriteMergeEligibleExcludesMisalignedWhenIntentEnforced(t *testing.T) {

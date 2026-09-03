@@ -1,8 +1,8 @@
 # Agent state inventory — where in-process suspended state lives today
 
-Status: stage 1 of the [RFC #4002](https://github.com/kubestellar/hive/issues/4002)
+Status: stage 1 of the [RFC #4002](https://github.com/hivecommons/hive/issues/4002)
 sequence (re-entrant conversation-as-state turn model), per the
-[maintainer response](https://github.com/kubestellar/hive/issues/4002#issuecomment-5321618936):
+[maintainer response](https://github.com/hivecommons/hive/issues/4002#issuecomment-5321618936):
 **inventory (this document) → journaled prototype with a kill-mid-turn replay
 test → handoff evaluation**. Docs only; nothing here changes behavior. Every
 file/symbol reference below was verified against the `v5` branch at the time of
@@ -184,8 +184,8 @@ key generations (`/data/saas/hub-generations.json`).
 | 28 | Failure cooldowns + quarantine counters | `failedTasks` / `consecutiveFailures` (`:373`, `:381`), persisted to `/data/contributors/failed-tasks.json` | Survives (#2435 livelock fix, made durable with the ledger) | **fixed** |
 | 29 | No-PR completion streaks | `noPRStreaks` (`:394`), `/data/contributors/no-pr-streaks.json` | Survives (#3980; geometric backoff must outlive the completion entry it escalates) | **fixed** |
 | 30 | `no_work_needed` verdicts | `noWorkVerdicts` (`:416`), `/data/contributors/no-work-verdicts.json` | Survives (#3987/#3997) — "persisted in the same PVC-backed ledger dir as the cooldowns so a pod restart does not forget the verdict" | **fixed** |
-| 31 | Task leases — the server-authoritative record of what was issued to whom | `leases`, persisted to `/data/contributors/task-leases.json` (0600) | Survives ([#5681](https://github.com/kubestellar/hive/issues/5681)). Previously **all active leases went void**: a reconnecting relay could only re-adopt against an exact unexpired lease (the C4 fix), so after a roll no in-flight contributor task could resume — the agent was interrupted mid-turn and handed the identical issue back seconds later. The durability cost was accepted as a security posture, but the posture never required volatility: the restored record is one the *server* wrote, matched exactly as before, so nothing is rebuilt from client-supplied fields. Expired records are dropped at load rather than restored | **fixed** |
-| 32 | Assignment generation counter (`taskGen`) — fencing tokens | `:341`, `atomic.Uint64`, in-memory; high-water mark re-derived from row 31 at boot | Restarts at zero, then `loadLeases` advances it past every restored lease's generation ([#5681](https://github.com/kubestellar/hive/issues/5681)). This is what residual 2 below warned about: making row 31 durable without this would let a post-roll assignment mint a generation that ALIASES a restored one, and the #2568 Gate would accept a pre-roll straggler against a brand-new task. The fence no longer depends on two structures dying together | **fixed** (re-derived, not persisted) |
+| 31 | Task leases — the server-authoritative record of what was issued to whom | `leases`, persisted to `/data/contributors/task-leases.json` (0600) | Survives ([#5681](https://github.com/hivecommons/hive/issues/5681)). Previously **all active leases went void**: a reconnecting relay could only re-adopt against an exact unexpired lease (the C4 fix), so after a roll no in-flight contributor task could resume — the agent was interrupted mid-turn and handed the identical issue back seconds later. The durability cost was accepted as a security posture, but the posture never required volatility: the restored record is one the *server* wrote, matched exactly as before, so nothing is rebuilt from client-supplied fields. Expired records are dropped at load rather than restored | **fixed** |
+| 32 | Assignment generation counter (`taskGen`) — fencing tokens | `:341`, `atomic.Uint64`, in-memory; high-water mark re-derived from row 31 at boot | Restarts at zero, then `loadLeases` advances it past every restored lease's generation ([#5681](https://github.com/hivecommons/hive/issues/5681)). This is what residual 2 below warned about: making row 31 durable without this would let a post-roll assignment mint a generation that ALIASES a restored one, and the #2568 Gate would accept a pre-roll straggler against a brand-new task. The fence no longer depends on two structures dying together | **fixed** (re-derived, not persisted) |
 | 33 | Per-tier rate-limit ledger (`assignmentTimes`, #2436/#2566) | `:435`, in-memory only | **Every contributor's rolling per-hour/per-day assignment count resets to zero.** The tier limits an operator set are silently un-enforced for up to a day's window after each roll — same "admin-visible number is inert" class that #2566 fixed, reintroduced at roll frequency | **volatile** |
 | 34 | Live connections + `currentTask` + pending-auth counter | `connections` / `ContributorConnection.currentTask` (`:73`), `pendingConns` | Connection-scoped by nature; relays reconnect with backoff | **benign** (given row 31) |
 | 35 | Activity feed (50 entries) + SSE fan-out registry | `activity` (`:351`), `contribute_sse.go` | Operations view starts empty | **benign** |
@@ -302,7 +302,7 @@ Honest gaps in the current state of things, and in this inventory:
    hard enough to make it write-through; the RFC's journal, if it lands,
    should not inherit this cadence.
 2. ~~**Row 32's coupling is undocumented elsewhere.**~~ **Resolved by
-   [#5681](https://github.com/kubestellar/hive/issues/5681).** The warning was
+   [#5681](https://github.com/hivecommons/hive/issues/5681).** The warning was
    accurate and it was load-bearing: leases were made to survive restarts, and
    the fence would have broken silently had `taskGen` not been re-derived from
    the restored leases in the same change. The coupling is now stated in

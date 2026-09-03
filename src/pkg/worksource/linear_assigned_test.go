@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // rawGQLServer captures the full GraphQL request bodies so tests can assert

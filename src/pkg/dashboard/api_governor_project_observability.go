@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 var projectObservabilityPlatforms = map[string][]string{

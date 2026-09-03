@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 func TestNormalizedAutoMergeLabel(t *testing.T) {

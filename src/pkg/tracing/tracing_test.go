@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/timeline"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // Runner manages the execution of re-entrant turns over a SessionEnvelope.

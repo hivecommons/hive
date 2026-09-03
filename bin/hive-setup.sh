@@ -39,7 +39,7 @@ ANTHROPIC_KEY=""
 COMPOSE_FILE="docker-compose.yaml"
 SKIP_BUILD=false
 DRY_RUN=false
-HIVE_REPO_URL="https://github.com/kubestellar/hive.git"
+HIVE_REPO_URL="https://github.com/hivecommons/hive.git"
 HIVE_BRANCH="${HIVE_BRANCH:-v4}"
 HIVE_DIR=/opt/hive
 
@@ -197,7 +197,7 @@ project:
   open_prs: ${PR_ENABLED}
 
 policies:
-  repo: https://github.com/kubestellar/hive
+  repo: https://github.com/hivecommons/hive
   path: examples/${TARGET_REPO_NAME}/agents/
   local_dir: /data/policies
   poll_interval: 5m

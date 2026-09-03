@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/convergence/proof"
+	"github.com/hivecommons/hive/pkg/convergence/proof"
 )
 
 func newExecutor(t *testing.T, mode string) (Executor, Claim, time.Time) {

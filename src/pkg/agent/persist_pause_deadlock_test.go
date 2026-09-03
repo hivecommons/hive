@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // These are the v4-idiom equivalents of v2's

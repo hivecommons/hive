@@ -126,7 +126,7 @@ grants exactly two things — posting a comment on an issue or PR, and leaving a
 PR review — and nothing else moves.
 
 It exists because those two operations had nowhere sensible to sit
-([#4492](https://github.com/kubestellar/hive/issues/4492)). Commenting was
+([#4492](https://github.com/hivecommons/hive/issues/4492)). Commenting was
 bundled with `ISSUES_ONLY`, alongside creating issues, editing issue bodies and
 relabelling; leaving a PR review was bundled with `ISSUES_AND_PRS`, alongside
 pushing branches. Both bundles are wrong in both directions:
@@ -359,7 +359,7 @@ Three API routes can change an agent's method or model. If you are changing **bo
 PUT /api/config/agent/{name}/models     {"backend": "codex", "model": "gpt-5-codex"}
 ```
 
-The other two set one field each and are fine on their own — but using them **in sequence** to change both is a live footgun ([#5698](https://github.com/kubestellar/hive/issues/5698)):
+The other two set one field each and are fine on their own — but using them **in sequence** to change both is a live footgun ([#5698](https://github.com/hivecommons/hive/issues/5698)):
 
 ```
 POST /api/switch/{agent}/{backend}      # then
@@ -374,7 +374,7 @@ The three routes differ in ways that matter here:
 |---|---|---|
 | Backend and model applied together | **no** — separate requests | **yes** |
 | Backend value validated | yes | yes |
-| Model value validated | yes, but see below | **not yet** — [#5698](https://github.com/kubestellar/hive/issues/5698) phase 2 |
+| Model value validated | yes, but see below | **not yet** — [#5698](https://github.com/hivecommons/hive/issues/5698) phase 2 |
 | Restarts the agent | yes, **once per call** | no — syncs into the live process config |
 | Claims operator ownership | yes | yes |
 
@@ -607,9 +607,9 @@ Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM 
 
 ### The reviewer lane's template, and what an override cannot change
 
-One agent reaches its template by **role** rather than by `kick_template`: an agent with `role: reviewer` runs the escalated-PR adjudication lane ([#5480](https://github.com/kubestellar/hive/issues/5480)) and renders `reviewer-lane.md`. An operator enables that lane by adding a cadence agent with that role, under any name and with no `kick_template`, so the ordinary resolution order above never reaches it.
+One agent reaches its template by **role** rather than by `kick_template`: an agent with `role: reviewer` runs the escalated-PR adjudication lane ([#5480](https://github.com/hivecommons/hive/issues/5480)) and renders `reviewer-lane.md`. An operator enables that lane by adding a cadence agent with that role, under any name and with no `kick_template`, so the ordinary resolution order above never reaches it.
 
-`reviewer-lane.md` resolves through the same paths as every other template, so the contract **is** editable — the operator-saved copy wins, then the policies checkout, then the embedded default. That matters because this contract governs an agent acting on PRs sitting in a human queue, so three decisions are deliberately **not** in the template and cannot be changed by editing it ([#5617](https://github.com/kubestellar/hive/issues/5617)):
+`reviewer-lane.md` resolves through the same paths as every other template, so the contract **is** editable — the operator-saved copy wins, then the policies checkout, then the embedded default. That matters because this contract governs an agent acting on PRs sitting in a human queue, so three decisions are deliberately **not** in the template and cannot be changed by editing it ([#5617](https://github.com/hivecommons/hive/issues/5617)):
 
 | Decision | Where it lives | Why |
 |---|---|---|

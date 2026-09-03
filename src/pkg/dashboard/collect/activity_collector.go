@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // AuditEntry is one line of the dashboard's audit log. The type lives here —

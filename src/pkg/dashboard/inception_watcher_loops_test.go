@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 type fakeInceptionAgentManager struct {

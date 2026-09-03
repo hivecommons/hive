@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Live fleet identity values, used so every case below is a REAL shape rather

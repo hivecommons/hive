@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // The finding from #5236, verbatim in shape: a shell-coverage claim against

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // newFleetTestClient builds a github.Client pointed at a test server that

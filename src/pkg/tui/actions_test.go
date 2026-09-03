@@ -16,8 +16,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 var (

@@ -52,7 +52,7 @@ Containerized mode auto-detects the runtime — docker first, then podman — an
 The relay self-reports runtime capabilities during `auth_response`: container runtime, OS/arch, backend CLI version, credential type, protocol version, and Pi readiness where applicable. These values are self-reported and advisory, never a trust or credential-enforcement signal.
 
 The hub may use them only to avoid explicit task mismatches. Task requirements are derived from issue labels such as `needs-container`, `needs-docker`, `needs-podman`, `os/linux`, `arch/amd64`, `backend/copilot`, and `credential/app`. If a client explicitly declares a contradictory value, the hub skips that task for the client; if every otherwise-admissible task is skipped this way, the relay receives `task_unavailable` with reason `capability_mismatch`. A relay that declares nothing, or leaves a field unknown, continues to receive work as before.
-The resolved runtime is passed into the container, so the "attach to the CLI" hints printed from inside it (the status line, and the banner shown when the CLI needs a login) name the engine that actually launched it ([#5145](https://github.com/kubestellar/hive/issues/5145)). In host mode there is no container, and those hints are a plain `tmux attach -t <session>`.
+The resolved runtime is passed into the container, so the "attach to the CLI" hints printed from inside it (the status line, and the banner shown when the CLI needs a login) name the engine that actually launched it ([#5145](https://github.com/hivecommons/hive/issues/5145)). In host mode there is no container, and those hints are a plain `tmux attach -t <session>`.
 
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
 
@@ -99,7 +99,7 @@ The relay downloads the hive's knowledge export to a single `agent.md` and then
 symlinks it under whatever filename the chosen CLI actually looks for
 (`bin/contributor-agent.sh`). Getting this wrong is silent: the export is
 fetched and refreshed on schedule, but the model never sees it — the failure
-mode fixed for Goose in [#2393](https://github.com/kubestellar/hive/issues/2393).
+mode fixed for Goose in [#2393](https://github.com/hivecommons/hive/issues/2393).
 
 | Backend | Filenames linked in `$HOME` |
 | --- | --- |
@@ -235,7 +235,7 @@ That matters more than it sounds, because *attaching* is not the same as *lookin
 
 So `tmux capture-pane -p -t <session>` is the read-only way to look: it returns a snapshot without ever appearing in `tmux list-clients`. `tmux attach` and the dashboard terminal both put a real client on the session, and the dashboard route is **not** a read-only viewer despite feeling like one.
 
-Leaving a tab attached is fine — it does not park a task by itself. Two things bound it ([#5685](https://github.com/kubestellar/hive/issues/5685)):
+Leaving a tab attached is fine — it does not park a task by itself. Two things bound it ([#5685](https://github.com/hivecommons/hive/issues/5685)):
 
 - The relay corroborates tmux's `client_activity` against whether the pane actually **changed**. A keystroke draws something; a terminal answering the capability, colour and cursor-position queries the CLI writes does not. So an attached-but-unused tab — which advances `client_activity` on its own — no longer reads as a person.
 - Deferral is capped at `HIVE_HUMAN_PRESENCE_MAX_DEFERRALS` ticks (3, roughly six minutes) regardless. Presence is a signal the relay cannot verify, and a task parked forever on an unverifiable signal is worse than one `try again` landing next to somebody.
@@ -375,7 +375,7 @@ kubectl apply -f relay.yaml
 kubectl -n my-namespace rollout status deploy/hive-contributor
 ```
 
-The generated pod sets `CONTRIBUTOR_MODE=headless` because Kubernetes pods have no TTY; interactive tmux mode would stall. Headless mode is currently verified for `claude`, `litellm`, `copilot`, `codex`, `goose`, and `agy` (`agy -p`, verified on 1.1.13) — but **`agy` stays out of `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist regardless**: it signs in through an interactive Google OAuth flow with no API-key mode, and a pod has no way to complete that sign-in even once (unlike the container path, where an operator can attach and run `agy` interactively, or the relay can stage an already-signed-in `~/.gemini`). Headless `agy` is verified only on a host that has already signed in. `opencode` has a verified one-shot invocation (`opencode run "<prompt>"`, [#4970](https://github.com/kubestellar/hive/issues/4970)) but is **not yet** in `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist: whether `opencode auth login`'s credential file supports non-interactive, unattended use in a fresh pod is unverified, so it currently runs headless on a host that has already signed in, the same posture as `agy`. The Deployment has one replica per registered contributor identity and uses readiness/liveness probes that read the relay's headless status file (`waiting`, `working`, `done` pass; missing/failed state fails).
+The generated pod sets `CONTRIBUTOR_MODE=headless` because Kubernetes pods have no TTY; interactive tmux mode would stall. Headless mode is currently verified for `claude`, `litellm`, `copilot`, `codex`, `goose`, and `agy` (`agy -p`, verified on 1.1.13) — but **`agy` stays out of `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist regardless**: it signs in through an interactive Google OAuth flow with no API-key mode, and a pod has no way to complete that sign-in even once (unlike the container path, where an operator can attach and run `agy` interactively, or the relay can stage an already-signed-in `~/.gemini`). Headless `agy` is verified only on a host that has already signed in. `opencode` has a verified one-shot invocation (`opencode run "<prompt>"`, [#4970](https://github.com/hivecommons/hive/issues/4970)) but is **not yet** in `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist: whether `opencode auth login`'s credential file supports non-interactive, unattended use in a fresh pod is unverified, so it currently runs headless on a host that has already signed in, the same posture as `agy`. The Deployment has one replica per registered contributor identity and uses readiness/liveness probes that read the relay's headless status file (`waiting`, `working`, `done` pass; missing/failed state fails).
 
 The generated Secret contains the registration token and `GH_TOKEN` as Kubernetes Secret data. Treat it as sensitive cluster-readable material and prefer a pinned image tag/digest for repeatable operation.
 
@@ -383,7 +383,7 @@ The generated Secret contains the registration token and `GH_TOKEN` as Kubernete
 
 Two admission behaviors are worth knowing when your relay seems idle:
 
-- **Issues already claimed by any open PR are skipped.** The hub's claim ledger records every open PR that references an issue with a closing keyword (`fixes #N`, `closes owner/repo#N`, …) — including PRs from external authors, not just hive agents ([#3792](https://github.com/kubestellar/hive/pull/3792)). A claimed issue is silently dropped from the contribute candidate set; if nothing else is admissible the relay receives `task_unavailable` with reason `no_matching_work` (there is no per-issue "claimed by PR #N" message). External claims — like the weaker non-closing `Refs #N` references — now DEFER the hive's own agents for a bounded 72h window from when the claim was first observed, then release the issue even while the PR stays open ([#4929](https://github.com/kubestellar/hive/issues/4929)). They previously never suppressed agent work at all, which let an agent that cannot check for existing PRs re-implement an issue a live PR already covered. Nothing is frozen: the window is a bound, and a red+stale claiming PR defers nothing.
+- **Issues already claimed by any open PR are skipped.** The hub's claim ledger records every open PR that references an issue with a closing keyword (`fixes #N`, `closes owner/repo#N`, …) — including PRs from external authors, not just hive agents ([#3792](https://github.com/hivecommons/hive/pull/3792)). A claimed issue is silently dropped from the contribute candidate set; if nothing else is admissible the relay receives `task_unavailable` with reason `no_matching_work` (there is no per-issue "claimed by PR #N" message). External claims — like the weaker non-closing `Refs #N` references — now DEFER the hive's own agents for a bounded 72h window from when the claim was first observed, then release the issue even while the PR stays open ([#4929](https://github.com/hivecommons/hive/issues/4929)). They previously never suppressed agent work at all, which let an agent that cannot check for existing PRs re-implement an issue a live PR already covered. Nothing is frozen: the window is a bound, and a red+stale claiming PR defers nothing.
 - **Claims expire.** Ledger entries live 72 hours (refreshed while the PR stays open); a claiming PR that goes red on a required check and stale releases the issue back to the queue.
 
 ## Capability declaration (DECLARE)
@@ -412,7 +412,7 @@ The shipped relay declares `environment` only where the cause is unambiguous (CL
 
 **It changes nothing about dispatch.** The kind is self-reported, so acting on it would be routing on a value the client controls: a relay could keep an issue permanently hot by tagging every failure `environment`. The work item's failure cooldown and quarantine weight (#2435) are computed exactly as before, from the repo, number and `permanent` flag alone — never from the declared kind. That separation is pinned by tests (`TestSelectionPathsDoNotReadFailureKind`, `TestRecordTaskFailure_IgnoresFailureKind`).
 
-Whether the hub should ever *act* on client declarations — the ROUTE half of [#2547](https://github.com/kubestellar/hive/issues/2547) — remains an open maintainer decision, and needs task-side requirements metadata that does not exist yet.
+Whether the hub should ever *act* on client declarations — the ROUTE half of [#2547](https://github.com/hivecommons/hive/issues/2547) — remains an open maintainer decision, and needs task-side requirements metadata that does not exist yet.
 
 ## Reconnecting without losing in-flight work
 
@@ -424,7 +424,7 @@ Three things have to line up for that to work.
 
 **The relay proves it owns the task.** On reconnect it sends `task_accepted` followed by a `task_progress` carrying the `task_gen` the hub issued in `task_assign`. The hub honours the resume only when that claim matches the lease it recorded, exactly, on identity, task id, repo, number and generation, and only while the lease is unexpired. Ownership is never rebuilt from the relay's own fields, so a client cannot assert a task it was never given. A relay too old to echo a generation sends `0` and is asked to `ready` for fresh work instead.
 
-**The lease has to still be alive.** The window is `leaseTTL` (30 minutes, the same as the wedged-task timeout) measured from the last accepted `task_progress` — not from assignment. This is the part [#4260](https://github.com/kubestellar/hive/issues/4260) fixed: the expiry used to be stamped once at assignment and never moved, so a task that had been reporting progress for more than 30 minutes was correctly never reclaimed as wedged, yet its lease had quietly expired. The next drop, however brief, produced this:
+**The lease has to still be alive.** The window is `leaseTTL` (30 minutes, the same as the wedged-task timeout) measured from the last accepted `task_progress` — not from assignment. This is the part [#4260](https://github.com/hivecommons/hive/issues/4260) fixed: the expiry used to be stamped once at assignment and never moved, so a task that had been reporting progress for more than 30 minutes was correctly never reclaimed as wedged, yet its lease had quietly expired. The next drop, however brief, produced this:
 
 ```
 Reconnected while working on kubestellar/hive#4203 — resuming
@@ -435,7 +435,7 @@ Task prompt sent to CLI
 
 That last line types a fresh prompt into a pane whose CLI is still mid-turn, interrupting it. Renewing the lease on every progress report keeps the two clocks together: a task the hub still considers alive is a task the relay can still resume.
 
-**The lease has to outlive the hub process.** Leases used to live only in the hub's memory, so a restart — which self-upgrade rolls ([#5391](https://github.com/kubestellar/hive/issues/5391)) make routine rather than rare — emptied the registry while every relay carried on working. After the roll *no* in-flight resume could match, and each one produced the same four lines above, this time for a reason the relay could do nothing about ([#5681](https://github.com/kubestellar/hive/issues/5681)). Observed 2026-09-02: revoked at 14:24:40, the same issue reassigned to the same relay at 14:24:44, discarding two and a half minutes of a turn that was progressing normally. The registry is now written to `/data/contributors/task-leases.json` (owner-only) on every assignment, renewal and release, and read back at startup, so a restart is just a longer-than-usual disconnect.
+**The lease has to outlive the hub process.** Leases used to live only in the hub's memory, so a restart — which self-upgrade rolls ([#5391](https://github.com/hivecommons/hive/issues/5391)) make routine rather than rare — emptied the registry while every relay carried on working. After the roll *no* in-flight resume could match, and each one produced the same four lines above, this time for a reason the relay could do nothing about ([#5681](https://github.com/hivecommons/hive/issues/5681)). Observed 2026-09-02: revoked at 14:24:40, the same issue reassigned to the same relay at 14:24:44, discarding two and a half minutes of a turn that was progressing normally. The registry is now written to `/data/contributors/task-leases.json` (owner-only) on every assignment, renewal and release, and read back at startup, so a restart is just a longer-than-usual disconnect.
 
 This does not loosen who may claim what. The restored record is one the *hub itself* wrote, and a resume is matched against it exactly as before; a lease whose window has already passed is dropped at startup rather than restored. For the first two minutes after a restart the hub also treats a restored lease as a hold on its work item, so an issue whose relay is still reconnecting is not handed to somebody else in the meantime.
 
@@ -443,21 +443,21 @@ A resume that is genuinely refused — an operator yanked the task, or the relay
 
 **Except for the work the relay gave itself.** After every fifth completed task the relay runs a **PR review cycle**: it stops taking new issues and asks its agent to look over the open PRs it has filed, so review comments get answered. That task is built locally — the hub never assigned it, and holds no lease for it.
 
-Everything above therefore does *not* apply to it, and for a while the relay did not know that ([#5715](https://github.com/kubestellar/hive/issues/5715)). It reported progress on the review the same way it reports on real work, the hub answered each claim with `task_revoke` because no lease matched, and the relay treated that revoke as terminal — stopping the agent and asking for fresh work. On a hive where sockets flap this meant PR review coverage silently almost never happened. The revoke did not even need a flap: the first ordinary progress report, three minutes in, was enough.
+Everything above therefore does *not* apply to it, and for a while the relay did not know that ([#5715](https://github.com/hivecommons/hive/issues/5715)). It reported progress on the review the same way it reports on real work, the hub answered each claim with `task_revoke` because no lease matched, and the relay treated that revoke as terminal — stopping the agent and asking for fresh work. On a hive where sockets flap this meant PR review coverage silently almost never happened. The revoke did not even need a flap: the first ordinary progress report, three minutes in, was enough.
 
 The relay now withholds the two frames that *claim* a task (`task_accepted`, `task_progress`) for locally-created tasks, and ignores a `task_revoke` for one. Terminal frames still go out, and every hub-assigned task — including external Linear/Jira items, which legitimately carry issue number 0 — behaves exactly as before. A review cycle is now unaffected by a flap.
 
 One consequence worth knowing: an aborted review is *skipped*, not retried. The cycle counter only advances on a real completion, so a review that does not run waits for the next multiple of five rather than being retried at the next opportunity.
 
-**A dropped socket is not a failed issue.** The disconnect books a short cooldown on the issue so a second session cannot pick it up during the reconnect window and file a duplicate PR ([#2356](https://github.com/kubestellar/hive/issues/2356)). That cooldown no longer counts toward the consecutive-failure quarantine: three drops on a flaky connection used to park a perfectly workable issue for six hours with nothing having actually failed. Real failures — `task_failed`, the relay's own progress watchdog giving up, the wedged-task backstop — still count, and still quarantine.
+**A dropped socket is not a failed issue.** The disconnect books a short cooldown on the issue so a second session cannot pick it up during the reconnect window and file a duplicate PR ([#2356](https://github.com/hivecommons/hive/issues/2356)). That cooldown no longer counts toward the consecutive-failure quarantine: three drops on a flaky connection used to park a perfectly workable issue for six hours with nothing having actually failed. Real failures — `task_failed`, the relay's own progress watchdog giving up, the wedged-task backstop — still count, and still quarantine.
 
 ### The relay's max-duration ceiling is a progress lease
 
-[#5321](https://github.com/kubestellar/hive/issues/5321). `MAX_TASK_DURATION_MS` (30 minutes) bounds how long a task may go **without observed forward progress**, not how long it may take. Every progress tick that sees new pane output re-arms it from now, so an agent that is working keeps its lease indefinitely. `ABSOLUTE_TASK_DEADLINE_MS` (4 hours, `HIVE_ABSOLUTE_TASK_DEADLINE_MS`) is the backstop that nothing re-arms, for the pathological case of a process that prints forever without finishing.
+[#5321](https://github.com/hivecommons/hive/issues/5321). `MAX_TASK_DURATION_MS` (30 minutes) bounds how long a task may go **without observed forward progress**, not how long it may take. Every progress tick that sees new pane output re-arms it from now, so an agent that is working keeps its lease indefinitely. `ABSOLUTE_TASK_DEADLINE_MS` (4 hours, `HIVE_ABSOLUTE_TASK_DEADLINE_MS`) is the backstop that nothing re-arms, for the pathological case of a process that prints forever without finishing.
 
 It was previously a flat wall-clock kill, armed once at task start and never re-armed. That made any task whose honest duration exceeded 30 minutes impossible rather than merely slow. Observed live on 2026-08-31 it killed an agent that had already committed and pushed and was blocked on a full `go test` run; the hub booked the task `failed` 57 seconds before that task's own PR was opened, and returned the issue to the failure cooldown. The work survived only because the agent chose, unprompted, to finish and file the PR anyway.
 
-This aligns the relay with the hub, which has been progress-driven since [#4260](https://github.com/kubestellar/hive/issues/4260): `leaseTTL` is re-stamped on every accepted `task_progress`, and `reclaimExpiredLeases` never reclaims a task that keeps reporting. The relay's blind timer was the only remaining wall-clock kill.
+This aligns the relay with the hub, which has been progress-driven since [#4260](https://github.com/hivecommons/hive/issues/4260): `leaseTTL` is re-stamped on every accepted `task_progress`, and `reclaimExpiredLeases` never reclaims a task that keeps reporting. The relay's blind timer was the only remaining wall-clock kill.
 
 Crossing either ceiling is reported with `failure_kind: environment`. It is a statement about this runtime — the relay could not see the work finish — not a judgement that the agent failed its task. The old path passed no options at all, so an infrastructure ceiling was recorded as a plain task failure.
 
@@ -495,7 +495,7 @@ Two things follow from refresh being driven by the hub's heartbeat:
   re-adopts a task through the server-issued lease re-mints immediately and
   re-arms the cycle — without that step the resumed session's mint time would
   stay zero and refresh would never fire again for the life of the connection
-  ([#2610](https://github.com/kubestellar/hive/issues/2610)).
+  ([#2610](https://github.com/hivecommons/hive/issues/2610)).
 - **A failed re-mint is not fatal and is not announced.** If the mint errors, or
   the hive has no App auth to mint from, the hub logs it and leaves the relay's
   existing token in place, retrying on the next heartbeat. The relay is told
@@ -515,8 +515,8 @@ first thing to check, and the hub's log is the only place that records it.
 **Removal.** The token is unlinked on **every** task-exit path, before the agent
 is interrupted, so a turn that survives the stop cannot keep pushing against an
 issue the hub has already offered to someone else
-([#5353](https://github.com/kubestellar/hive/issues/5353),
-[#5373](https://github.com/kubestellar/hive/issues/5373)). It is deliberately
+([#5353](https://github.com/hivecommons/hive/issues/5353),
+[#5373](https://github.com/hivecommons/hive/issues/5373)). It is deliberately
 *not* dropped when the relay declines an offered task: a decline is not an exit,
 and dropping the credential there would destroy the token belonging to the task
 still being worked. Unlinking the file does not revoke the token — it stays
@@ -547,7 +547,7 @@ Note that `tmux new-session -c <path>` does **not** fix this on an already-poiso
 
 ## Protocol compatibility
 
-Both sides state a contributor-protocol version: the hub advertises its own on `auth_ok`, and the relay declares `relay_protocol_version` in `auth_response`. Since [#2547](https://github.com/kubestellar/hive/issues/2547) both sides also **compare** them, so an old relay against a new hub is something you are told about rather than something you infer from misbehaviour:
+Both sides state a contributor-protocol version: the hub advertises its own on `auth_ok`, and the relay declares `relay_protocol_version` in `auth_response`. Since [#2547](https://github.com/hivecommons/hive/issues/2547) both sides also **compare** them, so an old relay against a new hub is something you are told about rather than something you infer from misbehaviour:
 
 - **On the relay** — a mismatch prints one line on the contributor's own terminal (`Protocol older: hub 1.3 is behind this relay 1.2 …`), once per hub.
 - **On the hub** — the Operations tab shows a `protocol: client 1.1 · hub 1.2 · older than this hub` line under the clanker row, and the hub log records the verdict at connect.

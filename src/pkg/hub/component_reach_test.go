@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 // reachBody builds a heartbeat JSON body for hive h1 carrying n reach entries.

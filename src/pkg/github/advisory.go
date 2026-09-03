@@ -10,8 +10,8 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/advisory"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (

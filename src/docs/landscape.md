@@ -33,7 +33,7 @@ future runtimes are tracked separately.
 Fullsend is also notably strong in public design discipline: many ADRs, a public
 roadmap, security and governance problem documents, and a thoughtful intent
 model. Its intent docs discuss git as an intent ledger and tiered authorization,
-which directly influenced Hive's catch-up work in [#2812](https://github.com/kubestellar/hive/issues/2812).
+which directly influenced Hive's catch-up work in [#2812](https://github.com/hivecommons/hive/issues/2812).
 
 ### Where Hive differs
 

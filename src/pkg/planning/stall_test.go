@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // baseTime is a fixed reference "now" for deterministic stall tests.

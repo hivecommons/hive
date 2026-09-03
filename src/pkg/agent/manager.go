@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/pushbroker"
-	"github.com/kubestellar/hive/pkg/sandbox"
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/pushbroker"
+	"github.com/hivecommons/hive/pkg/sandbox"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 type ProcessState string

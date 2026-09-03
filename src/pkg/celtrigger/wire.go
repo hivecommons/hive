@@ -1,6 +1,6 @@
 package celtrigger
 
-import "github.com/kubestellar/hive/pkg/config"
+import "github.com/hivecommons/hive/pkg/config"
 
 // CompileFromConfig builds an Engine from the additive `triggers:` list in the
 // loaded config. It is the intended entry point for the governor/pipeline: call

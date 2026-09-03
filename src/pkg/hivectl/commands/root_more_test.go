@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hivectl"
+	"github.com/hivecommons/hive/pkg/hivectl"
 )
 
 // TestClientRejectsInvalidOutputBeforeConnecting covers commandEnv.client()'s

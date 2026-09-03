@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // This file backs the spoke dashboard's "Forge App" tab: a read-only inventory

@@ -10,7 +10,7 @@ import (
 	"io/fs"
 	"sync"
 
-	"github.com/kubestellar/hive/pkg/dashboard/webstatic"
+	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 )
 
 var (

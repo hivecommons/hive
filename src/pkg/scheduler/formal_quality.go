@@ -3,7 +3,7 @@ package scheduler
 import (
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/policies"
+	"github.com/hivecommons/hive/pkg/policies"
 )
 
 const formalQualityPolicyPath = "defaults/formal-quality-capability.md"

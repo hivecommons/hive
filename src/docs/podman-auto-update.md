@@ -98,7 +98,7 @@ expect **~5 minutes of downtime**, then automatic recovery to the previous image
 > stayed `0`, `podman auto-update` exited `0` — and `:3001`, the only published port,
 > stayed dead until a human noticed. `hive.container` now carries
 > `Wants=hive-gateway.service` so every path that starts Hive brings the gateway with
-> it ([#4516](https://github.com/kubestellar/hive/issues/4516)).
+> it ([#4516](https://github.com/hivecommons/hive/issues/4516)).
 
 **`is-failed` never leaves `activating`, and `NRestarts` never leaves `0`.**
 #4378's warning stands: monitoring keyed on unit state does not fire. Worse for

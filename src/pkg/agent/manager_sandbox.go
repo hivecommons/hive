@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/pushbroker"
-	"github.com/kubestellar/hive/pkg/sandbox"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/pushbroker"
+	"github.com/hivecommons/hive/pkg/sandbox"
 )
 
 // SetSandboxConfig wires the disabled-by-default sandbox kick executor gate.

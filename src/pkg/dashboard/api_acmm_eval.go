@@ -12,9 +12,9 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 const acmmEvalTTL = time.Hour

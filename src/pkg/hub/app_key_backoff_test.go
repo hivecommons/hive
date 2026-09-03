@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // The #2496 hot loop: a spoke that never reports a key fingerprint got the

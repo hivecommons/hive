@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

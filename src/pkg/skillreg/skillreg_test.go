@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agentsmd"
+	"github.com/hivecommons/hive/pkg/agentsmd"
 )
 
 // writeSkill writes content to <dir>/<name> creating the dir as needed.

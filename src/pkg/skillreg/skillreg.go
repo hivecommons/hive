@@ -56,7 +56,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/kubestellar/hive/pkg/agentsmd"
+	"github.com/hivecommons/hive/pkg/agentsmd"
 )
 
 const (

@@ -2,7 +2,7 @@
 
 **Status**: Proposed (RFC / Spike Phase)  
 **Author**: Douglas Baggett (`@Danathar`)  
-**Related Issues**: [#4002](https://github.com/kubestellar/hive/issues/4002) (RFC), [#4000](https://github.com/kubestellar/hive/issues/4000) (Tool Approval Operation), [#4001](https://github.com/kubestellar/hive/issues/4001) (State-Triggered Hooks)
+**Related Issues**: [#4002](https://github.com/hivecommons/hive/issues/4002) (RFC), [#4000](https://github.com/hivecommons/hive/issues/4000) (Tool Approval Operation), [#4001](https://github.com/hivecommons/hive/issues/4001) (State-Triggered Hooks)
 
 ---
 
@@ -231,7 +231,7 @@ Deliberately **excluded**: `ToolCallID`. Model-assigned call IDs are freshly min
 
 This mirrors what `pkg/github` already does ad hoc: `CreatePR` dedupes on the head branch and reports reuse via `CreatePRResult.AlreadyExisted`. `EffectResult.AlreadyExisted` reuses that vocabulary rather than inventing a parallel one.
 
-**Lineage.** At-least-once delivery over non-idempotent GitHub writes is exactly the duplicate-work class the fleet eradicated one incident at a time: [#3768](https://github.com/kubestellar/hive/issues/3768) → [#3792](https://github.com/kubestellar/hive/pull/3792) (issues re-offered while an open PR already claimed them) → [#3980](https://github.com/kubestellar/hive/issues/3980) (non-closing `Refs #N` PRs re-offered every cooldown window, forever) → [#3987](https://github.com/kubestellar/hive/issues/3987) (maintainer-gated issues with only merged reference PRs re-entering the pool, fixed by the `no_work_needed` verdict in #3997). Each was the same bug — a task re-entering a pool and re-performing an effect whose completion was not durably recorded — patched at a different layer. This journal is the generalization: **record the effect, not the attempt.**
+**Lineage.** At-least-once delivery over non-idempotent GitHub writes is exactly the duplicate-work class the fleet eradicated one incident at a time: [#3768](https://github.com/hivecommons/hive/issues/3768) → [#3792](https://github.com/hivecommons/hive/pull/3792) (issues re-offered while an open PR already claimed them) → [#3980](https://github.com/hivecommons/hive/issues/3980) (non-closing `Refs #N` PRs re-offered every cooldown window, forever) → [#3987](https://github.com/hivecommons/hive/issues/3987) (maintainer-gated issues with only merged reference PRs re-entering the pool, fixed by the `no_work_needed` verdict in #3997). Each was the same bug — a task re-entering a pool and re-performing an effect whose completion was not durably recorded — patched at a different layer. This journal is the generalization: **record the effect, not the attempt.**
 
 ### The write protocol
 

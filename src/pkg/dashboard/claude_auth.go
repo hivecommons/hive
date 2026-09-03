@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 const (

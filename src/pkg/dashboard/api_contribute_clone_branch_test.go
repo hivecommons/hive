@@ -42,7 +42,7 @@ func TestContributeCloneBranchFollowsBuildBranch(t *testing.T) {
 	withGitBranch(t, "v4")
 	html := renderContributeLanding(t)
 
-	if !strings.Contains(html, "git clone -b v4 https://github.com/kubestellar/hive") {
+	if !strings.Contains(html, "git clone -b v4 https://github.com/hivecommons/hive") {
 		t.Error("onboarding page does not clone the branch the hub was built from (v4)")
 	}
 	if strings.Contains(html, "clone -b v2 ") {
@@ -60,10 +60,10 @@ func TestContributeCloneBranchTracksADifferentBranch(t *testing.T) {
 	withGitBranch(t, "v5-experimental")
 	html := renderContributeLanding(t)
 
-	if !strings.Contains(html, "git clone -b v5-experimental https://github.com/kubestellar/hive") {
+	if !strings.Contains(html, "git clone -b v5-experimental https://github.com/hivecommons/hive") {
 		t.Error("clone branch did not follow the hub's own build branch")
 	}
-	if strings.Contains(html, "git clone -b v4 https://github.com/kubestellar/hive") {
+	if strings.Contains(html, "git clone -b v4 https://github.com/hivecommons/hive") {
 		t.Error("clone branch is still pinned to v4 rather than derived")
 	}
 }
@@ -80,7 +80,7 @@ func TestContributeCloneBranchUnknownBuildFallsBack(t *testing.T) {
 			if strings.Contains(html, "git clone -b unknown") || strings.Contains(html, "git clone -b  ") {
 				t.Fatal("a build with no injected branch emitted an unusable clone command")
 			}
-			if !strings.Contains(html, "git clone -b "+defaultUpstreamBranch+" https://github.com/kubestellar/hive") {
+			if !strings.Contains(html, "git clone -b "+defaultUpstreamBranch+" https://github.com/hivecommons/hive") {
 				t.Errorf("fallback did not use defaultUpstreamBranch (%q)", defaultUpstreamBranch)
 			}
 		})
@@ -104,7 +104,7 @@ func TestContributeCloneBranchAppliesToEveryCopyPasteSurface(t *testing.T) {
 	withGitBranch(t, "v4")
 	html := renderContributeLanding(t)
 
-	if got := strings.Count(html, "git clone -b v4 https://github.com/kubestellar/hive"); got != 5 {
+	if got := strings.Count(html, "git clone -b v4 https://github.com/hivecommons/hive"); got != 5 {
 		t.Errorf("clone command appears with the right branch %d times; want 5 (pre block, container/host/k8s templates, prompt)", got)
 	}
 }

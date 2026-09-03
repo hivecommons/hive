@@ -1,9 +1,9 @@
 package dashboard
 
 import (
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/convergence"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // ── #4246: blocked / unknown / partial admission diagnostics ──────────────────

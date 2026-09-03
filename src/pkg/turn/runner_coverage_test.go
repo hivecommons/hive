@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 type recordingSink struct {

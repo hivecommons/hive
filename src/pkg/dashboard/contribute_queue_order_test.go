@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // seedActionable builds a status with n actionable issues in one repo, numbered

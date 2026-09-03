@@ -39,7 +39,7 @@
   "agent": "quality",
   "type": "regression-risk",
   "severity": "critical",
-  "title": "PR #3344 removes SSRF guards and deletes 869 test lines \u2014 security+coverage regression [kubestellar/hive#3344](https://github.com/kubestellar/hive/issues/3344)"
+  "title": "PR #3344 removes SSRF guards and deletes 869 test lines \u2014 security+coverage regression [kubestellar/hive#3344](https://github.com/hivecommons/hive/issues/3344)"
  },
  {
   "agent": "quality",
@@ -75,25 +75,25 @@
   "agent": "scanner",
   "type": "security",
   "severity": "critical",
-  "title": "[hive#2172](https://github.com/kubestellar/hive/issues/2172): Default deployment lacks hardening\u2014RBAC, network policy, secrets management [#2172](https://github.com/kubestellar/hive/issues/2172)"
+  "title": "[hive#2172](https://github.com/hivecommons/hive/issues/2172): Default deployment lacks hardening\u2014RBAC, network policy, secrets management [#2172](https://github.com/hivecommons/hive/issues/2172)"
  },
  {
   "agent": "scanner",
   "type": "advisory",
   "severity": "critical",
-  "title": "K8s deployment.yaml missing securityContext \u2014 pods run as root with full privileges [#2920](https://github.com/kubestellar/hive/issues/2920)"
+  "title": "K8s deployment.yaml missing securityContext \u2014 pods run as root with full privileges [#2920](https://github.com/hivecommons/hive/issues/2920)"
  },
  {
   "agent": "scanner",
   "type": "advisory",
   "severity": "critical",
-  "title": "Missing role defaults to owner on /api/contributors write endpoints [#2975](https://github.com/kubestellar/hive/issues/2975)"
+  "title": "Missing role defaults to owner on /api/contributors write endpoints [#2975](https://github.com/hivecommons/hive/issues/2975)"
  },
  {
   "agent": "scanner",
   "type": "advisory",
   "severity": "critical",
-  "title": "Unauthenticated /api/auth/token leaks dashboard auth token [#2997](https://github.com/kubestellar/hive/issues/2997)"
+  "title": "Unauthenticated /api/auth/token leaks dashboard auth token [#2997](https://github.com/hivecommons/hive/issues/2997)"
  },
  {
   "agent": "ci-maintainer",

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // cliPaneMarkers are strings that appear in a tmux pane when a CLI (claude,

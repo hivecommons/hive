@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // oneActionableIssue installs a status with a single actionable issue that any

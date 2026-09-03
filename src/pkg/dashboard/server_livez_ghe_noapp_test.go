@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // These tests frame the #2439 production scenario end to end at the probe level:

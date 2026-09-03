@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // Tests for kubestellar/hive#5617 item 2: ship the reviewer lane's kick as a

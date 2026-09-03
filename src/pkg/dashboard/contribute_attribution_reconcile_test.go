@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func TestWSMessage_ReasoningEffortJSON(t *testing.T) {

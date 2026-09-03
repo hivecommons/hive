@@ -8,9 +8,9 @@ Decision of record: **Option D** from `MASTER-DELIVERY-OPTIONS-2026-08-14.md`
 
 > **§11 status (2026-08-17):** OQ-1 through OQ-5 were all decided by the
 > operator on 2026-08-14 — OQ-1
-> ([comment](https://github.com/kubestellar/hive/pull/3833#issuecomment-5294455083))
+> ([comment](https://github.com/hivecommons/hive/pull/3833#issuecomment-5294455083))
 > and OQ-2→OQ-5
-> ([comment](https://github.com/kubestellar/hive/pull/3833#issuecomment-5295761881)),
+> ([comment](https://github.com/hivecommons/hive/pull/3833#issuecomment-5295761881)),
 > which closed this document's merge gate ("Implementation is unblocked").
 > Stage 1 (X25519 sealed-box primitive + spoke wrap-key lifecycle) has since
 > landed as #3873. This design remains the reference record; it is not

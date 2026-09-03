@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/convergence/mutation"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 )
 
 // OpKind classifies a journaled operation by the kind of side effect it has on

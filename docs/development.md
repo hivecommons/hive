@@ -14,7 +14,7 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 ## Clone and branch
 
 ```bash
-git clone https://github.com/kubestellar/hive.git
+git clone https://github.com/hivecommons/hive.git
 cd hive
 git switch -c <topic-branch> origin/v4
 ```

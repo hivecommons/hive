@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 )
 
 // writeAuditFixture writes a JSONL audit file with the given entries.

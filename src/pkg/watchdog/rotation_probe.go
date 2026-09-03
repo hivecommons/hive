@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/rotation"
+	"github.com/hivecommons/hive/pkg/rotation"
 )
 
 // RotationAuthProbe adapts a rotation-package provider prober (#4608) into a

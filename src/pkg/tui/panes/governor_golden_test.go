@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // TestGovernorGolden pins the governor pane's complete 48x12 render, byte for

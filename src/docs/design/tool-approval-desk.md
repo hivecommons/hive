@@ -1,6 +1,6 @@
 # The Tool-Approval Desk
 
-Status: implemented (vertical slice), default-off — RFC [#4000](https://github.com/kubestellar/hive/issues/4000)
+Status: implemented (vertical slice), default-off — RFC [#4000](https://github.com/hivecommons/hive/issues/4000)
 
 The desk is the single decision point every approval-shaped request resolves
 through. It replaces four independently-grown gates with one testable function,

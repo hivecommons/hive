@@ -190,7 +190,7 @@ puts the operator's files where each mode already expects them.
 
 `%E` is the difference the unit file *shows* you. There is a second one it
 could not show, and it is why the units are no longer wanted by
-`default.target` ([#4478](https://github.com/kubestellar/hive/issues/4478)):
+`default.target` ([#4478](https://github.com/hivecommons/hive/issues/4478)):
 the two modes read that line differently.
 
 | | `[Install] WantedBy=default.target` would mean | A Hive that never becomes healthy |
@@ -303,7 +303,7 @@ systemd's leading `-` optional-file prefix here — see
 `EnvironmentFile=` is opaque: the unit names a path and nothing in the unit says
 what belongs in it, so a variable added to `src/docker-compose.yaml` used to
 reach Docker and silently never reach Podman. `src/deploy/
-test_standalone_runtime_parity.sh` ([#4404](https://github.com/kubestellar/hive/issues/4404))
+test_standalone_runtime_parity.sh` ([#4404](https://github.com/hivecommons/hive/issues/4404))
 asserts the two lists are the same set, so that divergence now fails CI. Add a
 variable to both or to neither.
 
@@ -417,7 +417,7 @@ sudo systemctl enable hive.service
 ```
 
 The boot wiring has two halves since
-[#4478](https://github.com/kubestellar/hive/issues/4478):
+[#4478](https://github.com/hivecommons/hive/issues/4478):
 
 1. `[Install] WantedBy=hive-boot.target` inside `hive.container` and
    `hive-gateway.container`. The generator turns it into
@@ -593,7 +593,7 @@ the measured difference.
 
 `README.md`'s Quick Start (Podman) asserts *"Docker is not required and is not
 used."* That was a design statement. This is the measurement, and it closes one
-of [#4188](https://github.com/kubestellar/hive/issues/4188)'s acceptance criteria
+of [#4188](https://github.com/hivecommons/hive/issues/4188)'s acceptance criteria
 — **but not the other**; see [what stays open](#what-this-does-not-establish)
 below.
 

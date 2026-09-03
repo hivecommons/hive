@@ -1,8 +1,8 @@
 package dashboard
 
 import (
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/worksource"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // refFromIssueMap builds the canonical, source-aware identity for one

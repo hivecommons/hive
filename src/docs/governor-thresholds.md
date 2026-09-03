@@ -82,7 +82,7 @@ It warns rather than silently reordering, because the inversion comes from a num
 
 ACMM level packs (`src/pkg/config/packs/level-*.yaml`) write `surge`/`busy`/`quiet` thresholds into `governor.modes` when a level is applied — for example L4–L6 seed `surge: 10, busy: 5, quiet: 2`, and L3 seeds `15/10/3`.
 
-Applying a pack is the normal path, so if those counted as hand-tuned the scaling above would almost never engage. Config therefore records **where the thresholds came from** ([#4037](https://github.com/kubestellar/hive/issues/4037)):
+Applying a pack is the normal path, so if those counted as hand-tuned the scaling above would almost never engage. Config therefore records **where the thresholds came from** ([#4037](https://github.com/hivecommons/hive/issues/4037)):
 
 ```yaml
 governor:
@@ -109,4 +109,4 @@ The dashboard governor gauge and the **Governor → Thresholds** settings tab bo
 ## Related
 
 - [Agent configuration → Cadences and the governor](agent-configuration.md#cadences-and-the-governor)
-- Issue [#3498](https://github.com/kubestellar/hive/issues/3498)
+- Issue [#3498](https://github.com/hivecommons/hive/issues/3498)

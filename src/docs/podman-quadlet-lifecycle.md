@@ -54,7 +54,7 @@ and is not. `boot-check` reads the journal and needs no arming beforehand.
 
 `exercise` ends with a restore step that returns the stack to its pre-probe
 state, and that step exists because of a systemd asymmetry worth knowing about
-([#4491](https://github.com/kubestellar/hive/issues/4491)):
+([#4491](https://github.com/hivecommons/hive/issues/4491)):
 `hive-gateway.service` has `Requires=hive.service`, and `Requires=` propagates
 a *stop* but not a *start*. The probe's deliberate stop/start pair therefore
 takes the gateway — and with it `:3001`, the only published port — down and

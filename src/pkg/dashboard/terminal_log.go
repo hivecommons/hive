@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // handleAgentFullLog serves the full retained tmux scrollback of an agent's

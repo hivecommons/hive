@@ -3,7 +3,7 @@ package intent
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // MergeAllowed is the final gate before a verdict enters merge-eligible.json;

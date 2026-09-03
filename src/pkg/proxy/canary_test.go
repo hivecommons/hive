@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 func TestInspectCanaryEgressDetectsGitHubWrites(t *testing.T) {

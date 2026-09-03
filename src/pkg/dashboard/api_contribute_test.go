@@ -194,7 +194,7 @@ func TestContributeLanding(t *testing.T) {
 		[]byte("HIVE_HUB</code> to comma-separated WebSocket URLs"),
 		[]byte("HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order"),
 		[]byte("one CLI/tmux session"),
-		[]byte("github.com/kubestellar/hive/pull/2846"),
+		[]byte("github.com/hivecommons/hive/pull/2846"),
 	} {
 		if !bytes.Contains(body, want) {
 			t.Errorf("landing page missing multi-hub help text %q", want)

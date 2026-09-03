@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 type Mode string

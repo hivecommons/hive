@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // This file adapts the Manager to the watchdog reconciler (RFC #4665). The

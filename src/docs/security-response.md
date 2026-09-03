@@ -172,7 +172,7 @@ Stated plainly, not implied away:
   computed against a published rubric.
 - **No formal, published incident-response runbook specific to a security
   incident** exists in this repository, as distinct from the operational
-  [Hub disaster recovery](https://github.com/kubestellar/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md)
+  [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md)
   runbook, which covers backup/restore and fleet recovery but not
   security-incident roles, communication SLAs, or post-incident review
   specifically.

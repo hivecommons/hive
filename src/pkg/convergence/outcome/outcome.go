@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // keySeparator joins the (project, repo) scope to the outcome-local slug. It

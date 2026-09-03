@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/convergence"
 )
 
 // The #4254 strict RED matrix, exercised through the production seams: the

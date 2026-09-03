@@ -3,7 +3,7 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // pluk_raw_output_key_test.go covers the third defect in kubestellar/hive#4285:

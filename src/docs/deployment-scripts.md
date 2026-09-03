@@ -99,8 +99,8 @@ a way back when the new image is bad — is
 [the digest pin and rollback](podman-quadlet-update-rollback.md): the image is
 pinned by manifest-list digest in a drop-in, the previous digest is recorded, and
 reverting is restoring the earlier pin. That path is measured end to end, in both
-root modes, including the failure case ([#4378](https://github.com/kubestellar/hive/issues/4378),
-[#4411](https://github.com/kubestellar/hive/issues/4411)).
+root modes, including the failure case ([#4378](https://github.com/hivecommons/hive/issues/4378),
+[#4411](https://github.com/hivecommons/hive/issues/4411)).
 
 The two are not the same technique and they trade differently: blue-green keeps
 the old container running until the new one is proven, and costs a second image

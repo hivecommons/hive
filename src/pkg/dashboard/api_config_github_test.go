@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Live values from the spoke the bug was observed on (hosted-available-

@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 const reviewerFixture = `{"generated_at":"2026-09-01T00:00:00Z","ci_failing":[

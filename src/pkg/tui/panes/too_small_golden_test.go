@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"github.com/kubestellar/hive/pkg/tui"
-	"github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui"
+	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
 // TestTooSmallGolden pins the complete below-minimum frame (T24) byte for

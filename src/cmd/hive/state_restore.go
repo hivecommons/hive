@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/snapshot"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
 // restoreAgentRuntimeState replays the per-agent runtime state persisted in

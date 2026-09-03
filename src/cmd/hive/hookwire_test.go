@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/hooks"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 func hookTestLogger() *slog.Logger {

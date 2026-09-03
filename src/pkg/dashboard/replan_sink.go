@@ -1,6 +1,6 @@
 package dashboard
 
-import "github.com/kubestellar/hive/pkg/notify"
+import "github.com/hivecommons/hive/pkg/notify"
 
 // ReplanSink adapts the dashboard Server (+ notifier) to planning.Sink, so the
 // Phase 3 stall-replan lane records audit entries, raises system alerts, and

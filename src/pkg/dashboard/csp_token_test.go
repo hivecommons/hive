@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // cspDirective returns the named directive from a CSP header value, or "".

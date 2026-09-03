@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // handleGovernorSecurity serves PUT /api/config/governor/security. It is

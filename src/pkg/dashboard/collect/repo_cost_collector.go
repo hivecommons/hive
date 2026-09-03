@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // repoCostCollectInterval mirrors activityCollectInterval on purpose: this

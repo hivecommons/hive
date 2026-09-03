@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 )
 
 // ── Per-budget-window history (#4298) ───────────────────────────────────────

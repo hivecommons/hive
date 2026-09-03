@@ -34,7 +34,7 @@ automated pass is coming. One reviewer pass per PR is the whole ladder: without
 the note, nothing distinguished that terminal hand-off from a first escalation
 except the label set.
 
-[#5480]: https://github.com/kubestellar/hive/issues/5480
+[#5480]: https://github.com/hivecommons/hive/issues/5480
 
 ## Consequences
 

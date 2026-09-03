@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // fakeFixedAudit is an AuditReader that always returns the same entries,

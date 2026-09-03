@@ -8,12 +8,12 @@ The dashboard's Content-Security-Policy carried one blanket `script-src 'self'
 'unsafe-inline'`, on both CSP emitters — the Go spoke server
 ([securityHeaders](../../pkg/dashboard/server.go)) and the Node proxy
 ([proxy/server.js](../../proxy/server.js)). That directive was the residual of
-[kubestellar/hive#3315](https://github.com/kubestellar/hive/issues/3315): the
+[kubestellar/hive#3315](https://github.com/hivecommons/hive/issues/3315): the
 token-injection half of that finding was fixed by #3844, but any XSS in the
 dashboard origin could still execute an injected inline `<script>` and, for
 example, read the pasted `HIVE_DASHBOARD_TOKEN` out of `localStorage`.
-[#3848](https://github.com/kubestellar/hive/issues/3848) part 1 (and its
-duplicate, [#3907](https://github.com/kubestellar/hive/issues/3907)) track
+[#3848](https://github.com/hivecommons/hive/issues/3848) part 1 (and its
+duplicate, [#3907](https://github.com/hivecommons/hive/issues/3907)) track
 closing it.
 
 [ADR-0015](0015-csp-style-src-scope.md) established the decomposition for

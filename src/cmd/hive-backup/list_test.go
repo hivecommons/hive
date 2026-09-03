@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/hubbackup"
 )
 
 // cmdList is the operator's incident-time view of what disaster-recovery

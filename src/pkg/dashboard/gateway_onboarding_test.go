@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
 // writeTempKeyFile stores a gateway key VALUE in a temp file and returns its

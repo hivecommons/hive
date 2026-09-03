@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // These tests pin the response contract that makes kubestellar/hive#5325

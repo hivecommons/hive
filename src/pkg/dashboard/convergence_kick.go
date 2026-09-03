@@ -3,9 +3,9 @@ package dashboard
 import (
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/convergence"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/convergence"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 // ── #4247: shared convergence admission for internal agent kicks ──────────────

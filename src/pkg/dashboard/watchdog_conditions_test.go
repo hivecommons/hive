@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // TestAgentPayloadCarriesWatchdogConditions verifies the RFC #4665 condition

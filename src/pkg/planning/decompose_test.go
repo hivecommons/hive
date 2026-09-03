@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agentparse"
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/classify"
+	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/classify"
 )
 
 // newStore returns a beads.Store rooted at a fresh temp dir.

@@ -3,7 +3,7 @@ package github
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // The queue label lands in someone else's repository, so a hive has to be able

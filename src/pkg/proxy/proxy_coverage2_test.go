@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // newInferenceTestProxy builds a GitHubProxy with the maps/routers the

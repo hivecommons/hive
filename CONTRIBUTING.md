@@ -13,7 +13,7 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 
 ## Repository layout
 
-- `src/` — the current Go module (`github.com/kubestellar/hive`) and the main development target for this repository.
+- `src/` — the current Go module (`github.com/hivecommons/hive`) and the main development target for this repository.
   - `src/cmd/hive` — main Hive binary.
   - `src/cmd/hivectl`, `src/cmd/apiproxy`, `src/cmd/hive-backup` — supporting command-line tools.
   - `src/pkg/` — Go packages for agents, GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.

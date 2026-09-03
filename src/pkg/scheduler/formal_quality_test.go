@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func formalQualityScheduler(t *testing.T, level int, enabled bool, role string) *Scheduler {

@@ -11,9 +11,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/defsrc"
-	"github.com/kubestellar/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/defsrc"
+	"github.com/hivecommons/hive/pkg/promptsrc"
 )
 
 type agentListEntry struct {

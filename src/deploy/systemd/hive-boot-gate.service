@@ -40,7 +40,7 @@
 
 [Unit]
 Description=Start Hive after the boot transaction has settled
-Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
+Documentation=https://github.com/hivecommons/hive/blob/v4/src/docs/podman-standalone-quadlet.md
 
 [Service]
 Type=exec

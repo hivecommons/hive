@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // This file is the config surface for the agent self-healing watchdog

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/planning"
 )
 
 // decomposeSamplePlan is a plan in the exact shape agentparse.ParseTaskList

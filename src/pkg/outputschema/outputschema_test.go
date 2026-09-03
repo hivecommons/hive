@@ -11,7 +11,7 @@ func TestValidate(t *testing.T) {
 		"lane":"scanner",
 		"kind":"findings",
 		"findings":[{"title":"racy write","severity":"high","summary":"shared map is written without a lock","file":"pkg/x.go","line":42}],
-		"prs_opened":[{"repo":"kubestellar/hive","number":2806,"title":"structured reports","url":"https://github.com/kubestellar/hive/pull/1"}],
+		"prs_opened":[{"repo":"kubestellar/hive","number":2806,"title":"structured reports","url":"https://github.com/hivecommons/hive/pull/1"}],
 		"beads_filed":[{"id":"bead-1","type":"task","title":"follow-up"}],
 		"artifacts":[{"repo":"kubestellar/hive","path":"grafana/dashboards/api.json","description":"API service dashboard"}],
 		"summary":"one finding, one PR, one bead"

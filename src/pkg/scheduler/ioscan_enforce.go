@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 // AuditFunc records a security-relevant enforcement event. It is deliberately a

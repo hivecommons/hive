@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // This file "pins" the current behavior of the inception output parsers

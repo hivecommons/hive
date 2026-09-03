@@ -34,8 +34,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/reach"
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/reach"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 // reachHistoryPath is the DEFAULT on-disk history file — its own file beside

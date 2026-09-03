@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // tmuxAvailable reports whether a usable tmux binary is on PATH. All tmux-based

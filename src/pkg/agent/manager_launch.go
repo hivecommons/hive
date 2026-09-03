@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // backendDefersStartupKick reports whether a backend's bootstrap prompt is

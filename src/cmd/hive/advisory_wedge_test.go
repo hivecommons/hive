@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/advisory"
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/dashboard"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 func TestPrimaryAdvisoryRepo(t *testing.T) {

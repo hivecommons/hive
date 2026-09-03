@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // App IDs from the live incident: the public github.com Hive App and the GHE App

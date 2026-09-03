@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // provenanceResponse is the JSON body of GET /api/config/provenance.

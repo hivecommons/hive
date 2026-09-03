@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TestWatchedHomeDirsIncludesBob pins the fix for bob's startup failure:

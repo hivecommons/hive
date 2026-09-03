@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // authorizedUsersForHiveID returns the hub's access list for a hive as

@@ -5360,7 +5360,7 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
       else if (!r.deployed) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="No hive reports running a commit containing this PR yet (merged is not deployed)">not deployed</span>');
       if ((r.shared_with || []).length) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Co-deployed with PR ' + esc((r.shared_with || []).map(function(n) { return '#' + n; }).join(', ')) + ' — reach and deltas are shared by construction (D4)">shared</span>');
       return '<tr>' +
-        '<td style="white-space:nowrap"><a href="https://github.com/kubestellar/hive/pull/' + r.pr + '" target="_blank">#' + r.pr + '</a>' +
+        '<td style="white-space:nowrap"><a href="https://github.com/hivecommons/hive/pull/' + r.pr + '" target="_blank">#' + r.pr + '</a>' +
         (r.title ? ' <span style="color:var(--muted);font-size:0.75rem" title="' + esc(r.title) + '">' + esc(r.title.length > 48 ? r.title.slice(0, 48) + '…' : r.title) + '</span>' : '') + '</td>' +
         '<td>' + compCell + '</td>' +
         '<td>' + reachCell + '</td>' +

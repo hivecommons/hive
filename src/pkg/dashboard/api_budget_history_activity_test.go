@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 )
 
 // --- handleBudgetHistory ---

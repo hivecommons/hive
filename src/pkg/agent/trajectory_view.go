@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/kubestellar/hive/pkg/trajectory"
+import "github.com/hivecommons/hive/pkg/trajectory"
 
 // trajectoryTranscriptLines is how many trailing pane lines are gathered per
 // agent for a trajectory review. The reviewer applies its own (smaller) tail

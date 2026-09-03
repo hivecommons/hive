@@ -4,11 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/dashboard"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/hub"
-	"github.com/kubestellar/hive/pkg/snapshot"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
 func intPtr(v int) *int    { return &v }

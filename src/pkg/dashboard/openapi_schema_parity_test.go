@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // TestOpenAPISchemaFieldsExistOnGoTypes is the #5077 guard.

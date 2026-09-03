@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/notify"
 )
 
 func TestCov_HandleGovernorTrajectory(t *testing.T) {

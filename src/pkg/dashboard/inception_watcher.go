@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/agentparse"
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 const (

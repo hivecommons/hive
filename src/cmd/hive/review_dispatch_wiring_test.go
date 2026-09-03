@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/outputschema"
-	"github.com/kubestellar/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 const reviewTestSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -70,7 +70,7 @@ func actionableWithPR(author string) *github.ActionableResult {
 			Title:   "test: add coverage",
 			Author:  author,
 			HeadSHA: reviewTestSHA,
-			URL:     "https://github.com/kubestellar/hive/pull/4321",
+			URL:     "https://github.com/hivecommons/hive/pull/4321",
 		}}},
 	}
 }

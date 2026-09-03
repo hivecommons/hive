@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // ---------- StartInferenceTranslator: real integration test ----------

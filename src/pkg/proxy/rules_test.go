@@ -3,7 +3,7 @@ package proxy
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 func TestAllowedByMode(t *testing.T) {

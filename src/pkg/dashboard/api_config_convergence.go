@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // ── #4263: owner-gated runtime control for the convergence rollout mode ────────

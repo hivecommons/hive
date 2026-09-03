@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // verifyDepsFor returns Dependencies whose GHClient answers any pulls lookup with

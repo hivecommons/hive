@@ -86,7 +86,7 @@ the threats they reduce.
 - **Shared-container execution remains a material risk.** Agents run as tmux
   sessions inside one Hive container (§2). Per-UID isolation reduces cross-agent
   access, but it is not equivalent to per-run containers or microVMs. Open issue
-  [#2804](https://github.com/kubestellar/hive/issues/2804) tracks credential-free
+  [#2804](https://github.com/hivecommons/hive/issues/2804) tracks credential-free
   sandboxed execution.
 - **Live tokens may still exist in-session.** Scoped, short-lived App tokens and
   owner-only caches reduce impact, but current agents can still need live

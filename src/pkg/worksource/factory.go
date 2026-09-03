@@ -6,9 +6,9 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
 // FromConfig constructs the WorkSource for a governor from its WorkSourceConfig.

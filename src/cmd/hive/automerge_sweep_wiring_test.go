@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // Tests for the eval-loop auto-merge sweep wiring and the duplicate-PR guard

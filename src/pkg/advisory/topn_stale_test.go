@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // The digest's top-N is a scarce resource: the 2026-08-24 advisory comment on

@@ -41,7 +41,7 @@ func groundedPR() PullRequest {
 		Author:    "hive-app[bot]",
 		HeadSHA:   "feedface",
 		MergeBase: "cafebabe",
-		URL:       "https://github.com/kubestellar/hive/pull/3872",
+		URL:       "https://github.com/hivecommons/hive/pull/3872",
 	}
 }
 

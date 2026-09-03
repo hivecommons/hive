@@ -16,7 +16,7 @@ The measurement, from one run with the gate installed normally
 | over **IPv6** | 5 | **0** |
 
 The IPv4 column is the control required by
-[#4319](https://github.com/kubestellar/hive/issues/4319): it rules out "the gate
+[#4319](https://github.com/hivecommons/hive/issues/4319): it rules out "the gate
 failed to install" as an explanation for the IPv6 column, in the same run,
 against the same endpoint, seconds apart.
 
@@ -120,7 +120,7 @@ what the kernel matched, not what the application received.
 
 ## The fix slice
 
-Not implemented here — [#4319](https://github.com/kubestellar/hive/issues/4319)
+Not implemented here — [#4319](https://github.com/hivecommons/hive/issues/4319)
 is scoped to determining whether the bypass is reachable, and it is.
 
 The good news for whoever takes it: **the IPv6 counterpart is a direct mirror.**
@@ -158,7 +158,7 @@ Two things the fix must decide that this measurement does not settle:
    a silent outage.
 
 > **Postscript — the fix slice has since landed
-> ([#4327](https://github.com/kubestellar/hive/pull/4327)).** It answers
+> ([#4327](https://github.com/hivecommons/hive/pull/4327)).** It answers
 > question 2 in the negative — the proxy listens on `127.0.0.1:18443` only —
 > so the entrypoint closes the IPv6 family with a filter-table
 > `REJECT --reject-with tcp-reset` carrying the same three exemptions, rather
@@ -189,6 +189,6 @@ Two things the fix must decide that this measurement does not settle:
 
 - [Rootful Podman egress-gate baseline](podman-rootful-egress-baseline.md) —
   where this gap was first recorded under *What remains unproven*.
-- [`src/deploy/entrypoint.sh`](https://github.com/kubestellar/hive/blob/v4/src/deploy/entrypoint.sh)
+- [`src/deploy/entrypoint.sh`](https://github.com/hivecommons/hive/blob/v4/src/deploy/entrypoint.sh)
   — the `HIVE_PROXY` chain construction, IPv4 only.
 - [`CAP_NET_ADMIN` requirement](net-admin-requirement.md)

@@ -2,7 +2,7 @@
 
 ## Why this doc exists
 
-Issue [#2535](https://github.com/kubestellar/hive/issues/2535) raises three options for
+Issue [#2535](https://github.com/hivecommons/hive/issues/2535) raises three options for
 container-runtime auto-detect:
 
 - **Option A** — re-order auto-detect to prefer rootless Podman over Docker when both are

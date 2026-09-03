@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 // SecurityScanner provides pre-execution security analysis of tool requests.

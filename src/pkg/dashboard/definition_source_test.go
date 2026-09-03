@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func enableDefinitionAllowlist(deps *Dependencies, slugs ...string) {
@@ -26,15 +26,15 @@ func TestDefinitionSourceFromURL(t *testing.T) {
 	}{
 		{
 			name:  "blob url",
-			url:   "https://github.com/kubestellar/hive/blob/v2/src/examples/agents/x.yaml",
-			owner: "kubestellar", repo: "hive", ref: "v2", path: "src/examples/agents/x.yaml",
+			url:   "https://github.com/hivecommons/hive/blob/v2/src/examples/agents/x.yaml",
+			owner: "hivecommons", repo: "hive", ref: "v2", path: "src/examples/agents/x.yaml",
 		},
 		{
 			name:  "raw url",
-			url:   "https://raw.githubusercontent.com/kubestellar/hive/main/agents/scanner.yaml",
-			owner: "kubestellar", repo: "hive", ref: "main", path: "agents/scanner.yaml",
+			url:   "https://raw.githubusercontent.com/hivecommons/hive/main/agents/scanner.yaml",
+			owner: "hivecommons", repo: "hive", ref: "main", path: "agents/scanner.yaml",
 		},
-		{name: "not a file url", url: "https://github.com/kubestellar/hive", wantErr: true},
+		{name: "not a file url", url: "https://github.com/hivecommons/hive", wantErr: true},
 		{name: "garbage", url: "::::", wantErr: true},
 		{name: "no host", url: "/kubestellar/hive/blob/v2/x.yaml", wantErr: true},
 	}
@@ -95,13 +95,13 @@ func TestAgentImportURLPolicy(t *testing.T) {
 		},
 		{
 			name:          "github blob one-shot accepted",
-			importURL:     "https://github.com/kubestellar/hive/blob/main/agents/blob-plain.yaml?name=blob-one-shot",
+			importURL:     "https://github.com/hivecommons/hive/blob/main/agents/blob-plain.yaml?name=blob-one-shot",
 			wantStatus:    http.StatusOK,
 			wantAgentName: "blob-one-shot",
 		},
 		{
 			name:          "github blob keep-linked accepted",
-			importURL:     "https://github.com/kubestellar/hive/blob/main/agents/blob-linked.yaml?name=blob-linked",
+			importURL:     "https://github.com/hivecommons/hive/blob/main/agents/blob-linked.yaml?name=blob-linked",
 			keepLinked:    true,
 			wantStatus:    http.StatusOK,
 			wantLinked:    true,
@@ -109,13 +109,13 @@ func TestAgentImportURLPolicy(t *testing.T) {
 		},
 		{
 			name:          "raw github one-shot accepted",
-			importURL:     "https://raw.githubusercontent.com/kubestellar/hive/main/agents/raw-plain.yaml?name=raw-one-shot",
+			importURL:     "https://raw.githubusercontent.com/hivecommons/hive/main/agents/raw-plain.yaml?name=raw-one-shot",
 			wantStatus:    http.StatusOK,
 			wantAgentName: "raw-one-shot",
 		},
 		{
 			name:          "raw github keep-linked accepted",
-			importURL:     "https://raw.githubusercontent.com/kubestellar/hive/main/agents/raw-linked.yaml?name=raw-linked",
+			importURL:     "https://raw.githubusercontent.com/hivecommons/hive/main/agents/raw-linked.yaml?name=raw-linked",
 			keepLinked:    true,
 			wantStatus:    http.StatusOK,
 			wantLinked:    true,
@@ -123,7 +123,7 @@ func TestAgentImportURLPolicy(t *testing.T) {
 		},
 		{
 			name:       "disallowed host rejected",
-			importURL:  "https://example.com/kubestellar/hive/blob/main/agent.yaml?name=bad-host",
+			importURL:  "https://example.com/hivecommons/hive/blob/main/agent.yaml?name=bad-host",
 			wantStatus: http.StatusBadRequest,
 			wantErr:    "example.com",
 		},
@@ -133,7 +133,7 @@ func TestAgentImportURLPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, deps := apiServer(t)
 			deps.Config.Data.AgentsDir = t.TempDir()
-			enableDefinitionAllowlist(deps, "kubestellar/hive")
+			enableDefinitionAllowlist(deps, "hivecommons/hive")
 
 			rec := doPost(s, "/api/agents/import", map[string]interface{}{
 				"source":     "url",
@@ -186,7 +186,7 @@ spec:
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source":     "url",
-		"url":        "https://github.com/kubestellar/hive/blob/main/plain.yaml",
+		"url":        "https://github.com/hivecommons/hive/blob/main/plain.yaml",
 		"keepLinked": false,
 	})
 	if rec.Code != http.StatusOK {
@@ -222,11 +222,11 @@ spec:
 	routeImportFetchesToServer(t, ts)
 
 	// The blob path makes the parsed slug "kubestellar/hive"; allowlist it.
-	enableDefinitionAllowlist(deps, "kubestellar/hive")
+	enableDefinitionAllowlist(deps, "hivecommons/hive")
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source":     "url",
-		"url":        "https://github.com/kubestellar/hive/blob/main/agents/linked.yaml",
+		"url":        "https://github.com/hivecommons/hive/blob/main/agents/linked.yaml",
 		"keepLinked": true,
 	})
 	if rec.Code != http.StatusOK {
@@ -240,8 +240,8 @@ spec:
 		t.Fatal("keep-linked import must set definition_source")
 	}
 	ds := agent.DefinitionSource
-	if ds.Owner != "kubestellar" || ds.Repo != "hive" || ds.Path != "agents/linked.yaml" || ds.Ref != "main" {
-		t.Errorf("definition_source = %+v, want kubestellar/hive agents/linked.yaml@main", ds)
+	if ds.Owner != "hivecommons" || ds.Repo != "hive" || ds.Path != "agents/linked.yaml" || ds.Ref != "main" {
+		t.Errorf("definition_source = %+v, want hivecommons/hive agents/linked.yaml@main", ds)
 	}
 }
 

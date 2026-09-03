@@ -94,7 +94,7 @@ Ask %s to grant you access from their
 </p>
 <a href="/dashboard" class="btn btn-primary">Go to My Hives</a>
 <a href="/" class="btn btn-secondary">Browse Public Hives</a>
-<p class="help">If you believe this is an error, <a href="https://github.com/kubestellar/hive/issues" style="color:#58a6ff">file an issue</a>.</p>
+<p class="help">If you believe this is an error, <a href="https://github.com/hivecommons/hive/issues" style="color:#58a6ff">file an issue</a>.</p>
 </div>
 </body></html>`, hiveID, hiveID, ownerLink)
 }

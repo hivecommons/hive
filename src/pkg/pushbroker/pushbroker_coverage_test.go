@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // scriptedGit answers git invocations from a table keyed on the joined argv,

@@ -24,8 +24,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/kubestellar/hive/pkg/hooks"
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // hookApprovalAdapter satisfies hooks.ApprovalQueue over toolapprove.Inbox.

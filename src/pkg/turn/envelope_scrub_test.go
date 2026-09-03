@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // fakeToken is a credential-shaped string matching logscrub's GitHub token

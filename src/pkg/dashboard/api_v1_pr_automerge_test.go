@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func newAPIV1QueueServer(t *testing.T, role, tokenUser, prAuthor, headSHA string) (*Server, *bool, *bool) {

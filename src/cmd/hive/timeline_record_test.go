@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // fakeLifecycleRecorder is a minimal lifecycleRecorder backed by a real

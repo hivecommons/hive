@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/claude"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // AppTokenMinter is implemented by github.AppAuth to mint per-agent scoped tokens.

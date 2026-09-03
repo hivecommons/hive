@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/celtrigger"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 )
 
 func celTestLogger() *slog.Logger {

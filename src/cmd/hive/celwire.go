@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/kubestellar/hive/pkg/celtrigger"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 )
 
 // celTriggerSource identifies which forge object produced a CEL-evaluated event,

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // newRelaunchManager builds a bare Manager with the given agents registered.

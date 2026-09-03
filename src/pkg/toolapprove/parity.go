@@ -24,7 +24,7 @@ package toolapprove
 import (
 	"fmt"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // LegacyGateSelfMerge reports whether the App-self-merge sweep may merge a PR

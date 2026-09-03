@@ -9,7 +9,7 @@ The dashboard's Content-Security-Policy carried one blanket `style-src 'self'
 token covered two different things with two different futures, and hid the fact
 that only one of them is closable.
 
-[kubestellar/hive#3848](https://github.com/kubestellar/hive/issues/3848) asked
+[kubestellar/hive#3848](https://github.com/hivecommons/hive/issues/3848) asked
 for the two to be separated and for the remaining allowance to be either removed
 or accepted **with a written rationale**. This is that rationale.
 

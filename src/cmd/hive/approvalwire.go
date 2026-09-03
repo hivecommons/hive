@@ -16,9 +16,9 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/kubestellar/hive/pkg/config"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // buildApprovalDesk constructs the desk and its durable operator inbox from

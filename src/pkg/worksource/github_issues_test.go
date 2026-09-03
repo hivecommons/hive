@@ -9,8 +9,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/worksource"
 )
 
 func newIssuesTestServer(t *testing.T, org, repo, issuesJSON string) *httptest.Server {

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/convergence"
-	"github.com/kubestellar/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/planning"
 )
 
 // ── Dependency observation for contributor-neutral admission (#3845) ──────────

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // ToJSON serializes the SessionEnvelope into JSON bytes.

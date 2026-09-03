@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/reach"
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/reach"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 // The admin advisory-diagnostics endpoint answers the fleet false-negative

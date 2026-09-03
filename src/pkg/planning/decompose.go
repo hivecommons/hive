@@ -22,10 +22,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/agentparse"
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/classify"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/classify"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // Metadata keys written by Decompose. These form the convention Phase 2's

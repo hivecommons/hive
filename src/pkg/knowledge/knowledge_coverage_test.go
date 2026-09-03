@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // covLogger returns a logger that discards output so tests stay quiet.

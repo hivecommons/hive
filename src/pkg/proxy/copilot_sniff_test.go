@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // newTestProxyWithCA builds a GitHubProxy with a fresh in-memory CA and cert

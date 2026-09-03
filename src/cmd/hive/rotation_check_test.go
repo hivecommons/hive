@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/rotation"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/rotation"
 )
 
 // Tests for runRotationCheck (cmd/hive/main.go) — the RFC #3958 eval-loop
