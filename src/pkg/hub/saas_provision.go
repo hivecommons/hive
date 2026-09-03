@@ -491,6 +491,11 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 type PendingAccessRequest struct {
 	Username    string `json:"username"`
 	RequestedAt string `json:"requested_at"`
+	// DisplayLabel is the human-facing name resolved at serve time for opaque
+	// OIDC identities. Username remains the raw auth key used by approve/deny.
+	DisplayLabel string `json:"display_label,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	AvatarURL    string `json:"avatar_url,omitempty"`
 	// Note is the requester's justification for wanting access,
 	// surfaced to owners/approvers. May be empty for legacy records.
 	Note string `json:"note,omitempty"`
