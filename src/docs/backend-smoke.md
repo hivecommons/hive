@@ -73,7 +73,7 @@ distinction is the point:
   Red means **vendor drift is incoming**: shipped contributor images still
   work, but the next pin bump will break. Fix the integration before bumping.
 - **pinned** — runs the suite inside
-  `ghcr.io/kubestellar/hive-contributor:latest`, against the CLI versions
+  `ghcr.io/hivecommons/hive-contributor:latest`, against the CLI versions
   contributors actually get. Red means **contributors are likely broken right
   now**.
 

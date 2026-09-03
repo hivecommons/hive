@@ -43,9 +43,9 @@ spec:
           # stale the moment the channel advances, since nothing on this
           # manifest re-resolves it. Self-hosted users who want a harder pin
           # than the channel tag can replace this with a specific
-          # ghcr.io/kubestellar/hive@sha256:<digest> of a release they've
+          # ghcr.io/hivecommons/hive@sha256:<digest> of a release they've
           # reviewed and are willing to manage upgrades for manually.
-          image: ghcr.io/kubestellar/hive:stable
+          image: ghcr.io/hivecommons/hive:stable
           # SECURITY: drop the ambient root capability set down to only what the
           # runtime actually needs, and pin the default seccomp profile. This
           # container CANNOT run fully unprivileged: it starts as root to set up

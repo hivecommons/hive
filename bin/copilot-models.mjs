@@ -110,7 +110,7 @@ async function main() {
     options.connection = RuntimeConnection.forStdio({ path: cliPath });
   }
   // When a token is present, hand it to the SDK explicitly (the documented
-  // path for token auth, kubestellar/hive#2519); when absent, the CLI
+  // path for token auth, hivecommons/hive#2519); when absent, the CLI
   // resolves its stored logged-in auth ($HOME/.copilot) on its own.
   if (process.env.COPILOT_GITHUB_TOKEN) {
     options.gitHubToken = process.env.COPILOT_GITHUB_TOKEN;

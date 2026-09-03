@@ -41,7 +41,7 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 				UpgradeStartedAt: started,
 				GitHash:          "9999abc",
 				UpgradeTarget:    "fc32ae4",
-				ImageRef:         "ghcr.io/kubestellar/hive:v4-latest",
+				ImageRef:         "ghcr.io/hivecommons/hive:v4-latest",
 				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
 			},
 			latestSHA: "9999abc",
@@ -57,7 +57,7 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 				UpgradeStartedAt: started,
 				GitHash:          "c11643a",
 				UpgradeTarget:    "fc32ae4",
-				ImageRef:         "ghcr.io/kubestellar/hive:v4-latest",
+				ImageRef:         "ghcr.io/hivecommons/hive:v4-latest",
 				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
 			},
 			latestSHA: "9999abc",
@@ -74,7 +74,7 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 				UpgradeStartedAt: started,
 				GitHash:          "c11643a",
 				UpgradeTarget:    "fc32ae4",
-				ImageRef:         "ghcr.io/kubestellar/hive:c11643a",
+				ImageRef:         "ghcr.io/hivecommons/hive:c11643a",
 				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
 			},
 			latestSHA: "9999abc",
@@ -417,7 +417,7 @@ func TestSweepDoesNotReRollFloatingTagAtLatest(t *testing.T) {
 		GitBranch:     "v4",
 		GitHash:       "9999abc", // == branch-latest
 		UpgradeTarget: "fc32ae4", // an older armed commit the tag never lands on
-		ImageRef:      "ghcr.io/kubestellar/hive:v4-latest",
+		ImageRef:      "ghcr.io/hivecommons/hive:v4-latest",
 	}}
 
 	// Run more cycles than the fault budget: a broken hive would be marked

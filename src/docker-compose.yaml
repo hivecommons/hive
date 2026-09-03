@@ -39,9 +39,9 @@ services:
     # new deployments and flagged this default as pending a bump, and
     # src/deploy/k8s/backup-cronjob.yaml made the same move for the same reason
     # (#3709). `stable` is the operator-blessed release channel; pin a digest
-    # here instead (`ghcr.io/kubestellar/hive@sha256:...`) for full
+    # here instead (`ghcr.io/hivecommons/hive@sha256:...`) for full
     # reproducibility.
-    image: ghcr.io/kubestellar/hive:stable
+    image: ghcr.io/hivecommons/hive:stable
     build:
       context: ..
       dockerfile: src/Dockerfile

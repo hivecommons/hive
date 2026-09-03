@@ -182,7 +182,7 @@ done < <(collect_assets)
 
 hive_ref="$(hive_standalone_image hive)"
 case "$hive_ref" in
-  ghcr.io/kubestellar/hive:stable|ghcr.io/kubestellar/hive@sha256:*|ghcr.io/kubestellar/hive:*@sha256:*)
+  ghcr.io/hivecommons/hive:stable|ghcr.io/hivecommons/hive@sha256:*|ghcr.io/hivecommons/hive:*@sha256:*)
     ok
     ;;
   *)

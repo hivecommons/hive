@@ -602,7 +602,7 @@ spec:
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source": "url",
-		"url":    "https://raw.githubusercontent.com/kubestellar/hive/main/agent.yaml",
+		"url":    "https://raw.githubusercontent.com/hivecommons/hive/main/agent.yaml",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -624,7 +624,7 @@ func TestHandleAgentImport_URLFetchFails(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source": "url",
-		"url":    "https://raw.githubusercontent.com/kubestellar/hive/main/agent.yaml",
+		"url":    "https://raw.githubusercontent.com/hivecommons/hive/main/agent.yaml",
 	})
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("expected 502, got %d: %s", rec.Code, rec.Body.String())
@@ -725,7 +725,7 @@ func TestGhcrTagExistsWithClientUsesInjectedBaseURL(t *testing.T) {
 		case "/token":
 			gotTokenPath = r.URL.Path + "?" + r.URL.RawQuery
 			_, _ = w.Write([]byte(`{"token":"test-token"}`))
-		case "/v2/kubestellar/hive/manifests/v4-test":
+		case "/v2/hivecommons/hive/manifests/v4-test":
 			gotManifestPath = r.URL.Path
 			gotAuth = r.Header.Get("Authorization")
 			w.WriteHeader(http.StatusOK)
@@ -741,7 +741,7 @@ func TestGhcrTagExistsWithClientUsesInjectedBaseURL(t *testing.T) {
 	if gotTokenPath != "/token?scope=repository:kubestellar/hive:pull" {
 		t.Fatalf("token request = %q", gotTokenPath)
 	}
-	if gotManifestPath != "/v2/kubestellar/hive/manifests/v4-test" || gotAuth != "Bearer test-token" {
+	if gotManifestPath != "/v2/hivecommons/hive/manifests/v4-test" || gotAuth != "Bearer test-token" {
 		t.Fatalf("manifest request path/auth = %q/%q", gotManifestPath, gotAuth)
 	}
 }

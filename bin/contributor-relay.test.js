@@ -1,6 +1,6 @@
 // Tests for bin/contributor-relay.sh (JavaScript despite the .sh extension).
 //
-// Regression coverage for kubestellar/hive#2203 — "Contributor agent stuck in
+// Regression coverage for hivecommons/hive#2203 — "Contributor agent stuck in
 // infinite crash loop after periodic CLI restart". Reported with a full source
 // root-cause analysis by @castrojo.
 //
@@ -116,7 +116,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     return child;
   };
 
-  // The capability probe (`<cli> --version`, kubestellar/hive#2547) is the only
+  // The capability probe (`<cli> --version`, hivecommons/hive#2547) is the only
   // execFileSync caller. `cliVersion` is what the CLI "prints"; an Error instance
   // makes the probe throw, standing in for an absent binary, an unsupported flag
   // or a timeout kill — every one of which must leave the field simply absent.
@@ -219,7 +219,7 @@ function teardown(relay) {
   try { fs.rmSync(relay.__tmpDir, { recursive: true, force: true }); } catch (_) {}
 }
 
-// Drive a full chrome-idle grace window (kubestellar/hive#5376).
+// Drive a full chrome-idle grace window (hivecommons/hive#5376).
 //
 // A pane that merely LOOKS idle no longer completes a task on the first tick:
 // classifyTmuxPane was demoted to liveness, and chrome alone must hold idle for
@@ -295,7 +295,7 @@ test('#5652 relaunch reuses the entrypoint launch command instead of container d
 
 // --- agy pane classification: stale narration must not pin WORKING ---------
 //
-// Verbatim shape of a real wedged pane (kubestellar/hive): agy had finished the
+// Verbatim shape of a real wedged pane (hivecommons/hive): agy had finished the
 // turn and printed its no_work_needed verdict, and was sitting at its idle
 // prompt. One line of narration left over from the PREVIOUS task — "I am
 // running the pkg/agent tests…" — kept the whole-pane isWorking scan true, so
@@ -328,7 +328,7 @@ const AGY_WEDGED_PANE = [
 // box, and the footer padding, so it matched a regex that the real pane did
 // not. That is how the wedge below shipped green.
 const AGY_GEMINI_IDLE_PANE = [
-  '● Bash(gh pr create --repo kubestellar/hive ...)',
+  '● Bash(gh pr create --repo hivecommons/hive ...)',
   ...Array.from({ length: 20 }, (_, i) => `  completed test step ${i}`),
   '',
   '  • Opened https://github.com/foo/bar/pull/9 targeting v4.',
@@ -344,8 +344,8 @@ const AGY_GEMINI_IDLE_PANE = [
 // with "esc to cancel" on the footer line, so this must NOT read as idle: a
 // busy agent reported complete is the worse direction of this bug.
 const AGY_GEMINI_WORKING_PANE = [
-  '● Read(/home/dev/workspace/kubestellar/hive/.github/workflows/prune-ghcr.yml)',
-  '● Edit(/home/dev/workspace/kubestellar/hive/.github/workflows/prune-ghcr.yml) (ctrl+o to expand)',
+  '● Read(/home/dev/workspace/hivecommons/hive/.github/workflows/prune-ghcr.yml)',
+  '● Edit(/home/dev/workspace/hivecommons/hive/.github/workflows/prune-ghcr.yml) (ctrl+o to expand)',
   '⣷  Editing files...',
   '└ Tip: Use /diff to view uncommitted changes in your workspace.',
   '────────────────────────────────────────────',
@@ -436,7 +436,7 @@ test('relaunchCLI sends the cd-prefixed command to tmux', () => {
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5652, remaining edges — a relaunch must reuse the
+// hivecommons/hive#5652, remaining edges — a relaunch must reuse the
 // LAUNCHER's resolved launch line, never re-derive one that drops local
 // mode's sandbox.
 //
@@ -536,7 +536,7 @@ test('a task prompt is never typed into a pane that is running a shell', () => {
   const relay = loadRelay({ backend: 'agy', procAlive: false });
   try {
     relay.setCliReady(true);
-    const PROMPT = "You are a contributor to the kubestellar/hive hive. Work on issue #4030.";
+    const PROMPT = "You are a contributor to the hivecommons/hive hive. Work on issue #4030.";
     const before = relay.__tmuxSends().length;
     relay.tmuxSendKeys(PROMPT);
 
@@ -545,7 +545,7 @@ test('a task prompt is never typed into a pane that is running a shell', () => {
     assert.strictEqual(relay.getCliReady(), false,
       'a stale readiness latch must be dropped once the pane is seen to be a shell');
     const sends = relay.__tmuxSends().slice(before);
-    assert.ok(!sends.some(c => c.includes('contributor to the kubestellar/hive hive')),
+    assert.ok(!sends.some(c => c.includes('contributor to the hivecommons/hive hive')),
       `the prompt text must never reach the pane: ${JSON.stringify(sends)}`);
     assert.ok(sends.some(c => /agy/.test(c)),
       `the CLI must be relaunched so the queued prompt has somewhere to go: ${JSON.stringify(sends)}`);
@@ -573,7 +573,7 @@ test('agy Gemini footer with a bare prompt is COMPLETE', () => {
 // Regression for the wedge that shipped past the fixture above: the input box
 // is closed by a second rule, so the gap between ">" and the footer is not pure
 // whitespace. Live, this classified WORKING after the turn opened
-// kubestellar/hive#4127, and the stall backstop failed the task 20 minutes
+// hivecommons/hive#4127, and the stall backstop failed the task 20 minutes
 // later as `environment` — a shipped PR recorded as a failure.
 test('agy idle pane with a closing rule under the input box is COMPLETE', () => {
   const relay = loadRelay({ backend: 'agy' });
@@ -589,13 +589,13 @@ test('agy idle pane with a closing rule under the input box is COMPLETE', () => 
 // would hand the hub a half-done task and abandon real work.
 // A FINISHED agy turn whose completion summary happens to contain one of the
 // activity verbs. Reproduced from the pane of a task that opened
-// kubestellar/hive#4181: the summary line says "...with writing
+// hivecommons/hive#4181: the summary line says "...with writing
 // HIVE_GITHUB_TOKEN to a local .env file". The verb is in the last 15 lines by
 // construction, because it is the summary, so a bare word match reads a done
 // turn as busy — and isWorking short-circuits before hasIdlePrompt is
 // consulted, so the idle chrome below never gets a vote.
 const AGY_DONE_SUMMARY_WITH_VERB = [
-  '  I have completed work on issue kubestellar/hive#4179 and submitted pull request kubestellar/hive#4181.',
+  '  I have completed work on issue hivecommons/hive#4179 and submitted pull request hivecommons/hive#4181.',
   '  ### Key Updates',
   '  • Docker Compose Quick Start: Updated commands across README.md and get-started.html.',
   '  • Environment file (.env): Replaced inline token export instructions with writing',
@@ -918,7 +918,7 @@ test('goose is also excluded from --model', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pi provider/model, readiness and receipts (kubestellar/hive#5039).
+// Pi provider/model, readiness and receipts (hivecommons/hive#5039).
 // ---------------------------------------------------------------------------
 
 test('Pi accepts exactly one canonical provider/model selection', () => {
@@ -1065,7 +1065,7 @@ const PROMPT_WITH_APOSTROPHES =
   "Work on issue foo/bar#421. Fork it with 'gh repo fork foo/bar --clone=false' first.";
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5090 — a close must be diagnosable.
+// hivecommons/hive#5090 — a close must be diagnosable.
 //
 // The close handler used to ignore the code and reason entirely and log only
 // "closed. Reconnecting in 1000ms...". A contributor whose socket flapped every
@@ -1171,7 +1171,7 @@ test('task_assign queues rather than typing when the CLI is not ready', () => {
   } finally { teardown(relay); }
 });
 
-test('task_assign never persists github_token to the task file (kubestellar/hive#5065)', () => {
+test('task_assign never persists github_token to the task file (hivecommons/hive#5065)', () => {
   const relay = loadRelay({ backend: 'copilot' });
   try {
     relay.setCliReady(false);
@@ -1439,7 +1439,7 @@ function assignTask(relay, taskId, number = 421) {
 }
 
 // assignTask, plus the two things a STATIC pane fixture cannot express by
-// itself (kubestellar/hive#5650).
+// itself (hivecommons/hive#5650).
 //
 //  1. The CLI is up, so the prompt was typed rather than queued. tmuxSendKeys()
 //     queues whenever cliReady is false, and progressTick() now refuses to judge
@@ -1567,7 +1567,7 @@ test('restart backoff grows and is capped', () => {
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#2844 — interactive completion detection must distinguish a
+// hivecommons/hive#2844 — interactive completion detection must distinguish a
 // finished turn from a backend prompt that is waiting for human input.
 // ---------------------------------------------------------------------------
 
@@ -1630,7 +1630,7 @@ test('interactive pane classifier distinguishes complete, blocked, and working s
         pane: 'calling tool github.create_pull_request\n> Enter to send\n',
         want: relay.PANE_STATE_WORKING,
       },
-      // kubestellar/hive#2844 — MCP elicitation forms. Each of these leaves the
+      // hivecommons/hive#2844 — MCP elicitation forms. Each of these leaves the
       // pane at goose's idle chrome ("> " / "> Enter to send") with no working
       // word, so the pre-fix classifier called them IDLE_COMPLETE and the relay
       // reported the unanswered form as a finished task.
@@ -1771,7 +1771,7 @@ test('goose elicitation form is reported as blocked, never as task_complete (#28
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5281 — an unattended agent that stops to ask a question gets
+// hivecommons/hive#5281 — an unattended agent that stops to ask a question gets
 // one reminder to proceed on its own.
 //
 // Detection without recovery was the gap: the relay already SAW the question
@@ -1822,7 +1822,7 @@ test('#5281 the budget is per task, not per process', () => {
   // rather than by calling the reset directly, so that a change which dropped
   // resetAutonomyNudgeState() from the task-start path would fail here.
   const DONE_PANE = [
-    '● Done — opened https://github.com/kubestellar/hive/pull/9999',
+    '● Done — opened https://github.com/hivecommons/hive/pull/9999',
     '',
     '✻ Cogitated for 3m 30s',
     '',
@@ -2043,7 +2043,7 @@ test('#5281 a failed send still spends the budget', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Multi-hub (kubestellar/hive#multi-hive) — one relay/CLI session subscribed
+// Multi-hub (hivecommons/hive#multi-hive) — one relay/CLI session subscribed
 // to more than one hub via comma-separated HIVE_HUB/HIVE_REGISTRATION_TOKEN.
 // ---------------------------------------------------------------------------
 
@@ -2240,7 +2240,7 @@ test('a currentTask with no recorded hub still reaches the hub', () => {
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#2538 — headless (non-interactive) delivery mode.
+// hivecommons/hive#2538 — headless (non-interactive) delivery mode.
 //
 // A task must reach the backend CLI through a one-shot invocation (execFile),
 // never tmux send-keys; the exit status must drive task_complete / task_failed;
@@ -2548,7 +2548,7 @@ test('interactive mode still delivers via tmux send-keys (unchanged default path
 
 
 // Verbatim capture of a genuinely READY codex pane from a running
-// ghcr.io/kubestellar/hive-contributor container. Note what it does NOT
+// ghcr.io/hivecommons/hive-contributor container. Note what it does NOT
 // contain: no "codex>", no line ending in ">", and the banner says "OpenAI
 // Codex", not "Codex CLI". The pre-fix patterns matched none of it, so this
 // pane classified as 'starting' forever.
@@ -2618,7 +2618,7 @@ const AGY_LOGIN_PANE = [
 ].join('\n');
 
 const CODEX_COMPLETED_NO_WORK_PANE = [
-  '• Running GH_TOKEN=... gh issue view 4065 --repo kubestellar/hive',
+  '• Running GH_TOKEN=... gh issue view 4065 --repo hivecommons/hive',
   '',
   // Codex may leave many old tool rows above the completed turn.
   ...Array.from({ length: 20 }, (_, i) => `  checked upstream evidence ${i}`),
@@ -2734,13 +2734,13 @@ test('a bullet-prefixed Codex no-work verdict is reported as task_complete', () 
 });
 
 // A codex turn that finished and shipped a PR, reproduced from the pane of the
-// task that opened kubestellar/hive#4259. Note what it does NOT contain:
+// task that opened hivecommons/hive#4259. Note what it does NOT contain:
 // "completed", "done" or "finished". codex writes its summary in whatever words
 // the work calls for, so gating completion on a prose word means a finished task
 // is invisible whenever it reaches for different ones — the mirror of #4182,
 // where agy's prose made a finished pane look busy.
 const CODEX_SHIPPED_PR_IDLE_PANE = [
-  '\u2022 Opened ready-for-review PR #4259 (https://github.com/kubestellar/hive/pull/4259).',
+  '\u2022 Opened ready-for-review PR #4259 (https://github.com/hivecommons/hive/pull/4259).',
   '  - Conclusion: direct .kube reuse is not viable; native Quadlet units are recommended.',
   '  - Added the measured compatibility report and documentation index link.',
   '  - Commit c8ae4ddf includes a matching Signed-off-by trailer.',
@@ -2807,7 +2807,7 @@ test('codex still reads as WORKING while activity is in the tail', () => {
       'HIVE_VERDICT: no_work_needed — an older, finished turn',
       '',
       '› ',
-      '• Running gh issue view 4066 --repo kubestellar/hive',
+      '• Running gh issue view 4066 --repo hivecommons/hive',
     ].join('\n');
     assert.strictEqual(
       relay.classifyTmuxPane(busy), relay.PANE_STATE_WORKING,
@@ -2946,7 +2946,7 @@ test('an ordinary task failure still re-advertises ready (skipReady is opt-in)',
   } finally { teardown(relay); }
 });
 
-// Multi-hub (kubestellar/hive#multi-hive) — one relay/CLI session subscribed
+// Multi-hub (hivecommons/hive#multi-hive) — one relay/CLI session subscribed
 // to more than one hub via comma-separated HIVE_HUB/HIVE_REGISTRATION_TOKEN.
 // ---------------------------------------------------------------------------
 
@@ -3222,7 +3222,7 @@ test('the /tmp cleanup find scopes its -o group (N20: no cross-owner *.html dele
 });
 
 // ---------------------------------------------------------------------------
-// Capability declaration — agent CLI version (kubestellar/hive#2547, DECLARE).
+// Capability declaration — agent CLI version (hivecommons/hive#2547, DECLARE).
 //
 // The hub schema, src/docs/contributor-relay.md and the Operations row ("cli
 // 1.2.3") all carried agent_cli_version, but the relay never sent it, so the
@@ -3335,7 +3335,7 @@ test('capabilities are probed once and cached, not re-probed per hub handshake',
 });
 
 // ---------------------------------------------------------------------------
-// Peer-protocol compatibility (kubestellar/hive#2547).
+// Peer-protocol compatibility (hivecommons/hive#2547).
 //
 // #2567 gave both sides a version to STATE; neither side COMPARED them, so the
 // issue's original complaint stood: "the only way to learn that an old relay is
@@ -3432,7 +3432,7 @@ test('the relay declares the same protocol version the hub speaks', () => {
 
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#1861 / #3842 (audit N14) — the relay must never target the
+// hivecommons/hive#1861 / #3842 (audit N14) — the relay must never target the
 // hub's full-privilege installation-token cache, and a failed token write must
 // degrade, not crash the relay mid-assignment.
 // ---------------------------------------------------------------------------
@@ -3649,7 +3649,7 @@ test('#4117: detection failure (missing log root) is silent and reports no model
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#4267 — unit coverage for previously untested functions.
+// hivecommons/hive#4267 — unit coverage for previously untested functions.
 // ---------------------------------------------------------------------------
 
 // A 36-char token body, the canonical length GitHub mints today.
@@ -3819,7 +3819,7 @@ test('#4267 blocked-on-human: ordinary build/test output is NOT blocked', () => 
       'Compiling module foo\nBuild succeeded in 12.3s\nAll 42 tests passed\n> ',
       'go build ./...\nok  pkg/dashboard  1.234s\n$ ',
       // A "label: value" line must not read as an elicitation form (#2844).
-      'opened a PR: https://github.com/kubestellar/hive/pull/123\n> ',
+      'opened a PR: https://github.com/hivecommons/hive/pull/123\n> ',
       // A question mark mid-line is not a prompt.
       'Checked whether the flag applies? yes, and it is already set\ndone\n> ',
       '',
@@ -4037,7 +4037,7 @@ test('#4267 parseProtocolVersion is strict MAJOR.MINOR', () => {
 test('#4267 taskKey keys by repo#number with task_id fallback', () => {
   const relay = loadRelay({});
   try {
-    assert.strictEqual(relay.taskKey({ repo: 'kubestellar/hive', number: 42 }), 'kubestellar/hive#42');
+    assert.strictEqual(relay.taskKey({ repo: 'hivecommons/hive', number: 42 }), 'hivecommons/hive#42');
     assert.strictEqual(relay.taskKey({ task_id: 'abc-123' }), 'abc-123');
     assert.strictEqual(relay.taskKey(null), 'unknown');
     assert.strictEqual(relay.taskKey({}), 'unknown');
@@ -4113,29 +4113,29 @@ test('#4267 detectPRURL prefers the task repo and falls back to the first URL', 
   try {
     const lines = [
       'mentioned https://github.com/other/repo/pull/7 in passing',
-      'Opened https://github.com/kubestellar/hive/pull/4267 for review',
+      'Opened https://github.com/hivecommons/hive/pull/4267 for review',
     ];
-    assert.strictEqual(relay.detectPRURL(lines, 'kubestellar/hive'),
-      'https://github.com/kubestellar/hive/pull/4267');
+    assert.strictEqual(relay.detectPRURL(lines, 'hivecommons/hive'),
+      'https://github.com/hivecommons/hive/pull/4267');
     assert.strictEqual(relay.detectPRURL(lines, 'nomatch/repo'),
       'https://github.com/other/repo/pull/7', 'fall back to the first PR URL seen');
-    assert.strictEqual(relay.detectPRURL(['no urls here'], 'kubestellar/hive'), '');
-    assert.strictEqual(relay.detectPRURL([], 'kubestellar/hive'), '');
-    assert.strictEqual(relay.detectPRURL(null, 'kubestellar/hive'), '');
+    assert.strictEqual(relay.detectPRURL(['no urls here'], 'hivecommons/hive'), '');
+    assert.strictEqual(relay.detectPRURL([], 'hivecommons/hive'), '');
+    assert.strictEqual(relay.detectPRURL(null, 'hivecommons/hive'), '');
     // An issue URL is not a PR URL.
-    assert.strictEqual(relay.detectPRURL(['https://github.com/kubestellar/hive/issues/9'], 'kubestellar/hive'), '');
+    assert.strictEqual(relay.detectPRURL(['https://github.com/hivecommons/hive/issues/9'], 'hivecommons/hive'), '');
   } finally { teardown(relay); }
 });
 
 test('#4267 isGivenUp remembers a give-up and expires it after GIVE_UP_MEMORY_MS', () => {
   const relay = loadRelay({});
   try {
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#1'), false, 'unknown key');
-    relay.__setGivenUp('kubestellar/hive#1', Date.now());
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#1'), true, 'fresh give-up');
-    relay.__setGivenUp('kubestellar/hive#2', Date.now() - relay.GIVE_UP_MEMORY_MS - 1);
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#2'), false, 'stale give-up expires');
-    assert.strictEqual(relay.isGivenUp('kubestellar/hive#2'), false, 'and stays pruned');
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#1'), false, 'unknown key');
+    relay.__setGivenUp('hivecommons/hive#1', Date.now());
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#1'), true, 'fresh give-up');
+    relay.__setGivenUp('hivecommons/hive#2', Date.now() - relay.GIVE_UP_MEMORY_MS - 1);
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#2'), false, 'stale give-up expires');
+    assert.strictEqual(relay.isGivenUp('hivecommons/hive#2'), false, 'and stays pruned');
   } finally { teardown(relay); }
 });
 
@@ -4207,7 +4207,7 @@ test('#4267 warnOnProtocolDrift warns once per hub and stays silent when current
 
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5094 — a transient API error must never read as completion.
+// hivecommons/hive#5094 — a transient API error must never read as completion.
 //
 // Claude Code prints a turn-duration summary ("✻ Cogitated for 9m 24s") whenever
 // a turn ENDS, including when it ends in an error, and the claude branch of
@@ -4239,7 +4239,7 @@ const CLAUDE_CLEAN_PANE = [
   '',
   '  Ran 6 shell commands',
   '',
-  '● Done — opened https://github.com/kubestellar/hive/pull/5095',
+  '● Done — opened https://github.com/hivecommons/hive/pull/5095',
   '',
   '✻ Cogitated for 9m 24s',
   '',
@@ -4444,7 +4444,7 @@ test('#5094 a completed turn whose summary mentions a quota phrase is still comp
   // PR line, idle prompt — and its summary echoes a string from the code it was
   // editing. Failing it would destroy credited work.
   const pane = [
-    '● Done — opened https://github.com/kubestellar/hive/pull/5095',
+    '● Done — opened https://github.com/hivecommons/hive/pull/5095',
     '',
     "● Summary: hardened the budget_exceeded path in quota_exhaustion_test.go",
     '',
@@ -4530,7 +4530,7 @@ test('#5094 with a human attached the relay asks for attention instead of typing
 
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5654 — Claude Code's SILENT API retry must not read as
+// hivecommons/hive#5654 — Claude Code's SILENT API retry must not read as
 // IDLE_COMPLETE.
 //
 // When the connection drops mid-turn, Claude Code does not print its
@@ -4562,7 +4562,7 @@ const CLAUDE_SILENT_RETRY_PANE = [
 const CLAUDE_RETRY_RECOVERED_PANE = [
   '● Pushed the branch; opening the PR next.',
   '',
-  '● Done — opened https://github.com/kubestellar/hive/pull/5655',
+  '● Done — opened https://github.com/hivecommons/hive/pull/5655',
   '',
   '✻ Worked for 15m 39s',
   '',
@@ -4647,7 +4647,7 @@ test('#5654 the relay never books a task complete off a pane waiting on a retry'
 
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5277 — "a client is attached" is not "a human is here".
+// hivecommons/hive#5277 — "a client is attached" is not "a human is here".
 //
 // The #5094 guard above is right to refuse to type over someone, but it tested
 // connection rather than presence. bin/ttyd-tmux.sh attaches a client with
@@ -4842,7 +4842,7 @@ test('#5277 the idle-client retry is still bounded and still fails honestly', ()
 
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5121 — an API error the curated lists cannot name must not
+// hivecommons/hive#5121 — an API error the curated lists cannot name must not
 // read as a completed task either.
 //
 // #5094/#5106 closed the retryable and known-unretryable buckets; anything
@@ -4918,7 +4918,7 @@ test('#5121 the anchor requires the CLI\'s own rendering — quoted prose still 
   // credited, not held and retried. The anchor is the line-leading ● bullet;
   // a mid-line mention is prose.
   const pane = [
-    '● Done — opened https://github.com/kubestellar/hive/pull/9999',
+    '● Done — opened https://github.com/hivecommons/hive/pull/9999',
     '',
     '● The flake was the upstream returning API Error: 418 during the outage window.',
     '',
@@ -4951,7 +4951,7 @@ test('#5121 the curated buckets keep first claim on their lines', () => {
 
 // --- Attach hints must name the runtime that actually launched us ----------
 //
-// kubestellar/hive#5145. Container mode resolves docker OR podman, but the
+// hivecommons/hive#5145. Container mode resolves docker OR podman, but the
 // relay runs INSIDE the container and cannot see its own launcher, so both
 // in-container attach hints hardcoded `docker`. Observed live on a podman
 // launch: the recipe's own host-side hint said `podman exec -it hive-...`, and
@@ -5244,7 +5244,7 @@ test('#5321 a headless one-shot is no longer capped at the old 30-minute wall', 
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5353 cause B — ending a task must stop the agent.
+// hivecommons/hive#5353 cause B — ending a task must stop the agent.
 //
 // Reporting task_complete or task_failed tells the hub to revoke the lease,
 // book a cooldown and offer the issue to somebody else. Before this, only five
@@ -5495,7 +5495,7 @@ test('#5353 declining an assignment touches neither the pane nor an unrelated to
 });
 
 // ---------------------------------------------------------------------------
-// The completion signal (kubestellar/hive#5376).
+// The completion signal (hivecommons/hive#5376).
 //
 // THE CLASS THIS SECTION EXISTS TO CATCH. Task completion in the interactive
 // relay used to be inferred entirely from tmux rendering chrome — per-backend
@@ -5890,7 +5890,7 @@ test('#5376 recordChromeIdleTick fires only after the full consecutive window', 
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5447 — a failed re-mint must be visible to the relay, and
+// hivecommons/hive#5447 — a failed re-mint must be visible to the relay, and
 // token_expires_at must actually be read.
 //
 // Both halves were plumbing that carried no effect: maybeRefreshToken() logged
@@ -6055,7 +6055,7 @@ test('#5447 an expired token still does NOT refuse the work (clock skew)', () =>
 });
 
 // ---------------------------------------------------------------------------
-// kubestellar/hive#5655 — Ctrl-C on a busy relay left the task's scoped GitHub
+// hivecommons/hive#5655 — Ctrl-C on a busy relay left the task's scoped GitHub
 // token on disk: the signal handlers cleared timers only and never ran the
 // task-exit contract (#5353), so the 0600 GH_TOKEN_CACHE credential stayed
 // valid for the rest of its ~55-minute lifetime after the hub had already
@@ -6069,7 +6069,7 @@ test('#5655 cleanup() with a task in flight unlinks the scoped token, interrupts
   const relay = loadRelay({ backend: 'claude' });
   try {
     relay.injectGhToken('scoped-token-5655');
-    relay.setCurrentTask({ task_id: 'ct-kubestellar/hive-5655', task_gen: 1 });
+    relay.setCurrentTask({ task_id: 'ct-hivecommons/hive-5655', task_gen: 1 });
     const tokenPath = path.join(relay.__tmpDir, 'gh-token.cache');
     assert.ok(fs.existsSync(tokenPath), 'precondition: the scoped token is on disk while the task is in flight');
     relay.cleanup();
@@ -6110,7 +6110,7 @@ const SHUTDOWN_CHILD_DRIVER = `
   const relay = require(process.env.RELAY_UNDER_TEST);
   Module._load = origLoad;
   relay.injectGhToken('scoped-token-5655');
-  relay.setCurrentTask({ task_id: 'ct-kubestellar/hive-5655', task_gen: 1 });
+  relay.setCurrentTask({ task_id: 'ct-hivecommons/hive-5655', task_gen: 1 });
   if (!fs.existsSync(process.env.HIVE_GH_TOKEN_CACHE)) process.exit(3);
   console.log('TOKEN_ON_DISK');
   // Keep the event loop alive: the process must end via the signal handler
@@ -6175,7 +6175,7 @@ test('#5655 a crash exit (uncaught exception) still takes the scoped token with 
   } finally { cleanupTmp(); }
 });
 
-// kubestellar/hive#5650 — the relay lost track of a live claude after the first
+// hivecommons/hive#5650 — the relay lost track of a live claude after the first
 // task of a session, then booked the NEXT task complete off the previous one's
 // transcript.
 //
@@ -6192,7 +6192,7 @@ test('#5655 a crash exit (uncaught exception) still takes the scoped token with 
 // "CLI not ready — queuing task prompt instead of typing into the pane" for
 // every remaining task of the session.
 const CLAUDE_STEADY_STATE_PANE = [
-  '● Pushed the branch and opened https://github.com/kubestellar/hive/pull/5649.',
+  '● Pushed the branch and opened https://github.com/hivecommons/hive/pull/5649.',
   '',
   '● HIVE_VERDICT: complete — PR #5649',
   '',

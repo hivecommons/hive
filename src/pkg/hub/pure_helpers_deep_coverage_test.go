@@ -19,20 +19,20 @@ func TestImageTagIsMutableEdgeCases(t *testing.T) {
 		want  bool
 	}{
 		// Mutable: branch-channel tags ending in "-latest"
-		{"ghcr.io/kubestellar/hive:v2-latest", true},
-		{"ghcr.io/kubestellar/hive:v3-latest", true},
-		{"ghcr.io/kubestellar/hive:mk-latest", true},
-		{"ghcr.io/kubestellar/hive-hub:feat-vanity-url-latest", true},
+		{"ghcr.io/hivecommons/hive:v2-latest", true},
+		{"ghcr.io/hivecommons/hive:v3-latest", true},
+		{"ghcr.io/hivecommons/hive:mk-latest", true},
+		{"ghcr.io/hivecommons/hive-hub:feat-vanity-url-latest", true},
 
 		// Immutable: SHA-pinned tags
-		{"ghcr.io/kubestellar/hive:f45d2e9", false},
-		{"ghcr.io/kubestellar/hive:438a9f2b1c3a4e5f6789012345678901234567ab", false},
+		{"ghcr.io/hivecommons/hive:f45d2e9", false},
+		{"ghcr.io/hivecommons/hive:438a9f2b1c3a4e5f6789012345678901234567ab", false},
 
 		// Immutable: digest-pinned (contains @)
-		{"ghcr.io/kubestellar/hive@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", false},
+		{"ghcr.io/hivecommons/hive@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", false},
 
 		// No tag at all (implicitly :latest, but function returns false)
-		{"ghcr.io/kubestellar/hive", false},
+		{"ghcr.io/hivecommons/hive", false},
 
 		// Empty string
 		{"", false},
@@ -42,10 +42,10 @@ func TestImageTagIsMutableEdgeCases(t *testing.T) {
 		{"registry.local:5000/kubestellar/hive:v2-latest", true},
 
 		// Tag that is literally "latest" (not "-latest" suffix)
-		{"ghcr.io/kubestellar/hive:latest", false},
+		{"ghcr.io/hivecommons/hive:latest", false},
 
 		// Tag ending in "-latest" but with digest present
-		{"ghcr.io/kubestellar/hive:v2-latest@sha256:abc123", false},
+		{"ghcr.io/hivecommons/hive:v2-latest@sha256:abc123", false},
 	}
 	for _, tc := range cases {
 		got := imageTagIsMutable(tc.image)

@@ -266,7 +266,7 @@ func TestCustomStyleRawURL(t *testing.T) {
 		Ref:   "main",
 	}
 	got := customStyleRawURL(src)
-	want := "https://raw.githubusercontent.com/kubestellar/hive/main/themes/dark.css"
+	want := "https://raw.githubusercontent.com/hivecommons/hive/main/themes/dark.css"
 	if got != want {
 		t.Errorf("customStyleRawURL() = %q, want %q", got, want)
 	}

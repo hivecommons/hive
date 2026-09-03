@@ -21,7 +21,7 @@ off the container's PATH — it is a client of the dashboard API, not part of
 the runtime; run it on the host, never inside the container):
 
 ```bash
-podman create --name hivectl-extract ghcr.io/kubestellar/hive:stable
+podman create --name hivectl-extract ghcr.io/hivecommons/hive:stable
 podman cp hivectl-extract:/usr/local/share/hive/hivectl ~/.local/bin/hivectl
 podman rm hivectl-extract
 ```

@@ -110,7 +110,7 @@ link_backend_knowledge() {
       # are NOT names it looks for (unless CONTEXT_FILE_NAMES is overridden), so
       # without these two the knowledge export downloaded above never reached the
       # model. Keep the old names for backward-compat, but add the ones Goose
-      # actually reads. (kubestellar/hive#2393 item 1.)
+      # actually reads. (hivecommons/hive#2393 item 1.)
       ln -sf "$agent_md" "${HOME}/AGENTS.md"
       ln -sf "$agent_md" "${HOME}/.goosehints"
       ln -sf "$agent_md" "${HOME}/.goose-instructions.md"
@@ -118,7 +118,7 @@ link_backend_knowledge() {
       mkdir -p "${HOME}/.config/goose"
       # Write the config only if the contributor/derived image hasn't provided one,
       # so a downstream can add Goose extensions (MCP servers) or other settings
-      # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
+      # without it being clobbered on every start. (hivecommons/hive#2393 item 3.)
       if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
         cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
 GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
@@ -161,7 +161,7 @@ GOOSECFG
   esac
 }
 
-# Task-delivery mode (kubestellar/hive#2538). "interactive" (default) launches
+# Task-delivery mode (hivecommons/hive#2538). "interactive" (default) launches
 # the CLI in a tmux pane and the relay types tasks into it; "headless" skips the
 # tmux/CLI launch entirely and the relay drives a one-shot CLI per task with no
 # TTY — suitable for an unattended / future Kubernetes contributor (#2549).
@@ -185,7 +185,7 @@ elif [[ -f /usr/local/etc/hive/backends.conf ]]; then
   source /usr/local/etc/hive/backends.conf
 fi
 
-# Extension seam for downstream images (kubestellar/hive#2393 item 4). A derived
+# Extension seam for downstream images (hivecommons/hive#2393 item 4). A derived
 # image (e.g. projectbluefin/donate-clanker) can drop *.sh into
 # /etc/hive/entrypoint.d/ and/or set HIVE_PRE_AGENT_HOOK to run setup here —
 # after the full contributor env and default backend helpers are available,
@@ -519,7 +519,7 @@ KNOWLEDGE_REFRESH_SECS=600
 # Make agent.md visible to the selected CLI backend.
 link_backend_knowledge "$AGENT_BACKEND" "$AGENT_MD"
 
-# Prepare a concrete workspace directory for the agent (kubestellar/hive#2545).
+# Prepare a concrete workspace directory for the agent (hivecommons/hive#2545).
 # Previously the tmux session inherited the bare $HOME (/home/dev in the stock
 # container) with no working directory prepared, while the assignment prompt's
 # only repository instruction was a fork WITHOUT a clone
@@ -533,7 +533,7 @@ export HIVE_WORKSPACE_DIR="${HIVE_WORKSPACE_DIR:-${HOME}/workspace}"
 mkdir -p "$HIVE_WORKSPACE_DIR"
 
 # Create the tmux session for the agent — INTERACTIVE mode only. In headless
-# mode (kubestellar/hive#2538) the relay spawns a one-shot CLI per task and
+# mode (hivecommons/hive#2538) the relay spawns a one-shot CLI per task and
 # there is no persistent pane to attach to or type into, so we skip the session
 # entirely rather than leave an idle tmux CLI sitting at a prompt.
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
@@ -541,7 +541,7 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
 fi
 
-# kubestellar/hive#4046: a long-lived tmux SERVER (this container can run one
+# hivecommons/hive#4046: a long-lived tmux SERVER (this container can run one
 # for its whole lifetime) keeps its own working directory, and every pane it
 # forks afterward inherits it — even a pane started with an explicit, valid
 # `-c`, if the server's own cwd is already gone. That is exactly the shape of
@@ -642,11 +642,11 @@ PYEOF
 fi
 
 # Launch the interactive CLI and auto-dismiss its startup prompts — INTERACTIVE
-# mode only. Headless mode (kubestellar/hive#2538) has no persistent pane; the
+# mode only. Headless mode (hivecommons/hive#2538) has no persistent pane; the
 # relay launches a one-shot CLI per task, and one-shot invocations do not draw
 # the trust/theme/onboarding dialogs this loop dismisses.
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
-  # kubestellar/hive#4046: `-c` on new-session above is NOT sufficient once the
+  # hivecommons/hive#4046: `-c` on new-session above is NOT sufficient once the
   # server's own cwd is already gone — verified: new-session with a valid `-c`
   # still forks the pane into the dead directory. The `cd` in the literal
   # launch line is what actually carries the fix; -c is defense-in-depth for a
@@ -687,7 +687,7 @@ fi
 echo ""
 CONTAINER_NAME="${HIVE_CONTAINER_NAME:-hive-contributor}"
 # The engine that launched this container, passed in by the `just contribute-hive`
-# recipe from the runtime it resolved (kubestellar/hive#5145). A container cannot
+# recipe from the runtime it resolved (hivecommons/hive#5145). A container cannot
 # see its own launcher, so without this the attach hint below guessed "docker" and
 # was simply wrong on every podman run — the operator pasted it and got a
 # docker-socket permission error, or "no such container" if docker also happened to

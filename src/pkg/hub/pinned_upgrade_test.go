@@ -13,16 +13,16 @@ func TestImageTagIsMutable(t *testing.T) {
 		want  bool
 		why   string
 	}{
-		{"ghcr.io/kubestellar/hive:v2-latest", true, "mutable branch tag"},
-		{"ghcr.io/kubestellar/hive:v3-latest", true, "mutable branch tag"},
-		{"ghcr.io/kubestellar/hive:mk-latest", true, "personal branch tag is republished too"},
-		{"ghcr.io/kubestellar/hive:63d8902", false, "SHA pin — restart is a no-op"},
-		{"ghcr.io/kubestellar/hive:v2.1.0", false, "release tag is immutable"},
-		{"ghcr.io/kubestellar/hive:stable", true, "release channel is a retagged digest — mutable"},
-		{"ghcr.io/kubestellar/hive:candidate", true, "release channel is a retagged digest — mutable"},
-		{"ghcr.io/kubestellar/hive:edge", true, "release channel is a retagged digest — mutable"},
-		{"ghcr.io/kubestellar/hive@sha256:abc123", false, "digest pin"},
-		{"ghcr.io/kubestellar/hive", false, "no tag — do not guess"},
+		{"ghcr.io/hivecommons/hive:v2-latest", true, "mutable branch tag"},
+		{"ghcr.io/hivecommons/hive:v3-latest", true, "mutable branch tag"},
+		{"ghcr.io/hivecommons/hive:mk-latest", true, "personal branch tag is republished too"},
+		{"ghcr.io/hivecommons/hive:63d8902", false, "SHA pin — restart is a no-op"},
+		{"ghcr.io/hivecommons/hive:v2.1.0", false, "release tag is immutable"},
+		{"ghcr.io/hivecommons/hive:stable", true, "release channel is a retagged digest — mutable"},
+		{"ghcr.io/hivecommons/hive:candidate", true, "release channel is a retagged digest — mutable"},
+		{"ghcr.io/hivecommons/hive:edge", true, "release channel is a retagged digest — mutable"},
+		{"ghcr.io/hivecommons/hive@sha256:abc123", false, "digest pin"},
+		{"ghcr.io/hivecommons/hive", false, "no tag — do not guess"},
 		{"", false, "empty"},
 		// Registry ports must not be mistaken for tags.
 		{"registry.internal:5000/kubestellar/hive", false, "port, not a tag"},

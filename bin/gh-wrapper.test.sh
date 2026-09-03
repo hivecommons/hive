@@ -2,7 +2,7 @@
 # Author: RawNuke
 # Copyright (c) 2026 RawNuke. All rights reserved.
 #
-# Regression tests for kubestellar/hive#3072 and #3096: gh-wrapper --author gate.
+# Regression tests for hivecommons/hive#3072 and #3096: gh-wrapper --author gate.
 # Creates a temporary copy of the wrapper with a mock gh binary so tests
 # can run without requiring /usr/bin/gh.
 #

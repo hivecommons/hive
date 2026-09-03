@@ -655,7 +655,7 @@ because it is a deviation, though cloning is not what is under test.
 | `bin/hive-podman-preflight-ids.sh` | `pass=4 warn=0 fail=0` |
 | config + secrets staging, `dashboard.port` rewrite | `port:3002` |
 | `HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh` | `pass=8 warn=3 fail=0` |
-| `podman pull ghcr.io/kubestellar/hive:stable` | exit 0 |
+| `podman pull ghcr.io/hivecommons/hive:stable` | exit 0 |
 | four `install -Dm644` + `daemon-reload` | all four services `generated` |
 | `systemctl --user start hive-gateway.service` | **exit 0, 13s** |
 
@@ -669,7 +669,7 @@ Id=hive-gateway.service  ActiveState=active  SubState=running  Result=success
 $ curl -sf http://127.0.0.1:3001/api/health
 {"status":"ok"}
 
-hive          Up 28 seconds (healthy)  ghcr.io/kubestellar/hive:stable
+hive          Up 28 seconds (healthy)  ghcr.io/hivecommons/hive:stable
 hive-gateway  Up 17 seconds (healthy)  docker.io/library/nginx@sha256:4a73073b…
 ```
 
@@ -757,7 +757,7 @@ drop-in, `hive.container.d/10-image.conf`, which that page describes. A floating
 tag is not something you can roll back to, so pin before you need to.
 
 A **live rootless start was performed** on Fedora 44, Podman 5.8.4, cgroup v2,
-SELinux enforcing, against the real `ghcr.io/kubestellar/hive:stable` image:
+SELinux enforcing, against the real `ghcr.io/hivecommons/hive:stable` image:
 
 | | Observed |
 | --- | --- |
@@ -772,7 +772,7 @@ SELinux enforcing, against the real `ghcr.io/kubestellar/hive:stable` image:
 
 The gateway and network units were started live in the same way — Fedora 44,
 Podman 5.8.4 rootless, netavark, cgroup v2, SELinux enforcing, against the real
-`ghcr.io/kubestellar/hive:stable` and the digest-pinned `nginx:alpine`.
+`ghcr.io/hivecommons/hive:stable` and the digest-pinned `nginx:alpine`.
 `systemctl --user start hive-gateway.service` returned **0 after 11s**, having
 pulled `hive.service` up first; both containers reported `healthy`.
 

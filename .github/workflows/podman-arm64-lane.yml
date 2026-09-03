@@ -50,7 +50,7 @@ name: Podman arm64 Lane
 #
 # THE PUBLISHED-IMAGE ROUTE DOES NOT EXIST FOR A PR. #5370 proposed probing a
 # per-SHA image built from the PR head. Per-SHA tags are real
-# (ghcr.io/kubestellar/hive:<7-char-sha>) but are created ONLY by docker.yml's
+# (ghcr.io/hivecommons/hive:<7-char-sha>) but are created ONLY by docker.yml's
 # `merge` job under push == 'true', and docker.yml (a) skips its `build` job
 # entirely on `pull_request` and (b) allow-lists pushes to LONG_LIVED branches
 # ("v2 v4 mk dd") only, so a PR branch's own push run builds as a compile gate
@@ -99,9 +99,9 @@ on:
         # defaults to that: when this input is empty the lane passes no
         # --image and probe_arm64_image_startup.sh falls back to
         # HIVE_STANDALONE_IMAGE_HIVE from src/deploy/standalone-images.sh,
-        # which is ghcr.io/kubestellar/hive:stable — the RELEASE CHANNEL tag,
+        # which is ghcr.io/hivecommons/hive:stable — the RELEASE CHANNEL tag,
         # further behind v4 tip than v4-latest is. Say what actually happens.
-        description: 'Image to probe. Empty = ghcr.io/kubestellar/hive:stable on a push, or the image built from the PR checkout on a pull request.'
+        description: 'Image to probe. Empty = ghcr.io/hivecommons/hive:stable on a push, or the image built from the PR checkout on a pull request.'
         type: string
         default: ''
 
@@ -282,7 +282,7 @@ jobs:
       # Selects what the probe actually runs against, so the choice is made in
       # ONE place and reported. On a pull request that is the image built
       # above; otherwise it is the caller's --image, or the probe's own default
-      # (ghcr.io/kubestellar/hive:stable) when that is empty too.
+      # (ghcr.io/hivecommons/hive:stable) when that is empty too.
       - name: Select the image to probe
         id: select
         env:
@@ -305,7 +305,7 @@ jobs:
           else
             image=""
             local_build="false"
-            why="probe default (ghcr.io/kubestellar/hive:stable) — the published image, which is the right target on a push"
+            why="probe default (ghcr.io/hivecommons/hive:stable) — the published image, which is the right target on a push"
           fi
 
           echo "image=${image}" >>"$GITHUB_OUTPUT"
@@ -313,7 +313,7 @@ jobs:
           printf 'probing: %s\n' "${image:-<probe default>}"
           printf 'reason:  %s\n' "$why"
           {
-            printf '\n**Image under test:** `%s`\n\n' "${image:-ghcr.io/kubestellar/hive:stable}"
+            printf '\n**Image under test:** `%s`\n\n' "${image:-ghcr.io/hivecommons/hive:stable}"
             printf '%s\n' "$why"
           } >>"$GITHUB_STEP_SUMMARY"
 

@@ -4856,7 +4856,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	ns := "hive-hosted-" + id
 	// A channel IS the tag ("stable"); a branch's moving tag is "<branch>-latest".
 	imageTag := upgradeTargetTag(body.Branch)
-	image := "ghcr.io/kubestellar/hive:" + imageTag
+	image := "ghcr.io/hivecommons/hive:" + imageTag
 	// Refuse a branch name that sanitizes into something that is not a valid
 	// channel tag, rather than stranding the spoke on ImagePullBackOff behind a
 	// still-serving old ReplicaSet.
@@ -5326,7 +5326,7 @@ var (
 // a stale cached image.
 const (
 	ghcrRepoSpoke = "kubestellar/hive"
-	ghcrRepoHub   = "kubestellar/hive-hub"
+	ghcrRepoHub   = "hivecommons/hive-hub"
 
 	// hubDeploymentName / hubContainerName / hubNamespace identify the hub's own
 	// Kubernetes objects for self-upgrade. NOTE the container is named "hub", not
@@ -5434,7 +5434,7 @@ var (
 const imageBranchCacheTTL = 5 * time.Minute
 
 // discoveredImageBranches returns branch names inferred from published
-// ghcr.io/kubestellar/hive:<branch>-latest tags (cached). A tag with a '-'
+// ghcr.io/hivecommons/hive:<branch>-latest tags (cached). A tag with a '-'
 // that our sanitizer would have produced can't be reversed unambiguously, so
 // we only surface tags that round-trip: the tag minus the "-latest" suffix.
 // Slashless branches (v2, mk) round-trip exactly; slashed branches
@@ -5527,7 +5527,7 @@ func nextGitHubLink(link string) string {
 }
 
 // listLatestImageBranches queries the GHCR tag list for
-// ghcr.io/kubestellar/hive and returns the branch name of every "<x>-latest"
+// ghcr.io/hivecommons/hive and returns the branch name of every "<x>-latest"
 // tag (the "<x>" part).
 func listLatestImageBranches(client *http.Client) []string {
 	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:kubestellar/hive:pull")
@@ -5547,7 +5547,7 @@ func listLatestImageBranches(client *http.Client) []string {
 	// "<branch>-latest" tags we want may live on a later page — follow Link
 	// until exhausted (bounded) rather than reading only the first page.
 	branchSet := map[string]struct{}{}
-	next := ghcrBase + "/v2/kubestellar/hive/tags/list?n=1000"
+	next := ghcrBase + "/v2/hivecommons/hive/tags/list?n=1000"
 	const maxPages = 20 // bound: up to ~20k tags
 	for page := 0; next != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", next, nil)
@@ -6650,7 +6650,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 }
 
 // dockerWorkflowFile is the workflow that builds and pushes the container
-// images (ghcr.io/kubestellar/hive:<branch>-latest and :<short-sha>) on
+// images (ghcr.io/hivecommons/hive:<branch>-latest and :<short-sha>) on
 // every push to a tracked branch.
 const dockerWorkflowFile = "docker.yml"
 
@@ -10443,7 +10443,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <p style="margin-top:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:rgba(244,199,95,0.08);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
         <!-- Image-pulls bar chart: per-release container-image PULLS of the
-             public spoke image (ghcr.io/kubestellar/hive), bucketed by the
+             public spoke image (ghcr.io/hivecommons/hive), bucketed by the
              ACTIVE release line's release boundaries (the line the "stable"
              channel currently resolves to — v4 today, v5 after the next
              rollover, with no code change). Gauges external adoption beyond
@@ -10453,7 +10453,7 @@ const dashboardHTML = `<!DOCTYPE html>
              which also fills the per-line mini charts in the
              "Latest available images" rows. Hidden until there is data. -->
         <div id="image-pulls-spark" style="display:none;margin-top:8px"
-             title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/kubestellar/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
+             title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/hivecommons/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
@@ -15646,7 +15646,7 @@ const dashboardHTML = `<!DOCTYPE html>
        no frontend change — and (b) a mini per-line chart in each
        "Latest available images" row from data.lines. One bar per release,
        newest on the right. Gauges external adoption of the public spoke image
-       (ghcr.io/kubestellar/hive) beyond the hosted fleet. Honest labelling:
+       (ghcr.io/hivecommons/hive) beyond the hosted fleet. Honest labelling:
        derived from GitHub's cumulative download counter (pulls, NOT unique
        downloads; GitHub publishes one package-wide counter, not per-tag). Cold
        start (fewer than two release snapshots → no window can be closed yet)

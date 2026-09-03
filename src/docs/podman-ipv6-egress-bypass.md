@@ -66,7 +66,7 @@ The IPv6 nat table is empty. Not misconfigured — empty.
 | Network backend | netavark |
 | cgroups | v2 |
 | Kernel / host | 7.1.4-200.fc44.x86_64, Aurora 44.20260815.1 (Kinoite), SELinux enabled |
-| Image | `ghcr.io/kubestellar/hive:stable`, digest `sha256:8f1d4da08bb4439f5bc3da91e20161cb58483567d0f1e53e570675ad4d334d4b` |
+| Image | `ghcr.io/hivecommons/hive:stable`, digest `sha256:8f1d4da08bb4439f5bc3da91e20161cb58483567d0f1e53e570675ad4d334d4b` |
 | Architecture | `amd64` only |
 
 Container network, created for this run and removed afterwards:
@@ -93,7 +93,7 @@ podman run -d --name hive-4319-endpoint --network hive-4319-net \
 
 # 3. Hive, with the gate installed normally.
 podman run -d --name hive-4319-gate --network hive-4319-net --cap-add NET_ADMIN \
-  -v ./hive.yaml:/etc/hive/hive.yaml:ro,Z ghcr.io/kubestellar/hive:stable
+  -v ./hive.yaml:/etc/hive/hive.yaml:ro,Z ghcr.io/hivecommons/hive:stable
 
 # 4. Read the REDIRECT counter, drive traffic from the AGENT uid, read it again.
 podman exec hive-4319-gate iptables-nft -t nat -L HIVE_PROXY -n -v | awk '/REDIRECT/{print $1}'

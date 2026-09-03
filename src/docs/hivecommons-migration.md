@@ -46,7 +46,7 @@ update all applicable locations:
 ## Current known gaps
 
 - The v4 line has dual-publish documentation, but many examples still use only
-  `github.com/kubestellar/hive` and `ghcr.io/kubestellar/hive`.
+  `github.com/kubestellar/hive` and `ghcr.io/hivecommons/hive`.
 - The v5 edge workflow needs the same mirror coverage before v5 is presented as
   the next-generation line.
 - No package-name deprecation date is set; `kubestellar` references remain

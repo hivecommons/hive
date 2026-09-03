@@ -30,7 +30,7 @@ on the same port.
 - `git`, `openssl`, and a GitHub token (PAT or App) for the org you want the hive to work on
 
 ```bash
-git clone https://github.com/kubestellar/hive.git
+git clone https://github.com/hivecommons/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
@@ -94,7 +94,7 @@ preflights, configuration, the four Quadlet units, the boot wiring, and a final
 check that the **gateway** answers on the published port before it returns.
 
 ```bash
-git clone https://github.com/kubestellar/hive.git
+git clone https://github.com/hivecommons/hive.git
 cd hive
 
 export HIVE_DEPLOY_RUNTIME=podman
@@ -132,7 +132,7 @@ The block below is **rootless**. For rootful, set `CONF=/etc/hive`, drop the
 # checked nothing — they default to Docker and skip.
 export HIVE_DEPLOY_RUNTIME=podman
 
-git clone https://github.com/kubestellar/hive.git
+git clone https://github.com/hivecommons/hive.git
 cd hive
 
 # Engine, root mode, cgroups; then subordinate IDs, graphroot, networking.
@@ -170,7 +170,7 @@ HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh
 
 # Pull before starting. The generated ExecStart pulls a missing image itself and
 # that pull is spent inside TimeoutStartSec; the Hive image is ~3.8GB.
-podman pull ghcr.io/kubestellar/hive:stable
+podman pull ghcr.io/hivecommons/hive:stable
 
 # All four Quadlet units — the gateway will not generate without the network it
 # names — plus the plain units that wire the stack to boot (#4478).
@@ -236,7 +236,7 @@ To build from source instead of pulling the pre-built image, build and tag it
 under the name the unit already names, then start as above:
 
 ```bash
-podman build -t ghcr.io/kubestellar/hive:stable -f src/Dockerfile .
+podman build -t ghcr.io/hivecommons/hive:stable -f src/Dockerfile .
 ```
 
 Full install detail — unit search paths, the traps behind each step above, boot
@@ -546,7 +546,7 @@ running on your own machine:
 
 ```bash
 brew install just gh
-git clone https://github.com/kubestellar/hive && cd hive
+git clone https://github.com/hivecommons/hive && cd hive
 just contribute-setup claude
 just contribute-hive
 ```

@@ -681,7 +681,7 @@ type HeartbeatPayload struct {
 	// in-cluster from the Deployment spec. GitHash says which commit the
 	// BINARY was built from; ImageRef says which TAG the deployment tracks —
 	// and only the tag reveals a hive pinned to an immutable
-	// ghcr.io/kubestellar/hive:<sha> that can never receive a rolling upgrade.
+	// ghcr.io/hivecommons/hive:<sha> that can never receive a rolling upgrade.
 	// The hub cannot read this itself for firewalled spokes it reaches only by
 	// heartbeat, which is why it rides the payload. Empty when the spoke is
 	// not running in-cluster or the read failed — never a guess.
@@ -2224,7 +2224,7 @@ type HeartbeatResponse struct {
 	LatestSHA  string `json:"latest_sha,omitempty"`
 	LatestTag  string `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
-	// ghcr.io/kubestellar/hive:<SwitchToTag> and restart. Used for branch
+	// ghcr.io/hivecommons/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
 	// in-cluster RBAC (hive-self-upgrade role) to patch its own deployment.
 	SwitchToTag string `json:"switch_to_tag,omitempty"`

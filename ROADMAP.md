@@ -42,21 +42,21 @@ issues. The three pillars:
 - **Reviewer lane.** A dedicated agent role with authority to adjudicate
   escalated (`needs-human`) PRs, so the human-escalation queue has an
   owner instead of being a one-way door
-  ([#5480](https://github.com/kubestellar/hive/issues/5480)). A first
+  ([#5480](https://github.com/hivecommons/hive/issues/5480)). A first
   implementation is merged on `v5`
-  ([#5485](https://github.com/kubestellar/hive/pull/5485)). Per
+  ([#5485](https://github.com/hivecommons/hive/pull/5485)). Per
   governance, reviewer-lane output is advisory where a human-approval
   requirement exists — it never substitutes for one.
 - **Formal verification of protocol invariants.** Promela/Spin models of
   protocol-shaped subsystems live in
-  [`src/formal/`](https://github.com/kubestellar/hive/tree/v5/src/formal)
+  [`src/formal/`](https://github.com/hivecommons/hive/tree/v5/src/formal)
   on `v5`, wired as an opt-in quality-lane capability gated at ACMM L5
-  ([#5512](https://github.com/kubestellar/hive/issues/5512),
-  [#5518](https://github.com/kubestellar/hive/pull/5518)). The approach
+  ([#5512](https://github.com/hivecommons/hive/issues/5512),
+  [#5518](https://github.com/hivecommons/hive/pull/5518)). The approach
   has already paid for itself: the first model proved a liveness violation
   in the escalation ledger — a PR could become red, open, and excluded
-  from every lane at once ([#5511](https://github.com/kubestellar/hive/pull/5511)) —
-  and the fix ([#5515](https://github.com/kubestellar/hive/pull/5515))
+  from every lane at once ([#5511](https://github.com/hivecommons/hive/pull/5511)) —
+  and the fix ([#5515](https://github.com/hivecommons/hive/pull/5515))
   flipped the violated properties to holding across millions of states.
   Goal: changes to modeled protocols update the corresponding model in
   the same PR.

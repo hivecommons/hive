@@ -68,13 +68,13 @@ func TestValidateImageTagAcceptsValid(t *testing.T) {
 }
 
 func TestValidateImageRef(t *testing.T) {
-	if err := validateImageRef("ghcr.io/kubestellar/hive-hub:target1"); err == nil {
+	if err := validateImageRef("ghcr.io/hivecommons/hive-hub:target1"); err == nil {
 		t.Error("validateImageRef accepted the outage image reference, want refusal")
 	}
-	if err := validateImageRef("ghcr.io/kubestellar/hive-hub:f45d2e9"); err != nil {
+	if err := validateImageRef("ghcr.io/hivecommons/hive-hub:f45d2e9"); err != nil {
 		t.Errorf("validateImageRef(valid SHA ref) = %v, want nil", err)
 	}
-	if err := validateImageRef("ghcr.io/kubestellar/hive:v2-latest"); err != nil {
+	if err := validateImageRef("ghcr.io/hivecommons/hive:v2-latest"); err != nil {
 		t.Errorf("validateImageRef(valid channel ref) = %v, want nil", err)
 	}
 	// A registry port must not be mistaken for a tag.
@@ -82,7 +82,7 @@ func TestValidateImageRef(t *testing.T) {
 		t.Error("validateImageRef accepted an untagged image, want refusal")
 	}
 	// Digest pins are already fully resolved.
-	if err := validateImageRef("ghcr.io/kubestellar/hive-hub@sha256:" + strings.Repeat("a", 64)); err != nil {
+	if err := validateImageRef("ghcr.io/hivecommons/hive-hub@sha256:" + strings.Repeat("a", 64)); err != nil {
 		t.Errorf("validateImageRef(digest pin) = %v, want nil", err)
 	}
 	if err := validateImageRef(""); err == nil {
@@ -172,9 +172,9 @@ func TestHubUpgradeStateSurfacesFault(t *testing.T) {
 // re-sends the same doomed target on every heartbeat, forever.
 func TestSwitchImageSelfRefusesBogusTag(t *testing.T) {
 	for _, image := range []string{
-		"ghcr.io/kubestellar/hive:target1",
-		"ghcr.io/kubestellar/hive:$target",
-		"ghcr.io/kubestellar/hive:",
+		"ghcr.io/hivecommons/hive:target1",
+		"ghcr.io/hivecommons/hive:$target",
+		"ghcr.io/hivecommons/hive:",
 		"",
 	} {
 		err := SwitchImageSelf(slog.Default(), image)

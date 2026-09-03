@@ -185,7 +185,7 @@ qualification result.
 | Kernel / host | `7.0.12-201.fc44.x86_64`, Bluefin 44.20260811 (Silverblue) |
 | Policy packages | `container-selinux-2.250.0-1.fc44`, `selinux-policy-44.5-1.fc44` |
 | Audit | `audit-4.2.1-1.fc44`, `auditd` active; log read via `sudo ausearch` |
-| Image | `ghcr.io/kubestellar/hive:v4-latest`, digest `sha256:8f6b63a796fadbe05000e48445ac85b44f9b7c459fc81a82a5deef64abe05275` |
+| Image | `ghcr.io/hivecommons/hive:v4-latest`, digest `sha256:8f6b63a796fadbe05000e48445ac85b44f9b7c459fc81a82a5deef64abe05275` |
 | Architecture | `amd64` only |
 | coreutils | GNU 9.10 at `/usr/bin`, **uutils 0.9.0 ahead of it on `PATH`** |
 

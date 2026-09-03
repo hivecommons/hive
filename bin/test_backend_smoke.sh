@@ -208,7 +208,7 @@ wss.on('connection', (ws) => {
     } else if (msg.type === 'ready' && !assigned) {
       assigned = true;
       send({ type: 'task_assign', task_id: 'smoke-1', task_gen: 1, kind: 'issue',
-             repo: 'kubestellar/hive', number: 0, title: 'backend smoke', prompt });
+             repo: 'hivecommons/hive', number: 0, title: 'backend smoke', prompt });
     } else if (msg.type === 'ping') {
       send({ type: 'pong' });
     } else if (msg.type === 'task_complete' || msg.type === 'task_failed') {

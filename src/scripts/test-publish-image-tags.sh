@@ -39,13 +39,13 @@ chmod +x "$tmp/bin/docker"
 run_case() {
   local mode=$1 run=$2 capture=$3
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
-    "$publisher" ghcr.io/kubestellar/hive "$tmp/digests" v4 abcdef123456 "$run" v4 false
+    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v4 abcdef123456 "$run" v4 false
 }
 
 run_custom_case() {
   local mode=$1 run=$2 capture=$3 branch=$4 include_latest=$5
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
-    "$publisher" ghcr.io/kubestellar/hive-hub "$tmp/digests" "$branch" abcdef123456 "$run" v4 "$include_latest"
+    "$publisher" ghcr.io/hivecommons/hive-hub "$tmp/digests" "$branch" abcdef123456 "$run" v4 "$include_latest"
 }
 
 capture="$tmp/create-new"

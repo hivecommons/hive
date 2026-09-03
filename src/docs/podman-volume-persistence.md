@@ -100,7 +100,7 @@ The generated `ExecStart` carries `--rm`, so **the container is deleted every
 time the unit stops.** That makes the volume the only thing that persists, which
 is worth stating plainly rather than leaving as an inference.
 
-Live, on a real `ghcr.io/kubestellar/hive:stable` started through
+Live, on a real `ghcr.io/hivecommons/hive:stable` started through
 `hive.container` and `hive-data.volume`. Hive wrote its own state — `hive-id`,
 `hive-state.json`, `hive.yaml.runtime`, `proxy-ca.pem`, `beads/`, `agents/` — and
 a sentinel was planted alongside it:
@@ -254,7 +254,7 @@ is that the file is missing — `podman run` fails outright on a missing
 | OCI runtime | crun 1.28 |
 | Kernel / host | `7.1.4-200.fc44.x86_64`, Aurora 44.20260815.1 (Kinoite) |
 | Policy packages | `container-selinux-2.250.0-1.fc44`, `selinux-policy-44.5-1.fc44` |
-| Image | `ghcr.io/kubestellar/hive:stable` |
+| Image | `ghcr.io/hivecommons/hive:stable` |
 | Architecture | `amd64` only |
 | coreutils | GNU 9.10 at `/usr/bin/stat`, **not** shadowed by uutils on this host |
 | `subuid`/`subgid` | `524288:65536`, so container `1001:1000` is host `525288:525287` |
@@ -313,7 +313,7 @@ wrong way round.
 ```sh
 # Stop condition: this reports nothing unless the host is enforcing.
 getenforce                                    # must print Enforcing
-podman pull ghcr.io/kubestellar/hive:stable   # the probe does not pull
+podman pull ghcr.io/hivecommons/hive:stable   # the probe does not pull
 
 src/deploy/probe_podman_volume_persistence.sh
 ```

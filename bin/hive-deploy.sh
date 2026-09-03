@@ -202,7 +202,7 @@ fi
 
 # Sync hive-project.yaml (code-managed config) — safe to overwrite since
 # runtime customizations (sidebar, repos, agents) live in hive-runtime.yaml
-HIVE_PROJECT="${HIVE_PROJECT_CONFIG_SRC:-$HIVE_REPO/examples/kubestellar/hive-project.yaml}"
+HIVE_PROJECT="${HIVE_PROJECT_CONFIG_SRC:-$HIVE_REPO/examples/hivecommons/hive-project.yaml}"
 HIVE_PROJECT_INSTALLED="/etc/hive/hive-project.yaml"
 if [ -f "$HIVE_PROJECT" ] && ! cmp -s "$HIVE_PROJECT" "$HIVE_PROJECT_INSTALLED" 2>/dev/null; then
   sudo mkdir -p /etc/hive

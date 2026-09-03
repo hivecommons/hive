@@ -31,7 +31,7 @@ func TestDefinitionSourceFromURL(t *testing.T) {
 		},
 		{
 			name:  "raw url",
-			url:   "https://raw.githubusercontent.com/kubestellar/hive/main/agents/scanner.yaml",
+			url:   "https://raw.githubusercontent.com/hivecommons/hive/main/agents/scanner.yaml",
 			owner: "kubestellar", repo: "hive", ref: "main", path: "agents/scanner.yaml",
 		},
 		{name: "not a file url", url: "https://github.com/kubestellar/hive", wantErr: true},
@@ -109,13 +109,13 @@ func TestAgentImportURLPolicy(t *testing.T) {
 		},
 		{
 			name:          "raw github one-shot accepted",
-			importURL:     "https://raw.githubusercontent.com/kubestellar/hive/main/agents/raw-plain.yaml?name=raw-one-shot",
+			importURL:     "https://raw.githubusercontent.com/hivecommons/hive/main/agents/raw-plain.yaml?name=raw-one-shot",
 			wantStatus:    http.StatusOK,
 			wantAgentName: "raw-one-shot",
 		},
 		{
 			name:          "raw github keep-linked accepted",
-			importURL:     "https://raw.githubusercontent.com/kubestellar/hive/main/agents/raw-linked.yaml?name=raw-linked",
+			importURL:     "https://raw.githubusercontent.com/hivecommons/hive/main/agents/raw-linked.yaml?name=raw-linked",
 			keepLinked:    true,
 			wantStatus:    http.StatusOK,
 			wantLinked:    true,

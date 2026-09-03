@@ -12,7 +12,7 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/kubestellar/hive-contributor:latest")
+hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:latest")
 hive_hub := env("HIVE_HUB", "wss://hive.kubestellar.io/contribute")
 config_dir := env("HOME") + "/.config/hive"
 # Container runtime for containerized mode. Empty = auto-detect (docker, then
@@ -1108,7 +1108,7 @@ contribute-hive backend="" mode="docker": check-version
       # clone from a prior task, 'cd' into it"), so an agent that starts there
       # reasonably concludes it is already in its checkout and works in place.
       #
-      # Observed live on kubestellar/hive#4167 with HIVE_WORKSPACE_DIR correctly
+      # Observed live on hivecommons/hive#4167 with HIVE_WORKSPACE_DIR correctly
       # set and its directory present: agy never ran `gh repo fork` at all, and
       # edited the relay's own source tree instead. An earlier task branch-
       # switched the checkout out from under the running relay.
@@ -1486,7 +1486,7 @@ contribute-hive backend="" mode="docker": check-version
       # ^ HIVE_SESSION uses ${VAR+...} (no colon) on purpose: an explicit
       #   empty string is the relay's opt-out of session labeling and must be
       #   forwarded, while an unset variable must stay unset so the relay
-      #   defaults the session to the backend name (kubestellar/hive#5605).
+      #   defaults the session to the backend name (hivecommons/hive#5605).
 
       echo "Container: ${CONTAINER_NAME}"
       echo "Waiting for CLI session to start..."
@@ -1670,7 +1670,7 @@ contribute-stop:
 #        just contribute-k8s my-namespace "" v4        (pin a specific image tag, #2549)
 #
 # Unlike the earlier config-only generator, this now ALSO emits a Deployment that
-# actually RUNS the contributor relay in HEADLESS mode (kubestellar/hive#2660,
+# actually RUNS the contributor relay in HEADLESS mode (hivecommons/hive#2660,
 # #2549): a headless pod has no TTY, so it sets CONTRIBUTOR_MODE=headless (the
 # interactive tmux path would stall forever waiting on a prompt nobody can type
 # into). Applying the output results in a running contributor, not three inert
@@ -1687,7 +1687,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     readonly ENV_FILE="{{config_dir}}/contributor.env"
     readonly GH_AUTH_FILE="{{config_dir}}/gh-auth.env"
     # Published multi-arch image (.github/workflows/docker.yml build-contributor).
-    readonly IMAGE_REPO="ghcr.io/kubestellar/hive-contributor"
+    readonly IMAGE_REPO="ghcr.io/hivecommons/hive-contributor"
     # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.sh.
     readonly MODE_HEADLESS="headless"
     # Where the headless relay writes its coarse lifecycle state as JSON
@@ -1831,8 +1831,8 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
           # is UNVERIFIED — shipping a mechanism that may sign the pod out
           # mid-task would recreate this bug with extra steps. Refuse honestly
           # and point at the paths that are verified. Plumbing these is
-          # tracked in kubestellar/hive#5103.
-          CRED_MISSING="${BACKEND} authenticates via an OAuth state directory whose behavior in an unattended pod is unverified (kubestellar/hive#5103); use 'just contribute-hive ${BACKEND}' (container) or a claude/litellm/goose pod instead."
+          # tracked in hivecommons/hive#5103.
+          CRED_MISSING="${BACKEND} authenticates via an OAuth state directory whose behavior in an unattended pod is unverified (hivecommons/hive#5103); use 'just contribute-hive ${BACKEND}' (container) or a claude/litellm/goose pod instead."
           ;;
       esac
     fi
@@ -1845,7 +1845,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
       else
         echo "ERROR: ${CRED_MISSING}" >&2
         echo "       Refusing to emit a workload whose agent CLI cannot authenticate" >&2
-        echo "       (kubestellar/hive#5103). Set HIVE_K8S_ALLOW_MISSING_BACKEND_CREDENTIALS=1" >&2
+        echo "       (hivecommons/hive#5103). Set HIVE_K8S_ALLOW_MISSING_BACKEND_CREDENTIALS=1" >&2
         echo "       to emit anyway if you provide the credential out of band." >&2
         exit 1
       fi
@@ -1938,7 +1938,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     YAML+="# by cluster-scoped operators/backups. This is materially more exposed"$'\n'
     YAML+="# than a 0600 file on a laptop. Revoke any time with: gh auth logout (or"$'\n'
     YAML+="# revoke the token in GitHub settings). Gating the credential on explicit"$'\n'
-    YAML+="# task acceptance is tracked in kubestellar/hive#2537 and is NOT solved"$'\n'
+    YAML+="# task acceptance is tracked in hivecommons/hive#2537 and is NOT solved"$'\n'
     YAML+="# here — this path reuses the existing Secret rather than inventing new"$'\n'
     YAML+="# long-lived credential plumbing."$'\n'
     YAML+="apiVersion: apps/v1"$'\n'

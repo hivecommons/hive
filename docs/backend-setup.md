@@ -32,7 +32,7 @@ If you need one of the excluded backends, either choose a supported headless
 backend, or run it attended on the container or local path
 (`just contribute-hive <backend>`), where an operator can complete an
 interactive sign-in once. Tracking issue:
-[#5406](https://github.com/kubestellar/hive/issues/5406). Whether these backends
+[#5406](https://github.com/hivecommons/hive/issues/5406). Whether these backends
 can run headless at all remains an open question, so the allowlist is a
 deliberate gate rather than an oversight.
 

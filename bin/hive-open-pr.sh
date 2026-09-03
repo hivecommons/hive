@@ -20,7 +20,7 @@
 #   # hive resolves the TARGET REPOSITORY's default branch when it opens the PR.
 #   # Do not pass --base main "to be safe" — that is exactly the bug that based
 #   # every PR on main in repos whose default branch is not main
-#   # (kubestellar/hive#4928). Pass --base only to target a non-default branch
+#   # (hivecommons/hive#4928). Pass --base only to target a non-default branch
 #   # deliberately (a release line, a stacked PR).
 #
 # On success it prints the request path and returns 0. The PR opens

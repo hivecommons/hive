@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression coverage for kubestellar/hive#2833.
+# Regression coverage for hivecommons/hive#2833.
 #
 # Run: bash bin/contributor-agent.test.sh
 
