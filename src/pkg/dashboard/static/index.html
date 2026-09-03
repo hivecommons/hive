@@ -15676,6 +15676,27 @@ function burnAreaChart() {
       const targetRepo = _acmmSelectedRepo || (repos.length === 1 ? repos[0].repo : null);
 
       let created = 0, failed = 0, skipped = 0;
+      // #5873: every failure used to collapse into a bare `failed++` while the
+      // server's response body — which carries the actual GitHub error, e.g.
+      // "410 Issues has been disabled in this repository" — was discarded
+      // unread. The summary then appended fixed template text about the acmm +
+      // ai-fix-requested labels, which reads as a diagnosis and sent operators
+      // chasing labels that were never the problem. Collect the real reason
+      // per failing repo:criterion instead, deduped, exactly as the
+      // single-issue path already shows it.
+      const failures = new Map(); // reason -> [repo:criterion, ...]
+      const recordFailure = async (where, r) => {
+        failed++;
+        let reason;
+        if (r instanceof Response) {
+          try { reason = (await r.text()).trim(); } catch { /* body unreadable */ }
+          reason = reason || ('HTTP ' + r.status + ' ' + r.statusText);
+        } else {
+          reason = 'network error: ' + (r && r.message ? r.message : r);
+        }
+        if (!failures.has(reason)) failures.set(reason, []);
+        failures.get(reason).push(where);
+      };
       acmmShowDialog('Creating Issues...', '<p id="acmm-batch-progress" class="text-base">0/' + criteria.length + ' created...</p>');
 
       for (const c of criteria) {
@@ -15690,8 +15711,8 @@ function burnAreaChart() {
             if (r.ok) {
               acmmRememberIssue(issueKey, await r.json());
               created++;
-            } else { failed++; }
-          } catch { failed++; }
+            } else { await recordFailure(issueKey, r); }
+          } catch (e) { await recordFailure(targetRepo + ':' + c.id, e); }
         } else {
           for (const rr of repos) {
             const issueKey = rr.repo + ':' + c.id;
@@ -15706,16 +15727,25 @@ function burnAreaChart() {
                 if (r.ok) {
                   acmmRememberIssue(issueKey, await r.json());
                   created++;
-                } else { failed++; }
-              } catch { failed++; }
+                } else { await recordFailure(issueKey, r); }
+              } catch (e) { await recordFailure(issueKey, e); }
             }
           }
         }
         const prog = document.getElementById('acmm-batch-progress');
         if (prog) prog.textContent = created + '/' + criteria.length + ' created' + (failed > 0 ? ' (' + failed + ' failed)' : '') + (skipped > 0 ? ' (' + skipped + ' skipped)' : '') + '...';
       }
+      // The label note is a description of what a SUCCESSFUL create did, not a
+      // diagnosis — show it only when something was actually created (#5873).
       const labelNote = acmmEffectiveTracker() === 'linear' ? ' in Linear.' : ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.';
-      acmmShowDialog('Issues Created', '<p class="text-base">' + created + ' issue(s) created' + (failed > 0 ? ', ' + failed + ' failed' : '') + (skipped > 0 ? ', ' + skipped + ' already existed' : '') + labelNote + '</p>');
+      let html = '<p class="text-base">' + created + ' issue(s) created' + (skipped > 0 ? ', ' + skipped + ' already existed' : '') + (created > 0 ? labelNote : '.') + '</p>';
+      if (failed > 0) {
+        html += '<p class="text-base" style="margin-top:8px">' + failed + ' failed:</p>';
+        for (const [reason, wheres] of failures) {
+          html += '<p class="error-note" style="margin-top:6px">' + escapeHtml(reason) + '<br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(wheres.join(', ')) + '</span></p>';
+        }
+      }
+      acmmShowDialog(failed > 0 ? 'Issues Created (' + failed + ' failed)' : 'Issues Created', html);
     }
 
     function acmmShowLevelDialog(level, repoName) {
