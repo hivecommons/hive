@@ -11,6 +11,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -76,6 +77,7 @@ var wsUpgrader = websocket.Upgrader{
 
 type ContributorConnection struct {
 	ws              *websocket.Conn
+	connID          string
 	profile         *ContributorProfile
 	cliBackend      string
 	model           string
@@ -275,13 +277,16 @@ type WSMessage struct {
 	// probing (e.g. token_refresh, task_unavailable_reasons). Additive; old
 	// clients ignore the unknown field.
 	ServerCapabilities []string `json:"server_capabilities,omitempty"`
-	Role               string   `json:"role,omitempty"`
-	ContribLabels      []string `json:"contributor_labels,omitempty"`
-	Status             string   `json:"status,omitempty"`
-	Result             string   `json:"result,omitempty"`
-	Summary            string   `json:"summary,omitempty"`
-	TmuxOutput         []string `json:"tmux_output,omitempty"`
-	AcceptedModels     []string `json:"accepted_models,omitempty"`
+	// ConnectionID is the hub's per-socket id, advertised on auth_ok so relay
+	// close logs can be correlated with hub disconnect/cleanup logs for #5090.
+	ConnectionID   string   `json:"connection_id,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	ContribLabels  []string `json:"contributor_labels,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	Result         string   `json:"result,omitempty"`
+	Summary        string   `json:"summary,omitempty"`
+	TmuxOutput     []string `json:"tmux_output,omitempty"`
+	AcceptedModels []string `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -3272,6 +3277,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			// deliberately leaving kubestellar/hive#5151's accounting untouched).
 			if abandonedTask != nil && h.taskReadoptedByLiveConnection(contributor, abandonedTask) {
 				h.logger.Info("[contribute-ws] disconnect release skipped: task already re-adopted on a live connection",
+					"id", connID,
 					"username", contributor.profile.GitHubUsername,
 					"task", abandonedTask.TaskID,
 					"repo", abandonedTask.Repo,
@@ -3282,6 +3288,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 			if abandonedTask != nil {
 				h.logger.Warn("[contribute-ws] task released on disconnect",
+					"id", connID,
 					"username", contributor.profile.GitHubUsername,
 					"task", abandonedTask.TaskID,
 				)
@@ -3325,7 +3332,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.role, contributor.cliBackend, contributor.model,
 					contributor.reasoningEffort, taskDescOf(abandonedTask))
 			}
-			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
+			h.logger.Info("[contribute-ws] disconnected", "id", connID, "username", contributor.profile.GitHubUsername)
 			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
 		}
 		_ = conn.Close()
@@ -3335,7 +3342,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				h.logger.Warn("[contribute-ws] read error", "id", connID, "error", err)
+				code, reason, source := websocketCloseErrorDetails(err)
+				h.logger.Warn("[contribute-ws] read error",
+					"id", connID,
+					"username", contributorUsername(contributor),
+					"close_source", source,
+					"close_code", code,
+					"close_reason", reason,
+					"error", err)
 			}
 			return
 		}
@@ -3470,6 +3484,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 			contributor = &ContributorConnection{
 				ws:              conn,
+				connID:          connID,
 				profile:         profile,
 				cliBackend:      msg.CLIBackend,
 				model:           msg.Model,
@@ -3523,12 +3538,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// probing. Additive — an existing client ignores these unknown fields.
 				ProtocolVersion:    contributorProtocolVersion,
 				ServerCapabilities: serverCapabilities(),
+				ConnectionID:       connID,
 			}); err != nil {
 				h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 				return
 			}
 
 			h.logger.Info("[contribute-ws] authenticated",
+				"id", connID,
 				"username", profile.GitHubUsername,
 				"tier", profile.TrustTier,
 				"cli", msg.CLIBackend,
@@ -4184,7 +4201,12 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 		c.mu.Unlock()
 
 		if time.Since(lastPong) > wsHeartbeatTimeout {
-			h.logger.Info("[contribute-ws] heartbeat timeout", "username", c.profile.GitHubUsername)
+			h.logger.Info("[contribute-ws] heartbeat timeout",
+				"id", c.connID,
+				"username", c.profile.GitHubUsername,
+				"last_pong_age_ms", time.Since(lastPong).Milliseconds(),
+				"heartbeat_timeout_ms", wsHeartbeatTimeout.Milliseconds(),
+			)
 			closeWithReason(c.ws, websocket.CloseGoingAway, "heartbeat timeout: no pong within the heartbeat window")
 			return
 		}
@@ -4192,7 +4214,11 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 		h.maybeRefreshToken(c)
 
 		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
-			h.logger.Info("[contribute-ws] heartbeat ping failed, closing", "username", c.profile.GitHubUsername)
+			h.logger.Info("[contribute-ws] heartbeat ping failed, closing",
+				"id", c.connID,
+				"username", c.profile.GitHubUsername,
+				"error", err,
+			)
 			closeWithReason(c.ws, websocket.CloseGoingAway, "heartbeat ping write failed")
 			return
 		}
@@ -4205,7 +4231,7 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 		// heartbeat-timeout check remains the authority on when to hang up.
 		if err := writeProtocolPing(c.ws); err != nil {
 			h.logger.Debug("[contribute-ws] protocol ping failed",
-				"username", c.profile.GitHubUsername, "error", err)
+				"id", c.connID, "username", c.profile.GitHubUsername, "error", err)
 		}
 	}
 }
@@ -5866,6 +5892,25 @@ func writeProtocolPing(conn *websocket.Conn) error {
 		nil,
 		time.Now().Add(wsProtocolPingDeadline),
 	)
+}
+
+func websocketCloseErrorDetails(err error) (code int, reason, source string) {
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		source = "close-frame"
+		if closeErr.Code == websocket.CloseAbnormalClosure {
+			source = "abnormal-no-close-frame"
+		}
+		return closeErr.Code, closeErr.Text, source
+	}
+	return 0, "", "read-error"
+}
+
+func contributorUsername(c *ContributorConnection) string {
+	if c == nil || c.profile == nil {
+		return ""
+	}
+	return c.profile.GitHubUsername
 }
 
 // closeWithReason closes a contributor socket after telling the client WHY.
