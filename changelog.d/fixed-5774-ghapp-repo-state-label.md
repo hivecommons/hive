@@ -1,0 +1,1 @@
+- Clarified fleet GitHub App hover labels for repo-scope and repo-transfer failures so they no longer appear as generic permission shortages.
