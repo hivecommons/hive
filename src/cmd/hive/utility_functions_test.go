@@ -36,8 +36,8 @@ func TestActionableIssueRefPinsGitHubAndWorksourceIdentity(t *testing.T) {
 		issue github.Issue
 		want  string
 	}{
-		{"github", github.Issue{Repo: "kubestellar/hive", Number: 42, ExternalID: "42"}, "kubestellar/hive#42"},
-		{"linear", github.Issue{Repo: "kubestellar/hive", SourceType: "linear", ExternalID: "ENG-7"}, "kubestellar/hive!ENG-7"},
+		{"github", github.Issue{Repo: "hivecommons/hive", Number: 42, ExternalID: "42"}, "hivecommons/hive#42"},
+		{"linear", github.Issue{Repo: "hivecommons/hive", SourceType: "linear", ExternalID: "ENG-7"}, "hivecommons/hive!ENG-7"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

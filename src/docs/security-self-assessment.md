@@ -27,7 +27,7 @@ writing) wherever a specific mechanism is asserted.
 | | |
 |---|---|
 | Assessment Stage | Complete |
-| Software | [kubestellar/hive](https://github.com/hivecommons/hive) |
+| Software | [hivecommons/hive](https://github.com/hivecommons/hive) |
 | Security Provider | No — Hive is not itself a security product. It is an agent-orchestration platform whose core value proposition includes constraining the blast radius of the AI agents it runs; see [Overview](#overview) below. |
 | Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `src/bin/`, 45 scripts per [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
 | SBOM | Not currently generated. Container image builds explicitly disable provenance/SBOM attestations (`sbom: false` in `.github/workflows/docker.yml:134,177,349,454`, citing issue #3760 as the reason). This is a known gap — see [Open questions](#open-questions--not-yet-assessed). |
@@ -333,7 +333,7 @@ project-level compliance signals:
 
 ### Communication channels
 
-- **Internal**: GitHub issues/PRs/discussions on the `kubestellar/hive`
+- **Internal**: GitHub issues/PRs/discussions on the `hivecommons/hive`
   repository; the project is largely maintained by autonomous agent fleets
   operating under the same ACMM framework the software implements
   (i.e., Hive is substantially self-hosting — its own maintenance PRs are

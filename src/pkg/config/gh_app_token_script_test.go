@@ -286,12 +286,12 @@ func TestScopedMintRejectsUnknownTier(t *testing.T) {
 // Repo scoping narrows a tier token to named repositories; the list has to
 // reach GitHub as a JSON array.
 func TestScopedMintPassesRepositoryRestriction(t *testing.T) {
-	run := runGHAppTokenScript(t, true, "--scoped", "advisor", "kubestellar/hive,kubestellar/ui")
+	run := runGHAppTokenScript(t, true, "--scoped", "advisor", "hivecommons/hive,kubestellar/ui")
 
 	if run.exitCode != 0 {
 		t.Fatalf("exit=%d stderr=%q", run.exitCode, run.stderr)
 	}
-	want := `{"permissions":{"issues":"read","metadata":"read"},"repositories":["kubestellar/hive","kubestellar/ui"]}`
+	want := `{"permissions":{"issues":"read","metadata":"read"},"repositories":["hivecommons/hive","kubestellar/ui"]}`
 	if run.scopedBody != want {
 		t.Fatalf("request body =\n  %s\nwant\n  %s", run.scopedBody, want)
 	}

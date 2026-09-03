@@ -4607,7 +4607,7 @@ func main() {
 			// the in-cluster K8s API — the pod has no kubectl binary, but its
 			// SA holds the hive-self-upgrade role (patch on deployment/hive).
 			// K8s then rolls the pod onto the new tag.
-			image := "ghcr.io/kubestellar/hive:" + tag
+			image := "ghcr.io/hivecommons/hive:" + tag
 			if err := hub.SwitchImageSelf(logger, image); err != nil {
 				logger.Warn("branch switch via heartbeat failed", "tag", tag, "image", image, "error", err)
 				return
@@ -6923,7 +6923,7 @@ func loginScanMatch(backend, paneText string, compiled []*regexp.Regexp) *regexp
 	// is on screen: that is not a login problem, and pausing the agent for it
 	// cancels the trust-prompt watcher that would answer it — the deadlock that
 	// kept copilot agents "sitting at login prompt" through every operator
-	// re-login (kubestellar/hive, 2026-08-22). The watcher answers the modal
+	// re-login (hivecommons/hive, 2026-08-22). The watcher answers the modal
 	// within seconds; if a REAL login prompt follows, the next detector tick
 	// sees it on a clean pane.
 	if agent.PaneShowsBlockingPrompt(backend, paneText) {
@@ -6991,7 +6991,7 @@ func scanForLoginRequired(
 	// reached deep into scrollback, where agent WORK OUTPUT that merely
 	// mentions a pattern phrase lives — quality's scan findings quoting
 	// "gh auth login" from auth documentation got the agent paused mid-kick
-	// (kubestellar/hive, 2026-08-22 08:27, on a fully-authenticated CLI).
+	// (hivecommons/hive, 2026-08-22 08:27, on a fully-authenticated CLI).
 	// Same discipline as the poller's tail-only match (#4577).
 	const paneLines = 12
 	statuses := agentMgr.AllStatuses()

@@ -69,7 +69,7 @@ func TestHeartbeatReArmsChannelSwitchFromTrackedChannel(t *testing.T) {
 
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"chanhive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:v4-latest",
+		"image_ref":"ghcr.io/hivecommons/hive:v4-latest",
 		"git_branch":"v4","git_hash":"abc1234","upgrading":false
 	}`)
 	if rec.Code != http.StatusOK {
@@ -119,7 +119,7 @@ func TestHeartbeatNoReArmWhileUpgrading(t *testing.T) {
 
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"chanhive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:v4-latest",
+		"image_ref":"ghcr.io/hivecommons/hive:v4-latest",
 		"git_branch":"v4","git_hash":"abc1234","upgrading":true
 	}`)
 	if rec.Code != http.StatusOK {
@@ -144,7 +144,7 @@ func TestHeartbeatNoReArmWhenImageMatchesChannel(t *testing.T) {
 
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"chanhive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:stable",
+		"image_ref":"ghcr.io/hivecommons/hive:stable",
 		"git_branch":"v4","git_hash":"abc1234","upgrading":false
 	}`)
 	if rec.Code != http.StatusOK {
@@ -171,7 +171,7 @@ func TestHeartbeatNoReArmWithoutTrackedChannel(t *testing.T) {
 
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"plainhive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:v4-latest",
+		"image_ref":"ghcr.io/hivecommons/hive:v4-latest",
 		"git_branch":"v4","git_hash":"abc1234","upgrading":false
 	}`)
 	if rec.Code != http.StatusOK {
@@ -208,7 +208,7 @@ func TestChannelLatchSurvivesQuietMutableBeat(t *testing.T) {
 	}}
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"latchhive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:v4-latest",
+		"image_ref":"ghcr.io/hivecommons/hive:v4-latest",
 		"git_branch":"chandurbranch","git_hash":"aaa9999","upgrading":false
 	}`)
 	if rec.Code != http.StatusOK {
@@ -244,7 +244,7 @@ func TestChannelLatchClearsWhenImageReportsChannelTag(t *testing.T) {
 	// ImageRef can prove completion. That is exactly what this beat carries.
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"latchhive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:stable",
+		"image_ref":"ghcr.io/hivecommons/hive:stable",
 		"git_branch":"v4","git_hash":"aaa9999","upgrading":false
 	}`)
 	if rec.Code != http.StatusOK {
@@ -287,7 +287,7 @@ func TestNonChannelTargetKeepsFloatingLatestClear(t *testing.T) {
 	// clear this, which is exactly the branch under test.
 	rec := postHeartbeat(t, s, `{
 		"hive_id":"shahive","primary_repo":"r",
-		"image_ref":"ghcr.io/kubestellar/hive:v4-latest",
+		"image_ref":"ghcr.io/hivecommons/hive:v4-latest",
 		"git_branch":"chandurbranch","git_hash":"ccc2222","upgrading":false
 	}`)
 	if rec.Code != http.StatusOK {

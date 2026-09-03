@@ -217,7 +217,7 @@ type RegistryEntry struct {
 	// read in-cluster by the spoke and reported over the heartbeat. The hub
 	// cannot see it any other way for firewalled/heartbeat-only spokes, and
 	// without it there is no way to tell a hive pinned to an immutable
-	// ghcr.io/kubestellar/hive:<sha> tag — which can never receive a rolling
+	// ghcr.io/hivecommons/hive:<sha> tag — which can never receive a rolling
 	// upgrade — from one riding <branch>-latest. Empty on spokes that are not
 	// in-cluster or predate this field; drift detection skips the signal
 	// rather than guessing.
@@ -4248,8 +4248,8 @@ func sanitizeRouteExistenceCheck(in *RouteExistenceCheck) *RouteExistenceCheck {
 // An image ref is the one heartbeat field where a colon is structural: it
 // separates repo from tag ("hive:v2-latest"), introduces a digest algorithm
 // ("@sha256:..."), and delimits a registry port ("registry:5000/..."). The
-// shared sanitizer stripped it, turning "ghcr.io/kubestellar/hive:v2-latest"
-// into "ghcr.io/kubestellar/hivev2-latest" — a ref with no tag separator,
+// shared sanitizer stripped it, turning "ghcr.io/hivecommons/hive:v2-latest"
+// into "ghcr.io/hivecommons/hivev2-latest" — a ref with no tag separator,
 // which the pinned-image drift rule then reported as a CRITICAL pin on eleven
 // perfectly healthy rolling hives.
 //

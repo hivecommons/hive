@@ -230,7 +230,7 @@ usage() {
 
 ${BLD}SETUP${RST}
   1. sudo apt install tmux
-  2. curl -fsSL https://raw.githubusercontent.com/${PROJECT_ORG:-kubestellar}/hive/main/install.sh | sudo bash
+  2. curl -fsSL https://raw.githubusercontent.com/${PROJECT_ORG:-hivecommons}/hive/main/install.sh | sudo bash
   3. sudo nano /etc/hive/hive.conf   # set NTFY_TOPIC, HIVE_REPOS, HIVE_BACKENDS
   4. hive supervisor
 
@@ -518,8 +518,8 @@ ensure_repo() {
       && ok "Repo current ($REPO_DIR)" \
       || warn "Could not pull — using cached version"
   else
-    HIVE_REPO_URL="https://github.com/${PROJECT_ORG:-kubestellar}/hive.git"
-    info "Cloning ${PROJECT_ORG:-kubestellar}/hive → $REPO_DIR..."
+    HIVE_REPO_URL="https://github.com/${PROJECT_ORG:-hivecommons}/hive.git"
+    info "Cloning ${PROJECT_ORG:-hivecommons}/hive → $REPO_DIR..."
     git clone --depth=1 "$HIVE_REPO_URL" "$REPO_DIR" -q 2>/dev/null \
       && ok "Repo cloned" \
       || warn "Clone failed — continuing without fresh repo"
@@ -557,7 +557,7 @@ ensure_agents() {
         || die "install.sh failed — check output above"
       sudo systemctl daemon-reload
     else
-      die "Units missing and $REPO_DIR/install.sh not found. Run: git clone https://github.com/${PROJECT_ORG:-kubestellar}/hive $REPO_DIR"
+      die "Units missing and $REPO_DIR/install.sh not found. Run: git clone https://github.com/${PROJECT_ORG:-hivecommons}/hive $REPO_DIR"
     fi
   fi
 

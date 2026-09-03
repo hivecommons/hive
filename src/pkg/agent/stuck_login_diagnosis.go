@@ -62,7 +62,7 @@ func (m *Manager) diagnoseStuckLogin(agent *AgentProcess) string {
 				"Restarting cannot fix this — it re-reads the same file. Interactive-auth agents share "+
 				"HOME %s while running under per-agent UIDs, and Claude Code rewrites .claude.json "+
 				"wholesale, so another agent starting up can overwrite a signed-in state. "+
-				"See kubestellar/hive#4596",
+				"See hivecommons/hive#4596",
 			credPath, session.Path, claudeOAuthAccountKey, home)
 
 	case credValid && session.State == claudeSessionUnreadable:
@@ -79,7 +79,7 @@ func (m *Manager) diagnoseStuckLogin(agent *AgentProcess) string {
 				"by the hive process (normal when the agent's CLI owns it at 0600), so whether it carries "+
 				"a signed-in identity cannot be determined from here — the agent itself may read it fine. "+
 				"Check the agent terminal before treating this as a permission problem. "+
-				"See kubestellar/hive#4596",
+				"See hivecommons/hive#4596",
 			credPath, session.Path)
 
 	case credValid && session.State == claudeSessionSignedIn:

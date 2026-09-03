@@ -237,7 +237,7 @@ type ContributorProfile struct {
 	CurrentTask   *WSTaskAssign        `json:"current_task,omitempty"`
 	ActiveTasks   []WSTaskAssign       `json:"active_tasks,omitempty"`
 	Sessions      int                  `json:"sessions,omitempty"`
-	// Version is the profile's optimistic-concurrency token (kubestellar/hive H2,
+	// Version is the profile's optimistic-concurrency token (hivecommons/hive H2,
 	// CWE-613/639). It is bumped on every persisted change. A caller that loaded the
 	// profile at version N may only persist its edit if the on-disk version is still
 	// N (saveContributorProfileCAS); a concurrent writer that already advanced the

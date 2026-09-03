@@ -55,7 +55,7 @@ func postPlanFromIssue(t *testing.T, srv *Server, body string) *httptest.Respons
 func TestHandlePlanFromIssue_MintsEpic(t *testing.T) {
 	srv, store := planIssueServer(t)
 
-	w := postPlanFromIssue(t, srv, `{"repo":"kubestellar/hive","number":11,"url":"https://x/11","title":"Plan me","body":"do the thing"}`)
+	w := postPlanFromIssue(t, srv, `{"repo":"hivecommons/hive","number":11,"url":"https://x/11","title":"Plan me","body":"do the thing"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -82,7 +82,7 @@ func TestHandlePlanFromIssue_MintsEpic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("epic not in store: %v", err)
 	}
-	if epic.ExternalRef != "gh-kubestellar/hive#11" {
+	if epic.ExternalRef != "gh-hivecommons/hive#11" {
 		t.Errorf("ref = %q", epic.ExternalRef)
 	}
 	if epic.Notes != "do the thing" {
@@ -144,16 +144,16 @@ func TestHandlePlanFromIssue_ResolvesTitleFromStatus(t *testing.T) {
 		Repos: []FrontendRepo{
 			{
 				Name: "hive",
-				Full: "kubestellar/hive",
+				Full: "hivecommons/hive",
 				ActionableIssues: []any{
-					github.Issue{Repo: "kubestellar/hive", Number: 21, Title: "resolved title", URL: "https://x/21", Labels: []string{"plan"}},
+					github.Issue{Repo: "hivecommons/hive", Number: 21, Title: "resolved title", URL: "https://x/21", Labels: []string{"plan"}},
 				},
 			},
 		},
 	}
 	srv.statusMu.Unlock()
 
-	w := postPlanFromIssue(t, srv, `{"repo":"kubestellar/hive","number":21}`)
+	w := postPlanFromIssue(t, srv, `{"repo":"hivecommons/hive","number":21}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -437,8 +437,8 @@ func TestHandlePlanFromIssue_ResolveFillsRepoAndURL(t *testing.T) {
 	srv.status = &StatusPayload{
 		Repos: []FrontendRepo{{
 			Name:             "hive",
-			Full:             "kubestellar/hive",
-			ActionableIssues: []any{github.Issue{Repo: "kubestellar/hive", Number: 44, Title: "filled in", URL: "https://x/44", Labels: []string{"epic"}}},
+			Full:             "hivecommons/hive",
+			ActionableIssues: []any{github.Issue{Repo: "hivecommons/hive", Number: 44, Title: "filled in", URL: "https://x/44", Labels: []string{"epic"}}},
 		}},
 	}
 	srv.statusMu.Unlock()
@@ -455,7 +455,7 @@ func TestHandlePlanFromIssue_ResolveFillsRepoAndURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("epic: %v", err)
 	}
-	if epic.Meta(planning.MetaIssueRepo) != "kubestellar/hive" {
+	if epic.Meta(planning.MetaIssueRepo) != "hivecommons/hive" {
 		t.Errorf("repo not filled: %q", epic.Meta(planning.MetaIssueRepo))
 	}
 	if epic.Title != "filled in" {
@@ -469,8 +469,8 @@ func TestResolveActionableIssue_ByURLAndMiss(t *testing.T) {
 	srv.status = &StatusPayload{
 		Repos: []FrontendRepo{{
 			Name:             "hive",
-			Full:             "kubestellar/hive",
-			ActionableIssues: []any{github.Issue{Repo: "kubestellar/hive", Number: 33, Title: "by url", URL: "https://x/33"}},
+			Full:             "hivecommons/hive",
+			ActionableIssues: []any{github.Issue{Repo: "hivecommons/hive", Number: 33, Title: "by url", URL: "https://x/33"}},
 		}},
 	}
 	srv.statusMu.Unlock()

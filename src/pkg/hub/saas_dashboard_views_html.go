@@ -2208,7 +2208,7 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
        no frontend change — and (b) a mini per-line chart in each
        "Latest available images" row from data.lines. One bar per release,
        newest on the right. Gauges external adoption of the public spoke image
-       (ghcr.io/kubestellar/hive) beyond the hosted fleet. Honest labelling:
+       (ghcr.io/hivecommons/hive) beyond the hosted fleet. Honest labelling:
        derived from GitHub's cumulative download counter (pulls, NOT unique
        downloads; GitHub publishes one package-wide counter, not per-tag). Cold
        start (fewer than two release snapshots → no window can be closed yet)

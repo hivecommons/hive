@@ -2952,7 +2952,7 @@ spec:
 {{- end}}
       initContainers:
       - name: copy-config
-        image: ghcr.io/kubestellar/hive:{{.ImageTag}}
+        image: ghcr.io/hivecommons/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
         # SEED-ONLY variant (phase 3 of the layer collapse). The ConfigMap is
         # copied ONLY when the PVC carries no runtime config — i.e. first boot.
@@ -2978,7 +2978,7 @@ spec:
           mountPath: /data
 {{- if .RequiresSCC}}
       - name: init-permissions
-        image: ghcr.io/kubestellar/hive:{{.ImageTag}}
+        image: ghcr.io/hivecommons/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
         # Best-effort ownership normalization. /data is already 1001:1000 on
         # these hives, so this recursive chown is belt-and-suspenders and must
@@ -2999,7 +2999,7 @@ spec:
 {{- end}}
       containers:
       - name: hive
-        image: ghcr.io/kubestellar/hive:{{.ImageTag}}
+        image: ghcr.io/hivecommons/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
         securityContext:
           # COVERAGE (#4379): src/deploy/test_manifest_caps_runtime.sh boots the

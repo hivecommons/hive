@@ -33,7 +33,7 @@ func TestAgentsRepoRoot_FromCheckoutsDir(t *testing.T) {
 	s := New(cfg, slog.Default())
 
 	want := filepath.Join("/data/checkouts", "hive")
-	for _, repo := range []string{"hive", "kubestellar/hive"} {
+	for _, repo := range []string{"hive", "hivecommons/hive"} {
 		if got := s.agentsRepoRoot(repo); got != want {
 			t.Errorf("agentsRepoRoot(%q) = %q, want %q", repo, got, want)
 		}

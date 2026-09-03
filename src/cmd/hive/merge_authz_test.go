@@ -61,7 +61,7 @@ func TestBindMergeAuthz(t *testing.T) {
 	writeEligibleFixture(t, `{
 		"generated_at": "2026-08-24T00:00:00Z",
 		"merge_eligible": [
-			{"number": 42, "repo": "kubestellar/hive", "head_sha": "`+goodSHA+`"}
+			{"number": 42, "repo": "hivecommons/hive", "head_sha": "`+goodSHA+`"}
 		]
 	}`)
 
@@ -70,14 +70,14 @@ func TestBindMergeAuthz(t *testing.T) {
 	deny := func(agent string, fileUID int) error { return innerErr }
 
 	t.Run("inner denial short-circuits", func(t *testing.T) {
-		err := bindMergeAuthz(deny)("guide", 1001, "kubestellar/hive", 42, goodSHA)
+		err := bindMergeAuthz(deny)("guide", 1001, "hivecommons/hive", 42, goodSHA)
 		if !errors.Is(err, innerErr) {
 			t.Fatalf("expected inner error to propagate, got %v", err)
 		}
 	})
 
 	t.Run("empty expected SHA denied (TOCTOU guard)", func(t *testing.T) {
-		err := bindMergeAuthz(allow)("guide", 1001, "kubestellar/hive", 42, "")
+		err := bindMergeAuthz(allow)("guide", 1001, "hivecommons/hive", 42, "")
 		if err == nil {
 			t.Fatal("unpinned head must be refused")
 		}
@@ -87,25 +87,25 @@ func TestBindMergeAuthz(t *testing.T) {
 	})
 
 	t.Run("whitespace expected SHA denied", func(t *testing.T) {
-		if err := bindMergeAuthz(allow)("guide", 1001, "kubestellar/hive", 42, "   "); err == nil {
+		if err := bindMergeAuthz(allow)("guide", 1001, "hivecommons/hive", 42, "   "); err == nil {
 			t.Fatal("whitespace SHA must be refused")
 		}
 	})
 
 	t.Run("target not in eligible list denied", func(t *testing.T) {
-		if err := bindMergeAuthz(allow)("guide", 1001, "kubestellar/hive", 999, goodSHA); err == nil {
+		if err := bindMergeAuthz(allow)("guide", 1001, "hivecommons/hive", 999, goodSHA); err == nil {
 			t.Fatal("a PR outside the merge-eligible list must be refused")
 		}
 	})
 
 	t.Run("moved head denied (SHA mismatch)", func(t *testing.T) {
-		if err := bindMergeAuthz(allow)("guide", 1001, "kubestellar/hive", 42, movedSHA); err == nil {
+		if err := bindMergeAuthz(allow)("guide", 1001, "hivecommons/hive", 42, movedSHA); err == nil {
 			t.Fatal("an eligible PR at a moved head must be refused")
 		}
 	})
 
 	t.Run("eligible target at reviewed SHA allowed", func(t *testing.T) {
-		if err := bindMergeAuthz(allow)("guide", 1001, "kubestellar/hive", 42, goodSHA); err != nil {
+		if err := bindMergeAuthz(allow)("guide", 1001, "hivecommons/hive", 42, goodSHA); err != nil {
 			t.Fatalf("governor-approved PR at its reviewed head must pass, got: %v", err)
 		}
 	})

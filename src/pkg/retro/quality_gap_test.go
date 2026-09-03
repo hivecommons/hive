@@ -78,26 +78,26 @@ func TestRoundDuration(t *testing.T) {
 
 func TestApplyPRMetadata(t *testing.T) {
 	t.Run("builds pr ref from repo and number", func(t *testing.T) {
-		b := &beads.Bead{Metadata: map[string]interface{}{"pr_repo": "kubestellar/hive", "pr_number": "17"}}
+		b := &beads.Bead{Metadata: map[string]interface{}{"pr_repo": "hivecommons/hive", "pr_number": "17"}}
 		r := RetroRecord{}
 		applyPRMetadata(b, &r)
-		if r.PRRef != "kubestellar/hive#17" {
+		if r.PRRef != "hivecommons/hive#17" {
 			t.Errorf("PRRef = %q", r.PRRef)
 		}
 	})
 	t.Run("falls back to issue ref repo", func(t *testing.T) {
 		b := &beads.Bead{Metadata: map[string]interface{}{"pr_number": "9"}}
-		r := RetroRecord{IssueRef: "kubestellar/hive#3"}
+		r := RetroRecord{IssueRef: "hivecommons/hive#3"}
 		applyPRMetadata(b, &r)
-		if r.PRRef != "kubestellar/hive#9" {
+		if r.PRRef != "hivecommons/hive#9" {
 			t.Errorf("PRRef = %q", r.PRRef)
 		}
 	})
 	t.Run("existing pr ref untouched", func(t *testing.T) {
 		b := &beads.Bead{Metadata: map[string]interface{}{"pr_repo": "other/repo", "pr_number": "5"}}
-		r := RetroRecord{PRRef: "kubestellar/hive#1"}
+		r := RetroRecord{PRRef: "hivecommons/hive#1"}
 		applyPRMetadata(b, &r)
-		if r.PRRef != "kubestellar/hive#1" {
+		if r.PRRef != "hivecommons/hive#1" {
 			t.Errorf("PRRef = %q", r.PRRef)
 		}
 	})
@@ -134,12 +134,12 @@ func TestPRRefFromAttrs(t *testing.T) {
 		issueRef string
 		want     string
 	}{
-		{"empty attrs", nil, "kubestellar/hive#1", ""},
+		{"empty attrs", nil, "hivecommons/hive#1", ""},
 		{"no repo anywhere", map[string]string{"pr_number": "4"}, "", ""},
-		{"pr_number with explicit repo", map[string]string{"pr_repo": "kubestellar/hive", "pr_number": "4"}, "", "kubestellar/hive#4"},
-		{"hash-prefixed number key", map[string]string{"number": "#12"}, "kubestellar/hive#1", "kubestellar/hive#12"},
-		{"pr key fallback", map[string]string{"pr": "8"}, "kubestellar/hive#1", "kubestellar/hive#8"},
-		{"non-numeric values", map[string]string{"pr_number": "abc"}, "kubestellar/hive#1", ""},
+		{"pr_number with explicit repo", map[string]string{"pr_repo": "hivecommons/hive", "pr_number": "4"}, "", "hivecommons/hive#4"},
+		{"hash-prefixed number key", map[string]string{"number": "#12"}, "hivecommons/hive#1", "hivecommons/hive#12"},
+		{"pr key fallback", map[string]string{"pr": "8"}, "hivecommons/hive#1", "hivecommons/hive#8"},
+		{"non-numeric values", map[string]string{"pr_number": "abc"}, "hivecommons/hive#1", ""},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,15 +151,15 @@ func TestPRRefFromAttrs(t *testing.T) {
 }
 
 func TestSplitPRRefAndRepoPart(t *testing.T) {
-	if repo, n, ok := splitPRRef(" kubestellar/hive#42 "); !ok || repo != "kubestellar/hive" || n != 42 {
+	if repo, n, ok := splitPRRef(" hivecommons/hive#42 "); !ok || repo != "hivecommons/hive" || n != 42 {
 		t.Errorf("splitPRRef = %q %d %v", repo, n, ok)
 	}
-	for _, bad := range []string{"", "#42", "kubestellar/hive#", "kubestellar/hive#0", "a#b#c", "plain"} {
+	for _, bad := range []string{"", "#42", "hivecommons/hive#", "hivecommons/hive#0", "a#b#c", "plain"} {
 		if _, _, ok := splitPRRef(bad); ok {
 			t.Errorf("splitPRRef(%q) must not parse", bad)
 		}
 	}
-	if got := repoPart("kubestellar/hive#5"); got != "kubestellar/hive" {
+	if got := repoPart("hivecommons/hive#5"); got != "hivecommons/hive" {
 		t.Errorf("repoPart = %q", got)
 	}
 	if got := repoPart("nonsense"); got != "" {
@@ -168,7 +168,7 @@ func TestSplitPRRefAndRepoPart(t *testing.T) {
 }
 
 func TestCanonicalIssueRef(t *testing.T) {
-	if got := canonicalIssueRef(" kubestellar/hive#12 "); got != "kubestellar/hive#12" {
+	if got := canonicalIssueRef(" hivecommons/hive#12 "); got != "hivecommons/hive#12" {
 		t.Errorf("canonicalIssueRef = %q", got)
 	}
 	for _, bad := range []string{"#12", "no-hash", "a#1#2", ""} {

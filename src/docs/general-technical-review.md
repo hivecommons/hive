@@ -2,7 +2,7 @@
 
 This document answers the CNCF [General Technical Review
 questions](https://github.com/cncf/toc/blob/main/toc_subprojects/project-reviews-subproject/general-technical-questions.md)
-(v1.0.1) for the `kubestellar/hive` project, following that template's exact
+(v1.0.1) for the `hivecommons/hive` project, following that template's exact
 question wording and section order. It is written from, and cited against,
 this repository at `v4` (`src/` prefix for source and most docs).
 
@@ -40,7 +40,7 @@ plainly in the relevant answers below rather than hidden behind a marker:
 
 # General Technical Review - Hive / Sandbox
 
-- **Project:** [kubestellar/hive](https://github.com/hivecommons/hive)
+- **Project:** [hivecommons/hive](https://github.com/hivecommons/hive)
 - **Project Version:** Continuously delivered from branch `v4` (`v4-latest` / `stable` / `candidate` / `edge` channel tags plus automated semver `vX.Y.Z` releases — see [Release processes](#describe-the-projects-release-processes-including-major-minor-and-patch-releases))
 - **Website:** [hive.kubestellar.io](https://hive.kubestellar.io)
 - **Date Updated:** 2026-08-28

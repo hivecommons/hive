@@ -269,7 +269,7 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 
 // ScopedTokenForRepos creates a short-lived installation token with permissions
 // scoped to a contributor's trust tier AND, when repos is non-empty, restricted to
-// those repositories within the installation (kubestellar/hive C4). Restricting the
+// those repositories within the installation (hivecommons/hive C4). Restricting the
 // repository scope means a contributor relay's credential can only touch the single
 // repo its assigned issue lives in, not every repo the installation covers — the
 // difference between a least-privilege, per-task credential and an

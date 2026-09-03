@@ -62,7 +62,7 @@ own, and it was the whole list — not an open-ended bar.
 
 All three were subsequently measured on a live rootless enforcing host
 (#4487 — Bluefin 44, SELinux enforcing, Podman 5.8.4, netavark, crun, cgroups
-v2, image `ghcr.io/kubestellar/hive:stable`), after the shipped
+v2, image `ghcr.io/hivecommons/hive:stable`), after the shipped
 `probe_podman_rootless_netadmin.sh --shared-store --bypass` passed as the
 baseline:
 
@@ -234,7 +234,7 @@ The rootful cells and the original rootless spike (#4199, #4200):
 | cgroups | v2 |
 | Kernel / host | 7.1.4-200.fc44.x86_64, Aurora (Fedora) 44, SELinux enforcing |
 | Architecture | `amd64` only |
-| Image | published `ghcr.io/kubestellar/hive` tags, not a local `src/Dockerfile` build |
+| Image | published `ghcr.io/hivecommons/hive` tags, not a local `src/Dockerfile` build |
 
 The rootless + enforcing promotion evidence (#4487):
 
@@ -246,7 +246,7 @@ The rootless + enforcing promotion evidence (#4487):
 | cgroups | v2 |
 | Kernel / host | Bluefin 44 (Silverblue), SELinux enforcing |
 | Architecture | `amd64` only |
-| Image | `ghcr.io/kubestellar/hive:stable` |
+| Image | `ghcr.io/hivecommons/hive:stable` |
 
 This document does **not** set minimum supported Podman versions or a lifecycle
 choice. That is a separate slice under #4188; 5.8.4 is what was measured, not a

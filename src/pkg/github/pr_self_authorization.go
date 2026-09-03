@@ -274,7 +274,7 @@ func selfAuthorizationNotice(finding SelfAuthorization) string {
 	return fmt.Sprintf(`> [!IMPORTANT]
 > **Held for human sign-off on the direction, not on the code.**
 >
-> This PR's only tracked rationale is %s#%d, which the hive filed itself — %s. An agent-filed issue does not, on its own, establish that anyone agreed to the direction (kubestellar/hive#5117).
+> This PR's only tracked rationale is %s#%d, which the hive filed itself — %s. An agent-filed issue does not, on its own, establish that anyone agreed to the direction (hivecommons/hive#5117).
 >
 > The change may well be right; nothing here is a review of it. To release the hold, acknowledge the direction on that issue — comment on it, assign yourself, or add the `+"`%s`"+` label — and remove the `+"`hold`"+` label here.`,
 		finding.Repo, finding.Issue, finding.Reason, HumanAckLabel)

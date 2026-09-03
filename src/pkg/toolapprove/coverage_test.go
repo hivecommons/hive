@@ -96,7 +96,7 @@ func TestToolRequestAccessorFallbacks(t *testing.T) {
 	r := ToolRequest{Arguments: map[string]any{
 		"script":     "make build",
 		"filename":   "pkg/x/y.go",
-		"repository": "kubestellar/hive",
+		"repository": "hivecommons/hive",
 		"body":       "hello",
 	}}
 	if r.GetCommand() != "make build" {
@@ -105,7 +105,7 @@ func TestToolRequestAccessorFallbacks(t *testing.T) {
 	if r.GetFilePath() != "pkg/x/y.go" {
 		t.Errorf("GetFilePath fallback = %q", r.GetFilePath())
 	}
-	if r.GetRepo() != "kubestellar/hive" {
+	if r.GetRepo() != "hivecommons/hive" {
 		t.Errorf("GetRepo fallback = %q", r.GetRepo())
 	}
 	if r.GetContent() != "hello" {

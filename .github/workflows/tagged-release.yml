@@ -330,8 +330,8 @@ jobs:
           set -euo pipefail
           short="${SHA:0:7}"
           for image in hive hive-contributor hive-hub; do
-            src="ghcr.io/kubestellar/${image}:${short}"
-            dst="ghcr.io/kubestellar/${image}:v${VERSION}"
+            src="ghcr.io/hivecommons/${image}:${short}"
+            dst="ghcr.io/hivecommons/${image}:v${VERSION}"
             echo "Tagging ${dst} from ${src}"
             docker buildx imagetools create -t "$dst" "$src"
           done
@@ -340,7 +340,7 @@ jobs:
       # release" (the operator's framing). Because this workflow retags rather
       # than rebuilds (see above), there is no fresh --version output to check
       # against the tag the way docker.yml's freshness guard checks a commit
-      # hash — the binary inside ghcr.io/kubestellar/hive:v${VERSION} was
+      # hash — the binary inside ghcr.io/hivecommons/hive:v${VERSION} was
       # built by an ordinary docker.yml run that never received a VERSION
       # build-arg, so today it always reports the "0.0.0-dev" fallback (see
       # cmd/hive/main.go and src/docs/releases.md, "What still blocks cutting
@@ -353,7 +353,7 @@ jobs:
       - name: Confirm the newly tagged image runs, and report its embedded version
         run: |
           set -euo pipefail
-          img="ghcr.io/kubestellar/hive:v${VERSION}"
+          img="ghcr.io/hivecommons/hive:v${VERSION}"
           docker pull "$img"
           reported="$(docker run --rm --entrypoint /usr/local/bin/hive "$img" --version)"
           echo "image reports: ${reported}"
@@ -409,7 +409,7 @@ jobs:
       - name: Generate per-image SBOMs (SPDX JSON, Syft, linux/amd64)
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          image: ghcr.io/kubestellar/hive:v${{ env.VERSION }}
+          image: ghcr.io/hivecommons/hive:v${{ env.VERSION }}
           output-file: hive-v${{ env.VERSION }}-sbom.spdx.json
           format: spdx-json
           artifact-name: "" # do not also attach to a GH Actions run artifact; the release upload below is the distribution point
@@ -417,7 +417,7 @@ jobs:
       - name: Generate contributor image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          image: ghcr.io/kubestellar/hive-contributor:v${{ env.VERSION }}
+          image: ghcr.io/hivecommons/hive-contributor:v${{ env.VERSION }}
           output-file: hive-contributor-v${{ env.VERSION }}-sbom.spdx.json
           format: spdx-json
           artifact-name: ""
@@ -425,7 +425,7 @@ jobs:
       - name: Generate hub image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          image: ghcr.io/kubestellar/hive-hub:v${{ env.VERSION }}
+          image: ghcr.io/hivecommons/hive-hub:v${{ env.VERSION }}
           output-file: hive-hub-v${{ env.VERSION }}-sbom.spdx.json
           format: spdx-json
           artifact-name: ""

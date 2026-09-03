@@ -270,7 +270,7 @@ jobs:
           # Push the per-arch digest only for long-lived branches; on a PR
           # branch build without pushing so the image is still validated (CI
           # gate) but nothing lands on GHCR.
-          outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
+          outputs: type=image,name=ghcr.io/hivecommons/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           # tmux-builder layers come from the local cache warmed above; every
           # other stage is forced to re-execute by no-cache-filters, so there
           # is nothing worth exporting — deliberately NO cache-to here (the
@@ -297,7 +297,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
-            IMG="ghcr.io/kubestellar/hive@${{ steps.build.outputs.digest }}"
+            IMG="ghcr.io/hivecommons/hive@${{ steps.build.outputs.digest }}"
             docker pull "$IMG"
           else
             IMG=hive-freshness-probe:local
@@ -337,7 +337,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
-            IMG="ghcr.io/kubestellar/hive@${{ steps.build.outputs.digest }}"
+            IMG="ghcr.io/hivecommons/hive@${{ steps.build.outputs.digest }}"
           else
             IMG=hive-freshness-probe:local
           fi
@@ -391,7 +391,7 @@ jobs:
       - name: Create manifest list and push
         run: |
           src/scripts/publish-image-tags.sh \
-            ghcr.io/kubestellar/hive /tmp/digests \
+            ghcr.io/hivecommons/hive /tmp/digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
             v5 false edge
 
@@ -450,7 +450,7 @@ jobs:
           # manifests, not an OCI index. See the note on the main build above.
           provenance: false
           sbom: false
-          outputs: type=image,name=ghcr.io/kubestellar/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
+          outputs: type=image,name=ghcr.io/hivecommons/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           cache-from: type=gha,scope=contributor-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=contributor-${{ steps.slug.outputs.slug }},mode=max
 
@@ -498,7 +498,7 @@ jobs:
       - name: Create contributor manifest list and push
         run: |
           src/scripts/publish-image-tags.sh \
-            ghcr.io/kubestellar/hive-contributor /tmp/contrib-digests \
+            ghcr.io/hivecommons/hive-contributor /tmp/contrib-digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
             v5 true edge
 
@@ -566,7 +566,7 @@ jobs:
           # manifests, not an OCI index. See the note on the main build above.
           provenance: false
           sbom: false
-          outputs: type=image,name=ghcr.io/kubestellar/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
+          outputs: type=image,name=ghcr.io/hivecommons/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           cache-from: type=gha,scope=hub-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=hub-${{ steps.slug.outputs.slug }},mode=max
 
@@ -614,6 +614,6 @@ jobs:
       - name: Create hub manifest list and push
         run: |
           src/scripts/publish-image-tags.sh \
-            ghcr.io/kubestellar/hive-hub /tmp/hub-digests \
+            ghcr.io/hivecommons/hive-hub /tmp/hub-digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
             v5 true edge

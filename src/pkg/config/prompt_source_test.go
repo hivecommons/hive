@@ -31,7 +31,7 @@ func TestPromptSourceConfig_Slug(t *testing.T) {
 	if s := (&PromptSourceConfig{Owner: "o"}).Slug(); s != "" {
 		t.Errorf("partial slug should be empty, got %q", s)
 	}
-	if s := (&PromptSourceConfig{Owner: "kubestellar", Repo: "hive"}).Slug(); s != "kubestellar/hive" {
+	if s := (&PromptSourceConfig{Owner: "hivecommons", Repo: "hive"}).Slug(); s != "hivecommons/hive" {
 		t.Errorf("slug = %q", s)
 	}
 }
@@ -45,37 +45,37 @@ func TestGitHubPromptAllowed(t *testing.T) {
 	}{
 		{
 			name:     "disabled by default",
-			security: VarSecurityConfig{GitHubPromptAllowlist: []string{"kubestellar/hive"}},
-			slug:     "kubestellar/hive",
+			security: VarSecurityConfig{GitHubPromptAllowlist: []string{"hivecommons/hive"}},
+			slug:     "hivecommons/hive",
 			want:     false, // AllowGitHubPrompt is false
 		},
 		{
 			name:     "enabled but empty allowlist denies all",
 			security: VarSecurityConfig{AllowGitHubPrompt: true},
-			slug:     "kubestellar/hive",
+			slug:     "hivecommons/hive",
 			want:     false,
 		},
 		{
 			name:     "enabled and allowlisted",
-			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"kubestellar/hive"}},
-			slug:     "kubestellar/hive",
+			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"hivecommons/hive"}},
+			slug:     "hivecommons/hive",
 			want:     true,
 		},
 		{
 			name:     "enabled but slug not on allowlist",
 			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"kubestellar/docs"}},
-			slug:     "kubestellar/hive",
+			slug:     "hivecommons/hive",
 			want:     false,
 		},
 		{
 			name:     "case-insensitive + whitespace-tolerant match",
-			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"  KubeStellar/Hive  "}},
-			slug:     "kubestellar/hive",
+			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"  HiveCommons/Hive  "}},
+			slug:     "hivecommons/hive",
 			want:     true,
 		},
 		{
 			name:     "empty slug denied",
-			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"kubestellar/hive"}},
+			security: VarSecurityConfig{AllowGitHubPrompt: true, GitHubPromptAllowlist: []string{"hivecommons/hive"}},
 			slug:     "",
 			want:     false,
 		},

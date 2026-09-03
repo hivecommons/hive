@@ -53,7 +53,7 @@ func TestIngestRetroLessonPropagatesIngestFailure(t *testing.T) {
 	api := NewKnowledgeAPI([]LayerConfig{{Type: LayerProject, URL: srv.URL}}, KnowledgeConfig{Enabled: true}, discardLogger())
 	lesson := RetroLesson{
 		Lesson:   "Run targeted validation before opening PRs when changes affect CI-sensitive code paths.",
-		SourcePR: "kubestellar/hive#7",
+		SourcePR: "hivecommons/hive#7",
 	}
 	slug, created, err := api.IngestRetroLesson(context.Background(), lesson)
 	if err == nil {
@@ -160,7 +160,7 @@ func TestWriteRetroLessonFileWritesFrontmatterAtomicallyAndTriggersReindex(t *te
 	lesson := RetroLesson{
 		Lesson:     "Run targeted validation before opening PRs when changes affect CI-sensitive code paths.",
 		SourceBead: "bead-1",
-		SourcePR:   "kubestellar/hive#42",
+		SourcePR:   "hivecommons/hive#42",
 	}
 
 	slug, created, err := api.IngestRetroLesson(context.Background(), lesson)
@@ -204,7 +204,7 @@ func TestWriteRetroLessonFileWritesFrontmatterAtomicallyAndTriggersReindex(t *te
 		"layer: project\n",
 		"confidence: 0.70\n",
 		"tags: [retro, lesson]\n",
-		"source: retro bead:bead-1 pr:kubestellar/hive#42\n",
+		"source: retro bead:bead-1 pr:hivecommons/hive#42\n",
 		lesson.Lesson,
 	} {
 		if !strings.Contains(content, want) {

@@ -36,7 +36,7 @@ const {
 } = require('./pi-backend.js');
 
 const rawHub = process.env.HIVE_HUB || 'wss://hive.kubestellar.io:3001/contribute';
-// Multi-hub (kubestellar/hive#multi-hive): HIVE_HUB and HIVE_REGISTRATION_TOKEN
+// Multi-hub (hivecommons/hive#multi-hive): HIVE_HUB and HIVE_REGISTRATION_TOKEN
 // may each be a comma-separated list, one token per hub in the same order, so
 // one relay/CLI session can hold work from more than one hive without running
 // duplicate contributor processes. A single value of each (the common case)
@@ -2607,7 +2607,7 @@ function stopAgentForTaskExit(opts) {
 // test suite, a slow clone) for many minutes without drawing anything new.
 const PANE_STALL_TIMEOUT_MS = Number(process.env.HIVE_PANE_STALL_TIMEOUT_MS) || 20 * 60 * 1000;
 
-// Observed live (kubestellar/hive): a task crossed PANE_STALL_TIMEOUT_MS while
+// Observed live (hivecommons/hive): a task crossed PANE_STALL_TIMEOUT_MS while
 // agy sat blocked on a slow `gh pr create` network round trip. The relay
 // declared it a failure and moved on to the next task, and the pane then, only
 // seconds to minutes later, printed the CLI's real completion summary — with a
@@ -3429,7 +3429,7 @@ function progressTick() {
     // the bounded transient path — retry up to the budget, honest environment
     // failure after it, blocked_on_human if someone is attached. Shared budget
     // and cooldown with the transient state: it is the same task either way.
-    console.warn(`Unrecognised API error (kubestellar/hive#5121) — treating as transient: ` +
+    console.warn(`Unrecognised API error (hivecommons/hive#5121) — treating as transient: ` +
       `${paneUnknownAPIErrorLine(tmuxLines.join('\n')) || '(line scrolled away)'}`);
     handleTransientAPIError(tmuxLines);
   } else if (paneState === PANE_STATE_FATAL_API_ERROR) {

@@ -117,7 +117,7 @@ func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	}}
 	res, err := (&Broker{
 		Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main",
-		Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_tok"}, Runner: git,
+		Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: git,
 	}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
@@ -144,7 +144,7 @@ func TestRunFallsBackToHeadCommitWhenNoBaseExists(t *testing.T) {
 		fails: map[string]error{"rev-parse --verify refs/remotes/origin/work": noBase},
 	}
 	res, err := (&Broker{
-		Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "kubestellar/hive",
+		Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "hivecommons/hive",
 		Minter: fakeMinter{"ghs_tok"}, Runner: git,
 	}).Run(context.Background())
 	if err != nil {
@@ -170,7 +170,7 @@ func TestRunFallsBackToRemoteRefWhenBaseRefIsGone(t *testing.T) {
 	}
 	res, err := (&Broker{
 		Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/deleted",
-		Repo: "kubestellar/hive", Minter: fakeMinter{"ghs_tok"}, Runner: git,
+		Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: git,
 	}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
@@ -249,7 +249,7 @@ func TestRunSurfacesEachFailureStage(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := (&Broker{
-				Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "kubestellar/hive",
+				Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "hivecommons/hive",
 				Minter: tc.minter, Runner: tc.git, Logger: slog.New(slog.DiscardHandler),
 			}).Run(context.Background())
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
@@ -281,7 +281,7 @@ func TestBrokerHonorsRemoteProtectedPathAndClockOverrides(t *testing.T) {
 		fails: map[string]error{"rev-parse --verify refs/remotes/upstream/work": errors.New("unknown revision")},
 	}
 	res, err := (&Broker{
-		Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "kubestellar/hive",
+		Workspace: fakeGitWorkspace(t), Branch: "work", Repo: "hivecommons/hive",
 		Remote: "upstream", ProtectedPaths: []string{"docs/"},
 		Minter: fakeMinter{"ghs_tok"}, Runner: git, Now: func() time.Time { return fixed },
 	}).Run(context.Background())
@@ -300,7 +300,7 @@ func TestBrokerHonorsRemoteProtectedPathAndClockOverrides(t *testing.T) {
 }
 
 func TestGitHubAppMinterRequiresAuth(t *testing.T) {
-	if _, err := (GitHubAppMinter{}).MintPushToken(context.Background(), "kubestellar/hive"); err == nil {
+	if _, err := (GitHubAppMinter{}).MintPushToken(context.Background(), "hivecommons/hive"); err == nil {
 		t.Fatal("MintPushToken: expected an error with nil App auth")
 	}
 }
@@ -325,7 +325,7 @@ func TestGitHubAppMinterScopesTokenToTheSingleRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAppAuthFromPEM: %v", err)
 	}
-	token, err := (GitHubAppMinter{Auth: auth}).MintPushToken(context.Background(), " kubestellar/hive ")
+	token, err := (GitHubAppMinter{Auth: auth}).MintPushToken(context.Background(), " hivecommons/hive ")
 	if err != nil {
 		t.Fatalf("MintPushToken: %v", err)
 	}

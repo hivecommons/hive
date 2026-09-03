@@ -16676,7 +16676,7 @@ function burnAreaChart() {
 
     function renderAgentImport() {
       var exampleURL = 'https://github.com/hivecommons/hive/blob/HEAD/src/examples/agents/customized-agent.yaml';
-      var rawURL = 'https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/examples/agents/customized-agent.yaml';
+      var rawURL = 'https://raw.githubusercontent.com/hivecommons/hive/HEAD/src/examples/agents/customized-agent.yaml';
       // Field-by-field reference on the docs site (documents the same v2 schema
       // as the example, and explains the ref+path "v2/src" URL). See #1929/#1930.
       var docsURL = 'https://docs.kubestellar.io/hive/agent-definition-yaml';
@@ -16716,7 +16716,7 @@ function burnAreaChart() {
       // path/ref from whichever URL it receives, so keep the raw form here and
       // let the server round-trip it back in _importBody.
       var keepLinked = !!(document.getElementById('import-keep-linked') || {}).checked;
-      url = url.replace('github.com/hivecommons/hive/blob/', 'raw.githubusercontent.com/kubestellar/hive/');
+      url = url.replace('github.com/hivecommons/hive/blob/', 'raw.githubusercontent.com/hivecommons/hive/');
       try {
         var resp = await fetch('/api/agents/import', {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({source:'url',url:url,preview:true,keepLinked:keepLinked})});
         var d = await resp.json();

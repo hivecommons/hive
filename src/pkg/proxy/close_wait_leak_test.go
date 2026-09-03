@@ -68,7 +68,7 @@ func TestProxyHTTPGitRelayReleasesAfterUpstreamFIN(t *testing.T) {
 
 	returned := runProxyHTTP(p, proxyClientSide, proxyUpstreamSide)
 
-	req := "GET /kubestellar/hive.git/info/refs?service=git-upload-pack HTTP/1.1\r\nHost: github.com\r\n\r\n"
+	req := "GET /hivecommons/hive.git/info/refs?service=git-upload-pack HTTP/1.1\r\nHost: github.com\r\n\r\n"
 	if _, err := agentSide.Write([]byte(req)); err != nil {
 		t.Fatalf("client write: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestProxyHTTPBodyRelayToleratesSlowButFlowingBody(t *testing.T) {
 
 	returned := runProxyHTTP(p, proxyClientSide, proxyUpstreamSide)
 
-	req := "GET /repos/kubestellar/hive/issues HTTP/1.1\r\nHost: api.github.com\r\n\r\n"
+	req := "GET /repos/hivecommons/hive/issues HTTP/1.1\r\nHost: api.github.com\r\n\r\n"
 	if _, err := agentSide.Write([]byte(req)); err != nil {
 		t.Fatalf("client write: %v", err)
 	}

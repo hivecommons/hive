@@ -1,9 +1,9 @@
 # Hive v2 — Quick Start Configuration
-# Points at kubestellar/hive-tester for safe ACMM level testing.
+# Points at hivecommons/hive-tester for safe ACMM level testing.
 # Copy this file to hive.yaml and update the github section.
 
 project:
-  org: kubestellar
+  org: hivecommons
   name: hive-tester
   repos:
     - hive-tester

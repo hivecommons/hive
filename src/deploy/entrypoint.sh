@@ -431,7 +431,7 @@ hive_write_system_gitconfig() {
   fi
 
   {
-    echo "# Managed by the hive entrypoint (kubestellar/hive#5343). Regenerated on every boot."
+    echo "# Managed by the hive entrypoint (hivecommons/hive#5343). Regenerated on every boot."
     echo "# System-level so EVERY agent UID reads it regardless of \$HOME. Contains no secret:"
     echo "# it names a helper path; the helper mints the per-agent scoped token."
     echo "[user]"
@@ -446,7 +446,7 @@ hive_write_system_gitconfig() {
       echo "	helper = /usr/local/bin/git-credential-hive.sh"
     fi
   } > "$_hwsg_path" 2>/dev/null || {
-    echo "[entrypoint] WARN: could not write $_hwsg_path — agents may be unable to push (see kubestellar/hive#5343)"
+    echo "[entrypoint] WARN: could not write $_hwsg_path — agents may be unable to push (see hivecommons/hive#5343)"
     return 0
   }
   chmod 0644 "$_hwsg_path" 2>/dev/null || true
@@ -1209,7 +1209,7 @@ print('\n'.join(sorted(names)))
       # the agent UID. A derived gid (e.g. uid+1000) can collide with an
       # existing group; letting groupadd pick from the system range cannot.
       #
-      # Verified in ghcr.io/kubestellar/hive:v2-latest: dev writes in place OK,
+      # Verified in ghcr.io/hivecommons/hive:v2-latest: dev writes in place OK,
       # the owning agent reads its own token OK, and a second agent gets
       # EACCES on the first agent's token.
       AGENT_TOKEN_GROUP="hive-${agent_name}"
@@ -1705,7 +1705,7 @@ _cred_probe="$(HOME=/nonexistent XDG_CONFIG_HOME=/nonexistent \
 if [ "${_cred_probe:-0}" -gt 0 ]; then
   echo "[entrypoint] git credential helper VERIFIED reachable without a per-user .gitconfig (system layer, ${_cred_probe} host entries; agent UIDs will resolve it for ${_cred_probe_host})"
 else
-  echo "[entrypoint] WARN: git credential helper is NOT reachable from a process without a per-user .gitconfig. Every per-agent UID will commit branches it cannot push, and hive-open-pr will report the branch as missing from the remote. Check that /etc/gitconfig exists and is mode 0644. See kubestellar/hive#5343."
+  echo "[entrypoint] WARN: git credential helper is NOT reachable from a process without a per-user .gitconfig. Every per-agent UID will commit branches it cannot push, and hive-open-pr will report the branch as missing from the remote. Check that /etc/gitconfig exists and is mode 0644. See hivecommons/hive#5343."
 fi
 
 # Generate initial GitHub App token if credentials are available

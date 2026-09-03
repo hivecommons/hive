@@ -160,7 +160,7 @@ podman volume prune --force --filter label=${OWNER_LABEL}
 podman network prune --filter label=${OWNER_LABEL}
 podman volume rm hive-data
 podman network rm hive-net
-podman rmi ghcr.io/kubestellar/hive:v4
+podman rmi ghcr.io/hivecommons/hive:v4
 buildah rm hive-build
 podman ps --all --filter label=${OWNER_LABEL}
 podman images --filter label=${OWNER_LABEL}

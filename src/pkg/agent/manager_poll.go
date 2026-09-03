@@ -83,7 +83,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// where a user authenticates via one agent's terminal and other
 			// agents don't pick up the new token automatically.
 			//
-			// THREE guards, each traced to a live failure (kubestellar/hive,
+			// THREE guards, each traced to a live failure (hivecommons/hive,
 			// 2026-08-22, scanner restart_count=28 with every kick destroyed):
 			//   1. loginStreak: the login line must persist across consecutive
 			//      polls (~9s). The CLI flashes "Please use /login" during its
@@ -276,7 +276,7 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 	// per-launch context). The old 120s window assumed the trust prompt only
 	// appears at startup, but Copilot ≥1.0.78 can render it later than that on
 	// a slow first start — and an unanswered prompt wedges the agent, which the
-	// login-detector then misreads as "needs login" (live on kubestellar/hive,
+	// login-detector then misreads as "needs login" (live on hivecommons/hive,
 	// 2026-08-22). A 2s poll of an in-memory pane capture is too cheap to need
 	// a deadline.
 	ticker := time.NewTicker(trustPollInterval)

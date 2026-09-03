@@ -602,7 +602,7 @@ spec:
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source": "url",
-		"url":    "https://raw.githubusercontent.com/kubestellar/hive/main/agent.yaml",
+		"url":    "https://raw.githubusercontent.com/hivecommons/hive/main/agent.yaml",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -624,7 +624,7 @@ func TestHandleAgentImport_URLFetchFails(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source": "url",
-		"url":    "https://raw.githubusercontent.com/kubestellar/hive/main/agent.yaml",
+		"url":    "https://raw.githubusercontent.com/hivecommons/hive/main/agent.yaml",
 	})
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("expected 502, got %d: %s", rec.Code, rec.Body.String())

@@ -283,7 +283,7 @@ func TestLoadPersistedImagePulls_LegacyArrayMigratesToV2(t *testing.T) {
 
 func TestActiveReleaseLine_FollowsStableChannel(t *testing.T) {
 	// The stable channel's digest-resolved branch is the source of truth —
-	// exactly what standalone-images.sh pins (ghcr.io/kubestellar/hive:stable).
+	// exactly what standalone-images.sh pins (ghcr.io/hivecommons/hive:stable).
 	channels := []ChannelTarget{
 		{Channel: ReleaseChannelStable, Branch: "v4", SHA: "ccc3333"},
 		{Channel: ReleaseChannelEdge, Branch: "v5", SHA: "eee5555"},

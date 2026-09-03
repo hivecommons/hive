@@ -84,7 +84,7 @@ run_step() { # $1 = IS_FORK value
   : >"${WORK}/gh-calls.log"
   : >"${WORK}/summary.md"
   OUT="$(cd "$WORK" && env PATH="${STUB}:${PATH}" \
-    GH_TOKEN=stub PR=4439 REPO=kubestellar/hive IS_FORK="$1" \
+    GH_TOKEN=stub PR=4439 REPO=hivecommons/hive IS_FORK="$1" \
     GITHUB_STEP_SUMMARY="${WORK}/summary.md" \
     bash "${WORK}/step.sh" 2>&1)"
   RC=$?

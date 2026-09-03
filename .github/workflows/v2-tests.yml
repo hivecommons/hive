@@ -211,8 +211,8 @@ jobs:
           # ./pkg/hub/...) and exactly pkg/agent (the agent jobs run it).
           # pkg/hubbackup et al. stay here.
           go list ./pkg/... ./cmd/... \
-            | grep -Ev '^github\.com/kubestellar/hive/pkg/hub(/|$)' \
-            | grep -Ev '^github\.com/kubestellar/hive/pkg/agent$' \
+            | grep -Ev '^github\.com/hivecommons/hive/pkg/hub(/|$)' \
+            | grep -Ev '^github\.com/hivecommons/hive/pkg/agent$' \
             | LC_ALL=C sort > rest-pkgs.txt
           if [ ! -s rest-pkgs.txt ]; then
             echo "::error::go list produced no rest packages — failing closed"

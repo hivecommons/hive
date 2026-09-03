@@ -27,7 +27,7 @@ func baseReport(p Perspective, v Verdict, findings ...outputschema.Finding) Pers
 		},
 		Perspective: p,
 		Verdict:     v,
-		Repo:        "kubestellar/hive",
+		Repo:        "hivecommons/hive",
 		Number:      2807,
 		HeadSHA:     testSHA,
 	}
@@ -72,9 +72,9 @@ func TestAggregateReportsMatrix(t *testing.T) {
 }
 
 func TestPromptBuilders(t *testing.T) {
-	pr := PullRequest{Repo: "kubestellar/hive", Number: 2807, Title: "review swarm", Author: "bot", HeadSHA: testSHA, URL: "https://example.invalid/pr/2807"}
+	pr := PullRequest{Repo: "hivecommons/hive", Number: 2807, Title: "review swarm", Author: "bot", HeadSHA: testSHA, URL: "https://example.invalid/pr/2807"}
 	prompt := BuildPerspectivePrompt(PerspectiveSecurity, pr)
-	for _, want := range []string{"[review-perspective:security]", "kubestellar/hive#2807", "kind to \"review\"", "Allowed verdicts", testSHA} {
+	for _, want := range []string{"[review-perspective:security]", "hivecommons/hive#2807", "kind to \"review\"", "Allowed verdicts", testSHA} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
@@ -113,7 +113,7 @@ func TestValidateRoundTripAndCollect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifact.Items) != 1 || !artifact.HasAggregateApproval("kubestellar/hive", 2807, testSHA) {
+	if len(artifact.Items) != 1 || !artifact.HasAggregateApproval("hivecommons/hive", 2807, testSHA) {
 		t.Fatalf("unexpected artifact: %+v", artifact)
 	}
 	out := filepath.Join(dir, ReviewVerdictsFile)
@@ -124,7 +124,7 @@ func TestValidateRoundTripAndCollect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !loaded.HasAggregateApproval("kubestellar/hive", 2807, testSHA) {
+	if !loaded.HasAggregateApproval("hivecommons/hive", 2807, testSHA) {
 		t.Fatalf("loaded artifact missing approval: %+v", loaded)
 	}
 	if loaded.HasAggregateApproval("other/hive", 2807, testSHA) {

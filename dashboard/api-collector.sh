@@ -26,7 +26,7 @@ IFS=' ' read -ra REPOS <<< "$REPOS_STR"
 
 PRIMARY_REPO="${PROJECT_PRIMARY_REPO:-kubestellar/console}"
 AI_AUTHOR="${PROJECT_AI_AUTHOR:-clubanderson}"
-PROJECT_ORG="${PROJECT_ORG:-kubestellar}"
+PROJECT_ORG="${PROJECT_ORG:-hivecommons}"
 PROJECT="${PROJECT_NAME:-KubeStellar}"
 
 # Use real gh binary — the /usr/local/bin/gh wrapper blocks listing commands

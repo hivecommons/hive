@@ -263,7 +263,7 @@ func writeCopilotConfig(path string, cfg map[string]interface{}) error {
 // interactive CLI refuses to consider itself signed in without an identity —
 // a later restoreCopilotTokens seed of a perfectly valid token still showed
 // "Please use /login" because this function had wiped the identity alongside
-// the token (kubestellar/hive, 2026-08-22).
+// the token (hivecommons/hive, 2026-08-22).
 func clearExpiredTokens() error {
 	cfg, err := readCopilotConfig(sharedCopilotConfigPath)
 	if err != nil {
@@ -369,7 +369,7 @@ var githubTokenLogin = func(token string) string {
 //
 // VALIDATION is the point, not just shape conversion: the shared config's
 // lineage accumulates junk identities (a bare "github.com" string was observed
-// live — kubestellar/hive, 2026-08-22 — inherited from stale rewrites), and a
+// live — hivecommons/hive, 2026-08-22 — inherited from stale rewrites), and a
 // junk identity keyed a seeded VALID token under a key the CLI rejects, leaving
 // every agent at "Please use /login" over working credentials. Only a
 // "https://<host>:<login>" string (scheme + host + login = at least two

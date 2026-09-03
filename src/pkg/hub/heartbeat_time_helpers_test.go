@@ -163,14 +163,14 @@ func TestSelfImageReleaseChannel(t *testing.T) {
 	}
 
 	t.Run("channel tag reports the channel", func(t *testing.T) {
-		serveImage(t, "ghcr.io/kubestellar/hive-hub:stable")
+		serveImage(t, "ghcr.io/hivecommons/hive-hub:stable")
 		if got := SelfImageReleaseChannel(); got != ReleaseChannelStable {
 			t.Errorf("SelfImageReleaseChannel() = %q, want %q", got, ReleaseChannelStable)
 		}
 	})
 
 	t.Run("commit tag reports empty", func(t *testing.T) {
-		serveImage(t, "ghcr.io/kubestellar/hive-hub:abc123")
+		serveImage(t, "ghcr.io/hivecommons/hive-hub:abc123")
 		if got := SelfImageReleaseChannel(); got != "" {
 			t.Errorf("SelfImageReleaseChannel() = %q, want \"\"", got)
 		}

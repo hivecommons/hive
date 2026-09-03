@@ -79,7 +79,7 @@ run_merge() {
 
   cat > "$dir/seed.yaml" <<YAML
 project:
-  org: kubestellar
+  org: hivecommons
 agents:
   guide:
     backend: copilot
@@ -89,7 +89,7 @@ github:
 YAML
   cat > "$dir/overlay.yaml" <<YAML
 project:
-  org: kubestellar
+  org: hivecommons
 agents:
   guide:
     backend: copilot

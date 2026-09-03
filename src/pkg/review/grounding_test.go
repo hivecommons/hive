@@ -35,7 +35,7 @@ func fieldExists(name string) bool {
 
 func groundedPR() PullRequest {
 	return PullRequest{
-		Repo:      "kubestellar/hive",
+		Repo:      "hivecommons/hive",
 		Number:    3872,
 		Title:     "bound tunnel drain",
 		Author:    "hive-app[bot]",

@@ -79,14 +79,14 @@ func TestBase64Decode(t *testing.T) {
 
 func TestExtractYAMLValue(t *testing.T) {
 	yaml := `name: my-hive
-org: kubestellar
+org: hivecommons
 level: 3
   nested: value`
 	tests := []struct {
 		key, want string
 	}{
 		{"name", "my-hive"},
-		{"org", "kubestellar"},
+		{"org", "hivecommons"},
 		{"level", "3"},
 		{"missing", ""},
 		{"nested", "value"},

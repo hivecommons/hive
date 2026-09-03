@@ -34,7 +34,7 @@ func TestDefinitionSourceConfig_Slug(t *testing.T) {
 	if (*DefinitionSourceConfig)(nil).Slug() != "" {
 		t.Error("nil slug should be empty")
 	}
-	if s := (&DefinitionSourceConfig{Owner: "kubestellar", Repo: "hive"}).Slug(); s != "kubestellar/hive" {
+	if s := (&DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive"}).Slug(); s != "hivecommons/hive" {
 		t.Errorf("slug = %q", s)
 	}
 }
@@ -44,9 +44,9 @@ func TestDefinitionSourceConfig_Slug(t *testing.T) {
 func TestGitHubDefinitionAllowed_ReusesPromptGate(t *testing.T) {
 	cfg := &Config{Variables: VariablesConfig{Security: VarSecurityConfig{
 		AllowGitHubPrompt:     true,
-		GitHubPromptAllowlist: []string{"kubestellar/hive"},
+		GitHubPromptAllowlist: []string{"hivecommons/hive"},
 	}}}
-	if !cfg.GitHubDefinitionAllowed("kubestellar/hive") {
+	if !cfg.GitHubDefinitionAllowed("hivecommons/hive") {
 		t.Error("allowlisted repo should be permitted")
 	}
 	if cfg.GitHubDefinitionAllowed("attacker/evil") {
@@ -54,7 +54,7 @@ func TestGitHubDefinitionAllowed_ReusesPromptGate(t *testing.T) {
 	}
 	// Feature flag off → deny even an allowlisted repo.
 	cfg.Variables.Security.AllowGitHubPrompt = false
-	if cfg.GitHubDefinitionAllowed("kubestellar/hive") {
+	if cfg.GitHubDefinitionAllowed("hivecommons/hive") {
 		t.Error("feature disabled must deny all")
 	}
 }
@@ -73,7 +73,7 @@ func TestDefinitionSource_OverlayCannotWidenAllowlist(t *testing.T) {
 	// Seed: feature OFF, empty allowlist.
 	seed := `
 project:
-  org: kubestellar
+  org: hivecommons
   repos: [hive]
   primary_repo: hive
 github:
@@ -93,7 +93,7 @@ variables:
 	// to an attacker repo.
 	overlayPath := filepath.Join(dir, "hive.yaml.dashboard")
 	overlay := Config{
-		Project: ProjectConfig{Org: "kubestellar", Repos: []string{"hive"}, PrimaryRepo: "hive"},
+		Project: ProjectConfig{Org: "hivecommons", Repos: []string{"hive"}, PrimaryRepo: "hive"},
 		Variables: VariablesConfig{Security: VarSecurityConfig{
 			AllowGitHubPrompt:     true,
 			GitHubPromptAllowlist: []string{"attacker/evil"},

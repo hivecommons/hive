@@ -36,7 +36,7 @@ func TestReviewRejectedEndToEndCarriesModelMetadata(t *testing.T) {
 	// 2. A human rejects a review whose output came from a stale pinned model.
 	EmitReviewRejected(context.Background(), d, ReviewRejection{
 		Agent:            "reviewer",
-		Repo:             "kubestellar/hive",
+		Repo:             "hivecommons/hive",
 		PRNumber:         4001,
 		Actor:            "fleet-owner",
 		Reason:           "hallucinated the API surface",
@@ -68,7 +68,7 @@ func TestReviewRejectedEndToEndCarriesModelMetadata(t *testing.T) {
 		"anthropic",                    // its backend
 		"20240229",                     // the stale pin
 		"hallucinated the API surface", // the rejection reason
-		"kubestellar/hive#4001",        // what was rejected
+		"hivecommons/hive#4001",        // what was rejected
 		"fleet-owner",                  // who rejected it
 	} {
 		if !strings.Contains(n.message, want) {

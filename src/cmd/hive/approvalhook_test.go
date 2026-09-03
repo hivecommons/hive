@@ -16,7 +16,7 @@ func hookApprovalRequest() hooks.ApprovalRequest {
 	return hooks.ApprovalRequest{
 		Kind:       "review_rejected",
 		Agent:      "reviewer",
-		Repo:       "kubestellar/hive",
+		Repo:       "hivecommons/hive",
 		Summary:    "review_rejected requires approval (hook needs-human)",
 		Transition: hooks.Transition("review_rejected"),
 		HookName:   "needs-human",

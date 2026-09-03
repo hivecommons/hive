@@ -18,7 +18,7 @@ import (
 func TestNoDeskInstalledIsNoOp(t *testing.T) {
 	c := &Client{}
 	allow, reason := c.consultApprovalDesk(context.Background(), ApprovalDeskRequest{
-		Kind: ApprovalDeskKindSelfMerge, Repo: "kubestellar/hive", Number: 1,
+		Kind: ApprovalDeskKindSelfMerge, Repo: "hivecommons/hive", Number: 1,
 	})
 	if !allow {
 		t.Fatalf("with no desk installed the sweep must proceed unchanged; got allow=false reason=%q", reason)
@@ -88,7 +88,7 @@ func TestApprovalDeskReceivesRequestFields(t *testing.T) {
 
 	want := ApprovalDeskRequest{
 		Kind:        ApprovalDeskKindSelfMerge,
-		Repo:        "kubestellar/hive",
+		Repo:        "hivecommons/hive",
 		Number:      4000,
 		Author:      "hive-app[bot]",
 		Title:       "fix: a thing",

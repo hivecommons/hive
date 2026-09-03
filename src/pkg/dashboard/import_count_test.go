@@ -14,7 +14,7 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read dashboard package: %v", err)
 	}
-	importRe := regexp.MustCompile(`"github\.com/kubestellar/hive/pkg/([^"]+)"`)
+	importRe := regexp.MustCompile(`"github\.com/hivecommons/hive/pkg/([^"]+)"`)
 	imports := map[string]struct{}{}
 	for _, entry := range entries {
 		name := entry.Name()

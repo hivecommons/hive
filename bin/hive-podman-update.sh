@@ -11,7 +11,7 @@
 #
 # WHAT IT MANAGES, and why it is not an edit to hive.container.
 #
-# The shipped unit names a floating tag, `ghcr.io/kubestellar/hive:stable`,
+# The shipped unit names a floating tag, `ghcr.io/hivecommons/hive:stable`,
 # because src/deploy/standalone-images.sh is the one image-reference source of
 # truth and src/deploy/test_standalone_image_refs.sh fails the build when an
 # asset stops agreeing with it. A floating tag cannot be rolled back to: today's
@@ -90,7 +90,7 @@ DROPIN_NAME="10-image.conf"
 AUTOUPDATE_NAME="20-autoupdate.conf"
 AUTOUPDATE_TIMER="podman-auto-update.timer"
 # The repo's unit names this. `unpin` returns to it, and `status` says so.
-BASE_IMAGE_REPO="ghcr.io/kubestellar/hive"
+BASE_IMAGE_REPO="ghcr.io/hivecommons/hive"
 HISTORY_KEEP=10
 
 ROOTFUL=0
@@ -211,7 +211,7 @@ running_version() {
 #   podman image inspect <tag> --format '{{index .RepoDigests 0}}'
 #
 # returns the digest of the per-ARCHITECTURE manifest, not of the manifest list
-# the tag points at. Measured: `ghcr.io/kubestellar/hive:stable` reported
+# the tag points at. Measured: `ghcr.io/hivecommons/hive:stable` reported
 # sha256:5d3f442f... that way and sha256:ec8e69bc... from the registry, and
 # only the second one is a pin that still resolves on arm64. So resolve from
 # the registry with skopeo when it is there, and otherwise from the DIGEST

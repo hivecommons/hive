@@ -27,7 +27,7 @@ func healthyEntry(id string) MyHiveEntry {
 			Online:        true,
 			GitHash:       "abc1234",
 			GitBranch:     "v2",
-			ImageRef:      "ghcr.io/kubestellar/hive:v2-latest",
+			ImageRef:      "ghcr.io/hivecommons/hive:v2-latest",
 			Health:        map[string]any{"status": "ok"},
 		},
 		Role:       "owner",
@@ -95,7 +95,7 @@ func TestComputeDriftSignals(t *testing.T) {
 		{
 			name: "pinned immutable sha tag",
 			mutate: func(h *MyHiveEntry) {
-				h.ImageRef = "ghcr.io/kubestellar/hive:63d8902"
+				h.ImageRef = "ghcr.io/hivecommons/hive:63d8902"
 			},
 			wantKind:      DriftKindPinnedImage,
 			wantSev:       DriftCritical,
@@ -104,7 +104,7 @@ func TestComputeDriftSignals(t *testing.T) {
 		{
 			name: "digest pin is also not a rolling tag",
 			mutate: func(h *MyHiveEntry) {
-				h.ImageRef = "ghcr.io/kubestellar/hive@sha256:" + strings.Repeat("d", 64)
+				h.ImageRef = "ghcr.io/hivecommons/hive@sha256:" + strings.Repeat("d", 64)
 			},
 			wantKind: DriftKindPinnedImage,
 			wantSev:  DriftCritical,
@@ -118,7 +118,7 @@ func TestComputeDriftSignals(t *testing.T) {
 		{
 			name: "registry port is not mistaken for a tag",
 			mutate: func(h *MyHiveEntry) {
-				h.ImageRef = "registry.internal:5000/kubestellar/hive:v2-latest"
+				h.ImageRef = "registry.internal:5000/hivecommons/hive:v2-latest"
 			},
 		},
 		{
@@ -369,7 +369,7 @@ func TestComputeDriftStillFlagsPlaceholderUniversalSignals(t *testing.T) {
 	h := healthyEntry("slot")
 	h.ProvStatus = statusAvailable
 	h.LastHeartbeat = rfc(driftNow.Add(-2 * time.Hour))
-	h.ImageRef = "ghcr.io/kubestellar/hive:63d8902"
+	h.ImageRef = "ghcr.io/hivecommons/hive:63d8902"
 
 	got := computeDrift(h, fleetNorm{}, nil, driftNow)
 	byKind := driftKindsOf(got)
@@ -457,7 +457,7 @@ func TestComputeDriftWorstSeverityWins(t *testing.T) {
 	h := healthyEntry("mixed")
 	h.ACMMLevel = 0                                 // warn
 	h.AgentCount = 0                                // warn
-	h.ImageRef = "ghcr.io/kubestellar/hive:63d8902" // critical
+	h.ImageRef = "ghcr.io/hivecommons/hive:63d8902" // critical
 
 	got := computeDrift(h, fleetNorm{}, nil, driftNow)
 	if got.WorstSeverity != DriftCritical {
@@ -641,13 +641,13 @@ func TestComputeDriftSkipsRelativeSignalsWithoutNorm(t *testing.T) {
 func TestImageTagOf(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", ""},
-		{"ghcr.io/kubestellar/hive:v2-latest", "v2-latest"},
-		{"ghcr.io/kubestellar/hive:63d8902", "63d8902"},
-		{"ghcr.io/kubestellar/hive", ""},
-		{"registry.internal:5000/kubestellar/hive", ""},
-		{"registry.internal:5000/kubestellar/hive:v2-latest", "v2-latest"},
-		{"ghcr.io/kubestellar/hive@sha256:" + strings.Repeat("a", 64), ""},
-		{"ghcr.io/kubestellar/hive:v2-latest@sha256:" + strings.Repeat("a", 64), "v2-latest"},
+		{"ghcr.io/hivecommons/hive:v2-latest", "v2-latest"},
+		{"ghcr.io/hivecommons/hive:63d8902", "63d8902"},
+		{"ghcr.io/hivecommons/hive", ""},
+		{"registry.internal:5000/hivecommons/hive", ""},
+		{"registry.internal:5000/hivecommons/hive:v2-latest", "v2-latest"},
+		{"ghcr.io/hivecommons/hive@sha256:" + strings.Repeat("a", 64), ""},
+		{"ghcr.io/hivecommons/hive:v2-latest@sha256:" + strings.Repeat("a", 64), "v2-latest"},
 	}
 	for _, tc := range tests {
 		if got := imageTagOf(tc.in); got != tc.want {

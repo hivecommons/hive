@@ -2,7 +2,7 @@
 # #5370: on a pull request the arm64 lane must probe the PR's OWN code.
 #
 # The fault this closes is a guard that cannot fail. The lane probed
-# ghcr.io/kubestellar/hive:stable — the published release-channel image — so on
+# ghcr.io/hivecommons/hive:stable — the published release-channel image — so on
 # a PR it validated code already on v4 rather than the change proposed. A PR
 # that REPAIRS a startup bug ran against the still-broken published image and
 # stayed red; a PR that INTRODUCED one ran against the still-good published
@@ -135,13 +135,13 @@ else
 fi
 
 # ── The stale default must not come back ─────────────────────────────────
-# The dispatch input said 'default ghcr.io/kubestellar/hive:v4-latest' and
+# The dispatch input said 'default ghcr.io/hivecommons/hive:v4-latest' and
 # nothing defaulted to that: an empty input means the probe's own fallback,
-# HIVE_STANDALONE_IMAGE_HIVE = ghcr.io/kubestellar/hive:stable. Documenting a
+# HIVE_STANDALONE_IMAGE_HIVE = ghcr.io/hivecommons/hive:stable. Documenting a
 # tag the code never uses is how #5370's description misdescribed the bug.
-if grep -q "description: 'Image to probe (default ghcr.io/kubestellar/hive:v4-latest)'" "$LANE"; then
+if grep -q "description: 'Image to probe (default ghcr.io/hivecommons/hive:v4-latest)'" "$LANE"; then
   bad "the workflow_dispatch input still claims a v4-latest default" \
-      "an empty input resolves to ghcr.io/kubestellar/hive:stable via standalone-images.sh"
+      "an empty input resolves to ghcr.io/hivecommons/hive:stable via standalone-images.sh"
 else
   ok "the dispatch input no longer claims a v4-latest default"
 fi

@@ -17,7 +17,7 @@ export HIVE_DASHBOARD_TOKEN="..."
 bin/hivectl system status
 
 # Enroll a repository in clusterless, zero-secret Hive lite mode.
-bin/hivectl enroll kubestellar/hive
+bin/hivectl enroll hivecommons/hive
 ```
 
 ## Running against a local Hive

@@ -11,9 +11,9 @@ func TestValidate(t *testing.T) {
 		"lane":"scanner",
 		"kind":"findings",
 		"findings":[{"title":"racy write","severity":"high","summary":"shared map is written without a lock","file":"pkg/x.go","line":42}],
-		"prs_opened":[{"repo":"kubestellar/hive","number":2806,"title":"structured reports","url":"https://github.com/hivecommons/hive/pull/1"}],
+		"prs_opened":[{"repo":"hivecommons/hive","number":2806,"title":"structured reports","url":"https://github.com/hivecommons/hive/pull/1"}],
 		"beads_filed":[{"id":"bead-1","type":"task","title":"follow-up"}],
-		"artifacts":[{"repo":"kubestellar/hive","path":"grafana/dashboards/api.json","description":"API service dashboard"}],
+		"artifacts":[{"repo":"hivecommons/hive","path":"grafana/dashboards/api.json","description":"API service dashboard"}],
 		"summary":"one finding, one PR, one bead"
 	}`
 
@@ -33,7 +33,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "valid instrument report",
-			raw:  `{"lane":"telemetry","kind":"instrument","findings":[],"prs_opened":[],"beads_filed":[],"artifacts":[{"repo":"kubestellar/hive","path":"deploy/servicemonitor.yaml","description":"Prometheus scrape target"}],"summary":"added monitoring"}`,
+			raw:  `{"lane":"telemetry","kind":"instrument","findings":[],"prs_opened":[],"beads_filed":[],"artifacts":[{"repo":"hivecommons/hive","path":"deploy/servicemonitor.yaml","description":"Prometheus scrape target"}],"summary":"added monitoring"}`,
 		},
 		{
 			name:    "invalid artifact",
@@ -57,7 +57,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "invalid nested values",
-			raw:     `{"lane":"scanner","kind":"fix","findings":[{"title":"x","severity":"low","summary":"y","line":-1}],"prs_opened":[{"repo":"kubestellar/hive","number":0,"title":"bad"}],"beads_filed":[],"summary":"bad nested"}`,
+			raw:     `{"lane":"scanner","kind":"fix","findings":[{"title":"x","severity":"low","summary":"y","line":-1}],"prs_opened":[{"repo":"hivecommons/hive","number":0,"title":"bad"}],"beads_filed":[],"summary":"bad nested"}`,
 			wantErr: []string{"findings[0].line", "prs_opened[0].number"},
 		},
 		{

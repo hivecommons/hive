@@ -38,7 +38,7 @@ func TestCreatePRBlocksCanaryWhenFailClosed(t *testing.T) {
 	}
 }
 
-// TestCreateIssueCommentBlocksCanaryWhenFailClosed pins the kubestellar/hive
+// TestCreateIssueCommentBlocksCanaryWhenFailClosed pins the hivecommons/hive
 // #4960 invariant directly: CreateIssueComment must refuse a canary body the
 // same way CreateIssue/CreatePR do. Without the fix, CreateIssueComment never
 // calls scanCanaryText at all, so this test fails (the comment "posts") the
@@ -117,7 +117,7 @@ func TestCreateIssueAndCreateIssueCommentAgreeOnCanaryFailClosed(t *testing.T) {
 		t.Fatalf("CreateIssueComment error = %v, want canary block (parity with CreateIssue)", commentErr)
 	}
 	if commented != 0 {
-		t.Fatal("CreateIssueComment: comment was posted despite fail-closed canary block — the bypass kubestellar/hive#4960 describes")
+		t.Fatal("CreateIssueComment: comment was posted despite fail-closed canary block — the bypass hivecommons/hive#4960 describes")
 	}
 }
 

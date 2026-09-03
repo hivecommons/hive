@@ -9,7 +9,7 @@ import (
 
 func observationsTestConfig() *config.Config {
 	return &config.Config{
-		Project: config.ProjectConfig{Org: "kubestellar", AIAuthor: "hive-bee"},
+		Project: config.ProjectConfig{Org: "hivecommons", AIAuthor: "hive-bee"},
 	}
 }
 
@@ -38,7 +38,7 @@ func TestHivePRObservationsExcludesHumanAuthors(t *testing.T) {
 }
 
 // Observations must carry FULLY-QUALIFIED repos: the escalation store keys on
-// them, and a bare "hive" beside a "kubestellar/hive" for the same PR would
+// them, and a bare "hive" beside a "hivecommons/hive" for the same PR would
 // split its attempt count across two ledger entries and defeat the breaker.
 func TestHivePRObservationsQualifiesRepos(t *testing.T) {
 	cfg := observationsTestConfig()
@@ -52,8 +52,8 @@ func TestHivePRObservationsQualifiesRepos(t *testing.T) {
 	if len(obs) != 2 {
 		t.Fatalf("got %d observations, want 2", len(obs))
 	}
-	if obs[0].Repo != "kubestellar/hive" {
-		t.Errorf("bare repo = %q, want qualified %q", obs[0].Repo, "kubestellar/hive")
+	if obs[0].Repo != "hivecommons/hive" {
+		t.Errorf("bare repo = %q, want qualified %q", obs[0].Repo, "hivecommons/hive")
 	}
 	if obs[1].Repo != "otherorg/console" {
 		t.Errorf("already-qualified repo rewritten to %q, want untouched %q", obs[1].Repo, "otherorg/console")

@@ -389,7 +389,7 @@ func TestHeartbeatFoldsReachHistory(t *testing.T) {
 
 	start := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339)
 	body := func(hive string, winTotal, winErr int64) string {
-		return fmt.Sprintf(`{"hive_id":%q,"org":"kubestellar","component_reach":{"entries":[
+		return fmt.Sprintf(`{"hive_id":%q,"org":"hivecommons","component_reach":{"entries":[
 			{"component":"hub","commit":"abc1234","spans_total":%d,"spans_error":%d,
 			 "first_seen":%q,"last_seen":%q,
 			 "window_1h":{"start":%q,"spans_total":%d,"spans_error":%d}}]}}`,
@@ -418,7 +418,7 @@ func TestHeartbeatFoldsReachHistory(t *testing.T) {
 	}
 	// A beat WITHOUT component_reach must not touch history (nil report —
 	// the carry-forward path keeps the registry copy, not the ring).
-	if rec := postHeartbeat(t, s, `{"hive_id":"h1","org":"kubestellar"}`); rec.Code != http.StatusOK {
+	if rec := postHeartbeat(t, s, `{"hive_id":"h1","org":"hivecommons"}`); rec.Code != http.StatusOK {
 		t.Fatalf("heartbeat status = %d", rec.Code)
 	}
 	windows = s.reachHistory.ComponentWindows("hub")

@@ -39,7 +39,7 @@ func approvalServer(t *testing.T, n int) (*Server, *toolapprove.Inbox) {
 	for i := 1; i <= n; i++ {
 		req := toolapprove.Request{
 			Kind:   toolapprove.KindSelfMerge,
-			Repo:   "kubestellar/hive",
+			Repo:   "hivecommons/hive",
 			Number: i,
 			Author: "hive-app[bot]",
 			Tool:   toolapprove.ToolRequest{Tool: "hive-merge"},

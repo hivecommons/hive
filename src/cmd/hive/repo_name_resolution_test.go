@@ -12,7 +12,7 @@ func TestBareRepoName(t *testing.T) {
 		repo string
 		want string
 	}{
-		{"qualified", "kubestellar/hive", "hive"},
+		{"qualified", "hivecommons/hive", "hive"},
 		{"bare passthrough", "hive", "hive"},
 		{"nested path keeps last segment", "ghe.example.com/org/hive", "hive"},
 		{"trailing slash yields empty", "kubestellar/", ""},
@@ -38,11 +38,11 @@ func TestFullRepoName(t *testing.T) {
 		org  string
 		want string
 	}{
-		{"bare gets org", "hive", "kubestellar", "kubestellar/hive"},
-		{"qualified untouched", "kubestellar/hive", "kubestellar", "kubestellar/hive"},
+		{"bare gets org", "hive", "hivecommons", "hivecommons/hive"},
+		{"qualified untouched", "hivecommons/hive", "hivecommons", "hivecommons/hive"},
 		{"foreign owner untouched", "otherorg/hive", "kubestellar", "otherorg/hive"},
 		{"empty org leaves bare", "hive", "", "hive"},
-		{"empty repo stays empty", "", "kubestellar", "kubestellar/"},
+		{"empty repo stays empty", "", "hivecommons", "hivecommons/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

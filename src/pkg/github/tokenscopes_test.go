@@ -26,7 +26,7 @@ func scopeTestServer(t *testing.T, setHeader bool, scopes string) *Client {
 		_, _ = w.Write([]byte(`{"resources":{}}`))
 	}))
 	t.Cleanup(srv.Close)
-	return NewClientForTest(srv.URL, "kubestellar", []string{"hive"}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	return NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 }
 
 func TestCheckTokenScopes(t *testing.T) {
@@ -194,7 +194,7 @@ func TestCheckTokenScopesNetworkFailureIsSoft(t *testing.T) {
 	url := srv.URL
 	srv.Close() // closed: connections are refused
 
-	c := NewClientForTest(url, "kubestellar", []string{"hive"}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	c := NewClientForTest(url, "hivecommons", []string{"hive"}, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 
 	proceeded := false
 	got := c.CheckTokenScopes(context.Background(), 6)
@@ -237,7 +237,7 @@ func TestLogTokenScopeCheckNeverLogsTokenMaterial(t *testing.T) {
 	// NewClientForTest hardcodes a placeholder token, so build the real client
 	// with the secret and then retarget its BaseURL at the test server — the
 	// point of this test is that a REAL token value never reaches the log.
-	c := NewClient(secret, "kubestellar", []string{"hive"}, logger, "")
+	c := NewClient(secret, "hivecommons", []string{"hive"}, logger, "")
 	base, err := url.Parse(srv.URL + "/")
 	if err != nil {
 		t.Fatalf("parse test url: %v", err)

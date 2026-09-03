@@ -57,13 +57,13 @@ func TestIngestRetroLessonDeduplicates(t *testing.T) {
 	lesson := RetroLesson{
 		Lesson:     "Run targeted validation before opening PRs when changes affect CI-sensitive code paths.",
 		SourceBead: "bead-1",
-		SourcePR:   "kubestellar/hive#42",
+		SourcePR:   "hivecommons/hive#42",
 		SourceDate: time.Now().UTC(),
 	}
 	if _, created, err := api.IngestRetroLesson(context.Background(), lesson); err != nil || !created {
 		t.Fatalf("first ingest created=%v err=%v", created, err)
 	}
-	if len(stored) != 1 || stored[0].SourcePR != "retro bead:bead-1 pr:kubestellar/hive#42" {
+	if len(stored) != 1 || stored[0].SourcePR != "retro bead:bead-1 pr:hivecommons/hive#42" {
 		t.Fatalf("stored payload = %#v", stored)
 	}
 	if _, created, err := api.IngestRetroLesson(context.Background(), lesson); err != nil || created {

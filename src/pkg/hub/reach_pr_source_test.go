@@ -17,13 +17,13 @@ import (
 // unchanged and propagate fetch errors instead of half-built PRInfo.
 func TestGitHubPRSourceMapping(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /repos/kubestellar/hive/pulls/9942", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/hivecommons/hive/pulls/9942", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"number":9942,"title":"reach mapping","merged_at":"2026-08-10T12:00:00Z","merge_commit_sha":"beef9942"}`)
 	})
-	mux.HandleFunc("GET /repos/kubestellar/hive/pulls/9942/files", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/hivecommons/hive/pulls/9942/files", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[{"filename":"src/pkg/hub/saas.go"},{"filename":"docs/reach.md"}]`)
 	})
-	mux.HandleFunc("GET /repos/kubestellar/hive/pulls", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/hivecommons/hive/pulls", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[
 			{"number":9942,"title":"reach mapping","merged_at":"2026-08-10T12:00:00Z","merge_commit_sha":"beef9942"},
 			{"number":9941,"title":"closed unmerged"}
@@ -32,7 +32,7 @@ func TestGitHubPRSourceMapping(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	client := hivegithub.NewClientForTest(server.URL, "kubestellar", []string{"hive"}, slog.Default())
+	client := hivegithub.NewClientForTest(server.URL, "hivecommons", []string{"hive"}, slog.Default())
 	src := NewGitHubPRSource(client, "v4")
 
 	info, err := src.MergedPR(context.Background(), 9942)
@@ -67,7 +67,7 @@ func TestGitHubPRSourceErrorPropagation(t *testing.T) {
 	defer server.Close()
 
 	src := NewGitHubPRSource(
-		hivegithub.NewClientForTest(server.URL, "kubestellar", []string{"hive"}, slog.Default()), "v4")
+		hivegithub.NewClientForTest(server.URL, "hivecommons", []string{"hive"}, slog.Default()), "v4")
 
 	if _, err := src.MergedPR(context.Background(), 9943); err == nil {
 		t.Error("MergedPR must propagate the fetch error")

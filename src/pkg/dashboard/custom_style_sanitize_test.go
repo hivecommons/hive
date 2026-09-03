@@ -260,13 +260,13 @@ func TestNormalizeCustomStyleScope_RejectsInvalid(t *testing.T) {
 
 func TestCustomStyleRawURL(t *testing.T) {
 	src := customStyleSource{
-		Owner: "kubestellar",
+		Owner: "hivecommons",
 		Repo:  "hive",
 		Path:  "themes/dark.css",
 		Ref:   "main",
 	}
 	got := customStyleRawURL(src)
-	want := "https://raw.githubusercontent.com/kubestellar/hive/main/themes/dark.css"
+	want := "https://raw.githubusercontent.com/hivecommons/hive/main/themes/dark.css"
 	if got != want {
 		t.Errorf("customStyleRawURL() = %q, want %q", got, want)
 	}

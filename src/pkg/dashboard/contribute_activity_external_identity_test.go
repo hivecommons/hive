@@ -25,9 +25,9 @@ import (
 // %s#%d format produced, because operators and any log tooling read these
 // strings today.
 func TestAssignDescGitHubOutputIsByteIdentical(t *testing.T) {
-	key := worksource.Ref{Repo: "kubestellar/hive", Number: 5061}.Key()
+	key := worksource.Ref{Repo: "hivecommons/hive", Number: 5061}.Key()
 	got := assignDesc("issue", key, "✨ tui T12: poll loop", "t-1")
-	want := fmt.Sprintf("%s %s#%d: %s", "issue", "kubestellar/hive", 5061, "✨ tui T12: poll loop")
+	want := fmt.Sprintf("%s %s#%d: %s", "issue", "hivecommons/hive", 5061, "✨ tui T12: poll loop")
 	if got != want {
 		t.Errorf("assignDesc() = %q, want the old GitHub rendering %q unchanged", got, want)
 	}

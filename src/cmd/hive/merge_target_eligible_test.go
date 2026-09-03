@@ -31,7 +31,7 @@ func TestMergeTargetEligible_SHABinding(t *testing.T) {
 	body := `{
 		"generated_at": "2026-08-06T00:00:00Z",
 		"merge_eligible": [
-			{"number": 42, "repo": "kubestellar/hive", "head_sha": "` + goodSHA + `"},
+			{"number": 42, "repo": "hivecommons/hive", "head_sha": "` + goodSHA + `"},
 			{"number": 7, "repo": "kubestellar/console", "head_sha": ""}
 		]
 	}`
@@ -44,13 +44,13 @@ func TestMergeTargetEligible_SHABinding(t *testing.T) {
 		expectSHA string
 		want      bool
 	}{
-		{"exact match allows (fully-qualified repo)", "kubestellar/hive", 42, goodSHA, true},
+		{"exact match allows (fully-qualified repo)", "hivecommons/hive", 42, goodSHA, true},
 		{"exact match allows (bare repo)", "hive", 42, goodSHA, true},
-		{"moved head denied (SHA mismatch)", "kubestellar/hive", 42, movedSHA, false},
-		{"empty expected SHA denied", "kubestellar/hive", 42, "", false},
-		{"whitespace expected SHA denied", "kubestellar/hive", 42, "   ", false},
+		{"moved head denied (SHA mismatch)", "hivecommons/hive", 42, movedSHA, false},
+		{"empty expected SHA denied", "hivecommons/hive", 42, "", false},
+		{"whitespace expected SHA denied", "hivecommons/hive", 42, "   ", false},
 		{"stored SHA empty denied", "kubestellar/console", 7, movedSHA, false},
-		{"number not in list denied", "kubestellar/hive", 999, goodSHA, false},
+		{"number not in list denied", "hivecommons/hive", 999, goodSHA, false},
 		{"repo mismatch denied", "kubestellar/other", 42, goodSHA, false},
 	}
 	for _, tt := range tests {
@@ -72,14 +72,14 @@ func TestMergeTargetEligible_FailClosed(t *testing.T) {
 		orig := mergeEligiblePath
 		mergeEligiblePath = filepath.Join(t.TempDir(), "does-not-exist.json")
 		t.Cleanup(func() { mergeEligiblePath = orig })
-		if mergeTargetEligible("kubestellar/hive", 42, someSHA) {
+		if mergeTargetEligible("hivecommons/hive", 42, someSHA) {
 			t.Error("missing merge-eligible.json must deny (fail closed)")
 		}
 	})
 
 	t.Run("unparseable file denies", func(t *testing.T) {
 		writeEligibleFixture(t, "{ this is not json")
-		if mergeTargetEligible("kubestellar/hive", 42, someSHA) {
+		if mergeTargetEligible("hivecommons/hive", 42, someSHA) {
 			t.Error("unparseable merge-eligible.json must deny (fail closed)")
 		}
 	})

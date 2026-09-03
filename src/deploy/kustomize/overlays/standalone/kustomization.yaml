@@ -25,18 +25,18 @@ resources:
 # The base image tracks the `stable` channel. For a self-hosted deployment pin
 # a reviewed DIGEST (see README "Pinning / upgrading the image" for how to
 # resolve `stable` to one) by running, from this directory:
-#   kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive@sha256:<digest>
+#   kustomize edit set image ghcr.io/hivecommons/hive=ghcr.io/hivecommons/hive@sha256:<digest>
 # which writes the `images:` block below into this file (git-tracked).
 #
-# Do NOT assume `newTag: vX.Y.Z` works: ghcr.io/kubestellar/hive only carries
+# Do NOT assume `newTag: vX.Y.Z` works: ghcr.io/hivecommons/hive only carries
 # channel tags (stable/candidate/edge/v4-latest) plus short-SHA tags on every
 # merge, and a `vX.Y.Z` IMAGE tag exists only when the automated tagged-release
 # workflow (.github/workflows/tagged-release.yml) has cut that version. In particular
 # there is no `:v4.0.0` image — pinning it is an ImagePullBackOff. Check the
 # tag exists (README) before using one.
 # images:
-#   - name: ghcr.io/kubestellar/hive
-#     newName: ghcr.io/kubestellar/hive
+#   - name: ghcr.io/hivecommons/hive
+#     newName: ghcr.io/hivecommons/hive
 #     digest: sha256:<digest>   # or newTag: vX.Y.Z once confirmed to exist
 
 patches:

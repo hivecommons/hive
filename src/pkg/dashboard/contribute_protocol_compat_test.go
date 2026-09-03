@@ -168,7 +168,7 @@ func TestRelayProtocolVersionMatchesHub(t *testing.T) {
 	if got := string(m[1]); got != contributorProtocolVersion {
 		t.Errorf("bin/contributor-relay.sh declares protocol %q but the hub speaks %q.\n"+
 			"They ship from the same tree and must match. Bumping contributorProtocolVersion "+
-			"means bumping RELAY_PROTOCOL_VERSION in the same PR (kubestellar/hive#2547 / #2567).", got, contributorProtocolVersion)
+			"means bumping RELAY_PROTOCOL_VERSION in the same PR (hivecommons/hive#2547 / #2567).", got, contributorProtocolVersion)
 	}
 }
 
@@ -257,7 +257,7 @@ func TestProtocolCompatIsNotReadBySelection(t *testing.T) {
 		for _, forbidden := range []string{"peerProtocolCompat", "classifyPeerProtocol", "ProtocolCompat", "RelayProtocolVersion", "protoPeer"} {
 			if strings.Contains(body, forbidden) {
 				t.Errorf("%s references %s — the peer-protocol comparison is OBSERVABILITY, not routing "+
-					"(kubestellar/hive#2547 DECLARE/ROUTE split). If routing has now been decided and recorded "+
+					"(hivecommons/hive#2547 DECLARE/ROUTE split). If routing has now been decided and recorded "+
 					"by a maintainer, update this test in that same PR; otherwise remove the read.", name, forbidden)
 			}
 		}

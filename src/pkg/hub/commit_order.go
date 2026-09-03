@@ -85,7 +85,7 @@ var (
 // commitOrderMu (commitAtOrAheadOfTarget captures it under that mutex).
 var fetchCommitCompareStatus = func(base, head string, logger *slog.Logger) (string, error) {
 	client := &http.Client{Timeout: commitCompareTimeout}
-	compareURL := fmt.Sprintf("%s/repos/kubestellar/hive/compare/%s...%s",
+	compareURL := fmt.Sprintf("%s/repos/hivecommons/hive/compare/%s...%s",
 		githubAPIBase, url.PathEscape(base), url.PathEscape(head))
 	req, err := http.NewRequest(http.MethodGet, compareURL, nil)
 	if err != nil {

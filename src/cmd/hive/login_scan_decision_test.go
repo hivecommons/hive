@@ -18,7 +18,7 @@ import (
 func defaultLoginRegexps(t *testing.T) []*regexp.Regexp {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "hive.yaml")
-	minimal := "project:\n  name: login-scan-test\n  org: kubestellar\n" +
+	minimal := "project:\n  name: login-scan-test\n  org: hivecommons\n" +
 		"github:\n  token: t-not-a-real-token\n" +
 		"agents:\n  supervisor:\n    backend: claude\n"
 	if err := os.WriteFile(path, []byte(minimal), 0o644); err != nil {

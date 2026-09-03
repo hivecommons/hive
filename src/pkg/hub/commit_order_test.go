@@ -155,7 +155,7 @@ func TestHandleHeartbeatFloatingTagLandedOnLatestNotTarget(t *testing.T) {
 	s.heartbeatUpgrade["h1"] = "aaaaaaa"
 
 	rec := postHeartbeat(t, s,
-		`{"hive_id":"h1","git_hash":"bbbbbbb","git_branch":"v2","upgrading":false,"image_ref":"ghcr.io/kubestellar/hive:v2-latest"}`)
+		`{"hive_id":"h1","git_hash":"bbbbbbb","git_branch":"v2","upgrading":false,"image_ref":"ghcr.io/hivecommons/hive:v2-latest"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -363,7 +363,7 @@ func TestFetchCommitCompareStatusHTTP(t *testing.T) {
 		wantErr bool
 	}{
 		{"ahead", func(w http.ResponseWriter, r *http.Request) {
-			if !strings.Contains(r.URL.Path, "/repos/kubestellar/hive/compare/aaaaaaa...bbbbbbb") {
+			if !strings.Contains(r.URL.Path, "/repos/hivecommons/hive/compare/aaaaaaa...bbbbbbb") {
 				t.Errorf("unexpected compare path %s", r.URL.Path)
 			}
 			w.Write([]byte(`{"status":"ahead"}`))

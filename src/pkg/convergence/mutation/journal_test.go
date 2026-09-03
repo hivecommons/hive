@@ -33,13 +33,13 @@ func openJournal(t *testing.T) *Journal {
 }
 
 func TestDeriveLogicalIDExcludesAttemptMetadata(t *testing.T) {
-	parts := []string{"v1", "session", "comment", "kubestellar/hive", "5624", "same body"}
+	parts := []string{"v1", "session", "comment", "hivecommons/hive", "5624", "same body"}
 	first := DeriveLogicalID(parts, nil)
 	second := DeriveLogicalID(append([]string(nil), parts...), nil)
 	if first == "" || first != second {
 		t.Fatalf("DeriveLogicalID must be stable: first=%q second=%q", first, second)
 	}
-	if changed := DeriveLogicalID([]string{"v1", "session", "comment", "kubestellar/hive", "5624", "different body"}, nil); changed == first {
+	if changed := DeriveLogicalID([]string{"v1", "session", "comment", "hivecommons/hive", "5624", "different body"}, nil); changed == first {
 		t.Fatal("changing a load-bearing field must change the logical operation id")
 	}
 }

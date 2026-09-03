@@ -85,7 +85,7 @@ func stripRepoRefHost(s string) string {
 // into the (host, "owner/repo") pair an overlap is keyed on.
 //
 // The raw entry is whatever the spoke reported or an operator pasted, so it may
-// be a bare name ("hive"), an owner-qualified path ("kubestellar/hive"), or a
+// be a bare name ("hive"), an owner-qualified path ("hivecommons/hive"), or a
 // full URL ("https://github.ibm.com/z-aiops-unite/ui"). All three must land on
 // the same identity when they name the same repo. That is not a nicety: two
 // spokes are configured separately, so "one lists bare names, the other lists

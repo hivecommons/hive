@@ -647,7 +647,7 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	// WithCancel context was born dead — launchInTmux still typed the CLI, but
 	// pollTmuxOutputForAgent and watchForTrustPromptForAgent exited instantly,
 	// leaving every restarted agent with NO pane monitors. Live signature
-	// (kubestellar/hive, 2026-08-22): exactly one auto-answered trust prompt
+	// (hivecommons/hive, 2026-08-22): exactly one auto-answered trust prompt
 	// per agent per pod boot, then wedged panes forever after the first
 	// token-detected restart. A relaunch must never be aborted by the
 	// cancellation of the launch it replaces. (Nil-guarded: WithoutCancel

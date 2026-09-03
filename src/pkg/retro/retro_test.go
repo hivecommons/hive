@@ -36,19 +36,19 @@ func TestReconstruct(t *testing.T) {
 			name: "metadata and timeline assemble compact record",
 			metadata: map[string]interface{}{
 				"claimed_at":       base.Format(time.RFC3339),
-				"pr_ref":           "kubestellar/hive#42",
+				"pr_ref":           "hivecommons/hive#42",
 				"pr_state":         "closed",
 				"ci_failure_count": "2",
 				"drift_pauses":     "1",
 			},
 			timeline: []timeline.Event{
-				{IssueRef: "kubestellar/hive#2809", Kind: timeline.KindKicked, At: base.Add(time.Hour).UnixMilli()},
-				{IssueRef: "kubestellar/hive#2809", Kind: timeline.KindKicked, At: base.Add(2 * time.Hour).UnixMilli()},
+				{IssueRef: "hivecommons/hive#2809", Kind: timeline.KindKicked, At: base.Add(time.Hour).UnixMilli()},
+				{IssueRef: "hivecommons/hive#2809", Kind: timeline.KindKicked, At: base.Add(2 * time.Hour).UnixMilli()},
 			},
-			attempts: fakeAttempts{"kubestellar/hive#42": 3},
+			attempts: fakeAttempts{"hivecommons/hive#42": 3},
 			want: RetroRecord{
-				IssueRef:       "kubestellar/hive#2809",
-				PRRef:          "kubestellar/hive#42",
+				IssueRef:       "hivecommons/hive#2809",
+				PRRef:          "hivecommons/hive#42",
 				PRState:        "closed",
 				KicksReceived:  2,
 				CIFailureCount: 3,
@@ -60,13 +60,13 @@ func TestReconstruct(t *testing.T) {
 		{
 			name: "timeline merged event supplies pr state and ref",
 			timeline: []timeline.Event{
-				{IssueRef: "kubestellar/hive#2810", Kind: timeline.KindKicked, At: base.Add(time.Hour).UnixMilli()},
-				{IssueRef: "kubestellar/hive#2810", Kind: timeline.KindMerged, At: base.Add(2 * time.Hour).UnixMilli(), Attrs: map[string]string{"pr_number": "77"}},
-				{IssueRef: "kubestellar/hive#2810", Kind: timeline.KindBlocked, At: base.Add(3 * time.Hour).UnixMilli(), Attrs: map[string]string{"trigger": "trajectory-review", "reason": "drift pause"}},
+				{IssueRef: "hivecommons/hive#2810", Kind: timeline.KindKicked, At: base.Add(time.Hour).UnixMilli()},
+				{IssueRef: "hivecommons/hive#2810", Kind: timeline.KindMerged, At: base.Add(2 * time.Hour).UnixMilli(), Attrs: map[string]string{"pr_number": "77"}},
+				{IssueRef: "hivecommons/hive#2810", Kind: timeline.KindBlocked, At: base.Add(3 * time.Hour).UnixMilli(), Attrs: map[string]string{"trigger": "trajectory-review", "reason": "drift pause"}},
 			},
 			want: RetroRecord{
-				IssueRef:      "kubestellar/hive#2810",
-				PRRef:         "kubestellar/hive#77",
+				IssueRef:      "hivecommons/hive#2810",
+				PRRef:         "hivecommons/hive#77",
 				PRState:       "merged",
 				KicksReceived: 1,
 				DriftPauses:   1,
@@ -150,7 +150,7 @@ func TestDetect(t *testing.T) {
 func TestReconstructDoneBeadUsesUpdatedAtAsCompletion(t *testing.T) {
 	store := newStore(t, "done-updated-at")
 	claimed := time.Now().UTC().Add(-8 * 24 * time.Hour)
-	b, err := store.Create("done source", beads.TypeTask, beads.PriorityMedium, "scanner", "kubestellar/hive#2809")
+	b, err := store.Create("done source", beads.TypeTask, beads.PriorityMedium, "scanner", "hivecommons/hive#2809")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestReconstructDoneBeadUsesUpdatedAtAsCompletion(t *testing.T) {
 		bd.Status = beads.StatusDone
 		bd.Metadata = map[string]interface{}{
 			"claimed_at": claimed.Format(time.RFC3339),
-			"pr_ref":     "kubestellar/hive#42",
+			"pr_ref":     "hivecommons/hive#42",
 			"pr_state":   "merged",
 		}
 	}); err != nil {
@@ -180,14 +180,14 @@ func TestReconstructDoneBeadUsesUpdatedAtAsCompletion(t *testing.T) {
 func TestLaneFilesAdvisoryOnceAndMarksAnalyzed(t *testing.T) {
 	source := newStore(t, "lane-source")
 	retroStore := newStore(t, "lane-retro")
-	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "kubestellar/hive#2809")
+	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "hivecommons/hive#2809")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := source.Update(b.ID, func(bd *beads.Bead) {
 		bd.Status = beads.StatusClosed
 		bd.Metadata = map[string]interface{}{
-			"pr_ref":       "kubestellar/hive#42",
+			"pr_ref":       "hivecommons/hive#42",
 			"pr_state":     "merged",
 			"fix_attempts": "3",
 		}
@@ -283,13 +283,13 @@ func TestAnalysisRetriesInvalidJSON(t *testing.T) {
 func TestLaneFailOpenOnAnalysisError(t *testing.T) {
 	source := newStore(t, "analysis-error-source")
 	retroStore := newStore(t, "analysis-error-retro")
-	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "kubestellar/hive#2809")
+	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "hivecommons/hive#2809")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := source.Update(b.ID, func(bd *beads.Bead) {
 		bd.Status = beads.StatusClosed
-		bd.Metadata = map[string]interface{}{"pr_ref": "kubestellar/hive#42", "pr_state": "merged", "fix_attempts": "3"}
+		bd.Metadata = map[string]interface{}{"pr_ref": "hivecommons/hive#42", "pr_state": "merged", "fix_attempts": "3"}
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -316,13 +316,13 @@ func (f *fakeKnowledgeSink) IngestRetroLesson(_ context.Context, lesson knowledg
 func TestLaneEnrichesAdvisoryAndFeedsKnowledge(t *testing.T) {
 	source := newStore(t, "analysis-source")
 	retroStore := newStore(t, "analysis-retro")
-	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "kubestellar/hive#2809")
+	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "hivecommons/hive#2809")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := source.Update(b.ID, func(bd *beads.Bead) {
 		bd.Status = beads.StatusClosed
-		bd.Metadata = map[string]interface{}{"pr_ref": "kubestellar/hive#42", "pr_state": "merged", "fix_attempts": "3"}
+		bd.Metadata = map[string]interface{}{"pr_ref": "hivecommons/hive#42", "pr_state": "merged", "fix_attempts": "3"}
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestLaneEnrichesAdvisoryAndFeedsKnowledge(t *testing.T) {
 	if advisory.Meta(metadataAnalysisRootCause) == "" || !strings.Contains(advisory.Notes, "Model-generated retro analysis") {
 		t.Fatalf("advisory not enriched: %#v", advisory)
 	}
-	if len(sink.lessons) != 1 || sink.lessons[0].SourcePR != "kubestellar/hive#42" {
+	if len(sink.lessons) != 1 || sink.lessons[0].SourcePR != "hivecommons/hive#42" {
 		t.Fatalf("lessons = %#v, want one sourced lesson", sink.lessons)
 	}
 }

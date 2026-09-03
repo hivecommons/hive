@@ -100,9 +100,9 @@ or grant the capability per the section below for the full gate.
 ### Docker / Podman (rootful)
 
 ```bash
-docker run --cap-add NET_ADMIN ... ghcr.io/kubestellar/hive:<tag>
+docker run --cap-add NET_ADMIN ... ghcr.io/hivecommons/hive:<tag>
 # or
-podman run --cap-add NET_ADMIN ... ghcr.io/kubestellar/hive:<tag>
+podman run --cap-add NET_ADMIN ... ghcr.io/hivecommons/hive:<tag>
 ```
 
 ### Kubernetes / k3s

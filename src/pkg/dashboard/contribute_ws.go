@@ -34,7 +34,7 @@ import (
 const (
 	wsHeartbeatInterval = 30 * time.Second
 	wsHeartbeatTimeout  = 90 * time.Second
-	// wsTaskTimeout is the hub-owned LEASE TTL on task ownership (kubestellar/hive
+	// wsTaskTimeout is the hub-owned LEASE TTL on task ownership (hivecommons/hive
 	// #2568). A task's lease is renewed on assignment and on every task_progress
 	// report; if a connection holds a task but the lease has not been renewed within
 	// this window the cleanupLoop auto-releases it through the SAME cooldown path the
@@ -171,7 +171,7 @@ type ContributorConnection struct {
 	// races surface as a "concurrent write to websocket connection" panic (seen in
 	// TestStaleGeneration_RevokedWorkerCannotOverwriteNewOwner). It is a SEPARATE
 	// lock from mu (which guards the state fields above): no write path holds mu
-	// while calling send, so the two never nest. See kubestellar/hive
+	// while calling send, so the two never nest. See hivecommons/hive
 	// contribute-ws concurrent-write fix.
 	writeMu sync.Mutex
 }
@@ -564,7 +564,7 @@ type ContributeWSHub struct {
 	// Guarded by h.mu, like the other per-issue live state.
 	yankExclusions map[string]time.Time
 	// leases is the hub-owned, server-authoritative registry of the task the hub
-	// ISSUED to each contributor identity (kubestellar/hive C4). It is keyed by
+	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
 	// exactly one lease per identity — the last task selectTask handed that identity.
 	//
@@ -584,7 +584,7 @@ type ContributeWSHub struct {
 }
 
 // taskLease is the server-authoritative record of a task the hub issued to a
-// contributor identity (kubestellar/hive C4). It binds the assignment to the
+// contributor identity (hivecommons/hive C4). It binds the assignment to the
 // {profile, task, repo, generation} tuple and an expiry so a reconnecting relay's
 // task_progress can only RE-ADOPT a task the hub actually assigned to it, under the
 // exact generation it was assigned, and only until the lease expires. It is minted
@@ -616,7 +616,7 @@ type taskLease struct {
 }
 
 // leaseTTL is how long a hub-issued task lease remains re-adoptable after the last
-// time the relay proved it was still working (kubestellar/hive C4). It is aligned
+// time the relay proved it was still working (hivecommons/hive C4). It is aligned
 // with wsTaskTimeout (the wedged-task backstop) and, since #4260, is measured from
 // the SAME event: recordLease stamps it at assignment and renewLease re-stamps it on
 // every accepted task_progress, exactly where reclaimExpiredLeases re-stamps
@@ -638,7 +638,7 @@ type taskLease struct {
 const leaseTTL = wsTaskTimeout
 
 // recordLease registers (or replaces) the server-authoritative lease for an
-// identity when the hub assigns it a task (kubestellar/hive C4). It stores the
+// identity when the hub assigns it a task (hivecommons/hive C4). It stores the
 // exact {task, repo, generation, tier} the hub issued plus an expiry, so a later
 // reconnect can be validated against what the server actually handed out — never
 // reconstructed from client-supplied fields. Called from selectTask under the new
@@ -708,7 +708,7 @@ func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) {
 }
 
 // revokeLease removes the server-authoritative lease for an identity on any release
-// path (kubestellar/hive C4): disconnect, ready-abandon, task_complete, task_failed,
+// path (hivecommons/hive C4): disconnect, ready-abandon, task_complete, task_failed,
 // operator requeue, and lease-TTL expiry. Once revoked, a reconnecting relay's
 // task_progress for that task no longer matches any lease and cannot re-adopt it —
 // closing the window in which a released task could be resurrected from client
@@ -730,7 +730,7 @@ func (h *ContributeWSHub) revokeLease(identity, taskID string) {
 }
 
 // lookupLease returns the active, unexpired server-issued lease for an identity that
-// EXACTLY matches the resume claim (kubestellar/hive C4): same task_id, same
+// EXACTLY matches the resume claim (hivecommons/hive C4): same task_id, same
 // canonical repo, same number, and same assignment generation. Any mismatch — no
 // lease, wrong task, wrong repo/number, wrong (or zero) generation, or an expired
 // lease — returns nil, so a reconnecting relay may only re-adopt the precise task the
@@ -4688,7 +4688,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 
 // mintScopedToken produces a scoped GitHub token for the given trust tier via the
 // GitHub App auth path, scoped to a single repository when repo is non-empty
-// (kubestellar/hive C4). This is the single mint path shared by task_assign and the
+// (hivecommons/hive C4). This is the single mint path shared by task_assign and the
 // heartbeat/resume token-refresh, so all three advertise tokens minted the same way.
 // See #2393 item 2.
 //
@@ -4723,7 +4723,7 @@ func (h *ContributeWSHub) mintScopedToken(tier, repo string) (string, error) {
 
 // repoNameOnly returns the bare repository name from an "owner/repo" (or already
 // bare) value, for the GitHub App installation-token Repositories option, which is
-// keyed on the repo name within the installation's org (kubestellar/hive C4). An
+// keyed on the repo name within the installation's org (hivecommons/hive C4). An
 // empty input yields "".
 func repoNameOnly(repo string) string {
 	repo = strings.TrimSpace(repo)
@@ -5141,7 +5141,7 @@ func (h *ContributeWSHub) canonicalRepoKey(repo string) string {
 	return repo
 }
 
-// resumeGateReason re-runs, for a RESUME (kubestellar/hive C4), the same admission
+// resumeGateReason re-runs, for a RESUME (hivecommons/hive C4), the same admission
 // gates a fresh selectTask assignment must clear that are NOT specific to a
 // particular candidate issue: the profile must not be revoked, the whole contribute
 // queue must not be suspended, and the contributor's trust tier must not be

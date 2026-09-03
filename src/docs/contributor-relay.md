@@ -428,7 +428,7 @@ Three things have to line up for that to work.
 
 ```
 Reconnected while working on kubestellar/hive#4203 — resuming
-Task revoked: ct-kubestellar/hive-4203-… — no active lease for this task
+Task revoked: ct-hivecommons/hive-4203-… — no active lease for this task
 Task assigned: issue kubestellar/hive#4203 — …
 Task prompt sent to CLI
 ```

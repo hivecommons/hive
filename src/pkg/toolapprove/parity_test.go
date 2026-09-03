@@ -30,7 +30,7 @@ func TestSelfMergeParityAcrossLevels(t *testing.T) {
 
 	req := Request{
 		Kind:        KindSelfMerge,
-		Repo:        "kubestellar/hive",
+		Repo:        "hivecommons/hive",
 		Number:      1,
 		Author:      "hive-app[bot]",
 		ChecksGreen: true,
@@ -101,7 +101,7 @@ func TestNoConservativeDowngradeAtHighAutonomy(t *testing.T) {
 		{Kind: KindAgentTool, Tool: ToolRequest{Tool: "read", Arguments: map[string]any{"file_path": "a.go"}}, Agent: AgentIdentity{Name: "r"}},
 		{Kind: KindAgentTool, Tool: ToolRequest{Tool: "write", Arguments: map[string]any{"file_path": "a.go", "content": "package a"}}, Agent: AgentIdentity{Name: "w"}},
 		{Kind: KindAgentTool, Tool: ToolRequest{Tool: "bash", Arguments: map[string]any{"command": "go build ./..."}}, Agent: AgentIdentity{Name: "b"}},
-		{Kind: KindSelfMerge, Repo: "kubestellar/hive", Number: 1, Author: "hive-app[bot]", ChecksGreen: true, Tool: ToolRequest{Tool: "hive-merge"}},
+		{Kind: KindSelfMerge, Repo: "hivecommons/hive", Number: 1, Author: "hive-app[bot]", ChecksGreen: true, Tool: ToolRequest{Tool: "hive-merge"}},
 		{Kind: KindPlanApproval, Tool: ToolRequest{Tool: "plan"}, Agent: AgentIdentity{Name: "architect"}},
 	} {
 		v := desk.Resolve(context.Background(), req, 6)

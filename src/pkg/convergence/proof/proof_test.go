@@ -24,10 +24,10 @@ var testObservedAt = time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 
 func testFingerprint() Fingerprint {
 	return Fingerprint{
-		OutcomeKey:        "default/kubestellar/hive@ship-proof-vertical",
+		OutcomeKey:        "default/hivecommons/hive@ship-proof-vertical",
 		PredicateID:       PredicateExactHeadGreen,
 		DesiredGeneration: 3,
-		Repo:              "kubestellar/hive",
+		Repo:              "hivecommons/hive",
 		PRNumber:          4253,
 		HeadSHA:           headX,
 		BaseSHA:           baseA,
@@ -196,7 +196,7 @@ func TestVerifyMatchingCurrentProofSatisfies(t *testing.T) {
 // fails this test.
 func TestVerifyEachFieldMismatchRejects(t *testing.T) {
 	mutations := map[string]func(*Fingerprint){
-		"outcome key":        func(f *Fingerprint) { f.OutcomeKey = "default/kubestellar/hive@other-outcome" },
+		"outcome key":        func(f *Fingerprint) { f.OutcomeKey = "default/hivecommons/hive@other-outcome" },
 		"desired generation": func(f *Fingerprint) { f.DesiredGeneration = 4 },
 		"repo":               func(f *Fingerprint) { f.Repo = "kubestellar/other" },
 		"pr number":          func(f *Fingerprint) { f.PRNumber = 4254 },
@@ -308,7 +308,7 @@ func TestVerifyLookupMissesAndNilStore(t *testing.T) {
 // declared to depend on the proof carries the projected Dependency edge.
 func observationWithProof(dep *convergence.Dependency) convergence.Observation {
 	obs := convergence.Observation{
-		Subject:  convergence.Subject{Repo: "kubestellar/hive", Number: 4253},
+		Subject:  convergence.Subject{Repo: "hivecommons/hive", Number: 4253},
 		Found:    true,
 		RecordID: "bead-4253",
 	}

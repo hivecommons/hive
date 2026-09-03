@@ -136,7 +136,7 @@ var blockingPrompts = []blockingPrompt{
 		// Deliberately NOT "2. Yes, and remember": remembering makes the CLI
 		// rewrite the SHARED ~/.copilot/config.json from its own in-memory
 		// snapshot, which stomps every other agent's state in that file — traced
-		// live on kubestellar/hive (2026-08-22): each agent's "remember" wiped
+		// live on hivecommons/hive (2026-08-22): each agent's "remember" wiped
 		// the others' trustedFolders entries, and one stale rewrite resurrected
 		// a dead token over the operator's fresh login, which is why re-logins
 		// never stuck. Session-only trust writes NOTHING; the watcher now runs
@@ -233,7 +233,7 @@ func blockingPromptKey(backend, pane string) (key, label string, ok bool) {
 // known startup-blocking modal (folder trust, codex update, …) for the given
 // backend. The login-detector uses it to stand down: a trust-wedged pane is
 // NOT a login problem, and pausing the agent for it kills the very watcher
-// that would answer the prompt — the deadlock that kept kubestellar/hive's
+// that would answer the prompt — the deadlock that kept hivecommons/hive's
 // copilot agents "sitting at login prompt" through every re-login (2026-08-22).
 func PaneShowsBlockingPrompt(backend, pane string) bool {
 	_, _, ok := blockingPromptKey(backend, pane)

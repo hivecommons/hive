@@ -206,7 +206,7 @@ func TestSelectionPathsDoNotReadFailureKind(t *testing.T) {
 		for _, forbidden := range []string{"lastfailure", "failurekind", "failure_kind"} {
 			if strings.Contains(lower, forbidden) {
 				t.Errorf("%s references %q — ROUTE is intentionally NOT implemented "+
-					"(kubestellar/hive#2547 DECLARE/ROUTE split). Acting on a self-declared "+
+					"(hivecommons/hive#2547 DECLARE/ROUTE split). Acting on a self-declared "+
 					"failure kind is routing on a client-controlled value. If routing has now "+
 					"been decided and recorded by a maintainer, update this test in that same PR.",
 					name, forbidden)

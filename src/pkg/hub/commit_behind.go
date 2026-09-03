@@ -34,7 +34,7 @@ var (
 
 var fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (count int, known bool, err error) {
 	client := &http.Client{Timeout: commitBehindCompareTimeout}
-	compareURL := fmt.Sprintf("%s/repos/kubestellar/hive/compare/%s...%s",
+	compareURL := fmt.Sprintf("%s/repos/hivecommons/hive/compare/%s...%s",
 		githubAPIBase, url.PathEscape(base), url.PathEscape(head))
 	req, err := http.NewRequest(http.MethodGet, compareURL, nil)
 	if err != nil {

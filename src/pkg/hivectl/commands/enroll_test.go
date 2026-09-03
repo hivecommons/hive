@@ -124,7 +124,7 @@ func TestEnrollCommandHappyPathCapsACMM(t *testing.T) {
 	}))
 	defer server.Close()
 
-	stdout, _, err := execute(t, server, "", "enroll", "kubestellar/hive", "--acmm-level", "5")
+	stdout, _, err := execute(t, server, "", "enroll", "hivecommons/hive", "--acmm-level", "5")
 	if err != nil {
 		t.Fatal(err)
 	}

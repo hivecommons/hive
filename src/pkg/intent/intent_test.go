@@ -38,7 +38,7 @@ func TestAlignmentContextBoundsAndEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	epic, err := store.Create("Implement proxy retry plan", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-kubestellar/hive#2803")
+	epic, err := store.Create("Implement proxy retry plan", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-hivecommons/hive#2803")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +58,10 @@ func TestAlignmentContextBoundsAndEvidence(t *testing.T) {
 		files[i] = ChangedFile{Filename: strings.Repeat("deep/", 20) + "pkg/proxy/file.go", Additions: 1}
 	}
 	ctx := BuildAlignmentContext(PR{Title: "proxy retry", Body: "Fixes #2803", Files: files}, []TextEvidence{{
-		Source: "issue kubestellar/hive#2803",
+		Source: "issue hivecommons/hive#2803",
 		Title:  "Proxy retry bug",
 		Body:   "Fix proxy retries.",
-	}}, map[string]*beads.Store{"architect": store}, []IssueRef{{Repo: "kubestellar/hive", Number: 2803}})
+	}}, map[string]*beads.Store{"architect": store}, []IssueRef{{Repo: "hivecommons/hive", Number: 2803}})
 	if ctx.TruncatedFiles != 5 {
 		t.Fatalf("TruncatedFiles = %d, want 5", ctx.TruncatedFiles)
 	}
@@ -88,7 +88,7 @@ func alignmentContextWithOutOfScopeFileBeyondCap() AlignmentContext {
 	}
 	files[MaxAlignmentFiles] = ChangedFile{Filename: "pkg/proxy/rules.go", Additions: 1}
 	return BuildAlignmentContext(PR{Title: "docs", Body: "Fixes #1", Files: files}, []TextEvidence{{
-		Source: "issue kubestellar/hive#1",
+		Source: "issue hivecommons/hive#1",
 		Title:  "Documentation update",
 		Body:   "Update docs only.",
 	}}, nil, nil)
@@ -233,10 +233,10 @@ func TestEvaluate(t *testing.T) {
 }
 
 func TestEvidence(t *testing.T) {
-	if !LinkedIssueInBody("Fixes #2803") || !LinkedIssueInBody("Closes kubestellar/hive#2803") {
+	if !LinkedIssueInBody("Fixes #2803") || !LinkedIssueInBody("Closes hivecommons/hive#2803") {
 		t.Fatal("expected closing issue refs to be detected")
 	}
-	for _, body := range []string{"Refs #2803", "Ref #2803", "Part of #2803", "Related to kubestellar/hive#2803"} {
+	for _, body := range []string{"Refs #2803", "Ref #2803", "Part of #2803", "Related to hivecommons/hive#2803"} {
 		if !LinkedIssueInBody(body) {
 			t.Fatalf("expected non-closing issue ref %q to be detected", body)
 		}
@@ -249,15 +249,15 @@ func TestEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	epic, _ := store.Create("epic", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-kubestellar/hive#2803")
+	epic, _ := store.Create("epic", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-hivecommons/hive#2803")
 	if err := store.SetMetadata(epic.ID, BeadPlanStatusKey, BeadPlanApprovedStatus); err != nil {
 		t.Fatal(err)
 	}
-	ev := BuildEvidenceForRepo("Fixes #2803", "kubestellar/hive", map[string]*beads.Store{"architect": store}, false)
+	ev := BuildEvidenceForRepo("Fixes #2803", "hivecommons/hive", map[string]*beads.Store{"architect": store}, false)
 	if !ev.LinkedIssue || !ev.ApprovedPlan {
 		t.Fatalf("evidence = %+v, want linked issue and approved plan", ev)
 	}
-	unrelated := BuildEvidenceForRepo("Fixes #9999", "kubestellar/hive", map[string]*beads.Store{"architect": store}, false)
+	unrelated := BuildEvidenceForRepo("Fixes #9999", "hivecommons/hive", map[string]*beads.Store{"architect": store}, false)
 	if unrelated.ApprovedPlan {
 		t.Fatalf("unrelated approved plan should not authorize PR evidence: %+v", unrelated)
 	}

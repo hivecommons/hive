@@ -26,9 +26,9 @@ func mixedRequests() []Request {
 		// hard-denied guardrail
 		{Kind: KindAgentTool, Tool: ToolRequest{Tool: "mcp__github__create_pull_request"}, Agent: AgentIdentity{Name: "p"}},
 		// self-merge, green
-		{Kind: KindSelfMerge, Repo: "kubestellar/hive", Number: 1, Author: "dependabot[bot]", ChecksGreen: true, Tool: ToolRequest{Tool: "hive-merge"}},
+		{Kind: KindSelfMerge, Repo: "hivecommons/hive", Number: 1, Author: "dependabot[bot]", ChecksGreen: true, Tool: ToolRequest{Tool: "hive-merge"}},
 		// self-merge, red
-		{Kind: KindSelfMerge, Repo: "kubestellar/hive", Number: 2, Author: "someone", ChecksGreen: false, Tool: ToolRequest{Tool: "hive-merge"}},
+		{Kind: KindSelfMerge, Repo: "hivecommons/hive", Number: 2, Author: "someone", ChecksGreen: false, Tool: ToolRequest{Tool: "hive-merge"}},
 		// plan approval
 		{Kind: KindPlanApproval, Tool: ToolRequest{Tool: "plan"}, Agent: AgentIdentity{Name: "architect"}},
 		// bash command

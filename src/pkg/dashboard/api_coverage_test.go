@@ -2615,7 +2615,7 @@ func ghMockServer() *httptest.Server {
 		})
 	})
 	// go-github uses /repos/:owner/:repo/git/ref/:ref (singular)
-	mux.HandleFunc("/repos/kubestellar/hive/git/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/hivecommons/hive/git/", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"ref":    "refs/heads/v2",
 			"object": map[string]interface{}{"sha": "abc1234567890abcdef1234567890abcdef123456"},

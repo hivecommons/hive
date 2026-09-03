@@ -26,11 +26,11 @@ func TestPrimaryRepo(t *testing.T) {
 		want string
 	}{
 		{"explicit name wins and org prefix is stripped",
-			ProjectContext{Org: "kubestellar", PrimaryRepoName: "kubestellar/hive", Repos: []string{"kubestellar/other"}}, "hive"},
+			ProjectContext{Org: "hivecommons", PrimaryRepoName: "hivecommons/hive", Repos: []string{"hivecommons/other"}}, "hive"},
 		{"explicit bare name kept",
-			ProjectContext{Org: "kubestellar", PrimaryRepoName: "hive"}, "hive"},
+			ProjectContext{Org: "hivecommons", PrimaryRepoName: "hive"}, "hive"},
 		{"falls back to first repo",
-			ProjectContext{Org: "kubestellar", Repos: []string{"kubestellar/console", "kubestellar/docs"}}, "console"},
+			ProjectContext{Org: "hivecommons", Repos: []string{"hivecommons/console", "hivecommons/docs"}}, "console"},
 		{"empty context yields empty",
 			ProjectContext{}, ""},
 	}

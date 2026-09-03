@@ -21,7 +21,7 @@ import (
 // thing was what made the work invisible.
 
 func TestParseReferencedIssues(t *testing.T) {
-	const defaultRepo = "kubestellar/hive"
+	const defaultRepo = "hivecommons/hive"
 
 	tests := []struct {
 		name string
@@ -189,7 +189,7 @@ func TestFetchClaimsReferenceTier(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := prClaimServer(t, tt.prs, http.StatusOK)
-			c := NewClientForTest(srv.URL, "kubestellar", []string{"hive"}, testLogger())
+			c := NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, testLogger())
 			claims, err := c.FetchClaims(context.Background(), HiveIdentity{AIAuthor: "clubanderson"})
 			if err != nil {
 				t.Fatal(err)
@@ -229,16 +229,16 @@ func TestFilterClaimedIssuesDefersReferenceClaims(t *testing.T) {
 	build := func() (*ActionableResult, *ClaimLedger) {
 		result := &ActionableResult{}
 		result.Issues.Items = []Issue{
-			{Repo: "kubestellar/hive", Number: 3498, Title: "referenced, not closed"},
-			{Repo: "kubestellar/hive", Number: 3499, Title: "genuinely claimed"},
+			{Repo: "hivecommons/hive", Number: 3498, Title: "referenced, not closed"},
+			{Repo: "hivecommons/hive", Number: 3499, Title: "genuinely claimed"},
 		}
 		result.Issues.Count = 2
 
 		l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
 		l.Reconcile([]IssueClaim{
-			{Repo: "kubestellar/hive", Issue: 3498, PRNumber: 3898, PRRepo: "kubestellar/hive",
+			{Repo: "hivecommons/hive", Issue: 3498, PRNumber: 3898, PRRepo: "hivecommons/hive",
 				PRAuthor: "clubanderson", ObservedAt: time.Now(), Reference: true},
-			{Repo: "kubestellar/hive", Issue: 3499, PRNumber: 3899, PRRepo: "kubestellar/hive",
+			{Repo: "hivecommons/hive", Issue: 3499, PRNumber: 3899, PRRepo: "hivecommons/hive",
 				PRAuthor: "clubanderson", ObservedAt: time.Now()},
 		}, true)
 		return result, l
@@ -338,10 +338,10 @@ func TestClaimLedgerBackCompatPreThreeNineEightZero(t *testing.T) {
   "saved_at": %[1]q,
   "claims": [
     {
-      "repo": "kubestellar/hive",
+      "repo": "hivecommons/hive",
       "issue": 42,
       "pr_number": 100,
-      "pr_repo": "kubestellar/hive",
+      "pr_repo": "hivecommons/hive",
       "pr_url": "https://github.com/hivecommons/hive/pull/100",
       "pr_author": "clubanderson",
       "observed_at": %[1]q
@@ -356,7 +356,7 @@ func TestClaimLedgerBackCompatPreThreeNineEightZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := l.Lookup("kubestellar/hive", 42)
+	got, ok := l.Lookup("hivecommons/hive", 42)
 	if !ok {
 		t.Fatal("pre-#3980 claim did not load")
 	}
@@ -366,7 +366,7 @@ func TestClaimLedgerBackCompatPreThreeNineEightZero(t *testing.T) {
 
 	// Positive control: it must still suppress agent work.
 	result := &ActionableResult{}
-	result.Issues.Items = []Issue{{Repo: "kubestellar/hive", Number: 42}}
+	result.Issues.Items = []Issue{{Repo: "hivecommons/hive", Number: 42}}
 	result.Issues.Count = 1
 	if suppressed := FilterClaimedIssues(result, l, nil, testLogger()); suppressed != 1 {
 		t.Fatalf("pre-#3980 claim stopped suppressing agent work: suppressed=%d", suppressed)

@@ -507,7 +507,7 @@ const dashboardHTMLLayout = `<!DOCTYPE html>
         <p style="margin-top:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:rgba(244,199,95,0.08);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
         <!-- Image-pulls bar chart: per-release container-image PULLS of the
-             public spoke image (ghcr.io/kubestellar/hive), bucketed by the
+             public spoke image (ghcr.io/hivecommons/hive), bucketed by the
              ACTIVE release line's release boundaries (the line the "stable"
              channel currently resolves to — v4 today, v5 after the next
              rollover, with no code change). Gauges external adoption beyond
@@ -517,7 +517,7 @@ const dashboardHTMLLayout = `<!DOCTYPE html>
              which also fills the per-line mini charts in the
              "Latest available images" rows. Hidden until there is data. -->
         <div id="image-pulls-spark" style="display:none;margin-top:8px"
-             title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/kubestellar/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
+             title="Container-image pulls per release of the active release line: the pulls that landed while each of the last ~10 releases was the newest, of the public hive image (ghcr.io/hivecommons/hive). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>

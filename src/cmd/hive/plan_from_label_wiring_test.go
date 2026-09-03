@@ -20,7 +20,7 @@ func newPlanTestStore(t *testing.T) *beads.Store {
 }
 
 func planLabeledIssue(number int, labels ...string) github.Issue {
-	return github.Issue{Repo: "kubestellar/hive", Number: number, Title: "build the thing", Labels: labels}
+	return github.Issue{Repo: "hivecommons/hive", Number: number, Title: "build the thing", Labels: labels}
 }
 
 // Below the planning ACMM floor the `plan` label must mint NOTHING — the

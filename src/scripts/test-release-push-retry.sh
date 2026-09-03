@@ -176,7 +176,7 @@ run_step() {
   RPR_SCENARIO="$1" RPR_TAG_SCENARIO="${2:-ok}" RPR_STATE="$st" \
     RELEASE_PUSH_GH006_WINDOW="${3:-120}" \
     VERSION="4.0.1" SHA="deadbeefcafe" GITHUB_OUTPUT="$st/gh_output" \
-    GITHUB_REPOSITORY="kubestellar/hive" \
+    GITHUB_REPOSITORY="hivecommons/hive" \
     PATH="$tmp/bin:$PATH" bash "$tmp/push_v4.sh" > "$st/out" 2>&1
   rc=$?
   output=$(cat "$st/out")

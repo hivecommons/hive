@@ -36,7 +36,7 @@ func TestDefinitionSourceFromURL(t *testing.T) {
 		},
 		{name: "not a file url", url: "https://github.com/hivecommons/hive", wantErr: true},
 		{name: "garbage", url: "::::", wantErr: true},
-		{name: "no host", url: "/kubestellar/hive/blob/v2/x.yaml", wantErr: true},
+		{name: "no host", url: "/hivecommons/hive/blob/v2/x.yaml", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -221,7 +221,7 @@ spec:
 	defer ts.Close()
 	routeImportFetchesToServer(t, ts)
 
-	// The blob path makes the parsed slug "kubestellar/hive"; allowlist it.
+	// The blob path makes the parsed slug "hivecommons/hive"; allowlist it.
 	enableDefinitionAllowlist(deps, "hivecommons/hive")
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{

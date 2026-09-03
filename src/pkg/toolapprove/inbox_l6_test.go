@@ -123,7 +123,7 @@ func TestL6RuleAutoApproveNeverQueues(t *testing.T) {
 
 	req := Request{
 		Kind:        KindSelfMerge,
-		Repo:        "kubestellar/hive",
+		Repo:        "hivecommons/hive",
 		Number:      42,
 		Author:      "dependabot[bot]",
 		Title:       "chore(deps): bump x from 1.0.0 to 1.0.1",

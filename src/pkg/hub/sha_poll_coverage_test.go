@@ -184,7 +184,7 @@ func TestListRepoBranchesPagination(t *testing.T) {
 		page++
 		if page == 1 {
 			// Point the next link at the same server, page 2.
-			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/kubestellar/hive/branches?page=2>; rel="next"`, githubAPIBase))
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/hivecommons/hive/branches?page=2>; rel="next"`, githubAPIBase))
 			w.Write([]byte(`[{"name":"a"}]`))
 			return
 		}

@@ -10,7 +10,7 @@ import (
 // running Deployment (hub self-upgrade and spoke upgrade/branch-switch).
 //
 // Why this exists: on 2026-07-27 the hub's own Deployment was patched to
-// `ghcr.io/kubestellar/hive-hub:target1`. `target1` is not a tag that has ever
+// `ghcr.io/hivecommons/hive-hub:target1`. `target1` is not a tag that has ever
 // been published — it is a TEST FIXTURE SHA (see setV2Latest(t, "target1") in
 // saas_edge_coverage_test.go) that reached a real cluster because the hub's
 // unit tests shell out to a real `kubectl` while KUBERNETES_SERVICE_HOST is

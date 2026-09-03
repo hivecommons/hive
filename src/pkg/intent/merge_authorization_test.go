@@ -125,7 +125,7 @@ func TestBuildEvidenceDelegatesWithEmptyRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create("epic", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-kubestellar/hive#2803"); err != nil {
+	if _, err := store.Create("epic", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-hivecommons/hive#2803"); err != nil {
 		t.Fatal(err)
 	}
 	stores := map[string]*beads.Store{"architect": store}
@@ -157,7 +157,7 @@ func TestLinkedIssueNumbers(t *testing.T) {
 		{"no references", "just prose", nil},
 		{"single closing ref", "Fixes #42", []int{42}},
 		{"multiple refs in order", "Fixes #42 and refs #7, part of #1000", []int{42, 7, 1000}},
-		{"cross-repo ref", "Fixes kubestellar/hive#2803", []int{2803}},
+		{"cross-repo ref", "Fixes hivecommons/hive#2803", []int{2803}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,7 +179,7 @@ func TestLinkedIssueInBeads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create("epic", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-kubestellar/hive#2803"); err != nil {
+	if _, err := store.Create("epic", beads.TypeEpic, beads.PriorityHigh, "architect", "gh-hivecommons/hive#2803"); err != nil {
 		t.Fatal(err)
 	}
 	stores := map[string]*beads.Store{"architect": store}
@@ -187,13 +187,13 @@ func TestLinkedIssueInBeads(t *testing.T) {
 	if LinkedIssueInBeads(stores, nil) {
 		t.Error("no refs must never match")
 	}
-	if !LinkedIssueInBeads(stores, []IssueRef{{Repo: "kubestellar/hive", Number: 2803}}) {
+	if !LinkedIssueInBeads(stores, []IssueRef{{Repo: "hivecommons/hive", Number: 2803}}) {
 		t.Error("bead external-ref should match the issue ref")
 	}
-	if LinkedIssueInBeads(stores, []IssueRef{{Repo: "kubestellar/hive", Number: 9999}}) {
+	if LinkedIssueInBeads(stores, []IssueRef{{Repo: "hivecommons/hive", Number: 9999}}) {
 		t.Error("unrelated issue number must not match")
 	}
-	if LinkedIssueInBeads(nil, []IssueRef{{Repo: "kubestellar/hive", Number: 2803}}) {
+	if LinkedIssueInBeads(nil, []IssueRef{{Repo: "hivecommons/hive", Number: 2803}}) {
 		t.Error("nil stores must not match")
 	}
 }

@@ -124,7 +124,7 @@ if command -v $GH &>/dev/null; then
       for ikey in $fetch_issue_keys; do
         _irepo="${ikey%%:*}"
         _inum="${ikey##*:}"
-        _full_repo="${PROJECT_ORG:-kubestellar}/${_irepo}"
+        _full_repo="${PROJECT_ORG:-hivecommons}/${_irepo}"
         ($GH api "repos/${_full_repo}/issues/${_inum}" --jq '{title: .title, state: .state}' > "$issue_tmp/${_irepo}_${_inum}" 2>/dev/null || echo '{"title":"","state":"open"}' > "$issue_tmp/${_irepo}_${_inum}") &
       done
       wait

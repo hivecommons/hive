@@ -61,8 +61,8 @@ var (
 // chasing a SHA whose hub image was never pushed, and the rollout falls back to
 // a stale cached image.
 const (
-	ghcrRepoSpoke = "kubestellar/hive"
-	ghcrRepoHub   = "kubestellar/hive-hub"
+	ghcrRepoSpoke = "hivecommons/hive"
+	ghcrRepoHub   = "hivecommons/hive-hub"
 
 	// hubDeploymentName / hubContainerName / hubNamespace identify the hub's own
 	// Kubernetes objects for self-upgrade. NOTE the container is named "hub", not
@@ -170,7 +170,7 @@ var (
 const imageBranchCacheTTL = 5 * time.Minute
 
 // discoveredImageBranches returns branch names inferred from published
-// ghcr.io/kubestellar/hive:<branch>-latest tags (cached). A tag with a '-'
+// ghcr.io/hivecommons/hive:<branch>-latest tags (cached). A tag with a '-'
 // that our sanitizer would have produced can't be reversed unambiguously, so
 // we only surface tags that round-trip: the tag minus the "-latest" suffix.
 // Slashless branches (v2, mk) round-trip exactly; slashed branches
@@ -217,12 +217,12 @@ func discoveredImageBranches() []string {
 	return branches
 }
 
-// listRepoBranches returns the names of branches on kubestellar/hive via the
+// listRepoBranches returns the names of branches on hivecommons/hive via the
 // GitHub API (paginated). Best-effort: returns nil on any failure so callers
 // treat "unknown" as "don't filter" rather than hiding valid branches.
 func listRepoBranches(client *http.Client) []string {
 	var names []string
-	url := githubAPIBase + "/repos/kubestellar/hive/branches?per_page=100"
+	url := githubAPIBase + "/repos/hivecommons/hive/branches?per_page=100"
 	const maxPages = 10
 	for page := 0; url != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", url, nil)
@@ -263,10 +263,10 @@ func nextGitHubLink(link string) string {
 }
 
 // listLatestImageBranches queries the GHCR tag list for
-// ghcr.io/kubestellar/hive and returns the branch name of every "<x>-latest"
+// ghcr.io/hivecommons/hive and returns the branch name of every "<x>-latest"
 // tag (the "<x>" part).
 func listLatestImageBranches(client *http.Client) []string {
-	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:kubestellar/hive:pull")
+	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:hivecommons/hive:pull")
 	if err != nil {
 		return nil
 	}
@@ -283,7 +283,7 @@ func listLatestImageBranches(client *http.Client) []string {
 	// "<branch>-latest" tags we want may live on a later page — follow Link
 	// until exhausted (bounded) rather than reading only the first page.
 	branchSet := map[string]struct{}{}
-	next := ghcrBase + "/v2/kubestellar/hive/tags/list?n=1000"
+	next := ghcrBase + "/v2/hivecommons/hive/tags/list?n=1000"
 	const maxPages = 20 // bound: up to ~20k tags
 	for page := 0; next != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", next, nil)
@@ -757,7 +757,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// Step 1: get the latest commit SHA on the branch from the GitHub API
 	const shaFetchTimeout = 10 * time.Second
 	client := &http.Client{Timeout: shaFetchTimeout}
-	branchURL := fmt.Sprintf("%s/repos/kubestellar/hive/branches/%s", githubAPIBase, branch)
+	branchURL := fmt.Sprintf("%s/repos/hivecommons/hive/branches/%s", githubAPIBase, branch)
 	req, _ := http.NewRequest("GET", branchURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
@@ -854,7 +854,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 }
 
 // dockerWorkflowFile is the workflow that builds and pushes the container
-// images (ghcr.io/kubestellar/hive:<branch>-latest and :<short-sha>) on
+// images (ghcr.io/hivecommons/hive:<branch>-latest and :<short-sha>) on
 // every push to a tracked branch.
 const dockerWorkflowFile = "docker.yml"
 
@@ -863,7 +863,7 @@ const dockerWorkflowFile = "docker.yml"
 // unavailable so the caller can keep the last-known status instead of
 // flapping ready/building on transient errors.
 func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Logger) string {
-	runsURL := fmt.Sprintf("%s/repos/kubestellar/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
+	runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
 	req, _ := http.NewRequest("GET", runsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
@@ -906,7 +906,7 @@ func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Log
 // Uses a separate endpoint that's less likely to be rate-limited since it's called
 // only once per new SHA (not every poll cycle).
 func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger) string {
-	commitURL := fmt.Sprintf("%s/repos/kubestellar/hive/commits/%s", githubAPIBase, fullSHA)
+	commitURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits/%s", githubAPIBase, fullSHA)
 	req, _ := http.NewRequest("GET", commitURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)

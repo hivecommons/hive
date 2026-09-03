@@ -11,7 +11,7 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 		forge   string
 		want    string
 	}{
-		{name: "public org repo", org: "kubestellar", repos: []string{"hive"}, primary: "hive", forge: "github.com"},
+		{name: "public org repo", org: "hivecommons", repos: []string{"hive"}, primary: "hive", forge: "github.com"},
 		{name: "ghe org repo", org: "kcp-dev", repos: []string{"hive"}, primary: "hive", forge: "github.ibm.com"},
 		{
 			name:  "forge host as org",
@@ -88,9 +88,9 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 		// Accepted, because it normalizes to the bare repo under the same org.
 		{
 			name:    "primary qualified with the configured org",
-			org:     "kubestellar",
+			org:     "hivecommons",
 			repos:   []string{"hive"},
-			primary: "kubestellar/hive",
+			primary: "hivecommons/hive",
 			forge:   "github.com",
 		},
 		{
@@ -102,18 +102,18 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 		},
 		{
 			name:    "repos entry qualified with a deeper path",
-			org:     "kubestellar",
-			repos:   []string{"kubestellar/hive/tree/main"},
+			org:     "hivecommons",
+			repos:   []string{"hivecommons/hive/tree/main"},
 			primary: "hive",
 			forge:   "github.com",
-			want:    "Repo target misconfigured: repo 'kubestellar/hive/tree/main' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
+			want:    "Repo target misconfigured: repo 'hivecommons/hive/tree/main' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
 		},
 		{
 			name:  "full url pasted into org",
-			org:   "https://github.com/kubestellar",
+			org:   "https://github.com/hivecommons",
 			repos: []string{"hive"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: org 'https://github.com/kubestellar' is not an organization name — expected org/repo. Fix in Settings → Repos.",
+			want:  "Repo target misconfigured: org 'https://github.com/hivecommons' is not an organization name — expected org/repo. Fix in Settings → Repos.",
 		},
 	}
 	for _, tt := range tests {
@@ -156,11 +156,11 @@ func TestNormalizeRepoForOrg(t *testing.T) {
 		{name: "bare repo unchanged", org: "zacburns", repo: "mlz-manager", want: "mlz-manager"},
 		{name: "bare repo containing org as substring", org: "zac", repo: "zacburns", want: "zacburns"},
 		{name: "different org not stripped", org: "kubestellar", repo: "other/hive", want: "other/hive"},
-		{name: "deeper path not stripped", org: "kubestellar", repo: "kubestellar/hive/tree/main", want: "kubestellar/hive/tree/main"},
+		{name: "deeper path not stripped", org: "hivecommons", repo: "hivecommons/hive/tree/main", want: "hivecommons/hive/tree/main"},
 		{name: "org prefix with empty repo not stripped", org: "kubestellar", repo: "kubestellar/", want: "kubestellar/"},
-		{name: "url left for the url error", org: "kubestellar", repo: "https://github.com/hivecommons/hive", want: "https://github.com/hivecommons/hive"},
-		{name: "empty org is a no-op", org: "", repo: "kubestellar/hive", want: "kubestellar/hive"},
-		{name: "empty repo is a no-op", org: "kubestellar", repo: "", want: ""},
+		{name: "url left for the url error", org: "hivecommons", repo: "https://github.com/hivecommons/hive", want: "https://github.com/hivecommons/hive"},
+		{name: "empty org is a no-op", org: "", repo: "hivecommons/hive", want: "hivecommons/hive"},
+		{name: "empty repo is a no-op", org: "hivecommons", repo: "", want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,11 +206,11 @@ func TestNormalizeProjectRepos(t *testing.T) {
 	})
 
 	t.Run("different org left for validation to reject", func(t *testing.T) {
-		got, changed := NormalizeProjectRepos("kubestellar", []string{"other/hive"})
+		got, changed := NormalizeProjectRepos("hivecommons", []string{"other/hive"})
 		if changed || got[0] != "other/hive" {
 			t.Fatalf("got (%v, %v), want ([other/hive], false)", got, changed)
 		}
-		if issue := ValidateProjectRepoTargets("kubestellar", got, "hive", "github.com"); issue == nil {
+		if issue := ValidateProjectRepoTargets("hivecommons", got, "hive", "github.com"); issue == nil {
 			t.Fatalf("a repo qualified with a different org must still be rejected")
 		}
 	})

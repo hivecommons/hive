@@ -283,9 +283,9 @@ fi
 printf -- '\n--- case: the service starts (GET /api/health) ---\n'
 cat >"${WORK}/hive.yaml" <<'EOF'
 project:
-  org: kubestellar
+  org: hivecommons
   repos:
-    - kubestellar/hive
+    - hivecommons/hive
 github:
   token: "ghp_probe_not_a_real_token"
 agents:

@@ -41,7 +41,7 @@ DIGEST_BAD="sha256:3333333333333333333333333333333333333333333333333333333333333
 # `podman image inspect ... RepoDigests` returns THIS, and pinning it produces
 # an amd64-only pin. No case may ever end up writing it.
 DIGEST_ARCH="sha256:4444444444444444444444444444444444444444444444444444444444444444"
-REPO="ghcr.io/kubestellar/hive"
+REPO="ghcr.io/hivecommons/hive"
 
 # systemctl: unit state lives in files so `restart` can change it, which is
 # what lets the suite exercise the report the script makes AFTER a restart
@@ -75,7 +75,7 @@ case "${args[0]:-}" in
     fi
     [ "${FAKE_UNIT_KNOWN:-yes}" = "yes" ] || exit 1
     img="$(dropin_image)"
-    [ -n "$img" ] || img="ghcr.io/kubestellar/hive:stable"
+    [ -n "$img" ] || img="ghcr.io/hivecommons/hive:stable"
     printf '# /run/user/1000/systemd/generator/hive.service\n'
     printf '[Service]\nExecStart=/usr/bin/podman run --name hive --rm %s\n' "$img"
     ;;

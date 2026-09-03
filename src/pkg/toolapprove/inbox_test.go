@@ -27,7 +27,7 @@ func writeFileHelper(path, content string) error {
 func pendingRequest(n int) Request {
 	return Request{
 		Kind:   KindSelfMerge,
-		Repo:   "kubestellar/hive",
+		Repo:   "hivecommons/hive",
 		Number: n,
 		Author: "hive-app[bot]",
 		Title:  fmt.Sprintf("fix: thing %d", n),

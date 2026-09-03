@@ -762,7 +762,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// prompt is on screen right now") that cannot outlive the pane — after
 		// a restart/pod roll there is no pane, so restoring the pause just
 		// strands the agent forever with nothing left to re-evaluate it
-		// (kubestellar/hive, 2026-08-22: four copilot agents stayed
+		// (hivecommons/hive, 2026-08-22: four copilot agents stayed
 		// persisted-paused across every roll). Drop it on startup and let the
 		// agent launch; if the condition still holds, the detector re-pauses
 		// within one tick — and with PaneShowsBlockingPrompt it now only

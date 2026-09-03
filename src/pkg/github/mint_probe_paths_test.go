@@ -129,25 +129,25 @@ func TestPathExistsAtRef(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	c := newTestClient(t, server, "kubestellar", []string{"hive"})
+	c := newTestClient(t, server, "hivecommons", []string{"hive"})
 	ctx := context.Background()
 
-	exists, err := c.PathExistsAtRef(ctx, "kubestellar", "hive", "docs/live.md", "abc123")
+	exists, err := c.PathExistsAtRef(ctx, "hivecommons", "hive", "docs/live.md", "abc123")
 	if err != nil || !exists {
 		t.Errorf("file at ref: exists=%v err=%v, want true,nil", exists, err)
 	}
-	exists, err = c.PathExistsAtRef(ctx, "kubestellar", "hive", "docs", "")
+	exists, err = c.PathExistsAtRef(ctx, "hivecommons", "hive", "docs", "")
 	if err != nil || !exists {
 		t.Errorf("directory: exists=%v err=%v, want true,nil", exists, err)
 	}
 	// 404 is a definitive "does not exist", NOT an error: the digest must be
 	// able to drop the stale citation rather than treat the check as broken.
-	exists, err = c.PathExistsAtRef(ctx, "kubestellar", "hive", "docs/removed.md", "abc123")
+	exists, err = c.PathExistsAtRef(ctx, "hivecommons", "hive", "docs/removed.md", "abc123")
 	if err != nil || exists {
 		t.Errorf("404: exists=%v err=%v, want false,nil", exists, err)
 	}
 	// Any non-404 failure is inconclusive and must surface as an error.
-	_, err = c.PathExistsAtRef(ctx, "kubestellar", "hive", "docs/error.md", "abc123")
+	_, err = c.PathExistsAtRef(ctx, "hivecommons", "hive", "docs/error.md", "abc123")
 	if err == nil {
 		t.Error("500: want error for inconclusive check, got nil")
 	}
@@ -201,8 +201,8 @@ func TestProbeIssueWrite(t *testing.T) {
 			}
 		}))
 		defer server.Close()
-		c := newTestClient(t, server, "kubestellar", []string{"hive"})
-		if err := c.ProbeIssueWrite(context.Background(), "kubestellar/hive", 7); err != nil {
+		c := newTestClient(t, server, "hivecommons", []string{"hive"})
+		if err := c.ProbeIssueWrite(context.Background(), "hivecommons/hive", 7); err != nil {
 			t.Fatalf("ProbeIssueWrite: %v", err)
 		}
 		if editedBody != body {
@@ -215,8 +215,8 @@ func TestProbeIssueWrite(t *testing.T) {
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 		}))
 		defer server.Close()
-		c := newTestClient(t, server, "kubestellar", []string{"hive"})
-		err := c.ProbeIssueWrite(context.Background(), "kubestellar/hive", 7)
+		c := newTestClient(t, server, "hivecommons", []string{"hive"})
+		err := c.ProbeIssueWrite(context.Background(), "hivecommons/hive", 7)
 		if err == nil || !strings.Contains(err.Error(), "for write probe") {
 			t.Fatalf("err = %v, want wrapped read-phase error", err)
 		}
@@ -231,8 +231,8 @@ func TestProbeIssueWrite(t *testing.T) {
 			http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
 		}))
 		defer server.Close()
-		c := newTestClient(t, server, "kubestellar", []string{"hive"})
-		err := c.ProbeIssueWrite(context.Background(), "kubestellar/hive", 7)
+		c := newTestClient(t, server, "hivecommons", []string{"hive"})
+		err := c.ProbeIssueWrite(context.Background(), "hivecommons/hive", 7)
 		if err == nil || !strings.Contains(err.Error(), "write probe on advisory issue") {
 			t.Fatalf("err = %v, want wrapped write-probe error", err)
 		}

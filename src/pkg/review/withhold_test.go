@@ -37,16 +37,16 @@ func approvedAggregate(repo string, number int, sha string) Aggregate {
 // authorize a merge of code the reviewer never read — the same reasoning that
 // makes the merge sweep re-verify the head SHA immediately before merging.
 func TestApprovalRequiresMatchingHeadSHA(t *testing.T) {
-	art := Artifact{Items: []Aggregate{approvedAggregate("kubestellar/hive", 42, "oldsha")}}
+	art := Artifact{Items: []Aggregate{approvedAggregate("hivecommons/hive", 42, "oldsha")}}
 
-	if art.HasAggregateApproval("kubestellar/hive", 42, "newsha") {
+	if art.HasAggregateApproval("hivecommons/hive", 42, "newsha") {
 		t.Fatal("an approval recorded against a different head SHA must not authorize the merge: " +
 			"the reviewer never read this code")
 	}
 	// Positive control: the same approval DOES apply to the SHA it was made
 	// against, proving the test above measures SHA matching rather than a
 	// predicate that always returns false.
-	if !art.HasAggregateApproval("kubestellar/hive", 42, "oldsha") {
+	if !art.HasAggregateApproval("hivecommons/hive", 42, "oldsha") {
 		t.Fatal("an approval must apply to the head SHA it was produced against")
 	}
 }
@@ -57,14 +57,14 @@ func TestApprovalRequiresMatchingHeadSHA(t *testing.T) {
 func TestNonApproveVerdictsNeverAuthorizeMerge(t *testing.T) {
 	for _, v := range []Verdict{VerdictChangesRequested, VerdictRequiresHuman, VerdictReject} {
 		art := Artifact{Items: []Aggregate{{
-			Repo: "kubestellar/hive", Number: 42, HeadSHA: "abc",
+			Repo: "hivecommons/hive", Number: 42, HeadSHA: "abc",
 			Verdict: v,
 			// Deliberately contradictory: MergeEligible is set true while the
 			// verdict is non-approve. Even this inconsistent record must not
 			// authorize a merge — the predicate requires BOTH.
 			MergeEligible: true,
 		}}}
-		if art.HasAggregateApproval("kubestellar/hive", 42, "abc") {
+		if art.HasAggregateApproval("hivecommons/hive", 42, "abc") {
 			t.Errorf("verdict %q must not authorize a merge even when MergeEligible is set", v)
 		}
 	}
@@ -75,10 +75,10 @@ func TestNonApproveVerdictsNeverAuthorizeMerge(t *testing.T) {
 // did not cover all required perspectives) must not authorize a merge either.
 func TestMergeIneligibleApprovalDoesNotAuthorize(t *testing.T) {
 	art := Artifact{Items: []Aggregate{{
-		Repo: "kubestellar/hive", Number: 42, HeadSHA: "abc",
+		Repo: "hivecommons/hive", Number: 42, HeadSHA: "abc",
 		Verdict: VerdictApprove, MergeEligible: false,
 	}}}
-	if art.HasAggregateApproval("kubestellar/hive", 42, "abc") {
+	if art.HasAggregateApproval("hivecommons/hive", 42, "abc") {
 		t.Fatal("an approve verdict that is not merge-eligible must not authorize the merge")
 	}
 }
@@ -88,7 +88,7 @@ func TestMergeIneligibleApprovalDoesNotAuthorize(t *testing.T) {
 // `!reviewLoaded || !HasAggregateApproval(...) -> continue`, a missing or
 // unreadable artifact withholds every merge rather than waving them through.
 func TestAbsentVerdictDoesNotAuthorizeMerge(t *testing.T) {
-	if (Artifact{}).HasAggregateApproval("kubestellar/hive", 42, "abc") {
+	if (Artifact{}).HasAggregateApproval("hivecommons/hive", 42, "abc") {
 		t.Fatal("an empty review artifact must not authorize any merge (fail closed)")
 	}
 }

@@ -29,7 +29,7 @@ var realFetchCommitCompareStatus func(base, head string, logger *slog.Logger) (s
 // seeds the SHA cache with the fixture value "target1" and calls
 // handleHubSelfUpgrade, producing a literal
 //
-//	kubectl set image deployment/hive-hub hub=ghcr.io/kubestellar/hive-hub:target1 -n hive-hub
+//	kubectl set image deployment/hive-hub hub=ghcr.io/hivecommons/hive-hub:target1 -n hive-hub
 //
 // against the live cluster. `target1` was never a published tag, so the new
 // ReplicaSet went ImagePullBackOff while the old one kept serving — the hub

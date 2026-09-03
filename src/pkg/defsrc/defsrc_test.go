@@ -36,7 +36,7 @@ func allowAll(string) bool  { return true }
 func allowNone(string) bool { return false }
 
 func fullSource() Source {
-	return Source{Owner: "kubestellar", Repo: "hive", Path: "agents/scanner.yaml", Ref: "v2"}
+	return Source{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml", Ref: "v2"}
 }
 
 // validDef is a minimal well-formed AgentDefinition YAML that changes several
@@ -71,8 +71,8 @@ func bakedAgent() config.AgentConfig {
 		BeadsDir:         "/data/beads/scanner",
 		MetricsCollector: "trusted-collector",
 		ACMMLevels:       []int{5},
-		PromptSource:     &config.PromptSourceConfig{Owner: "kubestellar", Repo: "hive", Path: "p.md"},
-		DefinitionSource: &config.DefinitionSourceConfig{Owner: "kubestellar", Repo: "hive", Path: "agents/scanner.yaml"},
+		PromptSource:     &config.PromptSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "p.md"},
+		DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml"},
 	}
 }
 
@@ -123,10 +123,10 @@ func TestResolve_MergesAllowedFieldsOnly(t *testing.T) {
 	if len(m.ACMMLevels) != 1 || m.ACMMLevels[0] != 5 {
 		t.Error("live definition must NOT be able to change acmm_levels")
 	}
-	if m.PromptSource == nil || m.PromptSource.Owner != "kubestellar" {
+	if m.PromptSource == nil || m.PromptSource.Owner != "hivecommons" {
 		t.Error("live definition must NOT be able to re-point prompt_source")
 	}
-	if m.DefinitionSource == nil || m.DefinitionSource.Owner != "kubestellar" {
+	if m.DefinitionSource == nil || m.DefinitionSource.Owner != "hivecommons" {
 		t.Error("live definition must NOT be able to re-point definition_source")
 	}
 }
@@ -253,7 +253,7 @@ func TestApplyToConfig_OnlyLinkedAgents(t *testing.T) {
 		"scanner": {
 			DisplayName:      "Baked Scanner",
 			Paused:           true,
-			DefinitionSource: &config.DefinitionSourceConfig{Owner: "kubestellar", Repo: "hive", Path: "agents/scanner.yaml", Ref: "v2"},
+			DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml", Ref: "v2"},
 		},
 		"reviewer": {DisplayName: "Reviewer", Paused: true}, // no definition_source
 	}}

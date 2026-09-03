@@ -134,12 +134,12 @@ func TestAllowedReposFilter(t *testing.T) {
 	id := AgentIdentity{
 		Name:         "scoped-agent",
 		Mode:         agent.ModeIssuesAndPRs,
-		AllowedRepos: map[string]bool{"kubestellar/hive": true},
+		AllowedRepos: map[string]bool{"hivecommons/hive": true},
 	}
 
 	allowedReq := ToolRequest{
 		Tool:      "mcp__github__create_issue",
-		Arguments: map[string]any{"repo": "kubestellar/hive", "title": "fix"},
+		Arguments: map[string]any{"repo": "hivecommons/hive", "title": "fix"},
 	}
 	v1 := Decide(context.Background(), allowedReq, 6, id)
 	if v1.Decision == DecisionDeny {

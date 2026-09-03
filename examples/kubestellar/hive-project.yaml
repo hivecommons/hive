@@ -15,7 +15,7 @@ project:
     - kubestellar/kubestellar-mcp
   ai_author: "clubanderson"
   website: "console.kubestellar.io"
-  hive_repo: "kubestellar/hive"
+  hive_repo: "hivecommons/hive"
 
 github_app:
   app_id: "3568013"

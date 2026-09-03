@@ -35,21 +35,21 @@ func ref(project, repo, name string) Ref {
 
 // Two outcomes sharing one repository stay distinct.
 func TestRefKey_TwoOutcomesOneRepoDistinct(t *testing.T) {
-	a := ref("default", "kubestellar/hive", "nightly-green").Key()
-	b := ref("default", "kubestellar/hive", "docs-current").Key()
+	a := ref("default", "hivecommons/hive", "nightly-green").Key()
+	b := ref("default", "hivecommons/hive", "docs-current").Key()
 	if a == b || a == "" || b == "" {
 		t.Fatalf("keys collided or empty: %q vs %q", a, b)
 	}
-	if a != "default/kubestellar/hive@nightly-green" {
+	if a != "default/hivecommons/hive@nightly-green" {
 		t.Fatalf("canonical key form changed: %q", a)
 	}
 }
 
 // The same outcome-local name in two accepted scopes stays distinct.
 func TestRefKey_SameNameTwoScopesDistinct(t *testing.T) {
-	byRepo := ref("default", "kubestellar/hive", "nightly-green").Key()
+	byRepo := ref("default", "hivecommons/hive", "nightly-green").Key()
 	otherRepo := ref("default", "kubestellar/console", "nightly-green").Key()
-	otherProject := ref("staging", "kubestellar/hive", "nightly-green").Key()
+	otherProject := ref("staging", "hivecommons/hive", "nightly-green").Key()
 	if byRepo == otherRepo || byRepo == otherProject {
 		t.Fatalf("scope did not disambiguate: %q %q %q", byRepo, otherRepo, otherProject)
 	}
@@ -59,12 +59,12 @@ func TestRefKey_SameNameTwoScopesDistinct(t *testing.T) {
 // worksource separator, so ParseKey refuses every canonical outcome key, and
 // legacy GitHub work keys are untouched by construction.
 func TestRefKey_CollisionFreeAgainstWorkKeys(t *testing.T) {
-	key := ref("default", "kubestellar/hive", "nightly-green").Key()
+	key := ref("default", "hivecommons/hive", "nightly-green").Key()
 	if _, ok := worksource.ParseKey(key); ok {
 		t.Fatalf("worksource.ParseKey accepted an outcome key %q — namespace collision", key)
 	}
 	// And the reverse: a work key is not a valid outcome ref dimension set.
-	if got := (Ref{Project: "default", Repo: "kubestellar/hive#42", Outcome: "x"}).Key(); got != "" {
+	if got := (Ref{Project: "default", Repo: "hivecommons/hive#42", Outcome: "x"}).Key(); got != "" {
 		t.Fatalf("a '#'-bearing repo produced an outcome key %q", got)
 	}
 }
@@ -95,16 +95,16 @@ func TestRefValidate_RefusesAmbiguousDimensions(t *testing.T) {
 
 func TestLedger_CreateAcceptSupersedeLifecycle(t *testing.T) {
 	l, _ := testLedger(t, Options{})
-	r := ref("default", "kubestellar/hive", "nightly-green")
+	r := ref("default", "hivecommons/hive", "nightly-green")
 
-	rec, err := l.Create(r, "nightly workflow green 7 days", []string{"kubestellar/hive#42"}, maintainer)
+	rec, err := l.Create(r, "nightly workflow green 7 days", []string{"hivecommons/hive#42"}, maintainer)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if rec.Generation != 1 || rec.State != StateProposed {
 		t.Fatalf("create produced %+v, want generation 1 proposed", rec)
 	}
-	if rec.WorkRefs[0] != "kubestellar/hive#42" {
+	if rec.WorkRefs[0] != "hivecommons/hive#42" {
 		t.Fatalf("legacy work key rewritten: %v", rec.WorkRefs)
 	}
 
@@ -243,8 +243,8 @@ func TestLedger_ConcurrentCASExactlyOneWinner(t *testing.T) {
 // process-only counter is truth.
 func TestLedger_RestartReconstructsDesiredGeneration(t *testing.T) {
 	l, path := testLedger(t, Options{})
-	r := ref("default", "kubestellar/hive", "nightly-green")
-	if _, err := l.Create(r, "g1", []string{"kubestellar/hive#42"}, maintainer); err != nil {
+	r := ref("default", "hivecommons/hive", "nightly-green")
+	if _, err := l.Create(r, "g1", []string{"hivecommons/hive#42"}, maintainer); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if _, err := l.Accept(r, 1, maintainer); err != nil {
@@ -268,7 +268,7 @@ func TestLedger_RestartReconstructsDesiredGeneration(t *testing.T) {
 	if len(rec.History) != 3 {
 		t.Fatalf("history lost across restart: %+v", rec.History)
 	}
-	if rec.WorkRefs[0] != "kubestellar/hive#42" {
+	if rec.WorkRefs[0] != "hivecommons/hive#42" {
 		t.Fatalf("work refs lost across restart: %v", rec.WorkRefs)
 	}
 	// And CAS discipline survives: the pre-restart generation still fences.
@@ -384,7 +384,7 @@ func TestLedger_MirrorIsWriteOnlyExhaust(t *testing.T) {
 		Mirror: func(rcpt Receipt) { receipts = append(receipts, rcpt) },
 		Now:    func() time.Time { return fixed },
 	})
-	r := ref("default", "kubestellar/hive", "nightly-green")
+	r := ref("default", "hivecommons/hive", "nightly-green")
 	if _, err := l.Create(r, "g1", nil, maintainer); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

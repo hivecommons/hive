@@ -35,9 +35,9 @@ func newEnrollCommand(env *commandEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enroll <owner/repo>",
 		Short: "Enroll a repo into a Hive lite spoke",
-		Example: `  hivectl enroll kubestellar/hive
-  hivectl enroll kubestellar/hive --acmm-level 1
-  hivectl enroll kubestellar/hive --installation-id 123456`,
+		Example: `  hivectl enroll hivecommons/hive
+  hivectl enroll hivecommons/hive --acmm-level 1
+  hivectl enroll hivecommons/hive --installation-id 123456`,
 		Args: argsExact(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return env.runEnrollCommand(cmd, args[0], opts, ghCLI{})

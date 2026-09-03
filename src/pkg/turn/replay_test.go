@@ -120,7 +120,7 @@ func (p *killablePersister) Persist(ctx context.Context, env SessionEnvelope) er
 // ---------------------------------------------------------------------------
 
 const (
-	testRepo    = "kubestellar/hive"
+	testRepo    = "hivecommons/hive"
 	testIssue   = "4002"
 	testBranch  = "fix-4002"
 	testSession = "sess-replay-1"

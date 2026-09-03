@@ -110,9 +110,9 @@ fi
 # proving nothing. This is the smallest config that reaches the gate.
 cat >"${WORK}/hive.yaml" <<'EOF'
 project:
-  org: kubestellar
+  org: hivecommons
   repos:
-    - kubestellar/hive
+    - hivecommons/hive
 github:
   token: "ghp_probe_not_a_real_token"
 agents:

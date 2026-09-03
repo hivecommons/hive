@@ -109,7 +109,7 @@ func TestClearExpiredTokens_Rewrites(t *testing.T) {
 	}
 	// Login identity SURVIVES a token clear: an expired token does not change
 	// who was logged in, and the interactive CLI refuses a re-seeded token
-	// without it (kubestellar/hive, 2026-08-22 — agents at "Please use /login"
+	// without it (hivecommons/hive, 2026-08-22 — agents at "Please use /login"
 	// over a valid restored token).
 	if parsed["lastLoggedInUser"] != "u" {
 		t.Errorf("lastLoggedInUser must be preserved, got %v", parsed["lastLoggedInUser"])
