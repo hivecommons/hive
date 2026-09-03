@@ -723,10 +723,21 @@ jobs:
       # mirror the gate already verified by the preceding step as a commit
       # status. The status is SHA-scoped and appears in the PR rollup without
       # depending on a check-suite association.
+      # #5875: the hivecommons org Actions policy denies GITHUB_TOKEN the
+      # createPullRequest mutation ("GitHub Actions is not permitted to create
+      # or approve pull requests"), a setting that did not survive the
+      # kubestellar->hivecommons transfer. Until an org admin re-allows it,
+      # RELEASE_PR_TOKEN (a PAT or App token with contents:write +
+      # pull-requests:write on this repo) takes precedence here; with the org
+      # setting restored and no secret configured, GITHUB_TOKEN works as
+      # before. Every OTHER step keeps GITHUB_TOKEN — only PR creation is
+      # policy-gated, and a fallback expression on an unset secret resolves
+      # to the empty string, which is why the fallback chain lives on this
+      # step alone.
       - name: Open and merge a PR from the scratch branch into v4
         id: push_v4
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' && secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           scratch="release-gate/v${VERSION}"
