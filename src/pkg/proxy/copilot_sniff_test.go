@@ -41,11 +41,11 @@ func newTestProxyWithCA(t *testing.T) (*GitHubProxy, string) {
 }
 
 // readInferenceUsage reads back the cumulative usage the sink wrote for an
-// agent (inference-<agent>.jsonl) and returns the model plus total in/out
+// agent (copilot-live-<agent>.jsonl) and returns the model plus total in/out
 // tokens.
 func readInferenceUsage(t *testing.T, dir, agent string) (model string, in, out int64) {
 	t.Helper()
-	path := filepath.Join(dir, "inference-"+agent+".jsonl")
+	path := filepath.Join(dir, "copilot-live-"+agent+".jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading usage file %s: %v", path, err)
@@ -343,7 +343,7 @@ func TestProxyCopilotHTTP_NonCompletionPassthrough(t *testing.T) {
 	<-proxyDone
 
 	// No usage file should have been written.
-	if _, err := os.Stat(filepath.Join(dir, "inference-worker3.jsonl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "copilot-live-worker3.jsonl")); !os.IsNotExist(err) {
 		t.Errorf("non-completion request should not record usage; file exists: %v", err)
 	}
 }
@@ -613,7 +613,7 @@ func TestProxyCopilotHTTP_NonSuccessCompletion(t *testing.T) {
 	resp.Body.Close()
 	<-done
 
-	if _, err := os.Stat(filepath.Join(dir, "inference-w4.jsonl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "copilot-live-w4.jsonl")); !os.IsNotExist(err) {
 		t.Errorf("non-2xx completion must not record usage")
 	}
 }
@@ -754,7 +754,7 @@ func TestProxyCopilotHTTP_ZeroUsageNotRecorded(t *testing.T) {
 		resp.Body.Close()
 	}
 	<-done
-	if _, err := os.Stat(filepath.Join(dir, "inference-w6.jsonl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "copilot-live-w6.jsonl")); !os.IsNotExist(err) {
 		t.Errorf("zero-usage completion must not record")
 	}
 }

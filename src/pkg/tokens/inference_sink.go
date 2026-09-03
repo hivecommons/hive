@@ -18,6 +18,11 @@ import (
 // wiring. The prefix keeps them visually distinct from CLI session files.
 const inferenceSessionFilePrefix = "inference-"
 
+// copilotLiveSessionFilePrefix is used for Copilot completions captured by the
+// MITM proxy. Keeping them in their own collectable session file prevents them
+// from being merged with bare-mode inference totals for the same agent.
+const copilotLiveSessionFilePrefix = "copilot-live-"
+
 // inferenceFilePerm is the mode for the per-agent inference usage files.
 const inferenceFilePerm = 0o644
 
@@ -51,6 +56,8 @@ type inferenceAgentTotals struct {
 	// sessions. FirstSeen survives restarts via restoreFromDisk.
 	FirstSeen string
 	LastSeen  string
+	Backend   string
+	Usage     []UsageEvent
 }
 
 // NewInferenceSink returns a sink that writes per-agent usage files into dir.
@@ -82,19 +89,24 @@ func (s *InferenceSink) restoreFromDisk() {
 	if s == nil || s.dir == "" {
 		return
 	}
-	matches, err := filepath.Glob(filepath.Join(s.dir, inferenceSessionFilePrefix+"*.jsonl"))
-	if err != nil {
-		return
-	}
-	for _, path := range matches {
-		base := filepath.Base(path)
-		agent := strings.TrimSuffix(strings.TrimPrefix(base, inferenceSessionFilePrefix), ".jsonl")
-		if agent == "" {
+	for _, prefix := range []string{inferenceSessionFilePrefix, copilotLiveSessionFilePrefix} {
+		matches, err := filepath.Glob(filepath.Join(s.dir, prefix+"*.jsonl"))
+		if err != nil {
 			continue
 		}
-		t := s.parseAgentFile(path)
-		if t != nil {
-			s.totals[agent] = t
+		for _, path := range matches {
+			base := filepath.Base(path)
+			agent := strings.TrimSuffix(strings.TrimPrefix(base, prefix), ".jsonl")
+			if agent == "" {
+				continue
+			}
+			t := s.parseAgentFile(path)
+			if t != nil {
+				if t.Backend == "" {
+					t.Backend = sinkBackendFromPrefix(prefix)
+				}
+				s.totals[sinkTotalsKey(t.Backend, agent)] = t
+			}
 		}
 	}
 }
@@ -121,6 +133,9 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 		if e.Model != "" {
 			t.Model = e.Model
 		}
+		if e.Backend != "" {
+			t.Backend = e.Backend
+		}
 		if ms := parseTimestampToUnixMilli(e.Timestamp); ms > 0 {
 			if t.FirstSeen == "" || ms < parseTimestampToUnixMilli(t.FirstSeen) {
 				t.FirstSeen = e.Timestamp
@@ -129,9 +144,18 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 				t.LastSeen = e.Timestamp
 			}
 		}
-		if e.InputTokens > 0 || e.OutputTokens > 0 {
+		if e.InputTokens > 0 || e.OutputTokens > 0 || e.CacheRead > 0 || e.CacheCreation > 0 {
 			t.InputTokens += e.InputTokens
 			t.OutputTokens += e.OutputTokens
+			t.Usage = append(t.Usage, UsageEvent{
+				TimestampMs: parseTimestampToUnixMilli(e.Timestamp),
+				Model:       e.Model,
+				Coalesced:   e.Coalesced,
+				Input:       e.InputTokens,
+				Output:      e.OutputTokens,
+				CacheRead:   e.CacheRead,
+				CacheCreate: e.CacheCreation,
+			})
 			found = true
 		}
 	}
@@ -147,6 +171,18 @@ func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
 // no-op when the sink is disabled, the agent name is empty, or the usage is
 // non-positive, so callers can invoke it unconditionally.
 func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens int64) {
+	s.record(agent, model, BackendInference, inputTokens, outputTokens)
+}
+
+// RecordCopilot adds one Copilot completion captured live by the MITM proxy.
+// Unlike Copilot session.shutdown metrics, each call has a real wall-clock
+// timestamp, so the collector persists a Usage timeline that /api/repo-cost can
+// join against audited repo activity.
+func (s *InferenceSink) RecordCopilot(agent, model string, inputTokens, outputTokens int64) {
+	s.record(agent, model, BackendCopilot, inputTokens, outputTokens)
+}
+
+func (s *InferenceSink) record(agent, model, backend string, inputTokens, outputTokens int64) {
 	if s == nil || s.dir == "" || agent == "" {
 		return
 	}
@@ -155,10 +191,11 @@ func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens in
 	}
 
 	s.mu.Lock()
-	t, ok := s.totals[agent]
+	key := sinkTotalsKey(backend, agent)
+	t, ok := s.totals[key]
 	if !ok {
-		t = &inferenceAgentTotals{}
-		s.totals[agent] = t
+		t = &inferenceAgentTotals{Backend: backend}
+		s.totals[key] = t
 	}
 	if model != "" {
 		t.Model = model
@@ -178,7 +215,16 @@ func (s *InferenceSink) Record(agent, model string, inputTokens, outputTokens in
 	if outputTokens > 0 {
 		t.OutputTokens += outputTokens
 	}
+	timeline := usageTimeline{events: append([]UsageEvent(nil), t.Usage...)}
+	timeline.add(UsageEvent{
+		TimestampMs: parseTimestampToUnixMilli(stamp),
+		Model:       model,
+		Input:       inputTokens,
+		Output:      outputTokens,
+	})
+	t.Usage, _ = timeline.finish()
 	snapshot := *t
+	snapshot.Usage = append([]UsageEvent(nil), t.Usage...)
 	s.mu.Unlock()
 
 	if err := s.writeAgentFile(agent, &snapshot); err != nil && s.logger != nil {
@@ -197,16 +243,46 @@ func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) er
 		return fmt.Errorf("creating metrics dir: %w", err)
 	}
 
+	backend := t.Backend
+	if backend == "" {
+		backend = BackendInference
+	}
 	entries := []SessionEntry{
-		{Role: "user", Agent: agent, Message: agent, Model: t.Model, Timestamp: t.FirstSeen},
-		{
+		{Role: "user", Agent: agent, Message: agent, Model: t.Model, Timestamp: t.FirstSeen, Backend: backend},
+	}
+	if len(t.Usage) == 0 {
+		entries = append(entries, SessionEntry{
 			Role:         "assistant",
 			Agent:        agent,
 			Model:        t.Model,
 			InputTokens:  t.InputTokens,
 			OutputTokens: t.OutputTokens,
 			Timestamp:    t.LastSeen,
-		},
+			Backend:      backend,
+		})
+	} else {
+		for _, u := range t.Usage {
+			ts := t.LastSeen
+			if u.TimestampMs > 0 {
+				ts = time.UnixMilli(u.TimestampMs).UTC().Format(time.RFC3339)
+			}
+			model := u.Model
+			if model == "" {
+				model = t.Model
+			}
+			entries = append(entries, SessionEntry{
+				Role:          "assistant",
+				Agent:         agent,
+				Model:         model,
+				InputTokens:   u.Input,
+				OutputTokens:  u.Output,
+				CacheRead:     u.CacheRead,
+				CacheCreation: u.CacheCreate,
+				Timestamp:     ts,
+				Backend:       backend,
+				Coalesced:     u.Coalesced,
+			})
+		}
 	}
 
 	var buf []byte
@@ -219,7 +295,7 @@ func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) er
 		buf = append(buf, '\n')
 	}
 
-	path := filepath.Join(s.dir, inferenceSessionFilePrefix+agent+".jsonl")
+	path := filepath.Join(s.dir, sinkFilePrefix(backend)+agent+".jsonl")
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, buf, inferenceFilePerm); err != nil {
 		return fmt.Errorf("writing usage file: %w", err)
@@ -228,4 +304,25 @@ func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) er
 		return fmt.Errorf("renaming usage file: %w", err)
 	}
 	return nil
+}
+
+func sinkTotalsKey(backend, agent string) string {
+	if backend == "" {
+		backend = BackendInference
+	}
+	return backend + "\x00" + agent
+}
+
+func sinkFilePrefix(backend string) string {
+	if backend == BackendCopilot {
+		return copilotLiveSessionFilePrefix
+	}
+	return inferenceSessionFilePrefix
+}
+
+func sinkBackendFromPrefix(prefix string) string {
+	if prefix == copilotLiveSessionFilePrefix {
+		return BackendCopilot
+	}
+	return BackendInference
 }

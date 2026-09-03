@@ -3351,14 +3351,22 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')) && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
-            var avatar = linkedAvatar(pr.username, LIST_AVATAR_PX, pr.username, 'margin-right:6px');
+            var rawUser = String(pr.username || '');
+            var userLabel = String(pr.display_label || rawUser);
+            var provider = pr.provider || identityProviderFromKey(rawUser);
+            var avatar = (provider === 'github' && rawUser.indexOf(':') === -1)
+              ? linkedAvatar(rawUser, LIST_AVATAR_PX, userLabel, 'margin-right:6px')
+              : userAvatar({display_name: userLabel, avatar_url: pr.avatar_url, github_username: rawUser}, LIST_AVATAR_PX, 'margin-right:6px');
+            var authKey = userLabel && rawUser && userLabel !== rawUser
+              ? '<span style="display:block;font-size:0.68rem;color:var(--muted);word-break:break-word" title="Auth key">' + esc(rawUser) + '</span>'
+              : '';
             var note = (pr.note || '').trim();
             var noteHtml = note
               ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text);white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.15);border-left:2px solid var(--accent);padding:4px 8px;border-radius:2px">' + esc(note) + '</div>'
               : '<div style="margin-top:4px;font-size:0.72rem;color:var(--muted);font-style:italic">(no note)</div>';
             return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
               '<div style="display:flex;align-items:center;justify-content:space-between">' +
-              '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(pr.username) + '</span></div>' +
+              '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(userLabel || rawUser) + '</span>' + authKey + '</div>' +
               '<div style="display:flex;gap:4px">' +
               '<button onclick="inlineApproveAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
               '<button onclick="inlineDenyAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
@@ -4704,7 +4712,7 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
           '<td style="white-space:nowrap">' + acmmBadge(pr.acmm_level) + '</td>' +
           '<td style="white-space:nowrap;color:var(--muted);font-size:0.7rem">' + esc((pr.requested_at || '').substring(0, 10)) + '</td>' +
           '<td style="white-space:nowrap"><span style="color:' + color + ';font-weight:600;font-size:0.72rem">' + esc(pr.status) + '</span></td>' +
-          '<td style="white-space:nowrap">' + esc(pr.decided_by || '—') + '</td>' +
+          '<td style="white-space:nowrap">' + esc(pr.decided_by_name || pr.decided_by || '—') + '</td>' +
           '<td style="white-space:nowrap;color:var(--muted);font-size:0.7rem">' + esc((pr.decided_at || '').substring(0, 10) || '—') + '</td>' +
           '<td>' + outcome + '</td>' +
           '<td>' + otherHivesCell(pr.other_hives) + '</td>' +
@@ -4782,6 +4790,11 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
 
     var _provisionRequestsByUser = {};
 
+    function provisionRequesterDisplay(username) {
+      var pr = _provisionRequestsByUser[username] || {username: username};
+      return provisionRequesterPrimary(pr) || String(username || '');
+    }
+
     /* openAssignForUser is the entry point from a click on a user in the admin
        users table. It routes to whichever existing flow fits, rather than adding
        a third assign path:
@@ -4816,7 +4829,7 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
       var reposText = pr.primary_repo || pr.repos || '';
       var summary =
         '<div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;margin-bottom:4px">' +
-        '<div><span style="color:var(--muted)">User:</span> <strong>' + esc(username) + '</strong></div>' +
+        '<div><span style="color:var(--muted)">User:</span> <strong>' + esc(provisionRequesterDisplay(username)) + '</strong></div>' +
         '<div><span style="color:var(--muted)">Org:</span> ' + esc(pr.org || '') + '</div>' +
         '<div><span style="color:var(--muted)">Repos:</span> ' + esc(pr.repos || '') + '</div>' +
         '<div><span style="color:var(--muted)">Primary:</span> ' + esc(pr.primary_repo || '') + '</div>' +
@@ -4902,20 +4915,20 @@ const dashboardHTMLViewScripts = `    function onSavedViewPick(name) {
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Assign failed', 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Approve'; } return; }
         closeApproveModal();
-        hiveToast('Approved ' + username + ' → ' + (hiveId || 'auto') + ' (' + (data.hive_id || 'a hive') + ')', 'success');
+        hiveToast('Approved ' + provisionRequesterDisplay(username) + ' → ' + (hiveId || 'auto') + ' (' + (data.hive_id || 'a hive') + ')', 'success');
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Approve'; } }
     }
 
     async function denyProvision(username, btn) {
-      if (!await hiveConfirm('Deny provision request from ' + username + '?')) return;
+      if (!await hiveConfirm('Deny provision request from ' + provisionRequesterDisplay(username) + '?')) return;
       btn.disabled = true;
       btn.textContent = 'Denying...';
       try {
         var resp = await fetch('/api/saas/deny-provision/' + encodeURIComponent(username), {method: 'DELETE'});
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Deny failed', 'error'); btn.disabled = false; btn.textContent = 'Deny'; return; }
-        hiveToast('Provision request denied for ' + username, 'success');
+        hiveToast('Provision request denied for ' + provisionRequesterDisplay(username), 'success');
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Deny'; }
     }

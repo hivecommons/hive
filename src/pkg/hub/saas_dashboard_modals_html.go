@@ -589,14 +589,22 @@ const dashboardHTMLModalScripts = `    function orfStartPolling(hiveId) {
         if (!el) return;
         if (!reqs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No pending requests</span>'; return; }
         el.innerHTML = reqs.map(function(r) {
-          var avatar = linkedAvatar(r.username, LIST_AVATAR_PX, r.username, 'margin-right:6px');
+          var rawUser = String(r.username || '');
+          var userLabel = String(r.display_label || rawUser);
+          var provider = r.provider || identityProviderFromKey(rawUser);
+          var avatar = (provider === 'github' && rawUser.indexOf(':') === -1)
+            ? linkedAvatar(rawUser, LIST_AVATAR_PX, userLabel, 'margin-right:6px')
+            : userAvatar({display_name: userLabel, avatar_url: r.avatar_url, github_username: rawUser}, LIST_AVATAR_PX, 'margin-right:6px');
+          var authKey = userLabel && rawUser && userLabel !== rawUser
+            ? '<span style="display:block;font-size:0.68rem;color:var(--muted);word-break:break-word" title="Auth key">' + esc(rawUser) + '</span>'
+            : '';
           var note = (r.note || '').trim();
           var noteHtml = note
             ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text);white-space:pre-wrap;word-break:break-word;background:var(--bg);border-left:2px solid var(--accent);padding:4px 8px;border-radius:2px">' + esc(note) + '</div>'
             : '<div style="margin-top:4px;font-size:0.72rem;color:var(--muted);font-style:italic">(no note)</div>';
           return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;align-items:center;justify-content:space-between">' +
-            '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(r.username) + '</span> <span style="font-size:0.7rem;color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span></div>' +
+            '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(userLabel || rawUser) + '</span> <span style="font-size:0.7rem;color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span>' + authKey + '</div>' +
             '<div style="display:flex;gap:4px">' +
             '<select id="req-role-' + esc(r.username) + '" title="Role to grant on approval" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read" title="' + escAttr(roleDescription('read')) + '">Read</option><option value="read-write" title="' + escAttr(roleDescription('read-write')) + '">Read-Write</option><option value="merger" title="' + escAttr(roleDescription('merger')) + '">Merger</option></select>' +
             '<button onclick="approveRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +

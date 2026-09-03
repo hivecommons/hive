@@ -31,6 +31,12 @@ type SessionEntry struct {
 	// (bare-mode) agents set this so the translator-written usage records
 	// attribute cleanly. Normal Claude/Copilot session files omit it.
 	Agent string `json:"agent,omitempty"`
+	// Backend pins collector-generated session files (for example MITM
+	// Copilot live capture) to their producing backend.
+	Backend string `json:"backend,omitempty"`
+	// Coalesced carries UsageEvent coalescing metadata when the inference sink
+	// rewrites a bounded per-request timeline.
+	Coalesced int `json:"coalesced,omitempty"`
 }
 
 // UsageEvent is one timestamped slice of token usage inside a session — the
@@ -85,9 +91,10 @@ type SessionSummary struct {
 	// provenance and must be treated as NOT time-resolved.
 	Backend string `json:"backend,omitempty"`
 
-	// Usage is the time-ordered per-message usage timeline, populated only by
-	// scanners that can observe the grain (currently Claude — see
-	// BackendClaude). It is ADDITIVE: the summed fields above remain the
+	// Usage is the time-ordered per-message/per-request usage timeline,
+	// populated only by scanners/sinks that can observe the grain (Claude
+	// sessions and MITM-captured Copilot completions). It is ADDITIVE: the
+	// summed fields above remain the
 	// authoritative session totals and are unchanged by its presence. When
 	// non-empty its token sums equal the summed fields exactly, so a consumer
 	// may use either but must never add both.
@@ -122,7 +129,8 @@ type SessionSummary struct {
 // complete as it was before the timeline existed. A restored session therefore
 // has Backend set but Usage empty, which the repo-cost join treats as
 // not-time-resolved and reports under backend_unsupported rather than
-// silently dropping or misattributing its tokens.
+// silently dropping or misattributing its tokens unless its source can
+// rebuild the timeline again (as live Copilot capture does).
 func stripUsageTimelines(agg *AggregateSummary) *AggregateSummary {
 	if agg == nil {
 		return nil
@@ -455,6 +463,8 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 
 	firstUserMsg := ""
 	explicitAgent := ""
+	explicitBackend := ""
+	var timeline usageTimeline
 	// FirstActive/LastActive are the min/max parseable entry timestamps, not
 	// the first/last line seen: flat-format files are append-mostly but not
 	// guaranteed ordered (atomic rewrites and merged records can interleave),
@@ -479,6 +489,9 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 		if entry.Agent != "" && explicitAgent == "" {
 			explicitAgent = entry.Agent
 		}
+		if entry.Backend != "" && explicitBackend == "" {
+			explicitBackend = entry.Backend
+		}
 
 		if entry.Role == "user" && firstUserMsg == "" {
 			firstUserMsg = entry.Message
@@ -492,6 +505,17 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 		summary.OutputTokens += entry.OutputTokens
 		summary.CacheRead += entry.CacheRead
 		summary.CacheCreate += entry.CacheCreation
+		if entry.InputTokens > 0 || entry.OutputTokens > 0 || entry.CacheRead > 0 || entry.CacheCreation > 0 {
+			timeline.add(UsageEvent{
+				TimestampMs: parseTimestampToUnixMilli(entry.Timestamp),
+				Model:       entry.Model,
+				Coalesced:   entry.Coalesced,
+				Input:       entry.InputTokens,
+				Output:      entry.OutputTokens,
+				CacheRead:   entry.CacheRead,
+				CacheCreate: entry.CacheCreation,
+			})
+		}
 
 		if entry.Role == "user" || entry.Role == "assistant" {
 			summary.Messages++
@@ -501,6 +525,18 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 	summary.TotalTokens = summary.InputTokens + summary.OutputTokens + summary.CacheRead + summary.CacheCreate
 	summary.FirstActive = firstTimestamp
 	summary.LastActive = lastTimestamp
+	summary.Usage, summary.UsageCoalesced = timeline.finish()
+	if explicitBackend != "" {
+		summary.Backend = explicitBackend
+	} else {
+		base := filepath.Base(path)
+		switch {
+		case strings.HasPrefix(base, inferenceSessionFilePrefix):
+			summary.Backend = BackendInference
+		case strings.HasPrefix(base, copilotLiveSessionFilePrefix):
+			summary.Backend = BackendCopilot
+		}
+	}
 
 	if explicitAgent != "" {
 		summary.Agent = explicitAgent

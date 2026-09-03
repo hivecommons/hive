@@ -142,9 +142,12 @@ func TestEnrichProvisionRequests(t *testing.T) {
 	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "bob", Hives: map[string]string{}}); err != nil {
 		t.Fatalf("saveSaaSUser(bob): %v", err)
 	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "ibmid:ADMIN", DisplayName: "Admin Person", Hives: map[string]string{}}); err != nil {
+		t.Fatalf("saveSaaSUser(admin): %v", err)
+	}
 
 	reqs := []ProvisionRequest{
-		{Username: "alice", Status: provisionStatusApproved, AssignedHive: "hosted-oke-06"},
+		{Username: "alice", Status: provisionStatusApproved, AssignedHive: "hosted-oke-06", DecidedBy: "ibmid:ADMIN"},
 		{Username: "ibmid:650001ABCD", Status: provisionStatusPending, AssignedHive: "hosted-oke-10"},
 		{Username: "bob", Status: provisionStatusDenied, DenyReason: "no capacity"},
 		{Username: "ghost", Status: provisionStatusApproved, AssignedHive: "hosted-oke-99"},
@@ -156,6 +159,9 @@ func TestEnrichProvisionRequests(t *testing.T) {
 	}
 	if got[0].AssignedRole != "owner" {
 		t.Errorf("alice assigned_role = %q, want %q", got[0].AssignedRole, "owner")
+	}
+	if got[0].DecidedBy != "ibmid:ADMIN" || got[0].DecidedByName != "Admin Person" {
+		t.Errorf("decided-by display = raw %q name %q, want raw ibmid:ADMIN name Admin Person", got[0].DecidedBy, got[0].DecidedByName)
 	}
 	wantOther := []UserHiveRole{{HiveID: "hosted-oke-07", Role: "read"}}
 	if !reflect.DeepEqual(got[0].OtherHives, wantOther) {

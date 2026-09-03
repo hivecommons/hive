@@ -1,10 +1,12 @@
 # Copilot per-repo cost capture at the MITM proxy (#4836 phase 4)
 
-Status: **investigation — no decision taken.** Nothing here is implemented, and
-nothing here is a commitment to implement. This page exists to record what was
-checked, with citations, so the phase-4 decision is made on evidence rather than
-on the epic's one-line sketch of it. Its conclusion is a recommendation against
-building phase 4 as scoped; see [Recommendation](#recommendation).
+Status: **implemented on v5 for #5802.** The implementation follows the
+timestamps-only path recommended below: Copilot completion usage that the MITM
+proxy already observes is persisted as timestamped live-capture sessions, then
+`/api/repo-cost` joins those events to the existing authenticated audit-log
+`repo=` timeline. The proxy does not invent a repo from adjacent request
+traffic; unsupported historical Copilot shutdown totals still remain in
+`backend_unsupported`.
 
 All citations are against `origin/v4` at `8d21a8aa`.
 

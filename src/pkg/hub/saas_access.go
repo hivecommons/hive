@@ -596,6 +596,28 @@ func loadAccessRequests(hiveID string) []AccessRequest {
 	return reqs
 }
 
+func (s *HubServer) decoratePendingAccessRequests(reqs []PendingAccessRequest) []PendingAccessRequest {
+	for i := range reqs {
+		username := strings.TrimSpace(reqs[i].Username)
+		if username == "" {
+			continue
+		}
+		label, avatar := s.displayIdentity(username)
+		reqs[i].DisplayLabel = label
+		reqs[i].AvatarURL = avatar
+		if u := loadSaaSUser(username); u != nil {
+			reqs[i].Provider = grantableUserProvider(u)
+			continue
+		}
+		if provider, _ := splitIdentityKey(username); provider != "" {
+			reqs[i].Provider = normalizeIdentityProvider(provider)
+		} else {
+			reqs[i].Provider = legacyProvider
+		}
+	}
+	return reqs
+}
+
 func saveAccessRequests(hiveID string, reqs []AccessRequest) {
 	if strings.Contains(hiveID, "..") || strings.Contains(hiveID, "/") || strings.Contains(hiveID, "\\") {
 		slog.Warn("saveAccessRequests: invalid hiveID", "hiveID", hiveID)
@@ -707,12 +729,17 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqs := loadAccessRequests(hiveID)
-	pending := make([]AccessRequest, 0)
+	pending := make([]PendingAccessRequest, 0)
 	for _, req := range reqs {
 		if req.Status == "pending" {
-			pending = append(pending, req)
+			pending = append(pending, PendingAccessRequest{
+				Username:    req.Username,
+				RequestedAt: req.RequestedAt,
+				Note:        req.Note,
+			})
 		}
 	}
+	pending = s.decoratePendingAccessRequests(pending)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"requests": pending})
