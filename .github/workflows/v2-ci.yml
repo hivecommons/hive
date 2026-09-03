@@ -44,12 +44,15 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     defaults:
       run:
         working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Ensure PyYAML on self-hosted runners
+        working-directory: .
+        run: python3 -c "import yaml" 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml; } || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q && python3 -m pip install --user -q pyyaml; }
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -755,7 +758,7 @@ jobs:
         run: bash src/deploy/test_deploy_suites_wired.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     needs: build-and-test
     permissions:
       contents: read
@@ -966,7 +969,7 @@ jobs:
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     needs: [build-and-test, docker]
     permissions:
       contents: read

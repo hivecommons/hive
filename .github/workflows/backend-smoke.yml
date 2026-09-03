@@ -76,7 +76,7 @@ jobs:
     # with no red anywhere. Both names listed explicitly (rather than
     # github.repository_owner) so forks still skip as before.
     if: github.repository == 'hivecommons/hive' || github.repository == 'hivecommons/hive'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -171,7 +171,7 @@ jobs:
     # "contributors broken today" are different problems with different
     # urgency, and must never collapse into one issue thread.
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     needs: [smoke]
     permissions:
       contents: read
