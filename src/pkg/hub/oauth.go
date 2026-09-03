@@ -201,6 +201,22 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirect := s.loginRedirectTarget(r)
+	// A signed-in user bounced here with a redirect target (a spoke's nginx
+	// auth-signin, or any trusted ?redirect=) needs no provider round-trip —
+	// the session cookie already proves who they are. Send them straight back
+	// to the validated target instead of rendering the picker or re-entering
+	// OAuth. Plain /login with no redirect still shows the picker so switching
+	// accounts stays possible. The target is already validated by
+	// loginRedirectTarget (isTrustedRedirectTarget), so this introduces no new
+	// open-redirect surface.
+	if redirect != "" {
+		for _, value := range hubSessionCookieValues(r) {
+			if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
+				http.Redirect(w, r, redirect, http.StatusSeeOther)
+				return
+			}
+		}
+	}
 	providers := s.authProviders.Providers()
 	if len(providers) == 0 {
 		// Registry not built (a HubServer constructed without registerOAuth — the

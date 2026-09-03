@@ -1,0 +1,1 @@
+- A user already signed in to the hub who is bounced to `/login?redirect=…` (for example by a spoke's auth gate) is now returned straight to the validated target instead of being shown the login provider picker and forced through OAuth again.
