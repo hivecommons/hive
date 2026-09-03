@@ -23,49 +23,72 @@ A re-entrant turn MUST be able to reconstruct everything it needs from:
 Breaking changes to the turn loop require an UPGRADE.md entry (see PR #5559)
 before they ship.
 
-## Phase 0 — Spike and state inventory (exit: written report)
+## Already delivered before implementation
 
-- Document hive's current agent-loop/state model and enumerate every place
-  in-process suspended state exists (RFC scope item 1).
-- Decide the minimal state envelope for handoff (RFC scope item 3).
-- Deliverable: feasibility + migration-cost report attached to #4002.
-- **Gate to Phase 1:** report reviewed by a human maintainer; go/no-go
-  recorded on #4002.
+The investigation work is intentionally separate from rollout:
+
+- **Stage 1: state inventory shipped.**
+  [`src/docs/design/agent-turn-model.md`](../src/docs/design/agent-turn-model.md)
+  documents hive's current agent-loop/state model and the in-process state that
+  would not survive a process restart.
+- **Stage 2: prototype shipped.** The isolated `pkg/turn` prototype demonstrates
+  a re-entrant `Step` over a serialized conversation envelope with journaled
+  external effects. It is not wired into the live tmux loop or contributor relay.
+- **Step 3: handoff evaluation documented.**
+  [`src/docs/design/agent-turn-handoff.md`](../src/docs/design/agent-turn-handoff.md)
+  records the handoff finding: do not add a queue yet; fix/reuse durable
+  ownership first, and avoid creating another durable state store.
+
+These shipped artifacts do not change runtime behavior. They are the evidence
+base for the opt-in rollout below.
 
 ## Phase 1 — Contributor agents only (opt-in)
 
-- Prototype one contributor agent as a re-entrant turn function with fully
-  externalized state (RFC scope item 2).
+- Wire one contributor-agent path to the re-entrant turn envelope behind an
+  explicit opt-in flag.
 - Contributor agents are the lowest-blast-radius fleet: sessions are short,
   externally driven, and already tolerate reconnects (see #5090 flap history).
+- Validate the compatibility contract end-to-end: persisted envelope, structured
+  return, no suspended in-process state between turns, and no observable change
+  for non-opted-in agents.
 - **Gate to Phase 2:** zero regressions in contributor-agent CI for 2
-  consecutive weeks; handoff exercised at least once across a process
-  restart in a live hive.
+  consecutive weeks; handoff exercised at least once across a process restart
+  in a live hive; no unreconciled ambiguous journal entry may complete as
+  success.
 
-## Phase 2 — Background agents (opt-in per agent)
+## Phase 2 — All background agents (opt-in per agent)
 
-- Extend to scanner/quality/architect-class background agents behind a
-  per-agent config flag.
+- Extend the opt-in path to every background-agent class (scanner, quality,
+  architect, security, guide, strategist, reviewer, and other non-contributor
+  scheduled/manager-driven agents). This is not a partial background rollout:
+  Phase 2 is the point where the whole background fleet has an opt-in path.
 - Integrate #4000 (tool-approval as an explicit, ACMM-gated operation) as a
-  first-class operation in the turn list — it is an individual operation
-  within this umbrella model and should not ship separately.
-- **Gate to Phase 3:** two full release cycles with the flag on for at least
-  three agents; durable resume verified across a spoke roll.
+  first-class operation in the turn list — it is an individual operation within
+  this umbrella model and should not ship separately.
+- Keep the legacy in-process loop available and default while per-agent opt-in
+  burns down compatibility issues.
+- **Phase-2 success gate:** two full release cycles with the flag enabled for at
+  least three different background-agent classes, durable resume verified across
+  a spoke roll, and no increase in failed/duplicated external effects versus the
+  legacy loop.
 
 ## Phase 3 — Default for all agents
 
 - Flip the default; retain the legacy loop for one deprecation release.
-- Ship operator migration guidance in UPGRADE.md at the major version
-  boundary where the default changes.
+- Ship operator migration guidance in UPGRADE.md at the major-version boundary
+  where the default changes.
+- Remove the legacy loop only after the deprecation release and after rollback
+  guidance has been exercised on a live spoke.
 
 ## Version targeting
 
-Phases 0–1 are v5-compatible (opt-in, no default change). Phases 2–3 target
-v6 unless the v5 GA bar (#5622) explicitly pulls them in. This RFC is not a
-v5 GA blocker.
+The delivered investigation artifacts and Phase 1 are v5-compatible
+(documentation/prototype plus opt-in contributor pilot, no default change).
+Phases 2–3 target v6 unless the v5 GA bar (#5622) explicitly pulls them in.
+This RFC is not a v5 GA blocker.
 
 ## Out of scope
 
-- Queue selection / transport for cross-node handoff (decide in Phase 0).
+- Queue selection / transport for cross-node handoff until durable ownership is
+  settled.
 - State-triggered hooks proposal (separate RFC; same umbrella).
-
