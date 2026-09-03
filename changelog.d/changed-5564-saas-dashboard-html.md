@@ -1,0 +1,1 @@
+- Split the embedded SaaS dashboard document into focused same-package HTML constants so dashboard work no longer concentrates in one oversized file.
