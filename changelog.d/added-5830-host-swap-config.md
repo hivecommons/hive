@@ -1,1 +1,0 @@
-- Made the hub public URL, provisioned spoke domain, and optional legacy SSO cookie domain configurable while preserving the existing hive.kubestellar.io defaults.

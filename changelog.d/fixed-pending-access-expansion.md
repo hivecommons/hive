@@ -1,1 +1,0 @@
-- Keep fleet pending access-request panels open across periodic refreshes.

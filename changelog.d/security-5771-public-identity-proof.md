@@ -1,1 +1,0 @@
-- Public dashboard endpoints now strip forged `X-Hive-User`/`X-Hive-Role` identity headers unless the hub's `X-Hive-Proxy-Auth` proof is valid, closing an anonymous contributor-control and impersonation bypass ([#5771](https://github.com/hivecommons/hive/issues/5771)).

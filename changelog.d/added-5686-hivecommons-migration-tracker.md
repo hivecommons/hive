@@ -1,1 +1,0 @@
-- Operators now have a public HiveCommons migration tracker covering org/package phases, dual-publish promises, communications checkpoints, and remaining gaps before any kubestellar namespace deprecation ([#5686](https://github.com/kubestellar/hive/issues/5686)).

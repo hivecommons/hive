@@ -1,1 +1,0 @@
-- The `cmd/hive` heartbeat, duplicate-PR claim ledger, and Nous dashboard state loaders now expose narrow path seams with production defaults preserved, allowing hermetic tests for token-cache freshness, corrupt claim ledgers, and governor artifacts without touching host `/var/run` or `/data` paths ([#5696](https://github.com/kubestellar/hive/issues/5696)).

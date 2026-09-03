@@ -1,1 +1,0 @@
-- The v4 Go module and repository references now use `github.com/hivecommons/hive`, removing the stable branch's dependency on GitHub redirects from the former `kubestellar/hive` location ([#5778](https://github.com/hivecommons/hive/issues/5778)).

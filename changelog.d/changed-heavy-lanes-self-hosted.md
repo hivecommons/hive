@@ -1,1 +1,0 @@
-- The v2 CI and backend-smoke workflows now run on the project's self-hosted runner fleet instead of hosted ubuntu-latest runners; both are trusted-event-only lanes (push/schedule/dispatch), so no fork code can reach the runners.

@@ -1,1 +1,0 @@
-- The GitHub user-auth logout endpoint now requires a live user session before deleting persisted owner credentials, preventing anonymous POSTs from logging the hive owner out on non-allowlist spokes ([#5743](https://github.com/kubestellar/hive/issues/5743)).

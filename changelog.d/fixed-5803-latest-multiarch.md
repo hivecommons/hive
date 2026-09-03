@@ -1,1 +1,0 @@
-- Ensure the main Hive `latest` image tag is republished from the v4 multi-arch manifest list, and fail publishing if any managed image tag is missing linux/amd64 or linux/arm64.

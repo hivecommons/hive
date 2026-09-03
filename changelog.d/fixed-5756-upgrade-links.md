@@ -1,1 +1,0 @@
-- Operators can now discover the major-version upgrade guide from both the repository README and the docs index, so v4 deployments have a visible path to the backup, manifest, and UID guidance needed before crossing release-line boundaries ([#5756](https://github.com/kubestellar/hive/issues/5756)).
