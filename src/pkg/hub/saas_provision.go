@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -3560,4 +3561,45 @@ spec:
 		return fmt.Errorf("no ingress found in %s to add %s to", ns, vanityHost)
 	}
 	return nil
+}
+
+// reconciledDashboardURLDomain returns a corrected dashboard URL when the
+// stored one carries a hostname built from a stale cluster domain, or "" when
+// there is nothing to change.
+//
+// DashboardURL is minted once at provision time as "<hiveID>.<cluster.Domain>"
+// (see the dashboardHost computation in the provision template). Nothing
+// re-derived it afterwards, so when a cluster's domain changed — the
+// kubestellar.io -> hivecommons.dev migration — every hive provisioned before
+// the change kept a hostname that no ingress serves. That is not cosmetic: the
+// hub pushes DashboardURL down on each heartbeat and the spoke ADOPTS it
+// (see "adopting vanity dashboard URL from hub heartbeat"), so the dead value
+// also overwrites the spoke's own correct local config.
+//
+// Deliberately narrow. It rewrites only when the stored host is exactly
+// "<hiveID>.<old-domain>", i.e. the shape provisioning mints. A host whose
+// leading label is NOT the hive ID is a vanity host and belongs to
+// reconcileStaleVanityURL; rewriting it here would fight that reconciler and
+// churn the hive-facing name. An empty, unparsable, or already-correct URL
+// returns "" so the caller leaves it untouched.
+func reconciledDashboardURLDomain(stored string, h *SaaSHive, cluster *ClusterConfig) string {
+	if stored == "" || h == nil || h.ID == "" || cluster == nil || cluster.Domain == "" {
+		return ""
+	}
+	u, err := url.Parse(stored)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	want := h.ID + "." + cluster.Domain
+	if host == want {
+		return "" // already correct
+	}
+	// Only the provisioning shape "<hiveID>.<anything>" is ours to re-domain.
+	if !strings.HasPrefix(host, h.ID+".") {
+		return ""
+	}
+	u.Host = want
+	u.Scheme = "https"
+	return u.String()
 }

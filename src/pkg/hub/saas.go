@@ -3459,6 +3459,21 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if v := claimedVanityURL(sh); v != "" {
 			entry.DashboardURL = v
 		}
+		// Re-derive the host from the cluster's CURRENT domain. DashboardURL is
+		// persisted at provision time as "<hiveID>.<cluster.Domain>", so a
+		// cluster that later changes domain (the kubestellar.io -> hivecommons.dev
+		// move) leaves every hive provisioned before the change pointing at a
+		// hostname no ingress serves — the hub then PUSHES that dead URL to the
+		// spoke each heartbeat, which adopts it and overwrites its own correct
+		// local value. VanityURL already self-heals via reconcileStaleVanityURL;
+		// DashboardURL had no equivalent, so it drifted permanently.
+		//
+		// Only rewrites the domain suffix when the stored host is <hiveID>.<something
+		// else>: a vanity host (different hive-facing name) is left to the vanity
+		// reconciler, and an empty/unparsable URL is left alone.
+		if u := reconciledDashboardURLDomain(entry.DashboardURL, sh, s.clusterForHive(sh)); u != "" {
+			entry.DashboardURL = u
+		}
 		switch sh.Status {
 		case "provisioning":
 			entry.GovernorMode = "PROVISIONING"
