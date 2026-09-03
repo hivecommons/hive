@@ -49,7 +49,10 @@ func TestStartCopilotSessionRefreshSeedsAndStops(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.After(2 * time.Second)
+	// Generous deadlines: under a full-suite run the scheduler can starve this
+	// goroutine well past the 10ms interval (observed >2s on loaded CI hosts),
+	// and the deadline guards liveness, not latency.
+	deadline := time.After(15 * time.Second)
 	for !copilotCredentialFileHasTokens(path) {
 		select {
 		case <-deadline:
@@ -61,7 +64,7 @@ func TestStartCopilotSessionRefreshSeedsAndStops(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("StartCopilotSessionRefresh did not stop after context cancellation")
 	}
 }
