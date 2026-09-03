@@ -165,6 +165,10 @@ func TestRunAutoMergeSweepIfDue_LogsCompletionWithSeenAndSkipped(t *testing.T) {
 func resetClaimLedgerForTest(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "pr-claims.json")
+	oldPath := claimLedgerPath
+	oldLoader := claimLedgerLoader
+	claimLedgerPath = path
+	claimLedgerLoader = github.LoadClaimLedger
 	claimLedgerOnce = sync.Once{}
 	claimLedgerOnce.Do(func() {
 		claimLedger = github.NewClaimLedger(path, sweepTestLogger(nil))
@@ -172,8 +176,38 @@ func resetClaimLedgerForTest(t *testing.T) string {
 	t.Cleanup(func() {
 		claimLedgerOnce = sync.Once{}
 		claimLedger = nil
+		claimLedgerPath = oldPath
+		claimLedgerLoader = oldLoader
 	})
 	return path
+}
+
+func TestGetClaimLedger_LoadsFromInjectedPathAndSurvivesCorruptFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pr-claims.json")
+	if err := os.WriteFile(path, []byte(`{not json`), 0o600); err != nil {
+		t.Fatalf("write corrupt ledger: %v", err)
+	}
+	oldPath := claimLedgerPath
+	oldLoader := claimLedgerLoader
+	claimLedgerPath = path
+	claimLedgerLoader = github.LoadClaimLedger
+	claimLedgerOnce = sync.Once{}
+	claimLedger = nil
+	t.Cleanup(func() {
+		claimLedgerOnce = sync.Once{}
+		claimLedger = nil
+		claimLedgerPath = oldPath
+		claimLedgerLoader = oldLoader
+	})
+
+	var buf strings.Builder
+	ledger := getClaimLedger(sweepTestLogger(&buf))
+	if ledger == nil {
+		t.Fatal("corrupt ledger should still return a usable empty ledger")
+	}
+	if !strings.Contains(buf.String(), path) {
+		t.Fatalf("warning should include injected path %q, log: %s", path, buf.String())
+	}
 }
 
 func TestGetClaimLedger_ReturnsSamePointerOnEveryCall(t *testing.T) {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kubestellar/hive/pkg/dashboard"
@@ -52,5 +54,30 @@ func TestLoadNousStateStatusConsistency(t *testing.T) {
 	// The baseline target rides from the dashboard package's single constant.
 	if state.Status["baseline_target"] != dashboard.NousBaselineTarget {
 		t.Errorf("baseline_target = %v, want %d", state.Status["baseline_target"], dashboard.NousBaselineTarget)
+	}
+}
+
+func TestLoadNousStateFromPathsLoadsHermeticArtifacts(t *testing.T) {
+	governorDir := t.TempDir()
+	snapshotDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(governorDir, "ledger.json"), []byte(`{"iterations":[{"id":"one"},{"id":"two"}]}`), 0o600); err != nil {
+		t.Fatalf("write ledger: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(governorDir, "principles.json"), []byte(`{"principles":[{"id":"p1","statement":"Prefer seams","confidence":"high","category":"testing"}]}`), 0o600); err != nil {
+		t.Fatalf("write principles: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDir, "snapshot.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+
+	state := loadNousStateFromPaths(restoreTestLogger(), governorDir, snapshotDir)
+	if state.Phase != "observing" || len(state.Ledger) != 2 {
+		t.Fatalf("phase/ledger = %q/%d, want observing/2", state.Phase, len(state.Ledger))
+	}
+	if len(state.Principles) != 1 || state.Principles[0].ID != "p1" || state.Principles[0].Confidence != 0.9 {
+		t.Fatalf("principles = %+v, want parsed p1 with confidence", state.Principles)
+	}
+	if state.Status["snapshotCount"] != 1 || state.Status["iterations"] != 2 || state.Status["principles"] != 1 {
+		t.Fatalf("status counts = %+v, want one snapshot, two iterations, one principle", state.Status)
 	}
 }

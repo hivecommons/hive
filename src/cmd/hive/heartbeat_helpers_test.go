@@ -1,10 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/pkg/agent"
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/hub"
 )
 
 // quotaExhaustedProcessCount must count ONLY running, unpaused processes whose
@@ -91,5 +95,47 @@ func TestQuotaExhaustedAgentReason(t *testing.T) {
 	}
 	if got := quotaExhaustedAgentReason(3); got != "3 agent(s) out of provider quota" {
 		t.Errorf("quotaExhaustedAgentReason(3) = %q", got)
+	}
+}
+
+func TestGitHubAppTokenHeartbeatFields_UsesInjectableCachePath(t *testing.T) {
+	oldPath := githubAppTokenCachePath
+	t.Cleanup(func() { githubAppTokenCachePath = oldPath })
+	cfg := &config.Config{GitHub: config.GitHubConfig{AppID: 123}}
+	detail := "mint failed"
+
+	githubAppTokenCachePath = filepath.Join(t.TempDir(), "missing.cache")
+	status, minted, lastErr := githubAppTokenHeartbeatFields(cfg, detail)
+	if status != hub.GitHubAppTokenStatusMissing || minted != "" || lastErr != detail {
+		t.Fatalf("missing cache = %q/%q/%q, want missing/empty/detail", status, minted, lastErr)
+	}
+
+	nowPath := filepath.Join(t.TempDir(), "token.cache")
+	if err := os.WriteFile(nowPath, []byte("token"), 0o600); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	githubAppTokenCachePath = nowPath
+	status, minted, lastErr = githubAppTokenHeartbeatFields(cfg, detail)
+	if status != hub.GitHubAppTokenStatusOK || minted == "" || lastErr != "" {
+		t.Fatalf("fresh cache = %q/%q/%q, want ok/minted/empty", status, minted, lastErr)
+	}
+
+	staleAt := time.Now().Add(-hub.GitHubAppTokenStaleAfter - time.Minute)
+	if err := os.Chtimes(nowPath, staleAt, staleAt); err != nil {
+		t.Fatalf("stale cache: %v", err)
+	}
+	status, minted, lastErr = githubAppTokenHeartbeatFields(cfg, detail)
+	if status != hub.GitHubAppTokenStatusStale || minted == "" || lastErr != detail {
+		t.Fatalf("stale cache = %q/%q/%q, want stale/minted/detail", status, minted, lastErr)
+	}
+
+	parentFile := filepath.Join(t.TempDir(), "not-dir")
+	if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	githubAppTokenCachePath = filepath.Join(parentFile, "token.cache")
+	status, minted, lastErr = githubAppTokenHeartbeatFields(cfg, detail)
+	if status != hub.GitHubAppTokenStatusError || minted != "" || lastErr == "" {
+		t.Fatalf("stat error = %q/%q/%q, want error/empty/error", status, minted, lastErr)
 	}
 }

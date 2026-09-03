@@ -677,11 +677,13 @@ func describeKeySource(v string) string {
 	return v
 }
 
+var githubAppTokenCachePath = github.TokenCachePath
+
 func githubAppTokenHeartbeatFields(cfg *config.Config, detail string) (status, lastMintAt, lastErr string) {
 	if cfg == nil || !cfg.GitHub.HasApp() {
 		return "", "", ""
 	}
-	info, err := os.Stat(github.TokenCachePath)
+	info, err := os.Stat(githubAppTokenCachePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return hub.GitHubAppTokenStatusMissing, "", detail
@@ -8034,8 +8036,10 @@ func mergeableJSON(m github.Mergeable) string {
 // failure) rather than at startup, so a missing or corrupt /data ledger can
 // never block the hive from booting.
 var (
-	claimLedgerOnce sync.Once
-	claimLedger     *github.ClaimLedger
+	claimLedgerOnce   sync.Once
+	claimLedger       *github.ClaimLedger
+	claimLedgerPath   = github.ClaimLedgerPath
+	claimLedgerLoader = github.LoadClaimLedger
 )
 
 // hiveIdentity determines which PR authors count as "this hive", so only our
@@ -8076,12 +8080,12 @@ func applyDuplicatePRGuard(
 // and the ledger itself is internally locked.
 func getClaimLedger(logger *slog.Logger) *github.ClaimLedger {
 	claimLedgerOnce.Do(func() {
-		ledger, err := github.LoadClaimLedger(github.ClaimLedgerPath, logger)
+		ledger, err := claimLedgerLoader(claimLedgerPath, logger)
 		if err != nil {
 			// LoadClaimLedger always returns a usable (possibly empty) ledger
 			// alongside the error, so we keep it and just report the problem.
 			logger.Warn("duplicate-PR guard: could not load persisted claim ledger, starting empty",
-				"path", github.ClaimLedgerPath, "error", err)
+				"path", claimLedgerPath, "error", err)
 		}
 		claimLedger = ledger
 	})
@@ -8883,6 +8887,10 @@ const (
 )
 
 func loadNousState(logger *slog.Logger) *dashboard.NousState {
+	return loadNousStateFromPaths(logger, nousGovernorDir, nousSnapshotDir)
+}
+
+func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
 		Mode:   "observe",
 		Scope:  "governor",
@@ -8891,7 +8899,7 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 		Config: make(map[string]interface{}),
 	}
 
-	if ledgerData, err := os.ReadFile(nousGovernorDir + "/ledger.json"); err == nil {
+	if ledgerData, err := os.ReadFile(filepath.Join(governorDir, "ledger.json")); err == nil {
 		var ledger struct {
 			Iterations []map[string]interface{} `json:"iterations"`
 		}
@@ -8901,7 +8909,7 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 		}
 	}
 
-	if principlesData, err := os.ReadFile(nousGovernorDir + "/principles.json"); err == nil {
+	if principlesData, err := os.ReadFile(filepath.Join(governorDir, "principles.json")); err == nil {
 		var pFile struct {
 			Principles []json.RawMessage `json:"principles"`
 		}
@@ -8922,7 +8930,7 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 	}
 
 	snapshotCount := 0
-	if entries, err := os.ReadDir(nousSnapshotDir); err == nil {
+	if entries, err := os.ReadDir(snapshotDir); err == nil {
 		snapshotCount = len(entries)
 	}
 
