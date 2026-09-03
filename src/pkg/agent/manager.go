@@ -386,14 +386,9 @@ type PauseTransitionEvent struct {
 }
 
 type Manager struct {
-	agents   map[string]*AgentProcess
-	idToName map[string]string
-	mu       sync.RWMutex
-	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
-	// the output-capture goroutines, and taking m.mu there risks the startup
-	// re-entrancy deadlock class (see the 2026-07 provisionWG incident).
-	thrashMu         sync.Mutex
-	thrash           map[string]*thrashState
+	agents           map[string]*AgentProcess
+	idToName         map[string]string
+	mu               sync.RWMutex
 	logger           *slog.Logger
 	workDir          string
 	project          ProjectContext

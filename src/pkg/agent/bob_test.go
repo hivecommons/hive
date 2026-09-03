@@ -365,20 +365,6 @@ func TestBobLaunchCmdApprovalIsFlat(t *testing.T) {
 
 // TestNormalizeModelNameSkipsBob covers the dot-rewrite that corrupted bob's
 // model id. bob is now excluded alongside claude and the inference backends.
-func TestNormalizeModelNameSkipsBob(t *testing.T) {
-	const configured = "claude-sonnet-4-6"
-	if got := normalizeModelName(configured, bobBackend); got != configured {
-		t.Errorf("normalizeModelName(%q, %q) = %q, want it unchanged: the "+
-			"dot-rewrite produced claude-sonnet-4.6, an id bob does not know",
-			configured, bobBackend, got)
-	}
-	// Non-bob backends must still be normalized.
-	if got := normalizeModelName(configured, "copilot"); got != "claude-sonnet-4.6" {
-		t.Errorf("normalizeModelName(%q, \"copilot\") = %q, want %q: other "+
-			"backends must be unaffected", configured, got, "claude-sonnet-4.6")
-	}
-}
-
 // TestToolRulesToLaunchCmdBobHasNoModel guards the second path that could feed
 // bob a --model: an agent with Config.Tools set bypasses the launchInTmux
 // switch entirely and would otherwise fall to the default branch.

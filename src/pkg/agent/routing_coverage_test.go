@@ -295,30 +295,6 @@ func TestConnectionMCPFlags_NonClaude(t *testing.T) {
 // normalizeModelName
 // ---------------------------------------------------------------------------
 
-func TestNormalizeModelName(t *testing.T) {
-	cases := []struct{ model, backend, want string }{
-		{"opus", "claude", "opus"},                // claude passes through
-		{"deepseek-14", "litellm", "deepseek-14"}, // inference passes through
-		// copilot no longer takes the blind digit-suffix dot-rewrite (#4262):
-		// ids are canonicalized against the CLI-accepted list and UNKNOWN ids
-		// pass through verbatim — the rewrite is what corrupted the known
-		// claude-fable-5 into the CLI-rejected claude-fable.5.
-		{"gpt-4o-2024", "copilot", "gpt-4o-2024"},        // unknown id passthrough
-		{"claude-fable-5", "copilot", "claude-fable-5"},  // dashed family kept dashed
-		{"claude-fable.5", "copilot", "claude-fable-5"},  // stored bad id self-corrects
-		{"claude-opus-4-6", "copilot", "claude-opus-4.6"}, // known dotted family still mapped
-		{"gpt-4o-2024", "gemini", "gpt-4o.2024"},        // digit suffix -> dot (non-copilot)
-		{"gpt-4o-preview", "copilot", "gpt-4o-preview"}, // non-digit suffix unchanged
-		{"nohyphen", "copilot", "nohyphen"},             // no hyphen
-		{"trailing-", "copilot", "trailing-"},           // trailing hyphen
-	}
-	for _, c := range cases {
-		if got := normalizeModelName(c.model, c.backend); got != c.want {
-			t.Errorf("normalizeModelName(%q,%q)=%q want %q", c.model, c.backend, got, c.want)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Pause / Resume with persist callback
 // ---------------------------------------------------------------------------

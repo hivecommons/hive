@@ -4,7 +4,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,17 +16,6 @@ import (
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 )
 
-// acmmLevelNames maps ACMM level numbers to human-readable names. Kept in
-// sync with the canonical pack definitions in src/pkg/config/packs/level-*.yaml.
-var acmmLevelNames = map[int]string{
-	1: "Inception",
-	2: "Advisory",
-	3: "Quality-Gated",
-	4: "Security-Aware",
-	5: "Semi-Autonomous",
-	6: "Fully Autonomous",
-}
-
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
 	// No boot prompt — the governor's first eval cycle (10s after startup)
 	// kicks all due agents via BuildKickMessages with fully substituted
@@ -37,123 +25,6 @@ func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
 	// removed, so it is gone too.
 	_ = agent // signature kept for the call site; the arg is no longer read
 	return ""
-}
-
-// findACMMFragments returns paths to ACMM policy files the agent should read.
-// Order: base.md (shared rules) then l<N>.md (level-specific).
-var acmmFragmentFallbackDirs = []string{
-	"/data/policies/examples/acmm",
-	"/opt/hive/examples/acmm",
-}
-
-func (m *Manager) findACMMFragments() []string {
-	level := m.project.ACMMLevel
-	if level <= 0 {
-		return nil
-	}
-
-	// Look for ACMM fragments in the policies directory first, then fallback to baked-in paths.
-	policiesRoot := filepath.Dir(m.project.PolicyDir)
-	if policiesRoot == "." || policiesRoot == "" {
-		policiesRoot = "/data/policies"
-	}
-
-	acmmDirs := append([]string{filepath.Join(policiesRoot, "examples", "acmm")}, acmmFragmentFallbackDirs...)
-
-	var acmmDir string
-	for _, d := range acmmDirs {
-		if _, err := os.Stat(d); err == nil {
-			acmmDir = d
-			break
-		}
-	}
-	if acmmDir == "" {
-		return nil
-	}
-
-	var files []string
-	basePath := filepath.Join(acmmDir, "base.md")
-	if _, err := os.Stat(basePath); err == nil {
-		files = append(files, basePath)
-	}
-	levelPath := filepath.Join(acmmDir, fmt.Sprintf("l%d.md", level))
-	if _, err := os.Stat(levelPath); err == nil {
-		files = append(files, levelPath)
-	}
-	return files
-}
-
-func (m *Manager) buildProjectPreamble(agent *AgentProcess) string {
-	p := m.project
-	if p.Org == "" || len(p.Repos) == 0 {
-		return ""
-	}
-
-	repos := make([]string, len(p.Repos))
-	for i, r := range p.Repos {
-		repos[i] = fmt.Sprintf("%s/%s", p.Org, r)
-	}
-
-	levelName := acmmLevelNames[p.ACMMLevel]
-	if levelName == "" {
-		levelName = fmt.Sprintf("Level %d", p.ACMMLevel)
-	}
-
-	mode := m.agentMode(agent)
-	var prPolicy string
-	if !p.PRsAllowed {
-		prPolicy = "PRs NOT allowed (project-wide)."
-	} else {
-		switch mode {
-		case ModeAdvisory:
-			prPolicy = "\U0001F4DD Advisory only — beads, no issues/PRs."
-		case ModeIssuesOnly:
-			prPolicy = "\U0001F3AB Issues ONLY — can open issues. NO PRs."
-		case ModeIssuesAndPRs:
-			if p.ACMMLevel == 5 {
-				prPolicy = "\U0001F527 Issues + PRs allowed (hold-labeled, human merges)."
-			} else {
-				prPolicy = "\U0001F527 Issues + PRs allowed."
-			}
-		case ModeIssuesPRsMerge:
-			prPolicy = "\U0001F680 Issues + PRs + auto-merge on green CI."
-		default:
-			prPolicy = "\U0001F4DD Advisory only — beads, no issues/PRs."
-		}
-	}
-
-	return fmt.Sprintf("[PROJECT] Org: %s | Repos: %s | ACMM: L%d (%s) | Mode: %s %s | %s ",
-		p.Org, strings.Join(repos, ", "), p.ACMMLevel, levelName,
-		mode.Emoji(), mode.String(), prPolicy)
-}
-
-// metricsCachePath is a var (not const) so tests can point it at a temp file
-// to exercise readCoveragePreamble without a real /data volume. Production
-// value is unchanged.
-var metricsCachePath = "/data/metrics/agent-metrics-cache.json"
-
-func (m *Manager) readCoveragePreamble() string {
-	data, err := os.ReadFile(metricsCachePath)
-	if err != nil {
-		return ""
-	}
-	var metrics map[string]map[string]json.Number
-	if err := json.Unmarshal(data, &metrics); err != nil {
-		return ""
-	}
-	ci, ok := metrics["ci-maintainer"]
-	if !ok {
-		return ""
-	}
-	cov, err := ci["coverage"].Int64()
-	if err != nil {
-		return ""
-	}
-	target, err := ci["coverageTarget"].Int64()
-	if err != nil {
-		target = 91
-	}
-	return fmt.Sprintf("[COVERAGE] Current: %d%% | Target: %d%%.", cov, target)
 }
 
 // shellEnvVar formats KEY='value' with single-quoting so values containing
@@ -194,26 +65,6 @@ func (m *Manager) buildEnvPrefix(agent *AgentProcess) string {
 		return ""
 	}
 	return strings.Join(parts, " ") + " "
-}
-
-// filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.
-// COPILOT_GITHUB_TOKEN is kept for all agents (needed for AI auth); write access is
-// gated by --enable-all-github-mcp-tools flag. GH_TOKEN and GITHUB_TOKEN are stripped
-// from non-quality agents to enforce gh-wrapper and credential helper policies.
-func (m *Manager) filteredEnv(agent *AgentProcess) []string {
-	env := os.Environ()
-	if m.agentMode(agent).CanPush() {
-		return env
-	}
-	filtered := make([]string, 0, len(env))
-	for _, e := range env {
-		if strings.HasPrefix(e, "GH_TOKEN=") ||
-			strings.HasPrefix(e, "GITHUB_TOKEN=") {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	return filtered
 }
 
 // embeddedTokenRe matches git remote URLs with embedded credentials:

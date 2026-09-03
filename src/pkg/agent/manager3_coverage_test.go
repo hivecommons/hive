@@ -358,15 +358,6 @@ func TestFixEntry_FileAndDir(t *testing.T) {
 // readCoveragePreamble — metrics cache absent / malformed.
 // ---------------------------------------------------------------------------
 
-func TestReadCoveragePreamble_NoFile(t *testing.T) {
-	m := NewManager(nil, discardLogger(), ProjectContext{})
-	// metricsCachePath is a fixed path unlikely to exist -> "".
-	if got := m.readCoveragePreamble(); got != "" {
-		// If a cache file happens to exist on the host, just ensure no panic.
-		t.Logf("readCoveragePreamble returned %q (cache present)", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // agentEnvPairs — inference + copilot token + display name + HIVE_ID env.
 // ---------------------------------------------------------------------------

@@ -324,11 +324,6 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	return nil
 }
 
-func (m *Manager) tmuxSessionExists(session string) bool {
-	cmd := m.tmuxRawCmd("has-session", "-t", session)
-	return cmd.Run() == nil
-}
-
 // tmuxSessionExists probes for a live tmux session. It is a function variable
 // solely as a TEST SEAM: production never assigns it, and the default below is
 // the real probe.
@@ -348,12 +343,6 @@ var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 
 func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
 	return tmuxSessionExists(m, agent)
-}
-
-// tmuxPaneHasCLI reports whether a CLI is running in the pane by inspecting
-// the visible pane content for known CLI UI markers.
-func (m *Manager) tmuxPaneHasCLI(session string) bool {
-	return paneHasCLIMarker(m.captureTmuxPane(session))
 }
 
 // tmuxPaneHasCLIForAgent checks for CLI markers using the agent's tmux socket.
@@ -377,25 +366,6 @@ func samePaneCapture(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-// waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
-// or the timeout expires. Returns true if the CLI became ready.
-func (m *Manager) waitForCLIReady(session string) bool {
-	deadline := time.After(cliReadyTimeout)
-	ticker := time.NewTicker(cliReadyPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-deadline:
-			return false
-		case <-ticker.C:
-			if m.tmuxPaneHasCLI(session) {
-				return true
-			}
-		}
-	}
 }
 
 // waitForCLIReadyForAgent polls the agent's tmux pane (using its socket)
@@ -472,43 +442,6 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 			}
 		}
 	}
-}
-
-// waitForInputPrompt polls until the CLI shows its input prompt (❯),
-// indicating it is ready to accept a kick. This is stricter than
-// waitForCLIReady which matches any CLI marker (including trust prompts).
-func (m *Manager) waitForInputPrompt(session string) bool {
-	deadline := time.After(inputPromptTimeout)
-	ticker := time.NewTicker(inputPromptPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-deadline:
-			return false
-		case <-ticker.C:
-			output := m.captureTmuxPane(session)
-			if paneShowsInputPrompt(output) {
-				return true
-			}
-		}
-	}
-}
-
-func (m *Manager) captureTmuxPane(session string) string {
-	cmd := m.tmuxRawCmd("capture-pane", "-t", session, "-p",
-		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
-}
-
-func (m *Manager) tmuxRawCmd(args ...string) *exec.Cmd {
-	base := m.tmuxBaseArgs(&AgentProcess{})
-	tmuxArgs := append(base[1:], args...)
-	return exec.Command(base[0], tmuxArgs...)
 }
 
 // captureTmuxPaneForAgent captures pane content using the agent's tmux socket.

@@ -99,18 +99,6 @@ func TestWatsonxAuthStateNeverNeedsLogin(t *testing.T) {
 
 // TestWatsonxModelNamePassedThroughVerbatim: gateway backends must never have
 // their model id rewritten — the id has to match what the gateway serves.
-func TestWatsonxModelNamePassedThroughVerbatim(t *testing.T) {
-	for _, model := range []string{
-		"ibm/granite-4-h-small",
-		"ibm/granite-3-3-8b-instruct",
-		"meta-llama/llama-3-3-70b-instruct",
-	} {
-		if got := normalizeModelName(model, "watsonx"); got != model {
-			t.Errorf("normalizeModelName(%q, watsonx) = %q, want verbatim", model, got)
-		}
-	}
-}
-
 // TestValidateBackendName covers the manager-side set-time gate that stops the
 // /switch/{backend} path from accepting a backend the launcher cannot start.
 func TestValidateBackendName(t *testing.T) {

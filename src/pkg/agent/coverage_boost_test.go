@@ -154,71 +154,9 @@ func TestBuildBootstrapPrompt_WithExamplesDir(t *testing.T) {
 // findACMMFragments — level 0 returns nil
 // ---------------------------------------------------------------------------
 
-func TestFindACMMFragments_LevelZero(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			ACMMLevel: 0,
-			PolicyDir: "/data/policies/agents",
-		},
-	}
-	files := m.findACMMFragments()
-	if len(files) != 0 {
-		t.Errorf("level 0 should return nil, got %v", files)
-	}
-}
-
-func TestFindACMMFragments_EmptyPolicyDir(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			ACMMLevel: 3,
-			PolicyDir: "",
-		},
-	}
-	// Should not panic
-	files := m.findACMMFragments()
-	_ = files
-}
-
 // ---------------------------------------------------------------------------
 // buildProjectPreamble — all mode branches
 // ---------------------------------------------------------------------------
-
-func TestBuildProjectPreamble_IssuesOnly(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  4,
-			PRsAllowed: true,
-		},
-	}
-	// scanner at L4 = ISSUES_ONLY
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "Issues ONLY") {
-		t.Errorf("L4 scanner should say Issues ONLY, got %q", got)
-	}
-}
-
-func TestBuildProjectPreamble_SupervisorAlwaysAdvisory(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:        "testorg",
-			Repos:      []string{"repo1"},
-			ACMMLevel:  6,
-			PRsAllowed: true,
-		},
-	}
-	agent := &AgentProcess{Name: "supervisor", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "Advisory") {
-		t.Errorf("supervisor should always be advisory, got %q", got)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // agentEnvPairs — comprehensive branch coverage
@@ -601,34 +539,6 @@ func TestStatePausedConstant(t *testing.T) {
 // ---------------------------------------------------------------------------
 // buildProjectPreamble — format verification
 // ---------------------------------------------------------------------------
-
-func TestBuildProjectPreamble_FormatContainsOrgAndRepos(t *testing.T) {
-	m := &Manager{
-		logger: discardLogger(),
-		project: ProjectContext{
-			Org:       "kubestellar",
-			Repos:     []string{"console", "docs"},
-			ACMMLevel: 3,
-		},
-	}
-	agent := &AgentProcess{Name: "scanner", Config: config.AgentConfig{}}
-	got := m.buildProjectPreamble(agent)
-	if !strings.Contains(got, "kubestellar") {
-		t.Error("should contain org name")
-	}
-	if !strings.Contains(got, "kubestellar/console") {
-		t.Error("should contain org/repo format")
-	}
-	if !strings.Contains(got, "kubestellar/docs") {
-		t.Error("should contain all repos")
-	}
-	if !strings.Contains(got, "L3") {
-		t.Error("should contain ACMM level")
-	}
-	if !strings.Contains(got, "Quality-Gated") {
-		t.Error("should contain level name")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // agentMode — uses Config.Mode when set to valid value
@@ -1587,106 +1497,6 @@ func TestLoginPromptPatterns_HasExpectedEntries(t *testing.T) {
 // ---------------------------------------------------------------------------
 // readCoveragePreamble — redirected metricsCachePath
 // ---------------------------------------------------------------------------
-
-func TestReadCoveragePreamble_WithActualFile(t *testing.T) {
-	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
-	orig := metricsCachePath
-	metricsCachePath = cacheFile
-	t.Cleanup(func() { metricsCachePath = orig })
-
-	metrics := map[string]map[string]json.Number{
-		"ci-maintainer": {
-			"coverage":       json.Number("85"),
-			"coverageTarget": json.Number("91"),
-		},
-	}
-	data, _ := json.Marshal(metrics)
-	if err := os.WriteFile(cacheFile, data, 0o644); err != nil {
-		t.Skipf("cannot write metrics file: %v", err)
-	}
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	if got != "[COVERAGE] Current: 85% | Target: 91%." {
-		t.Errorf("readCoveragePreamble = %q, want '[COVERAGE] Current: 85%% | Target: 91%%.'", got)
-	}
-}
-
-func TestReadCoveragePreamble_InvalidJSON_AtPath(t *testing.T) {
-	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
-	orig := metricsCachePath
-	metricsCachePath = cacheFile
-	t.Cleanup(func() { metricsCachePath = orig })
-	os.WriteFile(cacheFile, []byte("not json"), 0o644)
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	if got != "" {
-		t.Errorf("invalid JSON should return empty, got %q", got)
-	}
-}
-
-func TestReadCoveragePreamble_NoCIMaintainer(t *testing.T) {
-	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
-	orig := metricsCachePath
-	metricsCachePath = cacheFile
-	t.Cleanup(func() { metricsCachePath = orig })
-	metrics := map[string]map[string]json.Number{
-		"other": {"coverage": json.Number("50")},
-	}
-	data, _ := json.Marshal(metrics)
-	os.WriteFile(cacheFile, data, 0o644)
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	if got != "" {
-		t.Errorf("no ci-maintainer should return empty, got %q", got)
-	}
-}
-
-func TestReadCoveragePreamble_BadCoverage(t *testing.T) {
-	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
-	orig := metricsCachePath
-	metricsCachePath = cacheFile
-	t.Cleanup(func() { metricsCachePath = orig })
-	metrics := map[string]map[string]json.Number{
-		"ci-maintainer": {"coverage": json.Number("not-a-number")},
-	}
-	data, _ := json.Marshal(metrics)
-	os.WriteFile(cacheFile, data, 0o644)
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	if got != "" {
-		t.Errorf("bad coverage number should return empty, got %q", got)
-	}
-}
-
-func TestReadCoveragePreamble_DefaultTarget(t *testing.T) {
-	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "agent-metrics-cache.json")
-	orig := metricsCachePath
-	metricsCachePath = cacheFile
-	t.Cleanup(func() { metricsCachePath = orig })
-	metrics := map[string]map[string]json.Number{
-		"ci-maintainer": {"coverage": json.Number("80")},
-	}
-	data, _ := json.Marshal(metrics)
-	if err := os.WriteFile(cacheFile, data, 0o644); err != nil {
-		t.Skipf("cannot write metrics file: %v", err)
-	}
-
-	m := &Manager{logger: discardLogger()}
-	got := m.readCoveragePreamble()
-	// Missing target defaults to 91
-	if got != "[COVERAGE] Current: 80% | Target: 91%." {
-		t.Errorf("readCoveragePreamble = %q, want '[COVERAGE] Current: 80%% | Target: 91%%.'", got)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // configHasTokens — via the redirectable shared path
