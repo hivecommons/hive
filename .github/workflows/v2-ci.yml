@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Ensure PyYAML on self-hosted runners
         working-directory: .
-        run: python3 -c "import yaml" 2>/dev/null || pip3 install --user pyyaml
+        run: python3 -c "import yaml" 2>/dev/null || { python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user; python3 -m pip install --user pyyaml; }
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
