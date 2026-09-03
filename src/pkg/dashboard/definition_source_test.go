@@ -32,7 +32,7 @@ func TestDefinitionSourceFromURL(t *testing.T) {
 		{
 			name:  "raw url",
 			url:   "https://raw.githubusercontent.com/hivecommons/hive/main/agents/scanner.yaml",
-			owner: "kubestellar", repo: "hive", ref: "main", path: "agents/scanner.yaml",
+			owner: "hivecommons", repo: "hive", ref: "main", path: "agents/scanner.yaml",
 		},
 		{name: "not a file url", url: "https://github.com/kubestellar/hive", wantErr: true},
 		{name: "garbage", url: "::::", wantErr: true},
@@ -133,7 +133,7 @@ func TestAgentImportURLPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, deps := apiServer(t)
 			deps.Config.Data.AgentsDir = t.TempDir()
-			enableDefinitionAllowlist(deps, "kubestellar/hive")
+			enableDefinitionAllowlist(deps, "kubestellar/hive", "hivecommons/hive")
 
 			rec := doPost(s, "/api/agents/import", map[string]interface{}{
 				"source":     "url",
