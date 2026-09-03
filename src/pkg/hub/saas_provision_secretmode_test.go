@@ -58,7 +58,7 @@ func renderManifest(t *testing.T, requiresSCC bool) string {
 		"StorageClass":      "standard",
 		"Host":              "test-hive.hive.kubestellar.io",
 		"Owner":             "alice",
-		"HubURL":            "https://hive.kubestellar.io",
+		"HubPublicURL":      "https://hive.kubestellar.io",
 		"ProjectName":       "test",
 		"PrimaryRepo":       "org/repo",
 		"AppKeys":           []provisionAppKey{},

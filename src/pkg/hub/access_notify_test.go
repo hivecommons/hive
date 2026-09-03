@@ -166,7 +166,7 @@ func TestHubDashboardBaseURLFallsBackToPublicURL(t *testing.T) {
 	for _, key := range []string{"HIVE_HUB_PUBLIC_URL", "HIVE_PUBLIC_URL", "HIVE_HUB_BASE_URL", "HIVE_DASHBOARD_URL", "HIVE_HUB_URL"} {
 		t.Setenv(key, "")
 	}
-	if got := hubDashboardBaseURL(); got != hubPublicURL {
-		t.Errorf("base URL = %q, want fallback %q", got, hubPublicURL)
+	if got := hubDashboardBaseURL(); got != hubPublicURL() {
+		t.Errorf("base URL = %q, want fallback %q", got, hubPublicURL())
 	}
 }

@@ -64,7 +64,7 @@ func renderProvisionManifestWithAuth(t *testing.T, useApp, useAppFull bool, toke
 		"Org":               "kubestellar",
 		"Repos":             "[]",
 		"PrimaryRepo":       "hivecommons/hive",
-		"HubURL":            "https://hive.kubestellar.io",
+		"HubPublicURL":      "https://hive.kubestellar.io",
 		"DashboardURL":      "https://test-hive.hive.kubestellar.io",
 		"HiveType":          "hosted",
 		"IsPublic":          false,

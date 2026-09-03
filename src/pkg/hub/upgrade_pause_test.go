@@ -557,7 +557,7 @@ func TestUpgradePauseEndpointsAdminOnly(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	req := reqWithUser(http.MethodPost, "/api/saas/upgrade-pause", `{"target":"spokes","paused":true}`, "alice")
-	req.Header.Set("Origin", "https://"+hubCanonicalHost)
+	req.Header.Set("Origin", "https://"+hubCanonicalHost())
 	postH(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("non-admin POST status = %d, want 403", rec.Code)
@@ -571,7 +571,7 @@ func TestUpgradePauseEndpointsAdminOnly(t *testing.T) {
 	// and GET reflects the persisted state with who/when.
 	rec = httptest.NewRecorder()
 	req = reqWithUser(http.MethodPost, "/api/saas/upgrade-pause", `{"target":"spokes","paused":true}`, hubAdminUsername)
-	req.Header.Set("Origin", "https://"+hubCanonicalHost)
+	req.Header.Set("Origin", "https://"+hubCanonicalHost())
 	postH(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin POST status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -589,7 +589,7 @@ func TestUpgradePauseEndpointsAdminOnly(t *testing.T) {
 	// Unknown target is rejected.
 	rec = httptest.NewRecorder()
 	req = reqWithUser(http.MethodPost, "/api/saas/upgrade-pause", `{"target":"everything","paused":true}`, hubAdminUsername)
-	req.Header.Set("Origin", "https://"+hubCanonicalHost)
+	req.Header.Set("Origin", "https://"+hubCanonicalHost())
 	postH(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad target status = %d, want 400", rec.Code)
