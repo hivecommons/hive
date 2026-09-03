@@ -1,12 +1,12 @@
 package turn
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/convergence/mutation"
 )
 
 // OpKind classifies a journaled operation by the kind of side effect it has on
@@ -123,6 +123,12 @@ const idempotencyKeyVersion = "v1"
 
 // DeriveIdempotencyKey computes the stable identity of a logical side effect.
 //
+// Deprecated: turn operation identities are now derived by
+// mutation.DeriveLogicalID, the canonical operation-id helper shared with the
+// durable convergence journal. This wrapper remains only for the unwired
+// SessionEnvelope prototype until callers migrate to the mutation journal
+// directly.
+//
 // Design (RFC #4002 stage 2). The key must satisfy two opposing constraints:
 //
 //  1. STABLE ACROSS RE-ENTRY — recomputing it in a fresh process, from the
@@ -134,8 +140,9 @@ const idempotencyKeyVersion = "v1"
 //     turn would silently under-perform (a failure mode strictly worse than a
 //     duplicate, because it is invisible).
 //
-// The derivation is therefore a hash over the semantic content of the effect
-// and nothing else:
+// The derivation delegates to mutation.DeriveLogicalID, the same helper used
+// by pkg/convergence/mutation's durable journal, over the semantic content of
+// the effect and nothing else:
 //
 //	sha256(version | session | kind | repo | target | body)
 //
@@ -165,8 +172,8 @@ const idempotencyKeyVersion = "v1"
 // useful and this design uses them, but as RECONCILIATION for the ambiguous
 // OpIntended window (see Reconciler), not as the key itself: they cost a round
 // trip, they are eventually consistent, and they cannot be computed offline.
-// The content hash is the primary key; the remote query is the tie-breaker for
-// the one state where the local journal cannot know the answer.
+// The shared content hash is the primary key; the remote query is the
+// tie-breaker for the one state where the local journal cannot know the answer.
 //
 // Lineage: at-least-once delivery over non-idempotent GitHub writes is exactly
 // the duplicate-work class the fleet eradicated one incident at a time in
@@ -175,25 +182,22 @@ const idempotencyKeyVersion = "v1"
 // durably recorded — patched at a different layer. This journal is the
 // generalization: record the effect, not the attempt.
 func DeriveIdempotencyKey(sessionID string, in OpIntent) string {
-	h := sha256.New()
-	// Length-prefix every field so that concatenation is unambiguous and
-	// ("ab","c") cannot hash the same as ("a","bc").
-	for _, part := range []string{
+	return mutation.DeriveLogicalID([]string{
 		idempotencyKeyVersion,
 		sessionID,
 		string(in.Kind),
 		in.Repo,
 		in.Target,
 		in.Body,
-	} {
-		fmt.Fprintf(h, "%d:%s|", len(part), part)
-	}
-	return idempotencyKeyVersion + "-" + hex.EncodeToString(h.Sum(nil))[:32]
+	}, nil)
 }
 
 // Journal is the ordered list of operation records carried inside the
 // envelope. Order is the operation-boundary sequence of the turn; the map-free
 // slice representation keeps the JSON stable and diffable.
+//
+// Deprecated: use pkg/convergence/mutation.Journal for durable operation
+// journaling. pkg/turn must not grow a second idempotency implementation.
 type Journal struct {
 	Entries []JournalEntry `json:"entries,omitempty"`
 }

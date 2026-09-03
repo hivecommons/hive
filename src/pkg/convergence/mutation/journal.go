@@ -62,6 +62,31 @@ var (
 const journalFileMode = 0o660
 const journalFormatVersion = 1
 
+// DeriveLogicalID is the canonical operation-id derivation for Hive effects.
+// The caller supplies the already-ordered, load-bearing identity fields and any
+// additional named inputs; owner, holder, epoch, attempt id, and model tool-call
+// ids must stay out of both arguments so a retry or reassignment adopts the same
+// durable operation instead of minting a duplicate.
+func DeriveLogicalID(parts []string, inputs map[string]string) string {
+	h := sha256.New()
+	write := func(parts ...string) {
+		for _, p := range parts {
+			h.Write([]byte(p))
+			h.Write([]byte{0})
+		}
+	}
+	write(parts...)
+	names := make([]string, 0, len(inputs))
+	for k := range inputs {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		write(k, inputs[k])
+	}
+	return "op:" + hex.EncodeToString(h.Sum(nil))
+}
+
 // Effect is the complete description of one desired external effect. Its
 // LogicalID deliberately EXCLUDES the owner and epoch: retry or reassignment
 // of the same desired effect must find the same journal entry, and a
@@ -111,23 +136,7 @@ func (e Effect) LogicalID() string {
 	if err := e.Validate(); err != nil {
 		return ""
 	}
-	h := sha256.New()
-	write := func(parts ...string) {
-		for _, p := range parts {
-			h.Write([]byte(p))
-			h.Write([]byte{0})
-		}
-	}
-	write(e.OutcomeKey, fmt.Sprintf("%d", e.DesiredGeneration), e.Transition, e.Subject, e.ClaimKey, e.Kind)
-	names := make([]string, 0, len(e.Inputs))
-	for k := range e.Inputs {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	for _, k := range names {
-		write(k, e.Inputs[k])
-	}
-	return "op:" + hex.EncodeToString(h.Sum(nil))
+	return DeriveLogicalID([]string{e.OutcomeKey, fmt.Sprintf("%d", e.DesiredGeneration), e.Transition, e.Subject, e.ClaimKey, e.Kind}, e.Inputs)
 }
 
 // Attempt is one authorized attempt at the effect, recorded INSIDE the

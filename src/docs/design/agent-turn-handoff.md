@@ -193,7 +193,10 @@ two unwired journals. The next thing built here should reduce that number.
    journal answer the same question with the same rule. Converging them — most
    plausibly by having `turn` depend on `mutation` rather than the reverse,
    since `mutation` already carries the epoch — is the cheapest possible step
-   and removes a whole class of future divergence.
+   and removes a whole class of future divergence. Phase 1 is done for identity
+   derivation: `turn.DeriveIdempotencyKey` is now a deprecated wrapper around
+   `mutation.DeriveLogicalID`, so new operation-key changes have one canonical
+   helper while the unwired `SessionEnvelope` compatibility shape still exists.
 2. **Give the chosen ledger cross-process serialization**, using the pattern
    beads already proved: `flock` plus re-read-under-lock (`xproc_lock.go:32`),
    plus the unique-temp-name persist beads adopted in #4742.

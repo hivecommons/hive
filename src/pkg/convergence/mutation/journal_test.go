@@ -32,6 +32,18 @@ func openJournal(t *testing.T) *Journal {
 	return j
 }
 
+func TestDeriveLogicalIDExcludesAttemptMetadata(t *testing.T) {
+	parts := []string{"v1", "session", "comment", "kubestellar/hive", "5624", "same body"}
+	first := DeriveLogicalID(parts, nil)
+	second := DeriveLogicalID(append([]string(nil), parts...), nil)
+	if first == "" || first != second {
+		t.Fatalf("DeriveLogicalID must be stable: first=%q second=%q", first, second)
+	}
+	if changed := DeriveLogicalID([]string{"v1", "session", "comment", "kubestellar/hive", "5624", "different body"}, nil); changed == first {
+		t.Fatal("changing a load-bearing field must change the logical operation id")
+	}
+}
+
 // Row: crash after intent, before the effect — replay finds the same logical
 // operation; reconciliation to NotApplied authorizes at most one retry.
 func TestJournal_CrashBeforeEffect_ReconcilesThenRetries(t *testing.T) {
