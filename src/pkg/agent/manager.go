@@ -525,23 +525,17 @@ type Manager struct {
 	sandboxPRClient                   PRCreator
 	sandboxAuditCallback              atomic.Pointer[func(agent, action, detail string)]
 
-	paneCapture          func(agent *AgentProcess) string
-	visiblePaneCapture   func(agent *AgentProcess) string
-	sessionAttached      func(agent *AgentProcess) bool
-	sendLiteralForAgent  func(agent *AgentProcess, text string)
-	sendKeysForAgent     func(agent *AgentProcess, keys ...string)
-	promptDismissSleep   func(time.Duration)
+	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
+	// implementation, preserving zero-value Manager behavior in tests.
+	terminal             TerminalSession
 	promptDismissTimeout time.Duration
 
 	// Per-kick durable log archiving (#4296, #4295) — see kick_logs.go.
 	// kickLogDir/kickLogRetention/kickLogMaxBytes are resolved once in
-	// NewManager from env overrides; captureFullLogFn and clearHistoryFn are
-	// test seams over the tmux capture-pane / clear-history subprocesses.
+	// NewManager from env overrides; capture/clear seams live on terminal.
 	kickLogDir       string
 	kickLogRetention int
 	kickLogMaxBytes  int64
-	captureFullLogFn func(agent *AgentProcess) (string, error)
-	clearHistoryFn   func(agent *AgentProcess)
 }
 
 // SetACMMLevel updates the cached ACMM level used by agentMode() when

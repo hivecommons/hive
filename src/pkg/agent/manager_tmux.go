@@ -447,16 +447,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 // captureTmuxPaneForAgent captures pane content using the agent's tmux socket.
 // Includes scrollback for diff-based output signal detection.
 func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
-	if m.paneCapture != nil {
-		return m.paneCapture(agent)
-	}
-	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p",
-		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
+	return m.terminalSession().CapturePane(agent)
 }
 
 // CaptureFullLog returns the agent's full retained tmux scrollback for its
@@ -488,42 +479,16 @@ func (m *Manager) CaptureFullLog(name string) (string, error) {
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
 func (m *Manager) captureVisiblePaneForAgent(agent *AgentProcess) string {
-	if m.visiblePaneCapture != nil {
-		return m.visiblePaneCapture(agent)
-	}
-	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
+	return m.terminalSession().CaptureVisiblePane(agent)
 }
 
 func (m *Manager) tmuxSessionHasAttachedClientForAgent(agent *AgentProcess) bool {
-	if m.sessionAttached != nil {
-		return m.sessionAttached(agent)
-	}
-	if agent == nil || agent.tmuxSession == "" {
-		return true
-	}
-	out, err := m.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession, "#{session_attached}").Output()
-	if err != nil {
-		return true
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return true
-	}
-	return n > 0
+	return m.terminalSession().SessionAttached(agent)
 }
 
 // tmuxSendLiteralForAgent sends text using the agent's tmux socket.
 func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
-	if m.sendLiteralForAgent != nil {
-		m.sendLiteralForAgent(agent, text)
-		return
-	}
-	_ = m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
+	m.terminalSession().SendLiteral(agent, text)
 }
 
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
@@ -554,10 +519,66 @@ func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 
 // tmuxSendKeysForAgent sends key sequences (C-c, C-u, etc.) using the agent's tmux socket.
 func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
-	if m.sendKeysForAgent != nil {
-		m.sendKeysForAgent(agent, keys...)
-		return
+	m.terminalSession().SendKeys(agent, keys...)
+}
+
+func (t tmuxTerminal) CapturePane(agent *AgentProcess) string {
+	cmd := t.manager.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p",
+		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
 	}
+	return string(out)
+}
+
+func (t tmuxTerminal) CaptureVisiblePane(agent *AgentProcess) string {
+	cmd := t.manager.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+func (t tmuxTerminal) SessionAttached(agent *AgentProcess) bool {
+	if agent == nil || agent.tmuxSession == "" {
+		return true
+	}
+	out, err := t.manager.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession, "#{session_attached}").Output()
+	if err != nil {
+		return true
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return true
+	}
+	return n > 0
+}
+
+func (t tmuxTerminal) SendLiteral(agent *AgentProcess, text string) {
+	_ = t.manager.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
+}
+
+func (t tmuxTerminal) SendKeys(agent *AgentProcess, keys ...string) {
 	args := append([]string{"send-keys", "-t", agent.tmuxSession}, keys...)
-	_ = m.tmuxCmd(agent, args...).Run()
+	_ = t.manager.tmuxCmd(agent, args...).Run()
+}
+
+func (t tmuxTerminal) SleepDuringPromptDismiss(d time.Duration) {
+	time.Sleep(d)
+}
+
+func (t tmuxTerminal) CaptureFullLog(agent *AgentProcess) (string, error) {
+	cmd := t.manager.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
+		"-S", fmt.Sprintf("-%d", fullLogCaptureLines), "-E", "-")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("capturing pane for %s: %w", agent.Name, err)
+	}
+	return string(out), nil
+}
+
+func (t tmuxTerminal) ClearHistory(agent *AgentProcess) {
+	_ = t.manager.tmuxCmd(agent, "clear-history", "-t", agent.tmuxSession).Run()
 }

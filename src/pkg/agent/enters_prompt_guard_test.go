@@ -47,7 +47,7 @@ func entersGuardManager(t *testing.T, pane string) (*Manager, *AgentProcess, *sy
 	m := NewManager(map[string]config.AgentConfig{
 		"worker": makeAgentConfig("codex", "gpt-5-codex"),
 	}, slog.New(slog.NewTextHandler(logBuf, nil)), ProjectContext{})
-	m.visiblePaneCapture = func(*AgentProcess) string { return pane }
+	m.terminal = funcTerminal{captureVisiblePane: func(*AgentProcess) string { return pane }}
 	m.mu.RLock()
 	agent := m.agents["worker"]
 	m.mu.RUnlock()

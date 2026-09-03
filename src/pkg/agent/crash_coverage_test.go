@@ -114,9 +114,9 @@ func TestCheckAndRestartCrashedAgents_ConsentStuck(t *testing.T) {
 	m.mu.RLock()
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
-	m.visiblePaneCapture = func(*AgentProcess) string {
+	m.terminal = funcTerminal{captureVisiblePane: func(*AgentProcess) string {
 		return "Bypass Permissions mode\n❯ 1. No, exit\nEnter to confirm\n"
-	}
+	}}
 
 	old := time.Now().Add(-2 * time.Minute)
 	m.mu.Lock()

@@ -19,17 +19,19 @@ func TestHermeticWaitForInputPromptForAgentSkipsConsentScreen(t *testing.T) {
 
 	var mu sync.Mutex
 	visibleCalls := 0
-	m.visiblePaneCapture = func(*AgentProcess) string {
-		mu.Lock()
-		defer mu.Unlock()
-		visibleCalls++
-		if visibleCalls == 1 {
-			return "Bypass Permissions mode\n❯ No, exit\nEnter to confirm\n"
-		}
-		return ""
-	}
-	m.paneCapture = func(*AgentProcess) string {
-		return "goose is ready\n"
+	m.terminal = funcTerminal{
+		captureVisiblePane: func(*AgentProcess) string {
+			mu.Lock()
+			defer mu.Unlock()
+			visibleCalls++
+			if visibleCalls == 1 {
+				return "Bypass Permissions mode\n❯ No, exit\nEnter to confirm\n"
+			}
+			return ""
+		},
+		capturePane: func(*AgentProcess) string {
+			return "goose is ready\n"
+		},
 	}
 
 	if !m.waitForInputPromptForAgent(agent) {
@@ -48,21 +50,25 @@ func TestHermeticWatchForTrustPromptForAgentSendsBackendSpecificKeys(t *testing.
 	agent := m.agents["coder"]
 	m.mu.RUnlock()
 	agent.tmuxSession = "hive-coder"
-	m.paneCapture = func(*AgentProcess) string {
-		return "✨ Update available! 1.0.0 -> 1.0.1\n1. Update now\n3. Skip until next version\n"
+	m.terminal = funcTerminal{
+		capturePane: func(*AgentProcess) string {
+			return "✨ Update available! 1.0.0 -> 1.0.1\n1. Update now\n3. Skip until next version\n"
+		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
 	var keys []string
-	m.sendKeysForAgent = func(_ *AgentProcess, sent ...string) {
+	term := m.terminal.(funcTerminal)
+	term.sendKeys = func(_ *AgentProcess, sent ...string) {
 		keys = append(keys, sent...)
 		if len(sent) == 1 && sent[0] == "Enter" {
 			cancel()
 			close(done)
 		}
 	}
+	m.terminal = term
 
 	go m.watchForTrustPromptForAgent(agent, ctx)
 	select {
