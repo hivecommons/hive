@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -88,8 +87,4 @@ func turnEnvelopeVariables(task *WSTaskAssign, labels []string) map[string]strin
 		vars[fmt.Sprintf("label_%d", i)] = label
 	}
 	return vars
-}
-
-func turnEnvelopePath(dir, id string) string {
-	return filepath.Join(dir, id+".json")
 }
