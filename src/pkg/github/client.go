@@ -484,6 +484,16 @@ func NewClientForTest(serverURL string, org string, repos []string, logger *slog
 	return c
 }
 
+// SetOrg is nil-receiver safe for the same reason as SetRepos: dashboard saves
+// and hub heartbeat delivery can retarget a running hive without rebuilding the
+// GitHub client, so the owner's namespace must stay in sync with config.
+func (c *Client) SetOrg(org string) {
+	if c == nil {
+		return
+	}
+	c.org = org
+}
+
 // SetRepos is nil-receiver safe. A hive that booted without usable GitHub
 // credentials runs with a nil *Client for the life of the process, and the
 // config-reload / project-claim / override-migration paths all re-sync the repo

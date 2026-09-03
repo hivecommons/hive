@@ -109,18 +109,68 @@ func ValidateProjectRepoTargets(org string, repos []string, primaryRepo, forgeHo
 		return issue("project.repos", "repo is empty — expected org/repo")
 	}
 	for _, repo := range repos {
-		normalized, _ := NormalizeRepoForOrg(org, repo)
-		if repoIssue := validateRepoName("project.repos", normalized); repoIssue != nil {
+		if repoIssue := validateRepoTargetForOrg("project.repos", org, repo, forgeHost); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	if strings.TrimSpace(primaryRepo) != "" {
-		normalizedPrimary, _ := NormalizeRepoForOrg(org, primaryRepo)
-		if repoIssue := validateRepoName("project.primary_repo", normalizedPrimary); repoIssue != nil {
+		if repoIssue := validateRepoTargetForOrg("project.primary_repo", org, primaryRepo, forgeHost); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	return nil
+}
+
+func validateRepoTargetForOrg(field, org, repo, forgeHost string) *RepoTargetIssue {
+	repo = strings.TrimSpace(repo)
+	if parsed, ok := parseExplicitRepoTarget(repo); ok {
+		if parsed.host != "" && !sameRepoTargetForgeHost(parsed.host, forgeHost) {
+			return validateRepoName(field, repo)
+		}
+		if parsed.org != "" && !strings.EqualFold(parsed.org, org) {
+			return issue(field, "repo '"+repo+"' belongs to org '"+parsed.org+"', but this hive is configured for org '"+org+"' — to migrate, save a repo from the new org in Settings → Repos so the dashboard can adopt it")
+		}
+	}
+	normalized, _ := NormalizeRepoForOrg(org, repo)
+	return validateRepoName(field, normalized)
+}
+
+type explicitRepoTarget struct {
+	org  string
+	host string
+}
+
+func parseExplicitRepoTarget(repo string) (explicitRepoTarget, bool) {
+	if repo == "" {
+		return explicitRepoTarget{}, false
+	}
+	if u, err := url.Parse(repo); err == nil && u.Scheme != "" && u.Host != "" {
+		parts := strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 3)
+		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+			return explicitRepoTarget{org: parts[0], host: strings.ToLower(u.Host)}, true
+		}
+		return explicitRepoTarget{}, false
+	}
+	stripped := strings.Trim(repo, "/")
+	parts := strings.Split(stripped, "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.Contains(parts[0], ".") {
+		return explicitRepoTarget{org: parts[0]}, true
+	}
+	if len(parts) >= 3 && strings.Contains(parts[0], ".") && parts[1] != "" && parts[2] != "" {
+		return explicitRepoTarget{org: parts[1], host: strings.ToLower(parts[0])}, true
+	}
+	return explicitRepoTarget{}, false
+}
+
+func sameRepoTargetForgeHost(a, b string) bool {
+	norm := func(h string) string {
+		h = strings.ToLower(strings.Trim(strings.TrimSpace(h), "/"))
+		if h == "" || h == "github.com" {
+			return "github.com"
+		}
+		return h
+	}
+	return norm(a) == norm(b)
 }
 
 func validateRepoName(field, repo string) *RepoTargetIssue {

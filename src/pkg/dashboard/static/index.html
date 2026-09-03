@@ -20467,7 +20467,7 @@ function burnAreaChart() {
           <div class="config-list-add" style="align-items:stretch">
             <div style="display:flex;flex:1;min-width:0;align-items:stretch;border:1px solid var(--border);border-radius:6px;overflow:hidden">
               <span style="display:inline-flex;align-items:center;padding:0 8px;background:color-mix(in srgb, ${prefixColor} 12%, var(--surface));color:${prefixColor};font-size:0.78rem;font-weight:600;white-space:nowrap;border-right:1px solid var(--border)" title="This hive's forge — every repo must live on ${esc(ghHost)}">${esc(ghHost)}/</span>
-              <input type="text" id="cfg-repo-input" style="flex:1;min-width:0;border:none;border-radius:0" placeholder="org/repo" data-keydown-action="addListItem" data-arg0="repos" data-arg1="list" data-arg2="cfg-repo-input" data-prevent="1" data-keys="Enter" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
+              <input type="text" id="cfg-repo-input" style="flex:1;min-width:0;border:none;border-radius:0" placeholder="org/repo or GitHub URL" data-keydown-action="addListItem" data-arg0="repos" data-arg1="list" data-arg2="cfg-repo-input" data-prevent="1" data-keys="Enter" title="GitHub repository in org/repo format (e.g. kubestellar/console) or a full GitHub URL. It must live on this hive's forge, ${esc(ghHost)} — saving a repo from a different org migrates this hive to that org. It will be monitored for issues, PRs, and CI status.">
             </div>
             <button data-action="addListItem" data-arg0="repos" data-arg1="list" data-arg2="cfg-repo-input" title="Add this repository to the monitored list">+ Add</button>
           </div>
@@ -22014,7 +22014,7 @@ function burnAreaChart() {
     }
 
     function normalizeRepoInput(raw) {
-      return raw.replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
+      return raw.trim().replace(/\/+$/, '');
     }
 
     // hiveForgeHostLabel returns this hive's bare GitHub host ("github.com" or a

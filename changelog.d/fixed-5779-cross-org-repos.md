@@ -1,0 +1,1 @@
+- The dashboard Repos tab now accepts same-forge `org/repo` entries and GitHub URLs from a new organization as an explicit hosted-hive org migration, while cross-org validation errors explain how to migrate instead of reporting a misleading repo-name shape problem ([#5779](https://github.com/hivecommons/hive/issues/5779)).

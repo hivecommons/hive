@@ -138,9 +138,12 @@ func TestCovGov_Repos(t *testing.T) {
 	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"https://github.ibm.com/myorg/repoC"}, "primaryRepo": "repoC"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("cross-forge repo should be rejected: %d", rec.Code)
 	}
-	// A full same-forge (github.com) URL in the repo field is still rejected:
-	// operators must configure org + bare repo, not rely on silent rewriting.
-	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"https://github.com/myorg/repoC"}, "primaryRepo": "repoC"}); rec.Code != http.StatusBadRequest {
-		t.Fatalf("repos url should be rejected: %d", rec.Code)
+	// A full same-forge (github.com) URL in the repo field is accepted as an
+	// explicit org/repo migration and stored in canonical org + bare repo form.
+	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"https://github.com/myorg/repoC"}, "primaryRepo": "repoC"}); rec.Code != http.StatusOK {
+		t.Fatalf("repos url should be accepted: %d", rec.Code)
+	}
+	if s.deps.Config.Project.Org != "myorg" {
+		t.Fatalf("org = %q, want myorg", s.deps.Config.Project.Org)
 	}
 }

@@ -91,8 +91,9 @@ func TestHandleGovernorRepos_SimpleRepos(t *testing.T) {
 	}
 }
 
-func TestHandleGovernorRepos_URLParsingRejected(t *testing.T) {
+func TestHandleGovernorRepos_URLParsingMigratesOrg(t *testing.T) {
 	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "oldorg"
 	body := `{"repos":["https://github.com/myorg/myrepo"],"primaryRepo":"myrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -100,12 +101,14 @@ func TestHandleGovernorRepos_URLParsingRejected(t *testing.T) {
 	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("code = %d, want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	want := "Repo target misconfigured: repo 'https://github.com/myorg/myrepo' is a URL — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos."
-	if !strings.Contains(w.Body.String(), want) {
-		t.Fatalf("body = %q, want %q", w.Body.String(), want)
+	if got := srv.deps.Config.Project.Org; got != "myorg" {
+		t.Fatalf("Project.Org = %q, want myorg", got)
+	}
+	if got := srv.deps.Config.Project.Repos; len(got) != 1 || got[0] != "myrepo" {
+		t.Fatalf("Project.Repos = %v, want [myrepo]", got)
 	}
 }
 
@@ -416,10 +419,9 @@ func TestHandleGovernorRepos_BareRepoUnchanged(t *testing.T) {
 	}
 }
 
-// A repo qualified with a DIFFERENT org must still be rejected with the clear
-// repo_target message — normalizing it away would silently retarget the hive at
-// a repository the owner never named.
-func TestHandleGovernorRepos_ForeignOrgPrefixRejected(t *testing.T) {
+// A repo qualified with a DIFFERENT org is an explicit migration request from
+// the Repos tab, so the handler adopts that org and stores the bare repo name.
+func TestHandleGovernorRepos_ForeignOrgPrefixMigrates(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Project.Org = "testorg"
 	srv.deps.Config.Project.Repos = []string{"repo1"}
@@ -431,15 +433,34 @@ func TestHandleGovernorRepos_ForeignOrgPrefixRejected(t *testing.T) {
 	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Project.Org; got != "someoneelse" {
+		t.Fatalf("Project.Org = %q, want someoneelse", got)
+	}
+	if got := srv.deps.Config.Project.Repos; len(got) != 1 || got[0] != "repo1" {
+		t.Fatalf("Project.Repos = %v, want [repo1]", got)
+	}
+}
+
+func TestHandleGovernorRepos_RejectsMultipleMigrationOrgs(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "testorg"
+	srv.deps.Config.Project.Repos = []string{"repo1"}
+	srv.deps.Config.Project.PrimaryRepo = "repo1"
+	body := `{"repos":["orgone/repo1","orgtwo/repo2"],"primaryRepo":"repo1"}`
+	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	markOwnerRequest(req)
+	srv.handleGovernorRepos(w, req)
+
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "contains '/'") {
-		t.Fatalf("body = %q, want the repo_target contains-'/' message", w.Body.String())
-	}
-	// The rejected value must not have been persisted.
-	if got := srv.deps.Config.Project.Repos; len(got) != 1 || got[0] != "repo1" {
-		t.Fatalf("Project.Repos = %v, want the pre-request [repo1]", got)
+	if !strings.Contains(w.Body.String(), "multiple GitHub orgs") || !strings.Contains(w.Body.String(), "submit repos from a single destination org") {
+		t.Fatalf("body = %q, want multiple-org migration guidance", w.Body.String())
 	}
 }
 
