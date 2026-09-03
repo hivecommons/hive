@@ -66,6 +66,9 @@ type Config struct {
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	// Turn gates the re-entrant conversation-as-state rollout (#5799). Default
+	// off leaves every agent on the legacy tmux loop until an operator opts in.
+	Turn TurnConfig `yaml:"turn,omitempty" json:"turn,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record

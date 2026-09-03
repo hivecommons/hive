@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -43,6 +45,7 @@ var (
 
 // ledgerFileMode matches the outcome/proof/beads persistence idiom.
 const ledgerFileMode = 0o660
+const ledgerLockFileSuffix = ".lock"
 
 // ledgerFormatVersion is the persisted schema version.
 const ledgerFormatVersion = 1
@@ -101,42 +104,79 @@ func OpenLedger(path string, maxWritersPerRepo int) (*Ledger, error) {
 		maxWritersPerRepo = DefaultMaxWritersPerRepo
 	}
 	l := &Ledger{path: path, maxWriters: maxWritersPerRepo, entries: make(map[string]*Entry)}
-	data, err := os.ReadFile(path)
+	if err := l.reloadLocked(); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *Ledger) reloadLocked() error {
+	data, err := os.ReadFile(l.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return l, nil
+		l.entries = make(map[string]*Entry)
+		return nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading mutation claim ledger %s: %w", path, err)
+		return fmt.Errorf("reading mutation claim ledger %s: %w", l.path, err)
 	}
 	var persisted persistedLedger
 	if err := json.Unmarshal(data, &persisted); err != nil {
-		return nil, fmt.Errorf("mutation claim ledger %s is unparseable and is left untouched for inspection: %w", path, err)
+		return fmt.Errorf("mutation claim ledger %s is unparseable and is left untouched for inspection: %w", l.path, err)
 	}
+	entries := make(map[string]*Entry, len(persisted.Entries))
 	for i := range persisted.Entries {
 		e := persisted.Entries[i]
 		if err := e.Claim.Validate(); err != nil {
-			return nil, fmt.Errorf("mutation claim ledger %s holds an invalid claim: %w", path, err)
+			return fmt.Errorf("mutation claim ledger %s holds an invalid claim: %w", l.path, err)
 		}
 		key := e.Claim.Key()
-		if _, dup := l.entries[key]; dup {
-			return nil, fmt.Errorf("mutation claim ledger %s holds conflicting entries for %s", path, key)
+		if _, dup := entries[key]; dup {
+			return fmt.Errorf("mutation claim ledger %s holds conflicting entries for %s", l.path, key)
 		}
 		cp := e
-		l.entries[key] = &cp
+		entries[key] = &cp
 	}
-	return l, nil
+	l.entries = entries
+	return nil
+}
+
+func (l *Ledger) lockAndRefreshLocked() (func(), error) {
+	lockPath := l.path + ledgerLockFileSuffix
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o770); err != nil {
+		return nil, fmt.Errorf("creating mutation claim ledger lock directory: %w", err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, ledgerFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("opening mutation claim ledger lock %s: %w", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("locking mutation claim ledger %s: %w", lockPath, err)
+	}
+	if err := l.reloadLocked(); err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // reconcileExpiredLocked fences an ActiveMutation entry whose window has
 // passed: it moves to Waiting at its OWN epoch (retained for history), so the
 // old owner is fenced and the slot is freed, but ownership is never silently
 // released. Callers hold l.mu.
-func (l *Ledger) reconcileExpiredLocked(now time.Time) {
+func (l *Ledger) reconcileExpiredLocked(now time.Time) bool {
+	changed := false
 	for _, e := range l.entries {
 		if e.State == StateActiveMutation && now.After(e.ExpiresAt) {
 			e.State = StateWaiting
+			changed = true
 		}
 	}
+	return changed
 }
 
 // activeWritersLocked counts consumed mutation-writer slots in a repo:
@@ -173,7 +213,16 @@ func (l *Ledger) Acquire(c Claim, holder string, ttl time.Duration, now time.Tim
 	key := c.Key()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.reconcileExpiredLocked(now)
+	unlock, err := l.lockAndRefreshLocked()
+	if err != nil {
+		return Entry{}, err
+	}
+	defer unlock()
+	if l.reconcileExpiredLocked(now) {
+		if err := l.persistLocked(); err != nil {
+			return Entry{}, err
+		}
+	}
 
 	for otherKey, e := range l.entries {
 		if e.State != StateActiveMutation {
@@ -220,7 +269,16 @@ func (l *Ledger) Acquire(c Claim, holder string, ttl time.Duration, now time.Tim
 func (l *Ledger) transition(key string, expectedEpoch uint64, from map[string]bool, to string, now time.Time) (Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.reconcileExpiredLocked(now)
+	unlock, err := l.lockAndRefreshLocked()
+	if err != nil {
+		return Entry{}, err
+	}
+	defer unlock()
+	if l.reconcileExpiredLocked(now) {
+		if err := l.persistLocked(); err != nil {
+			return Entry{}, err
+		}
+	}
 	e, ok := l.entries[key]
 	if !ok || e.Epoch != expectedEpoch || !from[e.State] {
 		return Entry{}, fmt.Errorf("%s: expected epoch %d in %v: %w", key, expectedEpoch, keysOf(from), ErrStaleEpoch)
@@ -257,7 +315,16 @@ func (l *Ledger) Release(key string, expectedEpoch uint64, now time.Time) (Entry
 func (l *Ledger) ValidateEpoch(key string, epoch uint64, now time.Time) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.reconcileExpiredLocked(now)
+	unlock, err := l.lockAndRefreshLocked()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if l.reconcileExpiredLocked(now) {
+		if err := l.persistLocked(); err != nil {
+			return err
+		}
+	}
 	e, ok := l.entries[key]
 	if !ok {
 		return fmt.Errorf("%s has no claim entry: %w", key, ErrStaleEpoch)
@@ -275,6 +342,10 @@ func (l *Ledger) ValidateEpoch(key string, epoch uint64, now time.Time) error {
 func (l *Ledger) Get(key string) (Entry, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	unlock, err := l.lockAndRefreshLocked()
+	if err == nil {
+		defer unlock()
+	}
 	e, ok := l.entries[key]
 	if !ok {
 		return Entry{}, false
@@ -292,11 +363,44 @@ func (l *Ledger) persistLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshaling mutation claim ledger: %w", err)
 	}
-	tmpPath := l.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, ledgerFileMode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o770); err != nil {
+		return fmt.Errorf("creating mutation claim ledger directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(l.path), filepath.Base(l.path)+".*.tmp")
+	if err != nil {
 		return fmt.Errorf("writing tmp mutation claim ledger: %w", err)
 	}
-	return os.Rename(tmpPath, l.path)
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing tmp mutation claim ledger: %w", err)
+	}
+	if err := tmp.Chmod(ledgerFileMode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod tmp mutation claim ledger: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("syncing tmp mutation claim ledger: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing tmp mutation claim ledger: %w", err)
+	}
+	if err := os.Rename(tmpPath, l.path); err != nil {
+		return fmt.Errorf("renaming tmp mutation claim ledger: %w", err)
+	}
+	cleanup = false
+	if dir, err := os.Open(filepath.Dir(l.path)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
 }
 
 func keysOf(m map[string]bool) []string {

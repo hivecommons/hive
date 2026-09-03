@@ -181,6 +181,9 @@ type AgentConfig struct {
 	// Sandbox opts this agent into phase-1 sandbox execution when the global
 	// agent_sandbox.enabled gate is also true.
 	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	// ReentrantTurn opts this agent into the RFC #4002 envelope runner when the
+	// global turn.reentrant.enabled rollout gate is also true.
+	ReentrantTurn *bool `yaml:"reentrant_turn,omitempty" json:"reentrant_turn,omitempty"`
 
 	// Channels declares how this agent gets triggered (kick, webhook, discord, schedule, bead).
 	// When nil/empty, the agent uses governor timer kicks by default (implicit kick channel).
