@@ -1103,7 +1103,45 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		//
 		// The authToken=="" bypass remains for spokes that are genuinely open by
 		// design (no allowlist AND no token) — e.g. a local/dev dashboard.
+		inboundUser := r.Header.Get("X-Hive-User")
+		inboundRole := r.Header.Get("X-Hive-Role")
+
+		// Treat identity headers as an internal request attribute. Preserve inbound
+		// values only after the request has proved it transited the trusted hub
+		// proxy; this must happen before public-path dispatch because several public
+		// contribute handlers consult X-Hive-User/X-Hive-Role for optional identity.
+		r.Header.Del("X-Hive-User")
+		r.Header.Del("X-Hive-Role")
+		r.Header.Del(ownerRoleVerifiedHeader)
+
+		trustProxyIdentity := func(markOwner bool) (bool, string) {
+			if directRouteAuthz || inboundUser == "" || inboundRole == "" {
+				return false, ""
+			}
+			proof := r.Header.Get(proxyAuthHeader)
+			switch {
+			case proof != "" && s.authToken != "" && secureCompare(proof, s.authToken):
+				r.Header.Set("X-Hive-User", inboundUser)
+				r.Header.Set("X-Hive-Role", inboundRole)
+				if markOwner && isOwnerRole(inboundRole) {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
+				return true, ""
+			case proof == "" && !proxyProofRequired:
+				r.Header.Set("X-Hive-User", inboundUser)
+				r.Header.Set("X-Hive-Role", inboundRole)
+				return true, ""
+			case proof == "":
+				return false, "missing proxy proof header"
+			default:
+				return false, "invalid proxy proof header"
+			}
+		}
+
 		if isPublicPath(r.URL.Path) {
+			// Public endpoints remain reachable anonymously, but identity headers are
+			// visible to handlers only when backed by the hub's proxy proof.
+			trustProxyIdentity(true)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1124,26 +1162,24 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 						r.Header.Set(ownerRoleVerifiedHeader, "true")
 					}
 				}
-			} else if r.Header.Get("X-Hive-Role") == "" {
+			} else if inboundRole != "" {
+				// Open/dev spokes have no auth boundary; preserve an explicit role so
+				// local role-gate tests and read-only demos can still exercise least
+				// privilege. Public paths returned above with unproved identity stripped.
+				if inboundUser != "" {
+					r.Header.Set("X-Hive-User", inboundUser)
+				}
+				r.Header.Set("X-Hive-Role", inboundRole)
+				if isOwnerRole(inboundRole) {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
+			} else {
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
-				r.Header.Set(ownerRoleVerifiedHeader, "true")
-			} else if isOwnerRole(r.Header.Get("X-Hive-Role")) {
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 			next.ServeHTTP(w, r)
 			return
 		}
-		inboundUser := r.Header.Get("X-Hive-User")
-		inboundRole := r.Header.Get("X-Hive-Role")
-
-		// Treat identity headers as an internal request attribute. Preserve the
-		// inbound values only in the hub-proxy branch below, after that path has
-		// been authenticated as trusted; all other auth paths must set any role
-		// explicitly so clients cannot spoof owner access with X-Hive-Role.
-		r.Header.Del("X-Hive-User")
-		r.Header.Del("X-Hive-Role")
-		r.Header.Del(ownerRoleVerifiedHeader)
-
 		// Internal automation authenticates with the shared token via the
 		// X-Hive-Internal header; this is a trusted server-to-server path
 		// (the local proxy injects it) and carries no browser user identity.
@@ -1201,35 +1237,11 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// inject X-Hive-Proxy-Auth must be upgraded before their identity headers
 		// are accepted.
 		proxyProofRejectReason := ""
-		if !trusted && !directRouteAuthz &&
-			inboundUser != "" && inboundRole != "" {
-			proof := r.Header.Get(proxyAuthHeader)
-			switch {
-			case proof != "" && s.authToken != "" && secureCompare(proof, s.authToken):
-				// Proof present and valid — definitely came through the hub.
+		if !trusted {
+			if ok, reason := trustProxyIdentity(true); ok {
 				trusted = true
-				if isOwnerRole(inboundRole) {
-					r.Header.Set(ownerRoleVerifiedHeader, "true")
-				}
-			case proof == "" && !proxyProofRequired:
-				// No proof header yet (hub not upgraded) and we're not enforcing
-				// strictly — trust the identity headers as before (rollout window).
-				// Do not mark owner as verified in this legacy path: missing proof
-				// keeps reads/general writes compatible but owner-only mutations
-				// must fail closed.
-				trusted = true
-			default:
-				// Proof header present but WRONG, or strict mode with no proof:
-				// this did not come through the trusted hub proxy — reject.
-				if proof == "" {
-					proxyProofRejectReason = "missing proxy proof header"
-				} else {
-					proxyProofRejectReason = "invalid proxy proof header"
-				}
-			}
-			if trusted {
-				r.Header.Set("X-Hive-User", inboundUser)
-				r.Header.Set("X-Hive-Role", inboundRole)
+			} else {
+				proxyProofRejectReason = reason
 			}
 		}
 
