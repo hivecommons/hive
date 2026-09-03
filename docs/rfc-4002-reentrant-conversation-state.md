@@ -1,7 +1,7 @@
 # RFC #4002: Re-entrant conversation-as-state turn model
 
-Status: accepted design; v5 spike complete, production rollout deferred  
-Refs: #4002, #4000, #4001, #4036, #4053, #4879, #5272, #5635
+Status: accepted design; v5 opt-in production rollout started
+Refs: #4002, #4000, #4001, #4036, #4053, #4879, #5272, #5635, #5799
 
 ## Summary
 
@@ -22,9 +22,9 @@ Step(ctx, envelope, input) (nextEnvelope, output, error)
 The envelope is the durable state. It records messages, operation intents,
 settlements, pending approvals, subagent synchronization, task/claim identity,
 and enough metadata to resume without depending on a suspended goroutine or a
-live tmux pane. v5 has delivered the investigation, prototype, and handoff
-evaluation needed to accept the design. Wiring it into production agents is a
-future opt-in rollout, not part of this closing RFC.
+live tmux pane. v5 delivered the investigation, prototype, and handoff evaluation needed to
+accept the design. Issue #5799 starts the production rollout on v5, still
+default-off and explicitly opt-in.
 
 ## Goals
 
@@ -84,6 +84,25 @@ of adding a parallel queue and recreating duplicate-work bugs.
 #4000 is one operation within this model. A paused tool approval is not an
 out-of-band flag; it is an operation whose request, ACMM decision, settlement,
 and resume input are serialized in the turn envelope.
+
+## v5 phase 2/3 rollout status
+
+- Durable ownership uses one primitive: `pkg/convergence/mutation.Ledger`. Its
+  claim acquisition and state transitions are cross-process serialized and
+  epoch-fenced; replacements adopt expired/waiting claims at a higher epoch.
+- The first production path is contributor assignment. When explicitly opted
+  in, the hub persists a `pkg/turn.SessionEnvelope` for the assignment while
+  preserving the existing websocket relay execution path.
+- The opt-in surface is:
+  - global: `turn.reentrant.enabled` or `HIVE_REENTRANT_TURN_ENABLED`;
+  - named agent: `agents.<name>.reentrant_turn`;
+  - fleet: `turn.reentrant.background_fleet_enabled` or
+    `HIVE_REENTRANT_TURN_BACKGROUND_FLEET`.
+- Tool approvals now appear in `SessionEnvelope.operations` as
+  `tool_approval` operations with the ACMM verdict, tool call, pending/settled
+  status, and operator decision.
+- Rollback remains one flag flip: disable the global gate. Persisted envelopes
+  are passive audit/replay state and are not consumed when the gate is off.
 
 ## State envelope
 
