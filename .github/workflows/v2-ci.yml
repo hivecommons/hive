@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: [self-hosted, hive]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src

@@ -1,0 +1,1 @@
+- Trusted v4 build-and-test jobs now use the self-hosted runner pool for same-repository events while fork pull requests remain on hosted runners; Docker, overlayfs, Podman, and Quadlet lanes remain hosted after self-hosted environment probes exposed runner blockers.
