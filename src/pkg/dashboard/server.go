@@ -1130,6 +1130,17 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// The authToken=="" bypass remains for spokes that are genuinely open by
 		// design (no allowlist AND no token) — e.g. a local/dev dashboard.
 		if isPublicPath(r.URL.Path) {
+			// SECURITY (#5771): public paths skip the auth gate, but they must
+			// NOT skip identity-header vetting. Several public handlers treat
+			// X-Hive-User / X-Hive-Role as hub-injected identity (the queue
+			// controls' requireContributorWrite, resolveViewerUsername, the
+			// gh-user-auth status echo). Returning here with the client's raw
+			// headers intact let any anonymous caller reaching the pod directly
+			// forge "X-Hive-Role: owner" and park/reorder the ready-work queue,
+			// or forge X-Hive-User and impersonate a trusted contributor. Apply
+			// the same F2 proxy-proof trust decision as the authenticated
+			// branches below before dispatching.
+			s.vetPublicPathIdentity(r)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1376,6 +1387,50 @@ func (s *Server) requestRoleAllowsOwner(r *http.Request) bool {
 // requested from (or disclosed to) a browser.
 func (s *Server) hubProxied() bool {
 	return s.deps != nil && s.deps.Config != nil && s.deps.Config.Dashboard.HubProxied
+}
+
+// vetPublicPathIdentity applies the F2 identity-header trust decision to
+// requests on PUBLIC paths, where authenticate dispatches without running its
+// auth branches. Inbound X-Hive-User / X-Hive-Role (and the owner-verified
+// marker) are stripped, then restored ONLY when the request proves it transited
+// the trusted hub proxy — a valid X-Hive-Proxy-Auth proof, or the legacy
+// no-proof rollout window when proxyProofRequired is relaxed. This mirrors the
+// hub-proxied branch of authenticate exactly, including its refusal to trust
+// hub identity on a direct-route spoke (there identity comes only from a
+// per-user session, which public handlers already resolve themselves).
+// Everything a legitimate deployment sends survives: hub nginx emits the
+// proof alongside the identity it injects, and the local gateway strips client
+// identity headers itself before proxying. Only a direct forgery is dropped.
+func (s *Server) vetPublicPathIdentity(r *http.Request) {
+	inboundUser := r.Header.Get("X-Hive-User")
+	inboundRole := r.Header.Get("X-Hive-Role")
+	r.Header.Del("X-Hive-User")
+	r.Header.Del("X-Hive-Role")
+	r.Header.Del(ownerRoleVerifiedHeader)
+	if inboundUser == "" && inboundRole == "" {
+		return
+	}
+	if s.directRouteAuthzEnabled() {
+		// Direct-route spokes never trust hub identity headers (see the strip in
+		// authenticate); a session resolved by the handler is the only identity.
+		return
+	}
+	proof := r.Header.Get(proxyAuthHeader)
+	switch {
+	case proof != "" && s.authToken != "" && secureCompare(proof, s.authToken):
+		// Proof present and valid — definitely came through the hub.
+		r.Header.Set("X-Hive-User", inboundUser)
+		r.Header.Set("X-Hive-Role", inboundRole)
+		if isOwnerRole(inboundRole) {
+			r.Header.Set(ownerRoleVerifiedHeader, "true")
+		}
+	case proof == "" && !proxyProofRequired:
+		// Rollout window for hubs that do not emit the proof yet: keep identity
+		// (reads/general writes stay compatible) but never mark owner verified —
+		// owner-only mutations fail closed, exactly like the authenticated branch.
+		r.Header.Set("X-Hive-User", inboundUser)
+		r.Header.Set("X-Hive-Role", inboundRole)
+	}
 }
 
 // isPublicPath returns true for paths that should be accessible without
