@@ -260,7 +260,7 @@ func TestNormalizeCustomStyleScope_RejectsInvalid(t *testing.T) {
 
 func TestCustomStyleRawURL(t *testing.T) {
 	src := customStyleSource{
-		Owner: "kubestellar",
+		Owner: "hivecommons",
 		Repo:  "hive",
 		Path:  "themes/dark.css",
 		Ref:   "main",
