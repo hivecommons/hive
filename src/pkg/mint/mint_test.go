@@ -569,3 +569,60 @@ func TestVerifyUnexpectedSigningMethodHMAC(t *testing.T) {
 		t.Fatal("expected HS256 token to be rejected by RSA verifier")
 	}
 }
+
+func TestMaxTTLReportsEffectiveCeiling(t *testing.T) {
+	m, _ := newTestMinter(t)
+	if got := m.MaxTTL(); got != DefaultMaxTTL {
+		t.Errorf("MaxTTL() = %v, want default %v", got, DefaultMaxTTL)
+	}
+	// A maxTTL beyond the hard cap (only reachable by construction bugs —
+	// WithMaxTTL clamps) must still report the hard cap, never above it.
+	m.maxTTL = 2 * HardCapTTL
+	if got := m.MaxTTL(); got != HardCapTTL {
+		t.Errorf("MaxTTL() with oversized maxTTL = %v, want %v", got, HardCapTTL)
+	}
+}
+
+func TestClampTTLFloorsAtMinTTL(t *testing.T) {
+	m, _ := newTestMinter(t)
+	if got := m.clampTTL(time.Second); got != MinTTL {
+		t.Errorf("clampTTL(1s) = %v, want floor %v", got, MinTTL)
+	}
+}
+
+func TestLoadOrCreateKeyReadErrorFailsClosed(t *testing.T) {
+	// A directory at the key path yields a read error that is not
+	// IsNotExist — LoadOrCreateKey must fail rather than overwrite.
+	dir := t.TempDir()
+	if _, err := LoadOrCreateKey(dir); err == nil {
+		t.Fatal("expected error when key path is a directory")
+	}
+}
+
+func TestClampTTLCeilingNeverExceedsHardCap(t *testing.T) {
+	m, _ := newTestMinter(t)
+	// Only reachable by construction bugs — WithMaxTTL clamps — but clampTTL
+	// must still cap at HardCapTTL on its own.
+	m.maxTTL = 2 * HardCapTTL
+	if got := m.clampTTL(0); got != HardCapTTL {
+		t.Errorf("clampTTL(0) with oversized maxTTL = %v, want %v", got, HardCapTTL)
+	}
+}
+
+func TestWriteKeyPEMRenameFailsOntoDirectory(t *testing.T) {
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	// The destination is an existing directory: the temp write succeeds but
+	// the final rename cannot land, exercising the rename error branch.
+	dir := t.TempDir()
+	if err := writeKeyPEM(dir, key); err == nil {
+		t.Fatal("expected rename onto a directory to fail")
+	} else if !strings.Contains(err.Error(), "renaming key") {
+		t.Errorf("unexpected error %q, want a rename error", err)
+	}
+	if _, statErr := os.Stat(dir + ".tmp"); statErr == nil {
+		t.Error("temp file was not cleaned up after rename failure")
+	}
+}
