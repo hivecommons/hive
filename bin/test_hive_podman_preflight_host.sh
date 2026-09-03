@@ -293,10 +293,16 @@ if [[ -r /sys/fs/selinux/enforce ]]; then
     1) assert_contains "$RUN_OUT" "SELinux: Enforcing" "selinuxfs supplies Enforcing without getenforce" ;;
     *) assert_contains "$RUN_OUT" "SELinux: Permissive" "selinuxfs supplies Permissive without getenforce" ;;
   esac
-else
+  assert_not_contains "$RUN_OUT" "could not be determined" "no-utilities host still resolves a state"
+elif [[ ! -d /sys/fs/selinux ]]; then
   assert_contains "$RUN_OUT" "not enabled on this host" "absent selinuxfs reads as not enabled"
+  assert_not_contains "$RUN_OUT" "could not be determined" "no-utilities host still resolves a state"
+else
+  # selinuxfs is mounted but enforce is unreadable (e.g. a container on an
+  # SELinux host that masks /sys/fs/selinux/enforce): the preflight
+  # deliberately reports an indeterminate state rather than guessing.
+  assert_contains "$RUN_OUT" "could not be determined" "masked selinuxfs reads as indeterminate"
 fi
-assert_not_contains "$RUN_OUT" "could not be determined" "no-utilities host still resolves a state"
 
 # --- Mount labeling -----------------------------------------------------------
 
