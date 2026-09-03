@@ -561,11 +561,6 @@ knowledge:
     #   url: https://wiki.hive.dev/mcp       # Public, read-only
     #   shared: true
   curator:
-    schedule: daily                           # How often to extract facts from merged PRs
-    extract_from:
-      - pr_comments
-      - ci_failures
-      - review_comments
     auto_promote_threshold: 0.9              # Confidence to auto-promote project→org
   git_sources:                               # Remote git repos indexed as knowledge
     # - name: dakota-skills                  # Display name for this source

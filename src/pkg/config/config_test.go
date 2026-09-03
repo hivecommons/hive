@@ -936,9 +936,6 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	if len(cfg.Knowledge.Primer.Priority) == 0 {
 		t.Error("expected default priority")
 	}
-	if cfg.Knowledge.Curator.Schedule != defaultCuratorSchedule {
-		t.Errorf("schedule = %q", cfg.Knowledge.Curator.Schedule)
-	}
 	if cfg.Knowledge.Curator.AutoPromoteThreshold != defaultPromoteThreshold {
 		t.Errorf("threshold = %f", cfg.Knowledge.Curator.AutoPromoteThreshold)
 	}

@@ -342,8 +342,6 @@ knowledge:
       shared: true
       precedence: 4          # lowest — overridden by all others
   curator:
-    schedule: "daily"
-    extract_from: ["pr_comments", "ci_failures", "review_comments"]
     auto_promote_threshold: 0.9  # confidence to auto-promote project→org
   primer:
     max_facts: 25

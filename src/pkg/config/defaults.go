@@ -16,7 +16,6 @@ const (
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeEngine        = "llm-wiki"
-	defaultCuratorSchedule        = "daily"
 	defaultPromoteThreshold       = 0.9
 	defaultSensingTTLSeconds      = 900
 	defaultSensingPullbackSeconds = 900
@@ -298,9 +297,6 @@ func (c *Config) applyDefaults() {
 		}
 		if len(c.Knowledge.Primer.Priority) == 0 {
 			c.Knowledge.Primer.Priority = []string{"regression", "gotcha", "test_scaffold", "pattern", "decision"}
-		}
-		if c.Knowledge.Curator.Schedule == "" {
-			c.Knowledge.Curator.Schedule = defaultCuratorSchedule
 		}
 		if c.Knowledge.Curator.AutoPromoteThreshold == 0 {
 			c.Knowledge.Curator.AutoPromoteThreshold = defaultPromoteThreshold
