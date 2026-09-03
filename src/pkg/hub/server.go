@@ -1038,6 +1038,12 @@ type HubServer struct {
 	// behind when a node disappears without draining (#5328). Same rationale
 	// and same guarding mutex as the two above: poller-loop-only state.
 	lastOrphanedPodReap time.Time
+	// lastHostedNamespaceSweep throttles the leaked hosted-namespace janitor
+	// (hosted_namespace_janitor.go), which deletes labelled ephemeral hosted
+	// namespaces left behind by failed provisioning with no registry entry
+	// (#5768). Same rationale and same guarding mutex as the two above:
+	// poller-loop-only state.
+	lastHostedNamespaceSweep time.Time
 	// lastGenerationRetire throttles the expired-master-generation retirement
 	// sweep (hub_generations_retire.go). Same rationale and same guarding mutex
 	// as the two above: poller-loop-only state.

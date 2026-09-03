@@ -5919,6 +5919,16 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// measured across 16 namespaces, oldest three weeks). See
 	// orphaned_pod_reaper.go.
 	s.reapOrphanedPodsIfDue()
+	// Delete hosted namespaces left behind by FAILED provisioning: labelled
+	// ephemeral, older than hostedNamespaceLeakMinAge, and with no matching hub
+	// registry entry (#5768). `kubectl apply` is not transactional and the
+	// Namespace is the first object in the manifest, so a later failure strands
+	// the namespace and its PVCs; provisionHive now tears that down inline, and
+	// this sweep is the backstop for when that teardown itself fails. Throttled
+	// internally to hostedNamespaceLeakSweepInterval, capped per cycle, and
+	// dry-run-able. NEVER touches a namespace lacking the ephemeral label. See
+	// hosted_namespace_janitor.go.
+	s.sweepLeakedHostedNamespacesIfDue()
 	// Drop master generations whose verify window has closed, and warn when one
 	// is closing while spokes still carry it. Throttled internally to
 	// generationRetireInterval. This lane PERSISTS the drop and ALERTS; it is
@@ -5977,6 +5987,7 @@ func (s *HubServer) pollLatestSHAsTick(ctx context.Context, now time.Time) {
 	s.reconcileNetAdminIfDue()
 	s.reconcilePerHiveEnvIfDue()
 	s.reapOrphanedPodsIfDue()
+	s.sweepLeakedHostedNamespacesIfDue()
 	s.retireExpiredGenerationsIfDue()
 	s.sweepExpiredAccessIfDue()
 	s.replenishPoolsIfDue()

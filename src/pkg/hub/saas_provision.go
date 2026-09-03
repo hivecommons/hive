@@ -2177,8 +2177,16 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 	}()
 
 	data := map[string]any{
-		"ID":              h.ID,
-		"Namespace":       "hive-hosted-" + h.ID,
+		"ID":        h.ID,
+		"Namespace": "hive-hosted-" + h.ID,
+		// Creation timestamp stamped as an annotation on the namespace. The
+		// janitor prefers this over the namespace's own
+		// metadata.creationTimestamp for age: a namespace that was recreated
+		// or restored keeps a fresh k8s creationTimestamp, and reading OUR
+		// stamp means the age the reaper judges is the age of the provisioning
+		// attempt that made the leak. Falls back to creationTimestamp when
+		// absent (namespaces provisioned before this shipped).
+		"CreatedAt":       time.Now().UTC().Format(time.RFC3339),
 		"Org":             sanitize(h.Org),
 		"Repos":           reposYAML,
 		"PrimaryRepo":     sanitize(normalizedPrimaryRepo),
@@ -2405,6 +2413,25 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 
 	if err != nil {
 		logger.Warn("kubectl apply failed", "hive", h.ID, "cluster", cluster.ID, "output", string(out), "error", err)
+		// THE LEAK (#5768). `kubectl apply -f` is NOT transactional, and the
+		// Namespace is the FIRST object in k8sManifestTemplate. A failure on
+		// any later object — PVC, Deployment, Ingress, RBAC — therefore leaves
+		// the namespace (and whatever was created before the failing object,
+		// including the PVC) behind on the cluster, while this function returns
+		// an error and both callers do nothing but set Status="error". Nothing
+		// else ever revisits that namespace: deprovisionHive runs only from the
+		// user-initiated delete handler, which needs a hive the user can SEE,
+		// and a hive that never finished provisioning is never listed as
+		// deletable. The residue accumulated into dozens of leaked
+		// hive-hosted-hosted-* namespaces holding ~76 stuck pods (64
+		// Unschedulable + 12 Pending on unbound PVCs) on a shared CI cluster.
+		//
+		// Tear down what the partial apply created, on the failure path, before
+		// returning. Best-effort by design: teardown failing must not mask the
+		// provisioning error the caller needs to report, and the janitor sweep
+		// (hosted_namespace_janitor.go) is the backstop for exactly the case
+		// where this delete also fails.
+		teardownPartialProvision(cluster, data["Namespace"].(string), h.ID, logger)
 		return fmt.Errorf("provisioning failed — check hub logs for details")
 	}
 
@@ -2435,6 +2462,57 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 func HashDashboardToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// teardownPartialProvision removes the namespace a FAILED provisioning attempt
+// left behind (issue #5768).
+//
+// It exists because `kubectl apply -f` is not transactional and the Namespace
+// is the first object in k8sManifestTemplate: when a later object fails, the
+// namespace and everything applied before the failure are already on the
+// cluster. Deleting the namespace cascades to all of it — Deployment, Service,
+// Ingress, ConfigMap, Secret, and the PVCs whose unbound Pending pods were the
+// symptom that surfaced this.
+//
+// This is deliberately NOT deprovisionHive. That function is the full,
+// user-initiated teardown: it also deletes the cluster-scoped PV, OCI export
+// and file system, removes the on-disk hive record, and decrements the owner's
+// quota. None of that is correct here. A failed provision must leave the hive
+// RECORD intact — that record is how the failure is reported to the user and
+// how a retry finds its slot — and the OCI resources it would delete may be
+// shared with, or predate, this attempt. The narrow delete is the right blast
+// radius for a cleanup that runs automatically on an error path.
+//
+// Best-effort by design: every failure here is logged and swallowed. The
+// caller is already returning a provisioning error and must not have it
+// replaced by a teardown error, and the janitor sweep
+// (hosted_namespace_janitor.go) is the backstop for exactly the case where
+// this delete fails or the hub dies before reaching it. --wait=false because
+// namespace deletion is asynchronous and blocking a provisioning worker on
+// finalizers would stall the queue for every hive behind it.
+func teardownPartialProvision(cluster *ClusterConfig, namespace, hiveID string, logger *slog.Logger) {
+	if cluster == nil || strings.TrimSpace(namespace) == "" {
+		return
+	}
+	if cluster.PullOnly {
+		// No kubectl path into a pull-only cluster. Say so rather than burning
+		// a timeout, so the residue is a known gap and not a silent one.
+		logger.Warn("partial-provision teardown skipped: cluster is not kubectl-reachable from the hub — namespace may need manual cleanup",
+			"namespace", namespace, "cluster", cluster.ID, "hive_id", hiveID)
+		return
+	}
+	logger.Info("partial-provision teardown: deleting namespace left by failed provisioning",
+		"namespace", namespace, "cluster", cluster.ID, "hive_id", hiveID)
+	ctx, cancel := context.WithTimeout(context.Background(), hostedNamespaceLeakKubectlTimeout)
+	defer cancel()
+	cmd := kubectlForClusterContext(ctx, cluster, "delete", "namespace", namespace,
+		"--ignore-not-found", "--wait=false")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Non-fatal: the janitor sweep will pick this up on its next pass.
+		logger.Warn("partial-provision teardown failed — janitor sweep will retry",
+			"namespace", namespace, "cluster", cluster.ID, "hive_id", hiveID,
+			"output", strings.TrimSpace(string(out)), "error", err)
+	}
 }
 
 // deprovisionHive performs best-effort cleanup of all resources associated
@@ -2601,6 +2679,11 @@ const k8sManifestTemplate = `apiVersion: v1
 kind: Namespace
 metadata:
   name: {{.Namespace}}
+  labels:
+    ` + hostedNamespaceOwnerLabel + `: ` + hostedNamespaceOwnerValue + `
+    ` + hostedNamespaceEphemeralLabel + `: "true"
+  annotations:
+    ` + hostedNamespaceCreatedAtAnnotation + `: "{{.CreatedAt}}"
 ---
 {{- if .RequiresSCC}}
 apiVersion: v1
