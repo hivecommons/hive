@@ -424,7 +424,7 @@ jobs:
           src/scripts/publish-image-tags.sh \
             ghcr.io/${{ github.repository_owner }}/hive /tmp/digests \
             '${{ github.ref_name }}' '${{ github.sha }}' '${{ github.run_number }}' \
-            v4 false stable,candidate
+            v4 true stable,candidate
 
       # ---- Cross-org mirror (kubestellar <-> hivecommons dual-publish) ----
       # Copy the tags just published above into the other org's GHCR
@@ -486,7 +486,7 @@ jobs:
           GIT_SHA: ${{ github.sha }}
           # These three mirror publish-image-tags.sh's positional args in the
           # publish step above — keep them in lockstep with that call.
-          INCLUDE_LATEST: "false"
+          INCLUDE_LATEST: "true"
           RELEASE_BRANCH: "v4"
           CHANNELS: "stable,candidate"
         run: |

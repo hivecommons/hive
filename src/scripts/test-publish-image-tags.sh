@@ -15,6 +15,15 @@ cat >"$tmp/bin/docker" <<'MOCK'
 set -euo pipefail
 if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
   ref=${@: -1}
+  if [[ -e ${MOCK_CAPTURE}.created ]]; then
+    case "${MOCK_INSPECT_MODE:-legacy}" in
+      publish-missing-arm64)
+        if [[ $* == *'linux/arm64'* ]]; then echo 'null'; else echo '{"config":{"Labels":{}}}'; fi
+        ;;
+      *) echo '{"config":{"Labels":{}}}' ;;
+    esac
+    exit 0
+  fi
   case "${MOCK_INSPECT_MODE:-legacy}" in
     missing) echo "ERROR: $ref: not found" >&2; exit 1 ;;
     failure) echo 'dial tcp: registry unavailable' >&2; exit 1 ;;
@@ -27,12 +36,14 @@ if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
       if [[ $ref == *':latest' ]]; then value=101; else value=99; fi
       printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s"}}}\n' "$value"
       ;;
+    publish-missing-arm64) echo '{"config":{"Labels":{}}}' ;;
     *) printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s"}}}\n' "$MOCK_INSPECT_MODE" ;;
   esac
   exit 0
 fi
 printf '%q ' "$@" >"$MOCK_CAPTURE"
 printf '\n' >>"$MOCK_CAPTURE"
+touch "${MOCK_CAPTURE}.created"
 MOCK
 chmod +x "$tmp/bin/docker"
 
@@ -82,6 +93,11 @@ if run_case failure 100 "$tmp/create-failure"; then
   exit 1
 fi
 
+if run_case publish-missing-arm64 100 "$tmp/create-missing-arm64"; then
+  echo "post-publish platform assertion did not fail closed" >&2
+  exit 1
+fi
+
 capture="$tmp/create-feature"
 run_custom_case missing 100 "$capture" feat/demo true
 grep -q 'hive-hub:feat-demo-latest' "$capture"
@@ -106,6 +122,8 @@ fi
 workflow="$script_dir/../../.github/workflows/docker.yml"
 [[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
 [[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
+grep -q 'v4 true stable,candidate' "$workflow"
+grep -q 'INCLUDE_LATEST: "true"' "$workflow"
 if grep -q 'head-check\|Verify build commit is still HEAD' "$workflow"; then
   echo "HEAD-only publication guard was reintroduced" >&2
   exit 1

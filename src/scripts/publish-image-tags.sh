@@ -120,3 +120,23 @@ for file in "${digest_files[@]}"; do
 done
 
 docker buildx imagetools create "${tag_args[@]}" "${source_args[@]}"
+
+assert_linux_platforms() {
+  local ref=$1 platform inspect
+  for platform in linux/amd64 linux/arm64; do
+    if ! inspect=$(docker buildx imagetools inspect \
+        --format "{{json (index .Image \"$platform\")}}" "$ref" 2>&1); then
+      echo "::error::could not inspect $ref after publishing; refusing to leave an unverified moving tag" >&2
+      echo "$inspect" >&2
+      exit 1
+    fi
+    if [[ $inspect == null ]]; then
+      echo "::error::$ref is missing $platform after publishing" >&2
+      exit 1
+    fi
+  done
+}
+
+for ((i = 0; i < ${#tag_args[@]}; i += 2)); do
+  assert_linux_platforms "${tag_args[i+1]}"
+done
