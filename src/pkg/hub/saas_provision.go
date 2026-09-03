@@ -433,6 +433,27 @@ func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 				"--certificate-authority", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 				"--token", readSAToken(),
 			)
+		} else {
+			// InCluster is a CLAIM, not a fact, and this is the branch where the
+			// claim is demonstrably false: a real hub pod ALWAYS has both
+			// KUBERNETES_SERVICE_HOST and _PORT injected by the kubelet, so
+			// their absence is positive evidence this process is not in a pod.
+			//
+			// Without this arm we appended NO connection flag at all, and
+			// kubectl then resolves against its AMBIENT configuration —
+			// $KUBECONFIG or ~/.kube/config — i.e. whatever cluster the machine
+			// happens to be pointed at. That is issue #5768: hub tests that
+			// reach a provisioning entry point ran a REAL `kubectl apply` of a
+			// Namespace + Deployment named from the test's own fixture org
+			// against a developer/agent machine's current-context cluster,
+			// leaking 76 hive-hosted-hosted-{apporg,myorg,acme}-* namespaces
+			// onto a live CI cluster. The hub kept no record of them because
+			// saveSaaSHive had been redirected to the test's t.TempDir().
+			//
+			// Aim at the sentinel instead, exactly as the unreachable branch
+			// above does, so a false InCluster claim fails loudly rather than
+			// mutating an unrelated cluster.
+			fullArgs = append(fullArgs, "--kubeconfig", unreachableKubeconfigSentinel)
 		}
 	}
 	fullArgs = append(fullArgs, args...)

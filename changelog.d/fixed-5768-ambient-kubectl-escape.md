@@ -1,0 +1,1 @@
+- Stopped hub provisioning from falling back to a machine's ambient kubeconfig. A cluster config claiming `in_cluster` outside a real pod now aims kubectl at the unreachable sentinel and fails loudly, instead of applying namespaces and Deployments to whatever cluster the current context named.
