@@ -56,6 +56,9 @@ func TestRunnerOptionsWiring(t *testing.T) {
 	if len(turnOut.Verdicts) != 1 || !turnOut.Verdicts[0].AutoApproved() {
 		t.Errorf("expected auto-approve via permissive scanner at L6, got %+v", turnOut.Verdicts)
 	}
+	if len(out.Operations) != 1 || out.Operations[0].Kind != OperationKindToolApproval || out.Operations[0].Status != OperationStatusApproved {
+		t.Errorf("approval operation not recorded as approved: %+v", out.Operations)
+	}
 	if len(sink.events) != 1 || !strings.Contains(sink.events[0], "tool_approval") {
 		t.Errorf("verdict not recorded in audit sink: %v", sink.events)
 	}

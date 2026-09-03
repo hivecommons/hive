@@ -20,6 +20,7 @@ func secretBearingEnvelope() SessionEnvelope {
 		Variables: map[string]string{"gh_auth": "token " + fakeToken},
 		PendingApprovals: []PendingApproval{
 			{
+				OperationID: "tool-approval:c9",
 				ToolCall: ToolCall{
 					ID:        "c9",
 					Name:      "bash",
@@ -31,6 +32,21 @@ func secretBearingEnvelope() SessionEnvelope {
 				},
 			},
 		},
+		Operations: []EnvelopeOperation{{
+			ID:     "tool-approval:c9",
+			Kind:   OperationKindToolApproval,
+			Status: OperationStatusPending,
+			ToolCall: &ToolCall{
+				ID:        "c9",
+				Name:      "bash",
+				Arguments: `{"command":"echo ` + fakeToken + `"}`,
+			},
+			Verdict: &toolapprove.Verdict{
+				Decision:  toolapprove.DecisionOperatorApprove,
+				Rationale: "contains " + fakeToken,
+			},
+			OperatorDecision: &OperatorApprovalDecision{Operator: "ops", Rationale: "saw " + fakeToken},
+		}},
 	}
 	env.AddMessage(RoleUser, "my token is "+fakeToken+", please use it")
 	env.AddToolCallMessage("calling tool", []ToolCall{

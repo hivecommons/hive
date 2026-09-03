@@ -85,6 +85,9 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 	// 1. Assimilate Turn Input (Operator decisions, User messages, Subagent sync)
 	if in.OperatorDecision != nil && len(outEnv.PendingApprovals) > 0 {
 		for _, pending := range outEnv.PendingApprovals {
+			if pending.OperationID != "" {
+				outEnv.SettleToolApprovalOperation(pending.OperationID, *in.OperatorDecision)
+			}
 			if in.OperatorDecision.Approved {
 				if r.ToolExecutor != nil {
 					res, err := r.ToolExecutor.Execute(ctx, pending.ToolCall)
@@ -195,9 +198,11 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 
 			switch {
 			case verdict.RequiresOperatorApproval():
+				opID := outEnv.AddToolApprovalOperation(call, verdict)
 				outEnv.PendingApprovals = append(outEnv.PendingApprovals, PendingApproval{
-					ToolCall: call,
-					Verdict:  verdict,
+					OperationID: opID,
+					ToolCall:    call,
+					Verdict:     verdict,
 				})
 				prev := outEnv.Status
 				outEnv.Status = StatusWaitingApproval
@@ -206,6 +211,7 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 				}
 
 			case verdict.Denied():
+				outEnv.AddToolApprovalOperation(call, verdict)
 				errDetail := fmt.Sprintf("Tool denied: %s", verdict.Rationale)
 				msg := outEnv.AddToolResultMessage(call.ID, call.Name, "", errDetail)
 				output.NewMessages = append(output.NewMessages, msg)
@@ -216,6 +222,7 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 				})
 
 			case verdict.AutoApproved():
+				outEnv.AddToolApprovalOperation(call, verdict)
 				if toolapprove.IsSubagent(call.Name) {
 					outEnv.Subagents[call.ID] = "running"
 				}

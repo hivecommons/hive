@@ -74,6 +74,7 @@ type SessionEnvelope struct {
 	LeaseExpiry      time.Time                 `json:"lease_expiry,omitempty"`
 	Variables        map[string]string         `json:"variables,omitempty"`
 	Subagents        map[string]string         `json:"subagents,omitempty"` // subagent sessionID -> status
+	Operations       []EnvelopeOperation       `json:"operations,omitempty"`
 	PendingApprovals []PendingApproval         `json:"pending_approvals,omitempty"`
 	// Journal records every side-effectful operation attempted in this session
 	// with its idempotency key and outcome (RFC #4002 stage 2). It travels
@@ -87,8 +88,28 @@ type SessionEnvelope struct {
 
 // PendingApproval holds state for a tool call paused awaiting operator approval.
 type PendingApproval struct {
-	ToolCall ToolCall            `json:"tool_call"`
-	Verdict  toolapprove.Verdict `json:"verdict"`
+	OperationID string              `json:"operation_id,omitempty"`
+	ToolCall    ToolCall            `json:"tool_call"`
+	Verdict     toolapprove.Verdict `json:"verdict"`
+}
+
+const (
+	OperationKindToolApproval = "tool_approval"
+	OperationStatusPending    = "pending"
+	OperationStatusApproved   = "approved"
+	OperationStatusDenied     = "denied"
+)
+
+// EnvelopeOperation is an ordered, durable operation in a re-entrant turn.
+type EnvelopeOperation struct {
+	ID               string                    `json:"id"`
+	Kind             string                    `json:"kind"`
+	Status           string                    `json:"status"`
+	ToolCall         *ToolCall                 `json:"tool_call,omitempty"`
+	Verdict          *toolapprove.Verdict      `json:"verdict,omitempty"`
+	OperatorDecision *OperatorApprovalDecision `json:"operator_decision,omitempty"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	SettledAt        time.Time                 `json:"settled_at,omitempty"`
 }
 
 // SubagentResult represents the output of a background subagent task.

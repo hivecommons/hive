@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // ToJSON serializes the SessionEnvelope into JSON bytes.
@@ -39,6 +40,18 @@ func (e SessionEnvelope) scrubbedForPersist() SessionEnvelope {
 	for i := range out.PendingApprovals {
 		out.PendingApprovals[i].ToolCall.Arguments = logscrub.ScrubString(out.PendingApprovals[i].ToolCall.Arguments)
 		out.PendingApprovals[i].Verdict.Rationale = logscrub.ScrubString(out.PendingApprovals[i].Verdict.Rationale)
+	}
+	for i := range out.Operations {
+		if out.Operations[i].ToolCall != nil {
+			out.Operations[i].ToolCall.Arguments = logscrub.ScrubString(out.Operations[i].ToolCall.Arguments)
+		}
+		if out.Operations[i].Verdict != nil {
+			out.Operations[i].Verdict.Rationale = logscrub.ScrubString(out.Operations[i].Verdict.Rationale)
+		}
+		if out.Operations[i].OperatorDecision != nil {
+			out.Operations[i].OperatorDecision.Rationale = logscrub.ScrubString(out.Operations[i].OperatorDecision.Rationale)
+			out.Operations[i].OperatorDecision.Operator = logscrub.ScrubString(out.Operations[i].OperatorDecision.Operator)
+		}
 	}
 	// The journal is persisted with the envelope and is equally secret-bearing:
 	// Target can carry a branch name minted from a token-bearing remote URL,
@@ -127,4 +140,46 @@ func (e *SessionEnvelope) AddToolResultMessage(callID, name, output, errStr stri
 	e.Messages = append(e.Messages, msg)
 	e.UpdatedAt = msg.Timestamp
 	return msg
+}
+
+func (e *SessionEnvelope) AddToolApprovalOperation(call ToolCall, verdict toolapprove.Verdict) string {
+	now := time.Now().UTC()
+	id := "tool-approval:" + call.ID
+	status := OperationStatusPending
+	if verdict.AutoApproved() {
+		status = OperationStatusApproved
+	} else if verdict.Denied() {
+		status = OperationStatusDenied
+	}
+	op := EnvelopeOperation{
+		ID:        id,
+		Kind:      OperationKindToolApproval,
+		Status:    status,
+		ToolCall:  &call,
+		Verdict:   &verdict,
+		CreatedAt: now,
+	}
+	if status != OperationStatusPending {
+		op.SettledAt = now
+	}
+	e.Operations = append(e.Operations, op)
+	e.UpdatedAt = now
+	return id
+}
+
+func (e *SessionEnvelope) SettleToolApprovalOperation(id string, decision OperatorApprovalDecision) {
+	now := time.Now().UTC()
+	status := OperationStatusDenied
+	if decision.Approved {
+		status = OperationStatusApproved
+	}
+	for i := range e.Operations {
+		if e.Operations[i].ID == id && e.Operations[i].Kind == OperationKindToolApproval {
+			e.Operations[i].Status = status
+			e.Operations[i].OperatorDecision = &decision
+			e.Operations[i].SettledAt = now
+			e.UpdatedAt = now
+			return
+		}
+	}
 }

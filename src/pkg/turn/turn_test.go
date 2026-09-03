@@ -233,6 +233,9 @@ func TestOperatorApprovalPauseAndResume(t *testing.T) {
 	if len(env1.PendingApprovals) != 1 {
 		t.Fatalf("expected 1 PendingApproval, got %d", len(env1.PendingApprovals))
 	}
+	if len(env1.Operations) != 1 || env1.Operations[0].Kind != OperationKindToolApproval || env1.Operations[0].Status != OperationStatusPending {
+		t.Fatalf("expected pending tool approval operation, got %+v", env1.Operations)
+	}
 	if len(exec.executed) != 0 {
 		t.Errorf("tool should NOT have executed before operator approval, got %d", len(exec.executed))
 	}
@@ -262,6 +265,9 @@ func TestOperatorApprovalPauseAndResume(t *testing.T) {
 	}
 	if len(env2.PendingApprovals) != 0 {
 		t.Errorf("PendingApprovals should be cleared after resolution")
+	}
+	if len(env2.Operations) != 1 || env2.Operations[0].Status != OperationStatusApproved || env2.Operations[0].OperatorDecision == nil {
+		t.Fatalf("approval operation was not settled: %+v", env2.Operations)
 	}
 }
 
@@ -296,6 +302,9 @@ func TestOperatorApprovalRejection(t *testing.T) {
 	if env1.Status != StatusWaitingApproval {
 		t.Fatalf("expected StatusWaitingApproval, got %s", env1.Status)
 	}
+	if len(env1.Operations) != 1 || env1.Operations[0].Status != OperationStatusPending {
+		t.Fatalf("expected pending approval operation, got %+v", env1.Operations)
+	}
 
 	// Operator rejects
 	inReject := TurnInput{
@@ -316,6 +325,9 @@ func TestOperatorApprovalRejection(t *testing.T) {
 	}
 	if env2.Status != StatusCompleted || !out2.Done {
 		t.Errorf("session should complete, got status=%s done=%v", env2.Status, out2.Done)
+	}
+	if len(env2.Operations) != 1 || env2.Operations[0].Status != OperationStatusDenied || env2.Operations[0].OperatorDecision == nil {
+		t.Fatalf("rejected approval operation was not settled: %+v", env2.Operations)
 	}
 
 	// Verify conversation contains the operator rejection message
