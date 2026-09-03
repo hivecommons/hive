@@ -15,7 +15,7 @@ Listed below are organizations that have adopted, or benefitted from, KubeStella
 | Organization | Description | Maturity Level | Further Information |
 | --- | --- | --- | --- |
 | [KubeStellar Console](https://github.com/kubestellar/console) | Autonomous maintenance of the Console codebase — issue triage, fixes, review, and merge | Production | |
-| [Tuna OS](https://github.com/tuna-os) | Autonomous development operations for tuna-os projects | Pre-production | |
+| [tunaos.org](https://tunaos.org) | Self-hosted hub coordinating two ACMM L5/L6 spokes across 43 tuna-os repositories | Production | [GitHub org](https://github.com/tuna-os); production evidence in [#5773](https://github.com/hivecommons/hive/issues/5773) |
 | [Frostyard](https://github.com/frostyard) | Autonomous development operations for frostyard projects | Pre-production | |
 | [Open Horizon](https://github.com/open-horizon) | Standardization and enforcement for code consistency | Pre-production | |
 | [Open Horizon Services](https://github.com/open-horizon-services) | Ensuring code consistency over community contributions | Pre-production | |

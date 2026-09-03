@@ -37,7 +37,7 @@ v4 is the default branch and the supported stable line.
 ## v5 — Next Generation
 
 v5 development happens on the `v5` branch, gated by public `[v5 RFC]`
-issues. The three pillars:
+issues. Accepted workstreams:
 
 - **Reviewer lane.** A dedicated agent role with authority to adjudicate
   escalated (`needs-human`) PRs, so the human-escalation queue has an
@@ -68,6 +68,27 @@ issues. The three pillars:
   digest-verifiable deployment, so what a spoke runs is provable rather
   than inferred from a tag. See
   [release channels](src/docs/release-channels.md).
+- **Multi-spoke constellations.** A production external deployment
+  (tunaos.org: a self-hosted hub coordinating two spokes at ACMM L5/L6
+  across 43 repos) showed that large adopters need hub-level fleet
+  visibility without making the hub a hard control plane. The accepted
+  v5 constellation RFC anchors repo-claim overlap warnings (phase 1
+  shipped in [#5705](https://github.com/hivecommons/hive/pull/5705)),
+  spoke charters, fleet headroom, GitHub App budget display,
+  shared-credential guidance, and route recommendations
+  ([#5691](https://github.com/hivecommons/hive/issues/5691),
+  [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md),
+  [#5796](https://github.com/hivecommons/hive/pull/5796)).
+- **Backend capacity, model inventory, and placement.** The same
+  multi-spoke evidence made provider quota and model availability the
+  practical constraint on splitting a hive. The accepted v5 capacity RFC
+  makes backend choice an operator-controlled placement problem with
+  normalized capacity readings, authoritative model inventory where
+  available, tier floors, scoped limit handling, and opt-in pacing /
+  placement policy
+  ([#5698](https://github.com/hivecommons/hive/issues/5698),
+  [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5698-backend-capacity-model-inventory-placement.md),
+  [#5784](https://github.com/hivecommons/hive/pull/5784)).
 
 A documented migration path from v4 hubs and spokes, with dual-version
 operation during the transition, is part of the v5 GA bar.
