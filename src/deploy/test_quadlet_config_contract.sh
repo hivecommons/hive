@@ -27,7 +27,7 @@ DOC="src/docs/podman-standalone-quadlet.md"
 COMPOSE="src/docker-compose.yaml"
 DEPLOY_CONF="src/deploy/hive.yaml"
 EXAMPLE_CONF="src/hive.yaml.example"
-GO_CONFIG="src/pkg/config/config.go"
+GO_DEFAULTS="src/pkg/config/defaults.go"
 
 pass_count=0
 failures=0
@@ -77,16 +77,16 @@ fi
 # --- 2. The Go default, which is what an omitted dashboard.port gives -------
 
 go_default=""
-if need_file "$GO_CONFIG"; then
+if need_file "$GO_DEFAULTS"; then
   go_default="$(
-    grep -oE 'defaultDashboardPort[[:space:]]*=[[:space:]]*[0-9]+' "${ROOT}/${GO_CONFIG}" \
+    grep -oE 'defaultDashboardPort[[:space:]]*=[[:space:]]*[0-9]+' "${ROOT}/${GO_DEFAULTS}" \
       | grep -oE '[0-9]+$' \
       | head -n1
   )"
   if [[ -z "$go_default" ]]; then
-    fail "${GO_CONFIG}: could not read defaultDashboardPort"
+    fail "${GO_DEFAULTS}: could not read defaultDashboardPort"
   elif [[ -n "$health_port" && "$go_default" != "$health_port" ]]; then
-    fail "${GO_CONFIG}: defaultDashboardPort is ${go_default} but ${UNIT} probes ${health_port}. An operator who omits dashboard.port would then never reach healthy."
+    fail "${GO_DEFAULTS}: defaultDashboardPort is ${go_default} but ${UNIT} probes ${health_port}. An operator who omits dashboard.port would then never reach healthy."
   else
     ok
   fi
