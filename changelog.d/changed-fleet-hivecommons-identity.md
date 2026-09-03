@@ -1,0 +1,1 @@
+- Fleet-facing image, GitHub API, and metrics defaults now use the Hive Commons identity so stable hubs and spokes pull `ghcr.io/hivecommons/hive` while the dual-publish window continues.
