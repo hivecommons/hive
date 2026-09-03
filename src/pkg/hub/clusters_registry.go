@@ -206,7 +206,7 @@ func defaultClusterRegistry() map[string]ClusterConfig {
 			IngressType:  "nginx",
 			IngressClass: "nginx",
 			CertIssuer:   "letsencrypt-prod",
-			Domain:       "hive.kubestellar.io",
+			Domain:       hubSpokeDomain(),
 			Arch:         "arm64",
 			// v4 is the ONLY image a hosted spoke can run: audit F2 deleted the
 			// fleet-wide heartbeat lane, and a v2 spoke has no SpokeHeartbeatKey

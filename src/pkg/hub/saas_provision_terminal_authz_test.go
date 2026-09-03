@@ -19,6 +19,7 @@ func renderManifestForTest(t *testing.T, nginx bool) string {
 	}
 	data := map[string]interface{}{
 		"ID":               "hosted-hive-x",
+		"HubPublicURL":     "https://hive.kubestellar.io",
 		"Namespace":        "hive-hosted-hosted-hive-x",
 		"DashboardHost":    "hosted-hive-x.hive.kubestellar.io",
 		"DashboardPort":    8080,

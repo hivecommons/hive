@@ -77,7 +77,7 @@ func TestWriteLinkPreviewServesHiveTags(t *testing.T) {
 		`property="og:description"`,
 		`property="og:image"`,
 		`name="twitter:card" content="summary_large_image"`,
-		hubPublicURL + "/og-card.png",
+		hubPublicURL() + "/og-card.png",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("preview HTML missing %q", want)

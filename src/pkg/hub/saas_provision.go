@@ -2287,6 +2287,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// symmetric; per-hive so an invite link cannot travel between tenants.
 		"InviteKey": provisionInviteKey(h.ID),
 		// Cluster-aware fields.
+		"HubPublicURL":       hubPublicURL(),
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
 		"DashboardPort":      dashboardPort,
@@ -2854,7 +2855,7 @@ data:
       hub_proxied: {{.IsNginxIngress}}
     hub:
       enabled: true
-      url: https://hive.kubestellar.io
+      url: {{.HubPublicURL}}
       dashboard_url: {{.DashboardURL}}
       hive_type: {{.HiveType}}
       is_public: {{.IsPublic}}
@@ -3108,7 +3109,7 @@ spec:
         - name: HIVE_LEVEL
           value: "{{.ACMMLevel}}"
         - name: HIVE_HUB_URL
-          value: https://hive.kubestellar.io
+          value: {{.HubPublicURL}}
         # C2 domain separation: derived per-domain sub-keys ONLY — never the
         # master HIVE_HUB_SECRET. HEARTBEAT authenticates beats to the hub;
         # SESSION verifies hub-minted cookies. SSO is ASYMMETRIC (C2 follow-up):
@@ -3253,10 +3254,10 @@ metadata:
   namespace: {{.Namespace}}
   annotations:
     cert-manager.io/cluster-issuer: {{.CertIssuer}}
-    nginx.ingress.kubernetes.io/auth-url: "https://hive.kubestellar.io/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
+    nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
     nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
     nginx.ingress.kubernetes.io/default-backend: hive-error-pages
-    nginx.ingress.kubernetes.io/auth-signin: "https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri"
+    nginx.ingress.kubernetes.io/auth-signin: "{{.HubPublicURL}}/login?redirect=$scheme://$http_host$request_uri"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
 spec:
   ingressClassName: {{.IngressClass}}
@@ -3344,8 +3345,8 @@ metadata:
     # shared .hive.kubestellar.io cookie) reaches ANY tenant's /terminal. The
     # auth-check endpoint verifies the caller against THIS hive's authorized
     # users (user.Hives[{{.ID}}]) and 403s a user with no access to this hive.
-    nginx.ingress.kubernetes.io/auth-url: "https://hive.kubestellar.io/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
-    nginx.ingress.kubernetes.io/auth-signin: "https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri"
+    nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
+    nginx.ingress.kubernetes.io/auth-signin: "{{.HubPublicURL}}/login?redirect=$scheme://$http_host$request_uri"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
 spec:
   ingressClassName: {{.IngressClass}}

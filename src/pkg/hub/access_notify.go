@@ -31,7 +31,7 @@ func hubDashboardBaseURL() string {
 			return strings.TrimRight(v, "/")
 		}
 	}
-	return hubPublicURL
+	return hubPublicURL()
 }
 
 // accessRequestReviewLink builds the one-click deep link that opens the

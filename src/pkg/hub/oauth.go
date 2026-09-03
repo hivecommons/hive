@@ -31,11 +31,6 @@ const (
 	// is inside the signature and checked by every verifier.
 	cookieSessionTTL = time.Duration(cookieMaxAgeDays) * 24 * time.Hour
 
-	// oauthRedirectURI is the single OAuth/OIDC callback registered on every
-	// provider's side. All providers share one callback path; the state parameter
-	// carries which provider to complete against.
-	oauthRedirectURI = "https://hive.kubestellar.io/api/auth/callback"
-
 	// oidcNonceCookieName holds the per-login OIDC replay nonce. Host-scoped like
 	// the CSRF state cookie; the id_token must echo it back or the callback fails.
 	oidcNonceCookieName = "hive_oidc_nonce"
@@ -126,12 +121,6 @@ func isLinkPreviewCrawler(r *http.Request) bool {
 	return false
 }
 
-// hubPublicURL is the canonical public origin used to build absolute Open Graph
-// URLs. Unfurlers require absolute image URLs — a relative path is ignored — and
-// they fetch the image without a session, so this must be the externally
-// reachable host.
-const hubPublicURL = "https://hive.kubestellar.io"
-
 // linkPreviewMaxAge is how long an unfurler may cache the preview HTML. Short,
 // because the copy may be reworded on any deploy; the image is cached far longer.
 const linkPreviewMaxAge = 5 * time.Minute
@@ -142,7 +131,8 @@ const linkPreviewMaxAge = 5 * time.Minute
 // The meta tags are kept at the very top of <head>: Slackbot reads only the
 // first 32KB of a response, so anything below that is invisible to it.
 func writeLinkPreview(w http.ResponseWriter) {
-	const previewHTML = `<!DOCTYPE html>
+	publicURL := hubPublicURL()
+	previewHTML := `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <title>Hive — AI agents that maintain your repo</title>
 <meta name="description" content="Hive — the AI maintainer you own outright. AI agents triage issues, write fixes, patch CVEs, and merge on green behind six autonomy levels.">
@@ -150,8 +140,8 @@ func writeLinkPreview(w http.ResponseWriter) {
 <meta property="og:title" content="Hive — AI agents that maintain your repo">
 <meta property="og:description" content="Put your repo on autopilot. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — test coverage earns the confidence to raise a level, and you (the admin) choose when to raise it.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="` + hubPublicURL + `">
-<meta property="og:image" content="` + hubPublicURL + `/og-card.png">
+<meta property="og:url" content="` + publicURL + `">
+<meta property="og:image" content="` + publicURL + `/og-card.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -159,10 +149,10 @@ func writeLinkPreview(w http.ResponseWriter) {
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Hive — AI agents that maintain your repo">
 <meta name="twitter:description" content="Put your repo on autopilot. AI agents on your backlog behind six autonomy levels.">
-<meta name="twitter:image" content="` + hubPublicURL + `/og-card.png">
+<meta name="twitter:image" content="` + publicURL + `/og-card.png">
 </head><body>
 <h1>Hive</h1>
-<p>AI agents that maintain your repo. <a href="` + hubPublicURL + `">Sign in to continue.</a></p>
+<p>AI agents that maintain your repo. <a href="` + publicURL + `">Sign in to continue.</a></p>
 </body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Preview cards are identical for every link and change only on deploy.
@@ -310,7 +300,7 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 		// serves /user's public profile (including "login") unscoped. Do NOT add a
 		// scope without a feature that needs it.
 		authURL := fmt.Sprintf("%s?client_id=%s&scope=&redirect_uri=%s&state=%s",
-			p.AuthorizeURL, p.ClientID, oauthRedirectURI, state)
+			p.AuthorizeURL, p.ClientID, oauthRedirectURI(), state)
 		http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 		return
 	}
@@ -332,7 +322,7 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	authURL, err := p.AuthCodeURL(oauthRedirectURI, state, oidcNonce)
+	authURL, err := p.AuthCodeURL(oauthRedirectURI(), state, oidcNonce)
 	if err != nil {
 		s.logger.Warn("OIDC: cannot build authorize URL", "provider", p.Name, "error", err)
 		http.Error(w, "login unavailable — provider not reachable", http.StatusBadGateway)
@@ -471,7 +461,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		ghToken     string // GitHub user access token, if any (stored encrypted)
 	)
 	if p.IsOIDC {
-		claims, err := p.Exchange(r.Context(), code, oauthRedirectURI, s.oidcNonceFromCookie(r))
+		claims, err := p.Exchange(r.Context(), code, oauthRedirectURI(), s.oidcNonceFromCookie(r))
 		s.clearOIDCNonceCookie(w)
 		if err != nil {
 			// Server-side diagnostics only: log which step failed (discovery /
@@ -835,12 +825,12 @@ func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue strin
 	// interim are handled by hubSessionCookieValues, which tries every copy.)
 	// Emitted BEFORE the real cookie so anything scanning Set-Cookie in order
 	// finds the live session last.
-	if domain != "" && domain != hubDomainSuffix {
+	for _, clearDomain := range legacySessionCookieDomains(domain) {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "hive_hub_user",
 			Value:    "",
 			Path:     "/",
-			Domain:   hubDomainSuffix,
+			Domain:   clearDomain,
 			MaxAge:   -1,
 			HttpOnly: true,
 			Secure:   true,
@@ -1072,10 +1062,8 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// only removes the jar entry whose domain matches. Also clear the legacy
 	// .hive.kubestellar.io-scoped entry (#4171 rollout: a pre-widening session
 	// is a separate jar entry that a parent-scoped deletion cannot remove).
-	clearDomains := []string{sessionCookieDomain(r.Host)}
-	if clearDomains[0] != "" && clearDomains[0] != hubDomainSuffix {
-		clearDomains = append(clearDomains, hubDomainSuffix)
-	}
+	liveDomain := sessionCookieDomain(r.Host)
+	clearDomains := append([]string{liveDomain}, legacySessionCookieDomains(liveDomain)...)
 	for _, domain := range clearDomains {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "hive_hub_user",

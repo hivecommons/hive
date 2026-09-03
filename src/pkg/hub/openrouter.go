@@ -28,10 +28,6 @@ import (
 )
 
 const (
-	// hubBaseURL is the hub's own public origin, used to build the OAuth
-	// callback_url server-side (never accepted from the client). Matches the
-	// hardcoded origin used elsewhere in the hub (cookies, redirect_uri).
-	hubBaseURL = "https://hive.kubestellar.io"
 	// hubOpenRouterCallbackPath is the hub's PUBLIC OAuth return path.
 	hubOpenRouterCallbackPath = "/openrouter/callback"
 	// hubOpenRouterGatewayName is the gateway name a funded key is delivered as.
@@ -106,7 +102,7 @@ func (s *HubServer) handleHubOpenRouterStart(w http.ResponseWriter, r *http.Requ
 		http.Error(w, `{"error":"failed to start flow"}`, http.StatusInternalServerError)
 		return
 	}
-	authURL, err := openrouter.BuildAuthorizeURL(hubBaseURL+hubOpenRouterCallbackPath, challenge, state)
+	authURL, err := openrouter.BuildAuthorizeURL(hubPublicURL()+hubOpenRouterCallbackPath, challenge, state)
 	if err != nil {
 		http.Error(w, `{"error":"failed to build authorize URL"}`, http.StatusInternalServerError)
 		return

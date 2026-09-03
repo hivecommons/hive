@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"golang.org/x/net/publicsuffix"
 )
 
 var saasUsersDir = "/data/saas/users"
@@ -1089,16 +1090,72 @@ func isNonBrowserAPIRequest(r *http.Request) bool {
 	return true
 }
 
+const (
+	defaultHubPublicURL          = "https://hive.kubestellar.io"
+	defaultHubCanonicalHost      = "hive.kubestellar.io"
+	defaultHubSpokeDomain        = "hive.kubestellar.io"
+	defaultLegacyHubCookieDomain = ".hive.kubestellar.io"
+)
+
+// hubPublicURL is the canonical public origin used to build absolute URLs.
+func hubPublicURL() string {
+	if v := strings.TrimSpace(os.Getenv("HIVE_HUB_PUBLIC_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultHubPublicURL
+}
+
+// oauthRedirectURI is the single OAuth/OIDC callback registered on every
+// provider's side. All providers share one callback path; the state parameter
+// carries which provider to complete against.
+func oauthRedirectURI() string {
+	return hubPublicURL() + "/api/auth/callback"
+}
+
 // hubCanonicalHost is the ONE host that serves the hub's own dashboard and API.
 // Every legitimate browser mutation against the hub is issued by a document
 // loaded from this host — tenant spokes are separate origins that talk to the
 // hub through their own proxy, never by scripting a cross-origin POST at it.
-const hubCanonicalHost = "hive.kubestellar.io"
+func hubCanonicalHost() string {
+	u, err := url.Parse(hubPublicURL())
+	if err != nil || u.Hostname() == "" {
+		return defaultHubCanonicalHost
+	}
+	return strings.ToLower(u.Hostname())
+}
 
-// hubDomainSuffix is the shared parent domain the hosted tenants live under
-// (<id>.hive.kubestellar.io). It is a REDIRECT-trust boundary only — see
-// isTrustedRedirectTarget — and deliberately NOT a CSRF or CORS boundary.
-const hubDomainSuffix = ".hive.kubestellar.io"
+// hubSpokeDomain is the shared parent domain the hosted tenants live under
+// (<id>.hive.kubestellar.io by default). It is a REDIRECT-trust boundary only
+// — see isTrustedRedirectTarget — and deliberately NOT a CSRF or CORS boundary.
+func hubSpokeDomain() string {
+	if v := strings.TrimSpace(os.Getenv("HIVE_HUB_SPOKE_DOMAIN")); v != "" {
+		return strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(v), "."), ".")
+	}
+	return defaultHubSpokeDomain
+}
+
+func hubDomainSuffix() string {
+	return "." + hubSpokeDomain()
+}
+
+func legacyHubCookieDomain() string {
+	v := strings.TrimSpace(os.Getenv("HIVE_HUB_LEGACY_COOKIE_DOMAIN"))
+	if v == "" {
+		return ""
+	}
+	return "." + strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(v), "."), ".")
+}
+
+func legacySessionCookieDomains(liveDomain string) []string {
+	var domains []string
+	if liveDomain != "" && liveDomain != defaultLegacyHubCookieDomain {
+		domains = append(domains, defaultLegacyHubCookieDomain)
+	}
+	if legacy := legacyHubCookieDomain(); legacy != "" && legacy != liveDomain && legacy != defaultLegacyHubCookieDomain {
+		domains = append(domains, legacy)
+	}
+	return domains
+}
 
 // sessionCookieParentDomain is the registrable parent domain the hub session
 // cookie is scoped to, so first-party sibling products on other kubestellar.io
@@ -1106,10 +1163,13 @@ const hubDomainSuffix = ".hive.kubestellar.io"
 // GET /api/saas/whoami. Derived from hubCanonicalHost (its parent domain)
 // rather than spelled out so the two can never disagree.
 func sessionCookieParentDomain() string {
-	if _, parent, ok := strings.Cut(hubCanonicalHost, "."); ok {
+	if parent, err := publicsuffix.EffectiveTLDPlusOne(hubCanonicalHost()); err == nil {
 		return parent
 	}
-	return hubCanonicalHost
+	if _, parent, ok := strings.Cut(hubCanonicalHost(), "."); ok {
+		return parent
+	}
+	return hubCanonicalHost()
 }
 
 // sessionCookieDomain returns the Domain attribute the hub session cookie
@@ -1177,7 +1237,7 @@ func isSameOriginAsHub(raw string) bool {
 	if !ok {
 		return false
 	}
-	return host == hubCanonicalHost || host == "localhost" || host == "127.0.0.1"
+	return host == hubCanonicalHost() || host == "localhost" || host == "127.0.0.1"
 }
 
 // isTrustedRedirectTarget reports whether raw is a URL the hub may bounce a
@@ -1202,8 +1262,8 @@ func isTrustedRedirectTarget(raw string) bool {
 	if !ok {
 		return false
 	}
-	return host == hubCanonicalHost ||
-		strings.HasSuffix(host, hubDomainSuffix) ||
+	return host == hubCanonicalHost() ||
+		strings.HasSuffix(host, hubDomainSuffix()) ||
 		host == "localhost" ||
 		host == "127.0.0.1"
 }
