@@ -50,6 +50,9 @@ jobs:
         working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Ensure PyYAML on self-hosted runners
+        working-directory: .
+        run: python3 -c "import yaml" 2>/dev/null || pip3 install --user pyyaml
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -810,7 +813,7 @@ jobs:
   # completion (~8 wasted runner-minutes). nightly-release still requires
   # BOTH build-and-test and docker, so the v2 nightly gate is unchanged.
   docker:
-    runs-on: [self-hosted, hive]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -849,7 +852,7 @@ jobs:
   # future re-enable of provenance/SBOM or removal of the in-stage rewrite), the
   # binary EPERMs here and the PR is blocked.
   overlayfs-exec-guard:
-    runs-on: [self-hosted, hive]
+    runs-on: ubuntu-latest
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
