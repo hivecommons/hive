@@ -1,0 +1,1 @@
+- Knowledge PR enrichment now strips the `gh-` namespace from repo-qualified external references before fetching metadata, so multi-repo beads such as `gh-owner/repo#123` enrich from the intended repository instead of caching a silent miss ([#5741](https://github.com/kubestellar/hive/issues/5741)).

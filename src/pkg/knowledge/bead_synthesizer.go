@@ -832,6 +832,8 @@ func (e *PREnricher) parseRef(ref string) (string, string, int) {
 		return e.org, "", n
 	}
 
+	ref = strings.TrimPrefix(ref, "gh-")
+
 	if m := repoRefPattern.FindStringSubmatch(ref); m != nil {
 		owner := m[1]
 		if owner == "" {

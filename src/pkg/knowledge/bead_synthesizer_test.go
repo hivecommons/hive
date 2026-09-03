@@ -765,6 +765,24 @@ func TestPREnricher_ParseRef_OrgRepoHash(t *testing.T) {
 	}
 }
 
+func TestPREnricher_ParseRef_PrefixedRepoHash(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", []string{"console"}, synthTestLogger())
+
+	owner, repo, num := e.parseRef("gh-docs#123")
+	if owner != "kubestellar" || repo != "docs" || num != 123 {
+		t.Errorf("parseRef(gh-docs#123) = %q, %q, %d; want kubestellar, docs, 123", owner, repo, num)
+	}
+}
+
+func TestPREnricher_ParseRef_PrefixedOrgRepoHash(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", nil, synthTestLogger())
+
+	owner, repo, num := e.parseRef("gh-other-org/my-repo#99")
+	if owner != "other-org" || repo != "my-repo" || num != 99 {
+		t.Errorf("parseRef(gh-other-org/my-repo#99) = %q, %q, %d; want other-org, my-repo, 99", owner, repo, num)
+	}
+}
+
 func TestPREnricher_ParseRef_Invalid(t *testing.T) {
 	e := NewPREnricher(nil, "kubestellar", nil, synthTestLogger())
 

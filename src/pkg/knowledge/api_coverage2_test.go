@@ -215,7 +215,9 @@ func mockGHClient(t *testing.T, handler http.HandlerFunc) (*gh.Client, func()) {
 }
 
 func TestPREnricher_EnrichBody(t *testing.T) {
+	var paths []string
 	client, closeSrv := mockGHClient(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
 		pr := map[string]any{
 			"number":        7,
 			"title":         "Fix the thing",
@@ -252,6 +254,15 @@ func TestPREnricher_EnrichBody(t *testing.T) {
 	b2 := &beads.Bead{ID: "b2", ExternalRef: "gh-7", Metadata: map[string]any{}}
 	if got := e.EnrichBody(context.Background(), b2, "scanner"); got == "" {
 		t.Error("expected non-empty body for gh-<n> ref")
+	}
+
+	// Prefixed qualified refs strip the gh- namespace before fetching.
+	bPrefixed := &beads.Bead{ID: "b-prefixed", ExternalRef: "gh-myorg/repo1#7", Metadata: map[string]any{}}
+	if got := e.EnrichBody(context.Background(), bPrefixed, "scanner"); got == "" {
+		t.Error("expected non-empty body for gh-owner/repo#n ref")
+	}
+	if paths[len(paths)-1] != "/api/v3/repos/myorg/repo1/pulls/7" {
+		t.Fatalf("prefixed qualified ref fetched %q; want /api/v3/repos/myorg/repo1/pulls/7", paths[len(paths)-1])
 	}
 
 	// Unparseable ref -> empty.
