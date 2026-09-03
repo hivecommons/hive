@@ -599,7 +599,17 @@ func TestEvaluateAllRepos_AggregatesAcrossRepos(t *testing.T) {
 	for _, rr := range eval.RepoResults {
 		if rr.Repo == "repo-b" {
 			repoBPassed = rr.CriteriaPassed
+			if rr.BlockedAtLevel != 0 {
+				t.Fatalf("repo-b BlockedAtLevel = %d, want 0", rr.BlockedAtLevel)
+			}
 		}
+	}
+	raw, err := json.Marshal(eval)
+	if err != nil {
+		t.Fatalf("marshal eval: %v", err)
+	}
+	if !strings.Contains(string(raw), `"blocked_at_level"`) {
+		t.Fatalf("serialized eval missing blocked_at_level: %s", raw)
 	}
 	aggPassed = eval.CriteriaPassed
 	if aggPassed < repoBPassed {
