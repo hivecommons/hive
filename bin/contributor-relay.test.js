@@ -2590,6 +2590,33 @@ const CODEX_UPDATE_PANE = [
   '  Press enter to continue',
 ].join('\n');
 
+const AGY_READY_PANE = [
+  'Antigravity CLI',
+  '',
+  '> ',
+  '? for shortcuts',
+].join('\n');
+
+const AGY_TOS_PANE = [
+  'Welcome to Antigravity',
+  'Terms of Service & Data Use',
+  '',
+  '[ ] I agree to the Terms of Service',
+  '',
+  '[Previous] [Done]',
+].join('\n');
+
+const AGY_TRUST_PANE = [
+  'Do you trust the contents of this directory?',
+  '',
+  '[I trust this directory]',
+].join('\n');
+
+const AGY_LOGIN_PANE = [
+  'You are not signed in',
+  'Select login method',
+].join('\n');
+
 const CODEX_COMPLETED_NO_WORK_PANE = [
   '• Running GH_TOKEN=... gh issue view 4065 --repo kubestellar/hive',
   '',
@@ -2629,6 +2656,61 @@ test('codex numbered startup menus get explicit safe selections', () => {
     assert.strictEqual(relay.blockingPromptKey(CODEX_UPDATE_PANE), '3');
     assert.strictEqual(relay.blockingPromptKey('Do you trust this folder? (y/n)'), null);
   } finally { teardown(relay); }
+});
+
+test('agy startup gates are classified before readiness, using only the visible tail', () => {
+  const cases = [
+    [AGY_LOGIN_PANE, 'needs-login'],
+    [AGY_TOS_PANE, 'onboarding'],
+    [AGY_TRUST_PANE, 'onboarding'],
+    [AGY_READY_PANE, 'ready'],
+  ];
+  for (const [pane, want] of cases) {
+    const relay = loadRelay({ backend: 'agy', cliStates: [pane] });
+    try {
+      assert.strictEqual(relay.getCLIState(), want);
+    } finally { teardown(relay); }
+  }
+});
+
+test('agy ready gate does not fire on splash or wizard cursor', () => {
+  for (const pane of [
+    'Antigravity CLI\nloading workspace...\n',
+    'Choose your color scheme\n❯ Dark\n  Light\n',
+  ]) {
+    const relay = loadRelay({ backend: 'agy', cliStates: [pane] });
+    try {
+      assert.notStrictEqual(relay.getCLIState(), 'ready',
+        'splash text and wizard cursors must not be treated as an idle agy prompt');
+    } finally { teardown(relay); }
+  }
+});
+
+test('agy onboarding prose in old scrollback does not override a ready tail', () => {
+  const pane = [
+    'Earlier task output quoted Terms of Service & Data Use and [Done].',
+    ...Array.from({ length: 20 }, (_, i) => `ordinary output line ${i}`),
+    AGY_READY_PANE,
+  ].join('\n');
+  const relay = loadRelay({ backend: 'agy', cliStates: [pane] });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'ready');
+    assert.strictEqual(relay.blockingPromptKey(pane), null);
+  } finally { teardown(relay); }
+});
+
+test('agy ToS wizard selects Done, but non-agy or prose matches do not', () => {
+  const agy = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(agy.blockingPromptKey(AGY_TOS_PANE), 'Down Right');
+    assert.strictEqual(agy.blockingPromptKey('Terms of Service & Data Use\n[Done] appears in a task summary'), null);
+    assert.strictEqual(agy.blockingPromptKey('Terms of Service & Data Use mentioned without the button row'), null);
+  } finally { teardown(agy); }
+
+  const codex = loadRelay({ backend: 'codex' });
+  try {
+    assert.strictEqual(codex.blockingPromptKey(AGY_TOS_PANE), null);
+  } finally { teardown(codex); }
 });
 
 test('codex no-work verdict is COMPLETE despite stale activity in scrollback', () => {
