@@ -769,7 +769,12 @@ Before choosing work:
    or stand down. If the snapshot says additional PRs were omitted, stand down:
    unseen occupied ground cannot be proven disjoint. Do not write a second
    implementation and do not remove hold.
-4. Make each new PR title and body name the exact files/functions/cluster it
+4. Cut any new branch from a fresh ` + "`origin/<base>`" + `, not from a local worktree
+   or another agent's branch. If a hold-gated PR's head moves while held, the
+   hold guard treats that as unreviewed drift: auto-merge stays blocked, a
+   warning comment names the new commits/authors, and the PR must receive fresh
+   human review before the hold is lifted again.
+5. Make each new PR title and body name the exact files/functions/cluster it
    claims so the next kick can make the same comparison.
 
 `

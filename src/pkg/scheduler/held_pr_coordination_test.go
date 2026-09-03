@@ -62,6 +62,8 @@ func TestHeldPRCoordinationReachesCustomizedAndManualKicks(t *testing.T) {
 		"acme/widget#26 Test run_main and main exit mapping",
 		"gh pr view <number> --repo <repo> --json title,body,files",
 		"choose a disjoint cluster",
+		"Cut any new branch from a fresh `origin/<base>`",
+		"hold guard treats that as unreviewed drift",
 		"CUSTOM POLICY BODY",
 	} {
 		if !strings.Contains(msg, want) {

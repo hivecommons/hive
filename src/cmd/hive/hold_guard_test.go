@@ -297,6 +297,77 @@ func TestEnforceHoldGuardDriftBlocksCommentsAndReholds(t *testing.T) {
 	}
 }
 
+func TestEnforceHoldGuardPlanningPRForeignCommitsRequireReReview(t *testing.T) {
+	newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		55: {ghCommit("d1", "strategist-bot", "docs: add UPGRADE")},
+	}}
+	client := newHoldGuardClient(t, fake)
+	cfg := escalationTestConfig()
+
+	_ = enforceHoldGuard(context.Background(), cfg, client, client,
+		heldActionable(github.HoldItem{Repo: "widgets", Number: 55, Type: "pr", HeadSHA: "d1", Author: "strategist-bot"}), discardLogger())
+
+	fake.mu.Lock()
+	fake.commits[55] = []map[string]any{
+		ghCommit("d1", "strategist-bot", "docs: add UPGRADE"),
+		ghCommit("x1", "sec-check-bot", "fix: harden saas token path"),
+		ghCommit("x2", "quality-bot", "test: cover contaminated branch"),
+	}
+	fake.mu.Unlock()
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{
+			Repo:      "widgets",
+			Number:    55,
+			Title:     "📖 docs: add v5 upgrade plan",
+			Author:    "strategist-bot",
+			HeadSHA:   "x2",
+			CIStatus:  "success",
+			Mergeable: github.MergeableYes,
+		}), discardLogger())
+	if !got["widgets/55"] {
+		t.Fatalf("docs/planning PR with foreign commits must require re-review, got %v", got)
+	}
+	if len(fake.comments) != 1 {
+		t.Fatalf("comments = %d, want one re-review evidence comment", len(fake.comments))
+	}
+	comment := fake.comments[0]
+	for _, want := range []string{"`sec-check-bot`", "`quality-bot`", "fix: harden saas token path", "test: cover contaminated branch", "fresh review required"} {
+		if !strings.Contains(comment, want) {
+			t.Errorf("drift comment missing %q:\n%s", want, comment)
+		}
+	}
+	if len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+		t.Fatalf("labels = %v, want re-applied hold", fake.labels)
+	}
+}
+
+func TestEnforceHoldGuardLeavesUnheldPRsAlone(t *testing.T) {
+	newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "agent", "feat: normal PR")},
+	}}
+	client := newHoldGuardClient(t, fake)
+	cfg := escalationTestConfig()
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{
+			Repo:      "widgets",
+			Number:    7,
+			Author:    "agent",
+			HeadSHA:   "c1",
+			CIStatus:  "success",
+			Mergeable: github.MergeableYes,
+		}), discardLogger())
+	if len(got) != 0 {
+		t.Fatalf("unheld PRs with no hold snapshot must not be gated, got %v", got)
+	}
+	if len(fake.comments)+len(fake.labels) != 0 {
+		t.Fatalf("unheld PR must not receive comments or labels, saw %v / %v", fake.comments, fake.labels)
+	}
+}
+
 func TestEnforceHoldGuardCommentFailureRetriesWithoutSilentRehold(t *testing.T) {
 	store := newTestHoldGuardStore(t)
 	fake := &holdGuardServer{
