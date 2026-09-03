@@ -50,6 +50,9 @@ jobs:
         working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Ensure PyYAML on self-hosted runners
+        working-directory: .
+        run: python3 -c "import yaml" 2>/dev/null || pip3 install --user pyyaml
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -583,7 +586,7 @@ jobs:
             });
 
   docker:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: build-and-test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -623,7 +626,7 @@ jobs:
   # future re-enable of provenance/SBOM or removal of the in-stage rewrite), the
   # binary EPERMs here and the PR is blocked.
   overlayfs-exec-guard:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: build-and-test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
