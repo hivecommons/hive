@@ -86,6 +86,10 @@ type ApprovalDeskRequest struct {
 // toolapprove.KindSelfMerge without importing it.
 const ApprovalDeskKindSelfMerge = "self-merge"
 
+// ApprovalDeskKindQueuedMerge names the trusted-human merge-queue lane. It
+// mirrors toolapprove.KindQueuedMerge without importing it.
+const ApprovalDeskKindQueuedMerge = "queued-merge"
+
 // SetApprovalDesk installs the approval-desk hook. Passing nil removes it,
 // restoring pre-desk behavior. A nil client is a no-op.
 //

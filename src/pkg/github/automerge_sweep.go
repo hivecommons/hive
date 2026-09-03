@@ -732,6 +732,23 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, reason, nil
 	}
 
+	// Approval desk (RFC #4000) for the trusted human merge-queue lane.
+	// Consulted only after the legacy queue approval, trusted-merger,
+	// mergeability, and green-check gates pass, so enabling the desk can record
+	// or withhold this operation but cannot widen merge authority.
+	if allow, deskReason := c.consultApprovalDesk(ctx, ApprovalDeskRequest{
+		Kind:        ApprovalDeskKindQueuedMerge,
+		Repo:        displayRepo,
+		Number:      number,
+		Author:      author,
+		Title:       pr.GetTitle(),
+		Labels:      labels,
+		ChecksGreen: true,
+		HeadSHA:     headSHA,
+	}); !allow {
+		return AutoMergeSweepEvent{}, deskReason, nil
+	}
+
 	mergeResult, _, err := c.client.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
 		SHA:         headSHA,
 		MergeMethod: "squash",
