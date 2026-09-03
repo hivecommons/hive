@@ -1404,7 +1404,7 @@ func isPublicPath(path string) bool {
 	case strings.HasPrefix(path, "/api/leaderboard"):
 		return true
 	case strings.HasPrefix(path, "/api/gh-user-auth/"):
-		return true
+		return path != "/api/gh-user-auth/logout"
 	case path == openRouterCallbackPath:
 		// OpenRouter OAuth PKCE return: the sponsor's browser comes back with no
 		// session, so the path must be public. The single-use state token in the

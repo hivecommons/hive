@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -351,6 +352,23 @@ func TestCovDF_GHUserAuthStatus_NoTokenFile(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["logged_in"] != false {
 		t.Fatalf("no token file should be logged_in=false, got %v", body)
+	}
+}
+
+func TestGHUserAuthLogout_AnonymousDoesNotDeletePersistedToken(t *testing.T) {
+	s, _, _ := dfServer(t, "complete", "octocat")
+	if err := os.WriteFile(userTokenPath, []byte("gho_owner_token"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/gh-user-auth/logout", nil)
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous logout code = %d, want 401", rec.Code)
+	}
+	if _, err := os.Stat(userTokenPath); err != nil {
+		t.Fatalf("anonymous logout removed persisted token: %v", err)
 	}
 }
 

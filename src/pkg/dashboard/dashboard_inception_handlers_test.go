@@ -233,7 +233,9 @@ func TestHandleGHUserAuthPollNoState(t *testing.T) {
 
 func TestHandleGHUserAuthLogout(t *testing.T) {
 	srv := newMinimalServer(t)
+	sid := srv.createUserSession("owner", config.RoleOwner)
 	req := httptest.NewRequest("POST", "/api/gh-user-auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
 	w := httptest.NewRecorder()
 	srv.handleGHUserAuthLogout(w, req)
 	if w.Code != http.StatusOK {
