@@ -26,6 +26,7 @@ order, not priority rank.
 | Spoke-based lite enrollment | Keep `hivectl enroll OWNER/REPO` as a zero-secret on-ramp by adding repos to an existing spoke or provisioning a hosted lite spoke; the hub tracks only spokes. | [#2808](https://github.com/kubestellar/hive/issues/2808), [lite enrollment](lite-enrollment.md) |
 | Retrospective learning lane | Build from deterministic post-completion advisory beads toward LLM-assisted retro summaries and knowledge extraction. | [#2809](https://github.com/kubestellar/hive/issues/2809), [retro lane](retro-lane.md) |
 | ADR back-fill for remaining subsystems | **Done.** Back-filled accepted ADRs capture the knowledge system, skill registry, CEL/channel triggers, and hub/spoke mechanics, so architecture decisions stay auditable. | [ADR-0011](adr/0011-knowledge-system.md), [ADR-0012](adr/0012-skill-registry.md), [ADR-0013](adr/0013-cel-triggers.md), [ADR-0014](adr/0014-hub-spoke.md) |
+| HiveCommons org migration | Make the kubestellar-to-hivecommons migration auditable before package or repository defaults change, including image mirror phases, docs sweeps, v5 edge coverage, and operator communications. | [migration tracker](hivecommons-migration.md), [#5686](https://github.com/kubestellar/hive/issues/5686) |
 
 ## Next
 
