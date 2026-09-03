@@ -917,7 +917,7 @@ func TestHealthSummary_WithAgents(t *testing.T) {
 
 func TestHandleGovernorRepos_PrimaryRepoURL(t *testing.T) {
 	srv := newFullServer(t)
-	// Full URLs in primary_repo are now rejected instead of silently stripped.
+	srv.deps.Config.Project.Org = "oldorg"
 	body := `{"repos":["otherrepo"],"primaryRepo":"https://github.com/otherorg/otherrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -925,11 +925,14 @@ func TestHandleGovernorRepos_PrimaryRepoURL(t *testing.T) {
 	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if srv.deps.Config.Project.PrimaryRepo == "otherrepo" {
-		t.Errorf("primaryRepo changed to %q despite rejection", srv.deps.Config.Project.PrimaryRepo)
+	if srv.deps.Config.Project.Org != "otherorg" {
+		t.Fatalf("Project.Org = %q, want otherorg", srv.deps.Config.Project.Org)
+	}
+	if srv.deps.Config.Project.PrimaryRepo != "otherrepo" {
+		t.Fatalf("primaryRepo = %q, want otherrepo", srv.deps.Config.Project.PrimaryRepo)
 	}
 }
 
