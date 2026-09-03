@@ -3261,7 +3261,7 @@
   </div>
 
   <div id="acmm-eval-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-eval-section"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level" style="vertical-align:middle;margin-left:8px;font-weight:400">Change level ▾</button></h2>
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-eval-section"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level" style="vertical-align:middle;margin-left:8px;font-weight:400">Change level ▾</button> <button class="btn" id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1" title="Re-run the criteria evaluation now instead of waiting out the hourly cache (server-debounced)" style="vertical-align:middle;margin-left:4px;font-weight:400">🔄 Re-evaluate</button></h2>
     <div class="section-body">
       <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
         <div class="kb-stat-grid" id="acmm-eval-stats">
@@ -16070,7 +16070,13 @@ function burnAreaChart() {
 
       const tsEl = document.getElementById('acmm-eval-timestamp');
       if (tsEl) {
-        let tsText = d.last_evaluated_at ? 'Evaluated: ' + new Date(d.last_evaluated_at).toLocaleString() : '';
+        // #5877: relative age, so it is legible that the numbers above may be
+        // an hour-old cache. Absolute timestamp stays in the tooltip.
+        let tsText = '';
+        if (d.last_evaluated_at) {
+          tsText = 'Evaluated ' + acmmRelativeAge(d.last_evaluated_at);
+          tsEl.title = new Date(d.last_evaluated_at).toLocaleString();
+        }
         if (d.repo_results && d.repo_results.length > 1) tsText += ' | ' + d.repo_results.length + ' repos';
         tsEl.textContent = tsText;
       }
@@ -16086,9 +16092,35 @@ function burnAreaChart() {
       }
     }
 
-    async function fetchACMMEvaluation() {
+    function acmmRelativeAge(iso) {
+      const ms = Date.now() - new Date(iso).getTime();
+      if (!Number.isFinite(ms) || ms < 0) return 'just now';
+      const mins = Math.floor(ms / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'm ago';
+      return Math.floor(hrs / 24) + 'd ago';
+    }
+
+    // #5877: operator-initiated re-evaluation. The server enforces its own
+    // debounce (a refresh within a minute of the last evaluation returns the
+    // cached result), so this button cannot spend the API budget.
+    async function acmmForceRefresh() {
+      const btn = document.getElementById('acmm-refresh-btn');
+      if (btn && btn.disabled) return;
+      const prev = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-evaluating...'; }
       try {
-        const r = await fetch('/api/acmm/evaluation');
+        await fetchACMMEvaluation(true);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+      }
+    }
+
+    async function fetchACMMEvaluation(force) {
+      try {
+        const r = await fetch(force ? '/api/acmm/evaluation?refresh=1' : '/api/acmm/evaluation');
         if (!r.ok) return;
         _acmmEvalData = await r.json();
         acmmRenderCard();
