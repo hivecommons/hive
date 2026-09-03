@@ -45,6 +45,8 @@ func TestMain(m *testing.M) {
 	// KUBECONFIG could equally point a real kubectl at a real cluster for the
 	// non-InCluster branch, so neutralize it to a path that cannot exist.
 	os.Setenv("KUBECONFIG", os.DevNull)
+	k8sTokenPath = "testdata/no-such-serviceaccount-token"
+	k8sCACertPath = "testdata/no-such-serviceaccount-ca.crt"
 
 	// Commit-order ancestry resolves are kicked as BACKGROUND goroutines from
 	// the heartbeat completion chain, the orphan sweep and triggerAutoUpgrades
