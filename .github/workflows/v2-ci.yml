@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     defaults:
       run:
         working-directory: src
@@ -755,7 +755,7 @@ jobs:
         run: bash src/deploy/test_deploy_suites_wired.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     needs: build-and-test
     permissions:
       contents: read
@@ -810,7 +810,7 @@ jobs:
   # completion (~8 wasted runner-minutes). nightly-release still requires
   # BOTH build-and-test and docker, so the v2 nightly gate is unchanged.
   docker:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -849,7 +849,7 @@ jobs:
   # future re-enable of provenance/SBOM or removal of the in-stage rewrite), the
   # binary EPERMs here and the PR is blocked.
   overlayfs-exec-guard:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -966,7 +966,7 @@ jobs:
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     needs: [build-and-test, docker]
     permissions:
       contents: read
