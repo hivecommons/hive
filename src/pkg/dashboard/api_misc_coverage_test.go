@@ -115,11 +115,11 @@ func TestCovG_HandleGHUserAuthSession(t *testing.T) {
 func TestCovG_HandleGHUserAuthLogout(t *testing.T) {
 	s := covMiscServer(t)
 
-	// Logout with no session cookie: still clears cookie + audits + 200.
+	// Logout with no session cookie is rejected before it can delete credentials.
 	rec := httptest.NewRecorder()
 	s.handleGHUserAuthLogout(rec, httptest.NewRequest(http.MethodPost, "/api/gh-user-auth/logout", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("logout no-session: expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("logout no-session: expected 401, got %d", rec.Code)
 	}
 
 	// Logout WITH a live session cookie exercises the lookup + delete branch.

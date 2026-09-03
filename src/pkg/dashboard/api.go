@@ -2688,22 +2688,31 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	// Clear only THIS request's session so logging out affects one user, not
 	// everyone. Removing the disk token only makes sense when the logging-out
 	// user is the one whose token is persisted (the owner/last-authenticated
-	// user); on a direct-route spoke a read-only viewer logging out must not
-	// wipe the owner's persisted token.
+	// user); an anonymous POST must never wipe the owner's persisted token.
 	var loggedOut, loggedOutRole string
-	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
-		if sess := s.lookupSession(c.Value); sess != nil {
-			loggedOut = sess.Username
-			loggedOutRole = sess.Role
-		}
-		s.deleteSession(c.Value)
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil || c.Value == "" {
+		clearSessionCookie(w)
+		jsonError(w, "GitHub user session required", http.StatusUnauthorized)
+		return
 	}
+	sess := s.lookupSession(c.Value)
+	if sess == nil {
+		s.deleteSession(c.Value)
+		clearSessionCookie(w)
+		jsonError(w, "GitHub user session required", http.StatusUnauthorized)
+		return
+	}
+	loggedOut = sess.Username
+	loggedOutRole = sess.Role
+	s.deleteSession(c.Value)
+
 	// Only clear the persisted GitHub token when the logging-out user is the
 	// owner (read-write). Use the role bound to the session at login time — not
 	// a fresh config lookup — so a later allowlist change can't leave a
 	// logging-out owner's own token stranded on disk. Viewer logouts leave the
 	// hive's user client intact.
-	if !s.directRouteAuthzEnabled() || loggedOutRole == config.RoleOwner {
+	if loggedOutRole == config.RoleOwner {
 		if err := os.Remove(userTokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.deps.Logger.Error("GitHub user token removal failed", "error", err)
 			jsonError(w, "failed to remove persisted GitHub credentials", http.StatusInternalServerError)

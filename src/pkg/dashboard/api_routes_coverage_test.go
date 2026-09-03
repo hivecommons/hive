@@ -223,9 +223,9 @@ func TestCovG2_GHUserAuthPollAndLogout(t *testing.T) {
 		t.Errorf("poll no-flow = %d, want 400", rec.Code)
 	}
 
-	// Logout (no session) still succeeds and clears cookie.
-	if rec := doPost(s, "/api/gh-user-auth/logout", nil); rec.Code != http.StatusOK {
-		t.Errorf("logout = %d", rec.Code)
+	// Logout requires a live GitHub user session.
+	if rec := doPost(s, "/api/gh-user-auth/logout", nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("logout = %d, want 401", rec.Code)
 	}
 }
 

@@ -32,7 +32,7 @@ func TestCovH2_IsPublicPath(t *testing.T) {
 			t.Errorf("expected %q to be public", p)
 		}
 	}
-	privates := []string{"/api/status", "/api/agents", "/", "/dashboard", "/api/config/github"}
+	privates := []string{"/api/status", "/api/agents", "/", "/dashboard", "/api/config/github", "/api/gh-user-auth/logout"}
 	for _, p := range privates {
 		if isPublicPath(p) {
 			t.Errorf("expected %q to NOT be public", p)
