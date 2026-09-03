@@ -46,6 +46,8 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_WORKSPACE_CLEANUP_INTERVAL` | No | `1h` | How often the workspace cleanup sweep runs (Go duration, e.g. `30m`). Unset, unparseable, or non-positive values fall back to the default. |
 | `HIVE_WORKSPACE_CLEANUP_MAX_AGE` | No | `2h` | How old an entry under `/data/agents/*/` must be before the cleanup sweep removes it (Go duration, e.g. `6h`). Unset, unparseable, or non-positive values fall back to the default. |
 | `HIVE_DOSSIER_CACHE_MAX_ENTRIES` | No | `512` | Caps each public dossier cache. Bounds username-spray memory while keeping normal contributor reuse hot. |
+| `HIVE_BRANDING_CSS` | No | `<data>/branding/custom.css`, where `<data>` is the parent of the configured `agents_dir` (normally `/data`) | Full path to the operator branding stylesheet the dashboard serves at `/branding/custom.css`. See [branding.md](branding.md). |
+| `HIVE_BRANDING_JSON` | No | `branding.json` beside the resolved `custom.css` path — so setting `HIVE_BRANDING_CSS` also moves this default | Full path to the branding strings file (`product_name`, `tagline`, `mark`, `title`). Read once at startup. See [branding.md](branding.md#strings). |
 
 ## Generating and rotating `HIVE_DASHBOARD_TOKEN`
 

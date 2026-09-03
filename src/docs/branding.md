@@ -12,6 +12,20 @@ dashboard or rebuilding the image. Two files on the data volume:
 Both are optional. A missing file changes nothing; a partial `branding.json`
 leaves every field it omits at the shipped default.
 
+`<data>` is the parent directory of the configured `agents_dir` (so `/data` in
+every standard deployment). For layouts where that is wrong — a read-only data
+volume, branding mounted from a Secret — each path can be overridden outright
+with an environment variable:
+
+| Variable | Overrides | Default |
+|---|---|---|
+| `HIVE_BRANDING_CSS` | full path to the override stylesheet | `<data>/branding/custom.css` |
+| `HIVE_BRANDING_JSON` | full path to the strings file | `branding.json` beside `custom.css` |
+
+Note the coupling: the `branding.json` default is derived from the *resolved*
+CSS path, so setting only `HIVE_BRANDING_CSS` also moves where `branding.json`
+is looked for.
+
 ## Strings
 
 ```json
