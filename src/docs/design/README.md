@@ -29,15 +29,18 @@ that status is the thing to check before treating a page as current behaviour:
   (`src/pkg/hub/hub_generations*.go`, `hub_cookie_generations.go`); the
   remaining per-domain adoptions listed under "Follow-on PRs" are still pending.
 - [Wrapped master delivery to pull-only spokes](master-delivery-wrapped.md) —
-  **partly shipped**, and page-level **design only**. Read it after
+  **design only** (an early partial implementation was later removed unwired).
+  Read it after
   master-key-rotation.md: rotation is complete on the hub and delivers nothing to
   the two thirds of the fleet on pull-only clusters, which the hub cannot write
   to by design. Records Option D — the spoke generates a keypair, publishes the
   public half over its own outbound heartbeat, and the hub seals each new master
   to it — and why Options A and B were rejected. The sealing primitive and the
-  spoke-side wrapping-key lifecycle have since landed (`src/pkg/hub/wrapkey.go`,
-  `wrapkey_store.go`); the page is not updated post hoc as later stages ship, so
-  its own header still reads DESIGN ONLY.
+  spoke-side wrapping-key lifecycle briefly landed (`src/pkg/hub/wrapkey.go`,
+  `wrapkey_store.go`) but were never wired to a caller and were removed as dead
+  code in #5697 (see #5694), so no shipped code currently implements this page —
+  the prior implementation is recoverable from git history. Its header reads
+  DESIGN ONLY and that is once again literally true.
 - [PR reach telemetry](pr-reach-telemetry.md) — **partly shipped.** The design
   behind attributing merged code to what is actually running, and the anchoring
   rule that governs it: **merged ≠ deployed ≠ running**, so reach must attribute
