@@ -12,7 +12,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 const DefaultAutoMergeSweepMaxMerges = 3

@@ -3,7 +3,7 @@ package outcome
 import (
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/convergence"
 )
 
 // Convergence mode values, mirroring the convergence.mode /

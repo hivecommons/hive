@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // ProxyRule maps a GitHub API (method, path-pattern) to the minimum

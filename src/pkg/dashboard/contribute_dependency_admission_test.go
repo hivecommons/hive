@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/convergence"
 )
 
 // ── #3845 first-slice acceptance matrix, proven on the PRODUCTION path ────────

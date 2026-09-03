@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // backendListsConfPath is the shell half of the CLI-backend list. config.go's

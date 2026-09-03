@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/kubestellar/hive/pkg/auth"
+	"github.com/hivecommons/hive/pkg/auth"
 )
 
 // fakeOIDCProvider is a minimal OIDC server (discovery + JWKS + token endpoint)

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 const maxInceptionBodyBytes = 64 * 1024

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // writeProvenanceFixture points the handler at temp seed/overlay files and

@@ -39,7 +39,7 @@ func TestRepoTargetForgeHost(t *testing.T) {
 	}{
 		{"empty defaults to github.com", "", "github.com"},
 		{"whitespace defaults to github.com", "   ", "github.com"},
-		{"full https URL", "https://github.com/kubestellar/hive", "github.com"},
+		{"full https URL", "https://github.com/hivecommons/hive", "github.com"},
 		{"GHE URL", "https://github.example.com/org/repo", "github.example.com"},
 		{"http URL", "http://gitlab.local/org/repo", "gitlab.local"},
 		{"URL with port", "https://git.example.com:8443/repo", "git.example.com:8443"},

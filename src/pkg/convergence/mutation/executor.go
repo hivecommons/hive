@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/convergence/proof"
+	"github.com/hivecommons/hive/pkg/convergence/proof"
 )
 
 // Convergence mode gating mirrors the proof package's resolved-mode contract

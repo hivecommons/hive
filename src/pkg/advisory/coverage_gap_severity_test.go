@@ -3,7 +3,7 @@ package advisory
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // A coverage-gap finding must never surface as critical in the digest (#4734):

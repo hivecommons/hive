@@ -4,7 +4,7 @@ This optional kustomize overlay deploys a [Kyverno](https://kyverno.io/) `Cluste
 gap between the backup CronJob's cluster-wide `pods/exec` RBAC grant and the
 application's actual access pattern (only `hive-hosted-*` namespaces).
 
-## Background (issue [#4062](https://github.com/kubestellar/hive/issues/4062))
+## Background (issue [#4062](https://github.com/hivecommons/hive/issues/4062))
 
 The `hive-hub-backup` ClusterRole must grant `pods/exec: create` cluster-wide
 because Kubernetes RBAC cannot express wildcard-namespace rules. The backup

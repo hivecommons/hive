@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // covFInceptionServerWithBeads builds a test server with a real bead store

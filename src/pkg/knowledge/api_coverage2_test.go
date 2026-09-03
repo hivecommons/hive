@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // apiWithVault builds a KnowledgeAPI with a single connected file vault so the

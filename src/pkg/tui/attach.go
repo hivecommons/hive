@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
 const tmuxSessionPrefix = "hive-"

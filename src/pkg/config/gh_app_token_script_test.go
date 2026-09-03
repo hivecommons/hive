@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // bin/gh-app-token.sh mints two very different things from the same GitHub App

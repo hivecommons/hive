@@ -2,8 +2,8 @@
 
 `bin/hive-podman-preflight-host.sh` diagnoses the three host conditions that
 break a standalone Podman deployment of Hive without ever mentioning Podman in
-the error message. Part of [#4188](https://github.com/kubestellar/hive/issues/4188);
-implements [#4209](https://github.com/kubestellar/hive/issues/4209).
+the error message. Part of [#4188](https://github.com/hivecommons/hive/issues/4188);
+implements [#4209](https://github.com/hivecommons/hive/issues/4209).
 
 It is **read-only**. It starts no container, relabels nothing, changes no mode
 or owner, writes nothing to the host, and contacts no registry. Every finding
@@ -24,9 +24,9 @@ set to `docker` — the script reports that it was skipped and exits `0` without
 running a single Podman command. Docker deployments are unaffected.
 
 Related layers: the engine, connection, root mode, and cgroup checks are
-[#4207](https://github.com/kubestellar/hive/issues/4207); subordinate IDs,
+[#4207](https://github.com/hivecommons/hive/issues/4207); subordinate IDs,
 graphroot, and networking are
-[#4208](https://github.com/kubestellar/hive/issues/4208).
+[#4208](https://github.com/hivecommons/hive/issues/4208).
 
 ## Configuration
 

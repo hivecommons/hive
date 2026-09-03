@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 const redPRFixture = `{"generated_at":"2026-08-26T00:00:00Z","ci_failing":[

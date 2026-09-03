@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // --- #4105: the assignment prompt tells the agent up front the exact

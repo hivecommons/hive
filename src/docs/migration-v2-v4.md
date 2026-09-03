@@ -30,7 +30,7 @@ from source) the directory layout:
 `v2` branch does not have. `v2` is in low-rate maintenance rather than fully
 stopped — it still receives occasional backports — but it is not where
 development happens, and new work targets `v4`
-(see [CONTRIBUTING.md](https://github.com/kubestellar/hive/blob/v4/CONTRIBUTING.md)).
+(see [CONTRIBUTING.md](https://github.com/hivecommons/hive/blob/v4/CONTRIBUTING.md)).
 
 The `v2-latest` image tag belongs to the `v2` branch and **resolves to a
 different, older digest than the v4 channels**. It is not a rolling tag that
@@ -96,7 +96,7 @@ upgrades yourself.
   auto-update profile, so Watchtower no longer receives the full daemon socket.
   See [auto-update-profile.md](auto-update-profile.md) before enabling it.
 - Standalone image references now come from one source of truth,
-  [`src/deploy/standalone-images.sh`](https://github.com/kubestellar/hive/blob/v4/src/deploy/standalone-images.sh),
+  [`src/deploy/standalone-images.sh`](https://github.com/hivecommons/hive/blob/v4/src/deploy/standalone-images.sh),
   which a build test enforces.
 
 ## Kubernetes

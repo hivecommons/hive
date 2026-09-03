@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Regression coverage for kubestellar/hive#5733 at the payload boundary — the

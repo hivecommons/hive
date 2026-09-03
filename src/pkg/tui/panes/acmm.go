@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
-	"github.com/kubestellar/hive/pkg/tui/theme"
+	"github.com/hivecommons/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/theme"
 )
 
 // ACMMOverlay is the `A` overlay's whole state: the pack list the server

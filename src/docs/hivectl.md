@@ -183,7 +183,7 @@ interchangeable: self-hosted hives accept the shared bearer token
 `authorized_users` allowlist accept only a **per-user session** — the
 `hive_session` cookie the GitHub device-flow login mints, resolved on every
 request against the live allowlist. `hivectl login` runs that device flow from
-the terminal ([#5651](https://github.com/kubestellar/hive/issues/5651)): it
+the terminal ([#5651](https://github.com/hivecommons/hive/issues/5651)): it
 prints a one-time code and `https://github.com/login/device`, waits for you to
 approve there, and caches the minted session so every subcommand — and
 `hivectl tui` — presents it automatically.
@@ -226,7 +226,7 @@ another client of the API: same auth token, same endpoints, same SSE stream
 the web dashboard consumes. Requires a real terminal.
 
 This is the v1 delivery of the `hive tui` epic
-([#4907](https://github.com/kubestellar/hive/issues/4907)); the design
+([#4907](https://github.com/hivecommons/hive/issues/4907)); the design
 rationale and the fixed architecture decisions behind it are recorded in
 [`src/docs/design/tui.md`](design/tui.md).
 
@@ -287,7 +287,7 @@ Obtaining the value today means copying it out of a browser already logged in
 to that dashboard (devtools → Application → Cookies). There is no
 `hivectl login` yet; adding one so the credential can be acquired from the
 terminal is tracked in
-[#5651](https://github.com/kubestellar/hive/issues/5651).
+[#5651](https://github.com/hivecommons/hive/issues/5651).
 
 Both variables may be set at once, and both are sent. That is not redundancy:
 a shared-token hive ignores the cookie and an allowlist hive ignores the token,
@@ -326,7 +326,7 @@ The **activity loop** — Tokens and Events — polls every 5 seconds
 the stream carries token counts, estimated cost, or audit rows, so there is
 no push event for those panes to wait on; tying them to the reconciliation
 timer would make a *healthy* connection the reason they went stale. (This is
-what `tui T32` / [#5421](https://github.com/kubestellar/hive/issues/5421)
+what `tui T32` / [#5421](https://github.com/hivecommons/hive/issues/5421)
 fixed — earlier builds hung all seven reads off one timer, so a connected
 stream paradoxically made the Tokens and Events panes twelve times staler.)
 
@@ -441,7 +441,7 @@ because the panes underneath may already describe a hive that has moved.
 #### Attach: local tmux, or the dashboard's terminal proxy
 
 `a` on a selected agent attaches to that agent's tmux session. Where the
-session actually is decides how ([#5644](https://github.com/kubestellar/hive/issues/5644)):
+session actually is decides how ([#5644](https://github.com/hivecommons/hive/issues/5644)):
 
 - **Local fast path.** When `HIVE_DASHBOARD_URL` is loopback (or unset) and a
   local `tmux has-session -t hive-<agent>` succeeds, the terminal is handed to
@@ -513,9 +513,9 @@ an operator dismisses the overlay first (see the modal rule above).
   acquire either. Session-based hives (hub-hosted, or a spoke with an
   `authorized_users` allowlist) are reachable, but the cookie has to be lifted
   from a browser — see [Credentials](#credentials) and
-  [#5651](https://github.com/kubestellar/hive/issues/5651).
+  [#5651](https://github.com/hivecommons/hive/issues/5651).
 - **No terminal emulation in-frame.** Remote attach
-  ([#5644](https://github.com/kubestellar/hive/issues/5644)) suspends the TUI
+  ([#5644](https://github.com/hivecommons/hive/issues/5644)) suspends the TUI
   and streams the ttyd websocket through your own terminal, exactly as the
   local path suspends into `tmux attach`; the session is not re-rendered
   inside a pane.
@@ -550,7 +550,7 @@ SSE degradation, both of which need state the fixture cannot produce
 deterministically. Each omission is explained in a comment in the tape itself.
 
 Track any further work under the `hive tui` epic
-([#4907](https://github.com/kubestellar/hive/issues/4907)).
+([#4907](https://github.com/hivecommons/hive/issues/4907)).
 
 ### enroll — spoke-based lite repo enrollment
 

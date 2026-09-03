@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/rotation"
+	"github.com/hivecommons/hive/pkg/rotation"
 )
 
 type scriptedProber struct {

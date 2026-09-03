@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 var saasUsersDir = "/data/saas/users"
@@ -9931,7 +9931,7 @@ Ask %s to grant you access from their
 </p>
 <a href="/dashboard" class="btn btn-primary">Go to My Hives</a>
 <a href="/" class="btn btn-secondary">Browse Public Hives</a>
-<p class="help">If you believe this is an error, <a href="https://github.com/kubestellar/hive/issues" style="color:#58a6ff">file an issue</a>.</p>
+<p class="help">If you believe this is an error, <a href="https://github.com/hivecommons/hive/issues" style="color:#58a6ff">file an issue</a>.</p>
 </div>
 </body></html>`, hiveID, hiveID, ownerLink)
 }
@@ -10415,7 +10415,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <a href="/" class="brand">
       <span class="brand-mark">🐝</span>
       <span>Hive</span>
-      <span onclick="window.open(&#39;https://github.com/kubestellar/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
+      <span onclick="window.open(&#39;https://github.com/hivecommons/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
     </a>
     <nav>
       <a href="/">Hives</a>
@@ -10627,7 +10627,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <footer class="footer">
     <div class="footer-links">
-      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://github.com/hivecommons/hive">Source Code</a>
       <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
       <a href="https://kubestellar.io">KubeStellar</a>
     </div>
@@ -18798,7 +18798,7 @@ const dashboardHTML = `<!DOCTYPE html>
       else if (!r.deployed) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="No hive reports running a commit containing this PR yet (merged is not deployed)">not deployed</span>');
       if ((r.shared_with || []).length) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Co-deployed with PR ' + esc((r.shared_with || []).map(function(n) { return '#' + n; }).join(', ')) + ' — reach and deltas are shared by construction (D4)">shared</span>');
       return '<tr>' +
-        '<td style="white-space:nowrap"><a href="https://github.com/kubestellar/hive/pull/' + r.pr + '" target="_blank">#' + r.pr + '</a>' +
+        '<td style="white-space:nowrap"><a href="https://github.com/hivecommons/hive/pull/' + r.pr + '" target="_blank">#' + r.pr + '</a>' +
         (r.title ? ' <span style="color:var(--muted);font-size:0.75rem" title="' + esc(r.title) + '">' + esc(r.title.length > 48 ? r.title.slice(0, 48) + '…' : r.title) + '</span>' : '') + '</td>' +
         '<td>' + compCell + '</td>' +
         '<td>' + reachCell + '</td>' +

@@ -29,10 +29,10 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 		},
 		{
 			name:  "url pasted in repo",
-			org:   "kubestellar",
-			repos: []string{"https://github.com/kubestellar/hive"},
+			org:   "hivecommons",
+			repos: []string{"https://github.com/hivecommons/hive"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: repo 'https://github.com/kubestellar/hive' is a URL — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
+			want:  "Repo target misconfigured: repo 'https://github.com/hivecommons/hive' is a URL — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
 		},
 		{
 			name:  "url pasted for different org explains migration",
@@ -158,7 +158,7 @@ func TestNormalizeRepoForOrg(t *testing.T) {
 		{name: "different org not stripped", org: "kubestellar", repo: "other/hive", want: "other/hive"},
 		{name: "deeper path not stripped", org: "kubestellar", repo: "kubestellar/hive/tree/main", want: "kubestellar/hive/tree/main"},
 		{name: "org prefix with empty repo not stripped", org: "kubestellar", repo: "kubestellar/", want: "kubestellar/"},
-		{name: "url left for the url error", org: "kubestellar", repo: "https://github.com/kubestellar/hive", want: "https://github.com/kubestellar/hive"},
+		{name: "url left for the url error", org: "kubestellar", repo: "https://github.com/hivecommons/hive", want: "https://github.com/hivecommons/hive"},
 		{name: "empty org is a no-op", org: "", repo: "kubestellar/hive", want: "kubestellar/hive"},
 		{name: "empty repo is a no-op", org: "kubestellar", repo: "", want: ""},
 	}

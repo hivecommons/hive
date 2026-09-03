@@ -1,6 +1,6 @@
 # `hive-data` under SELinux enforcing: what the volume actually guarantees
 
-[#4354](https://github.com/kubestellar/hive/issues/4354) shipped
+[#4354](https://github.com/hivecommons/hive/issues/4354) shipped
 `src/deploy/quadlet/hive-data.volume` and said, in the unit itself, that
 "persistence and SELinux volume semantics are deliberately NOT characterised
 here — that is its own slice". This is that slice.

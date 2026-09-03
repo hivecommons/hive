@@ -1,7 +1,7 @@
 package dashboard
 
 import (
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // agentAuditSink adapts the dashboard's AuditLog to agent.AuditSink so the

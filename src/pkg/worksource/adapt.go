@@ -3,7 +3,7 @@ package worksource
 import (
 	"time"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // ToGitHubIssues converts a worksource Issue slice into the github.Issue shape

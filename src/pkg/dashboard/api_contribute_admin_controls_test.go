@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // #2534 — Operator admin controls. Originally in a single "Management & Operations"

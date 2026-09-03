@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // ── PR 2 (features): Apple-Music playlist queue controls + Opportunistic Work
@@ -183,7 +183,7 @@ func TestFileAnIssueLinkTabAware(t *testing.T) {
 	if !strings.Contains(body, `id="cc-report-link"`) {
 		t.Fatal("file-an-issue link missing")
 	}
-	if !strings.Contains(body, "github.com/kubestellar/hive/issues/new") {
+	if !strings.Contains(body, "github.com/hivecommons/hive/issues/new") {
 		t.Error("report link does not point at the new-issue form")
 	}
 	// Tab-aware prefill: builds title with the tab name + body with the page URL.

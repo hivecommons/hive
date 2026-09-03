@@ -16,7 +16,7 @@ project:
   primary_repo: console
 
 policies:
-  repo: https://github.com/kubestellar/hive
+  repo: https://github.com/hivecommons/hive
   path: examples/kubestellar/agents/
   local_dir: /data/policies
   poll_interval: 5m

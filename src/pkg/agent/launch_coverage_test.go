@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/internal/testutil"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TestStart_CLIAlreadyRunning exercises launchInTmux's early-return branch: the

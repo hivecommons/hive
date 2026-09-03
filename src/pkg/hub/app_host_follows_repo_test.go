@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // The App ID provisioned for a hive must follow the hive's GitHub HOST:

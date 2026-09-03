@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
 // preflightTimeout bounds the credential probe.

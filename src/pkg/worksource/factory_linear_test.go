@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
 // TestFromConfig_LinearAssignedOnly verifies the fail-closed contract:

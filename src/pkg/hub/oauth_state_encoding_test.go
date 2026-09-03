@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/auth"
+	"github.com/hivecommons/hive/pkg/auth"
 )
 
 // ibmidStateHub returns a HubServer whose registry carries an ibmid provider,

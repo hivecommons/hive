@@ -15,7 +15,7 @@ import (
 
 	"log/slog"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // syncBuffer is a bytes.Buffer safe for a logger that may be written from

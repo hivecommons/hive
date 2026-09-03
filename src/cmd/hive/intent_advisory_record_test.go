@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/intent"
 )
 
 func newAdvisoryTestStore(t *testing.T) *beads.Store {

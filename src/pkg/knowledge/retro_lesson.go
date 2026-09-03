@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (

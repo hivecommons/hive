@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/snapshot"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
 // #4041: the legacy state-overrides migration replays a persisted

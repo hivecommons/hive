@@ -4,9 +4,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/convergence"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/convergence"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // ── #4247: shared convergence admission for internal agent kicks ──────────────

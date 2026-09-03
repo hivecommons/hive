@@ -3,7 +3,7 @@ package governor
 import (
 	"sort"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // No-cadence detection (#5577). An agent that is enabled and governor-kickable

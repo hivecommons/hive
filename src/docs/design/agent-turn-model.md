@@ -440,7 +440,7 @@ Step(SessionEnvelope, optional initial TurnPlan)
 ```
 
 It carries the operation-journal lesson previously exercised on the earlier
-`v5` line in [#4053](https://github.com/kubestellar/hive/pull/4053) onto current
+`v5` line in [#4053](https://github.com/hivecommons/hive/pull/4053) onto current
 `v4`, and adds the real atomic file store plus fail-closed handling for effects
 that cannot be reconciled.
 

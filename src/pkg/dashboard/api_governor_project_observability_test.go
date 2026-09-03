@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestGovernorProjectObservabilityRoundTripAndOptIn(t *testing.T) {

@@ -22,8 +22,8 @@ func TestParsePRURL(t *testing.T) {
 		owner, repo string
 		number      int
 	}{
-		{"canonical", "https://github.com/kubestellar/hive/pull/2565", false, "kubestellar", "hive", 2565},
-		{"trailing files", "https://github.com/kubestellar/hive/pull/2565/files", false, "kubestellar", "hive", 2565},
+		{"canonical", "https://github.com/hivecommons/hive/pull/2565", false, "hivecommons", "hive", 2565},
+		{"trailing files", "https://github.com/hivecommons/hive/pull/2565/files", false, "hivecommons", "hive", 2565},
 		{"with fragment", "https://github.com/o/r/pull/7#discussion_r1", false, "o", "r", 7},
 		{"with query", "https://github.com/o/r/pull/7?w=1", false, "o", "r", 7},
 		{"ghe host", "https://ghe.example.com/o/r/pull/12", false, "o", "r", 12},
@@ -137,7 +137,7 @@ func TestVerifyReportedPR_AllChecksPass(t *testing.T) {
 	ts := verifyMux(t, http.StatusOK, prJSON("kubestellar/hive", "alice", 2565))
 	c := NewClientForTest(ts.URL, "kubestellar", []string{"hive"}, verifyTestLogger())
 
-	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/kubestellar/hive/pull/2565", "alice")
+	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/hivecommons/hive/pull/2565", "alice")
 	if !res.Verified {
 		t.Fatalf("expected verified, got reason=%q err=%v", res.Reason, res.Err)
 	}
@@ -150,7 +150,7 @@ func TestVerifyReportedPR_CaseInsensitiveAuthorAndRepo(t *testing.T) {
 	ts := verifyMux(t, http.StatusOK, prJSON("KubeStellar/Hive", "Alice", 2565))
 	c := NewClientForTest(ts.URL, "kubestellar", []string{"hive"}, verifyTestLogger())
 
-	res := c.VerifyReportedPR(context.Background(), "kubestellar/hive", "https://github.com/kubestellar/hive/pull/2565", "alice")
+	res := c.VerifyReportedPR(context.Background(), "kubestellar/hive", "https://github.com/hivecommons/hive/pull/2565", "alice")
 	if !res.Verified {
 		t.Fatalf("expected verified (case-insensitive), reason=%q", res.Reason)
 	}
@@ -175,7 +175,7 @@ func TestVerifyReportedPR_WrongAuthor(t *testing.T) {
 	ts := verifyMux(t, http.StatusOK, prJSON("kubestellar/hive", "mallory", 2565))
 	c := NewClientForTest(ts.URL, "kubestellar", []string{"hive"}, verifyTestLogger())
 
-	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/kubestellar/hive/pull/2565", "alice")
+	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/hivecommons/hive/pull/2565", "alice")
 	if res.Verified {
 		t.Fatalf("expected NOT verified for wrong author")
 	}
@@ -188,7 +188,7 @@ func TestVerifyReportedPR_DoesNotExist(t *testing.T) {
 	ts := verifyMux(t, http.StatusNotFound, "")
 	c := NewClientForTest(ts.URL, "kubestellar", []string{"hive"}, verifyTestLogger())
 
-	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/kubestellar/hive/pull/404", "alice")
+	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/hivecommons/hive/pull/404", "alice")
 	if res.Verified {
 		t.Fatalf("expected NOT verified for nonexistent PR")
 	}
@@ -201,7 +201,7 @@ func TestVerifyReportedPR_APIError(t *testing.T) {
 	ts := verifyMux(t, http.StatusInternalServerError, "")
 	c := NewClientForTest(ts.URL, "kubestellar", []string{"hive"}, verifyTestLogger())
 
-	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/kubestellar/hive/pull/2565", "alice")
+	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/hivecommons/hive/pull/2565", "alice")
 	if res.Verified {
 		t.Fatalf("expected NOT verified on API error (fail closed on trust)")
 	}
@@ -225,7 +225,7 @@ func TestVerifyReportedPR_UnparseableURL(t *testing.T) {
 
 func TestVerifyReportedPR_NilClient(t *testing.T) {
 	var c *Client
-	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/kubestellar/hive/pull/1", "alice")
+	res := c.VerifyReportedPR(context.Background(), "hive", "https://github.com/hivecommons/hive/pull/1", "alice")
 	if res.Verified {
 		t.Fatalf("nil client must never verify")
 	}

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // IssueRequestDir is where agents drop issue-create and comment requests. An

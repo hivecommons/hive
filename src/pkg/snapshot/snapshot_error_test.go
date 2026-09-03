@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
 func TestBuildImpossibleOutputDir(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kubestellar/hive/pkg/hivectl/commands"
+	"github.com/hivecommons/hive/pkg/hivectl/commands"
 )
 
 func main() {

@@ -127,7 +127,7 @@ Declaring the capability is not enough on OpenShift: an SCC must *permit*
 adding it, and no stock SCC (`anyuid` included) does — the pod is rejected at
 admission (`unable to validate against any security context constraint`). A
 cluster-admin applies the bundled
-[`overlays/openshift-netadmin`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift-netadmin)
+[`overlays/openshift-netadmin`](https://github.com/hivecommons/hive/tree/v4/src/deploy/kustomize/overlays/openshift-netadmin)
 overlay once:
 
 ```bash

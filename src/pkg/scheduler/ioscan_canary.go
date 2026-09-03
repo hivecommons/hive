@@ -1,6 +1,6 @@
 package scheduler
 
-import "github.com/kubestellar/hive/pkg/ioscan"
+import "github.com/hivecommons/hive/pkg/ioscan"
 
 func (s *Scheduler) canariesEnabled() bool {
 	return s.cfg != nil && s.cfg.Ioscan.IsEnabled() && s.cfg.Ioscan.Canaries

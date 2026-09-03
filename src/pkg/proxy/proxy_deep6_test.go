@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // ---------- proxyHTTP: git path bidirectional streaming ----------

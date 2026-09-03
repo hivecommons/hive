@@ -1,4 +1,4 @@
-module github.com/kubestellar/hive
+module github.com/hivecommons/hive
 
 go 1.25.6
 

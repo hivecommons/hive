@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // newWatchdogTestManager builds a Manager with one agent per backend, marked

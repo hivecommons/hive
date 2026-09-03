@@ -38,10 +38,10 @@ func TestIssueURLFor(t *testing.T) {
 		number     int
 		want       string
 	}{
-		{"valid", "kubestellar/hive", 42, "https://github.com/kubestellar/hive/issues/42"},
+		{"valid", "hivecommons/hive", 42, "https://github.com/hivecommons/hive/issues/42"},
 		{"empty repo", "", 42, ""},
-		{"zero number", "kubestellar/hive", 0, ""},
-		{"negative number", "kubestellar/hive", -1, ""},
+		{"zero number", "hivecommons/hive", 0, ""},
+		{"negative number", "hivecommons/hive", -1, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

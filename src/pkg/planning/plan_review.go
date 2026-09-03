@@ -3,8 +3,8 @@ package planning
 import (
 	"fmt"
 
-	"github.com/kubestellar/hive/pkg/agentparse"
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // This file implements the Phase 2 plan-review gate transitions and readers.

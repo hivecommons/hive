@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
 // watsonxProbeMintTimeout bounds the IAM token mint done just to run a

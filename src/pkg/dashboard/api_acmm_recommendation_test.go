@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/acmmadvisor"
-	"github.com/kubestellar/hive/pkg/config"
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/config"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // TestHandleACMMRecommendationEmpty verifies the endpoint is safe with a

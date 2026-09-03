@@ -24,8 +24,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/kubestellar/hive/pkg/hubbackup"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // exitCodeError is returned for any operational failure so a CronJob shows

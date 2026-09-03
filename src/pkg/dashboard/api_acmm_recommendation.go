@@ -3,8 +3,8 @@ package dashboard
 import (
 	"net/http"
 
-	"github.com/kubestellar/hive/pkg/acmmadvisor"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // qualityAgentName is the config-level name of the quality/coverage agent that

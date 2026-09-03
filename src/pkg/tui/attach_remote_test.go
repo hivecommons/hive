@@ -13,7 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
 // remoteWait bounds every wait in this file. Generous for the same reason the

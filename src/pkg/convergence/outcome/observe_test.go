@@ -3,7 +3,7 @@ package outcome
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/convergence"
 )
 
 // The default-off guarantee, made structural: with the convergence mode off —

@@ -35,7 +35,7 @@ that status is the thing to check before treating a page as current behaviour:
   generates a keypair, publishes the public half over its own outbound heartbeat,
   and the hub seals each new master to it — and why Options A and B were
   rejected. Earlier unwired wrapkey primitives were removed as dead code in
-  [#5697](https://github.com/kubestellar/hive/pull/5697), so no sealing
+  [#5697](https://github.com/hivecommons/hive/pull/5697), so no sealing
   primitive or spoke-side wrapping-key lifecycle is currently implemented.
 - [PR reach telemetry](pr-reach-telemetry.md) — **partly shipped.** The design
   behind attributing merged code to what is actually running, and the anchoring

@@ -167,7 +167,7 @@ HEADER
     # reports Hive packages as unlicensed. Hive's own code does not belong in
     # a THIRD-PARTY notice regardless, so excluding it is the correct scope.
     "${GO_LICENSES_BIN}" report --template="${REPORT_TEMPLATE}" \
-      --ignore github.com/kubestellar/hive ./...
+      --ignore github.com/hivecommons/hive ./...
   # Preserve the complete text while normalizing insignificant end-of-line
   # whitespace from upstream license files, so the committed output passes
   # repository whitespace checks and stays stable across tooling/editors.

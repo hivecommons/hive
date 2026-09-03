@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/escalation"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // writeMergeEligible decides which PRs the sweep may merge and which go to

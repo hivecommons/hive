@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // syncLevel is a level whose pack roster contains neither "scanner" nor any

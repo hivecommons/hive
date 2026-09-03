@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/advisory"
 )
 
 // Tests for advisory-digest repeat suppression (#5507).

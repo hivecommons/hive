@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/advisory"
 )
 
 // End-to-end coverage for #5507 through PostAdvisoryDigest: the ~250-comment

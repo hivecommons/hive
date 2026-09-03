@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
 // syncBuffer lets the bridge's output goroutine and the test's assertions

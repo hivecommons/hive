@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // writeClaudeCreds writes a credentials.json with a non-expired OAuth token at

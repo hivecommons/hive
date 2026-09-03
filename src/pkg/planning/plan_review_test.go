@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agentparse"
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // mustTask creates a plain task bead (used for negative "not a child" cases).

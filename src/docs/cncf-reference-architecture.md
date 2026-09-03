@@ -9,7 +9,7 @@ contact: Andy Anderson
 email: # optional — add if you want it listed publicly
 org_description: |
   Hive is an open-source, self-hostable system (part of the KubeStellar org,
-  github.com/kubestellar/hive) that runs a fleet of AI coding agents to
+  github.com/hivecommons/hive) that runs a fleet of AI coding agents to
   autonomously maintain software repositories — triaging issues, writing fixes,
   opening pull requests, and merging on green CI, all under human-controlled,
   technically-enforced guardrails. It runs as a cloud-native workload on

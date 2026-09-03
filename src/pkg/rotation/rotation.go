@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // probeTimeout bounds each CLI/HTTP headroom probe.

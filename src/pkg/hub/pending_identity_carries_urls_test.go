@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TestPendingIdentityCarriesTheForgeURLs pins that the DURABLE pending record

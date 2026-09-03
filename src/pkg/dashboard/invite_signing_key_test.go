@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // Invite tokens are HMAC-signed with inviteSigningSecret(). Historically that key

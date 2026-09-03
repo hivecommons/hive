@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hivectl"
-	tuiclient "github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/hivectl"
+	tuiclient "github.com/hivecommons/hive/pkg/tui/client"
 )
 
 // TestMain pins this package's environment for the same reason

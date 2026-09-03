@@ -8,7 +8,7 @@ build/test commands, see [`docs/development.md`](development.md).
 
 ## 1. Find something to work on
 
-- Browse the [issue tracker](https://github.com/kubestellar/hive/issues). Issues
+- Browse the [issue tracker](https://github.com/hivecommons/hive/issues). Issues
   labeled `documentation` and `help wanted` are good entry points; many
   `[guide]` doc-gap issues are small and self-contained.
 - Docs-only fixes (a wrong path, a dead link, a missing README) are the fastest

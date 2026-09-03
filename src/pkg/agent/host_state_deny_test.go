@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // backendsConfPath is the shell half of this policy. Both launch paths must

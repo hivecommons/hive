@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // defaultLinearBaseURL is Linear's single GraphQL endpoint.

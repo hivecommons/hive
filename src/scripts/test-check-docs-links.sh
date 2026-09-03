@@ -200,7 +200,7 @@ cat > "$invault/agents.md" <<'EOF'
 
 Sibling: [getting started](getting-started.md#first-run).
 Subdir: [deep](sub/deep.md).
-Absolute outbound: [policy](https://github.com/kubestellar/hive/blob/v4/src/docs/policy.md).
+Absolute outbound: [policy](https://github.com/hivecommons/hive/blob/v4/src/docs/policy.md).
 EOF
 cat > "$invault/getting-started.md" <<'EOF'
 # Getting started

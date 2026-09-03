@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // bobTestKey is a realistic-looking secret used across these tests. Every

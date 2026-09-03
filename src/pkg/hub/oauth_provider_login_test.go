@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/auth"
+	"github.com/hivecommons/hive/pkg/auth"
 )
 
 func TestHandleProviderLoginUnknownProvider(t *testing.T) {

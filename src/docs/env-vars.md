@@ -6,7 +6,7 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
-| `HIVE_CONFIG` | No | `/etc/hive/hive.yaml` | Default config path used before the `--config` flag is parsed; an explicit `--config` outranks it, so `entrypoint.sh` also appends `--config "$HIVE_CONFIG"` to the launch argv when it is set ([#4973](https://github.com/kubestellar/hive/issues/4973)). The dashboard also uses it when reporting config provenance — which is why the two must not disagree. |
+| `HIVE_CONFIG` | No | `/etc/hive/hive.yaml` | Default config path used before the `--config` flag is parsed; an explicit `--config` outranks it, so `entrypoint.sh` also appends `--config "$HIVE_CONFIG"` to the launch argv when it is set ([#4973](https://github.com/hivecommons/hive/issues/4973)). The dashboard also uses it when reporting config provenance — which is why the two must not disagree. |
 | `HIVE_MODE` | No | spoke/dashboard mode | Set to `hub` to run the hub server instead of the spoke dashboard. |
 | `HIVE_HUB_PORT` | No | `3001` | Hub listen port when `HIVE_MODE=hub`. |
 | `HIVE_SINGLETON_LOCK` | No | `/var/run/hive-metrics/hive.singleton.lock` when available, otherwise OS temp dir | Overrides the process singleton lock path. Set exactly `off` only for local development where duplicate processes are intentional. |
@@ -27,8 +27,8 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_SHA` | No | build SHA | Passed to launched agents and used in hub upgrade/status paths. |
 | `HIVE_ADVISORY_ISSUE` | No | none | Passed to launched agents so advisory findings can target a configured issue. |
 | `HIVE_TTYD_PORT` | No | `7681` | Web terminal port used by the entrypoint and terminal proxy. |
-| `HIVE_TTYD_CREDENTIAL` | No | `hive:<HIVE_DASHBOARD_TOKEN>` when a token is set, else none | ttyd basic-auth credential (`user:pass`) the entrypoint starts the web terminal with. Also read by `hivectl tui`'s remote attach ([#5644](https://github.com/kubestellar/hive/issues/5644)), which must present the same credential through the terminal proxy and derives the same default from `HIVE_DASHBOARD_TOKEN` — set it on the client only if the deployment overrode it on the server. |
-| `HIVE_METRICS_ENABLED` | No | disabled | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. Requires `HIVE_METRICS_TOKEN` — enabled-but-tokenless returns 403 ([#3804](https://github.com/kubestellar/hive/pull/3804)). |
+| `HIVE_TTYD_CREDENTIAL` | No | `hive:<HIVE_DASHBOARD_TOKEN>` when a token is set, else none | ttyd basic-auth credential (`user:pass`) the entrypoint starts the web terminal with. Also read by `hivectl tui`'s remote attach ([#5644](https://github.com/hivecommons/hive/issues/5644)), which must present the same credential through the terminal proxy and derives the same default from `HIVE_DASHBOARD_TOKEN` — set it on the client only if the deployment overrode it on the server. |
+| `HIVE_METRICS_ENABLED` | No | disabled | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. Requires `HIVE_METRICS_TOKEN` — enabled-but-tokenless returns 403 ([#3804](https://github.com/hivecommons/hive/pull/3804)). |
 | `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token for `/metrics` (`Authorization: Bearer <token>`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; the cost/agent series are never served without it. |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
@@ -166,7 +166,7 @@ new value at the same time.
 
 ## Linear agent integration
 
-Part 2 of [RFC #4492](https://github.com/kubestellar/hive/issues/4492): the hive can join a Linear workspace as an agent (`actor=app` OAuth), receive `AgentSessionEvent` webhooks, and narrate work back as agent activities. Setup and verification steps live in [linear-agent.md](linear-agent.md).
+Part 2 of [RFC #4492](https://github.com/hivecommons/hive/issues/4492): the hive can join a Linear workspace as an agent (`actor=app` OAuth), receive `AgentSessionEvent` webhooks, and narrate work back as agent activities. Setup and verification steps live in [linear-agent.md](linear-agent.md).
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
@@ -243,7 +243,7 @@ only when neither is configured.
 
 ### Hub login providers
 
-`HIVE_HUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` enable **GitHub** login. Additional human-login providers are OIDC-based and each is enabled by setting its client id ([#3664](https://github.com/kubestellar/hive/pull/3664)). Per provider `<P>` in `GOOGLE`, `IBMID`, `REDHAT`, `MICROSOFT`, `CUSTOM`:
+`HIVE_HUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` enable **GitHub** login. Additional human-login providers are OIDC-based and each is enabled by setting its client id ([#3664](https://github.com/hivecommons/hive/pull/3664)). Per provider `<P>` in `GOOGLE`, `IBMID`, `REDHAT`, `MICROSOFT`, `CUSTOM`:
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
@@ -281,7 +281,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 | `HIVE_SESSION` | No | backend name (`AGENT_BACKEND`) | Optional session label for running multiple relays concurrently under one GitHub account. The hub keys task leases, assignment cooldowns, failure streaks, and ownership fences on `ContributorID#session`, so distinctly labeled relays hold independent task slots; auth, trust tier, model admission, and rate-limit accounting stay per-account. Sanitized to `[A-Za-z0-9._-]`, max 32 bytes. Set to the empty string to opt out (bare per-account identity, the historical single-session behavior). See `src/docs/contributor-relay.md`, "Running multiple backends under one account". |
 | `HIVE_HEADLESS_STATUS_FILE` | No | `/tmp/contributor-headless-status.json` | Status file written by headless contributor relay. |
 | `HIVE_CONTRIBUTOR_IMAGE` | No | `ghcr.io/kubestellar/hive-contributor:latest` | Image used by `just contribute-hive`. |
-| `HIVE_CONTAINER_RUNTIME` | No | autodetect `docker` or `podman` | Container runtime override for contributor helpers. `just contribute-hive` also passes the runtime it resolved into the container, so the attach hints printed from inside it name the engine that actually launched it rather than assuming `docker` ([#5145](https://github.com/kubestellar/hive/issues/5145)). |
+| `HIVE_CONTAINER_RUNTIME` | No | autodetect `docker` or `podman` | Container runtime override for contributor helpers. `just contribute-hive` also passes the runtime it resolved into the container, so the attach hints printed from inside it name the engine that actually launched it rather than assuming `docker` ([#5145](https://github.com/hivecommons/hive/issues/5145)). |
 | `HIVE_CONTAINER_NAME` | No | `hive-contributor` | Set by `just contribute-hive` on the container it starts. The contributor entrypoint and relay read it for their attach hints; unset means the relay is running in local mode, where the hint is a plain `tmux attach`. |
 | `HIVE_SKIP_VERSION_CHECK` | No | `false` | Skips `just` version freshness check when set to `true`. |
 | `HIVE_SKIP_PULL` | No | `false` | Skips contributor image pull when set to `true`. |

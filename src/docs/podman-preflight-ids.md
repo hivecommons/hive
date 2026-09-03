@@ -3,8 +3,8 @@
 `bin/hive-podman-preflight-ids.sh` diagnoses the three host conditions rootless
 Podman needs that have nothing to do with the engine version and everything to
 do with how the box was prepared. Part of
-[#4188](https://github.com/kubestellar/hive/issues/4188); implements
-[#4208](https://github.com/kubestellar/hive/issues/4208).
+[#4188](https://github.com/hivecommons/hive/issues/4188); implements
+[#4208](https://github.com/hivecommons/hive/issues/4208).
 
 It is **read-only**. In particular it never writes to `/etc/subuid` or
 `/etc/subgid`: delegating a subordinate range is a host-administration decision
@@ -27,9 +27,9 @@ With the Docker default selected — `HIVE_DEPLOY_RUNTIME` unset or set to
 a single Podman command. Docker deployments are unaffected.
 
 Related layers: the engine, connection, root mode, and cgroup checks are
-[#4207](https://github.com/kubestellar/hive/issues/4207); SELinux, mounts,
+[#4207](https://github.com/hivecommons/hive/issues/4207); SELinux, mounts,
 secrets, and ports are
-[#4209](https://github.com/kubestellar/hive/issues/4209) — see
+[#4209](https://github.com/hivecommons/hive/issues/4209) — see
 [Podman preflight: SELinux, mounts, secrets, and ports](podman-preflight-host.md).
 
 ## What it checks

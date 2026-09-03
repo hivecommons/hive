@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // bin/hive-open-pr.sh is what agents run INSTEAD of `gh pr create`; it writes

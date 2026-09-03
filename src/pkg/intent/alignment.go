@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 const (

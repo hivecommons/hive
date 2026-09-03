@@ -3,8 +3,8 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // TestBuildKickMessagesRecordsClassifiedJourneys pins the classified-stage

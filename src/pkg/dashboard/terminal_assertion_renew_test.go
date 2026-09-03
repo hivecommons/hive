@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // Tests for the audit-F4 residual: the terminal assertion must be renewable from

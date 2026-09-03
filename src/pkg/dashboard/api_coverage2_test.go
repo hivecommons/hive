@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
 )
 
 func httpPutRaw(s *Server, path string, rawBody string) *httptest.ResponseRecorder {

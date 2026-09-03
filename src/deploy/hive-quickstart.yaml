@@ -12,7 +12,7 @@ project:
   open_prs: true
 
 policies:
-  repo: https://github.com/kubestellar/hive
+  repo: https://github.com/hivecommons/hive
   branch: v2
   path: src/policies/
   local_dir: /data/policies

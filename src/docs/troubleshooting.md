@@ -72,7 +72,7 @@ On GitHub Enterprise, a 404 from the install link usually means the hive is poin
 
 ### Start on the agent card, not in tmux
 
-Since v4.1.0 ([#5594](https://github.com/kubestellar/hive/issues/5594)) the dashboard agent card states **every** reason an agent will not run at once, so read it before reaching for `tmux`. Under the card state (and on the ops-center detail panel) is a blockers line with three segments:
+Since v4.1.0 ([#5594](https://github.com/hivecommons/hive/issues/5594)) the dashboard agent card states **every** reason an agent will not run at once, so read it before reaching for `tmux`. Under the card state (and on the ops-center detail panel) is a blockers line with three segments:
 
 - **`session`** — `up` (live tmux session), `down` (no live session; `↻ restart` asks the supervisor to respawn it), or `disabled` (disabled in config; the governor never starts it — enable it with ⚙️).
 - **`scheduling`** — the governor cadence for the current mode when the agent is kickable, or **every** live reason it is not, joined together (for example `paused + off in surge mode`). All of the listed reasons must be cleared; fixing one is not enough. On-demand agents show `on demand`.
@@ -150,7 +150,7 @@ Liveness is judged by the governor's in-process health check, so an agent that k
 
 The agent ran, the session ended cleanly, the fleet view shows it healthy — and there is no PR and no branch on the remote. Often the agent's own summary says so plainly, in words like "branch committed locally but push failed due to git authentication issue."
 
-This is not the agent deciding no work was needed. The work was done; it could not be published. The fleet view cannot tell you which, because from the governor's point of view the session *is* healthy — the agent hit an auth error, correctly refused to manipulate git credentials, and wrote an honest summary. See [kubestellar/hive#5343](https://github.com/kubestellar/hive/issues/5343).
+This is not the agent deciding no work was needed. The work was done; it could not be published. The fleet view cannot tell you which, because from the governor's point of view the session *is* healthy — the agent hit an auth error, correctly refused to manipulate git credentials, and wrote an honest summary. See [kubestellar/hive#5343](https://github.com/hivecommons/hive/issues/5343).
 
 There are two distinct causes with the same symptom, and they are distinguishable.
 
@@ -168,7 +168,7 @@ A 404 from the first command plus commits in the agent's working copy is this sc
 
 ### Cause 1 — the credential helper is not reachable from the agent's UID
 
-The helper is invoked per-UID, and agents do **not** share the dev user's `$HOME`: each per-agent UID runs with its own `$HOME` under `/data/home/agents/<name>`, which has no `.gitconfig`. `git config --global` writes to the *caller's* `$HOME`, so wiring the helper that way makes it invisible to every agent. The helper is therefore wired **system-wide in `/etc/gitconfig`**, written from the entrypoint's root phase — see [#5343](https://github.com/kubestellar/hive/issues/5343) for the original defect and [#5352](https://github.com/kubestellar/hive/pull/5352) for the fix.
+The helper is invoked per-UID, and agents do **not** share the dev user's `$HOME`: each per-agent UID runs with its own `$HOME` under `/data/home/agents/<name>`, which has no `.gitconfig`. `git config --global` writes to the *caller's* `$HOME`, so wiring the helper that way makes it invisible to every agent. The helper is therefore wired **system-wide in `/etc/gitconfig`**, written from the entrypoint's root phase — see [#5343](https://github.com/hivecommons/hive/issues/5343) for the original defect and [#5352](https://github.com/hivecommons/hive/pull/5352) for the fix.
 
 Check the layer that actually matters, from a process with no per-user config — this is the same probe the entrypoint runs at boot:
 
@@ -203,7 +203,7 @@ Never print the file's contents.
 
 ### Cause 2 — the credential went stale mid-task (silent refresh failure)
 
-Contributor-relay tasks are pushed with a scoped token the hub re-mints periodically, a few minutes before its TTL expires. When a re-mint **fails**, the hub logs a warning and keeps the old token; the relay is told nothing. See [kubestellar/hive#5447](https://github.com/kubestellar/hive/issues/5447).
+Contributor-relay tasks are pushed with a scoped token the hub re-mints periodically, a few minutes before its TTL expires. When a re-mint **fails**, the hub logs a warning and keeps the old token; the relay is told nothing. See [kubestellar/hive#5447](https://github.com/hivecommons/hive/issues/5447).
 
 The signature is different from cause 1, and it is a timing signature:
 
@@ -269,7 +269,7 @@ server is the only thing that knows its own naming — so fix drift there in the
 agent's `model:` setting.
 
 For **`litellm`** gateways this drift now self-heals
-([#4400](https://github.com/kubestellar/hive/issues/4400)): hive learns the key's
+([#4400](https://github.com/hivecommons/hive/issues/4400)): hive learns the key's
 entitled model set (from a key-info probe, or from the first team-scope 403 itself)
 and, when the configured id differs from **exactly one** entitled id only by
 separator (`.`/`-`), case, or provider-prefix drift, forwards that exact entitled id
@@ -284,7 +284,7 @@ the model each was *meant* to use — a single separator differs and only one of
 matches the gateway. (Note the dashboard's model dropdown matches tolerantly, so both
 agents can *display* the same selection while their stored ids differ.)
 
-Before [#4400](https://github.com/kubestellar/hive/issues/4400) hive read that line as
+Before [#4400](https://github.com/hivecommons/hive/issues/4400) hive read that line as
 a login prompt: it badged the agent 🔑, and — because a valid token was on disk —
 auto-restarted it straight back into the same 403, which looked like the agent
 crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
@@ -312,7 +312,7 @@ If the status bar shows `[live]` and output really has stopped, the agent is idl
 
 ## The dashboard says the next kick is later, but the agent is visibly working now
 
-The agent-card **last kick** / **next kick** fields describe when work is *started*, not how long it runs. A kick sends one prompt into the agent's CLI; the resulting work pass then runs as long as it needs — often hours for a deep quality or scan pass. So an agent visibly busy at 01:47 with `last kick 8:12 PM` and `next kick 2:12 AM` is not off schedule: it is still working through the pass that began at 20:12. (These fields were labelled "last run" / "next run" before [#4399](https://github.com/kubestellar/hive/issues/4399), which invited exactly this misreading.)
+The agent-card **last kick** / **next kick** fields describe when work is *started*, not how long it runs. A kick sends one prompt into the agent's CLI; the resulting work pass then runs as long as it needs — often hours for a deep quality or scan pass. So an agent visibly busy at 01:47 with `last kick 8:12 PM` and `next kick 2:12 AM` is not off schedule: it is still working through the pass that began at 20:12. (These fields were labelled "last run" / "next run" before [#4399](https://github.com/hivecommons/hive/issues/4399), which invited exactly this misreading.)
 
 Every kick path — scheduled cadence, manual restart, crash-resume, CEL event triggers — records itself in `last kick` and the 🕘 *past kicks* archive, so a timestamp that has *not* moved is positive evidence that no new kick happened.
 
@@ -398,7 +398,7 @@ curl -fsS http://127.0.0.1:3001/api/health   # through the auth proxy — what t
 curl -fsS http://127.0.0.1:3002/api/livez
 ```
 
-Run both of the first two. They are the two halves of the container health probe, and they fail independently: a hive whose auth proxy refused to start answers the first and refuses the second ([#4476](https://github.com/kubestellar/hive/issues/4476)). Neither needs a credential — only mutating methods are authenticated.
+Run both of the first two. They are the two halves of the container health probe, and they fail independently: a hive whose auth proxy refused to start answers the first and refuses the second ([#4476](https://github.com/hivecommons/hive/issues/4476)). Neither needs a credential — only mutating methods are authenticated.
 
 `/api/livez` is deliberately process-focused: the Kubernetes manifest notes that stale hub heartbeat state belongs in deeper health reporting and should not crash-loop a healthy pod.
 
@@ -429,7 +429,7 @@ Docker is the default runtime, so with `HIVE_DEPLOY_RUNTIME` unset all three pri
 
 The unit sits in `activating` for the whole `TimeoutStartSec` (300s for `hive.service`, 120s for the gateway) and then gives up. `Notify=healthy` is doing its job: it holds the unit until the healthcheck passes, so a healthcheck that will never pass costs the full budget in silence.
 
-The measured cause ([#4367](https://github.com/kubestellar/hive/issues/4367)) is a **port mismatch between the config and the unit's `HealthCmd`**: the unit's first probe is `http://127.0.0.1:3002/api/health`, while `src/hive.yaml.example` ships `dashboard.port: 3001` for local source runs. Install the example unchanged and Hive serves on 3001, the probe never answers, and `--rm` deletes the container that held the evidence.
+The measured cause ([#4367](https://github.com/hivecommons/hive/issues/4367)) is a **port mismatch between the config and the unit's `HealthCmd`**: the unit's first probe is `http://127.0.0.1:3002/api/health`, while `src/hive.yaml.example` ships `dashboard.port: 3001` for local source runs. Install the example unchanged and Hive serves on 3001, the probe never answers, and `--rm` deletes the container that held the evidence.
 
 ```bash
 grep -A1 '^dashboard:' "$CONF/hive.yaml"    # must be 3002, or absent (3002 is the default)
@@ -442,11 +442,11 @@ The other frequent cause is a missing `HIVE_DASHBOARD_TOKEN` in `%E/hive/hive.en
 journalctl -u hive.service | grep '\[SECURITY\]'
 ```
 
-**This one used to look different, and older notes may still describe it that way.** Until [#4476](https://github.com/kubestellar/hive/issues/4476) the probe read the Go API alone, so `hive.service` went `active` with its container `healthy` while the proxy was dead; the only red arrived 120s later on `hive-gateway.service`, as an nginx `connect() failed (111: Connection refused)` naming neither the port nor the variable. The probe now covers both listeners, so the wait and the journal line are on the same unit.
+**This one used to look different, and older notes may still describe it that way.** Until [#4476](https://github.com/hivecommons/hive/issues/4476) the probe read the Go API alone, so `hive.service` went `active` with its container `healthy` while the proxy was dead; the only red arrived 120s later on `hive-gateway.service`, as an nginx `connect() failed (111: Connection refused)` naming neither the port nor the variable. The probe now covers both listeners, so the wait and the journal line are on the same unit.
 
 ### `systemctl is-failed` says `activating`, not `failed`
 
-Do not key monitoring on `failed` for these units. Measured in [#4378](https://github.com/kubestellar/hive/issues/4378): `Restart=always` moves the unit from a `TimeoutStartSec` expiry straight to `activating/auto-restart` and into the next attempt, so `is-failed` reports `activating` at every point during a bad update and `ActiveState` never reaches `failed`. An alert keyed on `failed` does not fire.
+Do not key monitoring on `failed` for these units. Measured in [#4378](https://github.com/hivecommons/hive/issues/4378): `Restart=always` moves the unit from a `TimeoutStartSec` expiry straight to `activating/auto-restart` and into the next attempt, so `is-failed` reports `activating` at every point during a bad update and `ActiveState` never reaches `failed`. An alert keyed on `failed` does not fire.
 
 What does move is `Result=timeout` during the auto-restart window, and `NRestarts` climbing — though not immediately, so a single sample that reads `NRestarts=0` has not shown the unit is healthy:
 

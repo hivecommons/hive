@@ -3,7 +3,7 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // TestResolveAgentModels_AutoConfigResolvesToRealModel is the core BUG A case:

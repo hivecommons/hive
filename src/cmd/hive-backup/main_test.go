@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/hubbackup"
 )
 
 // The hive-backup CLI is the disaster-recovery entry point: it is what an

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // The turn-loss measurement (#4002 open question 3) is worthless unless it

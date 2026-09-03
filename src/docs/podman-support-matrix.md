@@ -15,8 +15,8 @@ default and fully supported runtime**, unchanged by this document.
 
 | | **Enforcing** (`--cap-add NET_ADMIN`, gate installs) | **Advisory** (`HIVE_PROXY_ADVISORY_OK=true`, gate not installed) |
 | --- | --- | --- |
-| **Rootful** | **Supported** — #4200 ([PR #4304](https://github.com/kubestellar/hive/pull/4304)) | **Supported as a deliberate choice, unenforced** — #4200 ([PR #4304](https://github.com/kubestellar/hive/pull/4304)) |
-| **Rootless** | **Supported**¹ — #4199 ([PR #4280](https://github.com/kubestellar/hive/pull/4280)), promoted by #4487 | **Supported as a deliberate choice, unenforced** — #4199 ([PR #4280](https://github.com/kubestellar/hive/pull/4280)) |
+| **Rootful** | **Supported** — #4200 ([PR #4304](https://github.com/hivecommons/hive/pull/4304)) | **Supported as a deliberate choice, unenforced** — #4200 ([PR #4304](https://github.com/hivecommons/hive/pull/4304)) |
+| **Rootless** | **Supported**¹ — #4199 ([PR #4280](https://github.com/hivecommons/hive/pull/4280)), promoted by #4487 | **Supported as a deliberate choice, unenforced** — #4199 ([PR #4280](https://github.com/hivecommons/hive/pull/4280)) |
 
 ¹ Rootless support carries one operational precondition that is not an
 enforcement matter: surviving a reboot requires `loginctl enable-linger` for the
@@ -259,7 +259,7 @@ each already has a home, and none of them is closed by this document.
 
 | Gap | Status | Where it lives |
 | --- | --- | --- |
-| **IPv6 egress-gate bypass** | Measured real (#4319, [PR #4321](https://github.com/kubestellar/hive/pull/4321)) and **fixed** in [PR #4327](https://github.com/kubestellar/hive/pull/4327), which closes the v6 family with an `ip6tables` filter-table `REJECT` carrying the same three exemptions. Residual: the fix was observed on a rootful, ULA-only, amd64/netavark dual-stack network — **no rootless dual-stack measurement exists**, and no globally routable IPv6 path was available to either run. | [IPv6 egress-gate bypass](podman-ipv6-egress-bypass.md) |
+| **IPv6 egress-gate bypass** | Measured real (#4319, [PR #4321](https://github.com/hivecommons/hive/pull/4321)) and **fixed** in [PR #4327](https://github.com/hivecommons/hive/pull/4327), which closes the v6 family with an `ip6tables` filter-table `REJECT` carrying the same three exemptions. Residual: the fix was observed on a rootful, ULA-only, amd64/netavark dual-stack network — **no rootless dual-stack measurement exists**, and no globally routable IPv6 path was available to either run. | [IPv6 egress-gate bypass](podman-ipv6-egress-bypass.md) |
 | **`arm64`** | Unmeasured everywhere. `amd64` only in both spikes. A hosted `ubuntu-24.04-arm` lane is identified but not built. | [Podman CI runner map](podman-ci-runner-map.md), #4336 |
 | **`slirp4netns`** | **Measured** (#4487). Identical gate chain, interception, end-to-end relay, and `SO_MARK` isolation as `pasta`, on one host. | this page, [Rootless + enforcing](#rootless--enforcing--supported) |
 | **Restart, reboot, recreate** | **Narrowed further.** The LIFECYCLE is measured in both root modes — stop/start/restart/recreate (#4377) and an actual reboot of each (#4413, #4479), written up on the [lifecycle page](podman-quadlet-lifecycle.md). The GATE's re-installation across a container restart is now measured on rootless (#4487), including reconstruction from a deliberately mutilated chain. Rootful gate-after-restart remains uninspected, and no run has yet inspected the chain after a full host reboot. | #4199, #4200, #4487; [lifecycle page](podman-quadlet-lifecycle.md) (#4377, #4413) |
@@ -282,9 +282,9 @@ No supported cell is currently defended by CI.
 
 ## References
 
-- [Rootful Podman egress-gate baseline](podman-rootful-egress-baseline.md) — #4200, [PR #4304](https://github.com/kubestellar/hive/pull/4304).
-- [Rootless Podman startup and exit-77 behavior](podman-rootless-startup-spike.md) — #4199, [PR #4280](https://github.com/kubestellar/hive/pull/4280); promoted to supported by #4487.
-- [The IPv4-only egress gate is bypassable over IPv6](podman-ipv6-egress-bypass.md) — #4319, [PR #4321](https://github.com/kubestellar/hive/pull/4321); fixed in [PR #4327](https://github.com/kubestellar/hive/pull/4327).
+- [Rootful Podman egress-gate baseline](podman-rootful-egress-baseline.md) — #4200, [PR #4304](https://github.com/hivecommons/hive/pull/4304).
+- [Rootless Podman startup and exit-77 behavior](podman-rootless-startup-spike.md) — #4199, [PR #4280](https://github.com/hivecommons/hive/pull/4280); promoted to supported by #4487.
+- [The IPv4-only egress gate is bypassable over IPv6](podman-ipv6-egress-bypass.md) — #4319, [PR #4321](https://github.com/hivecommons/hive/pull/4321); fixed in [PR #4327](https://github.com/hivecommons/hive/pull/4327).
 - [`CAP_NET_ADMIN` requirement](net-admin-requirement.md)
 - [Security model — operator guide](security-model.md)
 - [Podman CI runner map](podman-ci-runner-map.md) — #4211.

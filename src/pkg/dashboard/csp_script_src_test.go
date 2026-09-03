@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // csp_script_src_test.go covers the script-src half of kubestellar/hive#3848

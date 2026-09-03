@@ -8,7 +8,7 @@ front door.
 
 ## The finding, and where it stands
 
-[#3915](https://github.com/kubestellar/hive/issues/3915): `/mint` was gated by a
+[#3915](https://github.com/hivecommons/hive/issues/3915): `/mint` was gated by a
 shared bearer secret alone. A shared secret proves **trusted network position**,
 not **who is calling** — and nothing bounded what a holder could ask for, so any
 process that obtained it could mint a token for any subject, any audience and

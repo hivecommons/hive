@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // facts returns a fixed set of facts whose natural (Slug-sorted) order differs

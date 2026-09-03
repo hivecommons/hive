@@ -342,7 +342,7 @@ func TestClaimLedgerBackCompatPreThreeNineEightZero(t *testing.T) {
       "issue": 42,
       "pr_number": 100,
       "pr_repo": "kubestellar/hive",
-      "pr_url": "https://github.com/kubestellar/hive/pull/100",
+      "pr_url": "https://github.com/hivecommons/hive/pull/100",
       "pr_author": "clubanderson",
       "observed_at": %[1]q
     }

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 const (

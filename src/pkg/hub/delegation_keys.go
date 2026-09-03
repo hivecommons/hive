@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/delegation"
+	"github.com/hivecommons/hive/pkg/delegation"
 )
 
 // Delegation-chain verification material, published for THIRD-PARTY use.

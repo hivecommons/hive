@@ -2914,7 +2914,7 @@
         <ol>
           <li>Go to <a id="setup-custom-apps-link" href="https://github.com/settings/apps/new" target="_blank" rel="noopener" style="color:var(--green)">github.com/settings/apps/new</a> (or your org's Settings &rarr; Developer settings &rarr; GitHub Apps)</li>
           <li>Set the app name (e.g. <code>my-hive</code>)</li>
-          <li>Homepage URL: any URL (e.g. <code>https://github.com/kubestellar/hive</code>)</li>
+          <li>Homepage URL: any URL (e.g. <code>https://github.com/hivecommons/hive</code>)</li>
           <li>Uncheck "Webhook &rarr; Active" (not needed)</li>
           <li>Under "Device Flow", check <strong>Enable Device Flow</strong></li>
           <li>Set the permissions below, then click "Create GitHub App"</li>
@@ -3067,7 +3067,7 @@
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
       <a class="oc-nav-item" href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
-      <a class="oc-nav-item" href="https://github.com/kubestellar/hive/issues" target="_blank" rel="noopener noreferrer"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
+      <a class="oc-nav-item" href="https://github.com/hivecommons/hive/issues" target="_blank" rel="noopener noreferrer"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
     </div>
     <div class="system-gauges" id="system-gauges">
       <div class="sys-gauge-row" id="sys-gauge-disk" title="Disk usage">
@@ -16041,7 +16041,7 @@ function burnAreaChart() {
         const el = document.getElementById('git-version');
         const ocEl = document.getElementById('oc-git-version');
         const commitTooltip = v.latestMessage ? escapeHtml(v.latestMessage) : escapeHtml(v.hash);
-        let html = `<a href="https://github.com/kubestellar/hive/commit/${escapeHtml(v.hash)}" target="_blank" style="color:inherit;text-decoration:none" title="${commitTooltip}">${escapeHtml(v.short)}</a>`;
+        let html = `<a href="https://github.com/hivecommons/hive/commit/${escapeHtml(v.hash)}" target="_blank" style="color:inherit;text-decoration:none" title="${commitTooltip}">${escapeHtml(v.short)}</a>`;
         // Branch pill next to the SHA — shows which branch this spoke tracks
         // (v2/v3 release, or a personal dev branch like mk). Skip only the
         // unknown placeholder so the pill is always present for real builds.
@@ -16850,7 +16850,7 @@ function burnAreaChart() {
     }
 
     function renderAgentImport() {
-      var exampleURL = 'https://github.com/kubestellar/hive/blob/HEAD/src/examples/agents/customized-agent.yaml';
+      var exampleURL = 'https://github.com/hivecommons/hive/blob/HEAD/src/examples/agents/customized-agent.yaml';
       var rawURL = 'https://raw.githubusercontent.com/kubestellar/hive/HEAD/src/examples/agents/customized-agent.yaml';
       // Field-by-field reference on the docs site (documents the same v2 schema
       // as the example, and explains the ref+path "v2/src" URL). See #1929/#1930.
@@ -16891,7 +16891,7 @@ function burnAreaChart() {
       // path/ref from whichever URL it receives, so keep the raw form here and
       // let the server round-trip it back in _importBody.
       var keepLinked = !!(document.getElementById('import-keep-linked') || {}).checked;
-      url = url.replace('github.com/kubestellar/hive/blob/', 'raw.githubusercontent.com/kubestellar/hive/');
+      url = url.replace('github.com/hivecommons/hive/blob/', 'raw.githubusercontent.com/kubestellar/hive/');
       try {
         var resp = await fetch('/api/agents/import', {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({source:'url',url:url,preview:true,keepLinked:keepLinked})});
         var d = await resp.json();
@@ -23808,7 +23808,7 @@ function burnAreaChart() {
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary repo; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
+        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary repo; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
         autoNote: 'Checks itself once the app is detected on your repository.',
         actions: [
           { label: 'Install GitHub App', action: 'welcomeInstallGitHubApp' },

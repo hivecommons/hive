@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // ── Opportunistic Work (#2592) ────────────────────────────────────────────────

@@ -23,11 +23,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/auth"
-	"github.com/kubestellar/hive/pkg/delegation"
-	"github.com/kubestellar/hive/pkg/openrouter"
-	"github.com/kubestellar/hive/pkg/reach"
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/auth"
+	"github.com/hivecommons/hive/pkg/delegation"
+	"github.com/hivecommons/hive/pkg/openrouter"
+	"github.com/hivecommons/hive/pkg/reach"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 //go:embed static/*

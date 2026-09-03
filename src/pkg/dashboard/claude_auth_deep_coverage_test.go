@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 // stubClaudeSeams overrides the package-level seams in claude_auth.go with

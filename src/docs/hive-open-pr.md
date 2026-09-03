@@ -93,8 +93,8 @@ read as though the *branch* were the problem, which sends an operator to
 investigate branch creation. That is the wrong place: the branch is missing
 because the **push** failed.
 
-The watcher now investigates a 404 before reporting it ([#5343](https://github.com/kubestellar/hive/issues/5343),
-fixed in [#5352](https://github.com/kubestellar/hive/pull/5352)). It probes the
+The watcher now investigates a 404 before reporting it ([#5343](https://github.com/hivecommons/hive/issues/5343),
+fixed in [#5352](https://github.com/hivecommons/hive/pull/5352)). It probes the
 **repository** first, then the **head ref**, and reports one of three distinct
 outcomes. Only a definitive 404 is investigated — a 403, a rate limit, or a 5xx
 keeps its own identity so the existing retry and rate-limit handling still

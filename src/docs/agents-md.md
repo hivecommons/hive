@@ -5,7 +5,7 @@
 > output to every kick prompt. That call site used to be permanently disabled —
 > `Scheduler.agentsRepoRoot()` returned `""` unconditionally, so no `AGENTS.md`
 > was ever read. It now resolves a real per-repo checkout root
-> ([#5227](https://github.com/kubestellar/hive/issues/5227)), but Hive agents
+> ([#5227](https://github.com/hivecommons/hive/issues/5227)), but Hive agents
 > work over the API and keep no clones, so **there is still no root unless you
 > configure one**. Set `project.checkouts_dir` (below). Without it, an
 > `AGENTS.md` you add to a monitored repo has no effect on any agent's prompt —

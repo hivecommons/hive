@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // This file implements Phase 3 bounded replanning and the eval-loop lane that

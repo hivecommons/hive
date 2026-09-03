@@ -2,7 +2,7 @@
 
 Hive has two backup paths with different scopes: nightly encrypted hub disaster-recovery archives, and on-demand per-spoke backups an owner can download from the dashboard.
 
-> **See also:** [Hub disaster recovery](https://github.com/kubestellar/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into.
+> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into.
 
 ## Hub disaster recovery: `hive-backup`
 
@@ -57,8 +57,8 @@ A restore operator should inspect the extracted `MANIFEST.json`, re-apply the ca
 `src/deploy/k8s/backup-cronjob.yaml` wires the hub DR path into Kubernetes. It is **not deployed by default** — it is absent from `src/deploy/k8s/kustomization.yaml` and nothing in the install path applies it; deployment is an explicit `kubectl apply -f`, gated on the operator having escrowed `HIVE_BACKUP_KEY` first. It creates:
 
 - ServiceAccount `hive-hub-backup` in namespace `hive-hub`;
-- a namespaced Role granting `get` (only) on exactly four named Secrets — `hive-hub-secrets`, `oci-api-key`, `hive-hub-kubeconfigs`, `hive-hub-tls` — plus a ClusterRole limited to `pods [get,list]` and `pods/exec [create]` for reading spoke PVC state (hardened in [#3719](https://github.com/kubestellar/hive/pull/3719) and [#3810](https://github.com/kubestellar/hive/pull/3810); the unused `namespaces` grant was removed — spoke namespaces derive as `hive-hosted-<id>` from the registry);
-- a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/kubestellar/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/kubestellar/hive/pull/3810));
+- a namespaced Role granting `get` (only) on exactly four named Secrets — `hive-hub-secrets`, `oci-api-key`, `hive-hub-kubeconfigs`, `hive-hub-tls` — plus a ClusterRole limited to `pods [get,list]` and `pods/exec [create]` for reading spoke PVC state (hardened in [#3719](https://github.com/hivecommons/hive/pull/3719) and [#3810](https://github.com/hivecommons/hive/pull/3810); the unused `namespaces` grant was removed — spoke namespaces derive as `hive-hosted-<id>` from the registry);
+- a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/kubestellar/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/hivecommons/hive/pull/3810));
 - ConfigMap `hive-hub-backup-config` with object-storage bucket (default `hive-hub-backups`, inherited silently if you don't edit it) and retention.
 
 Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment. Archives upload to OCI Object Storage, so allow egress to `objectstorage.<region>.oraclecloud.com` from the hub.
@@ -460,7 +460,7 @@ The volume-root ownership landing on `0:0` (rootful) or container-root (rootless
 | GitHub App key SHA-256 | identical to the Docker side |
 | `docker compose down -v` afterwards | removed container, network, and `src_hive-data` |
 
-The four SELinux rows come from a second, independent run of the same procedure on Bluefin 44 (Silverblue), SELinux enforcing, Podman 5.8.4 rootless, Docker 29.7.2 ([#4497](https://github.com/kubestellar/hive/issues/4497)), which is where the missing ownership step was found: that run reproduced the two "this cannot work" results above exactly, and completed the migration — `hive-able-moth` moved from Docker to Podman, carrying a `_migration_marker` planted on the Docker side — but only with step 2a added. The first run recorded here was executed as well; the step that made its rootless extract succeed did not make it onto the page, which is the defect [#4497](https://github.com/kubestellar/hive/issues/4497) reports.
+The four SELinux rows come from a second, independent run of the same procedure on Bluefin 44 (Silverblue), SELinux enforcing, Podman 5.8.4 rootless, Docker 29.7.2 ([#4497](https://github.com/hivecommons/hive/issues/4497)), which is where the missing ownership step was found: that run reproduced the two "this cannot work" results above exactly, and completed the migration — `hive-able-moth` moved from Docker to Podman, carrying a `_migration_marker` planted on the Docker side — but only with step 2a added. The first run recorded here was executed as well; the step that made its rootless extract succeed did not make it onto the page, which is the defect [#4497](https://github.com/hivecommons/hive/issues/4497) reports.
 
 ### Not executed, and one caveat about the host
 

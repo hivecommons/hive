@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/gorilla/websocket"
 
-	"github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
 // remoteAttach bridges the operator's real terminal to an agent's tmux

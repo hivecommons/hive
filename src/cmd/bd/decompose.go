@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/planning"
 )
 
 // cmdDecompose is the MANUAL Phase-1 entry point for planning intelligence.

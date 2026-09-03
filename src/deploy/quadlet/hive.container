@@ -42,7 +42,7 @@
 
 [Unit]
 Description=Hive service
-Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standalone-quadlet.md
+Documentation=https://github.com/hivecommons/hive/blob/v4/src/docs/podman-standalone-quadlet.md
 
 # THE GATEWAY IS THE OTHER HALF OF THE DEPLOYMENT (#4516). hive-gateway.service
 # carries Requires=hive.service, which propagates a STOP from here to it and

@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/apiproxy"
+	"github.com/hivecommons/hive/pkg/apiproxy"
 )
 
 const defaultProxyHost = "127.0.0.1"

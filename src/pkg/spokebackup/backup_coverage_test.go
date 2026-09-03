@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/hubbackup"
 )
 
 // ---- DataDir ----

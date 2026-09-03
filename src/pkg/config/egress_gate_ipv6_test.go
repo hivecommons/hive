@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // These tests pin the IPv6 half of the forced-proxy egress gate (#4319).

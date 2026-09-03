@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	hivegithub "github.com/kubestellar/hive/pkg/github"
+	hivegithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // ============================================================

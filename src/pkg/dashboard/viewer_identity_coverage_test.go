@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // ---------- resolveViewerUsername (api_contribute.go) ----------

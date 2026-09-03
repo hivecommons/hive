@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // #2323: governor.budget.period_days and .critical_pct were persisted in

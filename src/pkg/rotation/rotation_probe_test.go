@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // fakeCLI installs an executable shell script named `name` on PATH that

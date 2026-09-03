@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Hive-health verdict: does this spoke have RECENT OUTPUT back to its work

@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/hooks"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // snapshot returns a copy of the recorded audit actions, safe under -race.

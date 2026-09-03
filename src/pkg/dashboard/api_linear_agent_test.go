@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
 // linearAgentTestServer wires an apiServer whose linearagent service points at

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/escalation"
-	"github.com/kubestellar/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/forge"
 )
 
 // fakeIssueWriter is a non-GitHub forge.IssueWriter recording the two writes

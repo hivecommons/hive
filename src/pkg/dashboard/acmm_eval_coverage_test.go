@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // covBLogger returns a quiet logger for coverage tests.

@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // quotaExhaustedAgentCount must count ONLY running, unpaused agents whose

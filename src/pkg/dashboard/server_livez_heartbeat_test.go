@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // getLivez drives a ready server's /api/livez and returns the recorder.

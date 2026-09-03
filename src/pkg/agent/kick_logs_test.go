@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // kickLogTestManager builds a Manager with one agent whose tmux capture and

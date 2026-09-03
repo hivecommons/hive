@@ -8,7 +8,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 func TestNewForge(t *testing.T) {

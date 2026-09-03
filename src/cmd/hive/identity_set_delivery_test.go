@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // TestIdentityTravelsAsOneSet pins that the App and its forge URLs arrive

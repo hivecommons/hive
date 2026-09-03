@@ -126,7 +126,7 @@ grants exactly two things — posting a comment on an issue or PR, and leaving a
 PR review — and nothing else moves.
 
 It exists because those two operations had nowhere sensible to sit
-([#4492](https://github.com/kubestellar/hive/issues/4492)). Commenting was
+([#4492](https://github.com/hivecommons/hive/issues/4492)). Commenting was
 bundled with `ISSUES_ONLY`, alongside creating issues, editing issue bodies and
 relabelling; leaving a PR review was bundled with `ISSUES_AND_PRS`, alongside
 pushing branches. Both bundles are wrong in both directions:

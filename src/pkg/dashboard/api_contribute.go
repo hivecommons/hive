@@ -23,10 +23,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 const (
@@ -2035,7 +2035,7 @@ select.admin-act{min-width:0;max-width:100%%}
      the per-task credential boundary tracked in #2537. -->
 <div id="k8s-note" style="display:none;margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
 <strong style="color:var(--cc-text)">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
-<span style="color:var(--cc-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2537</a> and is not solved by this path.</span>
+<span style="color:var(--cc-muted)">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/hivecommons/hive/issues/2537" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2537</a> and is not solved by this path.</span>
 </div>
 <!-- Host-only note. Shown for backends the containerized/Kubernetes paths cannot
      run at all: "other" has no image by definition. (agy used to force Host
@@ -2057,7 +2057,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <strong style="color:var(--cc-text)">Antigravity (agy) has no OS-level sandbox of its own.</strong> <strong>Container</strong> mode (the default) is the only mode with any host boundary &mdash; it runs agy inside the contributor container, which now ships the <code>agy</code> binary. agy signs in through an interactive Google OAuth flow with no API-key mode: run <code>agy</code> once inside the container (or on the host first &mdash; <code>just contribute-hive agy</code> stages a signed-in <code>~/.gemini</code> into the container, though whether a staged credential re-authenticates an unattended agy has not been confirmed end-to-end). <strong>Local</strong> mode refuses to launch agy at all unless you explicitly set <code>HIVE_AGY_DANGEROUSLY_RUN_UNCONFINED=1</code>, which drops the container boundary and leaves agy running directly against your host filesystem &mdash; not recommended.
 </div>
 <div id="multi-hub-note" style="margin-bottom:12px;background:var(--cc-surface);border:1px solid var(--cc-border);border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:var(--cc-text-2);line-height:1.5">
-<strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
+<strong style="color:var(--cc-text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/hivecommons/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
 </div>
 <p style="color:var(--cc-muted);margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div style="margin-top:16px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:16px;position:relative">
@@ -2065,7 +2065,7 @@ select.admin-act{min-width:0;max-width:100%%}
 <pre id="copy-cmds" style="color:var(--cc-text);font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
 # Use the OS / CLI / Mode / Runtime selectors above to customize.
 brew install just gh
-git clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive
+git clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive
 export HIVE_HUB=%s
 # Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.
 just contribute-setup claude
@@ -2110,14 +2110,14 @@ linux:'curl --proto \'=https\' --tlsv1.2 -sSf https://just.systems/install.sh | 
 windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
 };
 var roleHelp='# Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.\n';
-var containerTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive';
-var hostTpl='PREREQ\nINSTALL\ngit clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI local';
+var containerTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive';
+var hostTpl='PREREQ\nINSTALL\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI local';
 // Kubernetes (#2549): register locally, then generate + apply a headless
 // contributor workload (Deployment, #2660) into a cluster you already have.
 // just contribute-k8s prints the manifest; it never touches your cluster on
 // its own, so you can read it before piping to kubectl. Only the headless-
 // capable backends run this way (see K8S_HEADLESS_BACKENDS).
-var k8sTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
+var k8sTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
 // Backends whose credentials and model configuration this generator can stage
 // safely. Pi's relay supports headless execution, but this generator does not
 // yet stage its provider-specific credentials or canonical model. A pod has no
@@ -2305,7 +2305,7 @@ function defaultPromptFor(v){
     'The hive hub is: '+hubURL+'\n\n'+
     'Please walk me through, step by step, using the official setup:\n'+
     '  1. Install the prerequisites (just, gh) for my OS.\n'+
-    '  2. git clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\n'+
+    '  2. git clone -b {{HIVE_BRANCH}} https://github.com/hivecommons/hive && cd hive\n'+
     '  3. export HIVE_HUB='+hubURL+'\n'+
     '     For multiple hives, HIVE_HUB can be comma-separated when HIVE_REGISTRATION_TOKEN has matching tokens in the same order.\n'+
     '  4. just contribute-setup '+v+'\n'+
@@ -2380,8 +2380,8 @@ update();  // initial paint: copy block + branded UI in sync from first load
 })();
 </script>
 </div>
-<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/kubestellar/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:var(--cc-accent)">docs/podman-rootless-ci.md</a>.</p>
-<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:var(--cc-accent)">Open an issue</a> and we'll add support for it.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; when both are present, Docker wins. Docker's daemon runs rootful (docker-group membership is effectively root on the host); Podman here runs rootless (user namespace via <code>--userns=keep-id</code>, SELinux labels). Force either explicitly with <code>export HIVE_CONTAINER_RUNTIME=podman</code> (or <code>docker</code>). Rootless Podman handling is best-effort today, not yet covered by CI &mdash; see <a href="https://github.com/hivecommons/hive/blob/HEAD/src/docs/podman-rootless-ci.md" target="_blank" style="color:var(--cc-accent)">docs/podman-rootless-ci.md</a>.</p>
+<p style="color:var(--cc-muted-2);font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/hivecommons/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:var(--cc-accent)">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
 <button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-accent);text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
 </div>
@@ -2728,7 +2728,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
      the link works even if JS never runs. Public — everyone can file an issue. -->
 <footer class="cc-page-foot">
   <a id="cc-report-link" class="cc-report-link" target="_blank" rel="noopener noreferrer"
-     href="https://github.com/kubestellar/hive/issues/new?labels=enhancement">
+     href="https://github.com/hivecommons/hive/issues/new?labels=enhancement">
     <span class="cc-report-ic" aria-hidden="true">&#x1F41B;</span>
     <span>Report an issue with this page</span>
   </a>
@@ -2938,7 +2938,7 @@ function activateTab(t,push){
   try{ccUpdateReportLink(dp);}catch(e){}
 }
 // ── "File an issue on this page" (#2594) ───────────────────────────────────────
-// Build a github.com/kubestellar/hive/issues/new URL pre-filled with WHICH tab the
+// Build a github.com/hivecommons/hive/issues/new URL pre-filled with WHICH tab the
 // report is about + the current page URL, so the maintainer knows the exact
 // surface. Uses ONLY the existing enhancement label (never a non-existent
 // "contribute" label — the #2536/#2540 regression). Rebuilt on load + every tab
@@ -2950,7 +2950,7 @@ function ccUpdateReportLink(dp){
   var title='contribute: '+tabName+' — ';
   var href='';try{href=window.location.href;}catch(e){href='';}
   var body='Reporting an issue with the /contribute page.\n\nPage/tab: '+tabName+'\nURL: '+href+'\n\n---\n\nWhat happened / what would you like to see?\n';
-  var url='https://github.com/kubestellar/hive/issues/new?labels=enhancement'+
+  var url='https://github.com/hivecommons/hive/issues/new?labels=enhancement'+
     '&title='+encodeURIComponent(title)+
     '&body='+encodeURIComponent(body);
   a.setAttribute('href',url);

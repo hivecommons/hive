@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 // This file adds runtime model discovery for the CLI backends (copilot,

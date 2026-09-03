@@ -113,13 +113,13 @@ func TestSanitizeRepoEntry(t *testing.T) {
 		{"empty stays empty", "", ""},
 		{"whitespace-only stays empty", "   ", ""},
 		{"plain owner/repo is unchanged", "kubestellar/hive", "kubestellar/hive"},
-		{"https scheme is stripped", "https://github.com/kubestellar/hive", "kubestellar/hive"},
-		{"http scheme is stripped", "http://github.com/kubestellar/hive", "kubestellar/hive"},
+		{"https scheme is stripped", "https://github.com/hivecommons/hive", "hivecommons/hive"},
+		{"http scheme is stripped", "http://github.com/hivecommons/hive", "hivecommons/hive"},
 		{"trailing .git is removed", "kubestellar/hive.git", "kubestellar/hive"},
 		{"surrounding slashes are trimmed", "/kubestellar/hive/", "kubestellar/hive"},
 		{"leading GHE hostname is dropped", "github.ibm.com/org/repo", "org/repo"},
 		{"deep path keeps only last two segments", "github.com/a/b/c/d", "c/d"},
-		{"whitespace and scheme together", "  https://github.com/kubestellar/hive.git  ", "kubestellar/hive"},
+		{"whitespace and scheme together", "  https://github.com/hivecommons/hive.git  ", "hivecommons/hive"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

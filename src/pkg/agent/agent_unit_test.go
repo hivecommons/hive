@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestSetAndGetACMMLevel(t *testing.T) {

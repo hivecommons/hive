@@ -1,7 +1,7 @@
 package proof
 
 import (
-	"github.com/kubestellar/hive/pkg/convergence"
+	"github.com/hivecommons/hive/pkg/convergence"
 )
 
 // This file is the selective, non-monotonic invalidation judgment for

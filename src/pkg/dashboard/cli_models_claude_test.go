@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/claude"
 )
 
 // withoutClaudeCredentials makes the claude discovery credential resolution

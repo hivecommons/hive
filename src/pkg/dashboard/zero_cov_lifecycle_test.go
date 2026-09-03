@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/linearagent"
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // Covers previously 0%-covered exported funcs in pkg/dashboard:

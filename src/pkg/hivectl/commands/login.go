@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hivectl"
+	"github.com/hivecommons/hive/pkg/hivectl"
 	"github.com/spf13/cobra"
 )
 

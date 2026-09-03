@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 func TestAllowedByModeOAuthDeviceFlow(t *testing.T) {

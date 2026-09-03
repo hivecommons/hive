@@ -471,7 +471,7 @@
       <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your repos, your infrastructure.</p>
     </div>
     <div class="alt-card">
-      <pre><code>git clone https://github.com/kubestellar/hive.git
+      <pre><code>git clone https://github.com/hivecommons/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
@@ -483,7 +483,7 @@ docker compose -f src/docker-compose.yaml up -d
 # Open the dashboard
 open http://localhost:3001</code></pre>
       <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.kubestellar.io.</p>
-      <p style="margin-bottom:0">Listing a hive you host yourself in the <a href="/#hives" style="color:var(--blue)">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a href="https://github.com/kubestellar/hive/issues/new" style="color:var(--blue)">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
+      <p style="margin-bottom:0">Listing a hive you host yourself in the <a href="/#hives" style="color:var(--blue)">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a href="https://github.com/hivecommons/hive/issues/new" style="color:var(--blue)">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
     </div>
   </section>
 
@@ -495,7 +495,7 @@ open http://localhost:3001</code></pre>
       <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a href="/#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
     </div>
     <div class="alt-card">
-      <pre><code>git clone https://github.com/kubestellar/hive.git
+      <pre><code>git clone https://github.com/hivecommons/hive.git
 cd hive
 
 export HIVE_HUB=wss://HIVE_HOST/contribute
@@ -510,7 +510,7 @@ just contribute-hive              # start taking tasks</code></pre>
 
   <footer class="footer">
     <div class="footer-links">
-      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://github.com/hivecommons/hive">Source Code</a>
       <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
       <a href="https://kubestellar.io">KubeStellar</a>
     </div>

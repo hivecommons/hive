@@ -49,7 +49,7 @@ The relay applies `redactTokens()` to agent output before it leaves the host: to
 
 Three further differences worth knowing:
 
-- **Minimum match length.** The Go patterns require 10 or more characters after the prefix; the relay requires 36 or more. A short or truncated token-shaped string is redacted by Go and passed through by the relay. The relay's bound is deliberately `{36,}` rather than `{36}` so a *longer* token is not redacted only in its first 36 characters, leaking its tail ([#4267](https://github.com/kubestellar/hive/issues/4267)).
+- **Minimum match length.** The Go patterns require 10 or more characters after the prefix; the relay requires 36 or more. A short or truncated token-shaped string is redacted by Go and passed through by the relay. The relay's bound is deliberately `{36,}` rather than `{36}` so a *longer* token is not redacted only in its first 36 characters, leaking its tail ([#4267](https://github.com/hivecommons/hive/issues/4267)).
 - **Character class.** Go accepts `[A-Za-z0-9_]` after every prefix. The relay accepts only `[A-Za-z0-9]` for the `gh*_` prefixes (underscores allowed for `github_pat_` alone).
 - **Placeholder text.** Go writes `[REDACTED]`; the relay writes `<prefix>_***REDACTED***`, keeping the prefix visible. Alerting that greps for one will not match the other.
 

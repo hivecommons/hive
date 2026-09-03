@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agent"
 )
 
 // Regressions for issue #3875: the hive process leaked CLOSE_WAIT sockets to

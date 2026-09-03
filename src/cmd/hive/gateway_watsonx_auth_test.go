@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/knowledge"
-	"github.com/kubestellar/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
 // swapDefaultMinter points watsonx.DefaultMinter at endpoint for the duration

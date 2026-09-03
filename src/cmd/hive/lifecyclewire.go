@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/timeline"
-	"github.com/kubestellar/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/tracing"
 )
 
 // timelineRef renders the canonical short "repo#number" journey key the

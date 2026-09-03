@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
 // Sampling-ratio bounds for the tracing head-based sampler. The config treats a

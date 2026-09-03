@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // RFC #4665 defaults. The zero value of every governor.watchdog config field

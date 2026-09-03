@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // TestHandleTrendHistory covers the trend-history read endpoint (#2039).

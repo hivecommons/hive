@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	hivegithub "github.com/kubestellar/hive/pkg/github"
+	hivegithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // githubPRSource adapts the hub's GitHub client to reach.PRSource; the

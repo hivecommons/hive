@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // covFInceptionServer builds a dashboard Server wired with a real inception

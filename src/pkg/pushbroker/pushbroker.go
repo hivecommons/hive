@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (

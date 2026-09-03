@@ -6,8 +6,8 @@ import (
 	"log/slog"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // githubReader is the subset of *github.Client the GitHub adapter needs for the

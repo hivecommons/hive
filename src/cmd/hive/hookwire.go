@@ -6,13 +6,13 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/hooks"
-	"github.com/kubestellar/hive/pkg/hub"
-	"github.com/kubestellar/hive/pkg/notify"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 // Sentinel errors for an adapter whose backing object was never installed.

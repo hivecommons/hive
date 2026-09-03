@@ -3,7 +3,7 @@ package hooks
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 	"gopkg.in/yaml.v3"
 )
 

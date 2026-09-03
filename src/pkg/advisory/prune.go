@@ -3,7 +3,7 @@ package advisory
 import (
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // staleCloseReason is stamped into a bead's metadata when staleness pruning

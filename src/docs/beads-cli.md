@@ -52,7 +52,7 @@ Examples:
 ```bash
 export BD_DIR=/data/beads/scanner
 bd ready --actor scanner
-bd create --title "Document backup restore" --type task --priority 2 --actor guide --external-ref https://github.com/kubestellar/hive/issues/2986
+bd create --title "Document backup restore" --type task --priority 2 --actor guide --external-ref https://github.com/hivecommons/hive/issues/2986
 bd update bead-123 --claim
 bd update bead-123 --set-metadata reviewer=guide
 bd close bead-123

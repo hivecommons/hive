@@ -40,7 +40,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/hubbackup"
+	"github.com/hivecommons/hive/pkg/hubbackup"
 )
 
 // Filesystem layout of spoke state.

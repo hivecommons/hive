@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/openrouter"
+	"github.com/hivecommons/hive/pkg/openrouter"
 )
 
 // ============================================================

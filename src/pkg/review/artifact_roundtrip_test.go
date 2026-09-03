@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 // writeReportFiles marshals one valid report per default perspective into dir

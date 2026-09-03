@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // fleetStatsCollectInterval is how often the spoke recomputes its fleet-stat

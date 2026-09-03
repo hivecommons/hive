@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/claude"
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // This file computes the per-agent CLI auth state that drives the dashboard's

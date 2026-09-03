@@ -1,6 +1,6 @@
 # Agent Self-Healing Watchdog
 
-Implements [RFC #4665](https://github.com/kubestellar/hive/issues/4665):
+Implements [RFC #4665](https://github.com/hivecommons/hive/issues/4665):
 k8s-style liveness/readiness reconciliation for hive agents. Before the
 watchdog, an agent's dashboard state was a config echo — an agent could sit
 dead at a shell prompt (or at a login screen, or behind a first-run modal)
@@ -60,7 +60,7 @@ refresh in place. A probe that cannot tell reports `Unknown`.
 A burst — every Claude agent but ONE flipping to `auth-required` /
 `PaneShowsLogin` within a few minutes, hours after a healthy boot — is almost
 never an expired login, and re-authenticating will not fix it
-([#5730](https://github.com/kubestellar/hive/issues/5730)).
+([#5730](https://github.com/hivecommons/hive/issues/5730)).
 
 Agents share one operator login: each runs as its own uid, but their
 `~/.claude` all symlink to `/data/home/.claude` (#4619). Claude Code refreshes
@@ -93,7 +93,7 @@ the cause.
 
 The same shape applies to antigravity (`agy`), whose token lives one directory
 deeper, at `/data/home/.gemini/antigravity-cli/antigravity-oauth-token`
-([#5734](https://github.com/kubestellar/hive/issues/5734)) — check and fix it
+([#5734](https://github.com/hivecommons/hive/issues/5734)) — check and fix it
 the same way.
 
 Two layers keep this from recurring, and both report rather than hide a

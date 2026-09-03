@@ -2,7 +2,7 @@ package dashboard
 
 import (
 	"fmt"
-	"github.com/kubestellar/hive/pkg/worksource"
+	"github.com/hivecommons/hive/pkg/worksource"
 	"strings"
 )
 

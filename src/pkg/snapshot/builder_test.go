@@ -10,8 +10,8 @@ import (
 
 	"log/slog"
 
-	"github.com/kubestellar/hive/internal/testutil"
-	"github.com/kubestellar/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
 func discardLogger() *slog.Logger {

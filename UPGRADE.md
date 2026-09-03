@@ -107,4 +107,4 @@ the `agents[].acmm` field replaced the former `agents[].tier` field.
 ---
 
 *This document is maintained by the strategist agent and project maintainers.
-Last updated: 2026-09-02. Tracking issue: [#5554](https://github.com/kubestellar/hive/issues/5554).*
+Last updated: 2026-09-02. Tracking issue: [#5554](https://github.com/hivecommons/hive/issues/5554).*

@@ -4,9 +4,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/hivectl"
-	"github.com/kubestellar/hive/pkg/tui"
-	tuiclient "github.com/kubestellar/hive/pkg/tui/client"
+	"github.com/hivecommons/hive/pkg/hivectl"
+	"github.com/hivecommons/hive/pkg/tui"
+	tuiclient "github.com/hivecommons/hive/pkg/tui/client"
 	"github.com/spf13/cobra"
 )
 

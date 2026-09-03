@@ -1,7 +1,7 @@
 # Backend smoke — the live canary for contributor CLI integration
 
 Hive runs contributor tasks by driving vendor coding-agent CLIs — Claude Code,
-Codex, and the rest of the [backend list](https://github.com/kubestellar/hive/blob/v4/docs/backend-setup.md) —
+Codex, and the rest of the [backend list](https://github.com/hivecommons/hive/blob/v4/docs/backend-setup.md) —
 through the ClankeR relay. That seam is the one integration surface hive does
 not control: vendors ship CLI updates on their own schedule, and what breaks
 is readiness detection, completion detection, credential layout, and one-shot
@@ -10,7 +10,7 @@ captured fixtures, so a vendor change ships green in CI and fails contributors
 in production.
 
 The backend smoke is the live complement:
-[`bin/test_backend_smoke.sh`](https://github.com/kubestellar/hive/blob/v4/bin/test_backend_smoke.sh)
+[`bin/test_backend_smoke.sh`](https://github.com/hivecommons/hive/blob/v4/bin/test_backend_smoke.sh)
 drives the **real relay** against a fake in-process hub and — where a
 credential exists — the **real backend CLI** on a one-line task, asserting the
 machine-checkable contract end to end: task acceptance, the `HIVE_VERDICT`
@@ -20,13 +20,13 @@ and the `task_failed` wire shape.
 Its first full run caught three live relay bugs (the claude `●` verdict glyph
 the parser did not accept, a headless-codex stdin hang, and codex's non-git
 workspace refusal) — the exact failure class it exists for. See the
-[Changelog](https://github.com/kubestellar/hive/blob/v4/CHANGELOG.md) entries.
+[Changelog](https://github.com/hivecommons/hive/blob/v4/CHANGELOG.md) entries.
 
 ## Who runs what
 
 | Piece | Runs where | Who acts on it |
 | --- | --- | --- |
-| Scheduled live smoke ([`backend-smoke.yml`](https://github.com/kubestellar/hive/blob/v4/.github/workflows/backend-smoke.yml)) | kubestellar/hive's own GitHub Actions, every 6h — gated to this repo, so forks and downstream deployments never run it | hive maintainers, via the issues it files |
+| Scheduled live smoke ([`backend-smoke.yml`](https://github.com/hivecommons/hive/blob/v4/.github/workflows/backend-smoke.yml)) | kubestellar/hive's own GitHub Actions, every 6h — gated to this repo, so forks and downstream deployments never run it | hive maintainers, via the issues it files |
 | Keyless subset | v2-ci, merge-gating on every PR | the PR author, like any red check |
 | `just backend-smoke` | any laptop or hive host, opt-in, with that machine's own credentials | whoever ran it |
 | Run telemetry (below) | **every hive hub, passively** — no setup, no model spend | the hive's operator; fleet-level aggregation is a planned follow-up |

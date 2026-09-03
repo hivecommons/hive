@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/logscrub"
-	"github.com/kubestellar/hive/pkg/outputschema"
-	"github.com/kubestellar/hive/pkg/pushbroker"
-	"github.com/kubestellar/hive/pkg/sandbox"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/pushbroker"
+	"github.com/hivecommons/hive/pkg/sandbox"
 )
 
 const (

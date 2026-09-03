@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/linearagent"
+	"github.com/hivecommons/hive/pkg/linearagent"
 )
 
 // seedLinearInstall writes a connected install into the service's store.

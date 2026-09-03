@@ -8,7 +8,7 @@ before any breaking transfer occurs.
 
 ## Operator promise
 
-- Existing `github.com/kubestellar/hive` clone URLs and
+- Existing `github.com/hivecommons/hive` clone URLs and
   `ghcr.io/kubestellar/*` image references remain valid throughout v4.
 - `ghcr.io/hivecommons/*` image tags are mirrors of the same manifest digests as
   the `kubestellar` packages while dual-publish is active.
@@ -46,7 +46,7 @@ update all applicable locations:
 ## Current known gaps
 
 - The v4 line has dual-publish documentation, but many examples still use only
-  `github.com/kubestellar/hive` and `ghcr.io/kubestellar/hive`.
+  `github.com/hivecommons/hive` and `ghcr.io/kubestellar/hive`.
 - The v5 edge workflow needs the same mirror coverage before v5 is presented as
   the next-generation line.
 - No package-name deprecation date is set; `kubestellar` references remain

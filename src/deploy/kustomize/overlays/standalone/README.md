@@ -114,7 +114,7 @@ deliberate — there is no hub to auto-upgrade a standalone hive.
   ```
 
   Version tags that do exist are listed on the
-  [GitHub Releases page](https://github.com/kubestellar/hive/releases) (each
+  [GitHub Releases page](https://github.com/hivecommons/hive/releases) (each
   release attaches the SBOM of the image it tagged).
 
 **Pin by digest (works today, always immutable — recommended).** Resolve the

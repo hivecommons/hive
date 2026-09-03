@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/reach"
+	"github.com/hivecommons/hive/pkg/reach"
 )
 
 // fakeReachPRSource is an in-memory reach.PRSource.

@@ -73,10 +73,10 @@ its stdin and prints events to stdout; it opens no file of its own. `tmux
 pipe-pane` feeds the pane into that command's stdin but does nothing with its
 stdout, so the publisher invocation in `pkg/agent/manager.go` has to end in
 `>> /var/run/pluk/logs/<session>.jsonl` for anything to be written at all. It
-did not between [#1759](https://github.com/kubestellar/hive/pull/1759) — which
+did not between [#1759](https://github.com/hivecommons/hive/pull/1759) — which
 replaced the Go `pluk-publish` binary, a publisher that wrote the log itself,
 with the TypeScript `pluk watch` — and
-[#4285](https://github.com/kubestellar/hive/issues/4285). Throughout that
+[#4285](https://github.com/hivecommons/hive/issues/4285). Throughout that
 window this directory was empty and every consumer below was reading files that
 did not exist.
 
@@ -105,7 +105,7 @@ reacts to a subset of event types:
   there. Both readers now agree: `hive-panes.sh` has always read `data.line`,
   and the dashboard's Go subscriber (`handlePlukEvent` in
   `inception_watcher.go`) read `data.message` until
-  [#4285](https://github.com/kubestellar/hive/issues/4285) corrected it, which
+  [#4285](https://github.com/hivecommons/hive/issues/4285) corrected it, which
   had left its whole `raw_output` arm dead. Earlier revisions of this page
   advised new consumers to check both keys; that was wrong, and generalised
   from the `error`/`rate_limit` shape below. pluk builds the event as
@@ -206,18 +206,18 @@ terminal scrollback:
 
 - Agent sessions are created with tmux `history-limit` **50000** (tmux's own
   default is 2000, which silently truncated long runs —
-  [#3790](https://github.com/kubestellar/hive/pull/3790)). Override with
+  [#3790](https://github.com/hivecommons/hive/pull/3790)). Override with
   `HIVE_TMUX_HISTORY_LIMIT` (positive integer); it must be set at session
   creation — raising it later never deepens an existing pane. The attach-time
   twin `HIVE_TTYD_HISTORY_LIMIT` (also 50000) only affects panes created after
   a browser attach.
 - The browser terminal attaches with tmux mouse mode on, so the scroll wheel
   drives copy-mode scrollback; hold Shift (Option on macOS) for native browser
-  text selection ([#3722](https://github.com/kubestellar/hive/pull/3722)).
+  text selection ([#3722](https://github.com/hivecommons/hive/pull/3722)).
 - **Full-log view/download:** `GET /api/agents/{name}/log` returns the entire
   retained buffer for the agent's latest run as `text/plain` (add `?download=1`
   for a `Content-Disposition` download named
-  `hive-<agent>-<timestamp>.log`) — [#3711](https://github.com/kubestellar/hive/pull/3711).
+  `hive-<agent>-<timestamp>.log`) — [#3711](https://github.com/hivecommons/hive/pull/3711).
   In the dashboard these are the `📄 full log` and `⬇ log` controls on the
   agent card. Normal dashboard auth applies (any authenticated role); output
   passes through token redaction, so it is not a redaction bypass.
@@ -231,8 +231,8 @@ those boundaries.
 
 Hive archives each kick's terminal output to a durable file so operators can
 read the logs of the last several runs — not just the latest —
-([#4296](https://github.com/kubestellar/hive/issues/4296),
-[#4295](https://github.com/kubestellar/hive/issues/4295)):
+([#4296](https://github.com/hivecommons/hive/issues/4296),
+[#4295](https://github.com/hivecommons/hive/issues/4295)):
 
 - **When snapshots happen.** The scrollback is captured to a file *before*
   it can be destroyed: when the next kick is delivered (the previous kick's

@@ -27,20 +27,20 @@ writing) wherever a specific mechanism is asserted.
 | | |
 |---|---|
 | Assessment Stage | Complete |
-| Software | [kubestellar/hive](https://github.com/kubestellar/hive) |
+| Software | [kubestellar/hive](https://github.com/hivecommons/hive) |
 | Security Provider | No — Hive is not itself a security product. It is an agent-orchestration platform whose core value proposition includes constraining the blast radius of the AI agents it runs; see [Overview](#overview) below. |
-| Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `src/bin/`, 45 scripts per [`bin/README.md`](https://github.com/kubestellar/hive/blob/v4/bin/README.md)) |
+| Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `src/bin/`, 45 scripts per [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
 | SBOM | Not currently generated. Container image builds explicitly disable provenance/SBOM attestations (`sbom: false` in `.github/workflows/docker.yml:134,177,349,454`, citing issue #3760 as the reason). This is a known gap — see [Open questions](#open-questions--not-yet-assessed). |
 | Security links | See table below |
 
 | Doc | URL |
 |---|---|
-| Security policy / vulnerability reporting | [SECURITY.md](https://github.com/kubestellar/hive/blob/v4/SECURITY.md) |
-| Threat model | [security-threat-model.md](https://github.com/kubestellar/hive/blob/v4/src/docs/security-threat-model.md) |
-| Security model (operator guide) | [security-model.md](https://github.com/kubestellar/hive/blob/v4/src/docs/security-model.md) |
-| Log scrubbing / secret redaction | [security.md](https://github.com/kubestellar/hive/blob/v4/src/docs/security.md) |
-| ADRs (architecture decision records) | [adr/README.md](https://github.com/kubestellar/hive/blob/v4/src/docs/adr/README.md) |
-| OpenSSF Scorecard workflow | [.github/workflows/scorecard.yml](https://github.com/kubestellar/hive/blob/v4/.github/workflows/scorecard.yml) |
+| Security policy / vulnerability reporting | [SECURITY.md](https://github.com/hivecommons/hive/blob/v4/SECURITY.md) |
+| Threat model | [security-threat-model.md](https://github.com/hivecommons/hive/blob/v4/src/docs/security-threat-model.md) |
+| Security model (operator guide) | [security-model.md](https://github.com/hivecommons/hive/blob/v4/src/docs/security-model.md) |
+| Log scrubbing / secret redaction | [security.md](https://github.com/hivecommons/hive/blob/v4/src/docs/security.md) |
+| ADRs (architecture decision records) | [adr/README.md](https://github.com/hivecommons/hive/blob/v4/src/docs/adr/README.md) |
+| OpenSSF Scorecard workflow | [.github/workflows/scorecard.yml](https://github.com/hivecommons/hive/blob/v4/.github/workflows/scorecard.yml) |
 
 ## Overview
 
@@ -85,7 +85,7 @@ obey.
   that reaches agent prompts.
 - **Contributors via ClankeR relay** — external contributors who donate
   compute by running an agent against a hive's queue over a relay protocol
-  (see [contributor-relay.md](https://github.com/kubestellar/hive/blob/v4/src/docs/contributor-relay.md)).
+  (see [contributor-relay.md](https://github.com/hivecommons/hive/blob/v4/src/docs/contributor-relay.md)).
 - **Hub operators / SaaS platform operators** — run the central hub that
   coordinates registered spokes and, for hosted spokes, provisions
   infrastructure and injects GitHub App credentials.
@@ -362,7 +362,7 @@ independent of any single cloud provider or AI vendor.
 
 Vulnerability reports are handled through **GitHub private vulnerability
 reporting** (Security tab → "Report a vulnerability"), not public issues, PRs,
-or discussions, per [`SECURITY.md`](https://github.com/kubestellar/hive/blob/v4/SECURITY.md).
+or discussions, per [`SECURITY.md`](https://github.com/hivecommons/hive/blob/v4/SECURITY.md).
 Reporters are asked for affected component/branch/commit, description and
 impact, reproduction steps, and any supporting logs/PoC/config.
 
@@ -380,7 +380,7 @@ see [Known weaknesses](#three-most-significant-known-weaknesses).
 No formal, published incident-response runbook specific to a security
 incident (as distinct from operational incidents) was found in this
 repository at assessment time. Related but not equivalent:
-[`docs/HUB_DISASTER_RECOVERY.md`](https://github.com/kubestellar/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md)
+[`docs/HUB_DISASTER_RECOVERY.md`](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md)
 covers hub-level disaster recovery (backup/restore, spoke fleet recovery,
 operator communication), and the master-key rotation flow
 (`security-model.md` "Master key rotation") gives an operator a mechanism to
@@ -429,7 +429,7 @@ because a self-assessment that only lists strengths is not credible:
    directly under "Residual risks and known gaps": *"Shared-container
    execution remains a material risk... it is not equivalent to per-run
    containers or microVMs,"* tracked in open issue
-   [#2804](https://github.com/kubestellar/hive/issues/2804), which — per the
+   [#2804](https://github.com/hivecommons/hive/issues/2804), which — per the
    same doc — also proposes moving live GitHub write credentials out of the
    agent sandbox entirely (*"current agents can still need live credentials
    to push/open PRs"*). Until #2804 lands, a compromised agent process that
@@ -492,7 +492,7 @@ development, not externally reported vulnerabilities.
 
 ### Open SSF best practices
 
-An [OpenSSF Scorecard](https://github.com/kubestellar/hive/blob/v4/.github/workflows/scorecard.yml) workflow runs weekly
+An [OpenSSF Scorecard](https://github.com/hivecommons/hive/blob/v4/.github/workflows/scorecard.yml) workflow runs weekly
 against the repository. This assessment does not reproduce the current
 numeric score here (it changes over time and is available live via the
 Scorecard badge/API); a reviewer should pull the current score rather than
@@ -513,7 +513,7 @@ Hive is part of the [KubeStellar](https://github.com/kubestellar) CNCF
 Sandbox project family. It interoperates with, but is not a vendor
 dependency of: GitHub/GitHub Enterprise/GitLab/Gitea, and multiple AI CLI
 backend vendors (Anthropic Claude Code, GitHub Copilot CLI, Google Gemini,
-Block Goose, IBM Bob). See [landscape.md](https://github.com/kubestellar/hive/blob/v4/docs/landscape.md)
+Block Goose, IBM Bob). See [landscape.md](https://github.com/hivecommons/hive/blob/v4/docs/landscape.md)
 for a maintained comparison against nearby agentic-orchestration tools.
 
 ## Open questions / not yet assessed

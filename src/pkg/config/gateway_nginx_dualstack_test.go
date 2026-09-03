@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // nginxConfPath is the gateway config under test, relative to this package.

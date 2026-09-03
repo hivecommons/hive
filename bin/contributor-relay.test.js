@@ -308,7 +308,7 @@ const AGY_WEDGED_PANE = [
   'I am running the pkg/agent tests with the shortened temp directory path to verify they now pass locally as well.',
   // The turn continues for a while after that line — in the pane this fixture
   // came from it sat 36 rows above the bottom, far outside any sane tail.
-  ...Array.from({ length: 20 }, (_, i) => `  ok  github.com/kubestellar/hive/pkg/thing${i}  0.0${i}s`),
+  ...Array.from({ length: 20 }, (_, i) => `  ok  github.com/hivecommons/hive/pkg/thing${i}  0.0${i}s`),
   '',
   '  HIVE_VERDICT: no_work_needed — standing living document tracker, not an actionable task',
   '────────────────────────────────────────────',
@@ -536,7 +536,7 @@ test('a task prompt is never typed into a pane that is running a shell', () => {
   const relay = loadRelay({ backend: 'agy', procAlive: false });
   try {
     relay.setCliReady(true);
-    const PROMPT = "You are a contributor to the kubestellar/hive hive. Work on issue #4030.";
+    const PROMPT = "You are a contributor to the hivecommons/hive hive. Work on issue #4030.";
     const before = relay.__tmuxSends().length;
     relay.tmuxSendKeys(PROMPT);
 
@@ -545,7 +545,7 @@ test('a task prompt is never typed into a pane that is running a shell', () => {
     assert.strictEqual(relay.getCliReady(), false,
       'a stale readiness latch must be dropped once the pane is seen to be a shell');
     const sends = relay.__tmuxSends().slice(before);
-    assert.ok(!sends.some(c => c.includes('contributor to the kubestellar/hive hive')),
+    assert.ok(!sends.some(c => c.includes('contributor to the hivecommons/hive hive')),
       `the prompt text must never reach the pane: ${JSON.stringify(sends)}`);
     assert.ok(sends.some(c => /agy/.test(c)),
       `the CLI must be relaunched so the queued prompt has somewhere to go: ${JSON.stringify(sends)}`);
@@ -1822,7 +1822,7 @@ test('#5281 the budget is per task, not per process', () => {
   // rather than by calling the reset directly, so that a change which dropped
   // resetAutonomyNudgeState() from the task-start path would fail here.
   const DONE_PANE = [
-    '● Done — opened https://github.com/kubestellar/hive/pull/9999',
+    '● Done — opened https://github.com/hivecommons/hive/pull/9999',
     '',
     '✻ Cogitated for 3m 30s',
     '',
@@ -2740,7 +2740,7 @@ test('a bullet-prefixed Codex no-work verdict is reported as task_complete', () 
 // is invisible whenever it reaches for different ones — the mirror of #4182,
 // where agy's prose made a finished pane look busy.
 const CODEX_SHIPPED_PR_IDLE_PANE = [
-  '\u2022 Opened ready-for-review PR #4259 (https://github.com/kubestellar/hive/pull/4259).',
+  '\u2022 Opened ready-for-review PR #4259 (https://github.com/hivecommons/hive/pull/4259).',
   '  - Conclusion: direct .kube reuse is not viable; native Quadlet units are recommended.',
   '  - Added the measured compatibility report and documentation index link.',
   '  - Commit c8ae4ddf includes a matching Signed-off-by trailer.',
@@ -3819,7 +3819,7 @@ test('#4267 blocked-on-human: ordinary build/test output is NOT blocked', () => 
       'Compiling module foo\nBuild succeeded in 12.3s\nAll 42 tests passed\n> ',
       'go build ./...\nok  pkg/dashboard  1.234s\n$ ',
       // A "label: value" line must not read as an elicitation form (#2844).
-      'opened a PR: https://github.com/kubestellar/hive/pull/123\n> ',
+      'opened a PR: https://github.com/hivecommons/hive/pull/123\n> ',
       // A question mark mid-line is not a prompt.
       'Checked whether the flag applies? yes, and it is already set\ndone\n> ',
       '',
@@ -4037,7 +4037,7 @@ test('#4267 parseProtocolVersion is strict MAJOR.MINOR', () => {
 test('#4267 taskKey keys by repo#number with task_id fallback', () => {
   const relay = loadRelay({});
   try {
-    assert.strictEqual(relay.taskKey({ repo: 'kubestellar/hive', number: 42 }), 'kubestellar/hive#42');
+    assert.strictEqual(relay.taskKey({ repo: 'hivecommons/hive', number: 42 }), 'hivecommons/hive#42');
     assert.strictEqual(relay.taskKey({ task_id: 'abc-123' }), 'abc-123');
     assert.strictEqual(relay.taskKey(null), 'unknown');
     assert.strictEqual(relay.taskKey({}), 'unknown');
@@ -4113,17 +4113,17 @@ test('#4267 detectPRURL prefers the task repo and falls back to the first URL', 
   try {
     const lines = [
       'mentioned https://github.com/other/repo/pull/7 in passing',
-      'Opened https://github.com/kubestellar/hive/pull/4267 for review',
+      'Opened https://github.com/hivecommons/hive/pull/4267 for review',
     ];
-    assert.strictEqual(relay.detectPRURL(lines, 'kubestellar/hive'),
-      'https://github.com/kubestellar/hive/pull/4267');
+    assert.strictEqual(relay.detectPRURL(lines, 'hivecommons/hive'),
+      'https://github.com/hivecommons/hive/pull/4267');
     assert.strictEqual(relay.detectPRURL(lines, 'nomatch/repo'),
       'https://github.com/other/repo/pull/7', 'fall back to the first PR URL seen');
-    assert.strictEqual(relay.detectPRURL(['no urls here'], 'kubestellar/hive'), '');
-    assert.strictEqual(relay.detectPRURL([], 'kubestellar/hive'), '');
-    assert.strictEqual(relay.detectPRURL(null, 'kubestellar/hive'), '');
+    assert.strictEqual(relay.detectPRURL(['no urls here'], 'hivecommons/hive'), '');
+    assert.strictEqual(relay.detectPRURL([], 'hivecommons/hive'), '');
+    assert.strictEqual(relay.detectPRURL(null, 'hivecommons/hive'), '');
     // An issue URL is not a PR URL.
-    assert.strictEqual(relay.detectPRURL(['https://github.com/kubestellar/hive/issues/9'], 'kubestellar/hive'), '');
+    assert.strictEqual(relay.detectPRURL(['https://github.com/hivecommons/hive/issues/9'], 'hivecommons/hive'), '');
   } finally { teardown(relay); }
 });
 
@@ -4239,7 +4239,7 @@ const CLAUDE_CLEAN_PANE = [
   '',
   '  Ran 6 shell commands',
   '',
-  '● Done — opened https://github.com/kubestellar/hive/pull/5095',
+  '● Done — opened https://github.com/hivecommons/hive/pull/5095',
   '',
   '✻ Cogitated for 9m 24s',
   '',
@@ -4444,7 +4444,7 @@ test('#5094 a completed turn whose summary mentions a quota phrase is still comp
   // PR line, idle prompt — and its summary echoes a string from the code it was
   // editing. Failing it would destroy credited work.
   const pane = [
-    '● Done — opened https://github.com/kubestellar/hive/pull/5095',
+    '● Done — opened https://github.com/hivecommons/hive/pull/5095',
     '',
     "● Summary: hardened the budget_exceeded path in quota_exhaustion_test.go",
     '',
@@ -4562,7 +4562,7 @@ const CLAUDE_SILENT_RETRY_PANE = [
 const CLAUDE_RETRY_RECOVERED_PANE = [
   '● Pushed the branch; opening the PR next.',
   '',
-  '● Done — opened https://github.com/kubestellar/hive/pull/5655',
+  '● Done — opened https://github.com/hivecommons/hive/pull/5655',
   '',
   '✻ Worked for 15m 39s',
   '',
@@ -4918,7 +4918,7 @@ test('#5121 the anchor requires the CLI\'s own rendering — quoted prose still 
   // credited, not held and retried. The anchor is the line-leading ● bullet;
   // a mid-line mention is prose.
   const pane = [
-    '● Done — opened https://github.com/kubestellar/hive/pull/9999',
+    '● Done — opened https://github.com/hivecommons/hive/pull/9999',
     '',
     '● The flake was the upstream returning API Error: 418 during the outage window.',
     '',
@@ -6069,7 +6069,7 @@ test('#5655 cleanup() with a task in flight unlinks the scoped token, interrupts
   const relay = loadRelay({ backend: 'claude' });
   try {
     relay.injectGhToken('scoped-token-5655');
-    relay.setCurrentTask({ task_id: 'ct-kubestellar/hive-5655', task_gen: 1 });
+    relay.setCurrentTask({ task_id: 'ct-hivecommons/hive-5655', task_gen: 1 });
     const tokenPath = path.join(relay.__tmpDir, 'gh-token.cache');
     assert.ok(fs.existsSync(tokenPath), 'precondition: the scoped token is on disk while the task is in flight');
     relay.cleanup();
@@ -6110,7 +6110,7 @@ const SHUTDOWN_CHILD_DRIVER = `
   const relay = require(process.env.RELAY_UNDER_TEST);
   Module._load = origLoad;
   relay.injectGhToken('scoped-token-5655');
-  relay.setCurrentTask({ task_id: 'ct-kubestellar/hive-5655', task_gen: 1 });
+  relay.setCurrentTask({ task_id: 'ct-hivecommons/hive-5655', task_gen: 1 });
   if (!fs.existsSync(process.env.HIVE_GH_TOKEN_CACHE)) process.exit(3);
   console.log('TOKEN_ON_DISK');
   // Keep the event loop alive: the process must end via the signal handler
@@ -6192,7 +6192,7 @@ test('#5655 a crash exit (uncaught exception) still takes the scoped token with 
 // "CLI not ready — queuing task prompt instead of typing into the pane" for
 // every remaining task of the session.
 const CLAUDE_STEADY_STATE_PANE = [
-  '● Pushed the branch and opened https://github.com/kubestellar/hive/pull/5649.',
+  '● Pushed the branch and opened https://github.com/hivecommons/hive/pull/5649.',
   '',
   '● HIVE_VERDICT: complete — PR #5649',
   '',

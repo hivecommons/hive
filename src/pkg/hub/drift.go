@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Config-drift detection.

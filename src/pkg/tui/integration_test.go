@@ -121,8 +121,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kubestellar/hive/internal/testutil"
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // ── The fixture dashboard ────────────────────────────────────────────────────

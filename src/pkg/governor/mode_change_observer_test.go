@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // These tests cover the ModeChangeObserver added for RFC #4001's

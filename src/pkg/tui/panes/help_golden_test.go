@@ -19,8 +19,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/kubestellar/hive/pkg/tui"
-	"github.com/kubestellar/hive/pkg/tui/panes"
+	"github.com/hivecommons/hive/pkg/tui"
+	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // TestHelpOverlayGolden pins the complete 100x30 frame with the help overlay

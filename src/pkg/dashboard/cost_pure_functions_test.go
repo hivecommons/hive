@@ -3,7 +3,7 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // Unit tests for the pure cost-formatting functions: flattenEstimated,

@@ -7,7 +7,7 @@ AI agent orchestrator for GitHub repositories. A single Go binary that enumerate
 ### Option A: Pre-built image (recommended)
 
 ```bash
-git clone https://github.com/kubestellar/hive.git
+git clone https://github.com/hivecommons/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml
@@ -29,7 +29,7 @@ curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
 ### Option B: Build from source
 
 ```bash
-git clone https://github.com/kubestellar/hive.git
+git clone https://github.com/hivecommons/hive.git
 cd hive
 
 cp src/hive.yaml.example src/hive.yaml

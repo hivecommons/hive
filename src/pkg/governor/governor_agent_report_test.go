@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
 // withAgentReportDir redirects outputschema.AgentReportDir to a temp dir for

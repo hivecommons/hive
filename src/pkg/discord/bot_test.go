@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/internal/testutil"
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // redirectTransport rewrites every outgoing request so that requests targeting

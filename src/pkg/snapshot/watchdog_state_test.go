@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 func TestWatchdogStateRoundtrip(t *testing.T) {

@@ -11,7 +11,7 @@ It is **opt-in** and off by default:
 docker compose --profile auto-update up -d
 ```
 
-> **Running Podman?** This page does not apply to you, and the feature is not missing. The profile is built on the Docker socket and a filtered Docker API proxy, and [#4188](https://github.com/kubestellar/hive/issues/4188) keeps it deliberately Docker-only. The Podman equivalent is opt-in health-aware auto-update through `podman auto-update` — see [podman-auto-update.md](podman-auto-update.md).
+> **Running Podman?** This page does not apply to you, and the feature is not missing. The profile is built on the Docker socket and a filtered Docker API proxy, and [#4188](https://github.com/hivecommons/hive/issues/4188) keeps it deliberately Docker-only. The Podman equivalent is opt-in health-aware auto-update through `podman auto-update` — see [podman-auto-update.md](podman-auto-update.md).
 
 **Read this whole page before enabling it in production.** The profile trades a
 real, permanent increase in blast radius for the convenience of unattended
@@ -27,7 +27,7 @@ and an API that can create and start containers can create a *privileged*
 container that mounts the host filesystem. That is the irreducible core of the
 risk, and no proxy in front of it changes that fact.
 
-## What changed in [#3865](https://github.com/kubestellar/hive/issues/3865)
+## What changed in [#3865](https://github.com/hivecommons/hive/issues/3865)
 
 Watchtower used to bind-mount `/var/run/docker.sock` directly into its own
 container. That is the **entire** daemon API, including:

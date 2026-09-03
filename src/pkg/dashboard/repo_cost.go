@@ -56,7 +56,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // repoCostWindow is the lookback for BOTH sides of the join. It matches the

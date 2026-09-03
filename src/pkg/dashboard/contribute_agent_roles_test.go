@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 func roleTestHub(t *testing.T) (*ContributeWSHub, *Server) {

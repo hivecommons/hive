@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	ghpkg "github.com/kubestellar/hive/pkg/github"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func covH2Logger() *slog.Logger {

@@ -30,7 +30,7 @@ import (
 const (
 	// instrumentationName is the default instrumentation scope used by the
 	// package-level Tracer() helper.
-	instrumentationName = "github.com/kubestellar/hive/pkg/tracing"
+	instrumentationName = "github.com/hivecommons/hive/pkg/tracing"
 
 	// otelEndpointEnv is the standard OTel environment variable used as the
 	// exporter endpoint when Config.Endpoint is empty. Reading it here keeps

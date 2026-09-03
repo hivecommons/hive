@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // TestEpicFromIssue_CreateError exercises the persistence error path (the epic
@@ -62,7 +62,7 @@ func TestEpicFromIssue_CreatesEpic(t *testing.T) {
 		Repo:   "kubestellar/hive",
 		Number: 7,
 		Title:  "Add planning intelligence phase 4",
-		URL:    "https://github.com/kubestellar/hive/issues/7",
+		URL:    "https://github.com/hivecommons/hive/issues/7",
 		Labels: []string{"enhancement", "plan"},
 	}
 

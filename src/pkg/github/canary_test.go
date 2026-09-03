@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/kubestellar/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 func TestCreatePRBlocksCanaryWhenFailClosed(t *testing.T) {

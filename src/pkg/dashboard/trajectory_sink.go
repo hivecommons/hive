@@ -1,6 +1,6 @@
 package dashboard
 
-import "github.com/kubestellar/hive/pkg/notify"
+import "github.com/hivecommons/hive/pkg/notify"
 
 // TrajectorySink adapts the dashboard Server (+ notifier) to
 // trajectory.Sink, so the review lane can record audit entries, raise system

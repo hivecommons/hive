@@ -14,7 +14,7 @@ project:
   primary_repo: knuckle
 
 policies:
-  repo: https://github.com/kubestellar/hive
+  repo: https://github.com/hivecommons/hive
   path: examples/agents/
   local_dir: /data/policies
   poll_interval: 5m

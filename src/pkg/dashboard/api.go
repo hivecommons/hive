@@ -25,16 +25,16 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/classify"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/hub"
-	"github.com/kubestellar/hive/pkg/knowledge"
-	"github.com/kubestellar/hive/pkg/policies"
-	"github.com/kubestellar/hive/pkg/resolve"
-	"github.com/kubestellar/hive/pkg/timeline"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/classify"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/policies"
+	"github.com/hivecommons/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/timeline"
 )
 
 func (s *Server) RegisterAPI(deps *Dependencies) {
@@ -4154,7 +4154,7 @@ func (s *Server) handleAgentPrompt(w http.ResponseWriter, r *http.Request) {
 		template = s.loadPromptTemplate(name)
 	}
 
-	const repoBaseURL = "https://github.com/kubestellar/hive/blob/HEAD/"
+	const repoBaseURL = "https://github.com/hivecommons/hive/blob/HEAD/"
 	sourceFiles := []map[string]string{}
 
 	templateName := ""

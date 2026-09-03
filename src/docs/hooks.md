@@ -2,7 +2,7 @@
 
 Hooks let an operator attach behavior to hive's state transitions **declaratively**, in config, instead of patching core. When a named transition durably commits, hive performs a vetted action.
 
-This implements [RFC #4001](https://github.com/kubestellar/hive/issues/4001).
+This implements [RFC #4001](https://github.com/hivecommons/hive/issues/4001).
 
 ```yaml
 # /data/hive.yaml (PVC-backed running config)
@@ -20,7 +20,7 @@ That one rule is the shipped default: when a human rejects a review's output, hi
 
 Hive already reacts to state transitions everywhere — the governor's mode changes, agent pause/resume, sweep results, escalation's red-CI reactions, ACMM level changes, the upgrade kill switch. Every one of those reactions is hand-rolled at its call site.
 
-The clearest symptom is [#3836](https://github.com/kubestellar/hive/issues/3836)'s upgrade-pause switch, whose own file header has to warn that the pause must be honoured by every delivery path *or it is a lie*. Hooks are where the next such switch gets **declared** instead of threaded by hand through every call site.
+The clearest symptom is [#3836](https://github.com/hivecommons/hive/issues/3836)'s upgrade-pause switch, whose own file header has to warn that the pause must be honoured by every delivery path *or it is a lie*. Hooks are where the next such switch gets **declared** instead of threaded by hand through every call site.
 
 ## Security model
 
@@ -41,7 +41,7 @@ A hook may read transition payloads and send notifications without restriction. 
 | `notify` | the existing ntfy/Slack/Discord fanout (`pkg/notify`) |
 | `pause` | the **audited** agent-manager pause — the same call the dashboard's pause button makes |
 | `annotate` | the existing lifecycle timeline (`pkg/timeline`) |
-| `enqueue-approval` | the tool-approval queue ([#4000](https://github.com/kubestellar/hive/issues/4000)) |
+| `enqueue-approval` | the tool-approval queue ([#4000](https://github.com/hivecommons/hive/issues/4000)) |
 
 Those four interfaces are the *complete* mutation surface of the feature. A dispatcher with no sinks wired can do nothing at all — there is no fallback path that writes directly.
 
@@ -168,7 +168,7 @@ Model/backend/pin are carried into the timeline attrs when the transition has th
 > **⚠️ NOT YET FUNCTIONAL — does not gate anything today.**
 >
 > The queue interface is defined and consumed, but the backing queue ships with
-> [#4000](https://github.com/kubestellar/hive/issues/4000). Until then the sink
+> [#4000](https://github.com/hivecommons/hive/issues/4000). Until then the sink
 > is nil: an `enqueue-approval` hook **loads and validates cleanly, fires, and
 > then fails to enqueue**, recording an unwired-sink error in the audit log.
 >
@@ -181,7 +181,7 @@ Model/backend/pin are carried into the timeline attrs when the transition has th
 > Watch for `hook_failed` entries in `/data/audit.jsonl` if you configure one
 > anyway.
 
-Places a request on the [#4000](https://github.com/kubestellar/hive/issues/4000) tool-approval queue.
+Places a request on the [#4000](https://github.com/hivecommons/hive/issues/4000) tool-approval queue.
 
 | Param | Meaning |
 | --- | --- |
@@ -189,7 +189,7 @@ Places a request on the [#4000](https://github.com/kubestellar/hive/issues/4000)
 | `summary` | the ask shown in the approvals UI |
 | `agent`, `repo` | scope; default to the transition's values |
 
-**Status:** see the callout at the top of this section — not yet functional. The wiring target is known: as of [#4057](https://github.com/kubestellar/hive/issues/4057) it is `toolapprove.Inbox`, connected by an adapter in `cmd/hive/hookwire.go` passed via `WithApprovalQueue`. Nothing in `pkg/hooks` changes when it lands.
+**Status:** see the callout at the top of this section — not yet functional. The wiring target is known: as of [#4057](https://github.com/hivecommons/hive/issues/4057) it is `toolapprove.Inbox`, connected by an adapter in `cmd/hive/hookwire.go` passed via `WithApprovalQueue`. Nothing in `pkg/hooks` changes when it lands.
 
 ## Predicates (`when:`)
 
@@ -267,7 +267,7 @@ hooks:
 ### Require approval for a large ACMM jump
 
 > **⚠️ This example does not work yet.** `enqueue-approval` has no backing queue
-> until [#4000](https://github.com/kubestellar/hive/issues/4000) — the hook
+> until [#4000](https://github.com/hivecommons/hive/issues/4000) — the hook
 > below validates, loads, and fires, but **does not block the ACMM raise**. It
 > is shown as the intended shape, not as a control you can deploy today.
 

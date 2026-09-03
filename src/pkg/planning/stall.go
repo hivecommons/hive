@@ -3,7 +3,7 @@ package planning
 import (
 	"time"
 
-	"github.com/kubestellar/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/beads"
 )
 
 // This file implements Phase 3 stall detection: the PURE, unit-testable core

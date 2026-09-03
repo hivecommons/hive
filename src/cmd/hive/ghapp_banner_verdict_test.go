@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // verdictTestKeyBits keeps key generation fast; these keys never leave the test.

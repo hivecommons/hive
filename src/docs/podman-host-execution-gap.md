@@ -1,6 +1,6 @@
 # Host-execution capability matrix: what this execution environment can actually do
 
-[#4188](https://github.com/kubestellar/hive/issues/4188) requires "Boot persistence
+[#4188](https://github.com/hivecommons/hive/issues/4188) requires "Boot persistence
 ... tested for the chosen Podman lifecycle", and when this page was written
 [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) recorded both reboot rows
 as **NOT executed**. Before anyone proposes a new execution runtime on the strength
@@ -19,7 +19,7 @@ neighbouring row, and nothing is generalised to any other host — see
 The headline result was not the expected one. Most of these capabilities are
 **present**, including the two that matter most for a disposable-guest proposal:
 `/dev/kvm` is usable and passwordless `sudo` works. And the reason
-[#4413](https://github.com/kubestellar/hive/issues/4413) could not run here turns
+[#4413](https://github.com/hivecommons/hive/issues/4413) could not run here turns
 out not to be a permission gap at all.
 
 ## Which execution path this was
@@ -172,7 +172,7 @@ Lingering is **off** right now, and polkit **would permit** this user to turn it
 
 `loginctl enable-linger` was deliberately **not run**: it reconfigures the host, which
 #4441 places out of scope. So this row establishes authorisation, not a completed
-enable — and per the precedent [#4377](https://github.com/kubestellar/hive/issues/4377)
+enable — and per the precedent [#4377](https://github.com/hivecommons/hive/issues/4377)
 set, authorisation is *not* evidence that units would survive a boot. Only an actual
 reboot can establish that. #4413 has since done so, on another host and with
 `Linger=yes` — the enable this row deliberately did not perform.
@@ -241,7 +241,7 @@ false
 
 Rootless podman runs as this user, and **passwordless `sudo` is available**
 (`sudo -n` exits 0), so rootful podman runs too and reports `Rootless=false`. The
-"first live rootful start" that [#4377](https://github.com/kubestellar/hive/issues/4377)
+"first live rootful start" that [#4377](https://github.com/hivecommons/hive/issues/4377)
 wanted is therefore not blocked by privilege in this environment.
 
 ### Kernel module load — resolvable, not loadable as this user
@@ -331,8 +331,8 @@ rather than performing it.
 
 ## Related
 
-- [#4188](https://github.com/kubestellar/hive/issues/4188) — the umbrella, and its boot-persistence requirement
-- [#4413](https://github.com/kubestellar/hive/issues/4413) — the reboot rows this page explains but does not execute; now executed in both root modes
+- [#4188](https://github.com/hivecommons/hive/issues/4188) — the umbrella, and its boot-persistence requirement
+- [#4413](https://github.com/hivecommons/hive/issues/4413) — the reboot rows this page explains but does not execute; now executed in both root modes
 - [podman-quadlet-lifecycle.md](podman-quadlet-lifecycle.md) — where those rows are recorded, measured
 - [podman-selinux-avc-evidence.md](podman-selinux-avc-evidence.md) — container SELinux behaviour, which is *not* what this environment shows
 - [net-admin-requirement.md](net-admin-requirement.md) — why `NET_ADMIN` matters

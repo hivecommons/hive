@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 // --- agentsRepoRoot ---
@@ -61,7 +61,7 @@ func TestAgentsRepoRoot_IsPerRepo(t *testing.T) {
 func TestAgentsRepoRoot_FromPoliciesLocalDir(t *testing.T) {
 	newCfg := func(policiesRepo string) *config.Config {
 		cfg := &config.Config{}
-		cfg.Project.Org = "kubestellar"
+		cfg.Project.Org = "hivecommons"
 		cfg.Policies.Repo = policiesRepo
 		cfg.Policies.LocalDir = "/data/policies"
 		return cfg
@@ -69,9 +69,9 @@ func TestAgentsRepoRoot_FromPoliciesLocalDir(t *testing.T) {
 
 	t.Run("matching repo uses the checkout", func(t *testing.T) {
 		for _, src := range []string{
-			"https://github.com/kubestellar/hive",
-			"https://github.com/kubestellar/hive.git",
-			"kubestellar/hive",
+			"https://github.com/hivecommons/hive",
+			"https://github.com/hivecommons/hive.git",
+			"hivecommons/hive",
 			"hive",
 		} {
 			s := New(newCfg(src), slog.Default())
@@ -82,7 +82,7 @@ func TestAgentsRepoRoot_FromPoliciesLocalDir(t *testing.T) {
 	})
 
 	t.Run("a different repo does not", func(t *testing.T) {
-		s := New(newCfg("https://github.com/kubestellar/hive-config"), slog.Default())
+		s := New(newCfg("https://github.com/hivecommons/hive-config"), slog.Default())
 		if got := s.agentsRepoRoot("hive"); got != "" {
 			t.Errorf("agentsRepoRoot = %q, want empty — the policies checkout is a different repo", got)
 		}
@@ -102,7 +102,7 @@ func TestAgentsRepoRoot_CheckoutsDirWins(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Project.Org = "kubestellar"
 	cfg.Project.CheckoutsDir = "/data/checkouts"
-	cfg.Policies.Repo = "https://github.com/kubestellar/hive"
+	cfg.Policies.Repo = "https://github.com/hivecommons/hive"
 	cfg.Policies.LocalDir = "/data/policies"
 	s := New(cfg, slog.Default())
 

@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/forge"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // This file wires pkg/forge onto the live governor path — the same structure

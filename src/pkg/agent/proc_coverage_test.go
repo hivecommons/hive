@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/kubestellar/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // withFakeProc redirects procRoot to a temp dir for the duration of a test.

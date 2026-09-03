@@ -15,16 +15,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kubestellar/hive/pkg/agent"
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/config"
-	"github.com/kubestellar/hive/pkg/github"
-	"github.com/kubestellar/hive/pkg/governor"
-	"github.com/kubestellar/hive/pkg/planning"
-	"github.com/kubestellar/hive/pkg/resolve"
-	"github.com/kubestellar/hive/pkg/skillreg"
-	"github.com/kubestellar/hive/pkg/tokens"
-	"github.com/kubestellar/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard

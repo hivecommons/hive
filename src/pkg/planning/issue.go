@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kubestellar/hive/pkg/beads"
-	"github.com/kubestellar/hive/pkg/classify"
-	"github.com/kubestellar/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/classify"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // Issue metadata keys stamped on an epic minted from a GitHub issue. They let
