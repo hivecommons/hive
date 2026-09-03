@@ -18,10 +18,15 @@ import (
 	"github.com/kubestellar/hive/pkg/hooks"
 	"github.com/kubestellar/hive/pkg/knowledge"
 	"github.com/kubestellar/hive/pkg/rotation"
-	"github.com/kubestellar/hive/pkg/scheduler"
 	"github.com/kubestellar/hive/pkg/tokens"
 	"github.com/kubestellar/hive/pkg/toolapprove"
 )
+
+type SchedulerControl interface {
+	BuildAgentMessage(agentName string, issues []ghpkg.Issue, actionable *ghpkg.ActionableResult) string
+	BuildAgentMessageFromLastActionable(agentName string) string
+	GetLastActionable() *ghpkg.ActionableResult
+}
 
 type Dependencies struct {
 	Config    *config.Config
@@ -40,7 +45,7 @@ type Dependencies struct {
 	Knowledge        *knowledge.KnowledgeAPI
 	Inception        *knowledge.InceptionEngine
 	Nous             *NousState
-	Scheduler        *scheduler.Scheduler
+	Scheduler        SchedulerControl
 	MetricsCollector *MetricsCollector
 	// RotationMgr is the provider-rotation manager (RFC #3958). Nil when
 	// rotation is disabled; the headroom endpoint then reports enabled=false.

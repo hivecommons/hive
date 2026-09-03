@@ -16,7 +16,6 @@ import (
 	"github.com/kubestellar/hive/pkg/beads"
 	"github.com/kubestellar/hive/pkg/governor"
 	"github.com/kubestellar/hive/pkg/knowledge"
-	"github.com/kubestellar/hive/pkg/scheduler"
 )
 
 const (
@@ -50,7 +49,7 @@ type inceptionAgentManager interface {
 type InceptionWatcher struct {
 	beadStore *beads.Store
 	inception *knowledge.InceptionEngine
-	scheduler *scheduler.Scheduler
+	scheduler SchedulerControl
 	agentMgr  inceptionAgentManager
 	governor  *governor.Governor
 	logger    *slog.Logger
@@ -80,7 +79,7 @@ type InceptionWatcher struct {
 func NewInceptionWatcher(
 	beadStore *beads.Store,
 	inception *knowledge.InceptionEngine,
-	sched *scheduler.Scheduler,
+	sched SchedulerControl,
 	agentMgr *agent.Manager,
 	gov *governor.Governor,
 	logger *slog.Logger,

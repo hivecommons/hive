@@ -1,0 +1,1 @@
+- Reduced `pkg/dashboard` coupling by hiding scheduler access behind a dashboard-owned interface and ratcheting the package's internal import count.
