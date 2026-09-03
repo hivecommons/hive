@@ -1,0 +1,1 @@
+- Added contributor capability-aware routing for explicit task requirement labels, while preserving assignments for undeclared clients and documenting the self-reported nature of the data.

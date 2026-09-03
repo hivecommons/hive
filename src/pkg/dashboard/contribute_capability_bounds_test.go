@@ -227,3 +227,30 @@ func waitForClanker(t *testing.T, s *Server, contributorID string) FleetClanker 
 	t.Fatalf("clanker %s never appeared in the fleet snapshot", contributorID)
 	return FleetClanker{}
 }
+
+func TestTaskRequirementsFromLabels(t *testing.T) {
+	req := TaskRequirementsFromLabels([]string{"needs-docker", "os/linux", "arch/amd64", "backend/copilot", "credential/app"})
+	if req.ContainerRuntime != "docker" || req.OS != "linux" || req.Arch != "amd64" || req.CLIBackend != "copilot" || req.CredentialType != "app" {
+		t.Fatalf("requirements = %+v", req)
+	}
+}
+
+func TestContributorCanRunTaskTreatsUnknownAsCompatible(t *testing.T) {
+	req := TaskRequirementsFromLabels([]string{"needs-docker", "os/linux"})
+	if !ContributorCanRunTask(nil, "", req) {
+		t.Fatal("undeclared capabilities must remain compatible")
+	}
+	if !ContributorCanRunTask(&ContributorCapabilities{}, "", req) {
+		t.Fatal("empty declaration must remain compatible")
+	}
+}
+
+func TestContributorCanRunTaskRejectsExplicitContradiction(t *testing.T) {
+	req := TaskRequirementsFromLabels([]string{"needs-docker", "os/linux"})
+	if ContributorCanRunTask(&ContributorCapabilities{ContainerRuntime: "podman", OS: "linux"}, "copilot", req) {
+		t.Fatal("podman declaration must not fit needs-docker")
+	}
+	if ContributorCanRunTask(&ContributorCapabilities{ContainerRuntime: "docker", OS: "darwin"}, "copilot", req) {
+		t.Fatal("darwin declaration must not fit os/linux")
+	}
+}
