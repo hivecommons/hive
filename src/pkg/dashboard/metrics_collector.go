@@ -293,7 +293,11 @@ func (mc *MetricsCollector) countAdopters(ctx context.Context, owner, repo strin
 func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) int {
 	// ACMM leaderboard lives in the docs repo, not the primary repo
 	const acmmLeaderboardPath = "src/app/[locale]/acmm-leaderboard/page.tsx"
-	content, err := mc.ghClient.GetFileContent(ctx, owner, "docs", acmmLeaderboardPath)
+	docsOwner := owner
+	if docsOwner == "hivecommons" {
+		docsOwner = "kubestellar"
+	}
+	content, err := mc.ghClient.GetFileContent(ctx, docsOwner, "docs", acmmLeaderboardPath)
 	if err != nil {
 		mc.logger.Warn("failed to fetch ACMM leaderboard page", "error", err)
 		return 0
