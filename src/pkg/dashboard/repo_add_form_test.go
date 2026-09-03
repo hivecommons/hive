@@ -29,8 +29,8 @@ func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 for a cross-forge repo", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "expected repo name only so the target resolves to org/repo") {
-		t.Errorf("expected canonical-shape message, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "one GitHub host") {
+		t.Errorf("expected single-host message, got: %s", w.Body.String())
 	}
 	// The hive's forge must be left untouched.
 	if srv.deps.Config.GitHub.BaseURL != "" {
@@ -38,26 +38,25 @@ func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	}
 }
 
-// A GHE hive still rejects full URLs in repo fields: the forge belongs in the
-// hive GitHub identity, and the repo target must remain org + bare repo.
+// A GHE hive accepts same-forge full URLs for org migration, but still rejects
+// repos pasted from another GitHub host.
 func TestGovernorRepos_GHEHiveHostRules(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.GitHub.BaseURL = "https://github.ibm.com"
 	srv.deps.Config.GitHub.APIURL = "https://github.ibm.com/api/v3"
 
-	// Same-forge full URL paste is still ambiguous in a repo field: rejected
-	// rather than silently rewritten.
+	// Same-forge full URL paste is an explicit org/repo target.
 	ok := `{"repos":["https://github.ibm.com/acme/widget"],"primaryRepo":"widget"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(ok))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("same-forge URL add: code = %d, want 400 (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("same-forge URL add: code = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "is a URL") {
-		t.Fatalf("same-forge URL add body = %s, want URL rejection", w.Body.String())
+	if srv.deps.Config.Project.Org != "acme" {
+		t.Fatalf("same-forge URL add org = %q, want acme", srv.deps.Config.Project.Org)
 	}
 
 	// public github.com paste on a GHE hive: rejected as mixing.

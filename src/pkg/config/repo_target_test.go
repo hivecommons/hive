@@ -35,6 +35,13 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 			want:  "Repo target misconfigured: repo 'https://github.com/kubestellar/hive' is a URL — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
 		},
 		{
+			name:  "url pasted for different org explains migration",
+			org:   "kubestellar",
+			repos: []string{"https://github.com/hivecommons/hive"},
+			forge: "github.com",
+			want:  "Repo target misconfigured: repo 'https://github.com/hivecommons/hive' belongs to org 'hivecommons', but this hive is configured for org 'kubestellar' — to migrate, save a repo from the new org in Settings → Repos so the dashboard can adopt it. Fix in Settings → Repos.",
+		},
+		{
 			name:  "host org no repo leaves empty repo",
 			org:   "kubestellar",
 			repos: []string{""},
@@ -67,7 +74,7 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 			org:   "kubestellar",
 			repos: []string{"other/hive"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: repo 'other/hive' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
+			want:  "Repo target misconfigured: repo 'other/hive' belongs to org 'other', but this hive is configured for org 'kubestellar' — to migrate, save a repo from the new org in Settings → Repos so the dashboard can adopt it. Fix in Settings → Repos.",
 		},
 		{
 			name:    "primary qualified with a different org",
@@ -75,7 +82,7 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 			repos:   []string{"hive"},
 			primary: "other/hive",
 			forge:   "github.com",
-			want:    "Repo target misconfigured: repo 'other/hive' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Settings → Repos.",
+			want:    "Repo target misconfigured: repo 'other/hive' belongs to org 'other', but this hive is configured for org 'kubestellar' — to migrate, save a repo from the new org in Settings → Repos so the dashboard can adopt it. Fix in Settings → Repos.",
 		},
 		// The live regression: an owner pastes the org/repo form GitHub shows.
 		// Accepted, because it normalizes to the bare repo under the same org.
