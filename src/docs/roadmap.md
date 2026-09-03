@@ -1,7 +1,7 @@
 # Hive public roadmap
 
 > **Directional, not a promise.** This roadmap reflects the public v4 direction as
-> of **2026-08-27**. It is maintained by pull request and can change as issues,
+> of **2026-09-03**. It is maintained by pull request and can change as issues,
 > security reviews, and operator feedback change the order of work.
 >
 > The umbrella issues this page grew out of —
@@ -24,6 +24,8 @@ order, not priority rank.
 | Review fan-out | Structured review reports and deterministic aggregation are in place; scheduler fan-out to parallel review perspectives is the deferred wiring. | [#2807](https://github.com/hivecommons/hive/issues/2807), [review swarm](review-swarm.md) |
 | Credential-free sandbox kick path | Move agent execution toward no live token and no direct network in the sandbox, with trusted host-side post-steps retaining the MITM proxy as an outer layer. | [#2804](https://github.com/hivecommons/hive/issues/2804), [security threat model](security-threat-model.md#residual-risks-and-known-gaps) |
 | Spoke-based lite enrollment | Keep `hivectl enroll OWNER/REPO` as a zero-secret on-ramp by adding repos to an existing spoke or provisioning a hosted lite spoke; the hub tracks only spokes. | [#2808](https://github.com/hivecommons/hive/issues/2808), [lite enrollment](lite-enrollment.md) |
+| Multi-spoke constellation foundations | Accepted for v5 phase 1 after production evidence from tunaos.org (self-hosted hub, two ACMM L5/L6 spokes, 43 repos). The first slice, repo-claim overlap detection, shipped in #5705; remaining slices add spoke charters, fleet headroom, GitHub App budget visibility, shared-credential guidance, and route recommendations without turning the hub into a hard control plane. | [#5691](https://github.com/hivecommons/hive/issues/5691), [RFC #5691](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md), [#5705](https://github.com/hivecommons/hive/pull/5705), [#5796](https://github.com/hivecommons/hive/pull/5796) |
+| Backend capacity, model inventory, and placement | Accepted for v5 phase 1 because multi-spoke fleets are constrained by shared provider quota, model availability, and policy, not only by repo ownership. The work standardizes capacity readings, inventory authority, tier floors, scoped limits, and opt-in placement / pacing before scheduler behaviour depends on them. | [#5698](https://github.com/hivecommons/hive/issues/5698), [RFC #5698](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5698-backend-capacity-model-inventory-placement.md), [#5784](https://github.com/hivecommons/hive/pull/5784) |
 | Retrospective learning lane | Build from deterministic post-completion advisory beads toward LLM-assisted retro summaries and knowledge extraction. | [#2809](https://github.com/hivecommons/hive/issues/2809), [retro lane](retro-lane.md) |
 | ADR back-fill for remaining subsystems | **Done.** Back-filled accepted ADRs capture the knowledge system, skill registry, CEL/channel triggers, and hub/spoke mechanics, so architecture decisions stay auditable. | [ADR-0011](adr/0011-knowledge-system.md), [ADR-0012](adr/0012-skill-registry.md), [ADR-0013](adr/0013-cel-triggers.md), [ADR-0014](adr/0014-hub-spoke.md) |
 
