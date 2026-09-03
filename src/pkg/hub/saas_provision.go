@@ -1808,9 +1808,14 @@ func removeHiveRecord(id string, logger *slog.Logger) {
 }
 
 func listSaaSHives() []SaaSHive {
+	hives, _ := listSaaSHivesWithReadStatus()
+	return hives
+}
+
+func listSaaSHivesWithReadStatus() ([]SaaSHive, bool) {
 	entries, err := os.ReadDir(saasHivesDir)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var hives []SaaSHive
 	for _, e := range entries {
@@ -1822,7 +1827,7 @@ func listSaaSHives() []SaaSHive {
 			hives = append(hives, *h)
 		}
 	}
-	return hives
+	return hives, true
 }
 
 func countUserHives(username string) int {

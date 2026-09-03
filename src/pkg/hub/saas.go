@@ -2269,7 +2269,8 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		hiveIDsByCluster[clusterID][hiveID] = true
 		allHiveIDs[hiveID] = true
 	}
-	for _, sh := range listSaaSHives() {
+	saasHives, saasHivesReadable := listSaaSHivesWithReadStatus()
+	for _, sh := range saasHives {
 		addHive(clusterIDForSaaSHive(sh), sh.ID)
 	}
 	s.mu.RLock()
@@ -2295,7 +2296,12 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 	// because the leak predicate convicts a namespace for being absent from it,
 	// and a narrower set would convict namespaces that are merely recorded
 	// somewhere else. See leaked_hosted_namespace.go.
-	knownHostedNamespaces := hostedNamespacesForHiveIDs(allHiveIDs)
+	var knownHostedNamespaces map[string]struct{}
+	if saasHivesReadable {
+		knownHostedNamespaces = hostedNamespacesForHiveIDs(allHiveIDs)
+	} else if s.logger != nil {
+		s.logger.Warn("leaked-namespace detection disabled: SaaS hive directory could not be read")
+	}
 
 	// Query all clusters in parallel.
 	type clusterResult struct {
