@@ -140,6 +140,10 @@ CADENCE_GUARDIAN_IDLE_SEC="${CADENCE_GUARDIAN_IDLE_SEC:-900}"           # 15min
 TOKEN_BUDGET_WEEKLY="${TOKEN_BUDGET_WEEKLY:-200000000}"  # ~200M billable tokens ≈ 100% weekly limit
 TOKEN_BUDGET_SAFETY_PCT="${TOKEN_BUDGET_SAFETY_PCT:-85}"
 TOKEN_BUDGET_RESET_DAY="${TOKEN_BUDGET_RESET_DAY:-4}"  # 4=Friday (Claude resets Fri 7PM)
+# Test seam: pin "now" (unix epoch seconds) for the weekly budget projection so
+# the pace math is deterministic regardless of the wall-clock weekday. Unset in
+# production; the contract tests set it to a fixed pre-reset instant.
+TOKEN_BUDGET_NOW_EPOCH="${TOKEN_BUDGET_NOW_EPOCH:-}"
 TOKEN_COLLECTOR_JSON="/var/run/hive-metrics/tokens.json"
 BUDGET_IGNORE_FLAG="/var/run/hive-metrics/budget_ignore"
 
@@ -559,7 +563,8 @@ except Exception:
   local hours_left hours_elapsed
   read -r hours_left hours_elapsed <<< "$(python3 -c "
 import datetime
-now = datetime.datetime.now()
+pinned = '$TOKEN_BUDGET_NOW_EPOCH'
+now = datetime.datetime.fromtimestamp(int(pinned)) if pinned else datetime.datetime.now()
 reset_day = $TOKEN_BUDGET_RESET_DAY
 days_ahead = (reset_day - now.weekday()) % 7
 if days_ahead == 0 and now.hour > 0: days_ahead = 7
