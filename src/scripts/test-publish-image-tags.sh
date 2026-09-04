@@ -63,7 +63,10 @@ capture="$tmp/create-new"
 run_case missing 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
 grep -q 'hive:v4-latest' "$capture"
-grep -q 'hive:stable' "$capture"
+if grep -q 'hive:stable' "$capture"; then
+  echo "v4 merge publish moved stable instead of candidate only" >&2
+  exit 1
+fi
 
 capture="$tmp/create-forward"
 run_case 99 100 "$capture"
@@ -122,7 +125,11 @@ fi
 workflow="$script_dir/../../.github/workflows/docker.yml"
 [[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
 [[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
-grep -q 'v4 true stable,candidate' "$workflow"
+grep -q 'v4 true candidate' "$workflow"
+if grep -q 'v4 true stable,candidate\|CHANNELS: "stable,candidate"' "$workflow"; then
+  echo "docker workflow still publishes stable on every v4 merge" >&2
+  exit 1
+fi
 grep -q 'INCLUDE_LATEST: "true"' "$workflow"
 if grep -q 'head-check\|Verify build commit is still HEAD' "$workflow"; then
   echo "HEAD-only publication guard was reintroduced" >&2

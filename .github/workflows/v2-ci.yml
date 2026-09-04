@@ -143,6 +143,9 @@ jobs:
       - name: Docker release-tag publication policy (#4804)
         run: bash scripts/test-publish-image-tags.sh
 
+      - name: Stable soak promotion policy (#5974)
+        run: bash scripts/test-promote-stable.sh
+
       # #5142: v4.0.1 failed to publish twice in a row inside tagged-release.yml's
       # final push — once on GH006 propagation lag (branch protection had not
       # yet ingested the just-earned gate check), once on a non-fast-forward

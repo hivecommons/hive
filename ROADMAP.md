@@ -62,11 +62,11 @@ issues. Accepted workstreams:
   the same PR.
 - **Channel-based release trains.** The three channels — `edge` (newest
   good build), `candidate` (awaiting soak), `stable` (promoted after
-  soak) — exist today as moving GHCR tags, and divergence has begun: `v4`
-  builds publish `stable` and `candidate` while `v5` builds publish
-  `edge`. Remaining work is the soak/promotion policy in CI and
-  digest-verifiable deployment, so what a spoke runs is provable rather
-  than inferred from a tag. See
+  soak) — exist as moving GHCR tags with enforced divergence: `v4` builds
+  publish `candidate`, the stable-promotion workflow advances `stable` by
+  digest after the soak/evidence/blocker/smoke gate, and `v5` builds
+  publish `edge`. Remaining work is digest-verifiable deployment, so what
+  a spoke runs is provable rather than inferred from a tag. See
   [release channels](src/docs/release-channels.md).
 - **Multi-spoke constellations.** A production external deployment
   (tunaos.org: a self-hosted hub coordinating two spokes at ACMM L5/L6

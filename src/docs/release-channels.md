@@ -8,19 +8,19 @@ Hive publishes three **release channels** — moving GHCR image tags an operator
 | `candidate` | A build believed good, awaiting soak before promotion to stable. |
 | `edge` | The newest good build, with no soak period. |
 
-> **Note — current promotion policy:** the channels have begun to diverge by release line. Every merge to **`v4`** retags **`stable` and `candidate`** (so those two still point at the same digest as `v4-latest`), while every merge to **`v5`** retags **`edge`** — meaning `edge` is now an **active-development v5 build**, not a synonym for `stable`. What has *not* landed yet is the soak/promotion step between `candidate` and `stable` (see [#3702](https://github.com/hivecommons/hive/pull/3702) for the channel plumbing): within the `v4` line, treat those two names as forward-looking track selection, not as a guarantee of differing maturity yet. The proposed v4 gate is documented in [v4 stable soak and promotion policy](stable-soak-policy.md).
+> **Promotion policy:** the channels diverge by release line and maturity. Every green merge to **`v4`** retags **`candidate`**; **`stable`** advances later by digest through the scheduled/manual stable-promotion workflow after the [v4 stable soak and promotion policy](stable-soak-policy.md) passes. Merges to **`v5`** retag **`edge`**, so `edge` is an active-development v5 build, not a synonym for `stable`.
 
 ## How channels are published
 
-Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds its channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v4` publish `stable` and `candidate`; builds of branch `v5` publish `edge`. All three images get their line's channels in both published orgs:
+Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds fast-moving channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v4` publish `candidate`; the separate stable-promotion workflow later retags `stable` by candidate digest after the soak gate passes. Builds of branch `v5` publish `edge`. All three images get their line's channels in both published orgs:
 
-- `ghcr.io/hivecommons/hive` and `ghcr.io/hivecommons/hive`
-- `ghcr.io/hivecommons/hive-contributor` and `ghcr.io/hivecommons/hive-contributor`
-- `ghcr.io/hivecommons/hive-hub` and `ghcr.io/hivecommons/hive-hub`
+- `ghcr.io/hivecommons/hive` and `ghcr.io/kubestellar/hive`
+- `ghcr.io/hivecommons/hive-contributor` and `ghcr.io/kubestellar/hive-contributor`
+- `ghcr.io/hivecommons/hive-hub` and `ghcr.io/kubestellar/hive-hub`
 
 The `hivecommons` packages are mirror tags of the same manifest digest as the native `kubestellar` packages during the org transfer, so operators can verify or pin the digest against either registry. Only builds of the release branches (`v4`, `v5`) publish channels — a feature-branch build can never move a production channel.
 
-Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. If that exact short-SHA tag already exists, a re-run leaves it untouched. Moving tags (the branch's `-latest` tag and its channels) advance only when that build is newer than the generation currently published; an older workflow that runs out of queue order publishes only any missing immutable tag. This avoids both failure modes of a HEAD-only guard: a merge burst cannot starve all tags, and an old queued build cannot move a channel backwards. Registry inspection failures fail the publish job instead of producing a silent green skip.
+Publishing is monotonic by workflow run number. Every successful multi-arch build receives its immutable short-SHA tag even if a newer merge has already reached the branch. If that exact short-SHA tag already exists, a re-run leaves it untouched. Moving tags (the branch's `-latest` tag and fast channels such as `candidate`/`edge`) advance only when that build is newer than the generation currently published; an older workflow that runs out of queue order publishes only any missing immutable tag. `stable` uses the same generation guard during digest promotion, so a delayed promotion cannot move it backwards over a newer stable. Registry inspection failures fail the publish or promotion job instead of producing a silent green skip.
 
 Short-SHA tags are retained as a bounded rollback/debug window, not forever. The scheduled GHCR pruning workflow deletes only old package versions whose complete tag set is one or more 7-hex short-SHA tags, after 90 days. Versions still carrying any moving tag (`v4-latest`, `latest`, `stable`, `candidate`, `edge`, or future channel names) are never deleted by that cleanup.
 

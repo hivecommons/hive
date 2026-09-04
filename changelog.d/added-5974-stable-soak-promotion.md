@@ -1,0 +1,1 @@
+- Enforce the v4 stable soak policy in CI: `candidate` continues to advance on every green v4 image build, while `stable` is promoted later by digest only after the soak, evidence, blocker, smoke, and monotonic safety gates pass.

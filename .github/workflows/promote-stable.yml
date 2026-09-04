@@ -1,0 +1,148 @@
+name: Promote Stable Channel
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Evaluate only; do not move stable tags'
+        type: boolean
+        default: true
+      soak-hours:
+        description: 'Minimum candidate soak window in hours'
+        type: string
+        default: '24'
+      smoke-evidence:
+        description: 'Maintained-hive heartbeat/dashboard evidence, or why smoke is not applicable'
+        type: string
+        required: false
+        default: ''
+      emergency-exception-reason:
+        description: 'Emergency promotion note; must name risk of waiting, checks that passed, and rollback digest'
+        type: string
+        required: false
+        default: ''
+      emergency-followup-issue:
+        description: 'Follow-up issue for skipped soak/smoke evidence when using an emergency exception'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  issues: write
+  packages: write
+
+concurrency:
+  group: stable-promotion-v4
+  cancel-in-progress: false
+
+env:
+  RELEASE_BRANCH: v4
+  SOAK_HOURS: ${{ inputs.soak-hours || '24' }}
+  DRY_RUN: ${{ inputs.dry-run || 'false' }}
+  IMAGE_NAMES: hive hive-contributor hive-hub
+  BLOCKER_LABEL: release-blocker
+  SMOKE_EVIDENCE: ${{ inputs.smoke-evidence || vars.STABLE_SMOKE_EVIDENCE || '' }}
+  EMERGENCY_EXCEPTION_REASON: ${{ inputs.emergency-exception-reason || '' }}
+  EMERGENCY_FOLLOWUP_ISSUE: ${{ inputs.emergency-followup-issue || '' }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout promotion scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to native GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Select cross-registry mirror target
+        id: registries
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [ "$OWNER" = "kubestellar" ]; then
+            cross_org=hivecommons
+            cross_secret=GHCR_HIVECOMMONS_PAT
+          else
+            cross_org=kubestellar
+            cross_secret=GHCR_KUBESTELLAR_PAT
+          fi
+          echo "cross_org=${cross_org}" >> "$GITHUB_OUTPUT"
+          echo "cross_secret=${cross_secret}" >> "$GITHUB_OUTPUT"
+
+      - name: Check cross-registry credential before publishing
+        id: crosspat
+        if: env.DRY_RUN != 'true'
+        env:
+          CROSS_PAT: ${{ secrets[steps.registries.outputs.cross_secret] }}
+          CROSS_ORG: ${{ steps.registries.outputs.cross_org }}
+          CROSS_SECRET_NAME: ${{ steps.registries.outputs.cross_secret }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CROSS_PAT" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          if [ "$OWNER" = "hivecommons" ]; then
+            echo "::error::secret ${CROSS_SECRET_NAME} is not set, so this run cannot mirror stable to ghcr.io/${CROSS_ORG}; refusing a one-sided native promotion."
+            exit 1
+          fi
+          echo "::warning::secret ${CROSS_SECRET_NAME} is not set — a native stable promotion will skip the ghcr.io/${CROSS_ORG} mirror."
+
+      - name: Evaluate and promote native stable tags
+        id: native
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+        run: src/scripts/promote-stable.sh promote
+
+      - name: Log in to GHCR as the cross-org publisher
+        if: steps.crosspat.outputs.available == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets[steps.registries.outputs.cross_secret] }}
+
+      - name: Mirror promoted stable tags into the cross-org registry
+        if: steps.crosspat.outputs.available == 'true'
+        env:
+          NATIVE_PREFIX: ghcr.io/${{ github.repository_owner }}
+          CROSS_PREFIX: ghcr.io/${{ steps.registries.outputs.cross_org }}
+        run: |
+          set -euo pipefail
+          for image in $IMAGE_NAMES; do
+            digest=$(docker buildx imagetools inspect "${NATIVE_PREFIX}/${image}:stable" --format '{{.Manifest.Digest}}')
+            src/scripts/promote-stable.sh mirror-stable "${CROSS_PREFIX}/${image}" "${NATIVE_PREFIX}/${image}@${digest}" "$DRY_RUN"
+          done
+
+      - name: Record emergency exception on follow-up issue
+        if: steps.native.outputs.promoted == 'true' && env.EMERGENCY_EXCEPTION_REASON != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOLLOWUP: ${{ env.EMERGENCY_FOLLOWUP_ISSUE }}
+          REASON: ${{ env.EMERGENCY_EXCEPTION_REASON }}
+          DIGEST: ${{ steps.native.outputs.candidate_digest }}
+          SHA: ${{ steps.native.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          unset GITHUB_TOKEN && gh issue comment "$FOLLOWUP" --body "Emergency stable promotion exception used for ${SHA} (${DIGEST}): ${REASON}"
