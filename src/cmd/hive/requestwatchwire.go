@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-)
 
-import "github.com/hivecommons/hive/pkg/github/requestwatch"
+	"github.com/hivecommons/hive/pkg/github/requestwatch"
+)
 
 func startRequestWatchers(ctx context.Context, watcher *requestwatch.Watcher, logger *slog.Logger) {
 	if watcher == nil {
