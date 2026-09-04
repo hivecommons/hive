@@ -137,6 +137,7 @@ type AgentConfig struct {
 	StaleTimeout    int    `yaml:"stale_timeout" json:"stale_timeout,omitempty"`
 	RestartStrategy string `yaml:"restart_strategy" json:"restart_strategy,omitempty"`
 	LaunchCmd       string `yaml:"launch_cmd" json:"launch_cmd,omitempty"`
+	AgentSpec       string `yaml:"agent_spec" json:"agent_spec,omitempty"`
 	DisplayName     string `yaml:"display_name" json:"display_name,omitempty"`
 	Description     string `yaml:"description" json:"description,omitempty"`
 

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/spf13/cobra"
 )
 
@@ -43,10 +44,92 @@ func newAgentCommand(env *commandEnv) *cobra.Command {
 	agent.AddCommand(agentLogsCommand(env))
 	agent.AddCommand(agentDeleteCommand(env))
 	agent.AddCommand(agentPromptCommand(env))
+	agent.AddCommand(agentSpecsCommand(env))
 	agent.AddCommand(agentModelSetCommand(env))
 	agent.AddCommand(agentBackendSetCommand(env))
 	agent.AddCommand(agentPipelineSetCommand(env))
 	return agent
+}
+
+func agentSpecsCommand(env *commandEnv) *cobra.Command {
+	dir := "/data/skills"
+	specs := &cobra.Command{
+		Use:     "specs",
+		Short:   "List and search reusable agent specs and skills",
+		Example: "  hivectl agent specs list --dir /data/skills\n  hivectl agent specs search go --limit 10",
+	}
+	specs.PersistentFlags().StringVar(&dir, "dir", dir, "skill registry directory")
+	specs.AddCommand(&cobra.Command{
+		Use:     "list",
+		Short:   "List registered reusable skills",
+		Args:    argsNone(),
+		Example: "  hivectl agent specs list --output json",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			reg, err := loadLocalSkillRegistry(dir)
+			if err != nil {
+				return err
+			}
+			return env.print(cmd, map[string]any{"items": skillViews(reg.List())})
+		},
+	})
+	var limit int
+	search := &cobra.Command{
+		Use:     "search [query]",
+		Short:   "Search registered reusable skills",
+		Args:    argsMax(1),
+		Example: "  hivectl agent specs search testing --limit 10 --output json",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if limit < 0 {
+				return &usageError{message: "--limit cannot be negative"}
+			}
+			reg, err := loadLocalSkillRegistry(dir)
+			if err != nil {
+				return err
+			}
+			term := ""
+			if len(args) == 1 {
+				term = args[0]
+			}
+			items := skillViews(reg.Search(term))
+			if limit > 0 && len(items) > limit {
+				items = items[:limit]
+			}
+			return env.print(cmd, map[string]any{"items": items})
+		},
+	}
+	search.Flags().IntVar(&limit, "limit", 0, "maximum results; zero returns all matches")
+	specs.AddCommand(search)
+	return specs
+}
+
+type skillView struct {
+	Name        string   `json:"name" yaml:"name"`
+	Version     string   `json:"version" yaml:"version"`
+	Description string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Source      string   `json:"source" yaml:"source"`
+	Tags        []string `json:"tags,omitempty" yaml:"tags,omitempty"`
+}
+
+func loadLocalSkillRegistry(dir string) (*skillreg.Registry, error) {
+	reg := skillreg.NewRegistry()
+	if _, err := reg.Load(dir, nil); err != nil {
+		return nil, err
+	}
+	return reg, nil
+}
+
+func skillViews(skills []skillreg.Skill) []skillView {
+	out := make([]skillView, 0, len(skills))
+	for _, skill := range skills {
+		out = append(out, skillView{
+			Name:        skill.Name,
+			Version:     skill.Version,
+			Description: skill.Description,
+			Source:      string(skill.Source),
+			Tags:        skill.Tags,
+		})
+	}
+	return out
 }
 
 func agentGetCommand(env *commandEnv) *cobra.Command {

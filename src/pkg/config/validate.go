@@ -88,6 +88,16 @@ func (c *Config) validate() error {
 		if err := validateConnections(name, agent.Connections); err != nil {
 			return err
 		}
+		if err := validateAgentSpecRef(name, agent.AgentSpec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAgentSpecRef(agentName, ref string) error {
+	if strings.ContainsRune(ref, '\x00') {
+		return fmt.Errorf("agent %s: agent_spec contains a NUL byte", agentName)
 	}
 	return nil
 }

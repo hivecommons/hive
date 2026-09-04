@@ -132,6 +132,38 @@ large file does not silently suppress everything behind it.
 When several files declare the same `name` with different `version` values,
 the **highest version wins** for an agent skill reference.
 
+## Discovering skills
+
+The same registry used at kick time is exposed through hivectl:
+
+```bash
+hivectl agent specs list
+hivectl agent specs search testing --limit 10
+```
+
+Both commands read `/data/skills/` from the local filesystem and return the
+skill name, version, description, source, and tags. Use `--dir` to inspect a
+different local registry, and use `--output json` or `--output yaml` for
+scripts.
+
+## BYO-agent specs
+
+ADR-0012 also defines a small bring-your-own-agent spec that a configured agent
+can reference with `agent_spec`:
+
+```yaml
+agents:
+  reviewer:
+    agent_spec: /data/agent-specs/reviewer
+```
+
+The reference may point to a YAML file or to a directory containing
+`agent.yaml`, `agent.yml`, `agent-spec.yaml`, `agent-spec.yml`, `spec.yaml`, or
+`spec.yml`. Hive loads it with `skillreg.LoadAgentSpec` when the agent launches
+and applies its backend, model, mode, launch command, prompt, tools, and default
+skills. See [Agent configuration](agent-configuration.md#byo-agent-specs) for
+the full example.
+
 ## Package surface
 
 | Function | What it does |
@@ -140,10 +172,12 @@ the **highest version wins** for an agent skill reference.
 | `Registry.Load(dir, logger)` | reads `*.md` from a directory, returns the count loaded |
 | `Registry.Add(skill)` | adds one skill |
 | `Registry.Get(name)` | looks up the newest loaded version for a name |
+| `Registry.Resolve(name, constraint)` | looks up a version by exact, wildcard, caret, or `>=` constraint |
+| `Registry.List()` | lists loaded skills for catalog UX |
+| `Registry.Search(term)` | searches names, descriptions, and tags |
+| `LoadAgentSpec(path)` | loads a BYO-agent YAML file or spec directory |
 | `Registry.ResolveRequested(cfg, names)` | resolves names, preferring registry skills over an `AGENTS.md` inline fallback |
 | `InjectionText(skills)` | renders resolved skills as the Markdown block injected into a kick |
-
-sources.
 
 ## Related
 

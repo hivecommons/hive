@@ -86,9 +86,46 @@ agents:
     launch_cmd: "/usr/bin/copilot --allow-all --model claude-sonnet-4-6"
                                  # explicit launch command (optional — hive builds
                                  #   one from backend + model + mode when omitted)
+    agent_spec: /data/agent-specs/reviewer
+                                 # optional BYO-agent spec file or directory.
+                                 #   When set, Hive loads agent.yaml/spec.yaml
+                                 #   and applies its backend, model, mode,
+                                 #   launch_cmd, prompt, tools, and skills at launch.
 ```
 
 > The dashboard also offers **gemini** as a live method (with live model discovery); as a persisted `backend:` value in `hive.yaml`, stick to the validated list above.
+
+### BYO-agent specs
+
+`agent_spec` wires ADR-0012's bring-your-own-agent contract into the launcher.
+Point it at a YAML file, or at a directory containing `agent.yaml`,
+`agent.yml`, `agent-spec.yaml`, `agent-spec.yml`, `spec.yaml`, or `spec.yml`:
+
+```yaml
+agents:
+  reviewer:
+    agent_spec: /data/agent-specs/reviewer
+```
+
+```yaml
+# /data/agent-specs/reviewer/agent.yaml
+name: reviewer
+backend: claude
+model: claude-sonnet-4-6
+mode: suggest
+launch_cmd: /opt/reviewer/bin/reviewer --stdio
+prompt: "Start with the external reviewer checklist."
+tools:
+  preset: advisory
+skills:
+  - review-checklist
+```
+
+At launch time Hive loads the spec with `skillreg.LoadAgentSpec`; the spec's
+backend, model, mapped mode (`observe` → `ADVISORY`, `suggest` →
+`ISSUES_AND_PRS`, `autonomous` → `ISSUES_PRS_MERGE`), `launch_cmd`, `prompt`,
+`tools`, and `skills` become the agent's effective launch configuration. If the
+spec omits `launch_cmd`, Hive still builds the backend command normally.
 
 ### Behavior — what it may do, and when
 

@@ -355,6 +355,11 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	if err := m.applyAgentSpec(agent); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+
 	agent.BootstrapOverride = prompt
 	agent.Paused = false
 	m.logger.Info("bootstrap override set (atomic)", "agent", name, "len", len(prompt))
@@ -663,6 +668,10 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	agent, ok := m.agents[name]
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
+	}
+
+	if err := m.applyAgentSpec(agent); err != nil {
+		return err
 	}
 
 	if agent.State == StateRunning {

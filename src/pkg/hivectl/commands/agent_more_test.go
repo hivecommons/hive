@@ -31,6 +31,40 @@ func TestAgentGetFetchesConfig(t *testing.T) {
 	}
 }
 
+func TestAgentSpecsCommands(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go-testing.md"), []byte(`---
+name: go-testing
+version: 1.0.0
+description: Go testing
+tags: [go]
+---
+Use t.TempDir.`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	stdout, _, err := execute(t, server, "", "--output", "json", "agent", "specs", "--dir", dir, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "go-testing") {
+		t.Fatalf("list stdout = %q", stdout)
+	}
+	stdout, _, err = execute(t, server, "", "--output", "json", "agent", "specs", "--dir", dir, "search", "go", "--limit", "5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "go-testing") {
+		t.Fatalf("search stdout = %q", stdout)
+	}
+	_, _, err = execute(t, server, "", "agent", "specs", "--dir", dir, "search", "go", "--limit", "-1")
+	if err == nil || ExitCode(err) != ExitUsage {
+		t.Fatalf("negative limit err = %v, want usage", err)
+	}
+}
+
 // TestAgentImportFromFile covers the readInput file path used in the
 // import command (not stdin), plus the "url" is empty branch.
 func TestAgentImportFromFile(t *testing.T) {

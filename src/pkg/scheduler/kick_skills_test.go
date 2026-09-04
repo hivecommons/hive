@@ -91,6 +91,61 @@ func TestPrimeSkills_InjectsDeclaredSkillBody(t *testing.T) {
 	}
 }
 
+func TestPrimeSkills_UsesAgentSpecDefaultSkills(t *testing.T) {
+	dir := useSkillsDir(t)
+	const body = "Apply the BYO checklist."
+	writeSkill(t, dir, "byo.md", "---\nname: byo-checklist\n---\n"+body+"\n")
+	specPath := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(specPath, []byte("name: reviewer\nbackend: copilot\nmodel: auto\nskills:\n  - byo-checklist\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.Config{
+		Agents: map[string]config.AgentConfig{
+			"reviewer": {AgentSpec: specPath},
+		},
+	}, slog.Default())
+
+	got := s.primeSkills("reviewer", "")
+	if !strings.Contains(got, body) {
+		t.Fatalf("primeSkills from agent_spec = %q, want body %q", got, body)
+	}
+}
+
+func TestPrimeSkills_AgentSpecWithoutSkillsRevokesConfiguredSkills(t *testing.T) {
+	dir := useSkillsDir(t)
+	writeSkill(t, dir, "configured.md", "SHOULD NOT APPEAR")
+	specPath := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(specPath, []byte("name: reviewer\nbackend: copilot\nmodel: auto\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.Config{
+		Agents: map[string]config.AgentConfig{
+			"reviewer": {AgentSpec: specPath, Skills: []string{"configured"}},
+		},
+	}, slog.Default())
+
+	if got := s.primeSkills("reviewer", ""); got != "" {
+		t.Fatalf("primeSkills with spec omitting skills = %q, want empty", got)
+	}
+}
+
+func TestPrimeSkills_MissingAgentSpecDoesNotFallbackToConfiguredSkills(t *testing.T) {
+	dir := useSkillsDir(t)
+	writeSkill(t, dir, "configured.md", "SHOULD NOT APPEAR")
+	s := New(&config.Config{
+		Agents: map[string]config.AgentConfig{
+			"reviewer": {
+				AgentSpec: filepath.Join(t.TempDir(), "missing.yaml"),
+				Skills:    []string{"configured"},
+			},
+		},
+	}, slog.Default())
+
+	if got := s.primeSkills("reviewer", ""); got != "" {
+		t.Fatalf("primeSkills with missing agent_spec = %q, want empty", got)
+	}
+}
+
 // Skills the agent did NOT declare must stay out of its context.
 func TestPrimeSkills_OnlyDeclaredSkillsAreInjected(t *testing.T) {
 	dir := useSkillsDir(t)
