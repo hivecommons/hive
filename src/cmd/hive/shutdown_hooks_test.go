@@ -168,15 +168,27 @@ func TestShutdownHooksZeroValueAndNilAreSafe(t *testing.T) {
 // It is deliberately narrow — it does not attempt to verify runtime behaviour
 // from source text.
 func TestMainRegistersBothPreShutdownHooks(t *testing.T) {
-	src, err := os.ReadFile("spokewire.go")
+	configSrc, err := os.ReadFile("configwire.go")
 	if err != nil {
-		t.Fatalf("read spokewire.go: %v", err)
+		t.Fatalf("read configwire.go: %v", err)
 	}
-	body := string(src)
+	governorSrc, err := os.ReadFile("governorwire.go")
+	if err != nil {
+		t.Fatalf("read governorwire.go: %v", err)
+	}
+	notifySrc, err := os.ReadFile("notifywire.go")
+	if err != nil {
+		t.Fatalf("read notifywire.go: %v", err)
+	}
+	dashboardSrc, err := os.ReadFile("dashboardwire.go")
+	if err != nil {
+		t.Fatalf("read dashboardwire.go: %v", err)
+	}
+	body := string(configSrc) + "\n" + string(governorSrc) + "\n" + string(notifySrc) + "\n" + string(dashboardSrc)
 
 	for _, want := range []string{
-		`preShutdownHooks.add("archive-kick-logs"`,
-		`preShutdownHooks.addUrgent("drain-contributor-websockets"`,
+		`w.preShutdownHooks.add("archive-kick-logs"`,
+		`w.preShutdownHooks.addUrgent("drain-contributor-websockets"`,
 		`DrainContributorsForShutdown()`,
 	} {
 		if !strings.Contains(body, want) {
@@ -191,7 +203,7 @@ func TestMainRegistersBothPreShutdownHooks(t *testing.T) {
 	}
 
 	// Ordering: hooks must run before cancel() in the signal goroutine.
-	runIdx := strings.Index(body, "preShutdownHooks.run()")
+	runIdx := strings.Index(body, "w.preShutdownHooks.run()")
 	if runIdx < 0 {
 		t.Fatal("signal handler no longer runs the pre-shutdown hooks")
 	}

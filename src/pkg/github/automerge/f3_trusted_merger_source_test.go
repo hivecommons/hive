@@ -158,10 +158,10 @@ func TestF3IsTrustedMergerFailsClosedInSource(t *testing.T) {
 // silently stops merging — or, if the fail-closed branch were also lost, merges
 // everything.
 func TestF3AuthorizerIsWiredInMain(t *testing.T) {
-	src := f3ReadSource(t, "../../../cmd/hive/spokewire.go") + "\n" +
+	src := f3ReadSource(t, "../../../cmd/hive/notifywire.go") + "\n" +
 		f3ReadSource(t, "../../../cmd/hive/main_helpers.go")
 
-	if !strings.Contains(src, "MergerAuthorizer: trustedMergerFunc(cfg)") {
+	if !strings.Contains(src, "MergerAuthorizer: trustedMergerFunc(w.cfg)") {
 		t.Error("cmd/hive spoke wiring does not install the trusted-merger authorizer — the F3 gate in " +
 			"trySweepQueuedPR is present but INERT (audit F3, standing). Restore " +
 			"MergerAuthorizer: trustedMergerFunc(cfg) beside StartMergeRequestWatcher.")
