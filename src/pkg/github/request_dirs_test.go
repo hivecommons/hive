@@ -176,7 +176,7 @@ func TestRequestWatchersStayGatedInMain(t *testing.T) {
 			"gate — inside it, queues stop existing on App-less boots (#4713)")
 	}
 
-	for _, call := range []string{"ghClient.StartPRRequestWatcher(", "ghClient.StartIssueRequestWatcher("} {
+	for _, call := range []string{"requestwatch.New(", "startRequestWatchers("} {
 		idx := strings.Index(src, call)
 		if idx < 0 {
 			t.Errorf("cmd/hive/main.go no longer starts %s — queued requests would accumulate forever", call)

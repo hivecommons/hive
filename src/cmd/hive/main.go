@@ -62,6 +62,7 @@ import (
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/github/requestwatch"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/holdguard"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -1344,17 +1345,7 @@ func main() {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		ghClient.SetHiveIdentity(hiveIdentity(cfg))
-		ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, holdLabel, nil)
-		// Issue relay: agents request issue creation and comments by dropping a
-		// file (hive-open-issue via the gh wrapper) instead of calling GitHub
-		// from their own shell. The agent-side call used to ride the agent's
-		// shell tool — one GHE secondary-rate-limit stall or mangled multiline
-		// command and the finding was silently lost (root-caused live
-		// 2026-08-21: sec-check's creates timed out and survived only as
-		// beads). The watcher executes server-side with the App token, retries
-		// with backoff, dedupes by exact open-issue title, and enforces the
-		// same forge-resistance + CanCreateIssues mode gate the wrapper does.
-		ghClient.StartIssueRequestWatcher(ctx, agentMgr.AuthorizeIssueOpen, nil)
+		startRequestWatchers(ctx, requestwatch.New(ghClient, agentMgr.AuthorizePROpen, agentMgr.AuthorizeIssueOpen, holdLabel, nil), logger)
 		// Review relay: agents request PR reviews by dropping a file (hive-review)
 		// instead of running `gh pr review` in their own shell, which the hive
 		// never observes. The watcher submits the review with the App token and
