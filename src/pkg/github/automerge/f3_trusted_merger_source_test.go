@@ -152,16 +152,17 @@ func TestF3IsTrustedMergerFailsClosedInSource(t *testing.T) {
 }
 
 // TestF3AuthorizerIsWiredInMain is the layer no other test in this package can
-// see. The gate is inert unless cmd/hive/main.go installs an authorizer; a sync
+// see. The gate is inert unless cmd/hive spoke wiring installs an authorizer; a sync
 // merge that dropped ONLY the SetMergerAuthorizer call would leave every
 // behavioural test in this package green while the live sweep fails closed and
 // silently stops merging — or, if the fail-closed branch were also lost, merges
 // everything.
 func TestF3AuthorizerIsWiredInMain(t *testing.T) {
-	src := f3ReadSource(t, "../../../cmd/hive/main.go")
+	src := f3ReadSource(t, "../../../cmd/hive/spokewire.go") + "\n" +
+		f3ReadSource(t, "../../../cmd/hive/main_helpers.go")
 
 	if !strings.Contains(src, "MergerAuthorizer: trustedMergerFunc(cfg)") {
-		t.Error("cmd/hive/main.go does not install the trusted-merger authorizer — the F3 gate in " +
+		t.Error("cmd/hive spoke wiring does not install the trusted-merger authorizer — the F3 gate in " +
 			"trySweepQueuedPR is present but INERT (audit F3, standing). Restore " +
 			"MergerAuthorizer: trustedMergerFunc(cfg) beside StartMergeRequestWatcher.")
 	}

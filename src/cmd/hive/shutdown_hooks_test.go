@@ -168,9 +168,9 @@ func TestShutdownHooksZeroValueAndNilAreSafe(t *testing.T) {
 // It is deliberately narrow — it does not attempt to verify runtime behaviour
 // from source text.
 func TestMainRegistersBothPreShutdownHooks(t *testing.T) {
-	src, err := os.ReadFile("main.go")
+	src, err := os.ReadFile("spokewire.go")
 	if err != nil {
-		t.Fatalf("read main.go: %v", err)
+		t.Fatalf("read spokewire.go: %v", err)
 	}
 	body := string(src)
 
@@ -180,7 +180,7 @@ func TestMainRegistersBothPreShutdownHooks(t *testing.T) {
 		`DrainContributorsForShutdown()`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("main.go no longer contains %q — a pre-shutdown hook was dropped", want)
+			t.Errorf("spoke wiring no longer contains %q — a pre-shutdown hook was dropped", want)
 		}
 	}
 

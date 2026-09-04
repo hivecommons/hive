@@ -143,7 +143,7 @@ func TestEnsureRequestDirReportsFailure(t *testing.T) {
 	}
 }
 
-// TestRequestWatchersStayGatedInMain pins the refusal half of the contract at
+// TestRequestWatchersStayGatedInSpokeWiring pins the refusal half of the contract at
 // the source level, the layer no behavioural test in this package can see
 // (shape follows f3_trusted_merger_source_test.go, and for the same reason: a
 // sync merge resolving a conflict in favour of an older main.go could ungate
@@ -154,22 +154,22 @@ func TestEnsureRequestDirReportsFailure(t *testing.T) {
 // App there is no bot identity to author as, and requests must accumulate on
 // disk, never open under a wrong identity.
 func TestRequestWatchersStayGatedInMain(t *testing.T) {
-	raw, err := os.ReadFile("../../cmd/hive/main.go")
+	raw, err := os.ReadFile("../../cmd/hive/spokewire.go")
 	if err != nil {
-		t.Fatalf("reading cmd/hive/main.go: %v", err)
+		t.Fatalf("reading cmd/hive/spokewire.go: %v", err)
 	}
 	src := string(raw)
 
 	gate := "if ghClient != nil && cfg.GitHub.HasUsableApp() {"
 	gateIdx := strings.Index(src, gate)
 	if gateIdx < 0 {
-		t.Fatalf("cmd/hive/main.go lost the usable-App gate %q — the request watchers "+
+		t.Fatalf("cmd/hive spoke wiring lost the usable-App gate %q — the request watchers "+
 			"must never start without an App identity to author as", gate)
 	}
 
 	prepIdx := strings.Index(src, "github.PrepareRequestDirs(")
 	if prepIdx < 0 {
-		t.Error("cmd/hive/main.go no longer calls github.PrepareRequestDirs — queues " +
+		t.Error("cmd/hive spoke wiring no longer calls github.PrepareRequestDirs — queues " +
 			"stop existing on App-less boots and agent findings are discarded again (#4713)")
 	} else if prepIdx > gateIdx {
 		t.Error("github.PrepareRequestDirs must be called BEFORE (outside) the usable-App " +
@@ -179,7 +179,7 @@ func TestRequestWatchersStayGatedInMain(t *testing.T) {
 	for _, call := range []string{"requestwatch.New(", "startRequestWatchers("} {
 		idx := strings.Index(src, call)
 		if idx < 0 {
-			t.Errorf("cmd/hive/main.go no longer starts %s — queued requests would accumulate forever", call)
+			t.Errorf("cmd/hive spoke wiring no longer starts %s — queued requests would accumulate forever", call)
 			continue
 		}
 		if idx < gateIdx {
