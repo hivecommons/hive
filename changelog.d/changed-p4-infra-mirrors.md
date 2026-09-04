@@ -1,0 +1,1 @@
+- Reusable CI workflows now come from `hivecommons/infra` instead of `kubestellar/infra`, completing the org transfer for the last 10 callers. The mirrored copies carry Apache-2.0 attribution to the KubeStellar Authors and swap KubeStellar-specific links for Hive Commons ones; behavior is otherwise unchanged.
