@@ -134,10 +134,33 @@ else
   bad "an unresolvable short SHA must fall back to the input (got ${got})"
 fi
 
-if grep -q 'head_sha=\${resolved}' "$promoter"; then
-  pass "the runs query uses the expanded SHA"
+if grep -q 'resolved=$(full_sha' "$promoter"; then
+  pass "the evidence check expands the revision before querying"
 else
-  bad "the runs query must use the expanded SHA, not the raw short revision"
+  bad "the evidence check must expand the revision before querying"
+fi
+
+# "did not run" and "ran and failed" are different answers. docker.yml
+# publishes a candidate on EVERY push while v2-ci/v2-tests are path-filtered to
+# src/**, so a docs-only merge yields a candidate the suites never looked at.
+# Treating that as failure made such a candidate permanently unpromotable;
+# treating a real failure as "did not run" would promote rejected code.
+if grep -q 'workflow_ran_on()' "$promoter"; then
+  pass "evidence distinguishes success, failure and did-not-run"
+else
+  bad "evidence must distinguish did-not-run from failure"
+fi
+
+if sed -n '/^workflow_ran_on()/,/^}/p' "$promoter" | grep -q 'branch=\${RELEASE_BRANCH'; then
+  bad "workflow_ran_on must not branch-filter: it hides a failure as did-not-run"
+else
+  pass "workflow_ran_on matches on head_sha alone so failures stay visible"
+fi
+
+if sed -n '/^workflow_success()/,/^}/p' "$promoter" | grep -q 'failure) return 1'; then
+  pass "ancestor walk stops at a failure instead of inheriting past it"
+else
+  bad "ancestor walk must stop at a failure"
 fi
 
 echo

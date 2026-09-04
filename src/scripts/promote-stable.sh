@@ -215,13 +215,68 @@ full_sha() {
   printf '%s' "$sha"
 }
 
+# EVIDENCE_ANCESTOR_DEPTH bounds how far back a required workflow's evidence may
+# be inherited from. Ancestors are only consulted when the workflow did not run
+# at all on the candidate; a run that FAILED is never inherited past.
+EVIDENCE_ANCESTOR_DEPTH=${EVIDENCE_ANCESTOR_DEPTH:-10}
+
+# workflow_ran_on reports how the workflow concluded on exactly this SHA:
+# "success", "failure" (any completed non-success), or "none" when it did not
+# run. The three cases are NOT interchangeable, which is the bug this replaces -
+# treating "did not run" as "failed" made every docs-only or workflow-only merge
+# permanently unpromotable, because docker.yml publishes a candidate on every
+# push while v2-ci.yml and v2-tests.yml are path-filtered to src/**.
+workflow_ran_on() {
+  local repo=$1 workflow=$2 sha=$3 runs
+  # Deliberately NOT branch-filtered. A run of this workflow on this exact
+  # commit is evidence about that commit wherever it ran, and a branch filter
+  # hides a genuine FAILURE (reporting it as "did not run"), which the caller
+  # would then inherit past. Matching on head_sha alone keeps a failure visible.
+  runs=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
+    "/repos/${repo}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20" \
+    --jq '[.workflow_runs[] | select(.status == "completed") | .conclusion]' 2>/dev/null || echo '[]')
+  if grep -q '"success"' <<<"$runs"; then
+    printf 'success'
+  elif [[ $runs == "[]" || -z $runs ]]; then
+    printf 'none'
+  else
+    printf 'failure'
+  fi
+}
+
+# workflow_success accepts evidence from the candidate, or - when the workflow
+# was path-filtered out of the candidate entirely - from the nearest ancestor
+# that did run it. A commit that changes no code the suite covers inherits the
+# verdict of the last commit that did, which is what "this code is tested" means
+# for a tree the suite never looked at.
+#
+# It stops at the first ancestor where the workflow actually ran: if that run
+# FAILED, the answer is failure. Inheriting past a failure would promote code a
+# required suite rejected.
 workflow_success() {
-  local repo=$1 workflow=$2 sha=$3 result resolved
+  local repo=$1 workflow=$2 sha=$3 resolved verdict candidate i
   resolved=$(full_sha "$repo" "$sha")
-  result=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
-    "/repos/${repo}/actions/workflows/${workflow}/runs?branch=${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}&head_sha=${resolved}&per_page=20" \
-    --jq '[.workflow_runs[] | select(.conclusion == "success")] | length' 2>/dev/null || echo 0)
-  [[ $result =~ ^[0-9]+$ && $result -gt 0 ]]
+
+  verdict=$(workflow_ran_on "$repo" "$workflow" "$resolved")
+  case $verdict in
+    success) return 0 ;;
+    failure) return 1 ;;
+  esac
+
+  for (( i = 1; i <= EVIDENCE_ANCESTOR_DEPTH; i++ )); do
+    candidate=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
+      "/repos/${repo}/commits/${resolved}~${i}" --jq '.sha' 2>/dev/null || true)
+    [[ $candidate =~ ^[0-9a-f]{40}$ ]] || return 1
+    verdict=$(workflow_ran_on "$repo" "$workflow" "$candidate")
+    case $verdict in
+      success)
+        echo "::notice::${workflow} did not run on ${resolved:0:7}; inheriting success from ancestor ${candidate:0:7}" >&2
+        return 0
+        ;;
+      failure) return 1 ;;
+    esac
+  done
+  return 1
 }
 
 workflow_run_created_at() {
