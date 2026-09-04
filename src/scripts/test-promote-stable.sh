@@ -112,6 +112,34 @@ else
   pass "docker workflow leaves stable to the promotion workflow"
 fi
 
+# The Actions runs API matches head_sha EXACTLY, returning zero runs for a
+# short SHA rather than an error. The candidate revision comes from an image
+# label, which carries the 7-character form, so an un-expanded value read as
+# "no green evidence" for every commit - and an emergency exception explicitly
+# refuses to bypass missing green evidence, so the gate could never promote.
+# shellcheck source=/dev/null
+source <(sed -n '/^full_sha()/,/^}/p' "$promoter")
+
+got=$(full_sha "example/repo" "526ef717269b7f73c9ccbc907ce5b94852a2c0ec")
+if [[ $got == "526ef717269b7f73c9ccbc907ce5b94852a2c0ec" ]]; then
+  pass "a 40-character SHA is used as-is"
+else
+  bad "a 40-character SHA must pass through unchanged (got ${got})"
+fi
+
+got=$(full_sha "example/definitely-not-a-real-repo-xyz" "abc1234" 2>/dev/null || true)
+if [[ $got == "abc1234" ]]; then
+  pass "an unresolvable short SHA falls back to the input, so the gate holds"
+else
+  bad "an unresolvable short SHA must fall back to the input (got ${got})"
+fi
+
+if grep -q 'head_sha=\${resolved}' "$promoter"; then
+  pass "the runs query uses the expanded SHA"
+else
+  bad "the runs query must use the expanded SHA, not the raw short revision"
+fi
+
 echo
 if [[ $fail -ne 0 ]]; then
   echo "RESULT: FAIL — stable promotion gate regressed."

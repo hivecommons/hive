@@ -192,10 +192,34 @@ revision_for_ref() {
   label_value "$1" "$REVISION_LABEL"
 }
 
-workflow_success() {
-  local repo=$1 workflow=$2 sha=$3 result
+# full_sha expands a short revision to the 40-character SHA. The Actions runs
+# API matches head_sha EXACTLY: a 7-character value returns zero runs rather
+# than an error, so a short SHA silently reads as "no green evidence" for every
+# commit. The candidate revision comes from an image label, which carries the
+# short form, so the expansion has to happen before any runs query.
+full_sha() {
+  local repo=$1 sha=$2 result
+  if [[ $sha =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s' "$sha"
+    return 0
+  fi
   result=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
-    "/repos/${repo}/actions/workflows/${workflow}/runs?branch=${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}&head_sha=${sha}&per_page=20" \
+    "/repos/${repo}/commits/${sha}" --jq '.sha' 2>/dev/null || true)
+  if [[ $result =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s' "$result"
+    return 0
+  fi
+  # Fall back to the input. The caller then queries with a short SHA and gets
+  # no runs, which is the pre-existing conservative behaviour: hold, never
+  # promote on evidence we could not confirm.
+  printf '%s' "$sha"
+}
+
+workflow_success() {
+  local repo=$1 workflow=$2 sha=$3 result resolved
+  resolved=$(full_sha "$repo" "$sha")
+  result=$(unset GITHUB_TOKEN && gh api -H "Accept: application/vnd.github+json" \
+    "/repos/${repo}/actions/workflows/${workflow}/runs?branch=${RELEASE_BRANCH:-$RELEASE_BRANCH_DEFAULT}&head_sha=${resolved}&per_page=20" \
     --jq '[.workflow_runs[] | select(.conclusion == "success")] | length' 2>/dev/null || echo 0)
   [[ $result =~ ^[0-9]+$ && $result -gt 0 ]]
 }
