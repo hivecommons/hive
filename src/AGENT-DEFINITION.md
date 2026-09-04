@@ -58,6 +58,7 @@ These defaults match the loader in `src/pkg/config`: an omitted `enabled` defaul
 | `stale_timeout` | int | 28800 | Seconds before an agent is considered stale |
 | `restart_strategy` | string | `"immediate"` | How to restart after crash |
 | `launch_cmd` | string | — | Override the auto-generated launch command |
+| `agent_spec` | string | — | BYO-agent spec file or directory; applies its backend, model, mode, launch command, prompt, tools, and skills at launch |
 | `cli_pinned` | bool | false | Pin the CLI binary version |
 | `caveman_mode` | string | — | Output compression: `lite`, `full`, `ultra`, `wenyan` |
 | `beads_dir` | string | — | Directory for bead storage |

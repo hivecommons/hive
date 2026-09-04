@@ -51,6 +51,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -187,7 +188,7 @@ func (r *Registry) Load(dir string, lg *slog.Logger) (int, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		raw, rErr := os.ReadFile(path)
+		raw, rErr := os.ReadFile(path) // #nosec G304 -- registry entries are local operator-managed skill files.
 		if rErr != nil {
 			lg.Warn("skillreg: cannot read skill file, skipping", "file", e.Name(), "error", rErr)
 			continue
@@ -274,6 +275,108 @@ func (r *Registry) Get(name string) (Skill, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.highestLocked(name)
+}
+
+// Resolve selects the skill named name whose version satisfies constraint. An
+// empty constraint or "*" selects the highest version. A "^X.Y.Z" constraint
+// selects the highest version sharing X's major component. A ">=X.Y.Z"
+// constraint selects the highest version at or above X.Y.Z. Any other
+// constraint is treated as an exact version match.
+func (r *Registry) Resolve(name, constraint string) (Skill, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	constraint = strings.TrimSpace(constraint)
+	if constraint == "" || constraint == "*" {
+		return r.highestLocked(name)
+	}
+
+	versions := r.byName[name]
+	if len(versions) == 0 {
+		return Skill{}, false
+	}
+
+	var best Skill
+	found := false
+	for _, s := range versions {
+		if !satisfies(s.Version, constraint) {
+			continue
+		}
+		if !found || compareVersions(s.Version, best.Version) > 0 {
+			best = s
+			found = true
+		}
+	}
+	return best, found
+}
+
+func satisfies(version, constraint string) bool {
+	switch {
+	case strings.HasPrefix(constraint, "^"):
+		want := strings.TrimSpace(strings.TrimPrefix(constraint, "^"))
+		return sameMajor(version, want) && compareVersions(version, want) >= 0
+	case strings.HasPrefix(constraint, ">="):
+		want := strings.TrimSpace(strings.TrimPrefix(constraint, ">="))
+		return compareVersions(version, want) >= 0
+	default:
+		return compareVersions(version, constraint) == 0
+	}
+}
+
+func sameMajor(a, b string) bool {
+	return versionParts(a)[0] == versionParts(b)[0]
+}
+
+// List returns every skill (all versions) sorted by name then descending
+// version, so the newest version of each name comes first.
+func (r *Registry) List() []Skill {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []Skill
+	for _, versions := range r.byName {
+		out = append(out, versions...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return compareVersions(out[i].Version, out[j].Version) > 0
+	})
+	return out
+}
+
+// Search returns the highest version of every skill whose name, description, or
+// any tag contains term (case-insensitively). An empty term matches everything.
+func (r *Registry) Search(term string) []Skill {
+	term = strings.ToLower(strings.TrimSpace(term))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var out []Skill
+	for name := range r.byName {
+		best, ok := r.highestLocked(name)
+		if !ok {
+			continue
+		}
+		if term == "" || skillMatches(best, term) {
+			out = append(out, best)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func skillMatches(s Skill, term string) bool {
+	if strings.Contains(strings.ToLower(s.Name), term) ||
+		strings.Contains(strings.ToLower(s.Description), term) {
+		return true
+	}
+	for _, tag := range s.Tags {
+		if strings.Contains(strings.ToLower(tag), term) {
+			return true
+		}
+	}
+	return false
 }
 
 // highestLocked returns the highest-versioned skill for name. Caller holds mu.

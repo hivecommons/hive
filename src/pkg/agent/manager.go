@@ -230,6 +230,8 @@ type AgentProcess struct {
 	KickRefusalReason string
 	LaunchedMode      AgentMode
 	HasLaunched       bool
+	baseConfig        config.AgentConfig
+	agentSpecPrompt   string
 	tmuxSession       string
 	tmuxSocket        string
 	cancel            context.CancelFunc
@@ -624,11 +626,12 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 			}
 		}
 		m.agents[name] = &AgentProcess{
-			Name:   name,
-			ID:     agentID,
-			Config: cfg,
-			State:  StateStopped,
-			UID:    agentUID,
+			Name:       name,
+			ID:         agentID,
+			Config:     cfg,
+			baseConfig: cfg,
+			State:      StateStopped,
+			UID:        agentUID,
 			// Restore a persisted operator pause so a restart/upgrade
 			// doesn't silently un-pause the agent.
 			Paused:       cfg.Paused,
@@ -658,10 +661,11 @@ func (m *Manager) ResolveAgent(nameOrID string) string {
 }
 
 func (m *Manager) Start(ctx context.Context, name string) error {
-	// PHASE 1 — brief critical section: map lookup, the pure in-memory
-	// decisions (running/sandbox), and claiming the per-agent launch guard.
-	// Nothing here does /data NFS I/O or a subprocess/outbound call, so m.mu is
-	// held only for microseconds.
+	// PHASE 1 — brief critical section: map lookup, BYO-agent spec application,
+	// the pure in-memory decisions (running/sandbox), and claiming the per-agent
+	// launch guard. AgentSpec file I/O stays here so the effective config is
+	// visible before sandbox and tmux preparation, and so Config/BootstrapOverride
+	// writes stay under the same lock as every status reader.
 	m.mu.Lock()
 
 	agent, ok := m.agents[name]
@@ -677,6 +681,22 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if agent.State == StateRunning {
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s already running", name)
+	}
+	if agent.launching {
+		m.mu.Unlock()
+		return fmt.Errorf("agent %s launch already in progress", name)
+	}
+
+	if err := m.applyAgentSpec(agent); err != nil {
+		m.audit(AuditAgentStartFailed, name, auditFields(
+			"outcome", "failure",
+			"backend", agent.effectiveBackend(),
+			"model", agent.effectiveModel(),
+			"error", err.Error(),
+			"stage", "agent_spec",
+		))
+		m.mu.Unlock()
+		return err
 	}
 
 	if m.agentSandboxEnabledLocked(agent) {
@@ -703,10 +723,6 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	// out-of-lock launch below, this guard is the only thing preventing a
 	// second Start from racing this one's tmux launch and guarded-field writes
 	// (m.mu no longer covers the whole method). Refuse the second caller fast.
-	if agent.launching {
-		m.mu.Unlock()
-		return fmt.Errorf("agent %s launch already in progress", name)
-	}
 	agent.launching = true
 	m.mu.Unlock()
 
@@ -908,6 +924,7 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 		Name:         name,
 		ID:           agentID,
 		Config:       cfg,
+		baseConfig:   cfg,
 		State:        StateStopped,
 		UID:          agentUID,
 		OutputBuffer: NewRingBuffer(outputBufferCapacity),
@@ -951,7 +968,9 @@ func (m *Manager) UpdateConfig(name string, cfg config.AgentConfig) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	agent.clearAgentSpecPromptIfSpecRemoved(cfg)
 	agent.Config = cfg
+	agent.baseConfig = cfg
 	return nil
 }
 
@@ -971,7 +990,9 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 		allowedConfigs[name] = cfg
 		if existing, ok := m.agents[name]; ok {
 			delete(m.idToName, existing.ID)
+			existing.clearAgentSpecPromptIfSpecRemoved(cfg)
 			existing.Config = cfg
+			existing.baseConfig = cfg
 			if cfg.ID != "" {
 				existing.ID = cfg.ID
 			} else {
@@ -1001,6 +1022,7 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 			Name:         name,
 			ID:           agentID,
 			Config:       cfg,
+			baseConfig:   cfg,
 			State:        StateStopped,
 			UID:          agentUID,
 			Paused:       cfg.Paused,

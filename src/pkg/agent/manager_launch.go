@@ -62,17 +62,21 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	binary, err := m.backendBinary(backend)
-	if err != nil {
-		agent.State = StateFailed
-		agent.LastError = err.Error()
-		m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", err)
-		// The tmux session already exists (Start/Restart ran ensureTmuxSession
-		// before this), so without a banner the pane is a silent bare shell —
-		// the operator attaches and sees a prompt, not a failure. Say which
-		// binary was attempted, that it is missing, and what to do.
-		m.announceLaunchFailureInPane(agent, m.backendLaunchFailureMessage(backend, err))
-		return nil
+	binary := ""
+	if strings.TrimSpace(agent.Config.LaunchCmd) == "" {
+		var err error
+		binary, err = m.backendBinary(backend)
+		if err != nil {
+			agent.State = StateFailed
+			agent.LastError = err.Error()
+			m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", err)
+			// The tmux session already exists (Start/Restart ran ensureTmuxSession
+			// before this), so without a banner the pane is a silent bare shell —
+			// the operator attaches and sees a prompt, not a failure. Say which
+			// binary was attempted, that it is missing, and what to do.
+			m.announceLaunchFailureInPane(agent, m.backendLaunchFailureMessage(backend, err))
+			return nil
+		}
 	}
 
 	// bob cannot authenticate without an API key in a pod: its default W3ID SSO
@@ -183,7 +187,9 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.installCavemanForAgent(agent, backend)
 	}
 
-	if agent.Config.Tools != nil {
+	if strings.TrimSpace(agent.Config.LaunchCmd) != "" {
+		launchCmd = strings.TrimSpace(agent.Config.LaunchCmd)
+	} else if agent.Config.Tools != nil {
 		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference)
 		if agent.Config.Tools != nil && agent.Config.Mode != "" {
 			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)

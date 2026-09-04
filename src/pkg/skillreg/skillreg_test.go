@@ -219,6 +219,9 @@ func TestAdd_SameVersionReplaces(t *testing.T) {
 	if got.Body != "new" {
 		t.Errorf("body = %q, want new (same version replaces)", got.Body)
 	}
+	if len(r.List()) != 1 {
+		t.Errorf("List len = %d, want 1", len(r.List()))
+	}
 }
 
 func TestGet_HighestVersion(t *testing.T) {
@@ -229,6 +232,62 @@ func TestGet_HighestVersion(t *testing.T) {
 	got, ok := r.Get("a")
 	if !ok || got.Version != "2.3.0" {
 		t.Fatalf("Get highest = %q, want 2.3.0", got.Version)
+	}
+}
+
+func TestResolveConstraintHitAndMiss(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Add(Skill{Name: "a", Version: "1.0.0"})
+	_ = r.Add(Skill{Name: "a", Version: "1.5.0"})
+	_ = r.Add(Skill{Name: "a", Version: "2.1.0"})
+
+	cases := []struct {
+		name       string
+		constraint string
+		wantVer    string
+		wantOK     bool
+	}{
+		{"empty", "", "2.1.0", true},
+		{"wildcard", "*", "2.1.0", true},
+		{"exact hit", "1.5.0", "1.5.0", true},
+		{"exact miss", "9.9.9", "", false},
+		{"caret", "^1.0.0", "1.5.0", true},
+		{"gte", ">=1.5.0", "2.1.0", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := r.Resolve("a", tc.constraint)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && got.Version != tc.wantVer {
+				t.Errorf("version = %q, want %q", got.Version, tc.wantVer)
+			}
+		})
+	}
+}
+
+func TestListAndSearch(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Add(Skill{Name: "go-testing", Version: "1.0.0", Description: "old", Tags: []string{"go"}})
+	_ = r.Add(Skill{Name: "go-testing", Version: "2.0.0", Description: "new", Tags: []string{"quality"}})
+	_ = r.Add(Skill{Name: "pr-etiquette", Version: "1.0.0", Description: "GitHub flow", Tags: []string{"git"}})
+
+	list := r.List()
+	if len(list) != 3 {
+		t.Fatalf("List len = %d, want 3", len(list))
+	}
+	if list[0].Name != "go-testing" || list[0].Version != "2.0.0" || list[1].Version != "1.0.0" {
+		t.Fatalf("List order = %+v", list)
+	}
+
+	search := r.Search("git")
+	if len(search) != 1 || search[0].Name != "pr-etiquette" {
+		t.Fatalf("Search(git) = %+v, want pr-etiquette", search)
+	}
+	search = r.Search("quality")
+	if len(search) != 1 || search[0].Name != "go-testing" || search[0].Version != "2.0.0" {
+		t.Fatalf("Search(quality) = %+v, want newest go-testing", search)
 	}
 }
 

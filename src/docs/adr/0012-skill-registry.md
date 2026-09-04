@@ -21,8 +21,20 @@ skipped with logs so one bad catalog entry does not prevent Hive from loading.
 
 Requested skills are selected by preferring the curated registry over inline
 `AGENTS.md` snippets, while falling back to repo-local skills the registry does
-not know about. `Get` returns the newest loaded version, and `InjectionText`
-renders a single Markdown block for the kick path.
+not know about. `Get` returns the newest loaded version, `List`/`Search` provide
+catalog UX, and `InjectionText` renders a single Markdown block for the kick
+path.
+
+The same package defines `AgentSpec`, the minimal BYO-agent contract:
+name, backend, model, operating mode, optional launch command, prompt, tools,
+and default skills. Agent configs opt into that contract with `agent_spec`,
+which points at a YAML file or spec directory.
+
+## Status notes
+
+- Implemented in #6004: `agent_spec` is loaded through `skillreg.LoadAgentSpec`
+  on the pkg/agent launch path, and `hivectl agent specs list|search` exposes
+  the registry discovery surface.
 
 ## Consequences
 
@@ -30,5 +42,6 @@ Rationale not recorded beyond the implementation, linked code, and cited design 
 
 Skills become portable without removing simple repo-local snippets. The
 trade-off is that registry skills intentionally override inline snippets, so
-catalog governance matters; and the current registry helper is a loading and
-rendering layer, not a full package manager or deep launcher integration.
+catalog governance matters. BYO-agent specs add launcher integration without
+turning the registry into a package manager: Hive resolves a local declaration
+and applies only the fields in the stable contract.

@@ -1615,7 +1615,21 @@ func (s *Scheduler) primeSkills(agentName, repoRoot string) string {
 		return ""
 	}
 	ac, ok := s.cfg.Agents[agentName]
-	if !ok || len(ac.Skills) == 0 {
+	if !ok {
+		return ""
+	}
+	requested := ac.Skills
+	if ac.AgentSpec != "" {
+		requested = nil
+		spec, err := skillreg.LoadAgentSpec(ac.AgentSpec)
+		if err != nil {
+			s.logger.Warn("skillreg: cannot load agent spec skills",
+				"agent", agentName, "spec", ac.AgentSpec, "error", err)
+		} else {
+			requested = spec.Skills
+		}
+	}
+	if len(requested) == 0 {
 		return ""
 	}
 
@@ -1641,16 +1655,16 @@ func (s *Scheduler) primeSkills(agentName, repoRoot string) string {
 			"dir", skillsRegistryDir, "error", err)
 	}
 
-	resolved := reg.ResolveRequested(repoCfg, ac.Skills)
+	resolved := reg.ResolveRequested(repoCfg, requested)
 	if len(resolved) == 0 {
 		if loaded == 0 && (repoCfg == nil || len(repoCfg.Skills) == 0) {
 			s.logger.Debug("skillreg: no skills available, skipping injection",
 				"dir", skillsRegistryDir, "repo_root", repoRoot,
-				"requested", len(ac.Skills))
+				"requested", len(requested))
 			return ""
 		}
 		s.logger.Warn("skillreg: none of the declared skills resolved",
-			"agent", agentName, "requested", ac.Skills, "registry_size", loaded,
+			"agent", agentName, "requested", requested, "registry_size", loaded,
 			"repo_root", repoRoot)
 		return ""
 	}
