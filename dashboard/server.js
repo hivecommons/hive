@@ -108,6 +108,13 @@ function modelTier(model) {
 }
 
 const PORT = process.env.HIVE_DASHBOARD_PORT || ((projectConfig.dashboard || {}).port) || 3001;
+// SECURITY: this legacy server has NO authentication on its control endpoints
+// (/api/kick, /api/switch, /api/model, config writes via sudo), so it must not
+// listen beyond loopback by default — the same posture as ttyd
+// (systemd/ttyd-hive.service, TTYD_BIND=127.0.0.1 in src/deploy/entrypoint.sh).
+// Operators fronting it with an authenticated proxy may set
+// HIVE_DASHBOARD_BIND=0.0.0.0 explicitly.
+const BIND_HOST = process.env.HIVE_DASHBOARD_BIND || ((projectConfig.dashboard || {}).bind) || '127.0.0.1';
 const REFRESH_MS = 5000;
 const METRICS_DIR = '/var/run/hive-metrics';
 const HISTORY_DIR = path.join(METRICS_DIR, 'history');
@@ -980,7 +987,7 @@ const GOVERNOR_CADENCE_DIR = '/var/run/kick-governor';
 // 0 means off in that mode (governor rule — agent doesn't run).
 const CADENCE_MATRIX = {
   scanner:    { surge: 900, busy: 900,  quiet: 900,  idle: 900  },
-  ci-maintainer:   { surge: 0,   busy: 3600, quiet: 2700, idle: 900  },
+  'ci-maintainer':   { surge: 0,   busy: 3600, quiet: 2700, idle: 900  },
   architect:  { surge: 0,   busy: 0,    quiet: 0,    idle: 7200 },
   outreach:   { surge: 0,   busy: 0,    quiet: 0,    idle: 7200 },
   supervisor: { surge: 300, busy: 600,  quiet: 900,  idle: 1800 },
@@ -1409,7 +1416,7 @@ function getDefaultStats(agentName) {
       { key: 'openPrs', label: 'Open PRs', source: 'status', field: 'openPrCount', style: 'spark', trendField: 'openPrs' },
       { key: 'mergeable', label: 'Mergeable', source: 'status', field: 'mergeableCount', style: 'spark', trendField: 'mergeable' },
     ],
-    ci-maintainer: [
+    'ci-maintainer': [
       { key: 'coverage', label: 'Coverage', source: 'agentMetrics', field: 'coverage', style: 'pct-bar', target: 91 },
       { key: 'brew', label: 'Brew', source: 'health', field: 'brew', style: 'dot' },
       { key: 'helm', label: 'Helm', source: 'health', field: 'helm', style: 'dot' },
@@ -3118,6 +3125,9 @@ services:
       - /etc/hive:/etc/hive:ro
     environment:
       - HIVE_PUBLIC_HOST=your-server.example.com
+      # Legacy dashboard/server.js binds loopback by default; expose it only
+      # when this container is protected by an authenticated front door.
+      - HIVE_DASHBOARD_BIND=0.0.0.0
 
 volumes:
   hive-data:
@@ -3165,8 +3175,8 @@ app.get('/api-docs', (_req, res) => {
 });
 
 // WebSocket server for contributor agents
-const server = app.listen(PORT, () => {
-  console.log(`🐝 Hive Dashboard running at http://localhost:${PORT}`);
+const server = app.listen(PORT, BIND_HOST, () => {
+  console.log(`🐝 Hive Dashboard running at http://${BIND_HOST}:${PORT}`);
 });
 
 const wss = new WebSocketServer({ server, path: '/contribute' });
