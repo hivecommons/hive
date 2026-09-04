@@ -1,0 +1,1 @@
+- Operators now have a staged `dibs.hivecommons.dev` cutover runbook and manifests for the delayed Certificate SAN update, dual-host Ingress, and legacy `dibs.kubestellar.io` redirect, preserving the Let's Encrypt quota hold and manual DNS gate from [#5925](https://github.com/hivecommons/hive/issues/5925).

@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dibs-kubestellar-redirect
+  namespace: dibs
+  annotations:
+    nginx.ingress.kubernetes.io/permanent-redirect: https://dibs.hivecommons.dev$request_uri
+    nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - dibs.kubestellar.io
+      secretName: hive-tls-hc
+  rules:
+    - host: dibs.kubestellar.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dibs
+                port:
+                  number: 80
