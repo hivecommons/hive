@@ -1,7 +1,8 @@
-package github
+package automerge
 
 import (
 	"context"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"strings"
 	"testing"
 )
@@ -32,10 +33,10 @@ func greenQueuedPR(number int, author, queuedBy string) sweepPR {
 
 // newUngatedSweepClient builds a sweep client with NO merger authorizer — the
 // pre-fix shape, used to assert the fail-closed default.
-func newUngatedSweepClient(apiURL string) *Client {
-	c := NewClient("token", "acme", []string{"widget"}, nil, apiURL)
+func newUngatedSweepClient(apiURL string) *Engine {
+	c := hgithub.NewClient("token", "acme", []string{"widget"}, nil, apiURL)
 	c.SetAppBotLogin(testHiveAppBotLogin)
-	return c
+	return New(c, Options{})
 }
 
 // TestF3_TrustedMergerMergesGreenQueuedPR is the POSITIVE CONTROL: a merger-tier
@@ -43,7 +44,7 @@ func newUngatedSweepClient(apiURL string) *Client {
 // this would be worthless.
 func TestF3_TrustedMergerMergesGreenQueuedPR(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "bob")}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "bob")}, &merged)
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
@@ -61,7 +62,7 @@ func TestF3_TrustedMergerMergesGreenQueuedPR(t *testing.T) {
 // and the self-merge ban is satisfied.
 func TestF3_UntrustedMergerDoesNotMerge(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "mallory")}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "mallory")}, &merged)
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
@@ -82,7 +83,7 @@ func TestF3_UntrustedMergerDoesNotMerge(t *testing.T) {
 // but neither holds the merger tier.
 func TestF3_SockpuppetPairDoesNotMerge(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "mallory", "mallory-alt")}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "mallory", "mallory-alt")}, &merged)
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
@@ -100,7 +101,7 @@ func TestF3_SockpuppetPairDoesNotMerge(t *testing.T) {
 // bypass of the self-merge ban.
 func TestF3_SelfMergeBanStillHolds(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "bob", "BOB")}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "bob", "BOB")}, &merged)
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
@@ -117,7 +118,7 @@ func TestF3_SelfMergeBanStillHolds(t *testing.T) {
 // authorizer installed, an unclassifiable actor must NOT merge.
 func TestF3_NoAuthorizerFailsClosed(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "bob")}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "bob")}, &merged)
 	defer api.Close()
 
 	c := newUngatedSweepClient(api.URL)
@@ -134,11 +135,11 @@ func TestF3_NoAuthorizerFailsClosed(t *testing.T) {
 // operator can tell an untrusted queuer apart from an unconfigured hive.
 func TestF3_TrySweepQueuedPRReportsUntrustedReason(t *testing.T) {
 	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "mallory")}, &merged)
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{greenQueuedPR(7, "alice", "mallory")}, &merged)
 	defer api.Close()
 
 	gated := newAutoMergeSweepClient(api.URL)
-	_, reason, err := gated.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, AutoMergeQueuedLabel)
+	_, reason, err := gated.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
 	if err != nil {
 		t.Fatalf("trySweepQueuedPR returned error: %v", err)
 	}
@@ -147,7 +148,7 @@ func TestF3_TrySweepQueuedPRReportsUntrustedReason(t *testing.T) {
 	}
 
 	ungated := newUngatedSweepClient(api.URL)
-	_, reason, err = ungated.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, AutoMergeQueuedLabel)
+	_, reason, err = ungated.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
 	if err != nil {
 		t.Fatalf("trySweepQueuedPR returned error: %v", err)
 	}
@@ -158,12 +159,12 @@ func TestF3_TrySweepQueuedPRReportsUntrustedReason(t *testing.T) {
 
 // TestF3_IsTrustedMergerFailsClosedOnEdgeCases covers the helper directly.
 func TestF3_IsTrustedMergerFailsClosedOnEdgeCases(t *testing.T) {
-	var nilClient *Client
+	var nilClient *Engine
 	if allowed, configured := nilClient.isTrustedMerger("bob"); allowed || configured {
 		t.Fatalf("nil client = (%v,%v), want (false,false)", allowed, configured)
 	}
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, "")
+	c := New(hgithub.NewClient("token", "acme", []string{"widget"}, nil, ""), Options{})
 	if allowed, configured := c.isTrustedMerger("bob"); allowed || configured {
 		t.Fatalf("no authorizer = (%v,%v), want (false,false)", allowed, configured)
 	}

@@ -61,6 +61,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/holdguard"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -1485,7 +1486,10 @@ func main() {
 		// anything, and a sockpuppet pair defeats the self-merge ban. Resolved
 		// against the SAME allowlist the dashboard uses so there is one notion of
 		// trust; read through cfg on every call so a config reload takes effect.
-		ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg))
+		autoMergeOpts := automerge.Options{
+			Logger:           logger,
+			MergerAuthorizer: trustedMergerFunc(cfg),
+		}
 
 		// commitGreen's required-checks gate (self-merge sweep, see
 		// automerge_sweep.go): install the operator-declared
@@ -1496,7 +1500,7 @@ func main() {
 		// allowlist. Unset/empty leaves the API/allowlist fallback chain
 		// intact (SetRequiredChecks(nil) is a safe no-op).
 		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
-			ghClient.SetRequiredChecks(set)
+			autoMergeOpts.RequiredChecks = set
 		}
 
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
@@ -1521,9 +1525,9 @@ func main() {
 		// `tool_approval.enabled` is false) installs no hook, leaving the
 		// sweep's behavior byte-identical to the pre-desk build.
 		if approvalDesk != nil && approvalInbox != nil {
-			ghClient.SetApprovalDesk(newSelfMergeDeskHook(approvalDesk, approvalInbox, cfg, logger))
+			autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(approvalDesk, approvalInbox, cfg, logger)
 		}
-		ghClient.StartSelfAuthoredAutoMergeSweep(ctx, cfg.AutoMerge.MaxMerges, cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel), cfg.ACMMLevel)
+		automerge.StartSelfAuthoredAutoMergeSweep(ctx, ghClient, cfg.AutoMerge.MaxMerges, cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel), cfg.ACMMLevel, autoMergeOpts)
 	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config
@@ -2498,9 +2502,6 @@ func main() {
 				newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
 			newClient.SetIssueFilter(cfg.Project.IssueFilter)
-			if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
-				newClient.SetRequiredChecks(set)
-			}
 
 			ghClient = newClient
 			appAuth = newAppAuth
@@ -2973,9 +2974,6 @@ func main() {
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 					}
 					newClient.SetIssueFilter(cfg.Project.IssueFilter)
-					if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
-						newClient.SetRequiredChecks(set)
-					}
 					ghClient = newClient
 					appAuth = newAppAuth
 					agentMgr.SetAppAuth(newAppAuth)
@@ -4369,9 +4367,6 @@ func main() {
 					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 				}
 				newClient.SetIssueFilter(cfg.Project.IssueFilter)
-				if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
-					newClient.SetRequiredChecks(set)
-				}
 				ghClient = newClient
 				appAuth = newAppAuth
 				agentMgr.SetAppAuth(newAppAuth)
@@ -4738,7 +4733,7 @@ func main() {
 	if wd != nil {
 		wd.Tick(ctx)
 	}
-	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
+	runAutoMergeSweepIfDue(ctx, ghClient, cfg, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, statePath, logger, dashSrv, wd)
 
 	agentTickCh := func() <-chan time.Time {
@@ -4814,7 +4809,7 @@ func main() {
 			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, approvalDesk, logger)
 			runRotationCheck(ctx, cfg, rotationMgr, gov, agentMgr, logger)
-			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
+			runAutoMergeSweepIfDue(ctx, ghClient, cfg, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
 			if trajLane != nil && trajLane.Due(time.Now()) {
@@ -7769,7 +7764,7 @@ const autoMergeSweepInterval = time.Minute
 // trusted, so an unclassifiable actor can never merge. cfg is read on every
 // call so a config reload that grants or revokes the merger tier takes effect
 // without a restart.
-func trustedMergerFunc(cfg *config.Config) github.MergerAuthorizer {
+func trustedMergerFunc(cfg *config.Config) automerge.MergerAuthorizer {
 	return func(login string) bool {
 		if cfg == nil || strings.TrimSpace(login) == "" {
 			return false
@@ -7855,7 +7850,7 @@ func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.
 	}
 }
 
-func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
 	if ghClient == nil {
 		return
 	}
@@ -7866,9 +7861,15 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSr
 	if lastRun != nil {
 		*lastRun = now
 	}
-	result, err := ghClient.SweepQueuedAutoMerges(ctx, github.AutoMergeSweepOptions{
-		MaxMerges: github.DefaultAutoMergeSweepMaxMerges,
-		Audit: func(event github.AutoMergeSweepEvent) {
+	opts := automerge.Options{Logger: logger, MergerAuthorizer: trustedMergerFunc(cfg)}
+	if cfg != nil {
+		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+			opts.RequiredChecks = set
+		}
+	}
+	result, err := automerge.SweepQueuedAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
+		MaxMerges: automerge.DefaultAutoMergeSweepMaxMerges,
+		Audit: func(event automerge.AutoMergeSweepEvent) {
 			if dashSrv == nil {
 				return
 			}

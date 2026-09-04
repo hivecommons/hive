@@ -1,24 +1,96 @@
-package github
+package automerge
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
+
+// Transport is the small surface the sweep needs from the GitHub transport
+// client. The policy state lives in this package; the client only supplies API
+// access and transport-scoped metadata.
+type Transport interface {
+	GoGitHub() *gh.Client
+	Repositories() []string
+	SplitRepo(repo string) (owner, repoName string)
+	AutoMergeLabel() string
+	AppBotLogin() string
+	IsExemptLabels(labels []string) bool
+	RecordPRMergedAudit(repo string, number int, method, sha string)
+}
+
+// Options carries policy dependencies owned by the caller.
+type Options struct {
+	Logger           *slog.Logger
+	MergerAuthorizer MergerAuthorizer
+	RequiredChecks   map[string]bool
+	ApprovalDesk     hgithub.ApprovalDeskHook
+}
+
+// Engine owns the automerge sweep policy state.
+type Engine struct {
+	transport Transport
+	gh        *gh.Client
+	logger    *slog.Logger
+
+	mergerAuthzMu sync.RWMutex
+	mergerAuthz   MergerAuthorizer
+
+	requiredChecksMu sync.RWMutex
+	requiredChecks   map[string]bool
+
+	approvalDesk hgithub.ApprovalDeskHook
+}
+
+// New returns an automerge sweep engine over a GitHub transport client.
+func New(transport Transport, opts Options) *Engine {
+	var ghClient *gh.Client
+	if transport != nil {
+		ghClient = transport.GoGitHub()
+	}
+	e := &Engine{
+		transport:      transport,
+		gh:             ghClient,
+		logger:         opts.Logger,
+		mergerAuthz:    opts.MergerAuthorizer,
+		requiredChecks: opts.RequiredChecks,
+		approvalDesk:   opts.ApprovalDesk,
+	}
+	return e
+}
+
+func (c *Engine) ready() bool {
+	return c != nil && c.transport != nil && c.gh != nil
+}
+
+// SweepQueuedAutoMerges consumes queued automerge requests using a one-shot engine.
+func SweepQueuedAutoMerges(ctx context.Context, transport Transport, opts Options, sweepOpts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	return New(transport, opts).SweepQueuedAutoMerges(ctx, sweepOpts)
+}
+
+// StartSelfAuthoredAutoMergeSweep starts the self-authored sweep using caller-owned options.
+func StartSelfAuthoredAutoMergeSweep(ctx context.Context, transport Transport, maxMerges int, acmmAllowed bool, acmmLevel *int, opts Options) {
+	New(transport, opts).StartSelfAuthoredAutoMergeSweep(ctx, maxMerges, acmmAllowed, acmmLevel)
+}
 
 // selfMergeMinACMMLevel mirrors config.SelfMergeMinACMMLevel. It is duplicated
 // rather than imported so this package keeps no dependency on pkg/config
 // (hivecommons/hive#5953 phase 1); config_parity_test.go pins the two equal so
 // they cannot drift silently.
 const selfMergeMinACMMLevel = 6
+
+// SelfMergeMinACMMLevel is the minimum ACMM level for self-authored automerge.
+const SelfMergeMinACMMLevel = selfMergeMinACMMLevel
 
 const DefaultAutoMergeSweepMaxMerges = 3
 
@@ -128,13 +200,25 @@ type MergerAuthorizer func(login string) bool
 
 // SetMergerAuthorizer installs the trusted-merger gate consulted by
 // SweepQueuedAutoMerges. nil fails closed — the sweep merges nothing.
-func (c *Client) SetMergerAuthorizer(fn MergerAuthorizer) {
+func (c *Engine) SetMergerAuthorizer(fn MergerAuthorizer) {
 	if c == nil {
 		return
 	}
 	c.mergerAuthzMu.Lock()
 	defer c.mergerAuthzMu.Unlock()
 	c.mergerAuthz = fn
+}
+
+// SetAttributionHooks forwards test audit hooks to transports that support them.
+func (c *Engine) SetAttributionHooks(hooks hgithub.AttributionHooks) {
+	if c == nil {
+		return
+	}
+	if setter, ok := c.transport.(interface {
+		SetAttributionHooks(hgithub.AttributionHooks)
+	}); ok {
+		setter.SetAttributionHooks(hooks)
+	}
 }
 
 // SetRequiredChecks installs the config-declared required-status-check set
@@ -144,7 +228,7 @@ func (c *Client) SetMergerAuthorizer(fn MergerAuthorizer) {
 // also fails, to the isMetaCheck/isIgnorableCICheck allowlist. Safe to call
 // repeatedly (e.g. on every config reload); the sweep goroutine reads the
 // installed value through requiredChecksMu.
-func (c *Client) SetRequiredChecks(set map[string]bool) {
+func (c *Engine) SetRequiredChecks(set map[string]bool) {
 	if c == nil {
 		return
 	}
@@ -153,10 +237,20 @@ func (c *Client) SetRequiredChecks(set map[string]bool) {
 	c.requiredChecks = set
 }
 
+// SetAutoMergeLabel updates the underlying transport label when it supports the setter.
+func (c *Engine) SetAutoMergeLabel(label string) {
+	if c == nil {
+		return
+	}
+	if setter, ok := c.transport.(interface{ SetAutoMergeLabel(string) }); ok {
+		setter.SetAutoMergeLabel(label)
+	}
+}
+
 // configRequiredChecks returns the currently installed config-declared
 // required-check set and whether one is installed. Mirrors isTrustedMerger's
 // nil-safe read pattern for c.mergerAuthz.
-func (c *Client) configRequiredChecks() (map[string]bool, bool) {
+func (c *Engine) configRequiredChecks() (map[string]bool, bool) {
 	if c == nil {
 		return nil, false
 	}
@@ -169,7 +263,7 @@ func (c *Client) configRequiredChecks() (map[string]bool, bool) {
 }
 
 // isTrustedMerger reports whether login may queue a merge. Fails CLOSED.
-func (c *Client) isTrustedMerger(login string) (allowed, configured bool) {
+func (c *Engine) isTrustedMerger(login string) (allowed, configured bool) {
 	if c == nil {
 		return false, false
 	}
@@ -183,6 +277,17 @@ func (c *Client) isTrustedMerger(login string) (allowed, configured bool) {
 		return false, true
 	}
 	return fn(login), true
+}
+
+func (c *Engine) consultApprovalDesk(ctx context.Context, req hgithub.ApprovalDeskRequest) (bool, string) {
+	if c == nil || c.approvalDesk == nil {
+		return true, ""
+	}
+	allow, reason := c.approvalDesk(ctx, req)
+	if !allow && reason == "" {
+		reason = "approval-desk-withheld"
+	}
+	return allow, reason
 }
 
 type AutoMergeSweepEvent struct {
@@ -212,24 +317,24 @@ type hiveQueueApproval struct {
 // Hive App-authored queue approval proves the queuer is not the PR author, and
 // the queuer is a TRUSTED merger (audit F3 — see MergerAuthorizer). Without an
 // authorizer installed the sweep fails closed and merges nothing.
-func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
-	if c == nil {
-		return nil, ErrNoGitHubClient
+func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	if !c.ready() {
+		return nil, hgithub.ErrNoGitHubClient
 	}
 	maxMerges := opts.MaxMerges
 	if maxMerges <= 0 {
 		maxMerges = DefaultAutoMergeSweepMaxMerges
 	}
-	label := c.AutoMergeLabel()
+	label := c.transport.AutoMergeLabel()
 	result := &AutoMergeSweepResult{}
 	noAppBotLoginWarned := false
 	noMergerAuthzWarned := false
 
-	for _, repo := range c.getRepos() {
+	for _, repo := range c.transport.Repositories() {
 		if len(result.Merged) >= maxMerges {
 			break
 		}
-		owner, repoName := c.splitRepo(repo)
+		owner, repoName := c.transport.SplitRepo(repo)
 		issues, err := c.listQueuedPullRequestIssues(ctx, owner, repoName, label)
 		if err != nil {
 			return result, err
@@ -303,16 +408,16 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 // There is no queuedBy in this path, so the author==queuedBy self-merge-ban
 // in trySweepQueuedPR simply does not apply — there is no queuer to compare
 // against.
-func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
-	if c == nil {
-		return nil, ErrNoGitHubClient
+func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	if !c.ready() {
+		return nil, hgithub.ErrNoGitHubClient
 	}
 	maxMerges := opts.MaxMerges
 	if maxMerges <= 0 {
 		maxMerges = DefaultAutoMergeSweepMaxMerges
 	}
 	result := &AutoMergeSweepResult{}
-	if strings.TrimSpace(c.appBotLogin) == "" {
+	if strings.TrimSpace(c.transport.AppBotLogin()) == "" {
 		// No usable App identity: there is no "self" to authenticate PRs as
 		// App-authored, so this sweep has nothing safe to do. Warn once per
 		// call (matching the human-queue sweep's per-call warn cadence) rather
@@ -321,11 +426,11 @@ func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		return result, nil
 	}
 
-	for _, repo := range c.getRepos() {
+	for _, repo := range c.transport.Repositories() {
 		if len(result.Merged) >= maxMerges {
 			break
 		}
-		owner, repoName := c.splitRepo(repo)
+		owner, repoName := c.transport.SplitRepo(repo)
 		prs, err := c.listOpenAppAuthoredPullRequests(ctx, owner, repoName)
 		if err != nil {
 			return result, err
@@ -393,11 +498,11 @@ func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 // GET /rate_limit does not count against any limit, and RateLimitService.Get
 // writes the result back into the client's cache, so this is a cheap, exact
 // correction rather than a guess.
-func (c *Client) refreshRateLimitCache(ctx context.Context) {
-	if c == nil || c.client == nil {
+func (c *Engine) refreshRateLimitCache(ctx context.Context) {
+	if c == nil || c.gh == nil {
 		return
 	}
-	if _, _, err := c.client.RateLimit.Get(ctx); err != nil {
+	if _, _, err := c.gh.RateLimit.Get(ctx); err != nil {
 		c.warn("could not refresh rate-limit cache", "error", err)
 		return
 	}
@@ -415,8 +520,8 @@ func isRateLimited(err error) bool {
 	return errors.As(err, &ab)
 }
 
-func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int, acmmAllowed bool, acmmLevel *int) {
-	if c == nil {
+func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int, acmmAllowed bool, acmmLevel *int) {
+	if !c.ready() {
 		return
 	}
 	if !acmmAllowed {
@@ -428,7 +533,7 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			"acmm_level", level, "min_acmm_level", selfMergeMinACMMLevel)
 		return
 	}
-	interval := selfAuthoredSweepInterval(len(c.getRepos()))
+	interval := selfAuthoredSweepInterval(len(c.transport.Repositories()))
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
@@ -451,21 +556,21 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			}
 		}
 	}()
-	c.info("self-authored automerge sweep started", "interval", interval, "repos", len(c.getRepos()))
+	c.info("self-authored automerge sweep started", "interval", interval, "repos", len(c.transport.Repositories()))
 }
 
 // listOpenAppAuthoredPullRequests returns every open, non-draft PR in owner/repo
 // authored by the App bot login. Uses the PR list endpoint (not issue search)
 // because the caller needs PullRequest objects (head SHA, mergeable state)
 // for every candidate, not just issue metadata.
-func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+func (c *Engine) listOpenAppAuthoredPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
 	opts := &gh.PullRequestListOptions{
 		State:       "open",
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 	var out []*gh.PullRequest
 	for {
-		prs, resp, err := c.client.PullRequests.List(ctx, owner, repo, opts)
+		prs, resp, err := c.gh.PullRequests.List(ctx, owner, repo, opts)
 		if err != nil {
 			return nil, fmt.Errorf("listing open PRs for %s/%s: %w", owner, repo, err)
 		}
@@ -473,7 +578,7 @@ func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 			if pr.GetDraft() {
 				continue
 			}
-			if !strings.EqualFold(safeGetLogin(pr.GetUser()), c.appBotLogin) {
+			if !strings.EqualFold(hgithub.SafeGetLogin(pr.GetUser()), c.transport.AppBotLogin()) {
 				continue
 			}
 			out = append(out, pr)
@@ -491,8 +596,8 @@ func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 // evaluated-then-re-verified-at-merge-time safety property trySweepQueuedPR
 // gets from the queue approval's recorded HeadSHA, just without a stored
 // approval record to compare against (there is no queue step in this path).
-func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int) (AutoMergeSweepEvent, string, error) {
+	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -505,8 +610,8 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if pr.GetDraft() {
 		return AutoMergeSweepEvent{}, "draft", nil
 	}
-	author := safeGetLogin(pr.GetUser())
-	if !strings.EqualFold(author, c.appBotLogin) {
+	author := hgithub.SafeGetLogin(pr.GetUser())
+	if !strings.EqualFold(author, c.transport.AppBotLogin()) {
 		// Not the App's own PR: this path never touches non-App-authored PRs,
 		// matching the human-queue sweep's untouched behavior for PRs it does
 		// not own. Defense in depth — listOpenAppAuthoredPullRequests already
@@ -521,10 +626,10 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// the hold guard re-applied because the branch moved while hold-gated —
 	// would not stop the App from squashing its own PR on green.
 	selfLabels := labelNames(pr.Labels)
-	if HasHoldLabel(selfLabels) {
+	if hgithub.HasHoldLabel(selfLabels) {
 		return AutoMergeSweepEvent{}, "held", nil
 	}
-	if c.isExempt(selfLabels) {
+	if c.transport.IsExemptLabels(selfLabels) {
 		return AutoMergeSweepEvent{}, "exempt-label", nil
 	}
 
@@ -536,8 +641,8 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
 
-	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)
-	if mergeable != MergeableYes {
+	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
+	if mergeable != hgithub.MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
 	}
 	baseBranch := ""
@@ -557,8 +662,8 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// permits — it can withhold a merge, never widen authority beyond what
 	// SelfAuthoredAutoMergeAllowed already granted upstream. No-op when no hook
 	// is installed, which is the default; see automerge_desk.go.
-	if allow, deskReason := c.consultApprovalDesk(ctx, ApprovalDeskRequest{
-		Kind:        ApprovalDeskKindSelfMerge,
+	if allow, deskReason := c.consultApprovalDesk(ctx, hgithub.ApprovalDeskRequest{
+		Kind:        hgithub.ApprovalDeskKindSelfMerge,
 		Repo:        displayRepo,
 		Number:      number,
 		Author:      author,
@@ -573,7 +678,7 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Re-verify the head SHA immediately before merging: a push landing
 	// between the green-check above and the merge call below must never be
 	// squashed without having gone through commitGreen itself.
-	current, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+	current, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -588,7 +693,7 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
 	}
 
-	mergeResult, _, err := c.client.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
+	mergeResult, _, err := c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
 		SHA:         evaluatedHeadSHA,
 		MergeMethod: "squash",
 	})
@@ -603,11 +708,7 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// health verdict is judged on them. When the fleet's merges moved to this
 	// sweep, the unaudited path made merging hives read as "no merge in Nd"
 	// red on /fleet (observed live on kubestellar/console, 2026-08-26).
-	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
-		"repo", owner+"/"+repo,
-		"number", strconv.Itoa(number),
-		"method", "squash",
-		"sha", mergeResult.GetSHA())
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA())
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
@@ -620,7 +721,7 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	return event, "", nil
 }
 
-func (c *Client) listQueuedPullRequestIssues(ctx context.Context, owner, repo, label string) ([]*gh.Issue, error) {
+func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, label string) ([]*gh.Issue, error) {
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
 		Labels:      []string{label},
@@ -628,7 +729,7 @@ func (c *Client) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 	}
 	var all []*gh.Issue
 	for {
-		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+		issues, resp, err := c.gh.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
 			return nil, fmt.Errorf("listing queued PRs for %s/%s: %w", owner, repo, err)
 		}
@@ -640,8 +741,8 @@ func (c *Client) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 	}
 }
 
-func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (AutoMergeSweepEvent, string, error) {
-	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (AutoMergeSweepEvent, string, error) {
+	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
 			return AutoMergeSweepEvent{}, "gone", nil
@@ -654,21 +755,21 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if pr.GetDraft() {
 		return AutoMergeSweepEvent{}, "draft", nil
 	}
-	labels := extractPRLabels(pr.Labels)
+	labels := hgithub.ExtractPRLabels(pr.Labels)
 	if !hasLabel(labels, label) {
 		return AutoMergeSweepEvent{}, "label-removed", nil
 	}
 	// Hold labels outrank the merger queue (#5589): a hold applied AFTER a
 	// merger queued the PR — including the hold guard re-applying one because
 	// the branch moved while hold-gated — must stop the sweep, not race it.
-	if HasHoldLabel(labels) {
+	if hgithub.HasHoldLabel(labels) {
 		return AutoMergeSweepEvent{}, "held", nil
 	}
-	if c.isExempt(labels) {
+	if c.transport.IsExemptLabels(labels) {
 		return AutoMergeSweepEvent{}, "exempt-label", nil
 	}
 
-	author := safeGetLogin(pr.GetUser())
+	author := hgithub.SafeGetLogin(pr.GetUser())
 	headSHA := ""
 	if pr.GetHead() != nil {
 		headSHA = pr.GetHead().GetSHA()
@@ -676,7 +777,7 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if headSHA == "" {
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
-	if strings.TrimSpace(c.appBotLogin) == "" {
+	if strings.TrimSpace(c.transport.AppBotLogin()) == "" {
 		return AutoMergeSweepEvent{}, autoMergeReasonNoAppBotLogin, nil
 	}
 	approval, ok, reason, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
@@ -721,8 +822,8 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, autoMergeReasonUntrustedMerger, nil
 	}
 
-	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)
-	if mergeable != MergeableYes {
+	mergeable := hgithub.MergeableFromState(pr.GetMergeableState(), pr.Mergeable)
+	if mergeable != hgithub.MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
 	}
 	baseBranch := ""
@@ -741,8 +842,8 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	// Consulted only after the legacy queue approval, trusted-merger,
 	// mergeability, and green-check gates pass, so enabling the desk can record
 	// or withhold this operation but cannot widen merge authority.
-	if allow, deskReason := c.consultApprovalDesk(ctx, ApprovalDeskRequest{
-		Kind:        ApprovalDeskKindQueuedMerge,
+	if allow, deskReason := c.consultApprovalDesk(ctx, hgithub.ApprovalDeskRequest{
+		Kind:        hgithub.ApprovalDeskKindQueuedMerge,
 		Repo:        displayRepo,
 		Number:      number,
 		Author:      author,
@@ -754,7 +855,7 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, deskReason, nil
 	}
 
-	mergeResult, _, err := c.client.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
+	mergeResult, _, err := c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
 		SHA:         headSHA,
 		MergeMethod: "squash",
 	})
@@ -766,11 +867,7 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	}
 	// Same audit obligation as the self-authored path above: pr_merged on
 	// the trail is what makes this merge count as hive output.
-	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
-		"repo", owner+"/"+repo,
-		"number", strconv.Itoa(number),
-		"method", "squash",
-		"sha", mergeResult.GetSHA())
+	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, "squash", mergeResult.GetSHA())
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
@@ -784,12 +881,12 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	return event, "", nil
 }
 
-func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (hiveQueueApproval, bool, string, error) {
+func (c *Engine) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (hiveQueueApproval, bool, string, error) {
 	opts := &gh.ListOptions{PerPage: 100}
 	latest := hiveQueueApproval{}
 	untrusted := false
 	for {
-		reviews, resp, err := c.client.PullRequests.ListReviews(ctx, owner, repo, number, opts)
+		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			return hiveQueueApproval{}, false, "", err
 		}
@@ -803,7 +900,7 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 			}
 			if !c.isHiveAppReviewAuthor(review) {
 				untrusted = true
-				c.warn(autoMergeWarnUntrustedQueueApproval, "owner", owner, "repo", repo, "pr", number, "review_author", safeGetLogin(review.GetUser()), "claimed_queued_by", queuedBy, "expected_app_bot", c.appBotLogin)
+				c.warn(autoMergeWarnUntrustedQueueApproval, "owner", owner, "repo", repo, "pr", number, "review_author", hgithub.SafeGetLogin(review.GetUser()), "claimed_queued_by", queuedBy, "expected_app_bot", c.transport.AppBotLogin())
 				continue
 			}
 			latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
@@ -822,18 +919,18 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 	return latest, false, "", nil
 }
 
-func (c *Client) isHiveAppReviewAuthor(review *gh.PullRequestReview) bool {
-	if c == nil || review == nil || strings.TrimSpace(c.appBotLogin) == "" {
+func (c *Engine) isHiveAppReviewAuthor(review *gh.PullRequestReview) bool {
+	if c == nil || review == nil || strings.TrimSpace(c.transport.AppBotLogin()) == "" {
 		return false
 	}
-	return strings.EqualFold(safeGetLogin(review.GetUser()), c.appBotLogin)
+	return strings.EqualFold(hgithub.SafeGetLogin(review.GetUser()), c.transport.AppBotLogin())
 }
 
-func (c *Client) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {
-	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
+func (c *Engine) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {
+	if _, err := c.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
 		return fmt.Errorf("removing %s label: %w", label, err)
 	}
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return fmt.Errorf("commenting on stale auto-merge approval: %w", err)
 	}
 	return nil
@@ -844,6 +941,7 @@ func parseHiveQueueReview(body string) string {
 	if len(matches) != 2 {
 		return ""
 	}
+
 	return matches[1]
 }
 
@@ -887,12 +985,12 @@ func parseHiveQueueReview(body string) string {
 // OLD isMetaCheck/isIgnorableCICheck allowlist behavior, so the previously-
 // shipped conservative behavior is preserved rather than degrading to
 // "always green".
-func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
+func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
 	required, requiredKnown := c.requiredStatusCheckContexts(ctx, owner, repo, branch)
 
 	statusOpts := &gh.ListOptions{PerPage: 100}
 	for {
-		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
+		status, resp, err := c.gh.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
 		if err != nil {
 			return false, "status-check", err
 		}
@@ -904,7 +1002,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 				if !required[ctxName] {
 					continue
 				}
-			} else if isMetaCheck(ctxName) {
+			} else if hgithub.IsMetaCheck(ctxName) {
 				// Fail-closed fallback path (required set unavailable).
 				continue
 			}
@@ -913,7 +1011,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 			case "pending":
 				return false, "status-pending", nil
 			default: // "failure", "error"
-				if !requiredKnown && isIgnorableCICheck(ctxName) {
+				if !requiredKnown && hgithub.IsIgnorableCICheck(ctxName) {
 					continue
 				}
 				return false, "status-" + s.GetState(), nil
@@ -927,7 +1025,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
-		checkRuns, resp, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, opts)
+		checkRuns, resp, err := c.gh.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, opts)
 		if err != nil {
 			return false, "check-runs", err
 		}
@@ -937,11 +1035,11 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 				if !required[name] {
 					continue
 				}
-			} else if isMetaCheck(name) {
+			} else if hgithub.IsMetaCheck(name) {
 				continue
 			}
 			if cr.GetStatus() != "completed" {
-				if !requiredKnown && isIgnorableCICheck(name) {
+				if !requiredKnown && hgithub.IsIgnorableCICheck(name) {
 					continue
 				}
 				return false, "check-pending", nil
@@ -949,7 +1047,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 			switch cr.GetConclusion() {
 			case "success", "neutral", "skipped":
 			default:
-				if !requiredKnown && isIgnorableCICheck(name) {
+				if !requiredKnown && hgithub.IsIgnorableCICheck(name) {
 					continue
 				}
 				return false, "check-" + cr.GetConclusion(), nil
@@ -985,14 +1083,14 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 //     caller must fall back to the OLD isMetaCheck/isIgnorableCICheck
 //     allowlist rather than treating "we don't know the required set" as
 //     "nothing is required" — see commitGreen's fail-closed comment.
-func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
+func (c *Engine) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
 	if set, ok := c.configRequiredChecks(); ok {
 		return set, true
 	}
 	if strings.TrimSpace(branch) == "" {
 		return nil, false
 	}
-	rsc, _, err := c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
+	rsc, _, err := c.gh.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
 	if err != nil {
 		// gh.ErrBranchNotProtected means "this branch legitimately requires
 		// nothing" — that IS a known, empty required set, not a failure to
@@ -1023,6 +1121,22 @@ func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, b
 	return required, true
 }
 
+func labelNames(labels []*gh.Label) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if l == nil {
+			continue
+		}
+		if name := l.GetName(); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 func hasLabel(labels []string, want string) bool {
 	for _, label := range labels {
 		if strings.EqualFold(label, want) {
@@ -1037,13 +1151,13 @@ func isGitHubStatus(err error, status int) bool {
 	return ok && ghErr.Response != nil && ghErr.Response.StatusCode == status
 }
 
-func (c *Client) warn(msg string, args ...any) {
+func (c *Engine) warn(msg string, args ...any) {
 	if c != nil && c.logger != nil {
 		c.logger.Warn(msg, args...)
 	}
 }
 
-func (c *Client) info(msg string, args ...any) {
+func (c *Engine) info(msg string, args ...any) {
 	if c != nil && c.logger != nil {
 		c.logger.Info(msg, args...)
 	}

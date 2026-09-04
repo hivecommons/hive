@@ -1,4 +1,4 @@
-package github
+package automerge
 
 // Tests for the uncovered guard branches of the self-authored auto-merge
 // sweep path (trySweepSelfAuthoredPR), the rate-limit cache refresh, the
@@ -10,6 +10,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -207,15 +208,19 @@ func TestRefreshRateLimitCache(t *testing.T) {
 func TestIsHiveAppReviewAuthorGuards(t *testing.T) {
 	review := &gh.PullRequestReview{User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}}
 
-	var nilClient *Client
+	var nilClient *Engine
 	if nilClient.isHiveAppReviewAuthor(review) {
 		t.Fatal("nil client must never trust a review author")
 	}
-	c := &Client{appBotLogin: testHiveAppBotLogin}
+	hc := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	hc.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(hc, Options{})
 	if c.isHiveAppReviewAuthor(nil) {
 		t.Fatal("nil review must never be trusted")
 	}
-	if (&Client{appBotLogin: "  "}).isHiveAppReviewAuthor(review) {
+	blank := hgithub.NewClient("token", "acme", []string{"widget"}, nil, "")
+	blank.SetAppBotLogin("  ")
+	if New(blank, Options{}).isHiveAppReviewAuthor(review) {
 		t.Fatal("blank appBotLogin must never trust any review author")
 	}
 	if !c.isHiveAppReviewAuthor(review) {

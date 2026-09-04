@@ -1,4 +1,4 @@
-package github
+package automerge
 
 import (
 	"os"
@@ -65,7 +65,7 @@ func f3FuncBody(t *testing.T, src, decl, name string) string {
 func TestF3SweepConsultsTrustedMergerGate(t *testing.T) {
 	body := f3FuncBody(t,
 		f3ReadSource(t, "automerge_sweep.go"),
-		"func (c *Client) trySweepQueuedPR(",
+		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 
 	if !strings.Contains(body, "c.isTrustedMerger(queuedBy)") {
@@ -109,7 +109,7 @@ func TestF3SweepConsultsTrustedMergerGate(t *testing.T) {
 func TestF3GateOrderedBeforeMerge(t *testing.T) {
 	body := f3FuncBody(t,
 		f3ReadSource(t, "automerge_sweep.go"),
-		"func (c *Client) trySweepQueuedPR(",
+		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 
 	gate := strings.Index(body, "c.isTrustedMerger(queuedBy)")
@@ -118,7 +118,7 @@ func TestF3GateOrderedBeforeMerge(t *testing.T) {
 	}
 	// mergeableFromState is the first step of the actual merge attempt; every
 	// gate that matters runs above it.
-	merge := strings.Index(body, "mergeableFromState(")
+	merge := strings.Index(body, "hgithub.MergeableFromState(")
 	if merge < 0 {
 		t.Skip("mergeableFromState no longer marks the start of the merge attempt — re-point this test")
 	}
@@ -134,7 +134,7 @@ func TestF3GateOrderedBeforeMerge(t *testing.T) {
 func TestF3IsTrustedMergerFailsClosedInSource(t *testing.T) {
 	body := f3FuncBody(t,
 		f3ReadSource(t, "automerge_sweep.go"),
-		"func (c *Client) isTrustedMerger(",
+		"func (c *Engine) isTrustedMerger(",
 		"isTrustedMerger")
 
 	for _, want := range []struct{ frag, why string }{
@@ -158,12 +158,12 @@ func TestF3IsTrustedMergerFailsClosedInSource(t *testing.T) {
 // silently stops merging — or, if the fail-closed branch were also lost, merges
 // everything.
 func TestF3AuthorizerIsWiredInMain(t *testing.T) {
-	src := f3ReadSource(t, "../../cmd/hive/main.go")
+	src := f3ReadSource(t, "../../../cmd/hive/main.go")
 
-	if !strings.Contains(src, "ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg))") {
+	if !strings.Contains(src, "MergerAuthorizer: trustedMergerFunc(cfg)") {
 		t.Error("cmd/hive/main.go does not install the trusted-merger authorizer — the F3 gate in " +
 			"trySweepQueuedPR is present but INERT (audit F3, standing). Restore " +
-			"ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg)) beside StartMergeRequestWatcher.")
+			"MergerAuthorizer: trustedMergerFunc(cfg) beside StartMergeRequestWatcher.")
 	}
 
 	body := f3FuncBody(t, src, "func trustedMergerFunc(", "trustedMergerFunc")
@@ -209,9 +209,9 @@ func TestF3TrustedMergerGateIsNotBlanket(t *testing.T) {
 func TestF3SweepStillMergesOnTheHappyPath(t *testing.T) {
 	body := f3FuncBody(t,
 		f3ReadSource(t, "automerge_sweep.go"),
-		"func (c *Client) trySweepQueuedPR(",
+		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
-	if !strings.Contains(body, "mergeableFromState(") {
+	if !strings.Contains(body, "hgithub.MergeableFromState(") {
 		t.Error("trySweepQueuedPR no longer evaluates mergeability — the sweep appears to have lost " +
 			"its merge path; F3 gates the sweep, it does not disable it")
 	}
@@ -226,7 +226,7 @@ func TestF3SweepStillMergesOnTheHappyPath(t *testing.T) {
 func TestF3RejectionReasonCountFloor(t *testing.T) {
 	body := f3FuncBody(t,
 		f3ReadSource(t, "automerge_sweep.go"),
-		"func (c *Client) trySweepQueuedPR(",
+		"func (c *Engine) trySweepQueuedPR(",
 		"trySweepQueuedPR")
 
 	// Gates trySweepQueuedPR must still contain, as they appear in the SOURCE
