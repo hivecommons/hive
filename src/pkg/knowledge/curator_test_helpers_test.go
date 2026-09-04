@@ -5,16 +5,10 @@ package knowledge
 // was removed.
 
 import (
-	"log/slog"
 	"net/http/httptest"
-	"os"
 
 	gh "github.com/google/go-github/v72/github"
 )
-
-func maturityTestLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-}
 
 func ghClientFromServer(server *httptest.Server) *gh.Client {
 	client := gh.NewClient(nil)
