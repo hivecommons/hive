@@ -3710,6 +3710,16 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Refuse to persist a backend/launch_cmd contradiction (#5921): saved
+	// silently, it produces an agent launched as one CLI but health-checked
+	// and diagnosed as another, relaunched as "hung" forever. Checked here —
+	// after every field edit above — so a save changing either half (or both)
+	// is judged on the final combination.
+	if err := s.deps.Config.Governor.ValidateLaunchCmdBackend(agentCfg.Backend, agentCfg.LaunchCmd); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	prevAgents := make(map[string]config.AgentConfig, len(s.deps.Config.Agents))
 	for k, v := range s.deps.Config.Agents {
 		prevAgents[k] = v

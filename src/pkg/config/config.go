@@ -5019,6 +5019,91 @@ func (g GovernorConfig) ValidateBackend(backend string) error {
 	return fmt.Errorf("%s)", msg)
 }
 
+// LaunchCmdDeclaredBackend extracts the CLI backend a custom launch_cmd
+// actually launches, or "" when it cannot tell (empty command, an unknown
+// wrapper script, an unrecognized binary).
+//
+// Two spellings are understood:
+//   - the standard wrapper: `agent-launch.sh --backend <b> ...`
+//   - a direct CLI invocation whose binary IS a known backend name
+//     (`bob --model auto`, `copilot --allow-all`, ...), optionally behind
+//     leading VAR=value environment assignments.
+//
+// "" is deliberately the answer for anything else: an operator wrapper the
+// hive cannot see into must never be flagged as a mismatch.
+func LaunchCmdDeclaredBackend(launchCmd string) string {
+	fields := strings.Fields(launchCmd)
+	i := 0
+	// Skip leading environment assignments (FOO=bar copilot ...).
+	for i < len(fields) && !strings.HasPrefix(fields[i], "-") && strings.Contains(fields[i], "=") {
+		i++
+	}
+	if i >= len(fields) {
+		return ""
+	}
+	bin := filepath.Base(fields[i])
+	if bin == "agent-launch.sh" {
+		for j := i + 1; j < len(fields); j++ {
+			if fields[j] == "--backend" && j+1 < len(fields) {
+				return fields[j+1]
+			}
+		}
+		return ""
+	}
+	if IsCLIBackend(bin) {
+		return bin
+	}
+	return ""
+}
+
+// ValidateLaunchCmdBackend rejects an agent whose declared backend and custom
+// launch_cmd CONFIDENTLY disagree — e.g. `backend: copilot` with
+// `launch_cmd: bob --model auto` (#5921). That contradiction used to be
+// accepted silently, and it cannot work: the hive launches the launch_cmd's
+// binary in the pane but every health/readiness/diagnostic path follows the
+// declared backend, so the agent is launched as one CLI, judged as another,
+// and relaunched as "hung" forever.
+//
+// Confidence rules — "" (no opinion) never errors:
+//   - An empty launch_cmd, or one whose binary the hive does not recognize
+//     (an operator wrapper), is not evidence of anything.
+//   - A declared CLI backend must match the launch_cmd's backend exactly.
+//   - Inference backends and configured gateway names run the claude CLI, so
+//     only a launch_cmd launching a DIFFERENT known CLI is a contradiction.
+func (g GovernorConfig) ValidateLaunchCmdBackend(backend, launchCmd string) error {
+	declared := LaunchCmdDeclaredBackend(launchCmd)
+	if declared == "" || backend == "" {
+		return nil
+	}
+	if strings.EqualFold(declared, backend) {
+		return nil
+	}
+	if IsCLIBackend(backend) {
+		return fmt.Errorf("backend %q contradicts launch_cmd %q (it launches %q): the agent would be launched as %s but health-checked and diagnosed as %s, then relaunched as \"hung\" forever — set backend to %s or fix launch_cmd",
+			backend, launchCmd, declared, declared, backend, declared)
+	}
+	// Inference backends and gateway names are served by the claude CLI.
+	if IsInferenceBackend(backend) || g.isGatewayName(backend) {
+		if declared == "claude" {
+			return nil
+		}
+		return fmt.Errorf("backend %q routes through the claude CLI but launch_cmd %q launches %q — clear launch_cmd or point it at claude",
+			backend, launchCmd, declared)
+	}
+	return nil
+}
+
+// isGatewayName reports whether backend names a configured model gateway,
+// matched case-insensitively to mirror ResolveGateway.
+func (g GovernorConfig) isGatewayName(backend string) bool {
+	for _, gw := range g.ResolvedGateways() {
+		if gw.Name != "" && strings.EqualFold(gw.Name, backend) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) validate() error {
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
@@ -5085,6 +5170,13 @@ func (c *Config) validate() error {
 		// routes that agent through it, matched case-insensitively to mirror
 		// ResolveGateway.
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
+			return fmt.Errorf("agent %s: %w", name, err)
+		}
+		// A launch_cmd that confidently launches a DIFFERENT backend than the
+		// declared one is rejected here, at load/save time, instead of being
+		// accepted silently and producing an agent that is launched as one CLI
+		// but judged as another and relaunched as "hung" forever (#5921).
+		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
 			return fmt.Errorf("agent %s: %w", name, err)
 		}
 		if !ValidateCavemanMode(agent.CavemanMode) {
