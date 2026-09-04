@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -52,7 +53,7 @@ func TestVanityRepairKickRunsAfterCooldownLapses(t *testing.T) {
 		id   string
 		last time.Time
 	}{
-		{"hosted-cooldown-lapsed", time.Now().Add(-vanityRepairSuccessCooldown - time.Minute)},
+		{"hosted-cooldown-lapsed", time.Now().Add(-vanityRepairSuccessCooldownDefault - time.Minute)},
 		{"hosted-cooldown-unset", time.Time{}}, // pre-field record: zero value
 	} {
 		h := assignedVllmdHive(tc.id)
@@ -123,7 +124,7 @@ func TestVanityRepairMintBudgetExhaustedSkipsMint(t *testing.T) {
 		return nil
 	}
 	// Exhaust the budget with recent mints.
-	for i := 0; i < vanityMintBudget; i++ {
+	for i := 0; i < vanityMintBudgetDefault; i++ {
 		s.recordVanityMint()
 	}
 
@@ -145,16 +146,84 @@ func TestVanityRepairMintBudgetExhaustedSkipsMint(t *testing.T) {
 
 // Mints that have aged out of the rolling window free their budget slot again.
 func TestVanityMintBudgetWindowPrunes(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
 	s := newHeartbeatHub()
-	old := time.Now().Add(-vanityMintWindow - time.Hour)
-	for i := 0; i < vanityMintBudget; i++ {
+	old := time.Now().Add(-vanityMintWindowDefault - time.Hour)
+	for i := 0; i < vanityMintBudgetDefault; i++ {
 		s.vanityMintTimes = append(s.vanityMintTimes, old)
 	}
 	if !s.vanityMintAllowed() {
 		t.Error("budget still exhausted although every mint aged out of the window")
 	}
-	if got := s.vanityMintRemaining(); got != vanityMintBudget {
-		t.Errorf("remaining = %d, want %d after pruning", got, vanityMintBudget)
+	if got := s.vanityMintRemaining(); got != vanityMintBudgetDefault {
+		t.Errorf("remaining = %d, want %d after pruning", got, vanityMintBudgetDefault)
+	}
+}
+
+func TestVanityMintBudgetPersistsAcrossHubRestart(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	t.Setenv(vanityMintBudgetEnv, "2")
+
+	s := newHeartbeatHub()
+	s.recordVanityMint()
+	s.recordVanityMint()
+
+	restarted := newHeartbeatHub()
+	if restarted.vanityMintAllowed() {
+		t.Error("new hub server forgot the persisted vanity mint budget ledger")
+	}
+}
+
+func TestVanityMintBudgetAcquireReservesAtomically(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	t.Setenv(vanityMintBudgetEnv, "1")
+
+	s := newHeartbeatHub()
+	if !s.acquireVanityMintSlot() {
+		t.Fatal("first mint slot was not available")
+	}
+	if s.acquireVanityMintSlot() {
+		t.Fatal("second mint slot succeeded despite budget=1")
+	}
+	if got := s.vanityMintRemaining(); got != 0 {
+		t.Fatalf("remaining = %d, want 0 after atomic reservation", got)
+	}
+}
+
+func TestVanityRepairFailureBackoffSkipsKick(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+	s.clusters["vllm-d"] = ClusterConfig{
+		ID: "vllm-d", Name: "vllm-d",
+		Domain: "apps.fmaas-vllm-d.example.com", IngressType: "nginx",
+	}
+	s.vanityHostServable = func(_, _ string, _ *ClusterConfig) error {
+		return errors.New("route update failed")
+	}
+
+	const id = "hosted-failure-backoff"
+	if err := saveSaaSHive(assignedVllmdHive(id)); err != nil {
+		t.Fatal(err)
+	}
+	if s.repairVanityURLForHive(id) {
+		t.Fatal("repair unexpectedly succeeded")
+	}
+	h := loadSaaSHive(id)
+	if h == nil || h.LastVanityRepairFailureAt.IsZero() || h.LastVanityRepairFailure == "" {
+		t.Fatalf("repair failure was not persisted for backoff: %+v", h)
+	}
+
+	s.vanityHostServable = func(_, _ string, _ *ClusterConfig) error {
+		t.Fatal("kick entered repair while failure backoff was active")
+		return nil
+	}
+	s.kickVanityURLRepairAsync(id)
+	if _, inFlight := s.vanityRepairInFlight.Load(id); inFlight {
+		t.Error("kick spawned a repair while failure backoff was active")
 	}
 }
 
@@ -170,7 +239,7 @@ func TestVanityReconcileIgnoresMintBudget(t *testing.T) {
 		ID: "vllm-d", Name: "vllm-d",
 		Domain: "apps.fmaas-vllm-d.example.com", IngressType: "nginx",
 	}
-	for i := 0; i < vanityMintBudget; i++ {
+	for i := 0; i < vanityMintBudgetDefault; i++ {
 		s.recordVanityMint()
 	}
 

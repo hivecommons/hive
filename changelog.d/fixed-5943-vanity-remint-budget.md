@@ -1,0 +1,1 @@
+- Hosted hive vanity URL repair now persists its success cooldown and fleet mint ledger, backs off failed repair attempts, and exposes env-tunable limits so a stale-route storm cannot exhaust Let’s Encrypt certificate quota again ([#5923](https://github.com/hivecommons/hive/issues/5923)).
