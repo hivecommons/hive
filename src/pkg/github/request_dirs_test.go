@@ -154,13 +154,13 @@ func TestEnsureRequestDirReportsFailure(t *testing.T) {
 // App there is no bot identity to author as, and requests must accumulate on
 // disk, never open under a wrong identity.
 func TestRequestWatchersStayGatedInMain(t *testing.T) {
-	raw, err := os.ReadFile("../../cmd/hive/spokewire.go")
+	raw, err := os.ReadFile("../../cmd/hive/notifywire.go")
 	if err != nil {
-		t.Fatalf("reading cmd/hive/spokewire.go: %v", err)
+		t.Fatalf("reading cmd/hive/notifywire.go: %v", err)
 	}
 	src := string(raw)
 
-	gate := "if ghClient != nil && cfg.GitHub.HasUsableApp() {"
+	gate := "if w.ghClient != nil && w.cfg.GitHub.HasUsableApp() {"
 	gateIdx := strings.Index(src, gate)
 	if gateIdx < 0 {
 		t.Fatalf("cmd/hive spoke wiring lost the usable-App gate %q — the request watchers "+

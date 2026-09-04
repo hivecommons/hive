@@ -464,12 +464,6 @@ func buildAgentMinter(cfg *config.Config, logger *slog.Logger) (*mint.AgentMinte
 	return mint.NewAgentMinter(minter, maxTTL), nil
 }
 
-// processStartedAt is when this hive process began. Reported over the heartbeat
-// so the hub can show an uptime pill — a hive that is 1/1 Running but restarting
-// every couple of minutes looks healthy in a pod listing and in My Hives, and a
-// short uptime that keeps resetting is the only visible tell.
-var processStartedAt = time.Now()
-
 // reporterName identifies this spoke PROCESS to the hub (HeartbeatPayload
 // Reporter) as "<hostname>/<pid>". In-cluster the hostname IS the pod name;
 // the PID suffix exists because two hive processes were observed beating from
