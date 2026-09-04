@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/openrouter"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/watchdog"
@@ -80,13 +81,15 @@ type Server struct {
 	// startup-grace window before the first heartbeat has to have succeeded.
 	startedAt time.Time
 
-	agentPipelines map[string]map[string]bool
-	agentHooks     map[string]map[string][]any
-	pipelineMu     sync.RWMutex
-	hooksMu        sync.RWMutex
-	knowledgeMu    sync.Mutex
-	levelMu        sync.Mutex
-	restartMu      sync.Mutex // serializes concurrent agent restart operations
+	agentPipelines    map[string]map[string]bool
+	agentHooks        map[string]map[string][]any
+	pipelineMu        sync.RWMutex
+	hooksMu           sync.RWMutex
+	knowledgeMu       sync.Mutex
+	levelMu           sync.Mutex
+	restartMu         sync.Mutex // serializes concurrent agent restart operations
+	gatewayHealthOnce sync.Once
+	gatewayHealth     *inferencehealth.Store
 
 	acmmEvalMu       sync.RWMutex
 	acmmEvalCache    *ACMMEvaluation

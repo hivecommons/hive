@@ -17735,6 +17735,7 @@ function burnAreaChart() {
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
     // preset add-form. null when the tab was opened normally.
@@ -18172,6 +18173,8 @@ function burnAreaChart() {
         const keyLine = gw.hasKey
           ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''} · Using key: ${esc(gw.keyName || '(unnamed)')}`
           : 'no key';
+        const persistedProbe = _gatewayProbeResults[gw.name] || (gw.health ? { ok: false, error: gatewayHealthText(gw.health) } : null);
+        const testDisplay = persistedProbe ? 'block' : 'none';
         return `
         <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -18186,7 +18189,7 @@ function burnAreaChart() {
             <div>Endpoint: ${esc(gw.endpoint || '—')}</div>
             <div>Default model: ${esc(gw.default_model || '—')} · ${keyLine}</div>
           </div>
-          <div id="gateway-test-result-${esc(gw.name)}" style="display:none;font-size:0.74rem;margin-top:6px;white-space:pre-wrap"></div>
+          <div id="gateway-test-result-${esc(gw.name)}" style="display:${testDisplay};font-size:0.74rem;margin-top:6px;white-space:pre-wrap">${persistedProbe ? gatewayProbeHTML(persistedProbe) : ''}</div>
         </div>`;
       }).join('');
     }
@@ -18200,24 +18203,36 @@ function burnAreaChart() {
         });
         const data = await res.json().catch(() => ({}));
         const probe = data.probe || (res.ok ? null : { ok: false, error: data.error || ('HTTP ' + res.status) });
+        _gatewayProbeResults[name] = probe;
         showGatewayProbe(el, probe);
       } catch (e) {
-        showGatewayProbe(el, { ok: false, error: e.message });
+        _gatewayProbeResults[name] = { ok: false, error: e.message };
+        showGatewayProbe(el, _gatewayProbeResults[name]);
       }
+    }
+
+    function gatewayHealthText(health) {
+      if (!health) return 'unknown error';
+      if (health.error_class === 'auth' && health.http_status) return `gateway rejected the configured key (HTTP ${health.http_status})`;
+      if (health.error_class === 'dns' || health.error_class === 'connect') return `gateway unreachable (${health.error_class})`;
+      if (health.error_class === '5xx') return 'gateway returned 5xx';
+      if (health.error_class === 'budget') return 'gateway budget/rate limited (HTTP 429)';
+      return health.detail || 'gateway failing';
+    }
+
+    function gatewayProbeHTML(probe) {
+      if (probe && probe.ok) {
+        const n = probe.model_count || 0;
+        return `<span style="color:var(--green)">OK — ${n} model${n === 1 ? '' : 's'} available</span>`;
+      }
+      return `<span style="color:var(--red)">Connection failed: ${esc((probe && probe.error) || 'unknown error')}</span>`;
     }
 
     // showGatewayProbe formats a {ok, model_count} / {ok:false, error} probe.
     function showGatewayProbe(el, probe) {
       if (!el) return;
       el.style.display = 'block';
-      if (probe && probe.ok) {
-        const n = probe.model_count || 0;
-        el.style.color = 'var(--green)';
-        el.textContent = `OK — ${n} model${n === 1 ? '' : 's'} available`;
-      } else {
-        el.style.color = 'var(--red)';
-        el.textContent = 'Connection failed: ' + ((probe && probe.error) || 'unknown error');
-      }
+      el.innerHTML = gatewayProbeHTML(probe);
     }
 
     // refreshMethodModelsAfterGatewaySave re-runs live model discovery for the
@@ -18246,6 +18261,7 @@ function burnAreaChart() {
         if (cached && cached.fallback) {
           // Discovery still is not working (bad key/region/project): say so
           // rather than letting unverified aliases masquerade as discovered.
+          _gatewayProbeResults[method] = { ok: false, error: 'model discovery did not return a live list — check the key and try Test.' };
           showToast(`${method} gateway saved, but model discovery did not return a live list — check the key and try Test.`, 'error');
           continue;
         }
@@ -18553,7 +18569,10 @@ function burnAreaChart() {
           return;
         }
         // Surface the server's live save-time probe inline.
-        if (data.probe && resultEl) showGatewayProbe(resultEl, data.probe);
+        if (data.probe) {
+          _gatewayProbeResults[payload.name] = data.probe;
+          if (resultEl) showGatewayProbe(resultEl, data.probe);
+        }
         showToast('Gateway "' + payload.name + '" saved', 'success');
         closeGatewayForm();
         loadGateways();

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
@@ -857,7 +858,8 @@ type HeartbeatPayload struct {
 	//
 	// nil/empty means the spoke is too old to report (UNKNOWN, never "has
 	// none"), so an absent list must not be read as a failed delivery.
-	GatewayNames []string `json:"gateway_names,omitempty"`
+	GatewayNames  []string                        `json:"gateway_names,omitempty"`
+	GatewayHealth []inferencehealth.GatewayStatus `json:"gateway_health,omitempty"`
 	// GitHubAppKeyFingerprint is a NON-SECRET identifier for the GitHub App
 	// private key this spoke currently holds — "sha256:<hex>" over the DER
 	// public key derived from it (config.AppKeyFingerprint). It exists so the

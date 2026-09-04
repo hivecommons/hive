@@ -3,6 +3,8 @@ package hub
 import (
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 // A capable, expected-active, working agent on a modern spoke: the green case.
@@ -12,6 +14,33 @@ func modernWorking(now time.Time) AgentSummary {
 		Enabled: true, ExpectedActive: true,
 		CanOpenIssue: true, CanOpenPR: true, CanMerge: true,
 		StartedAt: settled(now), LastActivityAt: activeAt(now, 1*time.Minute),
+	}
+}
+
+func TestVerdict_BoundGatewayFaultBlocksCapabilityAndAbleCount(t *testing.T) {
+	now := time.Now()
+	blocked := modernWorking(now)
+	blocked.Name = "scanner"
+	blocked.Backend = "litellm"
+	healthy := modernWorking(now)
+	healthy.Name = "guide"
+	healthy.Backend = "claude"
+	blockers := hiveBlockers{GatewayHealth: []inferencehealth.GatewayStatus{{
+		Name:        "litellm",
+		ErrorClass:  inferencehealth.ClassAuth,
+		HTTPStatus:  401,
+		LastErrorAt: now.UTC().Format(time.RFC3339),
+	}}}
+	v := deriveAgentVerdict(blocked, blockers, 5, now)
+	if v.Able || v.CapabilityTier != tierRed || !v.Impotent {
+		t.Fatalf("gateway-bound agent = %+v, want not able/red/impotent", v)
+	}
+	if v.BlockedReason != "inference gateway 'litellm' rejected key (401)" {
+		t.Fatalf("blocked reason = %q", v.BlockedReason)
+	}
+	r := rollupAgents([]AgentSummary{blocked, healthy}, blockers, 5, now)
+	if r.Able != 1 || r.Problems != 1 {
+		t.Fatalf("rollup able=%d problems=%d, want able=1 problems=1", r.Able, r.Problems)
 	}
 }
 

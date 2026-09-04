@@ -80,21 +80,27 @@ least one agent must be running at cadence. The verdict checks these in a
 fixed order and returns on the first match, so a deeper cause can never be
 shadowed by a shallower one:
 
-1. **GitHub App broken** — beats everything. The chip names the specific
-   failure when the spoke reported one (for example "GitHub App:
-   repo-not-covered", which needs a different remedy than a bad key).
-2. **Provider spending limit reached** — the model provider is refusing
+1. **Inference gateway failing** — beats inferred App breakage. Runtime proxy
+   failures and Gateway Test report DNS/connect/5xx/auth/budget classes; the
+   chip says, for example, "inference gateway 'litellm' unreachable (dns)"
+   or "inference gateway 'litellm' rejected key (401)" and points at
+   Settings → Model Gateways.
+2. **GitHub App broken** — applies when an actual App/auth problem is reported
+   or no gateway fault is present. The chip names the specific failure when the
+   spoke reported one (for example "GitHub App: repo-not-covered", which needs
+   a different remedy than a bad key).
+3. **Provider spending limit reached** — the model provider is refusing
    calls; shown with the refused-call count when known.
-3. **Budget exhausted / budget misconfigured** — the hive's own token budget
+4. **Budget exhausted / budget misconfigured** — the hive's own token budget
    closed the gate (see [the budget signals](#budget-exhausted-vs-budget-misconfigured)).
-4. **Blocked agents** — all blocked agents share one cause when possible:
+5. **Blocked agents** — all blocked agents share one cause when possible:
    "N agent(s) out of provider quota", "N agent(s) stuck at login —
    re-login needed", "N agent(s) down — restart needed", "N agent(s) idle
    with work queued", or the generic "N agent(s) blocked".
-5. **No agents running** (red) or **all agents paused** (amber — pausing is
+6. **No agents running** (red) or **all agents paused** (amber — pausing is
    operator choice, not an outage, but queued work will not move until
    someone resumes them).
-6. **Repo Issues disabled** — the repo's Issues tab is off (the GitHub
+7. **Repo Issues disabled** — the repo's Issues tab is off (the GitHub
    default on forks), so the advisory digest and every agent-filed issue
    have nowhere to go. Nothing about the App, key, or agents is wrong; the
    fix is the repo setting.
@@ -143,6 +149,7 @@ agents down, advisory stale, …) deliberately get none rather than a guess.
 
 | Cause | WHY chip you see | Verdict | Hint (action) | Where to do it |
 |---|---|---|---|---|
+| Inference gateway | "inference gateway 'litellm' unreachable (dns)" / "rejected key (401)" | red | Fix or retest the failing gateway (Settings → Model Gateways) | spoke dashboard settings |
 | App broken | "GitHub App broken" or "GitHub App: \<state\>" | red | Install or repair the GitHub App for this repo | GitHub App settings (link resolved per cluster/forge) |
 | Login stuck | "N agent(s) stuck at login — re-login needed" | red | Copilot device-flow login on the spoke dashboard | spoke dashboard `/login` |
 | Budget exhausted | "budget exhausted — spend X of Y, kicks suppressed" | red | Raise or reset the budget limit (Settings → Budget) | spoke dashboard settings |

@@ -3810,6 +3810,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 				RepoTargetIssue:         result[i].RepoTargetIssue,
 				InferenceAuthError:      result[i].InferenceAuthError,
 				ProviderLimitReason:     result[i].ProviderLimitReason,
+				GatewayHealth:           result[i].GatewayHealth,
 			}
 			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
 			result[i].FleetRollup = &rollup

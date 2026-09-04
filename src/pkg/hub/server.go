@@ -25,6 +25,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/auth"
 	"github.com/hivecommons/hive/pkg/delegation"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/openrouter"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -156,6 +157,8 @@ type RegistryEntry struct {
 	// hive, also trips advisory staleness immediately with this cause. Self-
 	// clears when inference recovers. Never carries key material.
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
+	// GatewayHealth is the spoke-reported set of currently failing inference gateways.
+	GatewayHealth []inferencehealth.GatewayStatus `json:"gatewayHealth,omitempty"`
 	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
 	// banner. It is separate from BudgetExhausted, which is hive-local governor
 	// budget; this means the upstream provider is refusing token purchases.
@@ -1745,6 +1748,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),
+		GatewayHealth:        sanitizeGatewayHealth(payload.GatewayHealth),
 		ProviderLimitReason:  sanitizeProseField(payload.ProviderLimitReason),
 		ProviderLimitRebuffs: clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
 		DashboardURL:         payload.DashboardURL,

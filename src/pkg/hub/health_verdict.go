@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 // Hive-health verdict: does this spoke have RECENT OUTPUT back to its work
@@ -117,6 +118,12 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 	// every level that is expected to produce anything (L2+). At L1 there is no
 	// output to enable, so a precondition gap is not a health fault. ---
 	if e.ACMMLevel > acmmInceptionMax {
+		if gw, ok := mostRecentGatewayFaultForAgents(e.GatewayHealth, e.Agents); ok {
+			v.State = HealthStateRed
+			v.cause = causeInferenceGateway
+			v.Reason = inferencehealth.Reason(gw)
+			return v
+		}
 		if app.Bucket == ghAppBucketBroken {
 			v.State = HealthStateRed
 			v.cause = causeAppBroken

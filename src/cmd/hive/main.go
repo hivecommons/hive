@@ -3349,6 +3349,7 @@ func main() {
 		// raise an advisory and stop kicking agents at a gateway that is
 		// refusing on a money limit.
 		dashboard.SetInferenceBudgetProvider(githubProxy.InferenceBudgetExceeded)
+		dashboard.SetGatewayHealthProvider(githubProxy.GatewayHealth)
 
 		// Wire the inference token sink so the translator records per-agent
 		// usage (from the gateway's OpenAI usage block) into the same metrics
@@ -3860,7 +3861,8 @@ func main() {
 				// record only when it sees the gateway named here, so a lost
 				// delivery is re-offered rather than dropped. Names only — the
 				// key never leaves the spoke.
-				GatewayNames: dashSrv.ConfiguredGatewayNames(),
+				GatewayNames:  dashSrv.ConfiguredGatewayNames(),
+				GatewayHealth: dashSrv.GatewayHealthState(),
 				// Hash only, never the raw token: lets the hub verify this
 				// spoke's upgrade-proof credential without reading the
 				// hive-secrets secret from a cluster it may not reach

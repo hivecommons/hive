@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 // Fleet-divergence derivation.
@@ -108,6 +109,7 @@ type hiveBlockers struct {
 	RepoTargetIssue         string
 	InferenceAuthError      string
 	ProviderLimitReason     string
+	GatewayHealth           []inferencehealth.GatewayStatus
 }
 
 // any reports whether any hive-level blocker is set.
@@ -272,8 +274,9 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 
 	loginBlocked := a.NeedsLogin && interactiveLoginBackend(a.Backend)
 	quotaBlocked := a.QuotaExhausted
+	gwFault, gatewayBlocked := gatewayFaultForBackend(blockers.GatewayHealth, a.Backend)
 	hiveBlocked := blockers.any()
-	blocked := loginBlocked || quotaBlocked || hiveBlocked
+	blocked := loginBlocked || quotaBlocked || gatewayBlocked || hiveBlocked
 
 	// modeGrantsWrite: the agent's mode grants at least one write action (open
 	// PR or merge) beyond opening issues. An advisory issues-only agent does
@@ -312,6 +315,8 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 		v.BlockedReason = "sitting at login prompt"
 	case quotaBlocked:
 		v.BlockedReason = "provider quota exhausted"
+	case gatewayBlocked:
+		v.BlockedReason = inferencehealth.Reason(gwFault)
 	case hiveBlocked:
 		v.BlockedReason = blockers.reason()
 	}
@@ -324,12 +329,12 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	//           mission is the digest — no GitHub write required).
 	//   amber — can still open issues, but a blocker takes away a WRITE its mode
 	//           would otherwise grant (partial: half its job works).
-	//   red   — cannot even open an issue despite its mode granting it (blocked
-	//           at the floor).
+	//   red   — cannot do its mission at all: the floor is blocked, or its
+	//           inference gateway cannot serve any turn.
 	switch {
 	case capable:
 		v.CapabilityTier = tierGreen
-	case a.CanOpenIssue && blocked && modeGrantsWrite:
+	case a.CanOpenIssue && blocked && modeGrantsWrite && !gatewayBlocked:
 		v.CapabilityTier = tierAmber
 	default:
 		v.CapabilityTier = tierRed
