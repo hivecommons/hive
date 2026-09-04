@@ -52,9 +52,9 @@ type GovernorState struct {
 
 	// Mode is the laddered mode, lowercased by the server: "idle", "quiet",
 	// "busy" or "surge". buildGovernor applies strings.ToLower, so callers do
-	// not need to case-fold — but the snapshot path carries it uncased
-	// (pkg/snapshot/builder_test.go feeds "BUSY"), so a renderer should
-	// case-fold for display rather than assume either casing on the wire.
+	// not need to case-fold — but persisted snapshots can carry historical
+	// uncased values, so a renderer should case-fold for display rather than
+	// assume either casing on the wire.
 	Mode string `json:"mode"`
 
 	// Issues and PRs are the two halves of what the design doc's governor pane
