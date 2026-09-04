@@ -166,9 +166,9 @@ func TestProviderLimitHeartbeatFields_SingleRebuffPhrasing(t *testing.T) {
 	})
 	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
 
-	reason, rebuffs := providerLimitHeartbeatFields([]hub.AgentSummary{
+	reason, rebuffs := hub.ProviderLimitHeartbeatFields([]hub.AgentSummary{
 		{Name: "guide", State: "running", QuotaExhausted: true},
-	})
+	}, dashboard.InferenceBudgetExceeded)
 	if rebuffs != 1 {
 		t.Fatalf("rebuffs = %d, want 1", rebuffs)
 	}
@@ -184,7 +184,7 @@ func TestProviderLimitHeartbeatFields_MultiRebuffPhrasing(t *testing.T) {
 	})
 	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
 
-	reason, rebuffs := providerLimitHeartbeatFields(nil)
+	reason, rebuffs := hub.ProviderLimitHeartbeatFields(nil, dashboard.InferenceBudgetExceeded)
 	if rebuffs != 4 {
 		t.Fatalf("rebuffs = %d, want 4", rebuffs)
 	}

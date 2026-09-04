@@ -6,6 +6,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub"
 )
 
@@ -79,7 +80,7 @@ func TestProviderBudgetSuppressionProbesRatherThanDeadlocks(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := providerBudgetSuppresses(tc.latched, tc.lastRebuff, now, probe); got != tc.want {
+			if got := governor.ProviderBudgetSuppresses(tc.latched, tc.lastRebuff, now, probe); got != tc.want {
 				t.Errorf("providerBudgetSuppresses = %v, want %v — %s", got, tc.want, tc.why)
 			}
 		})
@@ -95,22 +96,22 @@ func TestProviderBudgetProbeReSuppressesAfterAFailedProbe(t *testing.T) {
 	t0 := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 
 	// The clip lands. Kicks are withheld.
-	if !providerBudgetSuppresses(true, t0, t0.Add(time.Minute), probe) {
+	if !governor.ProviderBudgetSuppresses(true, t0, t0.Add(time.Minute), probe) {
 		t.Fatal("a fresh clip must withhold kicks")
 	}
 	// Half an hour later the stamp is stale, so one cycle probes.
 	probeAt := t0.Add(probe + time.Minute)
-	if providerBudgetSuppresses(true, t0, probeAt, probe) {
+	if governor.ProviderBudgetSuppresses(true, t0, probeAt, probe) {
 		t.Fatal("a stale clip must probe — this is the deadlock")
 	}
 	// The probe is rebuffed: the stamp moves forward and suppression resumes
 	// for another interval, so the burn is ~one run per interval, not all day.
-	if !providerBudgetSuppresses(true, probeAt, probeAt.Add(time.Minute), probe) {
+	if !governor.ProviderBudgetSuppresses(true, probeAt, probeAt.Add(time.Minute), probe) {
 		t.Fatal("a failed probe must re-freshen the stamp and resume suppression")
 	}
 	// After the provider's window resets, the probe succeeds instead: the proxy
 	// clears the latch, and with no latch there is nothing to suppress.
-	if providerBudgetSuppresses(false, time.Time{}, probeAt.Add(2*probe), probe) {
+	if governor.ProviderBudgetSuppresses(false, time.Time{}, probeAt.Add(2*probe), probe) {
 		t.Fatal("a cleared latch must not suppress")
 	}
 }
@@ -121,26 +122,26 @@ func TestProviderBudgetProbeReSuppressesAfterAFailedProbe(t *testing.T) {
 // paging on each of them would be a full day of identical high-priority
 // notifications, which is what the dashboard banner is for.
 func TestProviderBudgetNotifiesOncePerLatch(t *testing.T) {
-	var st providerBudgetNotifyState
+	var st governor.ProviderBudgetNotifyState
 	latch := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 
-	if !st.shouldSend(latch) {
+	if !st.ShouldSend(latch) {
 		t.Fatal("the first cycle of a new clip must notify")
 	}
 	for i := 0; i < 200; i++ {
-		if st.shouldSend(latch) {
+		if st.ShouldSend(latch) {
 			t.Fatalf("cycle %d notified again for the same clip", i+2)
 		}
 	}
 
 	// Recovery, then a genuinely new clip the next day: the operator must be
 	// told about that one too.
-	st.reset()
+	st.Reset()
 	nextDay := latch.Add(24 * time.Hour)
-	if !st.shouldSend(nextDay) {
+	if !st.ShouldSend(nextDay) {
 		t.Error("a new clip after a recovery must notify again")
 	}
-	if st.shouldSend(nextDay) {
+	if st.ShouldSend(nextDay) {
 		t.Error("the new clip notified twice")
 	}
 }
@@ -173,38 +174,38 @@ func TestProviderBudgetProbeIntervalDefault(t *testing.T) {
 // Releasing a probe must therefore re-arm suppression immediately, with
 // freshness measured from the release itself.
 func TestProviderBudgetProbeReArmsOnRelease(t *testing.T) {
-	var probe providerBudgetProbeState
-	t.Cleanup(probe.reset)
+	var probe governor.ProviderBudgetProbeState
+	t.Cleanup(probe.Reset)
 	const interval = 30 * time.Minute
 	rebuff := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 
 	// Stale stamp: the gate opens for a probe.
 	probeAt := rebuff.Add(interval + time.Minute)
-	if providerBudgetSuppresses(true, probe.freshest(rebuff), probeAt, interval) {
+	if governor.ProviderBudgetSuppresses(true, probe.Freshest(rebuff), probeAt, interval) {
 		t.Fatal("a stale rebuff must open the gate for a probe")
 	}
-	probe.markReleased(probeAt)
+	probe.MarkReleased(probeAt)
 
 	// The very next cycles: the probe's run is still in flight and has not
 	// rebuffed yet, so lastRebuff is unchanged and stale — but the gate must
 	// hold, because a probe already flew.
 	for i := 1; i <= 5; i++ {
 		now := probeAt.Add(time.Duration(i) * 5 * time.Minute)
-		if !providerBudgetSuppresses(true, probe.freshest(rebuff), now, interval) {
+		if !governor.ProviderBudgetSuppresses(true, probe.Freshest(rebuff), now, interval) {
 			t.Fatalf("cycle %d after a released probe leaked more kicks before the probe resolved", i)
 		}
 	}
 
 	// A full interval after the release with no new rebuff (the probe's run
 	// died without ever calling inference, say): the next probe may fly.
-	if providerBudgetSuppresses(true, probe.freshest(rebuff), probeAt.Add(interval), interval) {
+	if governor.ProviderBudgetSuppresses(true, probe.Freshest(rebuff), probeAt.Add(interval), interval) {
 		t.Fatal("an interval after the released probe the gate must open again")
 	}
 
 	// Recovery clears the stamp so a NEW latch starts its clock from its own
 	// rebuffs rather than inheriting last week's probe time.
-	probe.reset()
-	if got := probe.freshest(rebuff); !got.Equal(rebuff) {
+	probe.Reset()
+	if got := probe.Freshest(rebuff); !got.Equal(rebuff) {
 		t.Fatalf("after reset freshest = %v, want the rebuff %v", got, rebuff)
 	}
 }
@@ -214,25 +215,25 @@ func TestProviderBudgetProbeReArmsOnRelease(t *testing.T) {
 // is paged exactly once when it lifts — not every healthy cycle, and not at all
 // on a hive that was never clipped.
 func TestProviderBudgetNotifyResetReportsRecoveryOnce(t *testing.T) {
-	var st providerBudgetNotifyState
+	var st governor.ProviderBudgetNotifyState
 
 	// Never latched: healthy cycles must not fabricate a recovery.
-	if st.reset() {
+	if st.Reset() {
 		t.Fatal("a never-notified gate must not report a recovery")
 	}
 
 	latch := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
-	if !st.shouldSend(latch) {
+	if !st.ShouldSend(latch) {
 		t.Fatal("a new clip must notify")
 	}
 
 	// The clip lifts: exactly one recovery crossing...
-	if !st.reset() {
+	if !st.Reset() {
 		t.Fatal("the first healthy cycle after a notified clip must report the recovery")
 	}
 	// ...and silence afterwards.
 	for i := 0; i < 200; i++ {
-		if st.reset() {
+		if st.Reset() {
 			t.Fatalf("healthy cycle %d reported the recovery again", i+2)
 		}
 	}
@@ -242,12 +243,12 @@ func TestProviderLimitHeartbeatFieldsFallsBackToAgentQuota(t *testing.T) {
 	dashboard.SetInferenceBudgetProvider(nil)
 	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
 
-	reason, rebuffs := providerLimitHeartbeatFields([]hub.AgentSummary{
+	reason, rebuffs := hub.ProviderLimitHeartbeatFields([]hub.AgentSummary{
 		{Name: "guide", State: "running", QuotaExhausted: true},
 		{Name: "scanner", State: "running", QuotaExhausted: true},
 		{Name: "paused", State: "paused", Paused: true, QuotaExhausted: true},
 		{Name: "supervisor"},
-	})
+	}, dashboard.InferenceBudgetExceeded)
 	if rebuffs != 0 {
 		t.Fatalf("rebuffs = %d, want 0 for pane-derived quota", rebuffs)
 	}

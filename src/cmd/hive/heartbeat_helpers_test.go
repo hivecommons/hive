@@ -22,11 +22,11 @@ func TestQuotaExhaustedProcessCount(t *testing.T) {
 		"has-quota":  {State: agent.StateRunning, QuotaExhausted: false},
 		"nil-status": nil,
 	}
-	if got := quotaExhaustedProcessCount(statuses); got != 1 {
+	if got := hub.QuotaExhaustedProcessCount(statuses); got != 1 {
 		t.Errorf("quotaExhaustedProcessCount = %d, want 1", got)
 	}
-	if got := quotaExhaustedProcessCount(nil); got != 0 {
-		t.Errorf("quotaExhaustedProcessCount(nil) = %d, want 0", got)
+	if got := hub.QuotaExhaustedProcessCount(nil); got != 0 {
+		t.Errorf("hub.QuotaExhaustedProcessCount(nil) = %d, want 0", got)
 	}
 }
 
@@ -87,14 +87,14 @@ func TestGitHubAppTokenHeartbeatFieldsNoApp(t *testing.T) {
 // quotaExhaustedAgentReason must be empty for a zero/negative count so the
 // heartbeat never carries a vacuous provider-limit reason.
 func TestQuotaExhaustedAgentReason(t *testing.T) {
-	if got := quotaExhaustedAgentReason(0); got != "" {
-		t.Errorf("quotaExhaustedAgentReason(0) = %q, want empty", got)
+	if got := hub.QuotaExhaustedAgentReason(0); got != "" {
+		t.Errorf("hub.QuotaExhaustedAgentReason(0) = %q, want empty", got)
 	}
-	if got := quotaExhaustedAgentReason(-1); got != "" {
-		t.Errorf("quotaExhaustedAgentReason(-1) = %q, want empty", got)
+	if got := hub.QuotaExhaustedAgentReason(-1); got != "" {
+		t.Errorf("hub.QuotaExhaustedAgentReason(-1) = %q, want empty", got)
 	}
-	if got := quotaExhaustedAgentReason(3); got != "3 agent(s) out of provider quota" {
-		t.Errorf("quotaExhaustedAgentReason(3) = %q", got)
+	if got := hub.QuotaExhaustedAgentReason(3); got != "3 agent(s) out of provider quota" {
+		t.Errorf("hub.QuotaExhaustedAgentReason(3) = %q", got)
 	}
 }
 

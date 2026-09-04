@@ -7,6 +7,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // activityTestConfig builds the minimal config agentActivityFor needs: one
@@ -43,7 +44,7 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 		LastPaneChange: lastPane,
 	}
 
-	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
+	act := hub.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 
 	if !act.Paused || act.PausedTrigger != "dashboard-api" || act.PausedReason != "manual pause" ||
 		act.PausedBy != "owner" || !act.PausedAt.Equal(pausedAt) {
@@ -75,7 +76,7 @@ func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
 	proc := &agent.AgentProcess{}
 
-	scheduled := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
+	scheduled := hub.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 	if !scheduled.ExpectedActive {
 		t.Error("cadence-scheduled agent in the current mode should report ExpectedActive")
 	}
@@ -83,13 +84,13 @@ func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 		t.Error("enabled agent should report Enabled")
 	}
 
-	packOnDemand := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc,
+	packOnDemand := hub.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc,
 		map[string]bool{"scanner": true})
 	if packOnDemand.ExpectedActive {
 		t.Error("pack-on-demand agent must never report ExpectedActive")
 	}
 
-	otherMode := agentActivityFor(mgr, cfg, governor.State{}, "idle", "scanner", proc, nil)
+	otherMode := hub.AgentActivityFor(mgr, cfg, governor.State{}, "idle", "scanner", proc, nil)
 	if otherMode.ExpectedActive {
 		t.Error("agent with no cadence in the current mode must not report ExpectedActive")
 	}
@@ -100,7 +101,7 @@ func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 // divergence verdict.
 func TestAgentActivityForNilConfig(t *testing.T) {
 	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
-	act := agentActivityFor(mgr, nil, governor.State{}, "busy", "scanner", &agent.AgentProcess{}, nil)
+	act := hub.AgentActivityFor(mgr, nil, governor.State{}, "busy", "scanner", &agent.AgentProcess{}, nil)
 	if act.ExpectedActive || act.Enabled {
 		t.Errorf("nil config: ExpectedActive=%v Enabled=%v, want both false", act.ExpectedActive, act.Enabled)
 	}
@@ -112,7 +113,7 @@ func TestAgentActivityForNilConfig(t *testing.T) {
 func TestAgentActivityForUnknownAgentCapabilitiesStayFalse(t *testing.T) {
 	cfg := activityTestConfig()
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
-	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "ghost", &agent.AgentProcess{}, nil)
+	act := hub.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "ghost", &agent.AgentProcess{}, nil)
 	if act.CanOpenIssue || act.CanOpenPR || act.CanMerge {
 		t.Errorf("unknown agent capabilities = (%v, %v, %v), want all false (UNKNOWN)",
 			act.CanOpenIssue, act.CanOpenPR, act.CanMerge)

@@ -20,7 +20,7 @@ func TestQuotaExhaustedAgentCount(t *testing.T) {
 		{Name: "stopped", State: "stopped", QuotaExhausted: true},
 		{Name: "has-quota", State: "running", QuotaExhausted: false},
 	}
-	if got := quotaExhaustedAgentCount(agents); got != 2 {
+	if got := hub.QuotaExhaustedAgentCount(agents); got != 2 {
 		t.Errorf("quotaExhaustedAgentCount = %d, want 2 (only running+unpaused out-of-quota agents)", got)
 	}
 }
@@ -28,10 +28,10 @@ func TestQuotaExhaustedAgentCount(t *testing.T) {
 // A nil or empty summary slice must count zero — the heartbeat builder calls
 // this before any agent has reported.
 func TestQuotaExhaustedAgentCountEmpty(t *testing.T) {
-	if got := quotaExhaustedAgentCount(nil); got != 0 {
-		t.Errorf("quotaExhaustedAgentCount(nil) = %d, want 0", got)
+	if got := hub.QuotaExhaustedAgentCount(nil); got != 0 {
+		t.Errorf("hub.QuotaExhaustedAgentCount(nil) = %d, want 0", got)
 	}
-	if got := quotaExhaustedAgentCount([]hub.AgentSummary{}); got != 0 {
-		t.Errorf("quotaExhaustedAgentCount(empty) = %d, want 0", got)
+	if got := hub.QuotaExhaustedAgentCount([]hub.AgentSummary{}); got != 0 {
+		t.Errorf("hub.QuotaExhaustedAgentCount(empty) = %d, want 0", got)
 	}
 }

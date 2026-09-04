@@ -138,112 +138,6 @@ const traceShutdownTimeout = 5 * time.Second
 // (persistState), loaded once at boot.
 const reachStatePath = "/data/reach-state.json"
 
-// agentActivityFor gathers the per-agent liveness evidence the hub needs to
-// tell a deliberately-paused agent from one that is running but unable to
-// work. Shared by both heartbeat build sites so the ordinary beat and the
-// upgrade beat can never report different pictures of the same agent.
-func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
-	act := hub.AgentActivity{
-		Paused: proc.Paused,
-		// Pause provenance (#4041): ride WHO/WHY/WHEN to the hub so the
-		// fleet view can tell a deliberate owner quiesce from a malfunction.
-		PausedTrigger:  proc.PausedTrigger,
-		PausedReason:   proc.PausedReason,
-		PausedBy:       proc.PausedBy,
-		PausedAt:       proc.PausedAt,
-		NeedsLogin:     proc.NeedsLogin,
-		QuotaExhausted: proc.QuotaExhausted,
-		LastActivityAt: proc.LastPaneChange,
-		// A missing tmux session is only meaningful for an agent the manager
-		// believes is running; SessionMissing enforces that itself.
-		SessionMissing: mgr.SessionMissing(name),
-	}
-	if proc.StartedAt != nil {
-		act.StartedAt = *proc.StartedAt
-	}
-	act.KickInterval = heartbeatKickInterval(govState, name, proc, onDemandFromPack)
-
-	// EXPECTED leg: does the governor's current mode schedule this agent on a
-	// kicking cadence right now? Shared with the dashboard's offByCadence via
-	// config.ExpectedActive so the two never disagree.
-	if cfg != nil {
-		onDemandAgent := false
-		enabled := false
-		if ac, ok := cfg.Agents[name]; ok {
-			onDemandAgent = ac.OnDemand
-			enabled = ac.Enabled
-		}
-		act.ExpectedActive = cfg.ExpectedActive(name, currentMode, onDemandAgent, onDemandFromPack)
-		act.Enabled = enabled
-	}
-
-	// ABLE leg: the exact ACMM capability gates the spoke enforces. ok=false
-	// (unknown agent) leaves all three false, read hub-side as UNKNOWN.
-	if canIssue, canPR, canMerge, ok := mgr.AgentCapabilities(name); ok {
-		act.CanOpenIssue = canIssue
-		act.CanOpenPR = canPR
-		act.CanMerge = canMerge
-	}
-
-	// Backend lets the hub interpret NeedsLogin (interactive vs inference).
-	if backend, ok := mgr.EffectiveBackend(name); ok {
-		act.Backend = backend
-	}
-
-	return act
-}
-
-func heartbeatKickInterval(govState governor.State, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) time.Duration {
-	if proc == nil || !proc.Config.UsesGovernorKick() || proc.Config.OnDemand || onDemandFromPack[name] {
-		return 0
-	}
-	cadence, ok := govState.Cadences[name]
-	if !ok || cadence.Paused || cadence.Interval <= 0 {
-		return 0
-	}
-	return cadence.Interval
-}
-
-func quotaExhaustedAgentCount(agents []hub.AgentSummary) int {
-	count := 0
-	for _, a := range agents {
-		if a.QuotaExhausted && !a.Paused &&
-			!strings.EqualFold(a.State, "paused") &&
-			strings.EqualFold(a.State, "running") {
-			count++
-		}
-	}
-	return count
-}
-
-func quotaExhaustedProcessCount(statuses map[string]*agent.AgentProcess) int {
-	count := 0
-	for _, proc := range statuses {
-		if proc != nil && proc.QuotaExhausted && !proc.Paused && proc.State == agent.StateRunning {
-			count++
-		}
-	}
-	return count
-}
-
-func quotaExhaustedAgentReason(count int) string {
-	if count <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d agent(s) out of provider quota", count)
-}
-
-func providerLimitHeartbeatFields(agents []hub.AgentSummary) (reason string, rebuffs int) {
-	errMsg, _, _, rebuffs := dashboard.InferenceBudgetExceeded()
-	if errMsg != "" {
-		if rebuffs > 1 {
-			return fmt.Sprintf("provider spending limit reached — %d refused calls: %s", rebuffs, errMsg), rebuffs
-		}
-		return "provider spending limit reached — " + errMsg, rebuffs
-	}
-	return quotaExhaustedAgentReason(quotaExhaustedAgentCount(agents)), 0
-}
-
 // prospectiveGitHubIdentity returns the GitHub identity the spoke WOULD hold
 // after adopting ghCfg, or nil when the push speaks to no identity field and
 // there is nothing to validate.
@@ -717,6 +611,15 @@ func init() {
 }
 
 func main() {
+	// Startup order is intentionally linear and dependency-ordered:
+	//  1. version/config/logging/process singleton
+	//  2. config overlays, identity, GitHub auth/client, and dashboard server
+	//  3. agent manager, persisted runtime state, governor, scheduler, and queues
+	//  4. hub heartbeat/self-upgrade wiring, notification sinks, and background lanes
+	//  5. steady-state tick loop: watchdog, eval cycle, rotation, automerge, and persistence
+	//
+	// Keep new subsystem constructors on the existing *wire.go pattern and insert
+	// them at the matching point above; do not move side effects across steps.
 	// --version fast path, before any flag parsing or startup work: the CI
 	// smoke test (and operators) probe the binary with `hive --version`; the
 	// standard flag set would reject it ("flag provided but not defined").
@@ -3469,7 +3372,7 @@ func main() {
 					mode = "on_demand"
 				}
 				agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
-					agentActivityFor(agentMgr, cfg, govState, currentMode, name, proc, onDemandFromPack)))
+					hub.AgentActivityFor(agentMgr, cfg, govState, currentMode, name, proc, onDemandFromPack)))
 			}
 			acmmLvl := 0
 			if cfg.ACMMLevel != nil {
@@ -3590,7 +3493,7 @@ func main() {
 				tasksCompleted7d = &n
 			}
 
-			providerLimitReason, providerLimitRebuffs := providerLimitHeartbeatFields(agents)
+			providerLimitReason, providerLimitRebuffs := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 
 			// Remediation-hint detectors (#5577). All three read state the
 			// spoke already maintains — no new GitHub calls, no new file
@@ -4016,13 +3919,13 @@ func main() {
 						mode = "on_demand"
 					}
 					agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
-						agentActivityFor(agentMgr, cfg, govState, currentMode, name, proc, onDemandFromPack)))
+						hub.AgentActivityFor(agentMgr, cfg, govState, currentMode, name, proc, onDemandFromPack)))
 				}
 				acmmLvl := 0
 				if cfg.ACMMLevel != nil {
 					acmmLvl = *cfg.ACMMLevel
 				}
-				providerLimitReason, providerLimitRebuffs := providerLimitHeartbeatFields(agents)
+				providerLimitReason, providerLimitRebuffs := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 				return &hub.HeartbeatPayload{
 					HiveID: cfg.HiveID,
 					Org:    cfg.Project.Org,
@@ -4903,123 +4806,14 @@ func buildRepoActivityWire(repos []collect.RepoActivity) []hub.RepoActivityWire 
 }
 
 // providerBudgetNotify is the one-shot guard for the provider spend-rebuff
-// notification (#4294). runEvalCycle sees the CONDITION every cycle for as long
-// as the provider stays clipped, but an operator only needs to be paged on the
-// CROSSING — the dashboard banner is what carries the ongoing state. Keyed on
-// the latch time (which does not move forward while latched) so a fresh clip
-// after a recovery pages again, while the same clip never pages twice.
-//
-// Package-level because runEvalCycle is a function called once per tick with no
-// state of its own; mutex-guarded because it also runs from the startup and
-// restart call sites.
-var providerBudgetNotify providerBudgetNotifyState
+// notification (#4294). Package-level because runEvalCycle is a function called
+// once per tick with no state of its own; mutex-guarded inside pkg/governor.
+var providerBudgetNotify governor.ProviderBudgetNotifyState
 
-type providerBudgetNotifyState struct {
-	mu sync.Mutex
-	// notifiedSince is the latch time already notified about; zero when the
-	// provider is serving or the current latch has not been notified yet.
-	notifiedSince time.Time
-}
-
-// shouldSend reports whether this latch still owes the operator a notification,
-// and records that it has been sent. Returns true at most once per latch.
-func (p *providerBudgetNotifyState) shouldSend(since time.Time) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.notifiedSince.IsZero() && p.notifiedSince.Equal(since) {
-		return false
-	}
-	p.notifiedSince = since
-	return true
-}
-
-// reset forgets the notified latch so the next clip pages again, and reports
-// whether a notified latch was in force — true means this cycle is the
-// RECOVERY crossing, the one cycle that owes the operator the "serving again"
-// notification (the counterpart of shouldSend's entering crossing; every later
-// healthy cycle returns false). Called on every cycle where the provider is
-// serving.
-func (p *providerBudgetNotifyState) reset() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	wasNotified := !p.notifiedSince.IsZero()
-	p.notifiedSince = time.Time{}
-	return wasNotified
-}
-
-// providerBudgetSuppresses reports whether a latched spend rebuff should
-// withhold this cycle's kicks, or whether the cycle is a PROBE that must be let
-// through.
-//
-// The latch alone is not enough to keep suppressing, and that is the whole
-// subtlety: the only thing that clears the latch is a successful inference
-// call, and the only thing that produces inference calls is a kick. Suppressing
-// purely on the latch is therefore self-sustaining — on a cadence-only hive it
-// would mute the hive permanently while its alert promised recovery at the
-// provider's next window reset. Freshness breaks that loop: evidence of being
-// clipped expires, and when it does one cycle is spent finding out whether it
-// is still true.
-func providerBudgetSuppresses(latched bool, lastRebuff, now time.Time, probeInterval time.Duration) bool {
-	if !latched {
-		return false
-	}
-	// A latched signal with no stamp (an older snapshot, or a state restored
-	// without one) probes immediately rather than suppressing indefinitely:
-	// spending one run is recoverable, muting the hive forever is not.
-	if lastRebuff.IsZero() {
-		return false
-	}
-	return now.Sub(lastRebuff) < probeInterval
-}
-
-// providerBudgetProbe remembers when the last probe kick was RELEASED, which
-// providerBudgetSuppresses alone cannot know. Without it, the moment the last
-// rebuff went stale EVERY following cycle would release kicks until the probe's
-// run reached its first inference call and rebuffed — and agent runs take
-// minutes to get there, which at a five-minute eval cadence re-creates a slice
-// of the very burn this feature exists to stop. Stamping the release re-arms
-// suppression immediately: exactly one probe flies per interval, measured from
-// whichever is later — the last observed rebuff or the last released probe.
-//
-// Package-level for the same reason as providerBudgetNotify: runEvalCycle has
-// no state of its own, and this mirrors the process-wide latch it gates.
-var providerBudgetProbe providerBudgetProbeState
-
-type providerBudgetProbeState struct {
-	mu sync.Mutex
-	// lastProbe is when a probe kick was last released; zero when the provider
-	// is serving or no probe has flown for the current latch.
-	lastProbe time.Time
-}
-
-// freshest returns the later of the last observed rebuff and the last released
-// probe — the stamp suppression freshness is measured from. A probe whose run
-// has not yet reached its first inference call must still hold suppression.
-func (p *providerBudgetProbeState) freshest(lastRebuff time.Time) time.Time {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.lastProbe.After(lastRebuff) {
-		return p.lastProbe
-	}
-	return lastRebuff
-}
-
-// markReleased records that a probe kick actually went out this cycle. Only
-// called when a kick was really delivered — a probe window that happened to
-// find nothing due gathers no evidence and must not re-arm the timer.
-func (p *providerBudgetProbeState) markReleased(now time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.lastProbe = now
-}
-
-// reset forgets the probe stamp. Called on every cycle where the provider is
-// serving, so a new latch starts its probe clock from its own rebuffs.
-func (p *providerBudgetProbeState) reset() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.lastProbe = time.Time{}
-}
+// providerBudgetProbe remembers when the last probe kick was released while a
+// provider spend rebuff is latched. Package-level for the same reason as
+// providerBudgetNotify: runEvalCycle has no state of its own.
+var providerBudgetProbe governor.ProviderBudgetProbeState
 
 // applyBudgetAlerts turns budget threshold crossings into dashboard system
 // alerts and notifications. Crossings fire once per window (governor tracks
@@ -5949,8 +5743,8 @@ func runEvalCycle(
 	// resumes, served clears the latch outright.
 	providerBudgetProbeInterval := cfg.Governor.ProviderBudget.EffectiveProbeInterval()
 	providerBudgetLatched := providerBudgetCause != ""
-	suppressKicks := providerBudgetSuppresses(providerBudgetLatched,
-		providerBudgetProbe.freshest(providerBudgetLastRebuff), time.Now(), providerBudgetProbeInterval)
+	suppressKicks := governor.ProviderBudgetSuppresses(providerBudgetLatched,
+		providerBudgetProbe.Freshest(providerBudgetLastRebuff), time.Now(), providerBudgetProbeInterval)
 	if providerBudgetLatched {
 		state := "agent kicks suspended"
 		if !suppressKicks {
@@ -5964,7 +5758,7 @@ func runEvalCycle(
 		dashSrv.AddSystemAlert(providerBudgetAlertID, "error", msg)
 		providerBudgetCause = msg
 	} else {
-		if reason := quotaExhaustedAgentReason(quotaExhaustedProcessCount(agentMgr.AllStatuses())); reason != "" {
+		if reason := hub.QuotaExhaustedAgentReason(hub.QuotaExhaustedProcessCount(agentMgr.AllStatuses())); reason != "" {
 			dashSrv.AddSystemAlert(providerBudgetAlertID, "error", "provider quota exhausted — "+reason)
 		} else {
 			dashSrv.ClearSystemAlert(providerBudgetAlertID)
@@ -5977,15 +5771,15 @@ func runEvalCycle(
 	// deliberately does not move forward, so a genuinely new clip after a
 	// recovery notifies again. Matches applyBudgetAlerts, which notifies on the
 	// crossing rather than on the condition.
-	notifyProviderBudget := providerBudgetLatched && providerBudgetNotify.shouldSend(providerBudgetSince)
+	notifyProviderBudget := providerBudgetLatched && providerBudgetNotify.ShouldSend(providerBudgetSince)
 	if !providerBudgetLatched {
-		providerBudgetProbe.reset()
+		providerBudgetProbe.Reset()
 		// The RECOVERY crossing: the latch a notification went out for has
 		// cleared (a probe's inference call succeeded), so tell the operator
 		// once that the hive resumed — the counterpart of the entering page,
 		// without which the only signal of recovery is a banner quietly
 		// vanishing. Every later healthy cycle is silent.
-		if providerBudgetNotify.reset() {
+		if providerBudgetNotify.Reset() {
 			logger.Info("provider spending limit lifted: agent kicks resumed")
 			notifier.Send("Provider spending limit lifted",
 				"the inference provider is serving again — agent kicks have resumed",
@@ -6065,13 +5859,13 @@ func runEvalCycle(
 	if suppressKicks && len(messages) > 0 {
 		logger.Warn("provider spending limit: withholding agent kicks",
 			"withheld", kickGate.Withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
-			"next_probe_in", (providerBudgetProbeInterval - time.Since(providerBudgetProbe.freshest(providerBudgetLastRebuff))).Truncate(time.Second))
+			"next_probe_in", (providerBudgetProbeInterval - time.Since(providerBudgetProbe.Freshest(providerBudgetLastRebuff))).Truncate(time.Second))
 	} else if kickGate.ReleaseProbe {
 		if len(kickGate.Withheld) > 0 {
 			logger.Warn("provider spending limit: withholding all but the probe kick",
 				"withheld", kickGate.Withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince)
 		}
-		providerBudgetProbe.markReleased(time.Now())
+		providerBudgetProbe.MarkReleased(time.Now())
 		logger.Info("provider spending limit: releasing a single probe kick",
 			"probe_agent", kickGate.Kept[0].Agent, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
 			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
