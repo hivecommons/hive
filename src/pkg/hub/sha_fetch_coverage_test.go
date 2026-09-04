@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -46,9 +47,15 @@ func TestFetchImageBuildStatus(t *testing.T) {
 		want           string
 	}{
 		{"no runs", `{"workflow_runs":[]}`, 200, imageStatusBuilding},
-		{"in progress", `{"workflow_runs":[{"status":"in_progress"}]}`, 200, imageStatusBuilding},
-		{"completed success", `{"workflow_runs":[{"status":"completed","conclusion":"success"}]}`, 200, imageStatusBuilding},
-		{"completed failure", `{"workflow_runs":[{"status":"completed","conclusion":"failure"}]}`, 200, imageStatusFailed},
+		{"queued", `{"workflow_runs":[{"status":"queued","html_url":"https://example.test/r/1"}]}`, 200, imageStatusBuilding},
+		{"in progress", `{"workflow_runs":[{"status":"in_progress","html_url":"https://example.test/r/1"}]}`, 200, imageStatusBuilding},
+		{"completed success", `{"workflow_runs":[{"status":"completed","conclusion":"success","html_url":"https://example.test/r/1"}]}`, 200, imageStatusBuilding},
+		{"completed failure", `{"workflow_runs":[{"status":"completed","conclusion":"failure","html_url":"https://example.test/r/1"}]}`, 200, imageStatusFailed},
+		{"completed cancelled", `{"workflow_runs":[{"status":"completed","conclusion":"cancelled","html_url":"https://example.test/r/1"}]}`, 200, imageStatusFailed},
+		{"completed skipped", `{"workflow_runs":[{"status":"completed","conclusion":"skipped","html_url":"https://example.test/r/1"}]}`, 200, imageStatusFailed},
+		{"completed timed out", `{"workflow_runs":[{"status":"completed","conclusion":"timed_out","html_url":"https://example.test/r/1"}]}`, 200, imageStatusFailed},
+		{"completed action required", `{"workflow_runs":[{"status":"completed","conclusion":"action_required","html_url":"https://example.test/r/1"}]}`, 200, imageStatusFailed},
+		{"completed neutral", `{"workflow_runs":[{"status":"completed","conclusion":"neutral","html_url":"https://example.test/r/1"}]}`, 200, imageStatusFailed},
 		{"non-200", ``, 500, ""},
 		{"bad json", `{not json`, 200, ""},
 	}
@@ -64,6 +71,59 @@ func TestFetchImageBuildStatus(t *testing.T) {
 				t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFetchImageBuildStateRunURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"workflow_runs":[{"status":"completed","conclusion":"failure","html_url":"https://github.com/hivecommons/hive/actions/runs/1"}]}`))
+	}))
+	defer srv.Close()
+	got := fetchImageBuildState(clientTo(t, srv), "abc123def456", slog.Default())
+	if got.Status != imageStatusFailed {
+		t.Fatalf("Status = %q, want %q", got.Status, imageStatusFailed)
+	}
+	if got.RunURL != "https://github.com/hivecommons/hive/actions/runs/1" {
+		t.Fatalf("RunURL = %q", got.RunURL)
+	}
+}
+
+func TestBuildStatusWithStaleness(t *testing.T) {
+	t.Setenv(imageBuildStaleAfterEnv, "30m")
+	now := time.Now()
+	if got := buildStatusWithStaleness(imageStatusBuilding, now.Add(-29*time.Minute), now); got != imageStatusBuilding {
+		t.Fatalf("fresh building status = %q, want %q", got, imageStatusBuilding)
+	}
+	if got := buildStatusWithStaleness(imageStatusBuilding, now.Add(-31*time.Minute), now); got != imageStatusStale {
+		t.Fatalf("stale building status = %q, want %q", got, imageStatusStale)
+	}
+	if got := buildStatusWithStaleness(imageStatusFailed, now.Add(-31*time.Minute), now); got != imageStatusFailed {
+		t.Fatalf("failed status changed to %q", got)
+	}
+}
+
+func TestGetImageStatusesAppliesStaleCap(t *testing.T) {
+	t.Setenv(imageBuildStaleAfterEnv, "1m")
+	resetSHACaches(t)
+	defer resetSHACaches(t)
+	latestSHAMu.Lock()
+	headSHAByBranch["v4"] = branchHeadInfo{SHA: "b586124", ImageStatus: imageStatusBuilding, BuildStartedAt: time.Now().Add(-2 * time.Minute)}
+	latestSHAMu.Unlock()
+	if got := getImageStatuses()["v4"]; got != imageStatusStale {
+		t.Fatalf("getImageStatuses()[v4] = %q, want %q", got, imageStatusStale)
+	}
+	if _, ok := getImageBuildStartTimes()["v4"]; ok {
+		t.Fatalf("stale branch should not expose an active build timer")
+	}
+}
+
+func TestReadyBranchDoesNotExposeOldBuildURL(t *testing.T) {
+	resetSHACaches(t)
+	defer resetSHACaches(t)
+	setBranchHeadDetails("v4", "b586124", "", imageStatusFailed, "https://github.com/hivecommons/hive/actions/runs/1")
+	setBranchHead("v4", "b586124", "", imageStatusReady)
+	if got := getImageBuildURLs()["v4"]; got != "" {
+		t.Fatalf("ready branch exposed stale build URL %q", got)
 	}
 }
 

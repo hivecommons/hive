@@ -3913,6 +3913,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"latest_sha_messages":      getDisplaySHAMessages(),
 		"latest_sha_image_status":  getImageStatuses(),
 		"latest_sha_build_started": getImageBuildStartTimes(),
+		"latest_sha_build_url":     getImageBuildURLs(),
 		"commit_messages":          getCommitMessages(),
 		"hub_git_hash":             s.hubGitHash,
 		"hub_git_branch":           s.hubGitBranch,
@@ -4034,6 +4035,7 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 		"latest_sha_messages":      getDisplaySHAMessages(),
 		"latest_sha_image_status":  getImageStatuses(),
 		"latest_sha_build_started": getImageBuildStartTimes(),
+		"latest_sha_build_url":     getImageBuildURLs(),
 		"commit_messages":          getCommitMessages(),
 	})
 }
@@ -5420,6 +5422,10 @@ const (
 	imageStatusReady    = "ready"    // image tag verified on GHCR
 	imageStatusBuilding = "building" // docker workflow queued/in progress, or image not yet visible
 	imageStatusFailed   = "failed"   // docker workflow completed unsuccessfully
+	imageStatusStale    = "stale"    // still non-ready past the configured build window
+
+	imageBuildStaleAfterEnv     = "HIVE_IMAGE_BUILD_STALE_AFTER"
+	defaultImageBuildStaleAfter = 90 * time.Minute
 )
 
 // branchHeadInfo tracks the branch HEAD commit, which may be ahead of the
@@ -5434,6 +5440,9 @@ type branchHeadInfo struct {
 	// while the same SHA keeps building; it is zeroed when the image finishes
 	// (ready/failed) or a new SHA takes over. Zero means "not building / unknown".
 	BuildStartedAt time.Time
+	// BuildURL is the GitHub Actions run URL for the docker workflow run that
+	// established a terminal/non-ready state, when GitHub reported one.
+	BuildURL string
 }
 
 // githubAPIBase and ghcrBase are the GitHub/GHCR origins used by the SHA-poll
@@ -5830,26 +5839,33 @@ func getBranchHead(branch string) branchHeadInfo {
 // setBranchHead records the branch HEAD and its image build status, keeping
 // the previous commit message when the new fetch didn't include one.
 func setBranchHead(branch, sha, msg, status string) {
+	setBranchHeadDetails(branch, sha, msg, status, "")
+}
+
+func setBranchHeadDetails(branch, sha, msg, status, buildURL string) {
 	latestSHAMu.Lock()
 	defer latestSHAMu.Unlock()
 	prev := headSHAByBranch[branch]
 	if msg == "" && prev.SHA == sha {
 		msg = prev.Message
 	}
+	if buildURL == "" && prev.SHA == sha && status != imageStatusReady {
+		buildURL = prev.BuildURL
+	}
 	// Stamp the build-start time on the first poll that sees this SHA building,
 	// and carry it forward on every subsequent poll while the same SHA is still
-	// building — so the dashboard's elapsed timer counts from when the build
+	// building/stale — so the dashboard's elapsed timer counts from when the build
 	// actually started, not from each poll. Clear it once the image is
 	// ready/failed or a different SHA takes over.
 	var buildStartedAt time.Time
-	if status == imageStatusBuilding {
+	if status == imageStatusBuilding || status == imageStatusStale {
 		if prev.SHA == sha && !prev.BuildStartedAt.IsZero() {
 			buildStartedAt = prev.BuildStartedAt // same build, keep the original start
 		} else {
 			buildStartedAt = time.Now() // newly observed building SHA
 		}
 	}
-	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status, BuildStartedAt: buildStartedAt}
+	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status, BuildStartedAt: buildStartedAt, BuildURL: buildURL}
 	if msg != "" {
 		commitMsgBySHA[sha] = msg
 	}
@@ -5901,24 +5917,66 @@ func getImageStatuses() map[string]string {
 	for k := range latestSHAByBranch {
 		cp[k] = imageStatusReady
 	}
+	now := time.Now()
 	for k, v := range headSHAByBranch {
 		if v.SHA != "" && v.ImageStatus != "" {
-			cp[k] = v.ImageStatus
+			cp[k] = buildStatusWithStaleness(v.ImageStatus, v.BuildStartedAt, now)
 		}
 	}
 	return cp
 }
 
+// getImageBuildURLs returns branch→docker workflow run URL for non-ready head
+// states when GitHub reported a run.
+func getImageBuildURLs() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(headSHAByBranch))
+	now := time.Now()
+	for k, v := range headSHAByBranch {
+		status := buildStatusWithStaleness(v.ImageStatus, v.BuildStartedAt, now)
+		if v.SHA != "" && v.BuildURL != "" && status != "" && status != imageStatusReady {
+			cp[k] = v.BuildURL
+		}
+	}
+	return cp
+}
+
+// imageBuildStaleAfter is the maximum time the UI may call a non-ready head
+// "building" before surfacing it as stale/unknown.
+func imageBuildStaleAfter() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(imageBuildStaleAfterEnv))
+	if raw == "" {
+		return defaultImageBuildStaleAfter
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return defaultImageBuildStaleAfter
+	}
+	return d
+}
+
+// buildStatusWithStaleness applies the stale cap at read/poll time without
+// rewriting terminal failed/ready states.
+func buildStatusWithStaleness(status string, started time.Time, now time.Time) string {
+	if status == imageStatusBuilding && !started.IsZero() && now.Sub(started) > imageBuildStaleAfter() {
+		return imageStatusStale
+	}
+	return status
+}
+
 // getImageBuildStartTimes returns branch→unix-millis of when each currently
 // "building" head first started building, for the dashboard's elapsed build
 // timer. Only branches that are actively building have an entry; ready/failed/
-// unknown branches are omitted. Millis match the JS side (Date.now()).
+// stale/unknown branches are omitted. Millis match the JS side (Date.now()).
 func getImageBuildStartTimes() map[string]int64 {
 	latestSHAMu.RLock()
 	defer latestSHAMu.RUnlock()
 	cp := make(map[string]int64, len(headSHAByBranch))
+	now := time.Now()
 	for k, v := range headSHAByBranch {
-		if v.SHA != "" && v.ImageStatus == imageStatusBuilding && !v.BuildStartedAt.IsZero() {
+		if v.SHA != "" && v.ImageStatus == imageStatusBuilding && !v.BuildStartedAt.IsZero() &&
+			buildStatusWithStaleness(v.ImageStatus, v.BuildStartedAt, now) == imageStatusBuilding {
 			cp[k] = v.BuildStartedAt.UnixMilli()
 		}
 	}
@@ -6759,7 +6817,8 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 
 	// Image not on GHCR yet — ask the docker workflow whether the build for
 	// this head commit is still running or has failed.
-	status := fetchImageBuildStatus(client, branchResult.Commit.SHA, logger)
+	buildState := fetchImageBuildState(client, branchResult.Commit.SHA, logger)
+	status := buildState.Status
 	if status == "" {
 		// Actions API unavailable (rate-limited/network): keep the last-known
 		// status for this head; a brand-new head with no image is presumed
@@ -6772,8 +6831,15 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	if commitMsg == "" && headChanged {
 		commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
 	}
-	setBranchHead(branch, candidateSHA, commitMsg, status)
-	logger.Info("SHA poll: container image not yet on GHCR", "branch", branch, "sha", candidateSHA, "image_status", status)
+	if status == imageStatusBuilding {
+		started := prevHead.BuildStartedAt
+		if headChanged || started.IsZero() {
+			started = time.Now()
+		}
+		status = buildStatusWithStaleness(status, started, time.Now())
+	}
+	setBranchHeadDetails(branch, candidateSHA, commitMsg, status, buildState.RunURL)
+	logger.Info("SHA poll: container image not yet on GHCR", "branch", branch, "sha", candidateSHA, "image_status", status, "build_url", buildState.RunURL)
 }
 
 // dockerWorkflowFile is the workflow that builds and pushes the container
@@ -6785,44 +6851,63 @@ const dockerWorkflowFile = "docker.yml"
 // commit and maps it to an image build status. Returns "" when the API is
 // unavailable so the caller can keep the last-known status instead of
 // flapping ready/building on transient errors.
+type imageBuildState struct {
+	Status string
+	RunURL string
+}
+
 func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	return fetchImageBuildState(client, fullSHA, logger).Status
+}
+
+func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logger) imageBuildState {
 	runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
 	req, _ := http.NewRequest("GET", runsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("SHA poll: workflow runs request failed", "sha", fullSHA, "error", err)
-		return ""
+		return imageBuildState{}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: workflow runs non-200", "sha", fullSHA, "status", resp.StatusCode)
-		return ""
+		return imageBuildState{}
 	}
 	var result struct {
 		WorkflowRuns []struct {
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
 		} `json:"workflow_runs"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		logger.Warn("SHA poll: workflow runs decode failed", "sha", fullSHA, "error", err)
-		return ""
+		return imageBuildState{}
 	}
 	if len(result.WorkflowRuns) == 0 {
-		// The push event may not have spawned the workflow run yet.
-		return imageStatusBuilding
+		// The push event may not have spawned the workflow run yet. If it never does,
+		// the caller's stale timer flips the UI out of the spinner state.
+		return imageBuildState{Status: imageStatusBuilding}
 	}
 	run := result.WorkflowRuns[0]
+	state := imageBuildState{RunURL: run.HTMLURL}
 	if run.Status != "completed" {
-		return imageStatusBuilding // queued, in_progress, waiting, pending
+		state.Status = imageStatusBuilding // queued, in_progress, waiting, pending
+		return state
 	}
-	if run.Conclusion == "success" {
+	switch run.Conclusion {
+	case "success":
 		// Workflow finished but the manifest isn't visible on GHCR yet —
-		// treat as still publishing; the GHCR check flips it to ready.
-		return imageStatusBuilding
+		// treat as still publishing; the GHCR check flips it to ready, while the
+		// stale timer prevents an endless spinner if publication never appears.
+		state.Status = imageStatusBuilding
+	case "failure", "cancelled", "skipped", "timed_out", "action_required", "startup_failure", "neutral":
+		state.Status = imageStatusFailed
+	default:
+		state.Status = imageStatusFailed
 	}
-	return imageStatusFailed // failure, cancelled, timed_out, startup_failure
+	return state
 }
 
 // fetchCommitMessage fetches the first line of a commit message from the GitHub API.
@@ -12802,6 +12887,7 @@ const dashboardHTML = `<!DOCTYPE html>
     /* branch -> unix-millis when the currently-building image started building,
        from the hub (getImageBuildStartTimes). Drives the elapsed build timer. */
     var _latestBuildStarted = {};
+    var _latestBuildURLs = {};
 
     /* Format elapsed build time from an epoch-ms start as "Mm Ss" (or "Ss" under
        a minute). Clamps negatives (clock skew) to 0. */
@@ -15611,6 +15697,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
         _latestBuildStarted = data.latest_sha_build_started || {};
+        _latestBuildURLs = data.latest_sha_build_url || {};
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
         if (data.upgrade_pause) _upgradePause = data.upgrade_pause;
@@ -15635,7 +15722,15 @@ const dashboardHTML = `<!DOCTYPE html>
                   : '';
                 brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>' + _timerHTML;
               } else if (brStatus === 'failed') {
-                brStatusHTML = '<span style="color:var(--red);font-size:0.7rem;cursor:help" title="Image build failed for this commit — upgrades keep using the previous image">✗</span>';
+                var _bURL = _latestBuildURLs[br] || '';
+                var _failText = '<span style="color:var(--red);font-size:0.65rem;white-space:nowrap">build failed</span>';
+                if (_bURL) _failText = '<a href="' + escAttr(_bURL) + '" target="_blank" rel="noopener" style="color:var(--red);font-size:0.65rem;white-space:nowrap;text-decoration:none" title="Open failed Docker workflow run">build failed</a>';
+                brStatusHTML = '<span style="color:var(--red);font-size:0.7rem;cursor:help" title="Image build failed for this commit — upgrades keep using the previous image">✗</span>' + _failText;
+              } else if (brStatus === 'stale') {
+                var _staleURL = _latestBuildURLs[br] || '';
+                var _staleText = '<span style="color:var(--orange,#f59e0b);font-size:0.65rem;white-space:nowrap">build stale/unknown</span>';
+                if (_staleURL) _staleText = '<a href="' + escAttr(_staleURL) + '" target="_blank" rel="noopener" style="color:var(--orange,#f59e0b);font-size:0.65rem;white-space:nowrap;text-decoration:none" title="Open Docker workflow run">build stale/unknown</a>';
+                brStatusHTML = '<span style="color:var(--orange,#f59e0b);font-size:0.7rem;cursor:help" title="Image is still unavailable after the configured build window">!</span>' + _staleText;
               }
               lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHAs[br]) + '</span>' + (brMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(brMsg) + '</span>' : '') + brStatusHTML +
                 /* Per-line pulls mini chart: a .line-pulls span each

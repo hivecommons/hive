@@ -3747,14 +3747,15 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	// latest_shas is a legitimate state (hub image published, spoke image
 	// still building) rather than a contradiction.
 	resp := map[string]any{
-		"git_hash":        s.hubGitHash,
-		"git_branch":      s.hubGitBranch,
-		"latest_sha":      getLatestSHA(),
-		"latest_shas":     getLatestSHAs(),
-		"latest_hub_shas": getLatestHubSHAs(),
-		"head_shas":       getHeadSHAs(),
-		"image_statuses":  getImageStatuses(),
-		"upgrade_state":   s.hubUpgradeState(),
+		"git_hash":         s.hubGitHash,
+		"git_branch":       s.hubGitBranch,
+		"latest_sha":       getLatestSHA(),
+		"latest_shas":      getLatestSHAs(),
+		"latest_hub_shas":  getLatestHubSHAs(),
+		"head_shas":        getHeadSHAs(),
+		"image_statuses":   getImageStatuses(),
+		"image_build_urls": getImageBuildURLs(),
+		"upgrade_state":    s.hubUpgradeState(),
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
