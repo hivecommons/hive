@@ -60,9 +60,9 @@ Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or
 
 ## Hosted hive disappeared or its URL times out
 
-Hosted hives that never complete setup or go inactive are **reaped on a timer**: the hive vanishes from the hub's Usage view and the old `https://<id>.hive.kubestellar.io` URL times out permanently. This is expected reclamation, not an outage. Recovery:
+Hosted hives that never complete setup or go inactive are **reaped on a timer**: the hive vanishes from the hub's Usage view and the old `https://<id>.hive.hivecommons.dev` URL times out permanently. This is expected reclamation, not an outage. Recovery:
 
-1. **Request a new hive** from the hub's `/get-started` wizard (hosted hub: `https://hive.kubestellar.io/get-started`, the **Request a hive** button). The old URL will not come back.
+1. **Request a new hive** from the hub's `/get-started` wizard (hosted hub: `https://hive.hivecommons.dev/get-started`, the **Request a hive** button). The old URL will not come back.
 2. **Install the Forge App immediately** on the new hive — the GitHub App on GitHub.com, or the same app on your GHE host for enterprise. See [GitHub App setup](github-app-setup.md) and the [getting-started guide's Step 0](getting-started.md#step-0--before-you-start-do-this-first).
 3. An installed Forge App plus regular heartbeats keeps the new hive from being reaped again.
 

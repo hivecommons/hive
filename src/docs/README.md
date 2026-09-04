@@ -2,11 +2,12 @@
 
 Documentation for the current Hive line (branch `v4`; the code and docs live under the `src/` directory). The `v2` branch was retired in August 2026 — operators upgrading a v2 deployment should start with the [v2 → v4 migration guide](migration-v2-v4.md).
 
-Start with [Architecture](architecture.md) for the system overview, then use the topic guides below. New users should start with the [getting-started guide](getting-started.md) — it covers setting up the Forge App (the app for your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) and what to do if an inactive hosted hive is reaped.
+Start with [Architecture](architecture.md) for the system overview, then use the topic guides below. New users should start with the [getting-started guide](getting-started.md) — it covers setting up the Forge App (the app for your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) and what to do if an inactive hosted hive is reaped. If you want the no-cluster hosted path, use the [hosted Hive Hub onboarding guide](hosted-hub.md).
 
 ## Operations
 
 - [Manual provisioning](manual-provisioning.md) — heartbeat-only cluster provisioning, hub access roles, and common gotchas.
+- [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
 - [Self-hosted hub deployment](https://github.com/hivecommons/hive/blob/v4/src/docs/hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](https://github.com/hivecommons/hive/blob/v4/src/docs/net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
 - [Config layering](https://github.com/hivecommons/hive/blob/v4/src/docs/config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.

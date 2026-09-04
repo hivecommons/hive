@@ -1,0 +1,1 @@
+- Documented the hosted Hive Hub cutover to `https://hive.hivecommons.dev`, including legacy redirect guidance and hosted-hub onboarding.

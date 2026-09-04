@@ -21,8 +21,8 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_ID` | No | config or generated id | Stable hive/spoke identifier override; passed through to launched agents. |
 | `HIVE_CLUSTER_ID` | No | config or hub-provisioned value | Hosted cluster identifier override. |
 | `HIVE_HUB_URL` | No | `hub.url` from config | Hub URL override for spoke heartbeats/registration. On the hub it is also the last environment variable consulted in the hub public-origin chain (see `HIVE_HUB_PUBLIC_URL`). |
-| `HIVE_HUB_PUBLIC_URL` | No | `https://hive.kubestellar.io` | Hub canonical public origin used to derive OAuth/OIDC callback URLs, hub Open Graph/notification links, same-origin checks, and the registrable-domain scope for hub SSO cookies. Set this to the externally reachable hub URL when moving the public host; leave unset to preserve the current canonical host. |
-| `HIVE_HUB_SPOKE_DOMAIN` | No | `hive.kubestellar.io` | Parent domain used for hub-provisioned spoke ingress hostnames (for example `<hive-id>.<domain>`). Kept separate from `HIVE_HUB_PUBLIC_URL` because the wildcard spoke domain may differ from the hub's own hostname. |
+| `HIVE_HUB_PUBLIC_URL` | No | compiled fallback `https://hive.kubestellar.io`; hosted service sets `https://hive.hivecommons.dev` | Hub canonical public origin used to derive OAuth/OIDC callback URLs, hub Open Graph/notification links, same-origin checks, and the registrable-domain scope for hub SSO cookies. Public hub operators should set this to `https://hive.hivecommons.dev` for the cutover; leave the legacy value only while deliberately serving the redirect hostname. |
+| `HIVE_HUB_SPOKE_DOMAIN` | No | compiled fallback `hive.kubestellar.io`; hosted service sets `hive.hivecommons.dev` | Parent domain used for hub-provisioned spoke ingress hostnames (for example `<hive-id>.<domain>`). Kept separate from `HIVE_HUB_PUBLIC_URL` because the wildcard spoke domain may differ from the hub's own hostname. |
 | `HIVE_HUB_LEGACY_COOKIE_DOMAIN` | No | none | Optional transition-only hub SSO cookie domain to expire alongside the active cookie domain while accepting any carried `hive_hub_user` cookie value during a host migration. Writes still target the domain derived from `HIVE_HUB_PUBLIC_URL`; unset disables the extra legacy-domain cleanup. |
 | `HIVE_HUB_SECRET` | Required for spokes registered to a protected hub; optional for a standalone hub with `/data/saas/hub-secret.key` | `/data/saas/hub-secret.key` on the hub when present; no fallback for spoke heartbeat auth | Bearer secret for spoke heartbeats and hub/spoke SaaS APIs. |
 | `HIVE_COVERAGE_BADGE_URL` | No | none | Optional coverage badge URL exposed in dashboard status. |
@@ -281,7 +281,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
-| `HIVE_HUB` | Required after registration for contributor relay; `just` can discover/set it | `wss://hive.kubestellar.io/contribute` in `Justfile`; `wss://hive.kubestellar.io:3001/contribute` in compose/relay defaults | Contributor WebSocket hub URL. Comma-separated values are supported with matching `HIVE_REGISTRATION_TOKEN` entries. |
+| `HIVE_HUB` | Required after registration for contributor relay; `just` can discover/set it | legacy defaults may still mention `wss://hive.kubestellar.io`; use `wss://hive.hivecommons.dev/contribute` for the hosted hub | Contributor WebSocket hub URL. Comma-separated values are supported with matching `HIVE_REGISTRATION_TOKEN` entries. |
 | `HIVE_REGISTRATION_TOKEN` | Yes for contributor relay | none | Contributor registration token. Comma-separated values match `HIVE_HUB` by position. |
 | `AGENT_BACKEND` | No | `claude` | Contributor/agent CLI backend selector. |
 | `AGENT_MODEL` | No | backend default, or `GOOSE_MODEL` for Goose fallback | Contributor/agent model override. |

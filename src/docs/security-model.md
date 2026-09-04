@@ -22,7 +22,7 @@ The threats that matter: an unauthorized person reaching your dashboard, an agen
 
 ## Layer 1 — Dashboard access control (hub route)
 
-Hives hosted on or registered with the Hive Hub are reached through a per-hive hostname (`<hive-id>.<cluster-domain>` — `*.hive.kubestellar.io` on the default cluster, other domains on vanity/partner clusters), and every request passes the hub's authentication check before it reaches a spoke dashboard:
+Hives hosted on or registered with the Hive Hub are reached through a per-hive hostname (`<hive-id>.<cluster-domain>` — `*.hive.hivecommons.dev` on the default cluster, other domains on vanity/partner clusters), and every request passes the hub's authentication check before it reaches a spoke dashboard:
 
 - **Multi-provider sign-in.** Users sign in to the hub with GitHub OAuth or Google — with IBMid, Red Hat, Microsoft Entra ID, and a generic OIDC provider available via configuration. With more than one provider configured, `/login` shows a provider picker; a single configured provider goes straight through. The GitHub login deliberately requests **no OAuth scope at all** — the hub only needs to learn *who* is logging in, not to act on their behalf. The session cookie is `HttpOnly`, `Secure`, `SameSite=Lax`, and session cookies are **Ed25519-signed**; the legacy symmetric (HMAC) session lane was deleted on v4.
 - **Per-user, per-hive authorization on every request.** The hub's auth-check endpoint (wired as an nginx `auth_request` / `auth-url`) resolves the requesting user, looks up whether that specific hive is in the user's access map, and returns **403 if it isn't**. Only then does the request proceed to the spoke.

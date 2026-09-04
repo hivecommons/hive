@@ -39,7 +39,8 @@ closing them.
 | P2 — Go module rename | Done | Maintainers | v4 [#5815](https://github.com/hivecommons/hive/pull/5815) and v5 [#5816](https://github.com/hivecommons/hive/pull/5816) switched the module to `github.com/hivecommons/hive`; [#5778](https://github.com/hivecommons/hive/issues/5778) is closed. |
 | P3 — GHCR namespace transfer and workflow repair | In progress | Release maintainers | `hive`, `hive-hub`, `hive-contributor`, and `pr-verifier` packages exist under `ghcr.io/hivecommons/*`; workflow writes and verifier pulls still need [#5810](https://github.com/hivecommons/hive/issues/5810) and [#5814](https://github.com/hivecommons/hive/issues/5814) closed. |
 | P4 — documentation and install sweep | In progress | Docs maintainers | Duplicate XL sweep PRs [#5776](https://github.com/hivecommons/hive/pull/5776) and [#5777](https://github.com/hivecommons/hive/pull/5777) were closed as superseded; the redo landed as [#5818](https://github.com/hivecommons/hive/pull/5818) and [#5819](https://github.com/hivecommons/hive/pull/5819), with residual doc links tracked below. |
-| P5 — kubestellar package freeze/deprecation | Not started | Maintainers | A dated deprecation notice exists, operators have a documented migration window, and rollback/pinning instructions are tested after open breakages are closed. |
+| P5 — web-domain cutover | In progress | Hub maintainers + docs maintainers | `https://hive.hivecommons.dev` is documented as the canonical hosted hub, `https://hive.kubestellar.io` remains a legacy redirect, operator-facing `HIVE_HUB_URL`/`HIVE_HUB_PUBLIC_URL`/`HIVE_HUB_SPOKE_DOMAIN` guidance is published, and redirect retirement criteria are announced before enforcement. |
+| P6 — kubestellar package freeze/deprecation | Not started | Maintainers | A dated deprecation notice exists, operators have a documented migration window, and rollback/pinning instructions are tested after open breakages are closed. |
 
 ## Ordered closeout checklist
 
@@ -64,7 +65,13 @@ closing them.
    [#5814](https://github.com/hivecommons/hive/issues/5814); PR content
    verification must pull from the transferred `ghcr.io/hivecommons/pr-verifier`
    package instead of the retired `ghcr.io/kubestellar/pr-verifier` reference.
-6. **Residual doc links and operator notices** — In progress under this tracker:
+6. **Hosted hub web domain** — In progress under
+   [#5951](https://github.com/hivecommons/hive/issues/5951); the canonical hub
+   is `https://hive.hivecommons.dev`, while `https://hive.kubestellar.io`
+   remains a legacy redirect during the cutover. Operator docs must call out
+   `HIVE_HUB_URL`, `HIVE_HUB_PUBLIC_URL`, and `HIVE_HUB_SPOKE_DOMAIN` updates
+   before any redirect retirement.
+7. **Residual doc links and operator notices** — In progress under this tracker:
    keep README, install, release-channel, backup/restore, Podman, upgrade, and
    dashboard/operator notice text aligned as each preceding item closes.
 
