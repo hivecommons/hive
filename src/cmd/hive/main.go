@@ -7273,17 +7273,23 @@ func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
 		return
 	}
 	// A marker that cannot be read is not a reason to drop the cause. The
-	// earlier version returned here, which left LastError empty and produced
-	// the bare "self-upgrade failed after 5 attempts: " the hub relays to the
-	// dashboard - an alert naming a failure and nothing about it. Losing the
-	// attempt count is survivable; losing the reason is what makes the failure
-	// undiagnosable, so rebuild the marker around the error instead.
+	// earlier version returned on ANY read error, which left LastError empty
+	// and produced the bare "self-upgrade failed after 5 attempts: " the hub
+	// relays to the dashboard - an alert naming a failure and nothing about
+	// it. Losing the attempt count is survivable; losing the reason is what
+	// makes the failure undiagnosable, so rebuild the marker around the error
+	// instead. An ABSENT marker is different: no attempt is in flight, and
+	// creating one here would later be mistaken for a real attempt, so the
+	// no-op stands for that case only.
 	var m upgradeMarker
 	data, err := os.ReadFile(path)
-	if err != nil {
+	switch {
+	case os.IsNotExist(err):
+		return
+	case err != nil:
 		logger.Warn("upgrade marker unreadable; recording the error against a fresh marker",
 			"path", path, "error", err)
-	} else {
+	default:
 		m = parseUpgradeMarker(data)
 	}
 	m.LastError = upgradeErr.Error()

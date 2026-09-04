@@ -13,20 +13,31 @@ import (
 // attempts: " with nothing after the colon, because the cause was dropped when
 // the marker could not be read. The reason must survive that.
 func TestRecordUpgradeErrorKeepsCauseWhenMarkerUnreadable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing", "upgrade-marker.json")
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions cannot make the marker unreadable")
+	}
+	path := filepath.Join(t.TempDir(), "upgrade-marker.json")
+	writeUpgradeMarker(path, upgradeMarker{TargetSHA: "526ef71", Attempts: 5}, testLogger())
+	// Write-only: the read fails (the fleet scenario) but the rewrite can land.
+	if err := os.Chmod(path, 0o200); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
 
 	recordUpgradeError(path, errors.New("patching own Deployment: 403 forbidden"), testLogger())
 
-	// A missing parent directory means the write cannot land either; the point
-	// of the assertion is that the function no longer returns before trying.
-	if data, err := os.ReadFile(path); err == nil {
-		var m upgradeMarker
-		if err := json.Unmarshal(data, &m); err != nil {
-			t.Fatalf("marker is not valid JSON: %v", err)
-		}
-		if !strings.Contains(m.LastError, "403 forbidden") {
-			t.Errorf("LastError = %q, want the cause preserved", m.LastError)
-		}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod back: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading marker: %v", err)
+	}
+	var m upgradeMarker
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("marker is not valid JSON: %v", err)
+	}
+	if !strings.Contains(m.LastError, "403 forbidden") {
+		t.Errorf("LastError = %q, want the cause preserved", m.LastError)
 	}
 }
 
