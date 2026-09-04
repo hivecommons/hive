@@ -21,8 +21,27 @@
 #       prints the section body: every line between the heading and the next
 #       non-fenced `## ` heading (or EOF), exactly as derive-release-version.sh
 #       has always consumed it
-/^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
-!in_fence && /^## Unreleased[[:space:]]*$/ { found = 1; capture = 1; next }
-!in_fence && /^## / && capture { if (mode == "body") exit; capture = 0 }
+#   awk -v mode=range  -f changelog-unreleased.awk CHANGELOG.md
+#       prints 1-based inclusive body line numbers as: <start> <end>
+#   awk -v mode=lib -f changelog-unreleased.awk -f transformer.awk ...
+#       exposes the changelog_* functions without consuming records
+function changelog_is_fence(line) {
+  return line ~ /^[[:space:]]*(```|~~~)/
+}
+function changelog_is_unreleased_heading(line) {
+  return line ~ /^## Unreleased[[:space:]]*$/
+}
+function changelog_is_release_heading(line) {
+  return line ~ /^## /
+}
+mode != "lib" && changelog_is_fence($0) { in_fence = !in_fence }
+mode != "lib" && !in_fence && changelog_is_unreleased_heading($0) { found = 1; capture = 1; body_start = NR + 1; body_end = NR; next }
+mode != "lib" && !in_fence && changelog_is_release_heading($0) && capture { body_end = NR - 1; if (mode == "body") exit; capture = 0 }
 capture && mode == "body" { print }
-END { if (mode != "body") exit found ? 0 : 1 }
+END {
+  if (mode == "range" && found) {
+    if (capture) body_end = NR
+    print body_start, body_end
+  }
+  if (mode != "body" && mode != "lib") exit found ? 0 : 1
+}

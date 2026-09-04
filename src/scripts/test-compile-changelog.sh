@@ -185,12 +185,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 6: end-to-end property the release pipeline depends on — compiling an
+# Case 6: fenced prose that mentions `## Unreleased` must not be treated as
+# the target section. This pins the #5918/#5939 bug class for both the
+# existence check and the insertion transformer.
+# ---------------------------------------------------------------------------
+dir="$tmp/case-6"
+mkdir -p "$dir/changelog.d"
+cat > "$dir/CHANGELOG.md" <<'EOF'
+# Changelog
+
+```markdown
+Example prose that is not the changelog section:
+## Unreleased
+```
+
+## Unreleased
+
+### Fixed
+
+- the real existing entry.
+
+## 2026-01-01 (v1.0.0)
+
+### Added
+
+- old.
+EOF
+printf -- '- landed in the real section.\n' > "$dir/changelog.d/fixed-12-fence.md"
+( cd "$dir" && bash "$compile" CHANGELOG.md changelog.d ) > "$tmp/case6.out" 2>&1
+if grep -A2 'Example prose' "$dir/CHANGELOG.md" | grep -q -- '- landed in the real section'; then
+  note_fail "fenced ## Unreleased example must not receive fragment entries"
+elif awk '/^## Unreleased$/ { real=1; next } real && /^## 2026-01-01/ { exit } real && /landed in the real section/ { found=1 } END { exit found ? 0 : 1 }' "$dir/CHANGELOG.md"; then
+  note_ok "fenced prose mention of ## Unreleased is ignored by compile"
+else
+  note_fail "fragment did not land in the real Unreleased section: $(cat "$tmp/case6.out")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 7: end-to-end property the release pipeline depends on — compiling an
 # added- fragment into an EMPTY Unreleased makes derive-release-version.sh
 # derive a minor release, where before the compile it derived none. This is
 # the decide-job ordering (compile before derive) proven as a property.
 # ---------------------------------------------------------------------------
-dir="$tmp/case-6"
+dir="$tmp/case-7"
 mkdir -p "$dir/changelog.d"
 cat > "$dir/CHANGELOG.md" <<'EOF'
 # Changelog

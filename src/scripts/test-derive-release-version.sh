@@ -75,13 +75,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 4: ### Security present => major bump, outranks Added and Fixed.
+# Case 4: ### Security present is release-worthy but does not cut a new
+# release line by itself, so Added still controls the minor bump.
 # ---------------------------------------------------------------------------
 out=$(run $'## Unreleased\n\n### Added\n\n- new thing\n\n### Security\n\n- closed a hole\n' v1.3.0)
-if [[ "$(get "$out" release)" == "true" && "$(get "$out" bump)" == "major" && "$(get "$out" version)" == "2.0.0" ]]; then
-  note_ok "Security present => major bump outranks Added, 1.3.0 -> 2.0.0"
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" bump)" == "minor" && "$(get "$out" version)" == "1.4.0" ]]; then
+  note_ok "Security plus Added => minor bump, 1.3.0 -> 1.4.0"
 else
-  note_fail "expected release=true bump=major version=2.0.0, got: $out"
+  note_fail "expected release=true bump=minor version=1.4.0, got: $out"
 fi
 
 # ---------------------------------------------------------------------------
@@ -115,7 +116,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 8: version sort ignores tag creation order — only numeric value counts.
+# Case 8: fenced prose that mentions `## Unreleased` is ignored; only the real
+# heading controls the body extracted for release inference.
+# ---------------------------------------------------------------------------
+out=$(run $'```markdown\n## Unreleased\n\n### Added\n\n- example only\n```\n\n## Unreleased\n\n## 2026-01-01\n')
+if [[ "$(get "$out" release)" == "false" ]]; then
+  note_ok "fenced prose mention of ## Unreleased is ignored"
+else
+  note_fail "fenced prose mention should not make a release, got: $out"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 9: version sort ignores tag creation order — only numeric value counts.
 # A repo with v1.9.0 tagged AFTER v1.10.0 (out-of-order creation, possible
 # after a manual retag) must still treat v1.10.0 as the base.
 # ---------------------------------------------------------------------------
