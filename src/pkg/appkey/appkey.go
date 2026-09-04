@@ -64,6 +64,23 @@ type Resolver struct {
 	FileMode os.FileMode
 }
 
+type tempKeyFile interface {
+	Name() string
+	Chmod(os.FileMode) error
+	WriteString(string) (int, error)
+	Sync() error
+	Close() error
+}
+
+var (
+	mkdirAll      = os.MkdirAll
+	createTempKey = func(dir, pattern string) (tempKeyFile, error) {
+		return os.CreateTemp(dir, pattern)
+	}
+	removeFile = os.Remove
+	renameFile = os.Rename
+)
+
 // Default returns a Resolver using the production spoke layout.
 func Default() *Resolver {
 	return &Resolver{
@@ -150,15 +167,15 @@ func (r *Resolver) WritePerAppIDKey(appID int64, pemData string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("app key for app_id %d is unusable: %w", appID, err)
 	}
-	if err := os.MkdirAll(r.DataDir, 0o700); err != nil {
+	if err := mkdirAll(r.DataDir, 0o700); err != nil {
 		return "", fmt.Errorf("create app key dir: %w", err)
 	}
-	tmp, err := os.CreateTemp(r.DataDir, "."+filepath.Base(path)+".tmp*")
+	tmp, err := createTempKey(r.DataDir, "."+filepath.Base(path)+".tmp*")
 	if err != nil {
 		return "", fmt.Errorf("create temp app key file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename below succeeds
+	defer func() { _ = removeFile(tmpName) }() // no-op once the rename below succeeds
 	if err := tmp.Chmod(r.FileMode); err != nil {
 		_ = tmp.Close() // best-effort cleanup; the chmod error is what's returned
 		return "", fmt.Errorf("chmod temp app key file: %w", err)
@@ -174,7 +191,7 @@ func (r *Resolver) WritePerAppIDKey(appID int64, pemData string) (string, error)
 	if err := tmp.Close(); err != nil {
 		return "", fmt.Errorf("close temp app key file: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := renameFile(tmpName, path); err != nil {
 		return "", fmt.Errorf("rename app key into place: %w", err)
 	}
 	return fp, nil
