@@ -391,9 +391,9 @@ knowledge:
 
 ### Phase 2: Testing progression engine
 
-9. **`src/pkg/knowledge/maturity.go`** — ACMM test maturity detector
-   - `DetectMaturity(repo) Level` — checks: has tests? has CI? coverage config? TDD markers?
-   - Returns Level 1-4
+9. **Existing ACMM advisory/governor signals** — test progression inputs
+   - Reuse the current maturity evaluation pipeline instead of adding a
+     separate knowledge-package detector.
 
 10. **`src/pkg/governor/governor.go`** — Add test maturity to governor logic
     - Governor reads maturity level from snapshot

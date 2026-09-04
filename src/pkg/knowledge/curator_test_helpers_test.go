@@ -1,8 +1,7 @@
 package knowledge
 
-// Shared test helpers for the curator test files. These previously lived in
-// maturity_extra_test.go and were kept when the dead MaturityDetector code
-// was removed.
+// Shared test helpers for the curator test files. These previously lived with
+// the removed maturity-detector tests.
 
 import (
 	"net/http/httptest"
