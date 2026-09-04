@@ -29,7 +29,7 @@ writing) wherever a specific mechanism is asserted.
 | Assessment Stage | Complete |
 | Software | [hivecommons/hive](https://github.com/hivecommons/hive) |
 | Security Provider | No — Hive is not itself a security product. It is an agent-orchestration platform whose core value proposition includes constraining the blast radius of the AI agents it runs; see [Overview](#overview) below. |
-| Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `src/bin/`, 45 scripts per [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
+| Languages | Go (core: dashboard, hub, proxy, scheduler, agent orchestration — `src/go.mod`); JavaScript (dashboard UI, served inline, no separate SPA build — see `dashboard/`); Shell/Python (deterministic pipeline scripts under `bin/`, indexed in [`bin/README.md`](https://github.com/hivecommons/hive/blob/v4/bin/README.md)) |
 | SBOM | Not currently generated. Container image builds explicitly disable provenance/SBOM attestations (`sbom: false` in `.github/workflows/docker.yml:134,177,349,454`, citing issue #3760 as the reason). This is a known gap — see [Open questions](#open-questions--not-yet-assessed). |
 | Security links | See table below |
 
@@ -298,7 +298,7 @@ project-level compliance signals:
 - **Language and structure**: Go (`src/`, `go 1.25.6` per `src/go.mod:3`) for
   the core dashboard/hub/proxy/scheduler/agent-orchestration code; a JS
   dashboard UI served inline (no separate SPA build step); Python/Shell for
-  the deterministic pre-kick pipeline (45 scripts, indexed in
+  the deterministic pre-kick pipeline (indexed in
   `bin/README.md`).
 - **Branch model**: `v4` is the sole actively maintained line;
   `v2` was retired in August 2026 (`src/docs/README.md` header, `migration-v2-v4.md`).
