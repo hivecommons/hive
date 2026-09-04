@@ -20,6 +20,23 @@ on:
   #
   # create-issue-on-failure below stays gated on `github.event_name == 'schedule'`,
   # so a red PR fails the check without also filing an issue.
+  # Push to the release branches is what produces the per-commit evidence the
+  # stable promotion gate requires. Without it v2-tests only ever lands on
+  # whatever SHA happens to be HEAD at :30, so no merged commit carries a
+  # v2-tests success and the gate can never promote - it held on every
+  # candidate, including under an emergency exception, which by design refuses
+  # to bypass missing green evidence. The paths filter mirrors pull_request, so
+  # this adds a run only where the suite is relevant.
+  push:
+    branches: [v2, v4]
+    paths:
+      - 'src/**'
+      - 'bin/**'
+      - 'config/**'
+      - 'Justfile'
+      - 'dashboard/openapi.json'
+      - '.github/workflows/v2-tests.yml'
+      - '.github/scripts/slowest-tests.sh'
   pull_request:
     branches: [v2, v4]
     # Several package tests police shipped files outside src/: contributor
