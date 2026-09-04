@@ -1,0 +1,1 @@
+- The stable promotion gate now logs the revision it evaluated and each required workflow's verdict. A hold on "missing green release evidence" previously named only the category, never which workflow on which revision concluded what, so the reason had to be reconstructed by hand from outside the run.

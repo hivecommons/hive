@@ -393,6 +393,14 @@ promote() {
   (( age >= 0 )) || age=0
 
   evidence_text=$(collect_required_workflows "$repo" "$first_revision" 2>&1) || green=false
+  # Echo the per-workflow verdicts to the LOG, not only the job summary. A hold
+  # on "missing green release evidence" is otherwise undiagnosable from the run
+  # output: it names the category and never which workflow, on which revision,
+  # concluded what. That cost several blind promotion attempts during the
+  # 2026-09-04 fleet recovery.
+  echo "evidence_revision=${first_revision}"
+  echo "evidence_green=${green}"
+  printf '%s\n' "$evidence_text" | sed 's/^/evidence: /'
   blockers=$(blocker_count "$repo")
   smoke=${SMOKE_EVIDENCE:-}
   if [[ -z $smoke ]]; then
