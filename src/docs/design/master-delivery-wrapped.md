@@ -145,10 +145,10 @@ ambiguous (`master-key-rotation.md:461-463`).
 
 This mirrors an established pattern rather than inventing one. The spoke
 already persists private key material on the same PVC at the same mode:
-`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/main.go:99`) and
-`spokeAppKeyDir = "/data"` (`:104`), with `spokeAppKeyFileMode = 0o600`
-(`:116`) and the comment "signing material must never be readable by anything
-else sharing the PVC or the pod" (`:114-115`). `/data` is the PVC mount in the spoke template
+`appkey.DefaultDataKeyPath = "/data/gh-app-key.pem"` and
+`appkey.DefaultDataDir = "/data"`, with `appkey.DefaultFileMode = 0o600`
+and the comment "signing material must never be readable by anything
+else sharing the PVC or the pod" (`src/pkg/appkey/appkey.go`). `/data` is the PVC mount in the spoke template
 (`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:5297`)
 already establishes that identity-critical state persists there across
 restarts.
@@ -363,9 +363,9 @@ context, not by the hub. The template already injects per-hive secret material
 (`src/pkg/hub/saas_provision.go:1966-1986`: `HeartbeatKey`, `SessionKey`, `SSOPublicKey`,
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
 (`src/pkg/hub/saas_provision.go:2763`) already carries private key material at provision
-time — `spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"`
-(`src/cmd/hive/main.go:98`), which the spoke holds "from its very first boot —
-before any heartbeat has run" (`:108`).
+time — `appkey.DefaultProvisionedKeyPath = "/secrets/gh-app-key.pem"`
+(`src/pkg/appkey/appkey.go`), and per-app-id keys in that mount are available
+"from [a hive's] very first boot — before any heartbeat has run."
 
 So there is an existing, precedented channel for giving a spoke a secret at
 birth that the hub does not have to reach in to deliver.

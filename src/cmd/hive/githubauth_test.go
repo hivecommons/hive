@@ -36,12 +36,12 @@ const realInstallationID int64 = 149757667
 func isolateAppKeyLookup(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	origData, origSecrets := spokeAppKeyPath, spokeProvisionedAppKeyPath
-	spokeAppKeyPath = filepath.Join(dir, "absent-data-key.pem")
-	spokeProvisionedAppKeyPath = filepath.Join(dir, "absent-secrets-key.pem")
+	origData, origSecrets := appKeys.DataKeyPath, appKeys.ProvisionedKeyPath
+	appKeys.DataKeyPath = filepath.Join(dir, "absent-data-key.pem")
+	appKeys.ProvisionedKeyPath = filepath.Join(dir, "absent-secrets-key.pem")
 	t.Setenv("GH_APP_KEY_FILE", "")
 	t.Cleanup(func() {
-		spokeAppKeyPath, spokeProvisionedAppKeyPath = origData, origSecrets
+		appKeys.DataKeyPath, appKeys.ProvisionedKeyPath = origData, origSecrets
 	})
 	return dir
 }
@@ -171,7 +171,7 @@ func TestInitGitHubAuthRealAppMissingKeyDegrades(t *testing.T) {
 		t.Errorf("failure reason omits the path actually tried (%q): %q", missing, got.Failure)
 	}
 	// The resolution order, named explicitly.
-	for _, want := range []string{"GH_APP_KEY_FILE", "github.key_file", spokeAppKeyPath, spokeProvisionedAppKeyPath} {
+	for _, want := range []string{"GH_APP_KEY_FILE", "github.key_file", appKeys.DataKeyPath, appKeys.ProvisionedKeyPath} {
 		if !strings.Contains(got.Failure, want) {
 			t.Errorf("failure reason omits %q from the resolution order: %q", want, got.Failure)
 		}
@@ -337,7 +337,7 @@ func TestDescribeAppKeyFailureNamesEnvOverride(t *testing.T) {
 	// With neither set, the message must say so rather than printing a bare
 	// "=" and leaving the operator to guess whether the value was empty or the
 	// message was truncated.
-	bare := describeAppKeyFailure("", "", spokeProvisionedAppKeyPath, os.ErrNotExist)
+	bare := describeAppKeyFailure("", "", appKeys.ProvisionedKeyPath, os.ErrNotExist)
 	if strings.Count(bare, "(unset)") != 2 {
 		t.Errorf("both unset sources should render as (unset): %q", bare)
 	}

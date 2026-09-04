@@ -54,10 +54,10 @@ func verdictTestAuth(t *testing.T, apiURL string) *github.AppAuth {
 	// key-missing without any API call when none holds content. Point one of
 	// them at the real key so these tests exercise the API classification the
 	// verdict actually depends on. Restored via t.Cleanup.
-	origProvisioned, origPVC := spokeProvisionedAppKeyPath, spokeAppKeyPath
-	spokeProvisionedAppKeyPath, spokeAppKeyPath = keyPath, keyPath
+	origProvisioned, origPVC := appKeys.ProvisionedKeyPath, appKeys.DataKeyPath
+	appKeys.ProvisionedKeyPath, appKeys.DataKeyPath = keyPath, keyPath
 	t.Cleanup(func() {
-		spokeProvisionedAppKeyPath, spokeAppKeyPath = origProvisioned, origPVC
+		appKeys.ProvisionedKeyPath, appKeys.DataKeyPath = origProvisioned, origPVC
 	})
 	auth, err := github.NewAppAuth(verdictTestAppID, verdictTestInstallationID, keyPath, verdictTestLogger(), apiURL)
 	if err != nil {

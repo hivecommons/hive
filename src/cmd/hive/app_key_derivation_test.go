@@ -61,17 +61,17 @@ func writeKey(t *testing.T, path string) {
 // claim has a per-app-id key of its own.
 func TestResolveAppKeyFileIgnoresStaleGenericPin(t *testing.T) {
 	dir := t.TempDir()
-	origDir, origGeneric := spokeAppKeyDir, spokeAppKeyPath
-	spokeAppKeyDir = dir
-	spokeAppKeyPath = filepath.Join(dir, "gh-app-key.pem")
-	t.Cleanup(func() { spokeAppKeyDir, spokeAppKeyPath = origDir, origGeneric })
+	origDir, origGeneric := appKeys.DataDir, appKeys.DataKeyPath
+	appKeys.DataDir = dir
+	appKeys.DataKeyPath = filepath.Join(dir, "gh-app-key.pem")
+	t.Cleanup(func() { appKeys.DataDir, appKeys.DataKeyPath = origDir, origGeneric })
 
 	const publicAppID = 3568013
-	writeKey(t, spokeAppKeyPath)              // the stale GHE key
-	writeKey(t, perAppIDKeyPath(publicAppID)) // the correct public key
+	writeKey(t, appKeys.DataKeyPath)                  // the stale GHE key
+	writeKey(t, appKeys.PerAppIDKeyPath(publicAppID)) // the correct public key
 
-	got := resolveAppKeyFile(spokeAppKeyPath, "", publicAppID)
-	if want := perAppIDKeyPath(publicAppID); got != want {
+	got := appKeys.Resolve(appKeys.DataKeyPath, "", publicAppID)
+	if want := appKeys.PerAppIDKeyPath(publicAppID); got != want {
 		t.Fatalf("resolved %q, want %q — a stale generic pin must not shadow the key for the App we claim", got, want)
 	}
 }
@@ -82,17 +82,17 @@ func TestResolveAppKeyFileIgnoresStaleGenericPin(t *testing.T) {
 // at a bespoke location, and that must still win.
 func TestResolveAppKeyFileKeepsOperatorOverride(t *testing.T) {
 	dir := t.TempDir()
-	origDir, origGeneric := spokeAppKeyDir, spokeAppKeyPath
-	spokeAppKeyDir = dir
-	spokeAppKeyPath = filepath.Join(dir, "gh-app-key.pem")
-	t.Cleanup(func() { spokeAppKeyDir, spokeAppKeyPath = origDir, origGeneric })
+	origDir, origGeneric := appKeys.DataDir, appKeys.DataKeyPath
+	appKeys.DataDir = dir
+	appKeys.DataKeyPath = filepath.Join(dir, "gh-app-key.pem")
+	t.Cleanup(func() { appKeys.DataDir, appKeys.DataKeyPath = origDir, origGeneric })
 
 	const oddAppID = 4240368
 	bespoke := filepath.Join(dir, "custom", "my-app.pem")
 	writeKey(t, bespoke)
-	writeKey(t, perAppIDKeyPath(oddAppID)) // present, and must NOT be preferred
+	writeKey(t, appKeys.PerAppIDKeyPath(oddAppID)) // present, and must NOT be preferred
 
-	if got := resolveAppKeyFile(bespoke, "", oddAppID); got != bespoke {
+	if got := appKeys.Resolve(bespoke, "", oddAppID); got != bespoke {
 		t.Fatalf("resolved %q, want the operator's %q", got, bespoke)
 	}
 }
@@ -102,30 +102,30 @@ func TestResolveAppKeyFileKeepsOperatorOverride(t *testing.T) {
 // must be returned rather than dropping the hive to no key at all.
 func TestResolveAppKeyFileGenericPinSurvivesWithoutPerAppKey(t *testing.T) {
 	dir := t.TempDir()
-	origDir, origGeneric := spokeAppKeyDir, spokeAppKeyPath
-	spokeAppKeyDir = dir
-	spokeAppKeyPath = filepath.Join(dir, "gh-app-key.pem")
-	t.Cleanup(func() { spokeAppKeyDir, spokeAppKeyPath = origDir, origGeneric })
+	origDir, origGeneric := appKeys.DataDir, appKeys.DataKeyPath
+	appKeys.DataDir = dir
+	appKeys.DataKeyPath = filepath.Join(dir, "gh-app-key.pem")
+	t.Cleanup(func() { appKeys.DataDir, appKeys.DataKeyPath = origDir, origGeneric })
 
-	writeKey(t, spokeAppKeyPath)
-	if got := resolveAppKeyFile(spokeAppKeyPath, "", 3568013); got != spokeAppKeyPath {
-		t.Fatalf("resolved %q, want %q — with no per-app key the generic one is still the only key", got, spokeAppKeyPath)
+	writeKey(t, appKeys.DataKeyPath)
+	if got := appKeys.Resolve(appKeys.DataKeyPath, "", 3568013); got != appKeys.DataKeyPath {
+		t.Fatalf("resolved %q, want %q — with no per-app key the generic one is still the only key", got, appKeys.DataKeyPath)
 	}
 }
 
 // TestEnvOverrideStillWins: GH_APP_KEY_FILE outranks everything, unchanged.
 func TestEnvOverrideStillWins(t *testing.T) {
 	dir := t.TempDir()
-	origDir, origGeneric := spokeAppKeyDir, spokeAppKeyPath
-	spokeAppKeyDir = dir
-	spokeAppKeyPath = filepath.Join(dir, "gh-app-key.pem")
-	t.Cleanup(func() { spokeAppKeyDir, spokeAppKeyPath = origDir, origGeneric })
+	origDir, origGeneric := appKeys.DataDir, appKeys.DataKeyPath
+	appKeys.DataDir = dir
+	appKeys.DataKeyPath = filepath.Join(dir, "gh-app-key.pem")
+	t.Cleanup(func() { appKeys.DataDir, appKeys.DataKeyPath = origDir, origGeneric })
 
-	writeKey(t, spokeAppKeyPath)
-	writeKey(t, perAppIDKeyPath(3568013))
+	writeKey(t, appKeys.DataKeyPath)
+	writeKey(t, appKeys.PerAppIDKeyPath(3568013))
 	env := filepath.Join(dir, "env.pem")
 	writeKey(t, env)
-	if got := resolveAppKeyFile(spokeAppKeyPath, env, 3568013); got != env {
+	if got := appKeys.Resolve(appKeys.DataKeyPath, env, 3568013); got != env {
 		t.Fatalf("resolved %q, want env override %q", got, env)
 	}
 }
@@ -138,28 +138,28 @@ func TestEnvOverrideStillWins(t *testing.T) {
 // on disk said so, and correcting app_id to the public App kept signing with it.
 func TestDeliveredKeyPathNamesTheApp(t *testing.T) {
 	dir := t.TempDir()
-	origDir, origGeneric := spokeAppKeyDir, spokeAppKeyPath
-	spokeAppKeyDir = dir
-	spokeAppKeyPath = filepath.Join(dir, "gh-app-key.pem")
-	t.Cleanup(func() { spokeAppKeyDir, spokeAppKeyPath = origDir, origGeneric })
+	origDir, origGeneric := appKeys.DataDir, appKeys.DataKeyPath
+	appKeys.DataDir = dir
+	appKeys.DataKeyPath = filepath.Join(dir, "gh-app-key.pem")
+	t.Cleanup(func() { appKeys.DataDir, appKeys.DataKeyPath = origDir, origGeneric })
 
 	const publicAppID, gheAppID = 3568013, 5686
 
 	pub := deliveredKeyPath(publicAppID)
 	ghe := deliveredKeyPath(gheAppID)
 
-	if pub == spokeAppKeyPath {
+	if pub == appKeys.DataKeyPath {
 		t.Fatalf("delivered key for app %d landed on the generic path %q — the filename must name the App", publicAppID, pub)
 	}
 	if pub == ghe {
 		t.Fatalf("two different Apps share one key path %q; a key for one App would overwrite the other's", pub)
 	}
-	if want := perAppIDKeyPath(publicAppID); pub != want {
+	if want := appKeys.PerAppIDKeyPath(publicAppID); pub != want {
 		t.Fatalf("delivered path = %q, want %q", pub, want)
 	}
 
 	// A delivery naming no App must still land somewhere rather than be lost.
-	if got := deliveredKeyPath(0); got != spokeAppKeyPath {
-		t.Fatalf("App-less delivery = %q, want the generic %q", got, spokeAppKeyPath)
+	if got := deliveredKeyPath(0); got != appKeys.DataKeyPath {
+		t.Fatalf("App-less delivery = %q, want the generic %q", got, appKeys.DataKeyPath)
 	}
 }

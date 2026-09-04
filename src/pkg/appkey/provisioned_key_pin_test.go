@@ -1,4 +1,4 @@
-package main
+package appkey
 
 import (
 	"os"
@@ -61,20 +61,20 @@ func writeTestAppKey(t *testing.T, path string) {
 func TestResolveAppKeyFileProvisionedGenericPinYieldsToPerAppID(t *testing.T) {
 	dir := isolateAppKeyLookup(t)
 
-	origDir := spokeAppKeyDir
-	spokeAppKeyDir = dir
-	t.Cleanup(func() { spokeAppKeyDir = origDir })
+	origDir := testKeys.DataDir
+	testKeys.DataDir = dir
+	t.Cleanup(func() { testKeys.DataDir = origDir })
 
 	const appID int64 = 5686
 	perApp := filepath.Join(dir, "gh-app-key-5686.pem")
 	writeTestAppKey(t, perApp)
 
 	// Exactly what provisioning writes into hive.yaml.
-	got := resolveAppKeyFile(spokeProvisionedAppKeyPath, "", appID)
+	got := testKeys.Resolve(testKeys.ProvisionedKeyPath, "", appID)
 	if got != perApp {
-		t.Errorf("resolveAppKeyFile(%q) = %q, want the per-app-id key %q — "+
+		t.Errorf("testKeys.Resolve(%q) = %q, want the per-app-id key %q — "+
 			"the provisioned generic pin must not block per-app-id selection",
-			spokeProvisionedAppKeyPath, got, perApp)
+			testKeys.ProvisionedKeyPath, got, perApp)
 	}
 }
 
@@ -84,9 +84,9 @@ func TestResolveAppKeyFileProvisionedGenericPinYieldsToPerAppID(t *testing.T) {
 func TestResolveAppKeyFileRealOperatorOverrideStillWins(t *testing.T) {
 	dir := isolateAppKeyLookup(t)
 
-	origDir := spokeAppKeyDir
-	spokeAppKeyDir = dir
-	t.Cleanup(func() { spokeAppKeyDir = origDir })
+	origDir := testKeys.DataDir
+	testKeys.DataDir = dir
+	t.Cleanup(func() { testKeys.DataDir = origDir })
 
 	const appID int64 = 5686
 	writeTestAppKey(t, filepath.Join(dir, "gh-app-key-5686.pem"))
@@ -94,8 +94,8 @@ func TestResolveAppKeyFileRealOperatorOverrideStillWins(t *testing.T) {
 	bespoke := filepath.Join(dir, "operator-chosen.pem")
 	writeTestAppKey(t, bespoke)
 
-	if got := resolveAppKeyFile(bespoke, "", appID); got != bespoke {
-		t.Errorf("resolveAppKeyFile(%q) = %q, want the operator's own path", bespoke, got)
+	if got := testKeys.Resolve(bespoke, "", appID); got != bespoke {
+		t.Errorf("testKeys.Resolve(%q) = %q, want the operator's own path", bespoke, got)
 	}
 }
 
@@ -105,12 +105,12 @@ func TestResolveAppKeyFileRealOperatorOverrideStillWins(t *testing.T) {
 func TestResolveAppKeyFileProvisionedPinKeptWithoutPerAppKey(t *testing.T) {
 	dir := isolateAppKeyLookup(t)
 
-	origDir := spokeAppKeyDir
-	spokeAppKeyDir = dir
-	t.Cleanup(func() { spokeAppKeyDir = origDir })
+	origDir := testKeys.DataDir
+	testKeys.DataDir = dir
+	t.Cleanup(func() { testKeys.DataDir = origDir })
 
-	if got := resolveAppKeyFile(spokeProvisionedAppKeyPath, "", 5686); got != spokeProvisionedAppKeyPath {
+	if got := testKeys.Resolve(testKeys.ProvisionedKeyPath, "", 5686); got != testKeys.ProvisionedKeyPath {
 		t.Errorf("resolveAppKeyFile = %q, want %q kept when no per-app-id key exists",
-			got, spokeProvisionedAppKeyPath)
+			got, testKeys.ProvisionedKeyPath)
 	}
 }
