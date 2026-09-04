@@ -781,6 +781,14 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_hivectl_extraction_contract.sh
 
+      # #6003: on hosts missing a non-optional netfilter extension,
+      # entrypoint.sh must capture the iptables stderr, flush any partial
+      # HIVE_PROXY chain, and then take the explicit advisory/fail-closed path
+      # instead of letting set -e crash on the raw iptables exit code.
+      - name: Entrypoint iptables append failure handling (#6003)
+        working-directory: .
+        run: bash src/deploy/test_entrypoint_iptables_gate.sh
+
       # The guard that keeps the omission above from recurring: every
       # src/deploy/test_*.sh must be named by at least one workflow. This is
       # the src/deploy/ sibling of bin/test_bin_suites_wired.sh (#4363).

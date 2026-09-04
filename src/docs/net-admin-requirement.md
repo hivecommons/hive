@@ -71,7 +71,10 @@ whether the `iptables` **REDIRECT** that forces agent egress through the proxy
 could be installed at all — is fail-closed: without it, the whole ACMM
 capability model is advisory-only (an agent holding a raw token could bypass
 the proxy entirely), so the entrypoint refuses to start rather than run with
-unenforced egress. You'll see:
+unenforced egress. The same rule applies when a chain is created but a
+non-optional append fails: the entrypoint logs the exact iptables stderr,
+flushes the partial `HIVE_PROXY` chain, and then follows the explicit
+fail-closed / `HIVE_PROXY_ADVISORY_OK=true` decision. You'll see:
 
 ```
 [entrypoint] FATAL: could not establish forced proxy egress (iptables redirect). …
