@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/beads"
@@ -72,8 +73,12 @@ func TestResolveDirFallbackCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := resolveDir()
-	if got != tmp {
-		t.Errorf("resolveDir() = %q; want %q (cwd fallback)", got, tmp)
+	want, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("resolveDir() = %q; want %q (cwd fallback)", got, want)
 	}
 }
 

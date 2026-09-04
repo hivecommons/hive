@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"log/slog"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
-	"log/slog"
 
 	"io"
 )
