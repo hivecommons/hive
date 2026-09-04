@@ -95,6 +95,11 @@ type Digest struct {
 	// worse than a long one.
 	Capped        bool `json:"capped,omitempty"`
 	OverflowCount int  `json:"overflow_count,omitempty"`
+	// ResolvedOverflowCount is how many recently-resolved findings fell outside
+	// the render cap. Same contract as OverflowCount above: RecentlyResolved
+	// holds what is RENDERED and this carries the part the reader cannot see,
+	// which the renderer announces rather than dropping silently.
+	ResolvedOverflowCount int `json:"resolved_overflow_count,omitempty"`
 	// AnalyzedSnapshot, when set, pins the digest to a single repo commit: the
 	// latest commit of the target repo as of when this post cycle started. It is
 	// cited in the rendered comment and used by VerifyFindingPaths to detect
@@ -225,6 +230,13 @@ func isAdvisoryBeadType(t beads.BeadType) bool {
 }
 
 const recentlyResolvedWindow = 48 * time.Hour
+
+// maxRecentlyResolved is the absolute ceiling on the "Recently Resolved"
+// section, applied even when an owner has lifted the finding cap with
+// show_all. It keeps the comment inside GitHub's 65,536-character limit: past
+// that, truncateDigest cuts from the BOTTOM, which is where this section and
+// the analyzed-commit footer under it live.
+const maxRecentlyResolved = 100
 
 // maxFindingsPerAgentType is the most findings one agent may render under one
 // finding-type within a single severity section of the digest; the newest are
@@ -421,6 +433,28 @@ func (o DigestOptions) effectiveCap() int {
 	return o.MaxFindings
 }
 
+// resolvedRenderCap returns how many recently-resolved findings to render.
+//
+// One dial bounds both halves of the digest. Resolved entries are a changelog,
+// not work: a reader opens the digest to learn what still needs doing, and
+// there is no length at which a hundred healed findings serve that better than
+// the open ones do. Left outside MaxFindings they crowd it out — in the live
+// #2364 digest of 2026-09-03, 10 open findings (under a "286 more exist" note)
+// rendered in 4,937 characters while 100 resolved ones took 22,138, so 82% of
+// the comment was already-fixed work and everything anyone could act on was
+// the short part above it.
+//
+// maxRecentlyResolved still bounds the show_all case, where effectiveCap is 0:
+// an owner asking to see every finding is not asking for an unbounded
+// changelog, and the comment-size ceiling holds either way.
+func (o DigestOptions) resolvedRenderCap() int {
+	c := o.effectiveCap()
+	if c <= 0 || c > maxRecentlyResolved {
+		return maxRecentlyResolved
+	}
+	return c
+}
+
 // applyTopN keeps only the highest-priority findings across ALL agents and
 // reports how many it dropped.
 //
@@ -537,7 +571,8 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 //
 // opts.MaxFindings (unless opts.ShowAll) caps the result to the most severe,
 // most recent findings; the remainder is counted in OverflowCount rather than
-// dropped silently.
+// dropped silently. It bounds the RecentlyResolved changelog too — see
+// resolvedRenderCap — with its remainder in ResolvedOverflowCount.
 func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts DigestOptions) *Digest {
 	byAgent := make(map[string][]Finding)
 	var resolved []ResolvedFinding
@@ -618,19 +653,21 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	sort.Slice(resolved, func(i, j int) bool {
 		return resolved[i].ClosedAt.After(resolved[j].ClosedAt)
 	})
-	const maxRecentlyResolved = 100
-	if len(resolved) > maxRecentlyResolved {
-		resolved = resolved[:maxRecentlyResolved]
+	resolvedOverflow := 0
+	if rc := opts.resolvedRenderCap(); len(resolved) > rc {
+		resolvedOverflow = len(resolved) - rc
+		resolved = resolved[:rc]
 	}
 	d := &Digest{
-		GeneratedAt:      time.Now(),
-		Mode:             mode,
-		ByAgent:          byAgent,
-		TotalCount:       total,
-		RecentlyResolved: resolved,
-		Capped:           overflow > 0,
-		OverflowCount:    overflow,
-		AnalyzedSnapshot: opts.Snapshot,
+		GeneratedAt:           time.Now(),
+		Mode:                  mode,
+		ByAgent:               byAgent,
+		TotalCount:            total,
+		RecentlyResolved:      resolved,
+		Capped:                overflow > 0,
+		OverflowCount:         overflow,
+		ResolvedOverflowCount: resolvedOverflow,
+		AnalyzedSnapshot:      opts.Snapshot,
 	}
 	// When the cap was not reached, applyTopN returned early and never verified
 	// anything, so the surviving findings still need their paths checked before
@@ -1073,6 +1110,14 @@ func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo strin
 	for _, r := range d.RecentlyResolved {
 		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
 		fmt.Fprintf(b, "- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2"))
+	}
+	// The collapsed remainder is named, never merely absent: a changelog that
+	// quietly stops at the cap reads as "this is everything that healed".
+	if d.ResolvedOverflowCount > 0 {
+		// The window is read from the constant, not written as "48h": the two
+		// drifting apart would misstate the period the count covers.
+		fmt.Fprintf(b, "- _…plus %d more resolved in the last %dh, collapsed so the open findings above stay readable_\n",
+			d.ResolvedOverflowCount, int(recentlyResolvedWindow.Hours()))
 	}
 	b.WriteString("\n")
 }

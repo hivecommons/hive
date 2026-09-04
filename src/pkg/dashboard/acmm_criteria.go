@@ -44,8 +44,14 @@ var universalCriteria = []ACMMCriterion{
 		Patterns: []string{".github/ISSUE_TEMPLATE/", ".github/issue_template.md"}},
 	{ID: "acmm:prereq-contrib-guide", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Contributing guide",
 		Patterns: []string{"CONTRIBUTING.md", "docs/contributing.md", ".github/CONTRIBUTING.md"}},
+	// Patterns must span the languages hive evaluates, not just JS/Python/Go:
+	// this is an L0 prerequisite, so a language whose linter is missing here
+	// pins the repo below Level 0 permanently and re-files the gap issue on
+	// every run. Keep this list to explicit formatter/linter config files;
+	// broad project manifests would make the criterion match repos with no
+	// code-style configuration at all.
 	{ID: "acmm:prereq-code-style", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Code style config",
-		Patterns: []string{".eslintrc", ".eslintrc.json", ".eslintrc.js", "eslint.config.js", "eslint.config.mjs", ".prettierrc", ".prettierrc.json", "prettier.config.js", "ruff.toml", ".golangci.yml", "biome.json"}},
+		Patterns: []string{".eslintrc", ".eslintrc.json", ".eslintrc.js", "eslint.config.js", "eslint.config.mjs", ".prettierrc", ".prettierrc.json", "prettier.config.js", "ruff.toml", ".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json", "biome.json", ".shellcheckrc", ".editorconfig", ".clang-format", "checkstyle.xml", "config/checkstyle/checkstyle.xml", ".rubocop.yml", ".rubocop.yaml", "rustfmt.toml", ".rustfmt.toml", "clippy.toml", ".clippy.toml", ".swiftlint.yml", ".stylelintrc", ".stylelintrc.json", ".stylelintrc.yaml", ".stylelintrc.yml"}},
 	{ID: "acmm:prereq-coverage-gate", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Coverage gate",
 		Patterns: []string{"codecov.yml", ".codecov.yml", ".github/workflows/coverage-gate.yml", "coverage.yml", ".coverage-thresholds.json"}},
 

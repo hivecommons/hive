@@ -41,12 +41,10 @@
 #     Unreleased heading and are never scanned) => NO RELEASE. Exit 0,
 #     release=false. This is the common case: most merges are docs, tests, CI,
 #     or refactors and must silently produce nothing.
-#   - `### Security` present under Unreleased => MAJOR bump. Security changes
-#     in this changelog have historically included breaking auth/permission
-#     changes (e.g. the metrics-token fail-closed change), so this errs
-#     toward the more disruptive bump rather than assuming safe.
-#   - Else `### Added` present => MINOR bump.
+#   - `### Added` present => MINOR bump.
 #   - Else (`### Changed` / `### Fixed` / `### Deprecated` only) => PATCH bump.
+#     `### Security` also maps to PATCH unless an explicit marker says
+#     otherwise, because a major version is this repository's release line.
 #   - An explicit HTML-comment marker anywhere in the Unreleased section
 #     overrides the above, and is the human escape hatch:
 #       <!-- release: none -->            never release this merge
@@ -88,8 +86,9 @@ fi
 # Extract the body of the `## Unreleased` section: everything between that
 # heading and the next `## ` heading (or end of file).
 unreleased="$(awk '
-  /^## Unreleased[[:space:]]*$/ { capture=1; next }
-  /^## / && capture { exit }
+  /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
+  !in_fence && /^## Unreleased[[:space:]]*$/ { capture=1; next }
+  !in_fence && /^## / && capture { exit }
   capture { print }
 ' "$CHANGELOG")"
 

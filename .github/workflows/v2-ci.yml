@@ -547,6 +547,16 @@ jobs:
           node --check "${RUNNER_TEMP}/contributor-relay.js"
           node bin/contributor-relay.test.js
 
+      # backend-smoke.yml's failure-issue script runs only on a scheduled
+      # failure, in production, and its output is an issue somebody acts on —
+      # so nothing ever exercised it, and it spent a day announcing that the
+      # shipped CLIs were broken when the runner simply had no podman (#5883).
+      # This extracts that script from the workflow and runs it against
+      # fixtures. Placed after setup-node above, which it needs.
+      - name: Backend smoke failure-issue attribution
+        working-directory: .
+        run: bash bin/test_backend_smoke_attribution.sh
+
       # Keyless subset of the backend smoke: backend-list/Dockerfile-pin drift
       # checks plus the stub wire-contract scenarios (real relay, fake hub, a
       # stub CLI binary — no credentials, no network beyond localhost). The

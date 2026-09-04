@@ -91,7 +91,11 @@ fi
 # The Unreleased heading must exist, or the awk below would pass the file
 # through unchanged and the fragments would be deleted without ever landing
 # anywhere — silent data loss, the one failure mode a compiler cannot have.
-if ! grep -qE '^## Unreleased[[:space:]]*$' "$CHANGELOG"; then
+if ! awk '
+  /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
+  !in_fence && /^## Unreleased[[:space:]]*$/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$CHANGELOG"; then
   echo "::error::${CHANGELOG} has no '## Unreleased' heading — refusing to compile fragments into nowhere." >&2
   exit 1
 fi
@@ -163,14 +167,15 @@ for cat in "${CATEGORIES[@]}"; do
       for (i = 0; i < nb; i++) print ""
       nb = 0
     }
-    BEGIN { in_unrel = 0; in_cat = 0; inserted = 0; nb = 0 }
+    BEGIN { in_unrel = 0; in_cat = 0; inserted = 0; nb = 0; in_fence = 0 }
     {
+      if ($0 ~ /^[[:space:]]*(```|~~~)/) in_fence = !in_fence
       if (!in_unrel) {
         print
-        if ($0 ~ /^## Unreleased[[:space:]]*$/) in_unrel = 1
+        if (!in_fence && $0 ~ /^## Unreleased[[:space:]]*$/) in_unrel = 1
         next
       }
-      if ($0 ~ /^## /) {
+      if (!in_fence && $0 ~ /^## /) {
         # Unreleased ends here. Land the entries first, then exactly one
         # blank line before this next release heading.
         if (in_cat && !inserted) { dump(); inserted = 1; in_cat = 0 }
@@ -182,7 +187,7 @@ for cat in "${CATEGORIES[@]}"; do
         next
       }
       if ($0 ~ /^[[:space:]]*$/) { nb++; next }
-      if (in_cat && $0 ~ /^### /) {
+      if (in_cat && !in_fence && $0 ~ /^### /) {
         # The target subsection ends at the next subsection: append the new
         # entries right after its last existing line, then restore the
         # buffered blank line(s) that preceded this heading.
@@ -193,7 +198,7 @@ for cat in "${CATEGORIES[@]}"; do
       }
       flushblanks()
       print
-      if (!inserted && $0 == heading) in_cat = 1
+      if (!inserted && !in_fence && $0 == heading) in_cat = 1
     }
     END {
       if (in_unrel) {
