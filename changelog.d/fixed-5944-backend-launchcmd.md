@@ -1,0 +1,1 @@
+- Agent configuration now rejects clear backend/launch_cmd contradictions at load and Settings-save time, preventing agents from launching as one CLI while being diagnosed as another ([#5921](https://github.com/hivecommons/hive/issues/5921)).
