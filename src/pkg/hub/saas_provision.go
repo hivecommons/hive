@@ -826,6 +826,21 @@ type SaaSHive struct {
 	// unclaimed placeholders; a zero/absent stamp makes the sweep skip the hive
 	// rather than reset it on an unknowable age.
 	AssignedAt string `json:"assigned_at,omitempty"`
+	// LastVanityRepairAt is when a vanity-host repair last SUCCEEDED for this
+	// hive — a mint (repairVanityURLForHive / mintClaimVanityURL) or a
+	// drift-adopt (reconcileStaleVanityURL). kickVanityURLRepairAsync skips the
+	// repair entirely while this is fresher than vanityRepairSuccessCooldown.
+	//
+	// It exists because the in-flight guard only prevents CONCURRENT attempts,
+	// not repeated ones: with ~100 spokes beating every ~2 minutes nothing
+	// bounded how often a hive could successfully re-mint, and a condition
+	// making many hives look stale at once (a cluster domain change, an
+	// ingress rewrite) turned into a fleet-wide re-mint storm that exhausted
+	// the Let's Encrypt 50-certs/168h cap for the registered domain in about
+	// an hour (#5923). A legitimately stale host is not urgent; once a repair
+	// has succeeded, the next look can wait out the cooldown. Zero/absent on
+	// records from before this field existed, which simply means "no cooldown".
+	LastVanityRepairAt time.Time `json:"last_vanity_repair_at,omitempty"`
 }
 
 type CreateHiveRequest struct {
@@ -1357,6 +1372,17 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	if vanityHost == "" {
 		vanityHost = generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
 	}
+	// A brand-new host means a brand-new certificate against the registered
+	// domain's shared ACME quota, so actual mints are metered fleet-wide. The
+	// budget deliberately does NOT gate adopting an EXISTING route's host
+	// (above) or the reconcile path — neither issues a certificate.
+	if !s.vanityMintAllowed() {
+		s.logger.Warn("vanity url repair: fleet-wide mint budget exhausted — skipping mint to protect the ACME rate limit; "+
+			"repair will retry after the cooldown once budget returns",
+			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID,
+			"budget", vanityMintBudget, "window", vanityMintWindow.String())
+		return false
+	}
 	// Make it servable BEFORE adopting it; on failure leave VanityURL empty so
 	// every read path keeps falling back to the working placeholder host.
 	if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
@@ -1364,6 +1390,7 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
 		return false
 	}
+	s.recordVanityMint()
 	// Re-load before writing. makeVanityHostServable (and existingVanityHost
 	// above) can block for minutes in kubectl against a slow/unreachable
 	// cluster, and the heartbeat path keeps load-modify-writing this hive's
@@ -1378,13 +1405,15 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 		return false // another path minted one while we were blocked — keep it
 	}
 	h.VanityURL = "https://" + vanityHost
+	h.LastVanityRepairAt = time.Now()
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("vanity url repair: failed to save hive", "hive", hiveID, "error", err)
 		return false
 	}
 	s.logger.Info("vanity url repair: minted a vanity host for a hive claimed before the vanity feature",
 		"hive", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
-		"cluster", cluster.ID, "vanity_url", h.VanityURL)
+		"cluster", cluster.ID, "vanity_url", h.VanityURL,
+		"mint_budget_remaining", s.vanityMintRemaining())
 	return true
 }
 
@@ -1454,6 +1483,7 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 		return false
 	}
 	h.VanityURL = liveURL
+	h.LastVanityRepairAt = time.Now()
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("vanity url reconcile: failed to save hive", "hive", hiveID, "error", err)
 		return false
@@ -1461,6 +1491,62 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 	s.logger.Info("vanity url reconcile: stored vanity host did not match the live route, adopted the live host",
 		"hive", hiveID, "stored", stored, "live", liveURL, "cluster", cluster.ID)
 	return true
+}
+
+// vanityRepairSuccessCooldown is how long after a SUCCESSFUL vanity repair
+// (mint or drift-adopt) the heartbeat kick skips further repair attempts for
+// that hive. 24h: a legitimately stale host is not urgent, and the certificate
+// quota the repair can burn is a rolling 168h window (#5923).
+const vanityRepairSuccessCooldown = 24 * time.Hour
+
+// Fleet-wide budget for vanity-host MINTS from the repair path, sized well
+// under Let's Encrypt's 50 certificates / registered domain / 168h limit so
+// the remainder stays reserved for genuine claim-time provisioning (#5923).
+const (
+	vanityMintBudget = 20
+	vanityMintWindow = 168 * time.Hour
+)
+
+// vanityMintAllowed reports whether the fleet-wide mint budget has room for
+// another vanity-host mint, pruning entries older than the rolling window.
+func (s *HubServer) vanityMintAllowed() bool {
+	s.vanityMintMu.Lock()
+	defer s.vanityMintMu.Unlock()
+	s.pruneVanityMintsLocked()
+	return len(s.vanityMintTimes) < vanityMintBudget
+}
+
+// recordVanityMint charges one mint against the fleet-wide budget.
+func (s *HubServer) recordVanityMint() {
+	s.vanityMintMu.Lock()
+	defer s.vanityMintMu.Unlock()
+	s.pruneVanityMintsLocked()
+	s.vanityMintTimes = append(s.vanityMintTimes, time.Now())
+}
+
+// vanityMintRemaining returns how many mints the budget has left in the
+// current window, for the mint log line — the visibility #5923 asked for.
+func (s *HubServer) vanityMintRemaining() int {
+	s.vanityMintMu.Lock()
+	defer s.vanityMintMu.Unlock()
+	s.pruneVanityMintsLocked()
+	if r := vanityMintBudget - len(s.vanityMintTimes); r > 0 {
+		return r
+	}
+	return 0
+}
+
+// pruneVanityMintsLocked drops mint timestamps that have aged out of the
+// rolling window. Callers must hold vanityMintMu.
+func (s *HubServer) pruneVanityMintsLocked() {
+	cutoff := time.Now().Add(-vanityMintWindow)
+	kept := s.vanityMintTimes[:0]
+	for _, t := range s.vanityMintTimes {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	s.vanityMintTimes = kept
 }
 
 // kickVanityURLRepairAsync runs repairVanityURLForHive in the background, at
@@ -1492,6 +1578,16 @@ func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
 	// domain) still keep every truly-inapplicable hive off the goroutine path.
 	if h == nil || h.Status == statusAvailable ||
 		h.Org == "" || h.PrimaryRepo == "" {
+		return
+	}
+	// Cooldown on SUCCESSFUL repairs. The in-flight guard below only prevents
+	// concurrent attempts; nothing bounded repeated successful ones, and each
+	// new vanity host is a new certificate against the registered domain's
+	// shared ACME quota — a fleet-wide "everything looks stale" condition
+	// exhausted the 50-certs/168h cap in about an hour (#5923). A repair that
+	// just succeeded has nothing urgent left to do; skip the goroutine (and its
+	// per-beat kubectl read) until the cooldown lapses.
+	if !h.LastVanityRepairAt.IsZero() && time.Since(h.LastVanityRepairAt) < vanityRepairSuccessCooldown {
 		return
 	}
 	if cluster := s.clusterForHive(h); cluster == nil || cluster.Domain == "" {
@@ -1612,6 +1708,11 @@ func (s *HubServer) mintClaimVanityURL(hiveID string) {
 		return // another path minted one while we were in kubectl — keep it
 	}
 	h.VanityURL = "https://" + vanityHost
+	// Stamp the cooldown too: a just-minted host needs no heartbeat-kicked
+	// reconcile (and its per-beat kubectl read) for the cooldown window.
+	// Claim-time mints are deliberately NOT charged against the fleet mint
+	// budget — genuine provisioning keeps the reserved remainder of the quota.
+	h.LastVanityRepairAt = time.Now()
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("claim vanity mint: failed to save hive", "hive", hiveID, "error", err)
 	}
