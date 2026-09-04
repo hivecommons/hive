@@ -565,35 +565,7 @@ jobs:
         run: |
           set -euo pipefail
           today="$(date -u +%Y-%m-%d)"
-          python3 - "$today" <<'PYEOF'
-          import re, sys
-          today = sys.argv[1]
-          version = __import__("os").environ["VERSION"]
-          path = "CHANGELOG.md"
-          with open(path, encoding="utf-8") as f:
-              text = f.read()
-
-          marker = "## Unreleased"
-          start = text.index(marker)
-          # Section body runs from just after the heading line to the next
-          # "## " heading (or EOF).
-          body_start = text.index("\n", start) + 1
-          next_heading = re.search(r"\n## ", text[body_start:])
-          body_end = body_start + next_heading.start() + 1 if next_heading else len(text)
-          body = text[body_start:body_end]
-
-          # Strip any release markers before filing the section under the
-          # dated heading — they are release-decision metadata, not part of
-          # the permanent record.
-          body = re.sub(r"[ \t]*<!-- *release: *(none|major|minor|patch) *-->\n?", "", body)
-
-          new_unreleased = f"{marker}\n\n"
-          dated_heading = f"## {today} (v{version})\n"
-          replacement = new_unreleased + dated_heading + body
-          text = text[:start] + replacement + text[body_end:]
-          with open(path, "w", encoding="utf-8") as f:
-              f.write(text)
-          PYEOF
+          src/scripts/move-unreleased-to-release.py "$today" "$VERSION"
 
       - name: Commit the release changelog entry
         run: |

@@ -75,13 +75,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 4: ### Security present => major bump, outranks Added and Fixed.
+# Case 4: ### Security present does not force a major release line cut; Added
+# still makes this a minor release unless an explicit marker overrides it.
 # ---------------------------------------------------------------------------
 out=$(run $'## Unreleased\n\n### Added\n\n- new thing\n\n### Security\n\n- closed a hole\n' v1.3.0)
-if [[ "$(get "$out" release)" == "true" && "$(get "$out" bump)" == "major" && "$(get "$out" version)" == "2.0.0" ]]; then
-  note_ok "Security present => major bump outranks Added, 1.3.0 -> 2.0.0"
+if [[ "$(get "$out" release)" == "true" && "$(get "$out" bump)" == "minor" && "$(get "$out" version)" == "1.4.0" ]]; then
+  note_ok "Security present does not force major; Added still bumps 1.3.0 -> 1.4.0"
 else
-  note_fail "expected release=true bump=major version=2.0.0, got: $out"
+  note_fail "expected release=true bump=minor version=1.4.0, got: $out"
 fi
 
 # ---------------------------------------------------------------------------
