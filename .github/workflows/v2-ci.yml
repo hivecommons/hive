@@ -645,6 +645,15 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_hive_snapshot_unit_contract.sh
 
+      # #5936: hive-deploy.service is the same planted-checkout class with a
+      # larger payoff: it sudo-syncs /tmp/hive/bin/*.sh into /usr/local/bin.
+      # Pin the unit guard, the deploy script's checkout identity check, and
+      # the verified-snapshot copy path so root-installed files never come
+      # straight from the mutable /tmp/hive worktree.
+      - name: hive-deploy.service does not root-install planted code (#5936)
+        working-directory: .
+        run: bash src/deploy/test_hive_deploy_unit_contract.sh
+
       # #4440: the changelog reminder promises it "always succeeds" and "never
       # blocks a merge", and it did neither on a fork PR — GITHUB_TOKEN is
       # read-only there, the comment POST 403s, and `bash -e` made that a red
