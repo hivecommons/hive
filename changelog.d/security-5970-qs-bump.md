@@ -1,0 +1,1 @@
+- Bump the transitive `qs` dependency used by dashboard and proxy Node tooling to 6.16.0 to address [GHSA-f9cm-2x4f-4r3g](https://github.com/advisories/GHSA-f9cm-2x4f-4r3g) ([#5970](https://github.com/hivecommons/hive/issues/5970)).
