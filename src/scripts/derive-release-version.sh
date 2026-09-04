@@ -86,12 +86,10 @@ if [[ ! -f "$CHANGELOG" ]]; then
 fi
 
 # Extract the body of the `## Unreleased` section: everything between that
-# heading and the next `## ` heading (or end of file).
-unreleased="$(awk '
-  /^## Unreleased[[:space:]]*$/ { capture=1; next }
-  /^## / && capture { exit }
-  capture { print }
-' "$CHANGELOG")"
+# heading and the next `## ` heading (or end of file), via the shared
+# fence-aware scanner (single source of truth, #5939).
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+unreleased="$(awk -v mode=body -f "${script_dir}/lib/changelog-unreleased.awk" "$CHANGELOG")"
 
 # Strip blank lines for the emptiness check so a section with only whitespace
 # still counts as empty.

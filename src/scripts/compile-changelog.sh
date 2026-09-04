@@ -49,6 +49,10 @@ set -euo pipefail
 CHANGELOG="${1:-CHANGELOG.md}"
 FRAGDIR="${2:-changelog.d}"
 
+# Shared fence-aware `## Unreleased` scanner (single source of truth, #5939).
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+UNRELEASED_AWK="${script_dir}/lib/changelog-unreleased.awk"
+
 # Canonical subsection order for newly created subsections (keep-a-changelog
 # order; existing subsections keep their position, entries are only appended).
 CATEGORIES=(added changed deprecated fixed security)
@@ -91,7 +95,7 @@ fi
 # The Unreleased heading must exist, or the awk below would pass the file
 # through unchanged and the fragments would be deleted without ever landing
 # anywhere — silent data loss, the one failure mode a compiler cannot have.
-if ! grep -qE '^## Unreleased[[:space:]]*$' "$CHANGELOG"; then
+if ! awk -v mode=exists -f "$UNRELEASED_AWK" "$CHANGELOG"; then
   echo "::error::${CHANGELOG} has no '## Unreleased' heading — refusing to compile fragments into nowhere." >&2
   exit 1
 fi
@@ -154,6 +158,9 @@ for cat in "${CATEGORIES[@]}"; do
   [[ -s "$catfile" ]] || continue
   heading="$(category_heading "$cat")"
   next="${workdir}/CHANGELOG.next"
+  # NOTE: the in_fence toggle and `^## Unreleased` match below must stay in
+  # lockstep with lib/changelog-unreleased.awk (the canonical scanner); they
+  # are inlined here only because this awk also rewrites the file.
   awk -v heading="$heading" -v ef="$catfile" '
     function dump(   line) {
       while ((getline line < ef) > 0) print line
