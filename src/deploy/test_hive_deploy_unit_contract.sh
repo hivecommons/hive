@@ -239,5 +239,42 @@ else
 fi
 
 echo ""
+echo "--- deploy verifies identity and copies from a snapshot ---"
+
+if grep -q 'remote.origin.url' "$DEPLOY" && grep -q 'hivecommons/hive' "$DEPLOY"; then
+  pass "hive-deploy.sh verifies the checkout remote is hivecommons/hive"
+else
+  fail "hive-deploy.sh verifies the checkout remote" \
+       "a planted checkout with a safe mode but attacker-controlled origin must be rejected"
+fi
+
+if grep -q 'HIVE_DEPLOY_REF' "$DEPLOY" && grep -q 'symbolic-ref --short HEAD' "$DEPLOY"; then
+  pass "hive-deploy.sh verifies HEAD is on the expected branch/tag"
+else
+  fail "hive-deploy.sh verifies the checkout ref" \
+       "the deploy source must be an expected branch/tag, not an arbitrary detached commit"
+fi
+
+if grep -q 'git archive --format=tar HEAD' "$DEPLOY" && grep -q 'DEPLOY_SOURCE=.*make_verified_snapshot' "$DEPLOY"; then
+  pass "hive-deploy.sh copies root-installed files from a verified HEAD snapshot"
+else
+  fail "hive-deploy.sh copies from a verified snapshot" \
+       "checking /tmp/hive and later sudo-copying from the mutable worktree is a TOCTOU"
+fi
+
+for needle in 'src="$DEPLOY_SOURCE/$script"' \
+              'BASELINE_HELPER_SRC="$DEPLOY_SOURCE/bin/hive-baseline-check.sh"' \
+              'CHECKOUT_GUARD_SRC="$DEPLOY_SOURCE/bin/hive-checkout-guard.sh"' \
+              'HIVE_CLI="$DEPLOY_SOURCE/bin/hive.sh"' \
+              'GH_WRAPPER="$DEPLOY_SOURCE/bin/gh-wrapper.sh"' \
+              '"$DEPLOY_SOURCE"/systemd/*.service'; do
+  if grep -qF "$needle" "$DEPLOY"; then
+    pass "root-installed source uses DEPLOY_SOURCE: $needle"
+  else
+    fail "root-installed source uses DEPLOY_SOURCE" "missing: $needle"
+  fi
+done
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

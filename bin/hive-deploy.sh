@@ -6,11 +6,53 @@
 set -euo pipefail
 
 HIVE_REPO="${HIVE_REPO_DIR:-/tmp/hive}"
+HIVE_DEPLOY_REF="${HIVE_DEPLOY_REF:-main}"
 INSTALL_DIR="/usr/local/bin"
 LOG="/var/log/hive-deploy.log"
 TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 log() { echo "[$TIMESTAMP] $*" >> "$LOG" 2>/dev/null || true; }
+fail_closed() {
+  log "ERROR: REFUSING deploy: $*"
+  echo "hive-deploy: REFUSING deploy: $*" >&2
+  exit 1
+}
+
+normalize_remote() {
+  printf '%s\n' "$1" \
+    | sed -E 's#^git@github.com:#https://github.com/#; s#^https://github.com/##; s#\.git$##'
+}
+
+verify_checkout_identity() {
+  local remote current_branch current_tag normalized
+  remote="$(git config --get remote.origin.url 2>/dev/null || true)"
+  [ -n "$remote" ] || fail_closed "$HIVE_REPO has no remote.origin.url"
+  normalized="$(normalize_remote "$remote")"
+  [ "$normalized" = "hivecommons/hive" ] \
+    || fail_closed "$HIVE_REPO remote.origin.url is '$remote' (expected hivecommons/hive)"
+
+  current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  if [ -n "$current_branch" ]; then
+    [ "$current_branch" = "$HIVE_DEPLOY_REF" ] \
+      || fail_closed "$HIVE_REPO is on '$current_branch' (expected branch '$HIVE_DEPLOY_REF')"
+    return
+  fi
+
+  current_tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+  [ -n "$current_tag" ] && [ "$current_tag" = "$HIVE_DEPLOY_REF" ] \
+    || fail_closed "$HIVE_REPO is detached at $(git rev-parse --short HEAD 2>/dev/null || echo unknown) (expected branch/tag '$HIVE_DEPLOY_REF')"
+}
+
+make_verified_snapshot() {
+  local snapshot
+  snapshot="${HIVE_REPO}/.deploy-snapshot.$$"
+  if ! (umask 077 && mkdir "$snapshot"); then
+    fail_closed "cannot create verified snapshot directory $snapshot"
+  fi
+  git archive --format=tar HEAD | tar -x -C "$snapshot" \
+    || fail_closed "cannot archive verified HEAD into $snapshot"
+  printf '%s\n' "$snapshot"
+}
 
 # Guard of last resort: this script does `cd "$HIVE_REPO"` followed by
 # `git checkout main --force` and `git reset --hard origin/main` (see the
@@ -26,21 +68,36 @@ if [ -z "$HIVE_REPO" ] || [ "$HIVE_REPO" = "/" ]; then
 fi
 
 if [ ! -d "$HIVE_REPO/.git" ]; then
-  log "ERROR: $HIVE_REPO is not a git repo"
-  exit 1
+  fail_closed "$HIVE_REPO is not a git repo"
 fi
 
+CHECKOUT_GUARD="${HIVE_CHECKOUT_GUARD:-/usr/local/bin/hive-checkout-guard.sh}"
+[ -x "$CHECKOUT_GUARD" ] \
+  || fail_closed "$CHECKOUT_GUARD is missing or not executable; cannot verify $HIVE_REPO/bin"
+"$CHECKOUT_GUARD" "$HIVE_REPO/bin" hive.sh gh-wrapper.sh hive-deploy.sh hive-checkout-guard.sh \
+  || fail_closed "$HIVE_REPO/bin failed ownership/permission validation"
+
 cd "$HIVE_REPO"
+
+SYNCED=""
+DASHBOARD_CHANGED=""
+DISCORD_CHANGED=""
+
+# Fail closed before running git hooks or copying root-installed files from a
+# predictable checkout path. systemd also runs this as ExecStartPre, but the
+# script repeats the identity checks and copies from an archived HEAD snapshot
+# below so there is no check-then-copy race against the mutable worktree.
+verify_checkout_identity
 
 # Safety: ensure we're on main. An agent running `git checkout <branch>` in
 # /tmp/hive wipes dashboard files and takes the UI offline. The post-checkout
 # hook prevents this going forward, but recover here in case it happens anyway.
 CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
-if [ "$CURRENT_BRANCH" != "main" ]; then
-  log "RECOVERY: checkout was on '$CURRENT_BRANCH' — forcing back to main"
-  git checkout main --force --quiet 2>/dev/null
+if [ "$CURRENT_BRANCH" != "$HIVE_DEPLOY_REF" ]; then
+  log "RECOVERY: checkout was on '$CURRENT_BRANCH' — forcing back to $HIVE_DEPLOY_REF"
+  git checkout "$HIVE_DEPLOY_REF" --force --quiet 2>/dev/null
   sudo systemctl restart hive-dashboard.service 2>/dev/null || true
-  SYNCED="$SYNCED main-recovery"
+  SYNCED="$SYNCED ${HIVE_DEPLOY_REF}-recovery"
 fi
 
 # Install post-checkout hook if missing or outdated
@@ -54,22 +111,22 @@ fi
 
 BEFORE=$(git rev-parse HEAD)
 git stash --quiet 2>/dev/null || true
-git pull --rebase origin main --quiet 2>/dev/null || {
+git pull --rebase origin "$HIVE_DEPLOY_REF" --quiet 2>/dev/null || {
   log "WARN: git pull failed, skipping deploy"
   exit 0
 }
 AFTER=$(git rev-parse HEAD)
 
-SYNCED=""
-DASHBOARD_CHANGED=""
-DISCORD_CHANGED=""
+verify_checkout_identity
+DEPLOY_SOURCE="$(make_verified_snapshot)"
+trap 'rm -rf "$DEPLOY_SOURCE"' EXIT
 
 if [ "$BEFORE" != "$AFTER" ]; then
   CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER")
   SCRIPTS_CHANGED=$(echo "$CHANGED_FILES" | grep '^bin/' || true)
   for script in $SCRIPTS_CHANGED; do
     filename=$(basename "$script")
-    src="$HIVE_REPO/$script"
+    src="$DEPLOY_SOURCE/$script"
     dst="$INSTALL_DIR/$filename"
     if [ -f "$src" ] && [ -f "$dst" ]; then
       sudo cp "$src" "$dst"
@@ -86,8 +143,9 @@ for src in "$HIVE_REPO"/bin/*.sh; do
   filename=$(basename "$src")
   dst="$INSTALL_DIR/$filename"
   [ -f "$dst" ] || continue
-  if ! cmp -s "$src" "$dst"; then
-    sudo cp "$src" "$dst"
+  snapshot_src="$DEPLOY_SOURCE/bin/$filename"
+  if [ -f "$snapshot_src" ] && ! cmp -s "$snapshot_src" "$dst"; then
+    sudo cp "$snapshot_src" "$dst"
     sudo chmod +x "$dst"
     SYNCED="$SYNCED $filename(drift)"
   fi
@@ -96,7 +154,7 @@ done
 # New helpers do not exist at the destination yet, so the generic drift loop's
 # "installed files only" guard cannot bootstrap them. Keep this explicit until
 # all supported native installations have received the #5110 classifier.
-BASELINE_HELPER_SRC="$HIVE_REPO/bin/hive-baseline-check.sh"
+BASELINE_HELPER_SRC="$DEPLOY_SOURCE/bin/hive-baseline-check.sh"
 BASELINE_HELPER_DST="$INSTALL_DIR/hive-baseline-check.sh"
 if [ -f "$BASELINE_HELPER_SRC" ] && ! cmp -s "$BASELINE_HELPER_SRC" "$BASELINE_HELPER_DST" 2>/dev/null; then
   sudo install -m 0755 "$BASELINE_HELPER_SRC" "$BASELINE_HELPER_DST"
@@ -110,7 +168,7 @@ fi
 # already installed. Without this block an upgraded host would pull a unit that
 # calls a script it does not have, and systemd would refuse to start the unit.
 # Install it BEFORE the unit files are reinstalled by kick-agents.sh.
-CHECKOUT_GUARD_SRC="$HIVE_REPO/bin/hive-checkout-guard.sh"
+CHECKOUT_GUARD_SRC="$DEPLOY_SOURCE/bin/hive-checkout-guard.sh"
 CHECKOUT_GUARD_DST="$INSTALL_DIR/hive-checkout-guard.sh"
 if [ -f "$CHECKOUT_GUARD_SRC" ] && ! cmp -s "$CHECKOUT_GUARD_SRC" "$CHECKOUT_GUARD_DST" 2>/dev/null; then
   sudo install -m 0755 "$CHECKOUT_GUARD_SRC" "$CHECKOUT_GUARD_DST"
@@ -118,7 +176,7 @@ if [ -f "$CHECKOUT_GUARD_SRC" ] && ! cmp -s "$CHECKOUT_GUARD_SRC" "$CHECKOUT_GUA
 fi
 
 # hive.sh is installed as /usr/local/bin/hive (no .sh extension)
-HIVE_CLI="$HIVE_REPO/bin/hive.sh"
+HIVE_CLI="$DEPLOY_SOURCE/bin/hive.sh"
 HIVE_INSTALLED="$INSTALL_DIR/hive"
 if [ -f "$HIVE_CLI" ] && ! cmp -s "$HIVE_CLI" "$HIVE_INSTALLED"; then
   sudo cp "$HIVE_CLI" "$HIVE_INSTALLED"
@@ -127,7 +185,7 @@ if [ -f "$HIVE_CLI" ] && ! cmp -s "$HIVE_CLI" "$HIVE_INSTALLED"; then
 fi
 
 # gh-wrapper.sh is installed as /usr/local/bin/gh (ahead of /usr/bin/gh in PATH)
-GH_WRAPPER="$HIVE_REPO/bin/gh-wrapper.sh"
+GH_WRAPPER="$DEPLOY_SOURCE/bin/gh-wrapper.sh"
 GH_INSTALLED="$INSTALL_DIR/gh"
 if [ -f "$GH_WRAPPER" ] && ! cmp -s "$GH_WRAPPER" "$GH_INSTALLED"; then
   sudo cp "$GH_WRAPPER" "$GH_INSTALLED"
@@ -202,7 +260,7 @@ fi
 
 # Sync hive-project.yaml (code-managed config) — safe to overwrite since
 # runtime customizations (sidebar, repos, agents) live in hive-runtime.yaml
-HIVE_PROJECT="${HIVE_PROJECT_CONFIG_SRC:-$HIVE_REPO/examples/kubestellar/hive-project.yaml}"
+HIVE_PROJECT="${HIVE_PROJECT_CONFIG_SRC:-$DEPLOY_SOURCE/examples/kubestellar/hive-project.yaml}"
 HIVE_PROJECT_INSTALLED="/etc/hive/hive-project.yaml"
 if [ -f "$HIVE_PROJECT" ] && ! cmp -s "$HIVE_PROJECT" "$HIVE_PROJECT_INSTALLED" 2>/dev/null; then
   sudo mkdir -p /etc/hive
@@ -212,7 +270,7 @@ if [ -f "$HIVE_PROJECT" ] && ! cmp -s "$HIVE_PROJECT" "$HIVE_PROJECT_INSTALLED" 
 fi
 
 # Sync systemd units if changed
-for unit in "$HIVE_REPO"/systemd/*.service "$HIVE_REPO"/systemd/*.timer; do
+for unit in "$DEPLOY_SOURCE"/systemd/*.service "$DEPLOY_SOURCE"/systemd/*.timer; do
   [ -f "$unit" ] || continue
   unitname=$(basename "$unit")
   dst="/etc/systemd/system/$unitname"
