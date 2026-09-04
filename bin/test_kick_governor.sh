@@ -249,7 +249,11 @@ kick_count() {
 # scanner ci-maintainer architect outreach"}, used in 4 places) — see contract
 # 7b below for what happens when an operator's AGENTS_ENABLED omits supervisor.
 BASE_ENV=(AGENTS_ENABLED="supervisor scanner ci-maintainer architect outreach" HIVE_REPOS="acme/primary")
-STABLE_BUDGET_RESET_DAY="$(python3 -c 'import datetime; print((datetime.datetime.now().weekday() + 1) % 7)')"
+# Keep budget projection tests date-invariant: if they run on the configured
+# reset day after midnight UTC, the production projection correctly rolls to
+# the next reset and can turn a 90% fixture into >99% critical pressure.
+TEST_BUDGET_RESET_DAY="$(python3 -c 'import datetime; print((datetime.datetime.now().weekday() + 1) % 7)')"
+BUDGET_ENV=(TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$TEST_BUDGET_RESET_DAY")
 
 echo "=== kick-governor.sh contract tests ==="
 
@@ -484,13 +488,11 @@ echo "-- budget pressure ladder --"
 reset_state
 write_actionable 25 0   # surge -> MODEL_SURGE_ARCHITECT defaults to claude:claude-opus-4-6
 mkdir -p "$METRICS_DIR_T"
-# used=90% of a 100-token budget. Force the reset day to tomorrow so
-# hours_elapsed is large enough that integer avg_hourly is 0 and projected==used;
-# otherwise this time-dependent test can cross the >99% critical threshold late
-# in the budget week.
+# used=90% of a 100-token budget, 0 hours elapsed history -> avg_hourly ~ used
+# (hours_elapsed floors at 1), so projected == used == 90% for a same-tick read.
 printf '{"weekly":{"billableTokens":90},"hourlyBurnRate":{"billable":0}}\n' \
   >"${METRICS_DIR_T}/tokens.json"
-run_gov "${BASE_ENV[@]}" TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$STABLE_BUDGET_RESET_DAY" >/dev/null
+run_gov "${BASE_ENV[@]}" "${BUDGET_ENV[@]}" >/dev/null
 # outreach's own MODEL_*_OUTREACH default is copilot in every mode, so it can
 # never actually be observed being downgraded FROM claude; architect's surge
 # default (claude:claude-opus-4-6) is the one that exercises this branch.
@@ -506,7 +508,7 @@ write_actionable 25 0   # surge -> MODEL_SURGE_SCANNER=claude:claude-sonnet-4-6
 mkdir -p "$METRICS_DIR_T"
 printf '{"weekly":{"billableTokens":96},"hourlyBurnRate":{"billable":0}}\n' \
   >"${METRICS_DIR_T}/tokens.json"
-run_gov "${BASE_ENV[@]}" TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$STABLE_BUDGET_RESET_DAY" >/dev/null
+run_gov "${BASE_ENV[@]}" "${BUDGET_ENV[@]}" >/dev/null
 # #5549 fix 3: the sonnet->haiku downgrade used to be a literal string
 # substitution, `${model/sonnet/haiku}`, applied to "claude-sonnet-4-6" — it
 # swapped the tier word but left the version suffix untouched, producing
@@ -529,10 +531,10 @@ assert_eq "budget >95%: the downgraded model is a tier backends.conf recognises 
 reset_state
 write_actionable 25 0
 mkdir -p "$METRICS_DIR_T"
-printf '{"weekly":{"billableTokens":99},"hourlyBurnRate":{"billable":0}}\n' \
+printf '{"weekly":{"billableTokens":100},"hourlyBurnRate":{"billable":0}}\n' \
   >"${METRICS_DIR_T}/tokens.json"
 touch "${METRICS_DIR_T}/budget_ignore"
-run_gov "${BASE_ENV[@]}" TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$STABLE_BUDGET_RESET_DAY" >/dev/null
+run_gov "${BASE_ENV[@]}" "${BUDGET_ENV[@]}" >/dev/null
 assert_eq "BUDGET_IGNORE_FLAG bypasses every downgrade even above 99%" \
   "$(grep '^BACKEND=' "${STATE_DIR_T}/model_scanner" | cut -d= -f2)" "claude"
 
@@ -561,7 +563,7 @@ mkdir -p "$METRICS_DIR_T"
 printf '{"weekly":{"billableTokens":90},"hourlyBurnRate":{"billable":0}}\n' \
   >"${METRICS_DIR_T}/tokens.json"
 rc="$(run_gov AGENTS_ENABLED="scanner ci-maintainer architect outreach" HIVE_REPOS="acme/primary" \
-  TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$STABLE_BUDGET_RESET_DAY")"
+  "${BUDGET_ENV[@]}")"
 assert_eq "budget pressure without supervisor: governor exits 0, does not abort" "$rc" "0"
 grep -q "assignments\[.*\]: unbound variable" "${WORK}/stderr" \
   && fail "budget pressure without supervisor: must NOT hit assignments[\$agent]: unbound variable" "stderr: $(cat "${WORK}/stderr")" \
@@ -576,7 +578,7 @@ grep -q "GOVERNOR DONE" "${WORK}/stderr" \
 assert_eq "budget pressure without supervisor: the downgrade STILL fires for a configured agent (architect)" \
   "$(grep '^REASON=' "${STATE_DIR_T}/model_architect" 2>/dev/null | cut -d= -f2)" "budget_downgrade"
 assert_eq "budget pressure without supervisor: POSITIVE CONTROL — the same scenario WITH supervisor present also exits 0" \
-  "$(run_gov "${BASE_ENV[@]}" TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$STABLE_BUDGET_RESET_DAY")" "0"
+  "$(run_gov "${BASE_ENV[@]}" "${BUDGET_ENV[@]}")" "0"
 
 # ── 8. What is written where — the file contract other tooling reads ────────
 echo "-- state files written --"

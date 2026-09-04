@@ -166,6 +166,26 @@ may render under one finding type in a single severity section — that one exis
 to keep the comment inside GitHub's 65,536-character limit and is not
 configurable.
 
+`max_findings` bounds the **Recently Resolved** changelog too. It is a
+changelog, not work: a reader opens the digest to learn what still needs doing,
+and there is no length at which a long list of healed findings serves that
+better than the open ones do. Left outside the cap it crowds them out — the live
+digest of 2026-09-03 rendered 10 open findings in 4,937 characters, under a note
+saying 286 more existed, and 100 resolved ones in 22,138, so 82% of the comment
+was work already done.
+
+Withheld resolved entries are announced the same way withheld findings are, as
+the last line of the section:
+
+> - *…plus 20 more resolved in the last 48h, collapsed so the open findings
+>   above stay readable*
+
+`show_all: true` lifts the cap off the changelog as well. A hard ceiling of 100
+resolved entries still applies above it — an owner asking to see every finding
+is not asking for an unbounded changelog, and past GitHub's character limit the
+digest is truncated from the bottom, which is where this section and the
+analyzed-commit footer under it live.
+
 For the same reason, a finding whose file no longer exists at the analyzed
 commit — the ones captioned *"file path not found at analyzed commit — finding
 may be outdated"* — does not take a slot ahead of a live finding of the **same

@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // shutdownTimeout bounds shutdown calls in tests so a misbehaving batcher can
@@ -76,13 +77,11 @@ func TestInit_EnabledMissingEndpointIsNoop(t *testing.T) {
 // the global provider and verifies StartSpan produces a span with the expected
 // name and attributes. No real network is used.
 func TestStartSpan_RecordsWithStubExporter(t *testing.T) {
+	restoreGlobalProvider(t)
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	otel.SetTracerProvider(tp)
-	t.Cleanup(func() {
-		otel.SetTracerProvider(otel.GetTracerProvider())
-		_ = tp.Shutdown(context.Background())
-	})
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	const spanName = "test.span"
 	_, span := StartSpan(context.Background(), spanName,
@@ -119,6 +118,7 @@ func TestStartSpan_RecordsWithStubExporter(t *testing.T) {
 // TestStartSpan_ParentChild verifies that a child span started from a parent's
 // context is linked to the parent trace (the lifecycle shape we instrument).
 func TestStartSpan_ParentChild(t *testing.T) {
+	restoreGlobalProvider(t)
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	otel.SetTracerProvider(tp)
@@ -165,13 +165,16 @@ func TestTracer_EmptyNameUsesDefault(t *testing.T) {
 	span.End()
 }
 
-// restoreGlobalProvider snapshots the current global TracerProvider and restores
-// it on cleanup, so an enabled test that calls otel.SetTracerProvider does not
-// leak an OTLP-backed provider into other tests.
+// restoreGlobalProvider resets the global TracerProvider to a no-op on cleanup,
+// so a test that installs a recording provider (directly or via Init) does not
+// leak it into other tests. It deliberately does NOT snapshot-and-restore
+// otel.GetTracerProvider(): before any SetTracerProvider call that returns
+// otel's internal global delegate, which otel refuses to reinstall ("cannot
+// register the global delegate as the TracerProvider"), silently turning the
+// restore into a no-op and letting recording providers leak under -shuffle.
 func restoreGlobalProvider(t *testing.T) {
 	t.Helper()
-	prev := otel.GetTracerProvider()
-	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	t.Cleanup(func() { otel.SetTracerProvider(tracenoop.NewTracerProvider()) })
 }
 
 // TestInit_EnabledWithConfiguredEndpoint exercises the full enabled path:
@@ -461,6 +464,7 @@ func TestSpanComponent(t *testing.T) {
 // StartSpan automatically carries hive.component derived from its name, with
 // no call-site changes (#3973).
 func TestStartSpan_AddsComponentAttribute(t *testing.T) {
+	restoreGlobalProvider(t)
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	otel.SetTracerProvider(tp)
@@ -485,6 +489,7 @@ func TestStartSpan_AddsComponentAttribute(t *testing.T) {
 }
 
 func TestStartTimelineSpan_RecordsMappedSpan(t *testing.T) {
+	restoreGlobalProvider(t)
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	otel.SetTracerProvider(tp)
