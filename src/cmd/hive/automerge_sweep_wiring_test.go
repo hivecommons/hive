@@ -65,7 +65,7 @@ func newSweepAPI(t *testing.T, issuesJSON string, issuesStatus int, requests *at
 
 func TestRunAutoMergeSweepIfDue_NilClientIsNoop(t *testing.T) {
 	var lastRun time.Time
-	runAutoMergeSweepIfDue(context.Background(), nil, nil, &lastRun, sweepTestLogger(nil))
+	runAutoMergeSweepIfDue(context.Background(), nil, nil, nil, &lastRun, sweepTestLogger(nil))
 	if !lastRun.IsZero() {
 		t.Fatalf("nil client must not stamp lastRun, got %v", lastRun)
 	}
@@ -78,7 +78,7 @@ func TestRunAutoMergeSweepIfDue_ThrottledWithinInterval(t *testing.T) {
 
 	lastRun := time.Now()
 	before := lastRun
-	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, &lastRun, sweepTestLogger(nil))
+	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, nil, &lastRun, sweepTestLogger(nil))
 
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("throttled sweep must make no API calls, got %d", got)
@@ -95,7 +95,7 @@ func TestRunAutoMergeSweepIfDue_DueSweepStampsLastRunAndCallsAPI(t *testing.T) {
 
 	var lastRun time.Time
 	start := time.Now()
-	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, &lastRun, sweepTestLogger(nil))
+	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, nil, &lastRun, sweepTestLogger(nil))
 
 	if requests.Load() == 0 {
 		t.Fatal("due sweep made no API calls")
@@ -110,7 +110,7 @@ func TestRunAutoMergeSweepIfDue_NilLastRunStillSweeps(t *testing.T) {
 	srv := newSweepAPI(t, `[]`, http.StatusOK, &requests)
 	ghClient := github.NewClientForTest(srv.URL, "testorg", []string{"widget"}, sweepTestLogger(nil))
 
-	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, nil, sweepTestLogger(nil))
+	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, nil, nil, sweepTestLogger(nil))
 
 	if requests.Load() == 0 {
 		t.Fatal("sweep with nil lastRun pointer must still run (and not panic)")
@@ -124,7 +124,7 @@ func TestRunAutoMergeSweepIfDue_SweepErrorLoggedAndLastRunStamped(t *testing.T) 
 
 	var buf strings.Builder
 	var lastRun time.Time
-	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, &lastRun, sweepTestLogger(&buf))
+	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, nil, &lastRun, sweepTestLogger(&buf))
 
 	if !strings.Contains(buf.String(), "automerge sweep failed") {
 		t.Fatalf("sweep API failure must be logged as a warning, log:\n%s", buf.String())
@@ -147,7 +147,7 @@ func TestRunAutoMergeSweepIfDue_LogsCompletionWithSeenAndSkipped(t *testing.T) {
 
 	var buf strings.Builder
 	var lastRun time.Time
-	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, &lastRun, sweepTestLogger(&buf))
+	runAutoMergeSweepIfDue(context.Background(), ghClient, nil, nil, &lastRun, sweepTestLogger(&buf))
 
 	log := buf.String()
 	if !strings.Contains(log, "automerge sweep complete") {

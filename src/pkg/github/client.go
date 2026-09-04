@@ -118,24 +118,6 @@ type Client struct {
 	// the life of the process.
 	defaultBranchMu sync.RWMutex
 	defaultBranches map[string]string
-	// mergerAuthz gates the label-queued auto-merge sweep on WHO queued the
-	// merge: it reports whether a login holds at least config.RoleMerger (audit
-	// F3). nil fails closed — SweepQueuedAutoMerges merges nothing. Guarded
-	// because config reload re-installs it while the sweep goroutine reads it.
-	// Set by SetMergerAuthorizer.
-	mergerAuthzMu sync.RWMutex
-	mergerAuthz   MergerAuthorizer
-	// requiredChecks is the operator-declared config.AutoMergeConfig.RequiredChecks
-	// set (see config.AutoMergeConfig.RequiredCheckSet), consulted by
-	// commitGreen/requiredStatusCheckContexts BEFORE the branch-protection
-	// API — the Hive App token lacks administration:read, so that API call
-	// always errors, and this config-declared set is the scope-free source
-	// of truth for which status checks actually gate self-merge. nil means
-	// "not config-declared", so callers fall through to the API, then the
-	// allowlist. Guarded because config reload re-installs it while the
-	// sweep goroutine reads it. Set by SetRequiredChecks.
-	requiredChecksMu sync.RWMutex
-	requiredChecks   map[string]bool
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -208,6 +190,44 @@ func (c *Client) GoGitHub() *gh.Client {
 		return nil
 	}
 	return c.client
+}
+
+// Repositories returns the configured repository list.
+func (c *Client) Repositories() []string {
+	return c.getRepos()
+}
+
+// SplitRepo resolves a repository name into owner and repo components.
+func (c *Client) SplitRepo(repo string) (owner, repoName string) {
+	if c == nil {
+		return "", repo
+	}
+	return c.splitRepo(repo)
+}
+
+// AppBotLogin returns the configured GitHub App bot login.
+func (c *Client) AppBotLogin() string {
+	if c == nil {
+		return ""
+	}
+	return c.appBotLogin
+}
+
+// IsExemptLabels reports whether labels include a configured merge-exempt label.
+func (c *Client) IsExemptLabels(labels []string) bool {
+	return c.isExempt(labels)
+}
+
+// RecordPRMergedAudit records the standard PR-merged audit event.
+func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha string) {
+	if c == nil {
+		return
+	}
+	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
+		"repo", repo,
+		"number", strconv.Itoa(number),
+		"method", method,
+		"sha", sha)
 }
 
 // AppAuth returns the GitHub App auth backing this client, or nil when the
@@ -365,6 +385,7 @@ func mergeableFromState(state string, mergeable *bool) Mergeable {
 	case "dirty", "blocked", "behind", "draft":
 		return MergeableNo
 	}
+
 	// "unknown" (or an unrecognised state): GitHub is still computing.
 	// Fall back to the raw bool only when it was actually present.
 	if mergeable != nil {
@@ -529,6 +550,11 @@ func (c *Client) SetRepos(repos []string) {
 	c.reposMu.Lock()
 	defer c.reposMu.Unlock()
 	c.repos = repos
+}
+
+// MergeableFromState converts GitHub's mergeable_state/raw mergeable fields to a tri-state.
+func MergeableFromState(state string, mergeable *bool) Mergeable {
+	return mergeableFromState(state, mergeable)
 }
 
 func (c *Client) getRepos() []string {
@@ -898,6 +924,7 @@ func isMetaCheck(name string) bool {
 	case "tide", "enforce-guardrails":
 		return true
 	}
+
 	for _, prefix := range []string{"Header rules", "Pages changed", "Redirect rules", "netlify/", "copilot"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
@@ -934,6 +961,7 @@ func isIgnorableCICheck(name string) bool {
 	if isMetaCheck(name) {
 		return true
 	}
+
 	switch name {
 	case "Playwright", "Mobile Browser Tests", "coverage-report":
 		return true
@@ -942,6 +970,11 @@ func isIgnorableCICheck(name string) bool {
 		return true
 	}
 	return chromiumShardCheckRE.MatchString(name)
+}
+
+// IsIgnorableCICheck reports whether a non-required CI context is ignored by fallback gating.
+func IsIgnorableCICheck(name string) bool {
+	return isIgnorableCICheck(name)
 }
 
 // Bounds for fetchFailureExcerpt: annotations are fetched for at most
@@ -960,6 +993,12 @@ const (
 // see from a bare "CI failed" status. Works on GitHub and GHE through the
 // client's configured API base; on errors it degrades to "" — the excerpt is
 // an enrichment, never a gate.
+
+// IsMetaCheck reports whether a CI context is metadata-only for merge gating.
+func IsMetaCheck(name string) bool {
+	return isMetaCheck(name)
+}
+
 func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, runIDs []int64, runNames []string) string {
 	var lines []string
 	total := 0
@@ -1137,6 +1176,11 @@ func extractPRLabels(labels []*gh.Label) []string {
 	return extractLabels(labels)
 }
 
+// ExtractPRLabels returns the names from a pull request label list.
+func ExtractPRLabels(labels []*gh.Label) []string {
+	return extractPRLabels(labels)
+}
+
 func extractAssignees(users []*gh.User) []string {
 	var result []string
 	for _, u := range users {
@@ -1151,7 +1195,13 @@ func safeGetLogin(u *gh.User) string {
 	if u == nil {
 		return ""
 	}
+
 	return u.GetLogin()
+}
+
+// SafeGetLogin returns a GitHub user's login, or an empty string for nil.
+func SafeGetLogin(u *gh.User) string {
+	return safeGetLogin(u)
 }
 
 func HasHoldLabel(labels []string) bool {

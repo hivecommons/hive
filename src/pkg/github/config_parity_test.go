@@ -25,15 +25,6 @@ func TestAutoMergeQueuedLabelMatchesConfigDefault(t *testing.T) {
 	}
 }
 
-func TestSelfMergeMinACMMLevelMatchesConfig(t *testing.T) {
-	if selfMergeMinACMMLevel != config.SelfMergeMinACMMLevel {
-		t.Fatalf("selfMergeMinACMMLevel = %d, config.SelfMergeMinACMMLevel = %d — "+
-			"the sweep logs this as the authority for self-authored auto-merge; "+
-			"a mismatch would misreport the gate an operator is being held to",
-			selfMergeMinACMMLevel, config.SelfMergeMinACMMLevel)
-	}
-}
-
 // config.IssueFilterConfig must keep satisfying IssueAdmitter, because every
 // construction site passes it directly. If it stops, those sites break at the
 // call rather than here, which is a much less obvious failure.

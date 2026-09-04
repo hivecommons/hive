@@ -1,4 +1,4 @@
-package github
+package automerge
 
 import (
 	"errors"
@@ -60,7 +60,7 @@ func TestIsRateLimited_IgnoresOtherErrors(t *testing.T) {
 // TestRefreshRateLimitCache_NilSafe: the sweep calls this from an error path, so
 // it must never panic on a half-constructed client.
 func TestRefreshRateLimitCache_NilSafe(t *testing.T) {
-	var c *Client
+	var c *Engine
 	c.refreshRateLimitCache(t.Context()) // nil receiver
-	(&Client{}).refreshRateLimitCache(t.Context())
+	(&Engine{}).refreshRateLimitCache(t.Context())
 }

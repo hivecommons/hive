@@ -99,27 +99,6 @@ func TestListPRCommitsNilClientAndAPIError(t *testing.T) {
 // #5589: a hold label applied AFTER a merger queued the PR (including the
 // hold guard's re-applied hold on a drifted branch) must stop the queued
 // sweep before it ever consults the approval record.
-func TestSweepQueuedAutoMergesSkipsHeldAndExemptPRs(t *testing.T) {
-	var merged []int
-	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{
-		{number: 7, author: "alice", queuedBy: "bob", label: true, extraLabels: []string{"hold"}, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
-		{number: 8, author: "carol", queuedBy: "dave", label: true, extraLabels: []string{"do-not-merge"}, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
-	}, &merged)
-	defer api.Close()
-
-	c := newAutoMergeSweepClient(api.URL)
-	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
-	if err != nil {
-		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
-	}
-	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 2 {
-		t.Fatalf("result=%+v merge calls=%v, want held and exempt PRs skipped", result, merged)
-	}
-}
-
-// A held PR's HoldItem must carry the head SHA and author observed at
-// enumeration time — the hold guard's snapshot is pinned from these fields
-// without any extra API call.
 func TestEnumerateActionablePopulatesHoldItemHeadAndAuthor(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
