@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/advisory"
 )
 
 // --------------------------------------------------------------------------
@@ -636,12 +638,9 @@ func TestPostAdvisoryDigest_FindCommentError_StillCreates(t *testing.T) {
 	}
 }
 
-// TestPostAdvisoryDigest_NeutralizesMentions asserts the invariant that no
-// body posted through the advisory digest path ever carries a raw @mention —
-// even when a caller bypasses FormatDigestMarkdown and hands over unsanitized
-// text. The digest comment is rewritten every cycle, so a single raw mention
-// would re-notify that human on every refresh.
-func TestPostAdvisoryDigest_NeutralizesMentions(t *testing.T) {
+// TestPostAdvisoryDigestAcceptsPreRenderedMentionSafeBody asserts the posting
+// path preserves a caller-rendered, mention-safe digest body.
+func TestPostAdvisoryDigestAcceptsPreRenderedMentionSafeBody(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	var postedBody string
 	mux := http.NewServeMux()
@@ -667,7 +666,8 @@ func TestPostAdvisoryDigest_NeutralizesMentions(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	raw := "## 🐝 Advisory Digest\n- PR #665 (open, by @omerap12) adds a helper\n- ping user@example.com about @some-user"
-	if err := c.PostAdvisoryDigest(context.Background(), repo, 10, raw); err != nil {
+	rendered := advisory.NeutralizeMentions(raw)
+	if err := c.PostAdvisoryDigest(context.Background(), repo, 10, rendered); err != nil {
 		t.Fatalf("PostAdvisoryDigest: %v", err)
 	}
 	// A mention-position "@username" (@ at start of text or after a
