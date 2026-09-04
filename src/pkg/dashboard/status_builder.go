@@ -675,6 +675,13 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			Conditions:      proc.WatchdogConditions,
 			WatchdogMode:    watchdogMode,
 		}
+		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
+			a.StructuredStatus = "BLOCKED"
+			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
+			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
+				a.StatusEvidence += ": " + line
+			}
+		}
 
 		acmmLevel := 0
 		if cfg.ACMMLevel != nil {

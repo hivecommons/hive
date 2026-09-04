@@ -303,23 +303,28 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange     time.Time
-	consentSeenAt      time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt    time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
-	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
-	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	LastPaneChange       time.Time
+	consentSeenAt        time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss   time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt      time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane    string    // stall watchdog: hash of the visible pane just after kick delivery
+	lastInferKickVisible string    // stall watchdog: visible pane text just after kick delivery
+	stallNudgeSent       bool      // stall watchdog: at most one nudge per kick
+	StallNudges          int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
 	// a nudge per tick. transientNudgesThisKick is the per-kick cap; both it and
 	// the cooldown reset on the next kick.
-	lastTransientNudge      time.Time
-	transientNudgesThisKick int
-	TransientNudges         int // total transient-API-error nudges sent (surfaced to the dashboard)
-	launchGen               int // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks      int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	lastTransientNudge          time.Time
+	transientNudgesThisKick     int
+	TransientNudges             int // total transient-API-error nudges sent (surfaced to the dashboard)
+	launchGen                   int // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks          int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	ProviderErrorClass          string
+	ProviderErrorLine           string
+	ProviderErrorBackoffUntil   time.Time
+	providerErrorBackoffAttempt int
 	// kickLogPending is true while the current tmux session holds kick output
 	// that has not yet been archived to a per-kick log file (see
 	// kick_logs.go). Set after every kick delivery; cleared when the
@@ -845,6 +850,7 @@ func (m *Manager) linearEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if !m.agentMode(agent).CanCreateIssues() {
 		return nil
 	}
+
 	cred := m.linearCredential()
 	switch {
 	case cred.AccessToken != "":
@@ -4730,6 +4736,10 @@ func (m *Manager) SendKick(name string, message string) error {
 	if agent.State != StateRunning {
 		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
+	}
 
 	if !m.tmuxSessionExistsForAgent(agent) {
 		return fmt.Errorf("tmux session %s not found", agent.tmuxSession)
@@ -4779,6 +4789,10 @@ func (m *Manager) SendKick(name string, message string) error {
 	agent, ok = m.agents[name]
 	if !ok {
 		return fmt.Errorf("agent %s disappeared while waiting for input prompt", name)
+	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
 	}
 
 	m.deliverKickLocked(agent, message, "send-kick")
@@ -5567,6 +5581,18 @@ const (
 	// working agent. Sized to cover the error block plus the idle prompt under
 	// it without reaching back into the previous response.
 	transientAPIErrorTailLines = 12
+	// providerErrorBackoffBaseDefault is the first delay after an inference
+	// provider failure. A repeat of the same request cannot fix bad DNS, auth,
+	// quota, rate-limit, or overloaded-backend errors, so the hive backs off
+	// instead of typing anti-narration nudges into the failure.
+	providerErrorBackoffBaseDefault = 2 * time.Minute
+	// providerErrorBackoffMaxDefault caps the exponential provider-error
+	// backoff so one broken backend still gets periodic probe kicks.
+	providerErrorBackoffMaxDefault = 30 * time.Minute
+	// ProviderErrorBackoffBaseEnv overrides providerErrorBackoffBaseDefault.
+	ProviderErrorBackoffBaseEnv = "HIVE_PROVIDER_ERROR_BACKOFF_BASE"
+	// ProviderErrorBackoffMaxEnv overrides providerErrorBackoffMaxDefault.
+	ProviderErrorBackoffMaxEnv = "HIVE_PROVIDER_ERROR_BACKOFF_MAX"
 	// cliInputPromptMarker is the CLI's idle input prompt indicator.
 	cliInputPromptMarker = "❯"
 	// inferenceActionNudgeGrace is the minimum time after a kick before the
@@ -5705,17 +5731,90 @@ func paneContentHash(pane string) string {
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 
+func paneAfterKickBaseline(pane, baseline string) string {
+	if baseline == "" {
+		return pane
+	}
+	if idx := strings.LastIndex(pane, baseline); idx >= 0 {
+		return pane[idx+len(baseline):]
+	}
+	paneLines := strings.Split(pane, "\n")
+	baseLines := strings.Split(baseline, "\n")
+	common := 0
+	for common < len(paneLines) && common < len(baseLines) && paneLines[common] == baseLines[common] {
+		common++
+	}
+	if common > 0 {
+		return strings.Join(paneLines[common:], "\n")
+	}
+	return pane
+}
+
 // recordInferenceKick arms the post-kick stall watchdog for an inference
 // agent: remembers when the kick was delivered and what the pane looked like
 // right after delivery. Caller must hold m.mu.
 func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
+	visible := m.captureVisiblePaneForAgent(agent)
 	agent.lastInferKickAt = at
-	agent.lastInferKickPane = paneContentHash(m.captureVisiblePaneForAgent(agent))
+	agent.lastInferKickPane = paneContentHash(visible)
+	agent.lastInferKickVisible = visible
 	agent.stallNudgeSent = false
 	// Baseline for the no-action check: markers already in scrollback from
 	// work done before this kick must not count as post-kick tool activity.
 	agent.lastInferKickMarks = countToolMarkers(m.captureTmuxPaneForAgent(agent))
 	agent.actionNudgeSent = false
+}
+
+func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErrorMatch, now time.Time) time.Duration {
+	if !agent.ProviderErrorBackoffUntil.IsZero() && now.Before(agent.ProviderErrorBackoffUntil) &&
+		agent.ProviderErrorClass == match.Class && agent.ProviderErrorLine == match.Line {
+		return agent.ProviderErrorBackoffUntil.Sub(now)
+	}
+	agent.providerErrorBackoffAttempt++
+	delay := providerErrorBackoffDelay(agent.providerErrorBackoffAttempt)
+	agent.ProviderErrorBackoffUntil = now.Add(delay)
+	agent.ProviderErrorClass = match.Class
+	agent.ProviderErrorLine = match.Line
+	agent.LastError = match.Line
+	agent.lastInferKickPane = ""
+	agent.actionNudgeSent = false
+	return delay
+}
+
+func (m *Manager) clearProviderErrorLocked(agent *AgentProcess) {
+	if agent.ProviderErrorClass == "" && agent.ProviderErrorLine == "" && agent.ProviderErrorBackoffUntil.IsZero() {
+		return
+	}
+	if agent.LastError == agent.ProviderErrorLine {
+		agent.LastError = ""
+	}
+	agent.ProviderErrorClass = ""
+	agent.ProviderErrorLine = ""
+	agent.ProviderErrorBackoffUntil = time.Time{}
+	agent.providerErrorBackoffAttempt = 0
+}
+
+func (m *Manager) providerErrorBackoffRemainingLocked(agent *AgentProcess, now time.Time) time.Duration {
+	if agent == nil || agent.ProviderErrorBackoffUntil.IsZero() || !now.Before(agent.ProviderErrorBackoffUntil) {
+		return 0
+	}
+	return agent.ProviderErrorBackoffUntil.Sub(now)
+}
+
+// ProviderErrorBackoffRemaining reports the active inference-provider backoff
+// for a dashboard/governor caller that wants to avoid even attempting a kick.
+func (m *Manager) ProviderErrorBackoffRemaining(name string) (time.Duration, string, string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent, ok := m.agents[name]
+	if !ok {
+		return 0, "", "", false
+	}
+	remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now())
+	if remaining <= 0 {
+		return 0, agent.ProviderErrorClass, agent.ProviderErrorLine, false
+	}
+	return remaining, agent.ProviderErrorClass, agent.ProviderErrorLine, true
 }
 
 // nudgeIfKickStalled watches an inference agent after a kick and corrects
@@ -5746,6 +5845,20 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		return
 	}
 	sinceKick := now.Sub(agent.lastInferKickAt)
+	if match, ok := classifyProviderError(paneAfterKickBaseline(pane, agent.lastInferKickVisible)); ok {
+		backoff := m.markProviderErrorLocked(agent, match, now)
+		attempt := agent.providerErrorBackoffAttempt
+		m.mu.Unlock()
+
+		m.logger.Warn("inference provider error detected, backing off kicks instead of sending action nudge",
+			"name", name,
+			"class", match.Class,
+			"attempt", attempt,
+			"backoff", backoff.Round(time.Second),
+			"error", match.Line)
+		return
+	}
+	m.clearProviderErrorLocked(agent)
 
 	if paneContentHash(pane) == agent.lastInferKickPane {
 		// Frozen pane: the CLI never consumed the kick.
@@ -6064,40 +6177,43 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
 	return AgentProcess{
-		Name:               a.Name,
-		ID:                 a.ID,
-		Config:             a.Config,
-		State:              a.State,
-		PID:                a.PID,
-		UID:                a.UID,
-		StartedAt:          a.StartedAt,
-		LastKick:           a.LastKick,
-		Paused:             a.Paused,
-		PausedAt:           a.PausedAt,
-		PausedReason:       a.PausedReason,
-		PausedTrigger:      a.PausedTrigger,
-		PausedBy:           a.PausedBy,
-		PinnedCLI:          a.PinnedCLI,
-		PinnedModel:        a.PinnedModel,
-		ModelOverride:      a.ModelOverride,
-		BackendOverride:    a.BackendOverride,
-		RestartCount:       a.RestartCount,
-		TurnLoss:           cloneTurnLoss(a.TurnLoss),
-		KickHistory:        history,
-		LastKickMessage:    a.LastKickMessage,
-		NeedsLogin:         needsLogin,
-		QuotaExhausted:     quotaExhausted,
-		LastPaneChange:     lastPaneChange,
-		WatchdogConditions: conds,
-		StallNudges:        a.StallNudges,
-		ActionNudges:       a.ActionNudges,
-		TransientNudges:    a.TransientNudges,
-		HasLaunched:        a.HasLaunched,
-		LaunchedMode:       a.LaunchedMode,
-		tmuxSession:        a.tmuxSession,
-		tmuxSocket:         a.tmuxSocket,
-		OutputBuffer:       a.OutputBuffer,
-		lastPaneCapture:    pane,
+		Name:                      a.Name,
+		ID:                        a.ID,
+		Config:                    a.Config,
+		State:                     a.State,
+		PID:                       a.PID,
+		UID:                       a.UID,
+		StartedAt:                 a.StartedAt,
+		LastKick:                  a.LastKick,
+		Paused:                    a.Paused,
+		PausedAt:                  a.PausedAt,
+		PausedReason:              a.PausedReason,
+		PausedTrigger:             a.PausedTrigger,
+		PausedBy:                  a.PausedBy,
+		PinnedCLI:                 a.PinnedCLI,
+		PinnedModel:               a.PinnedModel,
+		ModelOverride:             a.ModelOverride,
+		BackendOverride:           a.BackendOverride,
+		RestartCount:              a.RestartCount,
+		TurnLoss:                  cloneTurnLoss(a.TurnLoss),
+		KickHistory:               history,
+		LastKickMessage:           a.LastKickMessage,
+		NeedsLogin:                needsLogin,
+		QuotaExhausted:            quotaExhausted,
+		LastPaneChange:            lastPaneChange,
+		WatchdogConditions:        conds,
+		StallNudges:               a.StallNudges,
+		ActionNudges:              a.ActionNudges,
+		TransientNudges:           a.TransientNudges,
+		ProviderErrorClass:        a.ProviderErrorClass,
+		ProviderErrorLine:         a.ProviderErrorLine,
+		ProviderErrorBackoffUntil: a.ProviderErrorBackoffUntil,
+		HasLaunched:               a.HasLaunched,
+		LaunchedMode:              a.LaunchedMode,
+		tmuxSession:               a.tmuxSession,
+		tmuxSocket:                a.tmuxSocket,
+		OutputBuffer:              a.OutputBuffer,
+		lastPaneCapture:           pane,
 	}
 }
 
@@ -6558,6 +6674,111 @@ func paneShowsTransientAPIError(lines []string) bool {
 		}
 	}
 	return false
+}
+
+type providerErrorMatch struct {
+	Class string
+	Line  string
+}
+
+var (
+	providerAPIErrorStatusRe = regexp.MustCompile(`(?i)\bAPI Error:\s*(\d{3})\b`)
+	providerRetryingRe       = regexp.MustCompile(`(?i)\bRetrying in \d+s\s+·\s+attempt \d+/\d+\b`)
+	providerHTTPStatusRe     = regexp.MustCompile(`\b(401|403|429|500|502|503|529)\b`)
+)
+
+func providerErrorBackoffBase() time.Duration {
+	if v := os.Getenv(ProviderErrorBackoffBaseEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return providerErrorBackoffBaseDefault
+}
+
+func providerErrorBackoffMax() time.Duration {
+	if v := os.Getenv(ProviderErrorBackoffMaxEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return providerErrorBackoffMaxDefault
+}
+
+func providerErrorBackoffDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	base := providerErrorBackoffBase()
+	maxDelay := providerErrorBackoffMax()
+	delay := base
+	for i := 1; i < attempt && delay < maxDelay; i++ {
+		delay *= 2
+		if delay > maxDelay {
+			return maxDelay
+		}
+	}
+	return delay
+}
+
+// classifyProviderError recognizes provider/API failures rendered by agent
+// CLIs. These are infrastructure failures, not model narration, so callers use
+// the verdict to block and back off instead of sending action nudges.
+func classifyProviderError(pane string) (providerErrorMatch, bool) {
+	for _, line := range strings.Split(stripExplainLines(pane), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		switch {
+		case strings.Contains(lower, "insufficient_quota"):
+			return providerErrorMatch{Class: "quota", Line: trimmed}, true
+		case strings.Contains(lower, "rate_limit") ||
+			((strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many requests")) && providerLineHasAPIContext(lower)):
+			return providerErrorMatch{Class: "rate_limit", Line: trimmed}, true
+		case strings.Contains(lower, "overloaded_error") ||
+			(strings.Contains(lower, "overloaded") && providerLineHasAPIContext(lower)):
+			return providerErrorMatch{Class: "overloaded", Line: trimmed}, true
+		case strings.Contains(lower, `"type":"api_error"`) || strings.Contains(lower, `"type": "api_error"`) ||
+			strings.Contains(lower, "inference backend unreachable"):
+			return providerErrorMatch{Class: "api_error", Line: trimmed}, true
+		case providerRetryingRe.MatchString(trimmed):
+			return providerErrorMatch{Class: "retrying", Line: trimmed}, true
+		}
+		if m := providerAPIErrorStatusRe.FindStringSubmatch(trimmed); len(m) == 2 {
+			return providerErrorMatch{Class: providerErrorStatusClass(m[1]), Line: trimmed}, true
+		}
+		if providerLineHasAPIContext(lower) {
+			if m := providerHTTPStatusRe.FindStringSubmatch(trimmed); len(m) == 2 {
+				return providerErrorMatch{Class: providerErrorStatusClass(m[1]), Line: trimmed}, true
+			}
+		}
+	}
+	return providerErrorMatch{}, false
+}
+
+func providerLineHasAPIContext(lower string) bool {
+	return strings.Contains(lower, "api error") ||
+		strings.Contains(lower, "api_error") ||
+		strings.Contains(lower, "inference") ||
+		strings.Contains(lower, "backend") ||
+		strings.Contains(lower, "quota") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "forbidden")
+}
+
+func providerErrorStatusClass(status string) string {
+	switch status {
+	case "401", "403":
+		return "auth"
+	case "429":
+		return "rate_limit"
+	case "529":
+		return "overloaded"
+	default:
+		return "api_error"
+	}
 }
 
 // claudeCredentialReachable reports whether a usable Claude credential exists

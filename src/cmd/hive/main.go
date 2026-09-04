@@ -6277,6 +6277,22 @@ func runEvalCycle(
 	// only `agentsDue` earlier would still let a CEL match or a review kick fire
 	// into the same clipped key.
 	//
+	if len(messages) > 0 {
+		filtered := messages[:0]
+		for _, msg := range messages {
+			if remaining, class, line, ok := agentMgr.ProviderErrorBackoffRemaining(msg.Agent); ok {
+				logger.Warn("provider inference error: withholding agent kick during backoff",
+					"agent", msg.Agent,
+					"class", class,
+					"retry_in", remaining.Round(time.Second),
+					"error", line)
+				continue
+			}
+			filtered = append(filtered, msg)
+		}
+		messages = filtered
+	}
+
 	// Suppression is total rather than per-agent because the limit is on the
 	// KEY: no agent can succeed while it is clipped. It self-heals — the first
 	// inference call that succeeds after the provider's window resets clears the
@@ -6296,16 +6312,16 @@ func runEvalCycle(
 	// re-arms suppression immediately, so the cycles while the probe's run
 	// is still in flight withhold again rather than leaking more kicks.
 	kickGate := gateKickMessagesForProviderBudget(messages, suppressKicks, providerBudgetLatched)
+	releaseProviderBudgetProbe := kickGate.ReleaseProbe
 	if suppressKicks && len(messages) > 0 {
 		logger.Warn("provider spending limit: withholding agent kicks",
 			"withheld", kickGate.Withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
 			"next_probe_in", (providerBudgetProbeInterval - time.Since(providerBudgetProbe.freshest(providerBudgetLastRebuff))).Truncate(time.Second))
-	} else if kickGate.ReleaseProbe {
+	} else if releaseProviderBudgetProbe {
 		if len(kickGate.Withheld) > 0 {
 			logger.Warn("provider spending limit: withholding all but the probe kick",
 				"withheld", kickGate.Withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince)
 		}
-		providerBudgetProbe.markReleased(time.Now())
 		logger.Info("provider spending limit: releasing a single probe kick",
 			"probe_agent", kickGate.Kept[0].Agent, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
 			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
@@ -6318,6 +6334,14 @@ func runEvalCycle(
 	var deliveredReviewKicks []review.DispatchKick
 	if len(messages) > 0 {
 		for _, msg := range messages {
+			if remaining, class, line, ok := agentMgr.ProviderErrorBackoffRemaining(msg.Agent); ok {
+				logger.Warn("provider inference error: withholding agent kick during backoff",
+					"agent", msg.Agent,
+					"class", class,
+					"retry_in", remaining.Round(time.Second),
+					"error", line)
+				continue
+			}
 			agentCfg := cfg.Agents[msg.Agent]
 			_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
 				msg.Agent,
@@ -6339,6 +6363,10 @@ func runEvalCycle(
 				persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 			}
 			kickSpan.End()
+			if releaseProviderBudgetProbe {
+				providerBudgetProbe.markReleased(time.Now())
+				releaseProviderBudgetProbe = false
+			}
 			gov.RecordKick(msg.Agent)
 			dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 

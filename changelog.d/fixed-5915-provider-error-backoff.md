@@ -1,0 +1,1 @@
+- Inference-backed agents now classify provider API failures before the anti-narration watchdog fires, back off retries, and show the blocked inference error in the dashboard instead of looping on “execute it yourself” nudges ([#5915](https://github.com/hivecommons/hive/issues/5915)).

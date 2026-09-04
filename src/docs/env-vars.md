@@ -163,6 +163,8 @@ new value at the same time.
 | `CODEX_API_KEY` | No | none | API key consulted for the Codex CLI backend. |
 | `HIVE_AGENT_TOKEN_REFRESH_INTERVAL` | No | `40m` | Go duration overriding the per-agent token refresh interval. Invalid or non-positive values fall back to the default. |
 | `HIVE_CREDENTIAL_WATCHDOG_INTERVAL` | No | `5m` | Go duration overriding how often the credential watchdog verifies each in-use backend credential file. `0` does NOT disable the watchdog — disabling is intentionally not offered. |
+| `HIVE_PROVIDER_ERROR_BACKOFF_BASE` | No | `2m` | Go duration for the first inference-provider error backoff before another kick is allowed. Invalid or non-positive values fall back to the default. |
+| `HIVE_PROVIDER_ERROR_BACKOFF_MAX` | No | `30m` | Go duration cap for exponential inference-provider error backoff. Invalid or non-positive values fall back to the default. |
 | `HIVE_COPILOT_SESSION_REFRESH_INTERVAL` | No | `10m` | Go duration overriding the Copilot session refresh interval. |
 | `HIVE_COPILOT_SESSION_REFRESH_START_DELAY` | No | `30s` | Go duration overriding the delay before the first Copilot session refresh. |
 | `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | No | unset | Bypasses the Claude host-state isolation guard. As the name says, unsafe outside local development. |
