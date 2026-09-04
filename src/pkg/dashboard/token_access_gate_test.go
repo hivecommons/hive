@@ -6,8 +6,12 @@ package dashboard
 // --body, etc.).
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,5 +60,72 @@ func TestTokenAccessSourceGate(t *testing.T) {
 		t.Error("handleTokenAccess in api.go has no requireOwnerRole gate — " +
 			"any authenticated user can read the full gh-command audit log (#3936). " +
 			"Restore the gate; do not remove this test.")
+	}
+}
+
+func TestTokenAccessSuccessSkipsBlankLinesAndCapsEntries(t *testing.T) {
+	s, _ := apiServer(t)
+	dir := t.TempDir()
+	orig := tokenAccessLogPath
+	tokenAccessLogPath = filepath.Join(dir, "token-access.jsonl")
+	t.Cleanup(func() { tokenAccessLogPath = orig })
+
+	var b strings.Builder
+	b.WriteString("\n")
+	const extraEntries = 5
+	for i := 0; i < tokenAccessMaxEntries+extraEntries; i++ {
+		if i == 3 {
+			b.WriteString("\n")
+		}
+		b.WriteString(`{"seq":`)
+		b.WriteString(fmt.Sprint(i))
+		b.WriteString(`,"cmd":"gh pr view"}` + "\n")
+	}
+	if err := os.WriteFile(tokenAccessLogPath, []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("write token access log: %v", err)
+	}
+
+	rec := doOwnerGet(s, "/api/token-access")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Entries) != tokenAccessMaxEntries {
+		t.Fatalf("entries = %d, want %d", len(got.Entries), tokenAccessMaxEntries)
+	}
+	firstSeq, ok := got.Entries[0]["seq"].(float64)
+	if !ok {
+		t.Fatalf("first seq has type %T, want number", got.Entries[0]["seq"])
+	}
+	if int(firstSeq) != extraEntries {
+		t.Fatalf("first seq = %v, want %d", firstSeq, extraEntries)
+	}
+}
+
+func TestTokenAccessMissingLogReturnsEmptyEntriesAndError(t *testing.T) {
+	s, _ := apiServer(t)
+	dir := t.TempDir()
+	orig := tokenAccessLogPath
+	tokenAccessLogPath = filepath.Join(dir, "missing.jsonl")
+	t.Cleanup(func() { tokenAccessLogPath = orig })
+
+	rec := doOwnerGet(s, "/api/token-access")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Entries []json.RawMessage `json:"entries"`
+		Error   string            `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Entries) != 0 || got.Error != "no audit log" {
+		t.Fatalf("response = %+v, want empty entries with no audit log error", got)
 	}
 }

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -46,6 +47,35 @@ func TestHandleAgentFullLog_DownloadRouted(t *testing.T) {
 	rec := doGet(s, "/api/agents/scanner/log?download=1")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleAgentFullLogSuccessDownloadAndExplainFilter(t *testing.T) {
+	s, _ := apiServer(t)
+	const capturedLog = "ordinary\nEXPLAIN: kept reasoning\n"
+	s.captureFullLogFn = func(name string) (string, error) {
+		if name != "scanner" {
+			return "", fmt.Errorf("unexpected agent %q", name)
+		}
+		return capturedLog, nil
+	}
+
+	rec := doGet(s, "/api/agents/scanner/log?download=1&explain=only")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "EXPLAIN: kept reasoning\n" {
+		t.Fatalf("body = %q, want explain-only log", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/plain", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cc)
+	}
+	disposition := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(disposition, `attachment; filename="hive-scanner-`) || !strings.HasSuffix(disposition, `.log"`) {
+		t.Fatalf("Content-Disposition = %q, want scanner log attachment", disposition)
 	}
 }
 

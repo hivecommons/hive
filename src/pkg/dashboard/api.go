@@ -1178,11 +1178,13 @@ func buildSnapshotProd(s *Server, outputFile, mode string) {
 	dashURL := fmt.Sprintf("http://localhost:%d", s.port)
 	htmlSource := "/opt/hive/proxy/public/index.html"
 	builderScript := "/opt/hive/dashboard/build-snapshot.mjs"
-	cmd := exec.Command("node", builderScript,
+	args := []string{
+		builderScript,
 		"--mode", mode,
 		"--base-path", "/snapshot",
 		"--html", htmlSource,
-		dashURL, outputFile)
+		dashURL, outputFile,
+	}
 	// The builder fetches /api/status (and siblings) from localhost. Those
 	// endpoints require auth, so without a token the builder gets 401 and
 	// bakes an empty snapshot (blank Governor/Tokens/Cost/Repos/Beads/Agents
@@ -1190,13 +1192,18 @@ func buildSnapshotProd(s *Server, outputFile, mode string) {
 	// builder authenticates via the trusted X-Hive-Internal header path. The
 	// token is used ONLY as a request header for the localhost fetch; the
 	// builder never writes it into the snapshot HTML output.
-	cmd.Env = snapshotBuilderEnv(os.Environ(), s.authToken)
-	out, err := cmd.CombinedOutput()
+	out, err := runSnapshotBuilder(args, snapshotBuilderEnv(os.Environ(), s.authToken))
 	if err != nil {
 		s.logger.Warn("snapshot build failed", "error", err, "output", string(out))
 	} else {
 		s.logger.Info("snapshot built", "file", outputFile)
 	}
+}
+
+var runSnapshotBuilder = func(args []string, env []string) ([]byte, error) {
+	cmd := exec.Command("node", args...)
+	cmd.Env = env
+	return cmd.CombinedOutput()
 }
 
 // snapshotBuilderEnv returns the environment for the Node snapshot builder.
@@ -2150,9 +2157,10 @@ func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
 // --- Token access audit log ---
 
 const (
-	tokenAccessLogPath    = "/var/run/hive-metrics/token-access.jsonl"
 	tokenAccessMaxEntries = 100
 )
+
+var tokenAccessLogPath = "/var/run/hive-metrics/token-access.jsonl"
 
 func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
 	// SECURITY (#3936, CWE-284): the token-access log records every gh CLI

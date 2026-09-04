@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -111,6 +112,15 @@ type Server struct {
 	// handleSnapshotPage can be exercised without a Node toolchain on the
 	// test host.
 	buildSnapshotFn func(s *Server, outputFile, mode string)
+
+	// captureFullLogFn, if non-nil, replaces AgentMgr.CaptureFullLog for
+	// handleAgentFullLog tests so handler success paths can be exercised without
+	// a live tmux pane.
+	captureFullLogFn func(name string) (string, error)
+
+	kickBrainstormSendKickFn func(name, msg string) error
+	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
+	kickBrainstormDoneFn     func()
 
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
