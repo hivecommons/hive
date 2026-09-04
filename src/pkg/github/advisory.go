@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -187,16 +186,6 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 		return ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
-
-	// Belt-and-suspenders enforcement: no advisory body may ever carry a raw
-	// @mention. The digest comment is rewritten every update cycle, so a
-	// single "@username" in any of its findings would re-notify that human on
-	// every refresh. FormatDigestMarkdown already neutralizes mentions at
-	// render time; NeutralizeMentions is idempotent, so applying it again here
-	// guarantees the invariant for every caller of this post path. The secret
-	// scrub (logscrub) runs after, so nothing it redacts can re-introduce a
-	// mention and neither pass weakens the other.
-	digest = advisory.NeutralizeMentions(digest)
 
 	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
 	// (kubestellar/hive#4960): the digest aggregates agent-sourced advisory
