@@ -7,6 +7,37 @@ Wants=network-online.target
 Type=oneshot
 User=dev
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Refuse to run unless the checkout we sync FROM is owned by this service user
+# (or root) and is not writable by anyone else (#5936, same class as
+# #5435/#5483).
+#
+# Unlike hive-snapshot.service, this unit's ExecStart lives safely in
+# /usr/local/bin — the exposure is the SOURCE tree, not the entrypoint.
+# hive-deploy.sh cds into /tmp/hive, runs git there (executing the checkout's
+# own .git/hooks as this user), and then `sudo cp`s every changed bin/*.sh
+# over its /usr/local/bin counterpart — including bin/hive.sh →
+# /usr/local/bin/hive and bin/gh-wrapper.sh → /usr/local/bin/gh, which fronts
+# /usr/bin/gh in PATH for every user on the host. /tmp is world-writable and
+# cleared on reboot; its sticky bit stops replacing entries owned by others,
+# not CREATING new ones, and hive-deploy.timer fires OnBootSec=60. Without
+# this guard, a local user who plants a /tmp/hive checkout in the post-reboot
+# window gets their bin/*.sh root-installed host-wide within a minute of boot.
+#
+# The guard walks every path component down to /tmp/hive/bin and additionally
+# pins the highest-value synced files. Its exit status is the assertion (see
+# bin/hive-checkout-guard.sh for why an inline `find` cannot be one), so a
+# violation stops ExecStart. A missing /tmp/hive/bin is a refusal, which
+# matches the script's own "not a git repo" bail-out: this unit repopulates
+# an existing checkout, it never creates one.
+#
+# The #5481 hardening pass is deliberately NOT applied here: NoNewPrivileges
+# would break every `sudo cp`/`sudo systemctl` the script performs, and
+# ProtectSystem=full would mount /usr read-only — breaking the very
+# /usr/local/bin sync this unit exists for. PrivateTmp would hide the
+# /tmp/hive checkout entirely.
+#
+# Test with: bash src/deploy/test_hive_deploy_unit_contract.sh
+ExecStartPre=/usr/local/bin/hive-checkout-guard.sh /tmp/hive/bin hive.sh gh-wrapper.sh hive-deploy.sh hive-checkout-guard.sh
 ExecStart=/usr/local/bin/hive-deploy.sh
 StandardOutput=journal
 StandardError=journal
