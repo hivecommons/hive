@@ -794,8 +794,8 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	}
 	k.mu.RUnlock()
 
-	gs := NewGitSource(config, localKnowledgeDir, k.logger)
-	if err := gs.Init(ctx); err != nil {
+	gs := newGitSourceForConnect(config, localKnowledgeDir, k.logger)
+	if err := initGitSourceForConnect(gs, ctx); err != nil {
 		return err
 	}
 
@@ -803,10 +803,16 @@ func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceCon
 	k.gitSources = append(k.gitSources, gs)
 	k.mu.Unlock()
 
-	go gs.StartSyncLoop(ctx)
+	go startGitSourceSyncLoopForConnect(gs, ctx)
 
 	return nil
 }
+
+var (
+	newGitSourceForConnect           = NewGitSource
+	initGitSourceForConnect          = (*GitSource).Init
+	startGitSourceSyncLoopForConnect = (*GitSource).StartSyncLoop
+)
 
 // GetGitSourceStore returns the underlying FileStore for a git source by name.
 func (k *KnowledgeAPI) GetGitSourceStore(name string) *FileStore {

@@ -12,10 +12,9 @@ import (
 
 // --- KnowledgeAPI.ConnectGitSource ---
 //
-// ConnectGitSource clones into the hardcoded localKnowledgeDir (/data/knowledge),
-// which is read-only in test environments, so a successful clone cannot be
-// exercised here. We cover the duplicate-detection short-circuit and the Init
-// failure path (which returns before any successful indexing).
+// ConnectGitSource clones into localKnowledgeDir in production. Tests override
+// the Init and sync-loop seams so the successful bookkeeping path stays
+// deterministic and does not need network or filesystem git operations.
 
 func TestKnowledgeAPI_ConnectGitSource_Duplicate(t *testing.T) {
 	api := &KnowledgeAPI{logger: covLogger()}
@@ -54,6 +53,50 @@ func TestKnowledgeAPI_ConnectGitSource_InvalidURL(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected invalid URL error")
+	}
+}
+
+func TestKnowledgeAPI_ConnectGitSource_SuccessAddsSourceAndStartsSync(t *testing.T) {
+	api := &KnowledgeAPI{logger: covLogger()}
+	origInit := initGitSourceForConnect
+	origStart := startGitSourceSyncLoopForConnect
+	t.Cleanup(func() {
+		initGitSourceForConnect = origInit
+		startGitSourceSyncLoopForConnect = origStart
+	})
+
+	started := make(chan GitSourceConfig, 1)
+	initGitSourceForConnect = func(gs *GitSource, ctx context.Context) error {
+		if gs.Config().URL != "https://example.com/repo.git" {
+			t.Fatalf("init URL = %q, want trimmed URL", gs.Config().URL)
+		}
+		return nil
+	}
+	startGitSourceSyncLoopForConnect = func(gs *GitSource, ctx context.Context) {
+		started <- gs.Config()
+	}
+
+	err := api.ConnectGitSource(context.Background(), GitSourceConfig{
+		Name:    "docs",
+		URL:     " https://example.com/repo.git ",
+		Subpath: "docs",
+		Layer:   LayerProject,
+	})
+	if err != nil {
+		t.Fatalf("ConnectGitSource: %v", err)
+	}
+	if len(api.gitSources) != 1 {
+		t.Fatalf("gitSources = %d, want 1", len(api.gitSources))
+	}
+
+	const timeout = 2 * time.Second
+	select {
+	case cfg := <-started:
+		if cfg.URL != "https://example.com/repo.git" || cfg.Subpath != "docs" {
+			t.Fatalf("started config = %+v, want trimmed URL and subpath docs", cfg)
+		}
+	case <-time.After(timeout):
+		t.Fatal("sync loop was not started")
 	}
 }
 
