@@ -10102,21 +10102,26 @@ func isUnfurlBot(ua string) bool {
 	return false
 }
 
-const ogFallbackHTML = `<!DOCTYPE html><html><head>
+// ogFallbackHTML renders the unfurl-bot fallback page. The og:url is built
+// from hubPublicURL so it follows HIVE_HUB_PUBLIC_URL rather than naming a
+// host that the canonical-host swap can leave stale.
+func ogFallbackHTML() string {
+	return `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta property="og:title" content="My Hives — Hive Hub">
 <meta property="og:description" content="AI Agent Orchestration for Open Source. Manage your hive instances — monitor agents, governor mode, issues, PRs, and contributor activity.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Hive Hub">
-<meta property="og:url" content="https://hive.kubestellar.io/dashboard">
+<meta property="og:url" content="` + hubPublicURL() + `/dashboard">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
 <title>My Hives — Hive Hub</title>
 </head><body></body></html>`
+}
 
 func (s *HubServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if isUnfurlBot(r.UserAgent()) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(ogFallbackHTML))
+		_, _ = w.Write([]byte(ogFallbackHTML()))
 		return
 	}
 	cookie, err := r.Cookie("hive_hub_user")
@@ -10670,7 +10675,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <a href="/dashboard" style="color:var(--amber)">My Hives</a>
       <a href="/fleet" id="nav-fleet" style="display:none" title="Fleet health — agents the governor expects on but that can't work">Fleet</a>
       <a href="/api/docs" target="_blank">API</a>
-      <a href="https://kubestellar.io/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
+      <a href="https://docs.hivecommons.dev/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
       <span id="nav-user" class="nav-user"></span>
     </nav>
     <div class="header-right">
@@ -10685,7 +10690,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <p class="section-label">Dashboard</p>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
-        <p style="margin-top:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:rgba(244,199,95,0.08);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
+        <p style="margin-top:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:rgba(244,199,95,0.08);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
         <!-- Image-pulls bar chart: per-release container-image PULLS of the
              public spoke image (ghcr.io/hivecommons/hive), bucketed by the

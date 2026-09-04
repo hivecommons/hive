@@ -379,7 +379,7 @@ func TestSSOErrorPage_NoLiteralBodyTag(t *testing.T) {
 func TestSSOErrorPage_EscapesInterpolatedText(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/sso", nil)
-	writeSSOError(w, r, http.StatusForbidden, "CODE", `<script>alert(1)</script>`, "do a thing")
+	writeSSOError(w, r, http.StatusForbidden, "CODE", `<script>alert(1)</script>`, "do a thing", "https://hive.hivecommons.dev")
 	if strings.Contains(w.Body.String(), "<script>alert(1)</script>") {
 		t.Error("interpolated text must be HTML-escaped")
 	}

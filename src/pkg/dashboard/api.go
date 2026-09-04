@@ -1066,8 +1066,12 @@ func (s *Server) handleSnapshotFrameAncestors(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, map[string]any{"origins": origins})
 }
 
+// defaultHubURLFallback names the hub used when no Hub.URL is configured.
+// The canonical host moved to hivecommons.dev; the old name still redirects.
+const defaultHubURLFallback = "https://hive.hivecommons.dev"
+
 func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
-	hubURL := "https://hive.kubestellar.io"
+	hubURL := defaultHubURLFallback
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.URL != "" {
 		hubURL = s.deps.Config.Hub.URL
 	}
@@ -2505,6 +2509,12 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 // authorized_users allowlist. On success it mints the same kind of session the
 // device flow does and redirects to the dashboard root.
 func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
+	// The "Back to the hub" escape hatch on the error page points at the
+	// configured hub, so a spoke on any canonical host links to its own.
+	ssoHubURL := defaultHubURLFallback
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.URL != "" {
+		ssoHubURL = s.deps.Config.Hub.URL
+	}
 	// Loop breaker. An authentication failure must never present as an infinite
 	// redirect: if this navigation has already been through the handoff
 	// maxSSOHops times, something between here and "/" is bouncing us and no
@@ -2516,7 +2526,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSSOError(w, r, http.StatusLoopDetected, ssoErrLoopDetected,
 			"Signing in to this hive redirected in a circle, so it was stopped before your browser gave up.",
-			"Sign in directly with GitHub below. If that also fails, the hive's access settings likely disagree with the hub's — ask the hive operator to check that your account is on this hive's authorized-users list.")
+			"Sign in directly with GitHub below. If that also fails, the hive's access settings likely disagree with the hub's — ask the hive operator to check that your account is on this hive's authorized-users list.", ssoHubURL)
 		return
 	}
 
@@ -2544,7 +2554,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		// login, the hub sees a valid session and hands off to /sso again.
 		writeSSOError(w, r, http.StatusServiceUnavailable, ssoErrNoSecret,
 			"This hive has no hub SSO verification key configured, so single sign-on from the hub cannot be verified.",
-			"Ask the hive operator to set HIVE_HUB_SECRET (or HIVE_SSO_PUBLIC_KEY) on this hive. In the meantime you can sign in directly with GitHub using the button below.")
+			"Ask the hive operator to set HIVE_HUB_SECRET (or HIVE_SSO_PUBLIC_KEY) on this hive. In the meantime you can sign in directly with GitHub using the button below.", ssoHubURL)
 		return
 	}
 
@@ -2552,7 +2562,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	if token == "" {
 		writeSSOError(w, r, http.StatusBadRequest, ssoErrMissingToken,
 			"This single sign-on link is missing its handoff token.",
-			"Open the hive from the hub dashboard rather than pasting the /sso URL directly.")
+			"Open the hive from the hub dashboard rather than pasting the /sso URL directly.", ssoHubURL)
 		return
 	}
 
@@ -2570,7 +2580,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		// explanation rather than serving anything that re-enters the handoff.
 		writeSSOError(w, r, http.StatusUnauthorized, ssoErrBadToken,
 			"The single sign-on handoff token was rejected — it is expired, malformed, or was issued for a different hive.",
-			"Go back to the hub dashboard and open this hive again to get a fresh link. Handoff links are short-lived by design.")
+			"Go back to the hub dashboard and open this hive again to get a fresh link. Handoff links are short-lived by design.", ssoHubURL)
 		return
 	}
 
@@ -2591,7 +2601,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
 			"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
-			"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
+			"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.", ssoHubURL)
 		return
 	}
 	if role == "" {
@@ -2607,7 +2617,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	if sid == "" {
 		writeSSOError(w, r, http.StatusInternalServerError, ssoErrSessionFailed,
 			"The hive could not create a login session for you.",
-			"This is a problem on the hive itself. Retry in a moment; if it persists, ask the hive operator to check the dashboard logs.")
+			"This is a problem on the hive itself. Retry in a moment; if it persists, ask the hive operator to check the dashboard logs.", ssoHubURL)
 		return
 	}
 	setSessionCookie(w, r, sid)
@@ -2662,18 +2672,19 @@ const maxSSOHops = 3
 //
 // It also clears any stale session cookie, so a half-established session cannot
 // keep re-triggering the same failure on reload.
-func writeSSOError(w http.ResponseWriter, r *http.Request, status int, code, what, action string) {
+func writeSSOError(w http.ResponseWriter, r *http.Request, status int, code, what, action, hubURL string) {
 	clearSessionCookie(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// A failed handoff must never be cached; a cached 401/403 would make the
 	// hive look permanently broken even after access is granted.
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, ssoErrorPage, html.EscapeString(code), html.EscapeString(what), html.EscapeString(action))
+	_, _ = fmt.Fprintf(w, ssoErrorPage, html.EscapeString(code), html.EscapeString(what), html.EscapeString(action), html.EscapeString(hubURL))
 }
 
 // ssoErrorPage is the terminal error shell for a failed SSO handoff. Format
-// verbs in order: %[1]s error code, %[2]s what happened, %[3]s what to do. It
+// verbs in order: %[1]s error code, %[2]s what happened, %[3]s what to do,
+// %[4]s the hub origin to link back to. It
 // deliberately offers "/" (which serves the device-flow login page when
 // unauthenticated) as an escape hatch and a link back to the hub, so the user
 // is never stranded.
@@ -2700,7 +2711,7 @@ code{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:2px 8
 <p class="action">%[3]s</p>
 <p>Error code: <code>%[1]s</code></p>
 <a class="btn btn-primary" href="/">Sign in with GitHub</a>
-<a class="btn btn-secondary" href="https://hive.kubestellar.io/dashboard">Back to the hub</a>
+<a class="btn btn-secondary" href="%[4]s/dashboard">Back to the hub</a>
 </div>
 </html>`
 
