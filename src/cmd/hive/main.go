@@ -4187,7 +4187,7 @@ func main() {
 							"hint", "the spoke must be able to get/patch its own Deployment; check the hive-self-upgrade Role/RoleBinding in this namespace",
 						)
 						hub.ReportUpgradeFailure(hubURL, cfg.HiveID, targetSHA, gitShort,
-							fmt.Sprintf("self-upgrade failed after %d attempts: %s", m.Attempts, m.LastError), logger)
+							upgradeFailureSummary(m.Attempts, m.LastError), logger)
 						return
 					}
 					// Exponential backoff between attempts so a hard failure does not
@@ -7257,12 +7257,35 @@ func writeUpgradeMarker(path string, m upgradeMarker, logger *slog.Logger) {
 // recordUpgradeError annotates the existing marker with the cause of the failed
 // attempt so the NEXT boot can log why the previous one did not land — without
 // it the reason dies with the process and the failure is invisible.
+// upgradeFailureSummary renders what the hub shows an operator. An empty
+// LastError must never render as a dangling "attempts: " - a colon promising a
+// reason and delivering none is worse than saying the reason was not captured,
+// because it reads as truncation and sends the reader looking for the rest.
+func upgradeFailureSummary(attempts int, lastError string) string {
+	if strings.TrimSpace(lastError) == "" {
+		return fmt.Sprintf("self-upgrade failed after %d attempts (no error recorded; the image never changed - check that the deployment tracks a tag carrying the target SHA)", attempts)
+	}
+	return fmt.Sprintf("self-upgrade failed after %d attempts: %s", attempts, lastError)
+}
+
 func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if upgradeErr == nil {
 		return
 	}
-	m := parseUpgradeMarker(data)
+	// A marker that cannot be read is not a reason to drop the cause. The
+	// earlier version returned here, which left LastError empty and produced
+	// the bare "self-upgrade failed after 5 attempts: " the hub relays to the
+	// dashboard - an alert naming a failure and nothing about it. Losing the
+	// attempt count is survivable; losing the reason is what makes the failure
+	// undiagnosable, so rebuild the marker around the error instead.
+	var m upgradeMarker
+	data, err := os.ReadFile(path)
+	if err != nil {
+		logger.Warn("upgrade marker unreadable; recording the error against a fresh marker",
+			"path", path, "error", err)
+	} else {
+		m = parseUpgradeMarker(data)
+	}
 	m.LastError = upgradeErr.Error()
 	writeUpgradeMarker(path, m, logger)
 }
