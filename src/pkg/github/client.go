@@ -16,7 +16,6 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
@@ -52,7 +51,7 @@ type Client struct {
 	// re-applies it while the enumeration goroutine reads it. Zero value =
 	// admit everything (pre-existing behavior).
 	issueFilterMu sync.RWMutex
-	issueFilter   config.IssueFilterConfig
+	issueFilter   IssueAdmitter
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
@@ -456,7 +455,7 @@ var PermanentExemptLabels = []string{"do-not-merge"}
 // applies when a hive has not configured `governor.labels.automerge`. Prefer
 // Client.AutoMergeLabel(), which honours that configuration; this constant
 // exists so a nil or unconfigured client still has a sane value.
-const AutoMergeQueuedLabel = config.DefaultAutoMergeLabel
+const AutoMergeQueuedLabel = "lgtm"
 
 const slaThresholdMinutes = 30
 
@@ -1188,7 +1187,7 @@ func (c *Client) SetExemptLabels(labels []string) {
 // safe for the same reason as SetRepos: the config-reload / heartbeat-delivery
 // paths re-apply it unconditionally, and a hive that booted without GitHub
 // credentials runs with a nil *Client.
-func (c *Client) SetIssueFilter(f config.IssueFilterConfig) {
+func (c *Client) SetIssueFilter(f IssueAdmitter) {
 	if c == nil {
 		return
 	}
@@ -1197,9 +1196,16 @@ func (c *Client) SetIssueFilter(f config.IssueFilterConfig) {
 	c.issueFilter = f
 }
 
-func (c *Client) getIssueFilter() config.IssueFilterConfig {
+// getIssueFilter never returns nil: an unset filter admits everything, which
+// is the zero-value contract the config struct had before this became an
+// interface. Returning nil here would turn "no filter configured" into a
+// panic at the one call site that consults it.
+func (c *Client) getIssueFilter() IssueAdmitter {
 	c.issueFilterMu.RLock()
 	defer c.issueFilterMu.RUnlock()
+	if c.issueFilter == nil {
+		return admitAllIssues{}
+	}
 	return c.issueFilter
 }
 

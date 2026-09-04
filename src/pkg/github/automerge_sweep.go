@@ -12,8 +12,13 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/config"
 )
+
+// selfMergeMinACMMLevel mirrors config.SelfMergeMinACMMLevel. It is duplicated
+// rather than imported so this package keeps no dependency on pkg/config
+// (hivecommons/hive#5953 phase 1); config_parity_test.go pins the two equal so
+// they cannot drift silently.
+const selfMergeMinACMMLevel = 6
 
 const DefaultAutoMergeSweepMaxMerges = 3
 
@@ -420,7 +425,7 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			level = fmt.Sprintf("%d", *acmmLevel)
 		}
 		c.info("self-authored auto-merge sweep disabled: acmm_level below minimum (or auto_merge.self_authored is off)",
-			"acmm_level", level, "min_acmm_level", config.SelfMergeMinACMMLevel)
+			"acmm_level", level, "min_acmm_level", selfMergeMinACMMLevel)
 		return
 	}
 	interval := selfAuthoredSweepInterval(len(c.getRepos()))

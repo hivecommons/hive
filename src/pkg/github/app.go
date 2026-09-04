@@ -14,8 +14,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
-
-	"github.com/hivecommons/hive/pkg/config"
 )
 
 const (
@@ -481,7 +479,7 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	// registry is never populated and the file receives the real token,
 	// byte-identical to the pre-#1861 behavior.
 	fileToken := token
-	if config.ProxyInjectGHAuth() {
+	if proxyInjectGHAuth() {
 		storeAgentProxyToken(agentName, token)
 		fileToken = AgentDummyToken(agentName)
 	}
