@@ -3195,11 +3195,12 @@ type MyHiveEntry struct {
 	// modal; this is only the hover preview.
 	RecentEvents []TimelineEvent `json:"recentEvents,omitempty"`
 
-	// AdvisoryIssueActivity is the fleet row's advisory/issue output freshness:
-	// the newest successful advisory digest post or actionable-issue count
-	// movement already reported to the hub, bucketed on read. Placeholders and
-	// old/non-advisory spokes with no signal still get the field with bucket
-	// "unknown" so every row renders an explicit n/a instead of disappearing.
+	// AdvisoryIssueActivity is the fleet row's advisory-digest freshness: the
+	// newest successful digest update already reported to the hub, bucketed on
+	// read with the same thresholds and gates as the advisory-stale verdict.
+	// Placeholders and old/non-advisory spokes with no signal still get the
+	// field with bucket "unknown" so every row renders an explicit n/a instead
+	// of disappearing.
 	AdvisoryIssueActivity AdvisoryIssueActivity `json:"advisoryIssueActivity"`
 
 	// BudgetHealth is this hive's current governor budget-window usage, bucketed
@@ -3745,14 +3746,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
-		result[i].AdvisoryIssueActivity = advisoryIssueActivityFor(result[i].RegistryEntry, journeyNow)
+		result[i].AdvisoryIssueActivity = advisoryFreshnessFor(result[i].RegistryEntry, journeyNow)
 		result[i].BudgetHealth = budgetHealthFor(result[i].RegistryEntry)
 		result[i].GitHubAppHealth = githubAppHealthFor(result[i].RegistryEntry, journeyNow)
 
 		// Advisory-staleness pill, computed on read (same as Journey) so the
 		// gating — advisory-mode participation, app-can-write, past-threshold —
 		// lives ONLY in Go and the browser just renders the flag.
-		if stale, reason := advisoryStale(result[i].RegistryEntry, journeyNow); stale {
+		if stale, reason := advisoryStaleFromFreshness(result[i].RegistryEntry, result[i].AdvisoryIssueActivity); stale {
 			result[i].AdvisoryStale = true
 			result[i].AdvisoryStaleReason = reason
 		}

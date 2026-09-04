@@ -36,9 +36,9 @@ func withActivity(e RegistryEntry, repos ...RepoActivityWire) RegistryEntry {
 func TestHiveHealthFor_ACMMBands(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
-	recent := rfc(now.Add(-1 * time.Hour))   // within 12h
-	oldTs := rfc(now.Add(-30 * time.Hour))   // outside 12h
-	freshAdv := rfc(now.Add(-2 * time.Hour)) // within advisory aging window
+	recent := rfc(now.Add(-1 * time.Hour))      // within 12h
+	oldTs := rfc(now.Add(-30 * time.Hour))      // outside 12h
+	freshAdv := rfc(now.Add(-30 * time.Minute)) // within advisory freshness window
 
 	base := func(level int) RegistryEntry {
 		// Every base entry carries one on-duty agent with full write grants so

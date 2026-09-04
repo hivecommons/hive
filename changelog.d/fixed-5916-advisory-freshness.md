@@ -1,0 +1,1 @@
+- The hub fleet row now uses one advisory-digest freshness calculation for both the right-side freshness chip and stale verdict, so a hive cannot show `advisories fresh` and `advisory stale` in the same render; rows without an advisory signal render `n/a` instead ([#5916](https://github.com/hivecommons/hive/issues/5916)).

@@ -254,9 +254,10 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 				return noWritersOnDuty(v, "advisory", roster)
 			}
 		}
-		// Reuse the existing advisory/issue-activity bucketing rather than the
-		// per-repo activity collector.
-		adv := advisoryIssueActivityFor(e, now)
+		// Reuse the same advisory-digest freshness bucketing that drives the
+		// fleet chip and stale-advisory pill rather than the per-repo activity
+		// collector.
+		adv := advisoryFreshnessFor(e, now)
 		v.LastOutputAt = adv.LastActivityAt
 		// A reported post error is a harder signal than any timestamp: the
 		// spoke PROVED the digest is wedged. Stale/unknown buckets must not

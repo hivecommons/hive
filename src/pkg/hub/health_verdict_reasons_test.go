@@ -41,12 +41,12 @@ func TestHiveHealthForReasons(t *testing.T) {
 			name: "L2 advisory fresh — reason carries a single humanized age",
 			entry: func() RegistryEntry {
 				e := writer(base(2))
-				e.AdvisoryLastPostedAt = rfc(now.Add(-2 * time.Hour))
+				e.AdvisoryLastPostedAt = rfc(now.Add(-30 * time.Minute))
 				return e
 			}(),
 			rollup: okRollup(), app: okApp(), queued: 3,
 			wantState:  HealthStateGreen,
-			wantReason: "advisory 2h ago",
+			wantReason: "advisory 30m ago",
 		},
 		{
 			name: "L2 advisory stale — red",
