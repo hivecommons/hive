@@ -3125,6 +3125,9 @@ services:
       - /etc/hive:/etc/hive:ro
     environment:
       - HIVE_PUBLIC_HOST=your-server.example.com
+      # Legacy dashboard/server.js binds loopback by default; expose it only
+      # when this container is protected by an authenticated front door.
+      - HIVE_DASHBOARD_BIND=0.0.0.0
 
 volumes:
   hive-data:

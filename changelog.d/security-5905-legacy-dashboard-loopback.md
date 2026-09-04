@@ -1,0 +1,1 @@
+- Legacy `dashboard/server.js` now binds to `127.0.0.1` by default via `HIVE_DASHBOARD_BIND`, so its unauthenticated control endpoints are not exposed to the network unless an operator explicitly opts into `0.0.0.0` behind an authenticated proxy ([#5905](https://github.com/hivecommons/hive/issues/5905)).

@@ -27,6 +27,7 @@ var envVarsDocScanRoots = []string{
 	"../..", // the whole src/ tree: Go, src/deploy/entrypoint.sh, manifests
 	"../../../bin",
 	"../../../config",
+	"../../../dashboard",
 	"../../../Justfile",
 	"../../../install.sh",
 	"../../../uninstall.sh",

@@ -10,7 +10,7 @@ The live v2 dashboard is implemented in Go under `src/pkg/dashboard/`, with the 
 - `publish-snapshot-v2.sh` — publishes per-instance v2 static snapshots and API docs into the `kubestellar/docs` site.
 - `publish-snapshot.sh` — older single-instance snapshot publisher retained for the original `/live/hive` path.
 - `openapi.json` — static OpenAPI snapshot used as a fallback when live `/api/openapi.json` is unavailable during snapshot publishing.
-- `server.js` and `index.html` — legacy Node dashboard assets from the pre-v2 dashboard path. They are useful historical/reference material, but v2 production does not start `dashboard/server.js`.
+- `server.js` and `index.html` — legacy Node dashboard assets from the pre-v2 dashboard path. They are useful historical/reference material, but v2 production does not start `dashboard/server.js`. The legacy server binds `127.0.0.1` by default because its control endpoints are unauthenticated; set `HIVE_DASHBOARD_BIND=0.0.0.0` only behind an authenticated proxy.
 - `agent-activity.py`, `agent-metrics.sh`, `agent-summaries.sh`, `api-collector.sh`, `token-collector.sh`, `health-check.sh` — operational/metrics helper scripts from the legacy dashboard stack.
 - `ubersicht/` — macOS Übersicht widget assets.
 - `test/` — Node tests for contributor/dashboard behavior that still lives with the legacy Node package.
