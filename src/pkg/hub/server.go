@@ -4057,12 +4057,14 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid hive URL", http.StatusInternalServerError)
 		return
 	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy := newContributeWSReverseProxy(target)
 	r.URL.Path = "/api/contribute/ws"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute WS", "hive", hive.ID, "target", target.String())
 	proxy.ServeHTTP(w, r)
 }
+
+var newContributeWSReverseProxy = httputil.NewSingleHostReverseProxy
 
 // privateURLDNSTimeout bounds DNS resolution inside the SSRF guard so a
 // slow or malicious DNS server cannot block the caller indefinitely.

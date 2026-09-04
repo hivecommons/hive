@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -936,6 +939,81 @@ func TestHandleContributeWSProxyNoHive(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleContributeWSProxyInvalidHiveURL(t *testing.T) {
+	origResolver := privateURLResolver
+	privateURLResolver = func(ctx context.Context, host string) ([]string, error) {
+		return []string{"203.0.113.10"}, nil
+	}
+	t.Cleanup(func() { privateURLResolver = origResolver })
+
+	srv := newHubServerForTest(t)
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{
+		{ID: "bad-url", Online: true, IsPublic: true, DashboardURL: "http://[::1", Owner: "user1"},
+	}
+	srv.mu.Unlock()
+
+	req := httptest.NewRequest("GET", "/api/contribute/ws", nil)
+	w := httptest.NewRecorder()
+	srv.handleContributeWSProxy(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestHandleContributeWSProxyForwardsToSelectedHive(t *testing.T) {
+	origResolver := privateURLResolver
+	privateURLResolver = func(ctx context.Context, host string) ([]string, error) {
+		return []string{"203.0.113.10"}, nil
+	}
+	t.Cleanup(func() { privateURLResolver = origResolver })
+
+	origProxy := newContributeWSReverseProxy
+	seenPath := make(chan string, 1)
+	newContributeWSReverseProxy = func(target *url.URL) *httputil.ReverseProxy {
+		return &httputil.ReverseProxy{
+			Director: func(r *http.Request) {},
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				seenPath <- r.URL.Path
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"X-Upstream": []string{"hit"}},
+					Body:       io.NopCloser(strings.NewReader("proxied")),
+					Request:    r,
+				}, nil
+			}),
+		}
+	}
+	t.Cleanup(func() { newContributeWSReverseProxy = origProxy })
+
+	srv := newHubServerForTest(t)
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{
+		{ID: "contribute-hive", Online: true, IsPublic: true, DashboardURL: "https://public.example", Owner: "user1"},
+	}
+	srv.mu.Unlock()
+
+	req := httptest.NewRequest("GET", "/api/contribute/ws?relay=1", nil)
+	w := httptest.NewRecorder()
+	srv.handleContributeWSProxy(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-Upstream"); got != "hit" {
+		t.Fatalf("X-Upstream = %q, want hit", got)
+	}
+	select {
+	case path := <-seenPath:
+		if path != "/api/contribute/ws" {
+			t.Fatalf("upstream path = %q, want /api/contribute/ws", path)
+		}
+	default:
+		t.Fatal("upstream was not called")
 	}
 }
 
