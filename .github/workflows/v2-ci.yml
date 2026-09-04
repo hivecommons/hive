@@ -13,7 +13,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml']
+    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
   pull_request:
     branches: [v2, v4]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
@@ -26,7 +26,7 @@ on:
     # not run on the one change that can break it — which is how the quick start
     # shipped broken twice over. src/docs/** already triggers this workflow via
     # src/**, so this is the same rule applied to the docs outside src/.
-    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml']
+    paths: ['src/**', 'bin/**', 'README.md', 'docs/**', '.github/workflows/v2-ci.yml', '.github/workflows/changelog-reminder.yml', '.github/workflows/docker.yml', '.github/workflows/tagged-release.yml']
 
 permissions:
   contents: read
@@ -166,6 +166,15 @@ jobs:
       # derive-release-version.sh from no-release to a minor release.
       - name: Changelog fragment compiler properties (#5675)
         run: bash scripts/test-compile-changelog.sh
+
+      # #5934: a hand-rescued v4.8.0 tag had no GitHub Release, and v4.9.0's
+      # dated changelog heading was empty while generated release notes still
+      # listed shipped PRs. The tagged release workflow now uses the tagged
+      # CHANGELOG.md section as its canonical Release body and falls back to
+      # generated notes only when that section is unexpectedly empty/missing,
+      # so tags do not become ledger entries with unusable bodies.
+      - name: Release notes extraction fallback (#5934)
+        run: bash scripts/test-extract-release-notes.sh
 
       # #4206: the standalone stack's image references live in exactly one
       # place, src/deploy/standalone-images.sh, so the Docker Compose assets

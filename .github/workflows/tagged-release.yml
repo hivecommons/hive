@@ -866,21 +866,25 @@ jobs:
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       # --notes-file and --generate-notes have fragile combined behavior
-      # across gh versions, so notes are built as one file: GitHub's own
-      # auto-generated commit/PR summary first (fetched via `gh api
-      # .../generate-notes`, the same content --generate-notes would have
-      # produced), then the SBOM callout appended after it — rather than
-      # relying on the two flags to compose correctly together.
+      # across gh versions, so notes are built as one file. The canonical
+      # operator ledger is the dated CHANGELOG.md section in the tag; if that
+      # section is unexpectedly empty or absent, fall back to GitHub's
+      # auto-generated commit/PR summary so a Release is still created with a
+      # useful body instead of leaving a tag-only ledger gap.
       - name: Create GitHub Release
         if: steps.push_v4.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          notes_file="$(mktemp)"
+          notes_file="${RUNNER_TEMP}/release-notes-v${VERSION}.md"
+          generated_notes="${RUNNER_TEMP}/generated-notes-v${VERSION}.md"
+          tag_changelog="${RUNNER_TEMP}/CHANGELOG-v${VERSION}.md"
           gh api "repos/${{ github.repository }}/releases/generate-notes" \
             -f tag_name="v${VERSION}" \
-            --jq .body > "$notes_file" || echo "(auto-generated notes unavailable)" > "$notes_file"
+            --jq .body > "$generated_notes" || echo "(auto-generated notes unavailable)" > "$generated_notes"
+          git show "v${VERSION}:CHANGELOG.md" > "$tag_changelog"
+          src/scripts/extract-release-notes.sh "$tag_changelog" "$VERSION" "$generated_notes" > "$notes_file"
           {
             echo
             echo "---"
