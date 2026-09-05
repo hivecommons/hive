@@ -182,6 +182,13 @@ type RegistryEntry struct {
 	TotalTokens24h   int64                `json:"totalTokens24h"`
 	ActionableIssues int                  `json:"actionableIssues"`
 	ActionablePRs    int                  `json:"actionablePRs"`
+	// Output-freshness telemetry explains L3-L6 "no write" verdicts. Empty
+	// means an older spoke omitted the optional fields and current behavior is
+	// preserved.
+	LastWriteCapableKickAt time.Time `json:"lastWriteCapableKickAt,omitempty"`
+	LastKickDisposition    string    `json:"lastKickDisposition,omitempty"`
+	LastKickSkipReason     string    `json:"lastKickSkipReason,omitempty"`
+	NotWritableQueued      int       `json:"notWritableQueued,omitempty"`
 	// WorkSource is the spoke's configured non-default work source type
 	// ("github_projects", "linear", "jira"). Empty for GitHub Issues (the
 	// default) — the dashboard only shows a badge when non-empty.
@@ -1789,14 +1796,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return count
 		}(),
-		GovernorMode:       sanitizeHeartbeatField(payload.Governor.Mode),
-		TotalTokens24h:     clampInt64(payload.Tokens24h, 0, 100_000_000_000),
-		ActionableIssues:   clampInt(payload.Governor.Issues, 0, 10_000),
-		ActionablePRs:      clampInt(payload.Governor.PRs, 0, 10_000),
-		WorkSource:         sanitizeHeartbeatField(payload.Governor.WorkSource),
-		ContributorCount:   clampInt(payload.Contributors.Registered, 0, 10_000),
-		ActiveContributors: clampInt(payload.Contributors.Active, 0, 10_000),
-		Owner:              sanitizeHeartbeatField(payload.Owner),
+		GovernorMode:           sanitizeHeartbeatField(payload.Governor.Mode),
+		TotalTokens24h:         clampInt64(payload.Tokens24h, 0, 100_000_000_000),
+		ActionableIssues:       clampInt(payload.Governor.Issues, 0, 10_000),
+		ActionablePRs:          clampInt(payload.Governor.PRs, 0, 10_000),
+		LastWriteCapableKickAt: parseHeartbeatTime(payload.LastWriteCapableKickAt),
+		LastKickDisposition:    sanitizeHeartbeatField(payload.LastKickDisposition),
+		LastKickSkipReason:     sanitizeProseField(payload.LastKickSkipReason),
+		NotWritableQueued:      clampInt(payload.NotWritableQueued, 0, 10_000),
+		WorkSource:             sanitizeHeartbeatField(payload.Governor.WorkSource),
+		ContributorCount:       clampInt(payload.Contributors.Registered, 0, 10_000),
+		ActiveContributors:     clampInt(payload.Contributors.Active, 0, 10_000),
+		Owner:                  sanitizeHeartbeatField(payload.Owner),
 		HiveType: func() string {
 			if payload.HiveType != "" {
 				return sanitizeHeartbeatField(payload.HiveType)
