@@ -165,6 +165,61 @@ func getContributorsDir() string {
 	return defaultContributorsDir
 }
 
+func (s *Server) contributorsDirOrDefault() string {
+	if s != nil && s.contributorsDir != "" {
+		return s.contributorsDir
+	}
+	if v := os.Getenv("HIVE_CONTRIBUTORS_DIR"); v != "" {
+		return v
+	}
+	if s != nil && s.deps != nil {
+		return contributorsDirFromConfig(s.deps.Config)
+	}
+	return getContributorsDir()
+}
+
+func (s *Server) SetContributorsDir(dir string) {
+	if s != nil {
+		s.contributorsDir = dir
+	}
+}
+
+func contributorsDirFromConfig(cfg *config.Config) string {
+	if cfg == nil {
+		return defaultContributorsDir
+	}
+	for _, dir := range []string{
+		cfg.Data.AgentsDir,
+		cfg.Data.MetricsDir,
+		cfg.Data.LogsDir,
+		cfg.Data.ClaudeSessionsDir,
+		cfg.Data.CopilotSessionsDir,
+		cfg.Data.BobSessionsDir,
+	} {
+		root := dataRootFromDir(dir)
+		if root != "" {
+			return filepath.Join(root, "contributors")
+		}
+	}
+	return defaultContributorsDir
+}
+
+func dataRootFromDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	clean := filepath.Clean(dir)
+	if base := filepath.Base(clean); base == "contributors" {
+		return filepath.Dir(clean)
+	}
+	parent := filepath.Dir(clean)
+	if parent == "." || parent == string(filepath.Separator) {
+		return ""
+	}
+	return parent
+}
+
 func getFederationRegistryPath() string {
 	if v := os.Getenv("HIVE_FEDERATION_REGISTRY_PATH"); v != "" {
 		return v

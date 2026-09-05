@@ -571,6 +571,7 @@ type ContributeWSHub struct {
 	// sibling ledgers.
 	taskLeasesFile  string
 	turnEnvelopeDir string
+	taskRunLogFile  string
 	// startedAt is when this hub process came up. It bounds the window in which a
 	// lease restored from the previous process is honoured as a hold on its work
 	// item (#5681, leaseHoldGraceAfterStart). Written once at construction and only
@@ -1222,6 +1223,17 @@ const defaultYankReason = "yanked by operator (released + reassigned)"
 const yankSelfExcludeSeconds = 60
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
+	if logger == nil {
+		if server != nil && server.logger != nil {
+			logger = server.logger
+		} else {
+			logger = slog.Default()
+		}
+	}
+	contributorsDir := getContributorsDir()
+	if server != nil {
+		contributorsDir = server.contributorsDirOrDefault()
+	}
 	hub := &ContributeWSHub{
 		connections:           make(map[string]*ContributorConnection),
 		completedTasks:        make(map[string]time.Time),
@@ -1231,14 +1243,15 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		consecutiveFailures:   make(map[string]int),
 		noPRStreaks:           make(map[string]noPRStreakRecord),
 		noWorkVerdicts:        make(map[string]noWorkVerdictRecord),
-		activityFilePath:      activityFilePath,
-		completedTasksFile:    completedTasksFile,
-		failedTasksFile:       failedTasksFile,
-		noPRStreaksFile:       noPRStreaksFile,
-		taskLeasesFile:        taskLeasesFile,
-		turnEnvelopeDir:       turnEnvelopeDirPath,
+		activityFilePath:      contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
+		completedTasksFile:    contributorStatePath(contributorsDir, completedTasksFile, "completed-tasks.json"),
+		failedTasksFile:       contributorStatePath(contributorsDir, failedTasksFile, "failed-tasks.json"),
+		noPRStreaksFile:       contributorStatePath(contributorsDir, noPRStreaksFile, "no-pr-streaks.json"),
+		taskLeasesFile:        contributorStatePath(contributorsDir, taskLeasesFile, "task-leases.json"),
+		turnEnvelopeDir:       contributorStatePath(contributorsDir, turnEnvelopeDirPath, "turn-envelopes"),
+		taskRunLogFile:        contributorStatePath(contributorsDir, taskRunLogPath, taskRunLogFileName),
 		startedAt:             time.Now(),
-		noWorkVerdictsFile:    noWorkVerdictsPath(),
+		noWorkVerdictsFile:    filepath.Join(contributorsDir, noWorkVerdictsFileName),
 		asyncActivitySave:     asyncActivitySave,
 		persistActivity:       activityPersistenceEnabled,
 		persistTaskLedgers:    taskLedgerPersistenceEnabled,
@@ -1260,6 +1273,14 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadLeases()
 	go hub.cleanupLoop()
 	return hub
+}
+
+func contributorStatePath(contributorsDir, currentPath, name string) string {
+	defaultPath := filepath.Join(defaultContributorsDir, name)
+	if currentPath != "" && currentPath != defaultPath {
+		return currentPath
+	}
+	return filepath.Join(contributorsDir, name)
 }
 
 var activityFilePath = "/data/contributors/activity.json"
