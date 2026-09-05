@@ -26,8 +26,10 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_SHA` | No | build SHA | Passed to launched agents and used in hub upgrade/status paths. |
 | `HIVE_ADVISORY_ISSUE` | No | none | Passed to launched agents so advisory findings can target a configured issue. |
 | `HIVE_TTYD_PORT` | No | `7681` | Web terminal port used by the entrypoint and terminal proxy. |
-| `HIVE_METRICS_ENABLED` | No | disabled | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. |
+| `HIVE_METRICS_ENABLED` | No | disabled | Registers the Prometheus `/metrics` endpoint when set to `1`, `true`, `yes`, or `on`. The endpoint is open unless `HIVE_METRICS_TOKEN` is also set. |
+| `HIVE_METRICS_TOKEN` | No | none | Optional bearer token guarding `/metrics` (`pkg/dashboard/metrics_prometheus.go`). When set, scrapers must send `Authorization: Bearer <token>` (Prometheus `bearer_token`); when empty, `/metrics` stays open for backward compatibility. Set it so the estimated cost/agent series are not readable by anyone on the pod network. |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
+| `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` | Exact `true` opts in to knowledge Git sources whose host resolves to a private/internal address (`pkg/knowledge/gitsource.go`), e.g. an in-cluster GitLab. Default is fail-closed as SSRF protection, mirroring the document-import guard. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
 | `HIVE_PROXY_PROOF_REQUIRED` | No | `false` | Requires the internal proxy proof header when set to `true`. |
 | `HIVE_CONTRIBUTORS_DIR` | No | hub default | Contributor registry directory override. |
@@ -62,6 +64,8 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_BOB_API_URL` | No | `https://api.us-east.bob.ibm.com` | Bob key-test endpoint base URL override. |
 | `BOBSHELL_API_KEY` | Required by Bob CLI when Hive injects or contributor mode uses Bob | none | API key name read by bobshell itself. |
 | `COPILOT_GITHUB_TOKEN` | No | dashboard device-flow token file, if present | Copilot completion/model-discovery token and explicit agent injection. |
+| `CODEX_API_KEY` | No | none | API key read by agent credential probing (`pkg/agent/authprobe.go`) for the Codex CLI backend; either this or `OPENAI_API_KEY` makes Codex API-key mode count as configured. |
+| `OPENAI_API_KEY` | No | none | OpenAI-compatible API key consulted by `pkg/agent/authprobe.go` for Codex API-key mode, alongside `CODEX_HOME/auth.json` entries stored under the same key. |
 | `ANTHROPIC_API_KEY` | Required by `cmd/apiproxy` unless `PROXY_AUTH_TOKEN` is set; agent inference backends receive a synthetic value | none | Anthropic-compatible API key for apiproxy auth or CLI compatibility. |
 | `PROXY_AUTH_TOKEN` | No | `ANTHROPIC_API_KEY` | Preferred auth token for `cmd/apiproxy`. |
 | `CONTEXT7_API_KEY` | No | none | Optional key for Context7 knowledge API integration. |
