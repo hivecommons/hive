@@ -1008,6 +1008,13 @@ contribute-hive backend="" mode="docker": check-version
       fi
 
       # Get CLI binary and permission flags from backends.conf
+      #
+      # HIVE_AGENT_CWD is exported BEFORE the permission flags are resolved:
+      # claude_family_local_perm_flag_shell grants it as a writable root
+      # (#6082), so it must exist in the environment when that function runs.
+      # The directory's rationale is with the cd below, where it is used.
+      export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
+      mkdir -p "$HIVE_AGENT_CWD"
       source "${SCRIPT_DIR}/../config/backends.conf" 2>/dev/null || true
       CMD=$(backend_binary "$BACKEND" 2>/dev/null || echo "$BACKEND")
       # _shell variant: this flag string is pasted into a tmux send-keys shell
@@ -1129,8 +1136,8 @@ contribute-hive backend="" mode="docker": check-version
       # `ls`, `grep -r` and relative write lands. cwd is not a boundary — the
       # process runs as the user regardless — but an empty dedicated directory
       # costs nothing and keeps the default blast radius off the user's home.
-      export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
-      mkdir -p "$HIVE_AGENT_CWD"
+      # (HIVE_AGENT_CWD itself is exported above, before the permission flags
+      # resolve, because the Claude local sandbox grants it as a write root.)
       export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }$CMD${PERM_FLAG:+ $PERM_FLAG}"
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
