@@ -580,6 +580,50 @@ of SIGKILL. The hub is not messaged on shutdown; the socket drop already books
 the release through the disconnect cooldown path
 ([#5097](https://github.com/hivecommons/hive/issues/5097)).
 
+## Extending the contributor image (downstream hooks)
+
+The contributor entrypoint (`bin/contributor-agent.sh`) ships an extension seam
+for derived images ([#2393](https://github.com/hivecommons/hive/issues/2393)
+item 4), so a downstream front end (for example `projectbluefin/donate-clanker`)
+can inject setup without forking the entrypoint and re-implementing its tmux
+wait/attach logic:
+
+1. **Hook directory** — every readable `*.sh` in `/etc/hive/entrypoint.d/`
+   (override the directory with `HIVE_ENTRYPOINT_HOOK_DIR`) is run, in shell
+   glob order.
+2. **Inline hook** — if `HIVE_PRE_AGENT_HOOK` is set, its value is then
+   `eval`'d.
+
+Both run at a deliberate point in startup: **after** the contributor env
+(`contributor.env`) and the default backend helpers (`backends.conf`) are
+loaded, and **before** backend detection and the tmux/CLI launch. Hooks are
+**sourced, not exec'd**, which is what makes the seam useful:
+
+- anything a hook `export`s is inherited by the relay, the tmux session, and
+  the CLI backend;
+- a hook can override shell helpers such as `backend_binary()` or
+  `backend_perm_flag()` and the override survives, because nothing reloads the
+  defaults after the seam runs.
+
+A minimal derived image:
+
+```dockerfile
+FROM ghcr.io/hivecommons/hive-contributor:latest
+COPY 10-my-setup.sh /etc/hive/entrypoint.d/10-my-setup.sh
+```
+
+```bash
+# /etc/hive/entrypoint.d/10-my-setup.sh — sourced by the entrypoint
+export MY_TOOL_CONFIG=/etc/mytool.yaml
+backend_binary() { echo "my-wrapped-cli"; }
+```
+
+Trust note: hooks run with the entrypoint's full privileges inside the
+contributor container, and `HIVE_PRE_AGENT_HOOK` is `eval`'d verbatim — only
+bake hooks into images you build, and only pass `HIVE_PRE_AGENT_HOOK` values
+you would be willing to type into that container's shell yourself. Both knobs
+are listed in the [environment variable reference](env-vars.md).
+
 ## Troubleshooting: the backend dies seconds after every task
 
 Symptom: the CLI starts fine and sits at its prompt, the relay reports `CLI ready` and `Task prompt sent to CLI`, and then the backend exits a few seconds later with a non-zero status — no crash, no log, no message. The pane falls back to a shell, and (on a relay without the liveness fix) subsequent task prompts get typed into that shell.
