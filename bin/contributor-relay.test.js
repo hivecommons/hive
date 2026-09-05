@@ -2011,13 +2011,32 @@ test('#5281 an unblocked pane classifies as no reason at all', () => {
 });
 
 test('#5281 the reminder carries no shell metacharacters', () => {
-  // tmuxSendNudge interpolates this into a single-quoted `send-keys -l '...'`.
-  // A quote or a metacharacter here would be a command-injection shaped bug,
-  // not a typo, so the constraint is pinned rather than trusted.
+  // Belt: tmuxSendNudge shell-quotes its argument (see the braces test below),
+  // but the nudge text staying trivially quotable is still the cheaper
+  // property to keep, so the constraint stays pinned rather than trusted.
   const relay = loadRelay({ backend: 'goose' });
   try {
     assert.match(relay.AUTONOMY_NUDGE_MESSAGE, /^[A-Za-z0-9 ,.]+$/,
       `the nudge text must stay trivially quotable, got: ${relay.AUTONOMY_NUDGE_MESSAGE}`);
+  } finally { teardown(relay); }
+});
+
+test('a nudge message with quotes and metacharacters is sent as one shell-quoted literal', () => {
+  // tmuxSendNudge used to interpolate its argument into naked single quotes:
+  // `send-keys -l '${message}'`. A message containing a single quote would
+  // have escaped the quoting and executed as shell — command injection shaped,
+  // even though today's callers only pass vetted constants. The function now
+  // routes through shellQuote(); this pins that, so the naked-quote form
+  // cannot quietly come back.
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    const hostile = "it's; a $(trap) `msg`";
+    const before = relay.__tmuxSends().length;
+    relay.tmuxSendNudge(hostile);
+    const sent = relay.__tmuxSends().slice(before).find((c) => /\s-l\s/.test(c));
+    assert.ok(sent, 'the nudge produced a literal send-keys command');
+    assert.ok(sent.endsWith(`-l ${relay.shellQuote(hostile)}`),
+      `the message must be shellQuote()d as a single argument, got: ${sent}`);
   } finally { teardown(relay); }
 });
 

@@ -2257,7 +2257,9 @@ function tmuxSessionHasAttachedClient() {
 // that makes recovery cheap; clearing or restarting would throw away the very
 // thing being rescued.
 function tmuxSendNudge(message) {
-  execSync(`tmux send-keys -t ${TMUX_SESSION} -l '${message}'`, { timeout: 15000 });
+  // shellQuote, not naked single quotes: a quote or metacharacter in a future
+  // nudge constant must degrade to literal text, never to shell syntax.
+  execSync(`tmux send-keys -t ${TMUX_SESSION} -l ${shellQuote(message)}`, { timeout: 15000 });
   sleepMs(ENTER_DELAY_MS);
   tmuxSendEnters();
 }
@@ -4206,6 +4208,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     recentPaneLines,
     sendTo,
     tmuxSendEnters,
+    tmuxSendNudge,
     GIVE_UP_MEMORY_MS,
     // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
     // expiry pruning can be exercised without waiting an hour.
