@@ -1454,6 +1454,37 @@ func (c *Client) PathExistsAtRef(ctx context.Context, owner, repo, path, ref str
 	return fileContent != nil || len(dirContent) > 0, nil
 }
 
+// IssueClosedAt reports whether a GitHub issue or pull request is closed, and
+// when. A pull request IS an issue to this endpoint, so one call covers both and
+// a merged PR reports closed -- which is what the advisory digest needs to know.
+//
+// It exists for #6080: the digest was re-emitting findings computed at an older
+// commit as counted, severity-ranked open HIGH items, including one listed open
+// at the exact commit that fixed it. When such a finding names its own
+// remediation ("Filed issue #208, hold-gated PR #209"), this is the lookup that
+// settles whether that remediation landed.
+//
+// A 404 reports (zero, false, nil): not found is not closed. The caller retires
+// a finding only when EVERY reference it names is closed, so an unreadable
+// reference keeps the finding open, which is the safe direction. Any other error
+// is returned so the caller can distinguish "open" from "could not tell".
+func (c *Client) IssueClosedAt(ctx context.Context, owner, repo string, number int) (time.Time, bool, error) {
+	if c == nil {
+		return time.Time{}, false, ErrNoGitHubClient
+	}
+	issue, resp, err := c.client.Issues.Get(ctx, owner, repo, number)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("reading %s/%s#%d: %w", owner, repo, number, err)
+	}
+	if issue == nil || issue.GetState() != "closed" {
+		return time.Time{}, false, nil
+	}
+	return issue.GetClosedAt().Time, true, nil
+}
+
 // SearchPRCount searches GitHub for PRs by author within an org.
 // state is "open" or "merged".
 // NOTE (org transfer): the org qualifier uses the CONFIGURED org verbatim.

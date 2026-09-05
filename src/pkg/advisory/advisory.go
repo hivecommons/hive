@@ -446,6 +446,16 @@ type DigestOptions struct {
 	// file-path refs, only for findings the ranking actually reaches, and at
 	// most once per distinct path. nil disables verification entirely.
 	VerifyPath func(path string) bool
+	// ResolveRef reports whether a GitHub issue or pull request has closed.
+	//
+	// When set, BuildDigestFromBeads uses it to retire findings that were
+	// computed at some OTHER commit and name only GitHub work that has since
+	// closed -- the #6080 case, where a finding sat in the counted open HIGH
+	// list at the exact commit that fixed it. It is consulted only for
+	// provenance-stale findings, and only for references those findings name
+	// themselves. nil disables the check, leaving the pre-#6080 behaviour
+	// exactly: stale findings are captioned and demoted, never retired.
+	ResolveRef ResolveRef
 }
 
 // effectiveCap returns the number of findings to render, or 0 for "no cap".
@@ -679,6 +689,23 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	if opts.Snapshot != nil {
 		markStaleProvenanceIn(byAgent, opts.Snapshot.SHA)
 	}
+	// Retire the stale findings whose own text names GitHub work that has since
+	// closed (#6080), BEFORE the cap. These were not merely mislabelled: they
+	// were counted, severity-ranked and holding top-N slots, one of them at the
+	// exact commit that fixed it. Retiring them after the cap would leave the
+	// slot spent on a finding nobody needed to read.
+	var settledStale []ResolvedFinding
+	byAgent, settledStale = partitionSettledStale(byAgent, opts, time.Now())
+	if len(settledStale) > 0 {
+		resolved = append(resolved, settledStale...)
+		// The header count is recomputed from the survivors for the same reason
+		// collapseNearDuplicates recomputes it: a total that still counts
+		// retired findings misstates how much is open.
+		total = 0
+		for _, fs := range byAgent {
+			total += len(fs)
+		}
+	}
 	// Cap AFTER collapsing: a top-10 built from uncollapsed restatements would
 	// spend its ten slots on one recurring problem. For the same reason the cap
 	// is staleness-aware (opts.VerifyPath) — a finding whose file no longer
@@ -859,9 +886,14 @@ func formatFindingRef(ref string, line int, org, primaryRepo, title string) stri
 			}
 			return fmt.Sprintf(" [#%d](%s)", num, issueURL(owner, repo, num))
 		}
-		if inlineRefPattern.FindString(ref) == ref {
-			if owner, repo, num, ok := splitInlineRef(ref, org); ok {
-				return fmt.Sprintf(" [%s](%s)", ref, issueURL(owner, repo, num))
+		// The prefix is stripped before the URL is built: beads carry
+		// "gh-<owner>/<repo>#<n>", and the prefix was being read as part of
+		// the OWNER, so every cross-repo reference in the digest pointed at a
+		// github.com/gh-<owner> that does not exist (#6080). Only the link and
+		// its visible text lose the prefix; the stored reference is untouched.
+		if bare := stripGHSourcePrefix(ref); inlineRefPattern.FindString(bare) == bare {
+			if owner, repo, num, ok := splitInlineRef(bare, org); ok {
+				return fmt.Sprintf(" [%s](%s)", bare, issueURL(owner, repo, num))
 			}
 		}
 	}
