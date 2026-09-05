@@ -84,6 +84,9 @@ func notRunningReason(agent *AgentProcess) string {
 		}
 		return reason
 	case agent.State == StateFailed:
+		if desc := startBlockedDescription(agent); desc != "" {
+			return "it is blocked after repeated failed starts: " + desc
+		}
 		reason := "it failed to start"
 		if e := strings.TrimSpace(agent.LastError); e != "" {
 			reason += ": " + e
@@ -121,6 +124,10 @@ func (m *Manager) SendKick(name string, message string) error {
 
 	if agent.State != StateRunning {
 		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
 	}
 
 	if !m.tmuxSessionExistsForAgent(agent) {
@@ -618,12 +625,33 @@ func paneContentHash(pane string) string {
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 
+func paneAfterKickBaseline(pane, baseline string) string {
+	if baseline == "" {
+		return pane
+	}
+	if idx := strings.LastIndex(pane, baseline); idx >= 0 {
+		return pane[idx+len(baseline):]
+	}
+	paneLines := strings.Split(pane, "\n")
+	baseLines := strings.Split(baseline, "\n")
+	common := 0
+	for common < len(paneLines) && common < len(baseLines) && paneLines[common] == baseLines[common] {
+		common++
+	}
+	if common > 0 {
+		return strings.Join(paneLines[common:], "\n")
+	}
+	return pane
+}
+
 // recordInferenceKick arms the post-kick stall watchdog for an inference
 // agent: remembers when the kick was delivered and what the pane looked like
 // right after delivery. Caller must hold m.mu.
 func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
+	visible := m.captureVisiblePaneForAgent(agent)
 	agent.lastInferKickAt = at
-	agent.lastInferKickPane = paneContentHash(m.captureVisiblePaneForAgent(agent))
+	agent.lastInferKickPane = paneContentHash(visible)
+	agent.lastInferKickVisible = visible
 	agent.stallNudgeSent = false
 	// Baseline for the no-action check: markers already in scrollback from
 	// work done before this kick must not count as post-kick tool activity.
@@ -659,6 +687,20 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		return
 	}
 	sinceKick := now.Sub(agent.lastInferKickAt)
+	if match, ok := classifyProviderError(paneAfterKickBaseline(pane, agent.lastInferKickVisible)); ok {
+		backoff := m.markProviderErrorLocked(agent, match, now)
+		attempt := agent.providerErrorBackoffAttempt
+		m.mu.Unlock()
+
+		m.logger.Warn("inference provider error detected, backing off kicks instead of sending action nudge",
+			"name", name,
+			"class", match.Class,
+			"attempt", attempt,
+			"backoff", backoff.Round(time.Second),
+			"error", match.Line)
+		return
+	}
+	m.clearProviderErrorLocked(agent)
 
 	if paneContentHash(pane) == agent.lastInferKickPane {
 		// Frozen pane: the CLI never consumed the kick.

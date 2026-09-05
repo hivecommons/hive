@@ -228,5 +228,5 @@ than trying to add the moved repository back to the old installation.
 
 | Name | Default | Purpose |
 |---|---|---|
-| `HIVE_VLLM_ENDPOINT` | `http://hive-vllm-svc.hive-inference.svc.cluster.local:8000` | Comma-separated vLLM endpoint list. |
+| `HIVE_VLLM_ENDPOINT` | unset | Comma-separated vLLM endpoint list; set only to a cluster-reachable endpoint. Unset disables the built-in vLLM gateway route. |
 | `HIVE_LLMD_ENDPOINT` | `http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000` | Comma-separated llm-d endpoint list. |

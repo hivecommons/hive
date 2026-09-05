@@ -76,7 +76,23 @@ jobs:
     # with no red anywhere. Both names listed explicitly (rather than
     # github.repository_owner) so forks still skip as before.
     if: github.repository == 'hivecommons/hive' || github.repository == 'hivecommons/hive'
-    runs-on: ubuntu-latest
+    # PER-LANE RUNNER (#5883). #5862 moved this workflow to the self-hosted
+    # fleet to relieve the hosted-runner queue, and kept the image-heavy jobs
+    # (docker, overlayfs-exec-guard) on ubuntu-latest for exactly the reason
+    # that applies here too — the fleet image is not built to pull and run
+    # container images. The PINNED lane is image-heavy by definition: it runs
+    # the suite INSIDE ghcr.io/hivecommons/hive-contributor, so it needs podman
+    # on the runner, and the fleet has none. Every scheduled run failed at the
+    # pull step in ~7s with `podman: command not found` (exit 127).
+    #
+    # The LATEST lane is not image-heavy — node, tmux and an npm-installed CLI
+    # on the bare runner — and passes on the fleet today, so it stays there and
+    # keeps the queue relief #5862 was after.
+    #
+    # `runs-on` can read the matrix context (the job-level `if` cannot — see the
+    # note on the lane list below), so the split is expressed here rather than
+    # by forking the job.
+    runs-on: ${{ matrix.lane == 'pinned' && 'ubuntu-latest' || fromJSON('["self-hosted","hive"]') }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -136,6 +152,33 @@ jobs:
             bash bin/test_backend_smoke.sh |& tee smoke.log
 
       # ── pinned lane: the CLI versions hive ships, inside the image ─────────
+      # A missing container engine is an ENVIRONMENT fault, and it has to say so
+      # itself (#5883). Without this step the lane died on a bare
+      # `podman: command not found` / exit 127, and the failure-issue job then
+      # announced that "the CLI versions hive SHIPS in the contributor image
+      # failed the smoke — contributors are likely broken right now" — about a
+      # suite that never executed. Naming the real cause here, and writing it
+      # into smoke.log so the evidence artifact is not empty, is what lets the
+      # issue job tell the two apart.
+      - name: Require a container engine
+        if: steps.scope.outputs.run == 'true' && matrix.lane == 'pinned'
+        run: |
+          if command -v podman >/dev/null 2>&1; then
+            podman --version
+            exit 0
+          fi
+          {
+            echo "SUITE DID NOT RUN — this runner has no container engine."
+            echo
+            echo "The pinned lane runs the smoke INSIDE"
+            echo "ghcr.io/hivecommons/hive-contributor, so it needs podman on the"
+            echo "runner. Nothing here says anything about the shipped CLIs."
+            echo
+            echo "Runner: ${RUNNER_NAME:-unknown} (${RUNNER_OS:-unknown}, ${RUNNER_ARCH:-unknown})"
+          } | tee smoke.log
+          echo "::error::the pinned backend-smoke lane needs podman and this runner has none, so the smoke did not run — this says nothing about the CLIs hive ships (#5883)"
+          exit 1
+
       - name: Pull the contributor image
         if: steps.scope.outputs.run == 'true' && matrix.lane == 'pinned'
         run: podman pull ghcr.io/hivecommons/hive-contributor:latest
@@ -171,7 +214,7 @@ jobs:
     # "contributors broken today" are different problems with different
     # urgency, and must never collapse into one issue thread.
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hive]
     needs: [smoke]
     permissions:
       contents: read
@@ -193,16 +236,39 @@ jobs:
               run_id: context.runId,
               per_page: 100,
             });
+            // A failed ARM and a failed SUITE are not the same thing (#5883).
+            // The suite runs in the step named "Backend smoke (...)"; anything
+            // that fails before it — a missing container engine, a checkout, an
+            // image pull — means the smoke never executed, so nothing was
+            // learned about the CLIs. Reporting that as "contributors are
+            // likely broken right now" is a false accusation, and it is what
+            // this job did on the day the workflow moved to the self-hosted
+            // fleet: the runner had no podman, the lane died at the pull step
+            // in 7s, and the issue blamed the shipped CLIs.
+            //
+            // The step list is already in the payload fetched above, so telling
+            // them apart costs no extra API call.
             const failed = jobs
               .filter(j => j.name.startsWith('smoke (') && j.conclusion === 'failure')
               .map(j => {
                 const m = j.name.match(/^smoke \(([^,]+), ([^)]+)\)$/);
-                return m ? { backend: m[1], lane: m[2] } : null;
+                if (!m) return null;
+                const steps = j.steps || [];
+                const suiteRan = steps.some(
+                  s => s.name.startsWith('Backend smoke') && s.conclusion === 'failure');
+                // Name the step that actually broke, so an environment failure
+                // is actionable without opening the run.
+                const brokeAt = (steps.find(s => s.conclusion === 'failure') || {}).name || 'an unknown step';
+                return { backend: m[1], lane: m[2], suiteRan, brokeAt };
               })
               .filter(Boolean);
             if (failed.length === 0) return;
 
-            const lanes = [...new Set(failed.map(f => f.lane))];
+            // Dedupe splits on the same principle the lane split already uses:
+            // "the shipped CLIs are broken" and "the runner could not start the
+            // suite" have different owners and different urgency, so they must
+            // not pile into one thread either.
+            const lanes = [...new Set(failed.map(f => `${f.lane}\u0000${f.suiteRan ? 'suite' : 'env'}`))];
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -211,10 +277,21 @@ jobs:
               per_page: 20,
             });
 
-            for (const lane of lanes) {
-              const backends = failed.filter(f => f.lane === lane).map(f => f.backend);
-              const prefix = `[Backend smoke: ${lane}]`;
-              const meaning = lane === 'pinned'
+            for (const key of lanes) {
+              const [lane, kind] = key.split('\u0000');
+              const suiteRan = kind === 'suite';
+              const arms = failed.filter(f => f.lane === lane && (f.suiteRan ? 'suite' : 'env') === kind);
+              const backends = arms.map(f => f.backend);
+              const prefix = suiteRan
+                ? `[Backend smoke: ${lane}]`
+                : `[Backend smoke: ${lane} — environment]`;
+              const brokeAt = [...new Set(arms.map(f => f.brokeAt))].join(', ');
+              const meaning = !suiteRan
+                ? `The smoke DID NOT RUN: the job failed at **${brokeAt}**, before the suite started. `
+                  + 'This says nothing about the CLIs hive ships or about the vendor releases — it is a '
+                  + 'runner/environment fault, and the fix belongs to whoever owns the runner, not to the '
+                  + 'backend integration.'
+                : lane === 'pinned'
                 ? 'The CLI versions hive SHIPS in the contributor image failed the smoke — contributors are likely broken right now.'
                 : "The vendor's LATEST CLI release failed the smoke against hive's relay — shipped images still work, but the next pin bump will break. Fix the integration before bumping.";
               const dup = existing.data.find(i => i.title.startsWith(prefix));
@@ -241,9 +318,12 @@ jobs:
                   '',
                   meaning,
                   '',
-                  'The run log carries the suite\'s evidence block (relay log tail, fake-hub',
-                  'wire messages, tmux pane capture) for each failed scenario, and the',
-                  '`backend-smoke-<backend>-<lane>` artifact holds the full suite output.',
+                  suiteRan
+                    ? 'The run log carries the suite\'s evidence block (relay log tail, fake-hub '
+                      + 'wire messages, tmux pane capture) for each failed scenario, and the '
+                      + '`backend-smoke-<backend>-<lane>` artifact holds the full suite output.'
+                    : 'There is no suite evidence to read — the run stopped before the suite '
+                      + 'produced any. The run log shows the failing step.',
                 ].join('\n'),
                 labels: ['backend-smoke', 'ci-failure', 'kind/bug'],
               });

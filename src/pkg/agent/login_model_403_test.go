@@ -129,3 +129,26 @@ func TestEmptyPaneIsNotALoginPrompt(t *testing.T) {
 		t.Error("an empty pane must not report a login prompt")
 	}
 }
+
+func TestBobAPIKeyVerificationFailureNeedsLogin(t *testing.T) {
+	lines := []string{
+		"How would you like to authenticate for this project?",
+		`🛑 Failed to login. Message: Failed to fetch user profile - HTTP 401:  - {"message":"API Key verification failed: Invalid or expired API Key","error":"unauthorized"}`,
+	}
+	if !paneShowsBobAPIKeyRejected(lines) {
+		t.Fatal("Bob HTTP 401 API-key verification failure must be classified as a credential/login problem")
+	}
+}
+
+func TestBobAPIKeyVerificationFailureJSONOrderNeedsLogin(t *testing.T) {
+	line := `🛑 Failed to login. Message: Failed to fetch user profile - HTTP 401:  - {"error":"unauthorized","message":"API Key verification failed: Invalid or expired API Key"}`
+	if !paneShowsBobAPIKeyRejected([]string{line}) {
+		t.Fatal("Bob API-key detector must match the observed alternate JSON field order")
+	}
+}
+
+func TestBobAPIKeyDetectorIgnoresOrdinaryAPIKeyText(t *testing.T) {
+	if paneShowsBobAPIKeyRejected([]string{"document how to rotate an API key before it expires"}) {
+		t.Fatal("ordinary API key discussion must not be treated as a Bob credential failure")
+	}
+}

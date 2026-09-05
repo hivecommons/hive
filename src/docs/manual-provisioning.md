@@ -33,7 +33,7 @@ the target cluster.
 | | **Hub-reachable cluster** (vanilla Kubernetes) | **Heartbeat-only cluster** (OpenShift) |
 |---|---|---|
 | Hub reachability | Hub **can** `kubectl` → **automated** provisioning | Hub is **heartbeat-only** → **manual** provisioning |
-| Dashboard routing | nginx **Ingress**, host `<id>.hive.kubestellar.io` | OpenShift **Route**, host `<id>.apps.<your-cluster-domain>` |
+| Dashboard routing | nginx **Ingress**, host `<id>.hive.hivecommons.dev` | OpenShift **Route**, host `<id>.apps.<your-cluster-domain>` |
 | Auth in front of the dashboard | Hub's nginx ingress runs `auth-url` → `/api/saas/auth-check`, injecting `X-Hive-User` / `X-Hive-Role`. Spokes need **no** own OAuth. | No hub auth proxy. Each spoke runs its **own** GitHub device-flow login (`oauth_client_id`, `hub_proxied: false`). |
 | Pod security | Standard Kubernetes; empty `securityContext`. | OpenShift SCC. The pod **must** run under the `anyuid` SCC (the entrypoint `chown`s the PVC as root). Without it the pod lands on `restricted-v2` and crash-loops. |
 | Storage | RWX volume, default storage class. | RWX on `ocs-storagecluster-cephfs`. |
@@ -769,8 +769,10 @@ governor:
     default_model: qwen2.5-0.5b-instruct
 ```
 
-Swap `backend: vllm` to hit `HIVE_VLLM_ENDPOINT` directly (the base deployment
-wires both `HIVE_VLLM_ENDPOINT` and `HIVE_LLMD_ENDPOINT`). Verify any key against
+Swap `backend: vllm` to hit `HIVE_VLLM_ENDPOINT` directly. Hive does not
+default this to an in-cluster Service; set it only when the target cluster can
+resolve and reach that endpoint (hosted provisioning injects it from the
+cluster `inference_endpoint` setting). Verify any key against
 `src/pkg/config/config.go` before adding it.
 
 ---
@@ -814,7 +816,7 @@ Response:
 
 ```json
 {"id":"hosted-myorg-myrepo-ab12","status":"provisioning",
- "subdomain":"hosted-myorg-myrepo-ab12.hive.kubestellar.io"}
+ "subdomain":"hosted-myorg-myrepo-ab12.hive.hivecommons.dev"}
 ```
 
 The generated ID is `hosted-<org>-<primary_repo>-<4char>`.
@@ -1004,7 +1006,7 @@ by the hub's own wildcard domain. Anywhere else it is a guaranteed **503**: the
 wildcard resolves, so DNS looks healthy, but it sends the name to the **hub's**
 router, which has no backend for a hive living on another cluster. This was a
 live user-visible outage on the heartbeat-only pool — the hub minted links at
-`<id>.hive.kubestellar.io` while the spoke's Route served
+`<id>.hive.hivecommons.dev` while the spoke's Route served
 `<id>.apps.<your-cluster-domain>`.
 
 The spoke is the only party that **can** answer this on a heartbeat-only
@@ -1106,7 +1108,7 @@ data:
       hub_proxied: false              # heartbeat-only cluster has no hub auth proxy → direct device-flow
     hub:
       enabled: true
-      url: https://hive.kubestellar.io
+      url: https://hive.hivecommons.dev
       dashboard_url: https://${ROUTE_HOST}
       hive_type: hosted
       is_public: false
@@ -1275,7 +1277,7 @@ spec:
         # to a standalone (hub-less) hive — see "Standalone / self-hosted (no
         # hub)" at the top of this guide.
         - { name: HIVE_HUB_SECRET, value: "${HUB_SECRET}" }
-        - { name: HIVE_HUB_URL,    value: "https://hive.kubestellar.io" }
+        - { name: HIVE_HUB_URL,    value: "https://hive.hivecommons.dev" }
         # startupProbe keeps the liveness clock from starting until boot
         # finishes, so a slow start can't race liveness into a restart loop.
         startupProbe:

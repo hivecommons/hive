@@ -2818,7 +2818,7 @@ const dashboardHTMLLayout = `<!DOCTYPE html>
        v5: rows carry the fleet-divergence view (fleetRollup + agentVerdicts:
        expected/actual/able per agent); a v4 cache would omit the new per-agent
        drill-down until the first poll landed. */
-    var HIVES_CACHE_VERSION = 5;
+    var HIVES_CACHE_VERSION = 6;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;

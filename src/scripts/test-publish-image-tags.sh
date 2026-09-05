@@ -15,6 +15,15 @@ cat >"$tmp/bin/docker" <<'MOCK'
 set -euo pipefail
 if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
   ref=${@: -1}
+  if [[ -e ${MOCK_CAPTURE}.created ]]; then
+    case "${MOCK_INSPECT_MODE:-legacy}" in
+      publish-missing-arm64)
+        if [[ $* == *'linux/arm64'* ]]; then echo 'null'; else echo '{"config":{"Labels":{}}}'; fi
+        ;;
+      *) echo '{"config":{"Labels":{}}}' ;;
+    esac
+    exit 0
+  fi
   case "${MOCK_INSPECT_MODE:-legacy}" in
     missing) echo "ERROR: $ref: not found" >&2; exit 1 ;;
     failure) echo 'dial tcp: registry unavailable' >&2; exit 1 ;;
@@ -27,19 +36,21 @@ if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
       if [[ $ref == *':latest' ]]; then value=101; else value=99; fi
       printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s"}}}\n' "$value"
       ;;
+    publish-missing-arm64) echo '{"config":{"Labels":{}}}' ;;
     *) printf '{"config":{"Labels":{"io.kubestellar.hive.github-actions-run-number":"%s"}}}\n' "$MOCK_INSPECT_MODE" ;;
   esac
   exit 0
 fi
 printf '%q ' "$@" >"$MOCK_CAPTURE"
 printf '\n' >>"$MOCK_CAPTURE"
+touch "${MOCK_CAPTURE}.created"
 MOCK
 chmod +x "$tmp/bin/docker"
 
 run_case() {
   local mode=$1 run=$2 capture=$3
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
-    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v4 abcdef123456 "$run" v4 false
+    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v5 abcdef123456 "$run" v5 false edge
 }
 
 run_custom_case() {
@@ -51,17 +62,22 @@ run_custom_case() {
 capture="$tmp/create-new"
 run_case missing 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
-grep -q 'hive:v4-latest' "$capture"
-grep -q 'hive:stable' "$capture"
+grep -q 'hive:v5-latest' "$capture"
+grep -q 'hive:edge' "$capture"
+if grep -q 'hive:stable\|hive:candidate' "$capture"; then
+  echo "v5 publish moved v4-owned stable/candidate tags" >&2
+  exit 1
+fi
 
 capture="$tmp/create-forward"
 run_case 99 100 "$capture"
-grep -q 'hive:v4-latest' "$capture"
+grep -q 'hive:v5-latest' "$capture"
+grep -q 'hive:edge' "$capture"
 
 capture="$tmp/create-stale"
 run_case sha-missing-moving-newer 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
-if grep -q 'hive:v4-latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
+if grep -q 'hive:v5-latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
   echo "stale run moved a mutable tag" >&2
   exit 1
 fi
@@ -75,10 +91,16 @@ fi
 
 capture="$tmp/create-legacy"
 run_case legacy 100 "$capture"
-grep -q 'hive:v4-latest' "$capture"
+grep -q 'hive:v5-latest' "$capture"
+grep -q 'hive:edge' "$capture"
 
 if run_case failure 100 "$tmp/create-failure"; then
   echo "registry inspection failure did not fail closed" >&2
+  exit 1
+fi
+
+if run_case publish-missing-arm64 100 "$tmp/create-missing-arm64"; then
+  echo "post-publish platform assertion did not fail closed" >&2
   exit 1
 fi
 
@@ -106,6 +128,12 @@ fi
 workflow="$script_dir/../../.github/workflows/docker.yml"
 [[ $(grep -c 'io.kubestellar.hive.github-actions-run-number=' "$workflow") -eq 3 ]]
 [[ $(grep -c 'src/scripts/publish-image-tags.sh' "$workflow") -eq 3 ]]
+grep -q 'v5 true edge' "$workflow"
+if grep -q 'v5 true stable\|CHANNELS: "stable' "$workflow"; then
+  echo "docker workflow publishes v4-owned stable from the v5 lane" >&2
+  exit 1
+fi
+grep -q 'INCLUDE_LATEST: "true"' "$workflow"
 if grep -q 'head-check\|Verify build commit is still HEAD' "$workflow"; then
   echo "HEAD-only publication guard was reintroduced" >&2
   exit 1

@@ -675,6 +675,26 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			Conditions:      proc.WatchdogConditions,
 			WatchdogMode:    watchdogMode,
 		}
+		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
+			a.StructuredStatus = "BLOCKED"
+			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
+			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
+				a.StatusEvidence += ": " + line
+			}
+		}
+		// #5958: the card said "restart needed" for an agent that had failed to
+		// start the same way three times running, so the one control it offered
+		// was the one that could not help. Show the reason and the recurrence
+		// instead. Written after the inference block on purpose — an agent that
+		// cannot START is a more basic fault than one whose provider is erroring,
+		// and it is the one the operator has to act on first.
+		if proc.StartBlocked {
+			a.StructuredStatus = "BLOCKED"
+			a.StatusEvidence = "blocked: " + strings.TrimSpace(proc.StartFailureReason)
+			if proc.StartFailureCount > 0 {
+				a.StatusEvidence += fmt.Sprintf(" (%d consecutive failed starts)", proc.StartFailureCount)
+			}
+		}
 
 		acmmLevel := 0
 		if cfg.ACMMLevel != nil {

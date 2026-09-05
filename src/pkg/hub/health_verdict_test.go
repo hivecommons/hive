@@ -1,9 +1,12 @@
 package hub
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 // ractivity builds a one-repo RepoActivityWire with the given create/merge
@@ -30,22 +33,110 @@ func withActivity(e RegistryEntry, repos ...RepoActivityWire) RegistryEntry {
 	return e
 }
 
+func TestHiveHealthFor_GatewayFaultPrecedesInferredAppBroken(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "quality", State: agentStateRunning, Backend: "litellm",
+			Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true,
+		}},
+		GatewayHealth: []inferencehealth.GatewayStatus{{
+			Name:        "litellm",
+			ErrorClass:  inferencehealth.ClassDNS,
+			LastErrorAt: now.Add(-time.Minute).Format(time.RFC3339),
+		}},
+	}
+	v := hiveHealthFor(e, okRollup(), GitHubAppHealth{Bucket: ghAppBucketBroken}, 21, now)
+	if v.State != HealthStateRed {
+		t.Fatalf("state = %s, want red", v.State)
+	}
+	if v.Reason != "inference gateway 'litellm' unreachable (dns)" {
+		t.Fatalf("reason = %q", v.Reason)
+	}
+	if v.Remediation == nil || !strings.Contains(v.Remediation.Action, "Settings → Model Gateways") {
+		t.Fatalf("remediation = %+v, want Model Gateways hint", v.Remediation)
+	}
+}
+
+func TestHiveHealthFor_GatewayDNSNamesEndpointHost(t *testing.T) {
+	now := time.Date(2026, 9, 4, 23, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "quality", State: agentStateRunning, Backend: "vllm", Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true,
+		}},
+		GatewayHealth: []inferencehealth.GatewayStatus{{
+			Name: "vllm", Host: "hive-vllm-svc.hive-inference.svc.cluster.local", ErrorClass: inferencehealth.ClassDNS, LastErrorAt: now.Format(time.RFC3339),
+		}},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 3, now)
+	if want := "vllm endpoint hive-vllm-svc.hive-inference.svc.cluster.local not resolvable on this cluster — set inference.vllm.endpoint or disable"; v.Reason != want {
+		t.Fatalf("reason = %q, want %q", v.Reason, want)
+	}
+}
+
+func TestHiveHealthFor_UnusedGatewayFaultDoesNotShadowAppVerdict(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "quality", State: agentStateRunning, Backend: "claude",
+			Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true,
+		}},
+		GatewayHealth: []inferencehealth.GatewayStatus{{
+			Name:        "unused-litellm",
+			ErrorClass:  inferencehealth.ClassDNS,
+			LastErrorAt: now.Add(-time.Minute).Format(time.RFC3339),
+		}},
+	}
+	v := hiveHealthFor(e, okRollup(), GitHubAppHealth{Bucket: ghAppBucketBroken}, 21, now)
+	if v.Reason != "GitHub App broken" {
+		t.Fatalf("reason = %q, want GitHub App broken because no agent uses the failing gateway", v.Reason)
+	}
+}
+
+func TestHiveHealthFor_GatewayAuthReason(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "quality", State: agentStateRunning, Backend: "litellm",
+			Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true,
+		}},
+		GatewayHealth: []inferencehealth.GatewayStatus{{
+			Name:        "litellm",
+			ErrorClass:  inferencehealth.ClassAuth,
+			HTTPStatus:  http.StatusUnauthorized,
+			LastErrorAt: now.Add(-time.Minute).Format(time.RFC3339),
+		}},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 21, now)
+	if v.Reason != "inference gateway 'litellm' rejected key (401)" {
+		t.Fatalf("reason = %q", v.Reason)
+	}
+}
+
 // The verdict must band by ACMM level exactly as the operator defined:
 // L1 no-output→green, L2 advisory-fresh→green, L3–L5 creates (unmerged is fine),
 // L6 merges (unmerged+queued→red), with precondition + unknown gates on top.
 func TestHiveHealthFor_ACMMBands(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
-	recent := rfc(now.Add(-1 * time.Hour))   // within 12h
-	oldTs := rfc(now.Add(-30 * time.Hour))   // outside 12h
-	freshAdv := rfc(now.Add(-2 * time.Hour)) // within advisory aging window
+	recent := rfc(now.Add(-1 * time.Hour))      // within 12h
+	oldTs := rfc(now.Add(-30 * time.Hour))      // outside 12h
+	freshAdv := rfc(now.Add(-30 * time.Minute)) // within advisory freshness window
 
 	base := func(level int) RegistryEntry {
 		// Every base entry carries one on-duty agent with full write grants so
 		// the freshness bands are actually exercised; the no-writers-on-duty
 		// cases build their own agent sets.
 		return RegistryEntry{Online: true, ACMMLevel: level, Agents: []AgentSummary{
-			{Name: "quality", State: agentStateRunning, Enabled: true, ExpectedActive: true,
+			{Name: "quality", State: agentStateRunning, Enabled: true, ExpectedActive: true, Backend: "litellm",
 				CanOpenIssue: true, CanOpenPR: true, CanMerge: true},
 		}}
 	}

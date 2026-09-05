@@ -10,4 +10,4 @@ permissions:
 
 jobs:
   feedback:
-    uses: kubestellar/infra/.github/workflows/reusable-feedback.yml@1a04a3fd17771e78e5cf6d42a3fda84e3ba478f3 # kubestellar/infra main as of 2026-08-11
+    uses: hivecommons/infra/.github/workflows/reusable-feedback.yml@f1c0b61675386f54e63c04cf07b3aa933cc963eb # hivecommons/infra main as of 2026-09-02

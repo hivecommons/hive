@@ -68,7 +68,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		binary, err = m.backendBinary(backend)
 		if err != nil {
 			agent.State = StateFailed
-			agent.LastError = err.Error()
+			m.recordStartFailureLocked(agent, backend, StartFailureBinaryMissing, err.Error())
 			m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", err)
 			// The tmux session already exists (Start/Restart ran ensureTmuxSession
 			// before this), so without a banner the pane is a silent bare shell —
@@ -97,7 +97,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		if m.bobAPIKey() == "" {
 			agent.State = StateFailed
 			agent.awaitingBobKey = true
-			agent.LastError = "no bob API key configured (" + config.BobAPIKeyEnvVar + ")"
+			m.recordStartFailureLocked(agent, backend, StartFailureCredentialMissing, config.BobAPIKeyEnvVar)
 			m.logger.Warn("bob requires "+config.BobAPIKeyEnvVar+" for headless operation; ask your hub admin to configure it",
 				"name", agent.Name,
 				"backend", backend,

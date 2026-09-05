@@ -50,12 +50,13 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 	}
 	body := text[start:end]
 	// The block sits inside an enclosing `if` whose opener is above the
-	// extraction start; drop the one unmatched trailing `fi`.
+	// extraction start; wrap it in a harmless true branch so the real trailing
+	// `fi` is parsed instead of deleting the very branch boundary this test is
+	// meant to execute.
 	body = strings.TrimRight(body, " \t\n")
 	if !strings.HasSuffix(body, "fi") {
 		t.Fatalf("gate block does not end with the enclosing fi; got tail %q", body[len(body)-20:])
 	}
-	body = strings.TrimRight(strings.TrimSuffix(body, "fi"), " \t\n")
 
 	root := t.TempDir()
 	// Rewrite absolute paths onto the temp root so the test never touches the
@@ -161,8 +162,10 @@ func runEgressGate(t *testing.T, env map[string]string, shims []string, ipv6Stac
 		"EXIT_NET_ADMIN_REQUIRED=77\n" +
 		"_cap_net_admin_in_bset=true\n" +
 		"PROXY_UID=1001\n" +
-		"HIVE_PROXY_EGRESS_MARK=0x1112\n"
-	cmd := exec.Command("sh", "-c", prelude+body)
+		"HIVE_PROXY_EGRESS_MARK=0x1112\n" +
+		"HIVE_IPTABLES_ERR_LOG=" + root + "/hive-ipt-err.log\n" +
+		"HIVE_IP6TABLES_ERR_LOG=" + root + "/hive-ip6t-err.log\n"
+	cmd := exec.Command("sh", "-c", prelude+"if true; then\n"+body)
 	cmd.Env = append(os.Environ(), "HIVE_PROXY_ADVISORY_OK=false")
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)

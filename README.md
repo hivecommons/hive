@@ -257,7 +257,11 @@ Teardown: `bin/hive-podman-teardown.sh`.
 
 ### Hosted Option
 
-The [Hive Hub](https://hive.kubestellar.io) provides hosted hives with OAuth-protected dashboards, a public registry, and cross-hive leaderboards. No cluster required.
+The [Hive Hub](https://hive.hivecommons.dev) provides hosted hives with OAuth-protected dashboards, a public registry, and cross-hive leaderboards. No cluster required.
+The canonical hub address is now `https://hive.hivecommons.dev`; the legacy
+`https://hive.kubestellar.io` hostname redirects during the cutover.
+Start with the [hosted hub onboarding guide](src/docs/hosted-hub.md) to sign in,
+request a hosted hive, and finish first-run setup.
 
 If you need to run your own private hub instead, see the
 [self-hosted hub deployment guide](src/docs/hub-deployment.md).
@@ -457,7 +461,7 @@ governor:
 
 hub:
   enabled: true
-  url: https://hive.kubestellar.io
+  url: https://hive.hivecommons.dev
   contribute:
     enabled: true
 ```
@@ -555,11 +559,11 @@ Supported CLIs: Claude Code, GitHub Copilot, Pi, Goose, Bob. Contributors start 
 
 A relay can subscribe to multiple hives with comma-separated `HIVE_HUB` and matching `HIVE_REGISTRATION_TOKEN` values, and operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) and [src/docs/contributor-trust-and-roles.md](src/docs/contributor-trust-and-roles.md).
 
-See the [Hive Hub contribute page](https://hive.kubestellar.io) for details.
+See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
 
 ## Contributing
 
-See the [Hive Hub](https://hive.kubestellar.io) to browse registered hives, view leaderboards, and find hives accepting contributions.
+See the [Hive Hub](https://hive.hivecommons.dev) to browse registered hives, view leaderboards, and find hives accepting contributions.
 
 To contribute to Hive itself, see [CONTRIBUTING.md](CONTRIBUTING.md) and open issues or PRs on this repository.
 

@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dibs
+  namespace: dibs
+spec:
+  ingressClassName: nginx
+  # Keep the legacy host on its existing per-namespace cert. Do not add
+  # dibs.hivecommons.dev here: ingress-nginx should serve that host with the
+  # controller default SSL certificate, hive-hub/hive-wildcard-tls, after the
+  # held SAN update is applied.
+  tls:
+    - hosts:
+        - dibs.kubestellar.io
+      secretName: hive-tls-hc
+  rules:
+    - host: dibs.kubestellar.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dibs
+                port:
+                  number: 80
+    - host: dibs.hivecommons.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dibs
+                port:
+                  number: 80

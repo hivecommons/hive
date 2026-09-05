@@ -17,7 +17,7 @@ credential-less hive over a working deployment.
 ## Background: how the two clusters differ
 
 **Hub-reachable cluster (vanilla Kubernetes).** Dashboards are reached via
-`*.hive.kubestellar.io`. The hub's nginx ingress performs authentication
+`*.hive.hivecommons.dev`. The hub's nginx ingress performs authentication
 (`auth-url` pointing at `/api/saas/auth-check`) and injects `X-Hive-User` /
 `X-Hive-Role` headers into proxied requests. Spokes on this cluster do **not**
 need their own OAuth configuration — the hub is the auth proxy.

@@ -88,6 +88,12 @@ var routeParityExceptions = []routeParityException{
 			"body; it has none.",
 	},
 	{
+		method: "POST", path: "/api/terminal/handoff",
+		reason: "Internal browser-to-terminal handoff mechanism: returns a " +
+			"short-lived, single-use code for a terminal navigation that cannot " +
+			"carry Authorization headers. Not a public data API.",
+	},
+	{
 		method: "GET", path: "/api/docs",
 		reason: "Serves an HTML API-docs page (handleAPIDocs) that renders " +
 			"this very spec for humans, not a JSON data operation.",

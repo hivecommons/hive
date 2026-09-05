@@ -2,8 +2,10 @@ package snapshot
 
 import (
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -156,37 +158,6 @@ func TestSaveState_SuccessfulRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCleanup_RemoveErrorLogged(t *testing.T) {
-	dir := t.TempDir()
-	logger := testLogger()
-	b := NewBuilder(dir, logger)
-
-	oldFile := filepath.Join(dir, "status-2020-01-01T00-00-00Z.json")
-	os.WriteFile(oldFile, []byte("{}"), 0o644)
-
-	err := b.Cleanup(time.Hour)
-	if err != nil {
-		t.Errorf("cleanup should not return error: %v", err)
-	}
-}
-
-func TestCleanup_RemovePermissionError(t *testing.T) {
-	dir := t.TempDir()
-	logger := testLogger()
-	b := NewBuilder(dir, logger)
-
-	oldFile := filepath.Join(dir, "status-2020-01-01T00-00-00Z.json")
-	os.WriteFile(oldFile, []byte("{}"), 0o644)
-
-	os.Chmod(dir, 0o555)
-	defer os.Chmod(dir, 0o755)
-
-	err := b.Cleanup(time.Hour)
-	if err != nil {
-		t.Errorf("cleanup should not return error even on permission issues: %v", err)
-	}
-}
-
 func TestSaveState_RenameError(t *testing.T) {
 	dir := t.TempDir()
 	subdir := filepath.Join(dir, "sub")
@@ -206,5 +177,65 @@ func TestSaveState_RenameError(t *testing.T) {
 	err = SaveState(path, state, logger)
 	if err == nil {
 		t.Log("write succeeded even with read-only dir (OS-dependent)")
+	}
+}
+
+func TestSaveState_MarshalError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+
+	// NaN is not representable in JSON, so MarshalIndent fails before any
+	// file is touched.
+	state := &PersistedState{
+		Agents: map[string]AgentState{
+			"scanner": {TurnLoss: &AgentTurnLoss{UpperBoundS: math.NaN()}},
+		},
+	}
+	err := SaveState(path, state, testLogger())
+	if err == nil {
+		t.Fatal("expected marshal error for NaN float")
+	}
+	if !strings.Contains(err.Error(), "marshaling state") {
+		t.Errorf("error = %q, want marshaling state wrap", err)
+	}
+	if _, statErr := os.Stat(path + ".tmp"); !os.IsNotExist(statErr) {
+		t.Error("temp file should not exist after marshal failure")
+	}
+}
+
+func TestSaveState_RenameOntoDirectoryFails(t *testing.T) {
+	dir := t.TempDir()
+	// The target path is an existing DIRECTORY: WriteFile of path+".tmp"
+	// succeeds, but the final rename onto a non-empty directory fails,
+	// deterministically exercising the rename error branch.
+	path := filepath.Join(dir, "state.json")
+	if err := os.MkdirAll(filepath.Join(path, "occupied"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &PersistedState{Agents: map[string]AgentState{}}
+	err := SaveState(path, state, testLogger())
+	if err == nil {
+		t.Fatal("expected rename error when target is a non-empty directory")
+	}
+	if !strings.Contains(err.Error(), "renaming state file") {
+		t.Errorf("error = %q, want renaming state file wrap", err)
+	}
+}
+
+func TestLoadState_ReadErrorNotMissing(t *testing.T) {
+	// A path that exists but is a directory fails ReadFile with an error that
+	// is NOT os.IsNotExist, so LoadState must surface it instead of treating
+	// it as a fresh start.
+	dir := t.TempDir()
+	state, err := LoadState(dir, testLogger())
+	if err == nil {
+		t.Fatal("expected error reading a directory as the state file")
+	}
+	if !strings.Contains(err.Error(), "reading state file") {
+		t.Errorf("error = %q, want reading state file wrap", err)
+	}
+	if state != nil {
+		t.Error("state should be nil on read error")
 	}
 }

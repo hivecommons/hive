@@ -998,7 +998,7 @@ func TestSecurityHeaders_Authorized(t *testing.T) {
 	}
 }
 
-func TestSecurityHeaders_TokenQueryParam(t *testing.T) {
+func TestSecurityHeaders_TokenQueryParamRejected(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := NewServerWithAuth(0, "secret", logger)
 	deps := testDeps(t)
@@ -1007,8 +1007,8 @@ func TestSecurityHeaders_TokenQueryParam(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/config?token=secret", nil)
 	s.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
 

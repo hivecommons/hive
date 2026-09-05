@@ -203,7 +203,9 @@ case_expect() {
   out="$(run_probe "$@")"; rc=$?
   local why=""
   [ "$rc" != "$want_rc" ] && why="exit $rc, wanted $want_rc"
-  if [ -n "$want_txt" ] && ! printf '%s' "$out" | grep -qF -- "$want_txt"; then
+  # herestring, not a pipe: grep -q closing the pipe early would EPIPE printf
+  # and, under pipefail, turn a successful match into a spurious FAIL (#5969)
+  if [ -n "$want_txt" ] && ! grep -qF -- "$want_txt" <<<"$out"; then
     why="${why:+$why; }missing text: $want_txt"
   fi
   if [ -z "$why" ]; then

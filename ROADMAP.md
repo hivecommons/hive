@@ -37,7 +37,7 @@ v4 is the default branch and the supported stable line.
 ## v5 — Next Generation
 
 v5 development happens on the `v5` branch, gated by public `[v5 RFC]`
-issues. The three pillars:
+issues. Accepted workstreams:
 
 - **Reviewer lane.** A dedicated agent role with authority to adjudicate
   escalated (`needs-human`) PRs, so the human-escalation queue has an
@@ -62,15 +62,82 @@ issues. The three pillars:
   the same PR.
 - **Channel-based release trains.** The three channels — `edge` (newest
   good build), `candidate` (awaiting soak), `stable` (promoted after
-  soak) — exist today as moving GHCR tags, and divergence has begun: `v4`
-  builds publish `stable` and `candidate` while `v5` builds publish
-  `edge`. Remaining work is the soak/promotion policy in CI and
-  digest-verifiable deployment, so what a spoke runs is provable rather
-  than inferred from a tag. See
+  soak) — exist as moving GHCR tags with enforced divergence: `v4` builds
+  publish `candidate`, the stable-promotion workflow advances `stable` by
+  digest after the soak/evidence/blocker/smoke gate, and `v5` builds
+  publish `edge`. Remaining work is digest-verifiable deployment, so what
+  a spoke runs is provable rather than inferred from a tag. See
   [release channels](src/docs/release-channels.md).
+- **Multi-spoke constellations.** A production external deployment
+  (tunaos.org: a self-hosted hub coordinating two spokes at ACMM L5/L6
+  across 43 repos) showed that large adopters need hub-level fleet
+  visibility without making the hub a hard control plane. The accepted
+  v5 constellation RFC anchors repo-claim overlap warnings (phase 1
+  shipped in [#5705](https://github.com/hivecommons/hive/pull/5705)),
+  spoke charters, fleet headroom, GitHub App budget display,
+  shared-credential guidance, and route recommendations
+  ([#5691](https://github.com/hivecommons/hive/issues/5691),
+  [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md),
+  [#5796](https://github.com/hivecommons/hive/pull/5796)).
+- **Backend capacity, model inventory, and placement.** The same
+  multi-spoke evidence made provider quota and model availability the
+  practical constraint on splitting a hive. The accepted v5 capacity RFC
+  makes backend choice an operator-controlled placement problem with
+  normalized capacity readings, authoritative model inventory where
+  available, tier floors, scoped limit handling, and opt-in pacing /
+  placement policy
+  ([#5698](https://github.com/hivecommons/hive/issues/5698),
+  [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5698-backend-capacity-model-inventory-placement.md),
+  [#5784](https://github.com/hivecommons/hive/pull/5784)).
 
 A documented migration path from v4 hubs and spokes, with dual-version
 operation during the transition, is part of the v5 GA bar.
+
+## Hosted Hive Hub
+
+The hosted hub at [hive.hivecommons.dev](https://hive.hivecommons.dev) is the
+project's zero-friction on-ramp: OAuth-protected dashboards, a public
+registry, cross-hive leaderboards, and provisioned hives with no cluster
+required. It is developed in this repo (`src/pkg/hub/`) and has recently
+absorbed significant work — hosted-hive provisioning and admin tooling,
+multi-login, the fleet wildcard certificate for provisioned spokes
+([#5981](https://github.com/hivecommons/hive/pull/5981)), and the domain
+cutover to `hive.hivecommons.dev`
+([#5955](https://github.com/hivecommons/hive/pull/5955), see
+[UPGRADE.md](UPGRADE.md)).
+
+Direction:
+
+- **Hosted is the funnel, self-hosted is the destination.** The hosted hub
+  exists to let adopters evaluate and run small hives without
+  infrastructure; larger fleets are expected to graduate to a self-hosted
+  hub (as tunaos.org did). Feature work lands in the shared codebase so
+  both deployments stay equivalent.
+- **Fleet features land on the hosted hub first.** The v5 constellation
+  ([#5691](https://github.com/hivecommons/hive/issues/5691)) and backend
+  capacity/placement ([#5698](https://github.com/hivecommons/hive/issues/5698))
+  workstreams are exercised by the hosted fleet before they are
+  recommended to self-hosted operators.
+- **Best-effort service, explicit expectations.** The hosted hub carries
+  no SLA today; treat hosted hives as evaluation-grade unless an operator
+  makes a separate commitment. Account creation is OAuth/OIDC-backed and
+  passwordless, new non-admin users have no self-service hosted quota until
+  an admin grants it, and admins may block or delete hub account records
+  (`src/pkg/hub/saas.go`). Tenancy is bounded by per-user quota
+  (`SaaSUser.SaaSQuota`), per-cluster `max_hives`, placeholder-pool
+  `pool_min`/`pool_target`, and the live Scale Controls defaults in
+  `src/pkg/hub/scale_settings.go`; provisioning throughput is bounded by
+  `HIVE_PROVISION_WORKERS` / `HIVE_PROVISION_PER_CLUSTER`
+  (`src/pkg/hub/provision_queue.go`). Data retention is operational rather
+  than SLA-backed: hub user and hive records live under `/data/saas`, usage
+  history is capped by `usageSnapshotMaxPoints`, timeline history by
+  `timelineMaxEvents`, and unconfigured or inactive hosted hives may be
+  reclaimed to free capacity. Operational docs live in
+  [hosted-hub.md](src/docs/hosted-hub.md),
+  [manual-provisioning.md](src/docs/manual-provisioning.md),
+  [hub-deployment.md](src/docs/hub-deployment.md),
+  [spoke-wildcard-tls.md](src/docs/spoke-wildcard-tls.md), and
+  [troubleshooting.md](src/docs/troubleshooting.md).
 
 ## Recently shipped (August 2026)
 

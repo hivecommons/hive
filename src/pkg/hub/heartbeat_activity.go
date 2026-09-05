@@ -59,6 +59,16 @@ func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	if backend, ok := mgr.EffectiveBackend(name); ok {
 		act.Backend = backend
 	}
+	if total, last24h, lastRestartAt, lastReason, ok := mgr.RestartTelemetry(name); ok {
+		act.Restarts = AgentRestartTelemetry{
+			Total:      total,
+			Last24h:    last24h,
+			LastReason: lastReason,
+		}
+		if !lastRestartAt.IsZero() {
+			act.Restarts.LastRestartAt = lastRestartAt.UTC().Format(time.RFC3339)
+		}
+	}
 
 	return act
 }

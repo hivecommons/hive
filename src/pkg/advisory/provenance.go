@@ -121,11 +121,24 @@ func MarkStaleProvenance(d *Digest) {
 	if d == nil || d.AnalyzedSnapshot == nil {
 		return
 	}
-	analyzed := normalizeSHA(d.AnalyzedSnapshot.SHA)
+	markStaleProvenanceIn(d.ByAgent, d.AnalyzedSnapshot.SHA)
+}
+
+// markStaleProvenanceIn is MarkStaleProvenance over a bare by-agent map. The
+// digest's ranking has to know which findings were computed elsewhere BEFORE it
+// picks the top-N — an unverified finding must not take a slot from a confirmed
+// one (#2364) — and at that point no Digest exists yet. Marking is pure: it
+// reads the finding's own metadata and prose and performs no lookups, so the
+// full set can be marked before the cap without added cost.
+//
+// analyzedSHA that is not a usable commit id leaves every finding unmarked:
+// "cannot tell" must never render as a freshness claim in either direction.
+func markStaleProvenanceIn(byAgent map[string][]Finding, analyzedSHA string) {
+	analyzed := normalizeSHA(analyzedSHA)
 	if analyzed == "" {
 		return
 	}
-	for agent, findings := range d.ByAgent {
+	for agent, findings := range byAgent {
 		for i := range findings {
 			f := &findings[i]
 			prov := findingProvenanceSHA(*f)
@@ -139,6 +152,6 @@ func MarkStaleProvenance(d *Digest) {
 			f.ProvenanceSHA = prov
 			f.ProvenanceStale = !sameCommit(prov, analyzed)
 		}
-		d.ByAgent[agent] = findings
+		byAgent[agent] = findings
 	}
 }

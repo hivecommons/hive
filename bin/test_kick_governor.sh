@@ -249,6 +249,29 @@ kick_count() {
 # scanner ci-maintainer architect outreach"}, used in 4 places) — see contract
 # 7b below for what happens when an operator's AGENTS_ENABLED omits supervisor.
 BASE_ENV=(AGENTS_ENABLED="supervisor scanner ci-maintainer architect outreach" HIVE_REPOS="acme/primary")
+# Keep budget projection tests date-invariant: if they run on the configured
+# reset day after midnight UTC, the production projection correctly rolls to
+# the next reset and can turn a 90% fixture into >99% critical pressure.
+TEST_BUDGET_RESET_DAY="$(python3 -c 'import datetime; print((datetime.datetime.now().weekday() + 1) % 7)')"
+BUDGET_ENV=(TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$TEST_BUDGET_RESET_DAY")
+
+# Pin the governor's budget clock to one hour before the weekly reset. With
+# TOKEN_BUDGET_RESET_DAY=4 (Friday 00:00 local) that is Thursday 23:00:
+# hours_left=1, hours_elapsed=167, so the week-pace projection collapses to
+# `projected == used` and the >85/>95/>99 ladder assertions below are exact.
+# Without this the projection is `used * 168 / hours_elapsed` — 90% used on a
+# Friday morning projects to >99% and every ladder step reads budget_critical
+# (the suite only passed when run on a Thursday evening).
+BUDGET_RESET_DAY_T=4
+BUDGET_CLOCK_EPOCH_T="$(python3 -c "
+import datetime
+now = datetime.datetime.now()
+reset_day = $BUDGET_RESET_DAY_T
+days_back = (now.weekday() - (reset_day - 1)) % 7
+pinned = (now - datetime.timedelta(days=days_back)).replace(hour=23, minute=0, second=0, microsecond=0)
+print(int(pinned.timestamp()))
+")"
+BUDGET_ENV=(TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85 TOKEN_BUDGET_RESET_DAY="$BUDGET_RESET_DAY_T" TOKEN_BUDGET_NOW_EPOCH="$BUDGET_CLOCK_EPOCH_T")
 
 # Pin the governor's budget clock to one hour before the weekly reset. With
 # TOKEN_BUDGET_RESET_DAY=4 (Friday 00:00 local) that is Thursday 23:00:
@@ -544,7 +567,7 @@ assert_eq "budget >95%: the downgraded model is a tier backends.conf recognises 
 reset_state
 write_actionable 25 0
 mkdir -p "$METRICS_DIR_T"
-printf '{"weekly":{"billableTokens":99},"hourlyBurnRate":{"billable":0}}\n' \
+printf '{"weekly":{"billableTokens":100},"hourlyBurnRate":{"billable":0}}\n' \
   >"${METRICS_DIR_T}/tokens.json"
 touch "${METRICS_DIR_T}/budget_ignore"
 run_gov "${BASE_ENV[@]}" "${BUDGET_ENV[@]}" >/dev/null
@@ -591,7 +614,7 @@ grep -q "GOVERNOR DONE" "${WORK}/stderr" \
 assert_eq "budget pressure without supervisor: the downgrade STILL fires for a configured agent (architect)" \
   "$(grep '^REASON=' "${STATE_DIR_T}/model_architect" 2>/dev/null | cut -d= -f2)" "budget_downgrade"
 assert_eq "budget pressure without supervisor: POSITIVE CONTROL — the same scenario WITH supervisor present also exits 0" \
-  "$(run_gov "${BASE_ENV[@]}" TOKEN_BUDGET_WEEKLY=100 TOKEN_BUDGET_SAFETY_PCT=85)" "0"
+  "$(run_gov "${BASE_ENV[@]}" "${BUDGET_ENV[@]}")" "0"
 
 # ── 8. What is written where — the file contract other tooling reads ────────
 echo "-- state files written --"

@@ -201,6 +201,22 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirect := s.loginRedirectTarget(r)
+	// A signed-in user bounced here with a redirect target (a spoke's nginx
+	// auth-signin, or any trusted ?redirect=) needs no provider round-trip —
+	// the session cookie already proves who they are. Send them straight back
+	// to the validated target instead of rendering the picker or re-entering
+	// OAuth. Plain /login with no redirect still shows the picker so switching
+	// accounts stays possible. The target is already validated by
+	// loginRedirectTarget (isTrustedRedirectTarget), so this introduces no new
+	// open-redirect surface.
+	if redirect != "" {
+		for _, value := range hubSessionCookieValues(r) {
+			if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
+				http.Redirect(w, r, redirect, http.StatusSeeOther)
+				return
+			}
+		}
+	}
 	providers := s.authProviders.Providers()
 	if len(providers) == 0 {
 		// Registry not built (a HubServer constructed without registerOAuth — the
@@ -802,20 +818,25 @@ func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue strin
 	// HttpOnly + Secure), which is why the spoke-scoped-session redesign is
 	// tracked as follow-up rather than closed.
 	//
-	// #4171 WIDENS the Domain one level, from .hive.kubestellar.io to
-	// .kubestellar.io (derived, not hard-coded — sessionCookieDomain in
-	// saas.go), so first-party sibling products (dibs.kubestellar.io) receive
-	// the cookie and can SSO against /api/saas/whoami. This does not change the
-	// F4 analysis above: every host that received the cookie before (all
-	// *.hive.kubestellar.io spoke dashboards — deeper subdomains of the new
-	// parent scope) still receives it, and the hosts ADDED are exclusively
-	// hive-operated first-party services on *.kubestellar.io, not tenant-
-	// controlled origins. The tenant-side risk profile is therefore unchanged,
-	// and the same isSameOriginAsHub containment applies. Local/dev hosts get
-	// a host-only cookie instead (a browser rejects a non-covering Domain).
-	// SameSite=Lax stays correct: dibs.kubestellar.io and the hub are
-	// same-SITE (same registrable domain), so the browser attaches the cookie
-	// to dibs requests without needing SameSite=None.
+	// #4171 WIDENS the Domain one level, from .hive.kubestellar.io to the hub's
+	// registrable domain (derived, not hard-coded — sessionCookieDomain in
+	// saas.go), so first-party sibling products (dibs) receive the cookie and can
+	// SSO against /api/saas/whoami. This does not change the F4 analysis above:
+	// every host that received the cookie before (all *.hive.<domain> spoke
+	// dashboards — deeper subdomains of the new parent scope) still receives it,
+	// and the hosts ADDED are exclusively hive-operated first-party services
+	// under that same domain, not tenant-controlled origins. The tenant-side risk
+	// profile is therefore unchanged, and the same isSameOriginAsHub containment
+	// applies. Local/dev hosts get a host-only cookie instead (a browser rejects
+	// a non-covering Domain).
+	//
+	// SameSite=Lax is correct only while the sibling shares the hub's registrable
+	// domain — same-SITE, so the browser attaches the cookie without needing
+	// SameSite=None. That is a precondition of the bridge, not a property of the
+	// hostnames: a sibling on a DIFFERENT registrable domain is both cross-site
+	// and outside the cookie's scope, and is signed out. Moving the hub across
+	// domains therefore strands every sibling left behind, which is why the old
+	// sibling host redirects rather than dual-serves (#5925).
 	domain := sessionCookieDomain(r.Host)
 	// Rollout hygiene (#4171): a pre-widening session cookie scoped
 	// Domain=.hive.kubestellar.io is a SEPARATE jar entry from the one minted

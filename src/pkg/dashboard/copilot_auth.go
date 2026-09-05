@@ -23,9 +23,6 @@ const (
 	// copilotDefaultPollIntervalSec is used when GitHub doesn't specify one.
 	copilotDefaultPollIntervalSec = 5
 
-	// copilotSlowDownBumpSec is added to the poll interval on slow_down.
-	copilotSlowDownBumpSec = 5
-
 	// copilotFlowExpiry bounds the poll loop; GitHub device codes
 	// expire after 15 minutes.
 	copilotFlowExpiry = 15 * time.Minute
@@ -33,6 +30,17 @@ const (
 	// copilotHTTPTimeout limits each GitHub API call.
 	copilotHTTPTimeout = 30 * time.Second
 )
+
+// copilotSlowDownBumpSec is added to the poll interval when GitHub answers
+// slow_down.
+//
+// A `var` for the same reason as the three below: the slow_down test has to
+// live through this delay in REAL time to prove the bump was honoured, and at
+// the production value of 5s that made it the slowest test in the package with
+// only 3s of slack before its own timeout. A loaded `-race` shard ate that
+// slack, the test timed out, and the abandoned poll goroutine then raced the
+// cleanups restoring the vars below (#5985). Production always uses 5.
+var copilotSlowDownBumpSec = 5
 
 // copilotDeviceCodeURL, copilotAccessTokenURL, and copilotUserTokenPath are
 // `var`s (not `const`) purely so tests can redirect them at a httptest server

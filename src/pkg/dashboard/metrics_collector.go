@@ -206,7 +206,11 @@ func (mc *MetricsCollector) collectOutreach(ctx context.Context) map[string]any 
 		result["contributors"] = contribs
 	}
 
-	if mc.org == "kubestellar" {
+	// Adopters/ACMM/outreach are flagship-project counters. The repo moved to
+	// the "hivecommons" org (org transfer), but hives configured before the
+	// transfer still report org "kubestellar" — accept BOTH so the migration
+	// does not silently zero these panels on older configs.
+	if mc.org == "kubestellar" || mc.org == "hivecommons" {
 		adopters := mc.countAdopters(ctx, mc.org, mc.repo)
 		result["adopters"] = adopters
 
@@ -289,7 +293,11 @@ func (mc *MetricsCollector) countAdopters(ctx context.Context, owner, repo strin
 func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) int {
 	// ACMM leaderboard lives in the docs repo, not the primary repo
 	const acmmLeaderboardPath = "src/app/[locale]/acmm-leaderboard/page.tsx"
-	content, err := mc.ghClient.GetFileContent(ctx, owner, "docs", acmmLeaderboardPath)
+	docsOwner := owner
+	if docsOwner == "hivecommons" {
+		docsOwner = "kubestellar"
+	}
+	content, err := mc.ghClient.GetFileContent(ctx, docsOwner, "docs", acmmLeaderboardPath)
 	if err != nil {
 		mc.logger.Warn("failed to fetch ACMM leaderboard page", "error", err)
 		return 0

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,25 +39,24 @@ func TestAdvisoryIssueActivityBuckets(t *testing.T) {
 	}
 }
 
-func TestAdvisoryIssueActivityUsesIssueHistoryChanges(t *testing.T) {
+func TestAdvisoryIssueActivityUsesDigestTimestampOnly(t *testing.T) {
 	t.Setenv(advisoryIssueAgingAfterEnv, "")
 	t.Setenv(advisoryIssueStaleAfterEnv, "")
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	changed := now.Add(-2 * time.Hour)
-	olderAdvisory := now.Add(-5 * 24 * time.Hour)
+	digest := now.Add(-30 * time.Minute)
 	got := advisoryIssueActivityFor(RegistryEntry{
-		AdvisoryLastPostedAt: olderAdvisory.Format(time.RFC3339),
+		AdvisoryLastPostedAt: digest.Format(time.RFC3339),
 		IssueHistory: []SparkPoint{
 			{T: now.Add(-8 * time.Hour).Unix(), V: 1},
-			{T: changed.Unix(), V: 2},
+			{T: now.Add(-2 * time.Hour).Unix(), V: 2},
 			{T: now.Add(-time.Hour).Unix(), V: 2},
 		},
 	}, now)
 	if got.Bucket != advisoryIssueBucketFresh {
 		t.Fatalf("bucket = %q, want fresh", got.Bucket)
 	}
-	if got.LastActivityAt != changed.Format(time.RFC3339) {
-		t.Fatalf("lastActivityAt = %q, want %q", got.LastActivityAt, changed.Format(time.RFC3339))
+	if got.LastActivityAt != digest.Format(time.RFC3339) {
+		t.Fatalf("lastActivityAt = %q, want digest timestamp %q", got.LastActivityAt, digest.Format(time.RFC3339))
 	}
 }
 
@@ -83,6 +83,36 @@ func TestAdvisoryIssueActivityThresholdEnvOverride(t *testing.T) {
 	got := advisoryIssueActivityFor(RegistryEntry{AdvisoryLastPostedAt: now.Add(-3 * time.Hour).Format(time.RFC3339)}, now)
 	if got.Bucket != advisoryIssueBucketAging {
 		t.Fatalf("bucket = %q, want aging with env thresholds", got.Bucket)
+	}
+}
+
+func TestAdvisoryIssueActivityIssue5916ContradictionUsesSingleFreshness(t *testing.T) {
+	t.Setenv(advisoryIssueAgingAfterEnv, "")
+	t.Setenv(advisoryIssueStaleAfterEnv, "")
+	now := time.Date(2026, 9, 4, 3, 11, 53, 0, time.UTC)
+	digest := time.Date(2026, 9, 3, 11, 41, 31, 0, time.UTC)
+	e := RegistryEntry{
+		AdvisoryLastPostedAt: digest.Format(time.RFC3339),
+		GitHubAppState:       "ok",
+		IssueHistory: []SparkPoint{
+			{T: now.Add(-15 * time.Minute).Unix(), V: 1},
+			{T: now.Add(-10 * time.Minute).Unix(), V: 2},
+		},
+	}
+
+	got := advisoryIssueActivityFor(e, now)
+	if got.Bucket != advisoryIssueBucketStale {
+		t.Fatalf("freshness bucket = %q, want stale from advisory digest timestamp", got.Bucket)
+	}
+	if got.LastActivityAt != digest.Format(time.RFC3339) {
+		t.Fatalf("lastActivityAt = %q, want digest timestamp %q", got.LastActivityAt, digest.Format(time.RFC3339))
+	}
+	stale, reason := advisoryStale(e, now)
+	if !stale {
+		t.Fatalf("advisoryStale = false, want true from same freshness struct")
+	}
+	if !strings.Contains(reason, digest.Format(time.RFC3339)) {
+		t.Fatalf("reason = %q, want digest timestamp %q", reason, digest.Format(time.RFC3339))
 	}
 }
 

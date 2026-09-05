@@ -1,9 +1,8 @@
 # v4 stable soak and promotion policy
 
-This proposal closes the policy gap where every successful `v4` merge retags both
-`candidate` and `stable`. Until the CI promotion step is implemented, operators
-should treat `stable` as a compatibility tag, not as evidence that the build has
-soaked longer than `candidate`.
+This policy is enforced by CI: every successful `v4` image build retags
+`candidate`, while a separate scheduled or manually dispatched promotion
+workflow advances `stable` by digest only after the gate below passes.
 
 ## Goals
 
@@ -34,38 +33,40 @@ conditions hold:
 The release captain records the promoted digest, candidate tag, stable tag, soak
 start/end time, and smoke evidence in the promotion PR or workflow summary.
 
-## Emergency promotion exception
-
-Security and data-loss fixes may promote faster than 24 hours when the maintainer
-who owns the release writes an explicit exception note naming:
-
-- the risk of waiting;
-- the checks that did pass;
-- the rollback digest; and
-- the follow-up issue for any skipped soak evidence.
-
-Emergency promotion should still publish `candidate` first. The exception only
-shortens the candidate-to-stable delay; it does not bypass builds or tests.
-
-## CI shape
+## CI enforcement
 
 The existing release build continues to publish immutable short-SHA tags and move
-`candidate`. A separate scheduled or manually dispatched promotion workflow should
-then:
+`candidate`; it no longer moves `stable` on every `v4` merge. The
+`Promote Stable Channel` workflow runs hourly and can also be manually dispatched.
+It:
 
-1. resolve the current `candidate` digest;
-2. compare it with the current `stable` digest;
-3. read the candidate's first-seen time from workflow artifacts, tag metadata, or
-   a checked-in promotion ledger;
-4. evaluate the gate above; and
-5. retag `stable` to the candidate digest only when the gate passes.
+1. resolves the current `candidate` digest for `hive`, `hive-contributor`, and
+   `hive-hub`;
+2. compares the candidate digest with the current `stable` digest;
+3. reads the candidate's first-seen time from the successful `docker.yml` run
+   number recorded in the image metadata;
+4. requires successful `v2 CI` and `v2 Tests` workflow evidence for the
+   candidate SHA;
+5. requires no open issue or PR labelled `release-blocker`;
+6. requires maintained-hive smoke evidence from the dispatch input or the
+   `STABLE_SMOKE_EVIDENCE` repository variable; and
+7. retags `stable` to the candidate digest only when the gate passes and the
+   moving-tag generation is newer than the currently published `stable` tag.
 
-If the gate fails, the workflow exits neutral with a human-readable reason such as
-`candidate age 7h14m < 24h` or `newer candidate superseded digest`.
+The workflow writes the candidate digest, SHA, generation, first-seen time, age,
+checks consulted, blocker count, smoke evidence, decision, and any exception note
+to the GitHub Actions step summary. If the gate fails, the workflow leaves
+`stable` unchanged with a human-readable reason such as `candidate age 3600s <
+required 86400s (24h)` or `newer candidate superseded this digest before the soak
+window completed`.
 
-## Operator guidance while CI catches up
+## Emergency promotion exception
 
-Until the promotion workflow exists, operators that need soak protection should
-pin an immutable short-SHA tag, or track `candidate`/`stable` only on hives where
-a same-day auto-upgrade is acceptable. Release notes and changelog entries should
-call out any burst release days so fleets can decide whether to defer upgrades.
+Manual dispatch may set `emergency-exception-reason` to shorten the 24-hour soak.
+The reason must name the risk of waiting, the checks that passed, and the
+rollback digest, and `emergency-followup-issue` must name the follow-up issue for
+skipped soak or smoke evidence. The exception still requires the candidate to be
+current, required workflows to be green, no open `release-blocker`, and the
+monotonic generation guard to pass. When an emergency promotion succeeds, the
+workflow records the exception in the step summary and comments on the follow-up
+issue.

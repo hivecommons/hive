@@ -66,6 +66,66 @@ func withCopilotMockURLs(t *testing.T, mockURL string) {
 	})
 }
 
+// withCopilotSlowDownBump shrinks the slow_down interval bump for the duration
+// of the test, restoring the production value afterward. See the var's comment
+// in copilot_auth.go for why it is not a const.
+func withCopilotSlowDownBump(t *testing.T, sec int) {
+	t.Helper()
+	orig := copilotSlowDownBumpSec
+	copilotSlowDownBumpSec = sec
+	t.Cleanup(func() { copilotSlowDownBumpSec = orig })
+}
+
+// backgroundPoll is a pollCopilotToken call running in its own goroutine, owned
+// so that it can never outlive the test that started it.
+//
+// Every poll test used to spawn the goroutine with context.Background() and
+// t.Fatalf on a select timeout, which ABANDONS it: t.Fatalf runs the test's
+// cleanups, those restore copilotAccessTokenURL / copilotUserTokenPath /
+// copilotSlowDownBumpSec, and the still-running poller reads exactly those
+// vars. So a timing flake did not fail as a timing flake — it failed as a DATA
+// RACE, which is what took the whole -race package down on 2026-09-04 (#5985),
+// and the leaked goroutine went on mutating package state under later tests.
+type backgroundPoll struct {
+	cancel context.CancelFunc
+	done   <-chan struct{}
+}
+
+// startCopilotPoll runs pollCopilotToken in the background and guarantees it is
+// stopped and joined before any of the test's other cleanups run.
+//
+// The LIFO order of t.Cleanup is load-bearing: withCopilotTokenPath,
+// withCopilotMockURLs and withCopilotSlowDownBump register their restores
+// EARLIER in the test body, so the join registered here runs FIRST and the
+// poller is already gone by the time a single var is written back. Call this
+// AFTER those helpers, which is also the order that reads naturally.
+func startCopilotPoll(t *testing.T, s *Server, deviceCode string, intervalSec int, expiry time.Duration) *backgroundPoll {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.pollCopilotToken(ctx, deviceCode, intervalSec, expiry)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return &backgroundPoll{cancel: cancel, done: done}
+}
+
+// await blocks until the poller returns, failing the test if it takes longer
+// than budget. Failing here is now safe: the cleanup registered by
+// startCopilotPoll cancels and joins the goroutine before anything is restored.
+func (p *backgroundPoll) await(t *testing.T, budget time.Duration) {
+	t.Helper()
+	select {
+	case <-p.done:
+	case <-time.After(budget):
+		t.Fatalf("pollCopilotToken did not return within %s", budget)
+	}
+}
+
 // withCopilotTokenPath redirects the package-level token-file path var at a
 // file inside t.TempDir(), restoring the real path afterward.
 func withCopilotTokenPath(t *testing.T) string {
@@ -234,17 +294,7 @@ func TestPollCopilotToken_SucceedsAndSavesToken(t *testing.T) {
 
 	// Poll directly with a 0-second interval and a short expiry so the test
 	// does not sleep for real GitHub-scale intervals.
-	done := make(chan struct{})
-	go func() {
-		s.pollCopilotToken(context.Background(), "dev-code-1", 0, 2*time.Second)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("pollCopilotToken did not return in time")
-	}
+	startCopilotPoll(t, s, "dev-code-1", 0, 2*time.Second).await(t, 3*time.Second)
 
 	s.copilotAuthFlow.mu.Lock()
 	polling := s.copilotAuthFlow.polling
@@ -278,17 +328,7 @@ func TestPollCopilotToken_RetriesOnPendingThenSucceeds(t *testing.T) {
 	s := NewServer(0, covBLogger())
 	s.RegisterAPI(testDeps(t))
 
-	done := make(chan struct{})
-	go func() {
-		s.pollCopilotToken(context.Background(), "dev-code-2", 0, 5*time.Second)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("pollCopilotToken did not return in time")
-	}
+	startCopilotPoll(t, s, "dev-code-2", 0, 5*time.Second).await(t, 6*time.Second)
 
 	if mock.callCount < 3 {
 		t.Fatalf("expected at least 3 polls (2 pending + 1 success), got %d", mock.callCount)
@@ -304,6 +344,13 @@ func TestPollCopilotToken_RetriesOnPendingThenSucceeds(t *testing.T) {
 
 func TestPollCopilotToken_SlowDownBumpsInterval(t *testing.T) {
 	withCopilotTokenPath(t)
+	// 1s, not the production 5s: this test has to live through the bump in real
+	// time to prove it was honoured, and at 5s it was the slowest test in the
+	// package with the thinnest margin — which is how it became the #5985
+	// failure. A 1s bump is still an order of magnitude clear of the ~0 gap an
+	// unhonoured bump would produce.
+	const bumpSec = 1
+	withCopilotSlowDownBump(t, bumpSec)
 	mock := newCopilotDeviceMock(t, "dev-code-3", 900, 0,
 		map[string]any{"error": "slow_down"},
 		map[string]any{"access_token": "gho_afterslowdown", "token_type": "bearer"},
@@ -314,23 +361,13 @@ func TestPollCopilotToken_SlowDownBumpsInterval(t *testing.T) {
 	s.RegisterAPI(testDeps(t))
 
 	start := time.Now()
-	done := make(chan struct{})
-	go func() {
-		// Start at interval 0; after slow_down the poller adds
-		// copilotSlowDownBumpSec (5s) to intervalSec, so the NEXT loop
-		// iteration sleeps 5s before polling again. pollCopilotToken checks
-		// its expiry deadline only at the top of each loop iteration (after
-		// the sleep), so with a 6s expiry the bumped 5s sleep still fits
-		// inside the deadline and the second (successful) poll fires.
-		s.pollCopilotToken(context.Background(), "dev-code-3", 0, 6*time.Second)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(8 * time.Second):
-		t.Fatalf("pollCopilotToken did not return in time")
-	}
+	// Start at interval 0; after slow_down the poller adds copilotSlowDownBumpSec
+	// to intervalSec, so the NEXT loop iteration sleeps that long before polling
+	// again. pollCopilotToken checks its expiry deadline only at the top of each
+	// iteration (after the sleep), so the expiry must leave room for the bumped
+	// sleep or the second (successful) poll never fires.
+	poll := startCopilotPoll(t, s, "dev-code-3", 0, 3*time.Second)
+	poll.await(t, 6*time.Second)
 	elapsed := time.Since(start)
 
 	if mock.callCount < 2 {
@@ -340,8 +377,11 @@ func TestPollCopilotToken_SlowDownBumpsInterval(t *testing.T) {
 	// have forced a real gap between the first and second poll.
 	if len(mock.pollTimes) >= 2 {
 		gap := mock.pollTimes[1].Sub(mock.pollTimes[0])
-		if gap < 4*time.Second {
-			t.Fatalf("gap between slow_down and retry = %s, want >= ~5s (bump honored)", gap)
+		// 80% of the bump: enough slack for scheduler jitter, still far above
+		// the near-zero gap an unhonoured bump would leave.
+		want := time.Duration(bumpSec) * time.Second * 8 / 10
+		if gap < want {
+			t.Fatalf("gap between slow_down and retry = %s, want >= %s (bump honored)", gap, want)
 		}
 	}
 	s.copilotAuthFlow.mu.Lock()
@@ -363,17 +403,7 @@ func TestPollCopilotToken_ExpiresWithoutSuccess(t *testing.T) {
 	s.RegisterAPI(testDeps(t))
 
 	start := time.Now()
-	done := make(chan struct{})
-	go func() {
-		s.pollCopilotToken(context.Background(), "dev-code-4", 0, 300*time.Millisecond)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("pollCopilotToken did not return in time (expiry not honored)")
-	}
+	startCopilotPoll(t, s, "dev-code-4", 0, 300*time.Millisecond).await(t, 3*time.Second)
 	elapsed := time.Since(start)
 	if elapsed > 2*time.Second {
 		t.Fatalf("pollCopilotToken took %s, expiry should have stopped it quickly", elapsed)
@@ -401,17 +431,7 @@ func TestPollCopilotToken_AccessDeniedStopsImmediately(t *testing.T) {
 	s := NewServer(0, covBLogger())
 	s.RegisterAPI(testDeps(t))
 
-	done := make(chan struct{})
-	go func() {
-		s.pollCopilotToken(context.Background(), "dev-code-5", 0, 10*time.Second)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("pollCopilotToken should stop immediately on access_denied")
-	}
+	startCopilotPoll(t, s, "dev-code-5", 0, 10*time.Second).await(t, 2*time.Second)
 
 	s.copilotAuthFlow.mu.Lock()
 	lastErr := s.copilotAuthFlow.lastError
@@ -534,19 +554,9 @@ func TestPollCopilotToken_CancelStopsPromptly(t *testing.T) {
 
 	// interval 5s: without cancellation the poller would sit in its sleep
 	// for the full interval (and keep polling for the whole 10m expiry).
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		s.pollCopilotToken(ctx, "dev-code-6", 5, 10*time.Minute)
-		close(done)
-	}()
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("pollCopilotToken did not stop promptly after cancel")
-	}
+	poll := startCopilotPoll(t, s, "dev-code-6", 5, 10*time.Minute)
+	poll.cancel()
+	poll.await(t, 2*time.Second)
 }
 
 func TestStopCopilotPoll_JoinsHandlerSpawnedPoller(t *testing.T) {
@@ -569,9 +579,21 @@ func TestStopCopilotPoll_JoinsHandlerSpawnedPoller(t *testing.T) {
 	// poller's 5s interval or 900s expiry.
 	joined := make(chan struct{})
 	go func() {
+		defer close(joined)
 		s.stopCopilotPoll()
-		close(joined)
 	}()
+	// Same reason as startCopilotPoll's cleanup: on the timeout path below,
+	// stopCopilotPoll is still joining a poller that reads the package vars this
+	// test's earlier cleanups are about to restore. Registered here so LIFO runs
+	// it first. Bounded rather than an unconditional receive, so a genuinely
+	// wedged stopCopilotPoll reports instead of hanging the package.
+	t.Cleanup(func() {
+		select {
+		case <-joined:
+		case <-time.After(30 * time.Second):
+			t.Error("stopCopilotPoll never returned; the poll goroutine outlived the test")
+		}
+	})
 	select {
 	case <-joined:
 	case <-time.After(2 * time.Second):

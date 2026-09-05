@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -43,6 +44,7 @@ const sessionCookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 // domain-widened to .hive.kubestellar.io (unlike the hub-wide hive_hub_user
 // cookie), so the browser only ever sends it to THIS hive's own terminal path.
 const terminalAssertionCookieName = "hive_terminal_assertion"
+const terminalHandoffCodeParam = "code"
 
 // proxyAuthHeader is the proof-of-proxy header the hub's auth-check injects
 // (value = this hive's dashboard token) so a hub-proxied spoke can verify a
@@ -81,17 +83,29 @@ type Server struct {
 	// startup-grace window before the first heartbeat has to have succeeded.
 	startedAt time.Time
 
-	agentPipelines map[string]map[string]bool
-	agentHooks     map[string]map[string][]any
-	pipelineMu     sync.RWMutex
-	hooksMu        sync.RWMutex
-	knowledgeMu    sync.Mutex
-	levelMu        sync.Mutex
-	restartMu      sync.Mutex // serializes concurrent agent restart operations
+	agentPipelines    map[string]map[string]bool
+	agentHooks        map[string]map[string][]any
+	pipelineMu        sync.RWMutex
+	hooksMu           sync.RWMutex
+	knowledgeMu       sync.Mutex
+	levelMu           sync.Mutex
+	restartMu         sync.Mutex // serializes concurrent agent restart operations
+	gatewayHealthOnce sync.Once
+	gatewayHealth     *serverGatewayHealthStore
 
 	acmmEvalMu       sync.RWMutex
 	acmmEvalCache    *ACMMEvaluation
 	acmmEvalCachedAt time.Time
+
+	// Operator-initiated repository rescan (POST /api/repos/rescan). The
+	// mutex guards all three: repoRescanInFlight collapses concurrent
+	// presses onto one GitHub sweep, repoRescanAt is the debounce clock, and
+	// repoRescanLast is the counts a debounced/in-flight caller is answered
+	// with so the UI never has to render an empty result.
+	repoRescanMu       sync.Mutex
+	repoRescanInFlight bool
+	repoRescanAt       time.Time
+	repoRescanLast     ReposRescanResult
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.
@@ -112,6 +126,15 @@ type Server struct {
 	// handleSnapshotPage can be exercised without a Node toolchain on the
 	// test host.
 	buildSnapshotFn func(s *Server, outputFile, mode string)
+
+	// captureFullLogFn, if non-nil, replaces AgentMgr.CaptureFullLog for
+	// handleAgentFullLog tests so handler success paths can be exercised without
+	// a live tmux pane.
+	captureFullLogFn func(name string) (string, error)
+
+	kickBrainstormSendKickFn func(name, msg string) error
+	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
+	kickBrainstormDoneFn     func()
 
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
@@ -203,6 +226,9 @@ type Server struct {
 	// sessionStorePath, when non-empty, persists userSessions across restarts
 	// (see EnableSessionPersistence). Guarded by sessionMu.
 	sessionStorePath string
+
+	terminalHandoffMu sync.Mutex
+	terminalHandoffs  map[string]terminalHandoff
 
 	claudeOAuthFlow claudeOAuthFlow
 
@@ -827,17 +853,18 @@ const sseRetryMs = 3000
 
 func NewServer(port int, logger *slog.Logger) *Server {
 	s := &Server{
-		port:           port,
-		sseClients:     make(map[chan []byte]struct{}),
-		logger:         logger,
-		mux:            http.NewServeMux(),
-		agentPipelines: make(map[string]map[string]bool),
-		agentHooks:     make(map[string]map[string][]any),
-		audit:          newAuditLog(),
-		promptHistory:  newPromptHistory(),
-		userSessions:   make(map[string]*userSession),
-		cliModels:      newCLIModelCache(),
-		startedAt:      time.Now(),
+		port:             port,
+		sseClients:       make(map[chan []byte]struct{}),
+		logger:           logger,
+		mux:              http.NewServeMux(),
+		agentPipelines:   make(map[string]map[string]bool),
+		agentHooks:       make(map[string]map[string][]any),
+		audit:            newAuditLog(),
+		promptHistory:    newPromptHistory(),
+		userSessions:     make(map[string]*userSession),
+		terminalHandoffs: make(map[string]terminalHandoff),
+		cliModels:        newCLIModelCache(),
+		startedAt:        time.Now(),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -845,18 +872,19 @@ func NewServer(port int, logger *slog.Logger) *Server {
 
 func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server {
 	s := &Server{
-		port:           port,
-		authToken:      authToken,
-		sseClients:     make(map[chan []byte]struct{}),
-		logger:         logger,
-		mux:            http.NewServeMux(),
-		agentPipelines: make(map[string]map[string]bool),
-		agentHooks:     make(map[string]map[string][]any),
-		audit:          newAuditLog(),
-		promptHistory:  newPromptHistory(),
-		userSessions:   make(map[string]*userSession),
-		cliModels:      newCLIModelCache(),
-		startedAt:      time.Now(),
+		port:             port,
+		authToken:        authToken,
+		sseClients:       make(map[chan []byte]struct{}),
+		logger:           logger,
+		mux:              http.NewServeMux(),
+		agentPipelines:   make(map[string]map[string]bool),
+		agentHooks:       make(map[string]map[string][]any),
+		audit:            newAuditLog(),
+		promptHistory:    newPromptHistory(),
+		userSessions:     make(map[string]*userSession),
+		terminalHandoffs: make(map[string]terminalHandoff),
+		cliModels:        newCLIModelCache(),
+		startedAt:        time.Now(),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -956,6 +984,7 @@ func (s *Server) registerCoreRoutes() {
 	// hive_hub_user cookie being consulted. NOT a public path: it authenticates
 	// on hive_session and 401s without one.
 	s.mux.HandleFunc("POST "+renewTerminalAssertionPath, s.handleRenewTerminalAssertion)
+	s.mux.HandleFunc("POST "+terminalHandoffPath, s.handleCreateTerminalHandoff)
 	// /terminal → in-container ttyd, so the dashboard's "▶ terminal" links
 	// work even when the cluster route sends the whole host to this server
 	// (see registerTerminalProxy).
@@ -1174,6 +1203,11 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		if r.URL.Query().Get("token") != "" {
+			writeQueryTokenRejected(w, r)
+			return
+		}
 		if s.authToken == "" && !directRouteAuthz {
 			// Open by design — but still resolve a session if the caller has one,
 			// so an SSO handoff on a token-less spoke yields a request that KNOWS
@@ -1274,6 +1308,38 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 
+		// Terminal handoff path: the dashboard first creates a short-lived,
+		// single-use code via an authenticated POST, then opens /terminal with only
+		// that code in the URL. Always redeem a presented code so a hosted request
+		// that is already trusted by hub-injected identity still burns its code on
+		// first use. When the request is not otherwise trusted, a valid code also
+		// authenticates the initial ttyd document load and establishes the
+		// Path=/terminal assertion cookie for subsequent asset/websocket requests.
+		if isTerminalPath(r.URL.Path) {
+			if user, role, ok := s.redeemTerminalHandoff(r.URL.Query().Get(terminalHandoffCodeParam)); ok && terminalRoleAllowed(role) {
+				if !trusted {
+					r.Header.Set("X-Hive-User", user)
+					r.Header.Set("X-Hive-Role", role)
+					if isOwnerRole(role) {
+						r.Header.Set(ownerRoleVerifiedHeader, "true")
+					}
+					s.setTerminalAssertionCookie(w, r, user, role)
+					trusted = true
+				}
+			}
+		}
+
+		if !trusted && isTerminalPath(r.URL.Path) {
+			if user, role, ok := s.terminalAssertionFromRequest(r); ok && terminalRoleAllowed(role) {
+				r.Header.Set("X-Hive-User", user)
+				r.Header.Set("X-Hive-Role", role)
+				if isOwnerRole(role) {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
+				trusted = true
+			}
+		}
+
 		// Per-user session path (device flow): resolve the session id in the
 		// hive_session cookie to THIS request's user and inject that user's
 		// identity. Two different people therefore get two different sessions
@@ -1300,18 +1366,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 		}
 
-		// Bearer/query shared-token path for programmatic API clients. This is
+		// Shared-token header path for programmatic API clients. This is
 		// an internal credential, not a browser session, so it is only accepted
-		// from the Authorization header or ?token= — never from the session
+		// from the Authorization header — never from the URL query string or session
 		// cookie. On a direct-route spoke it is DISABLED: the shared token grants
 		// no per-user identity, so accepting it would let any holder act as an
 		// unscoped owner and defeat the per-hive allowlist. Direct-route callers
 		// must use a per-user session instead.
 		if !trusted && !directRouteAuthz && s.authToken != "" {
 			token := r.Header.Get("Authorization")
-			if token == "" {
-				token = r.URL.Query().Get("token")
-			}
 			expected := "Bearer " + s.authToken
 			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
 				trusted = true
@@ -1340,6 +1403,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(loginPage))
 			}
+			return
+		}
+		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) {
+			writeTerminalRoleForbidden(w, r)
 			return
 		}
 
@@ -2929,6 +2996,9 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	backend := proc.Config.Backend
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
+	}
+	if backend == "bob" && proc.StartFailureClass == string(agent.StartFailureCredentialRejected) {
+		return true
 	}
 	// METHOD GATE. An inference backend (litellm/vllm/llm-d) authenticates with
 	// an API key supplied by config — there is no interactive login and so no

@@ -19,6 +19,8 @@
 #     would change the derived semver bump);
 #   - the compiled result is exactly what derive-release-version.sh needs:
 #     an added- fragment flips an empty Unreleased to a minor release.
+#   - the release move targets the real `## Unreleased` heading line, not a
+#     prose/backtick mention that appears before it.
 #
 # Usage: src/scripts/test-compile-changelog.sh
 set -uo pipefail
@@ -26,6 +28,7 @@ set -uo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 compile="$script_dir/compile-changelog.sh"
 derive="$script_dir/derive-release-version.sh"
+move_release="$script_dir/move-unreleased-to-release.py"
 tmp_root=${TMPDIR:-"$script_dir/../.test-tmp"}
 mkdir -p "$tmp_root"
 tmp=$(mktemp -d "$tmp_root/compile-changelog.XXXXXX")
@@ -256,6 +259,61 @@ if printf '%s\n' "$before" | grep -q '^release=false$' \
   note_ok "compiled added- fragment flips derive-release-version.sh from no-release to a 1.1.0 minor release"
 else
   note_fail "derive before/after compile mismatch. before: [$before] after: [$after]"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 7: regression for #5891 — the release move must anchor on the actual
+# heading line. The broken workflow used text.index("## Unreleased"), which
+# matched the prose mention below and filed an empty dated section while the
+# real entry stayed stranded under Unreleased.
+# ---------------------------------------------------------------------------
+dir="$tmp/case-7"
+mkdir -p "$dir"
+cat > "$dir/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## How we maintain this file
+
+- Do not append to `## Unreleased` directly; use changelog.d fragments.
+
+```markdown
+## Unreleased
+```
+
+## Unreleased
+
+### Fixed
+
+- a fix that must move.
+
+## 2026-01-01 (v1.0.0)
+
+- old released thing.
+EOF
+if python3 "$move_release" 2026-01-02 1.0.1 "$dir/CHANGELOG.md" > "$tmp/case7.out" 2>&1; then
+  note_ok "release move succeeds with prose and fenced mentions before the real heading"
+else
+  note_fail "release move failed: $(cat "$tmp/case7.out")"
+fi
+if awk '
+  /^## 2026-01-02 \(v1\.0\.1\)$/ { in_release = 1; next }
+  /^## / && in_release { exit }
+  in_release && /a fix that must move/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$dir/CHANGELOG.md"; then
+  note_ok "release move places the Unreleased body under the dated heading"
+else
+  note_fail "dated heading is missing the real Unreleased body"
+fi
+if awk '
+  /^## Unreleased$/ { in_unreleased = 1; next }
+  /^## / && in_unreleased { exit }
+  in_unreleased && /a fix that must move/ { found = 1 }
+  END { exit found ? 1 : 0 }
+' "$dir/CHANGELOG.md"; then
+  note_ok "release move leaves the new Unreleased section empty"
+else
+  note_fail "the moved entry is still stranded under Unreleased"
 fi
 
 echo ""

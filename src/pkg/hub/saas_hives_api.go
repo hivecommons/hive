@@ -1534,6 +1534,60 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "project_name": name})
 }
 
+func (s *HubServer) handleResetAgentRestarts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	agentName := sanitizeHeartbeatField(r.PathValue("agent"))
+	username := s.getAuthUser(r)
+	if agentName == "" || !isValidName(agentName) {
+		http.Error(w, `{"error":"invalid agent name"}`, http.StatusBadRequest)
+		return
+	}
+	h := loadSaaSHive(id)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if !userIsHiveOwner(username, h) {
+		http.Error(w, `{"error":"only the owner can reset agent restarts"}`, http.StatusForbidden)
+		return
+	}
+
+	total := 0
+	s.mu.RLock()
+	for _, reg := range s.registry.Hives {
+		if reg.ID != id {
+			continue
+		}
+		for _, a := range reg.Agents {
+			if a.Name == agentName {
+				total = a.Restarts.Total
+				break
+			}
+		}
+		break
+	}
+	s.mu.RUnlock()
+
+	if h.AgentRestartResets == nil {
+		h.AgentRestartResets = make(map[string]AgentRestartReset)
+	}
+	reset := AgentRestartReset{
+		ResetAt:       time.Now().UTC().Format(time.RFC3339),
+		By:            username,
+		TotalBaseline: total,
+		Pending:       true,
+	}
+	h.AgentRestartResets[agentName] = reset
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to save"}`, http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("audit: agent restart counter reset", "hive_id", id, "agent", agentName, "by", username, "total_baseline", total)
+	s.recordTimeline(id, TimelineRestarted, fmt.Sprintf("agent %s restart counter reset", agentName), username)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "agent": agentName, "reset_at": reset.ResetAt, "by": username})
+}
+
 // pushVisibilityToSpoke best-effort notifies a hosted hive's own governor
 // config of a visibility change made from the hub dashboard. It never
 // affects the outcome of the toggle request — the hub's registry/SaaS

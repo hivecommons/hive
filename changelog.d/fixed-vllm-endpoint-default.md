@@ -1,0 +1,1 @@
+- Do not default vLLM to a cluster-specific in-cluster Service; report DNS gateway faults with the unresolved host.

@@ -189,7 +189,8 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `GET` | `/api/packs` | Dashboard auth/session | Packs List | `pkg/dashboard/api.go:165` |
 | `POST` | `/api/packs/{level}/apply` | Dashboard auth/session | Pack Apply | `pkg/dashboard/api.go:166` |
 | `PUT` | `/api/packs/level` | Dashboard auth/session | Pack Set Level | `pkg/dashboard/api.go:167` |
-| `GET` | `/api/acmm/evaluation` | Dashboard auth/session | ACMMEvaluation | `pkg/dashboard/api.go:169` |
+| `POST` | `/api/repos/rescan` | Dashboard auth/session | Re-enumerate watched repositories' open issues/PRs for the dashboard Repositories cards. The scan is read-only with respect to agents/governor actions, collapses concurrent requests, and debounces repeated presses for 30 seconds (`repoRescanDebounce`) so the button cannot hammer GitHub | `pkg/dashboard/api.go`, `pkg/dashboard/api_repos_rescan.go` |
+| `GET` | `/api/acmm/evaluation` | Dashboard auth/session | ACMMEvaluation — combined codebase + operational result, cached server-side for 1 hour (`acmmEvalTTL`). `?refresh=1` (the dashboard's "🔄 Re-evaluate" button, #5877) bypasses the hourly TTL but is debounced server-side: requests within 1 minute of the last evaluation (`acmmRefreshDebounce`) still serve the cache, since a full refresh costs up to ~29 GitHub GetContents calls per repo. The response's `last_evaluated_at` timestamp reports when the cached evaluation was computed | `pkg/dashboard/api.go:244`, `pkg/dashboard/api_acmm_eval.go` |
 | `POST` | `/api/acmm/issue` | Dashboard auth/session | ACMMCreate Issue — files on GitHub or, with `governor.acmm.issue_tracker: work_source` / body `tracker: "work_source"` on a Linear-sourced hive, on Linear; response `tracker` says which. See [ACMM policy matrix](acmm-policy-matrix.md#where-acmm-gap-issues-are-filed) | `pkg/dashboard/api.go:170` |
 | `GET` | `/api/acmm-recommendation` | Dashboard auth/session | Advisory level-up recommendation (`acmmadvisor.Recommendation`, JSON): never changes the applied level — see [ACMM advisor](acmm-advisor.md) | `pkg/dashboard/api.go:230` |
 
@@ -298,7 +299,11 @@ header, using either the `Bearer <token>` scheme (hosted clients) or the
 legacy `token <token>` scheme (what `gh auth token` and older hive CLIs
 send). Both are accepted; the legacy scheme is retained for backward
 compatibility. Credentials in the query string (`?token=`) are NOT supported
-and are rejected, because query strings land in ingress and access logs.
+and are rejected, because query strings land in ingress and access logs. The
+same rule applies to the shared dashboard owner token: send it in the
+`Authorization` header, not in URLs. Dashboard terminal links use
+`/api/terminal/handoff` to mint a ≤60-second single-use `code` for the browser
+navigation instead of putting the owner token in the terminal URL.
 
 Authorization: every `/api/v1` path except `/api/v1/me` additionally requires
 the caller to be in the hive's authorized-users allowlist (any role), and

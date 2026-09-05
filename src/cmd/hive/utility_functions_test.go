@@ -57,8 +57,8 @@ func TestParseEndpointList(t *testing.T) {
 		{"single endpoint", "http://localhost:8080", []string{"http://localhost:8080"}},
 		{"multiple endpoints", "http://a:8080, http://b:8080", []string{"http://a:8080", "http://b:8080"}},
 		{"trims spaces", "  http://a , http://b  ", []string{"http://a", "http://b"}},
-		{"empty string returns raw", "", []string{""}},
-		{"all-commas returns raw", ",,,", []string{",,,"}},
+		{"empty string returns empty", "", []string{}},
+		{"all-commas returns empty", ",,,", []string{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

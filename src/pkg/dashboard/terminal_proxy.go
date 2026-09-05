@@ -43,9 +43,9 @@ func ttydPort() int {
 // "404 page not found" (task #39, heartbeat-only-cluster hosted spokes). Serving /terminal
 // from this server makes the link work regardless of which Service port the
 // cluster's route actually targets, and puts terminal access behind the same
-// authenticate() middleware as the rest of the dashboard (session cookie,
-// hub-injected identity, or ?token= — which the dashboard link already
-// appends).
+// authenticate() middleware as the rest of the dashboard (session cookie, hub-injected identity, terminal assertion cookie,
+// or a short-lived terminal handoff code minted by an authenticated dashboard
+// request).
 //
 // Registered with an explicit GET method: everything ttyd serves (assets,
 // auth token endpoint, websocket handshake) is a GET, and a method-less
@@ -64,9 +64,13 @@ func (s *Server) registerTerminalProxy() {
 			}
 			pr.Out.URL.Path = p
 			pr.Out.URL.RawPath = ""
+			q := pr.Out.URL.Query()
+			q.Del("token")
+			q.Del(terminalHandoffCodeParam)
+			pr.Out.URL.RawQuery = q.Encode()
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.logger.Error("terminal proxy error", "path", r.URL.Path, "error", err)
+			s.logger.Error("terminal proxy error", "request", redactedRequestURI(r.URL), "error", err)
 			// Same body the Node proxy returns when ttyd is down — a clear
 			// signal, not a bare 404.
 			http.Error(w, "Terminal unavailable", http.StatusBadGateway)

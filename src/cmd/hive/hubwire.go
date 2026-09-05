@@ -1045,7 +1045,7 @@ func (w *spokeWire) handleHubUpgrade(targetSHA string) {
 					"hint", "the spoke must be able to get/patch its own Deployment; check the hive-self-upgrade Role/RoleBinding in this namespace",
 				)
 				hub.ReportUpgradeFailure(w.hubURL, w.cfg.HiveID, targetSHA, gitShort,
-					fmt.Sprintf("self-upgrade failed after %d attempts: %s", m.Attempts, m.LastError), w.logger)
+					upgradeFailureSummary(m.Attempts, m.LastError), w.logger)
 				return
 			}
 			// Exponential backoff between attempts so a hard failure does not

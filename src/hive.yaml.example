@@ -373,7 +373,9 @@ governor:
   # backend: bob — bob's default IBMid/W3ID auth opens a browser and waits on a
   # localhost callback, which no pod can satisfy, so it fails after a 3-minute
   # timeout. With a key, hive launches bob with --auth-method api-key and it
-  # authenticates headlessly (interactive tmux use still works).
+  # authenticates headlessly (interactive tmux use still works). If Bob returns
+  # HTTP 401 / "API Key verification failed: Invalid or expired API Key", Hive
+  # reports the agents as needing login/credential refresh instead of restart.
   # SECURITY: store only the env var NAME or a key file path, never the value.
   # Both defaults below are consulted automatically, so if you mount the key at
   # /secrets/bob_api_key or set HIVE_BOB_API_KEY, this block can stay commented.

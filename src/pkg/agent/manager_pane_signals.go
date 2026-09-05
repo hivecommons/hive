@@ -313,40 +313,50 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
 	return AgentProcess{
-		Name:               a.Name,
-		ID:                 a.ID,
-		Config:             a.Config,
-		State:              a.State,
-		PID:                a.PID,
-		UID:                a.UID,
-		StartedAt:          a.StartedAt,
-		LastKick:           a.LastKick,
-		Paused:             a.Paused,
-		PausedAt:           a.PausedAt,
-		PausedReason:       a.PausedReason,
-		PausedTrigger:      a.PausedTrigger,
-		PausedBy:           a.PausedBy,
-		PinnedCLI:          a.PinnedCLI,
-		PinnedModel:        a.PinnedModel,
-		ModelOverride:      a.ModelOverride,
-		BackendOverride:    a.BackendOverride,
-		RestartCount:       a.RestartCount,
-		TurnLoss:           cloneTurnLoss(a.TurnLoss),
-		KickHistory:        history,
-		LastKickMessage:    a.LastKickMessage,
-		NeedsLogin:         needsLogin,
-		QuotaExhausted:     quotaExhausted,
-		LastPaneChange:     lastPaneChange,
-		WatchdogConditions: conds,
-		StallNudges:        a.StallNudges,
-		ActionNudges:       a.ActionNudges,
-		TransientNudges:    a.TransientNudges,
-		HasLaunched:        a.HasLaunched,
-		LaunchedMode:       a.LaunchedMode,
-		tmuxSession:        a.tmuxSession,
-		tmuxSocket:         a.tmuxSocket,
-		OutputBuffer:       a.OutputBuffer,
-		lastPaneCapture:    pane,
+		Name:                      a.Name,
+		ID:                        a.ID,
+		Config:                    a.Config,
+		State:                     a.State,
+		PID:                       a.PID,
+		UID:                       a.UID,
+		StartedAt:                 a.StartedAt,
+		LastKick:                  a.LastKick,
+		Paused:                    a.Paused,
+		PausedAt:                  a.PausedAt,
+		PausedReason:              a.PausedReason,
+		PausedTrigger:             a.PausedTrigger,
+		PausedBy:                  a.PausedBy,
+		PinnedCLI:                 a.PinnedCLI,
+		PinnedModel:               a.PinnedModel,
+		ModelOverride:             a.ModelOverride,
+		BackendOverride:           a.BackendOverride,
+		RestartCount:              a.RestartCount,
+		RestartEvents:             cloneRestartEvents(a.RestartEvents),
+		LastRestartReason:         a.LastRestartReason,
+		TurnLoss:                  cloneTurnLoss(a.TurnLoss),
+		KickHistory:               history,
+		LastKickMessage:           a.LastKickMessage,
+		NeedsLogin:                needsLogin,
+		QuotaExhausted:            quotaExhausted,
+		LastPaneChange:            lastPaneChange,
+		WatchdogConditions:        conds,
+		StallNudges:               a.StallNudges,
+		ActionNudges:              a.ActionNudges,
+		TransientNudges:           a.TransientNudges,
+		ProviderErrorClass:        a.ProviderErrorClass,
+		ProviderErrorLine:         a.ProviderErrorLine,
+		ProviderErrorBackoffUntil: a.ProviderErrorBackoffUntil,
+		StartFailureClass:         a.StartFailureClass,
+		StartFailureReason:        a.StartFailureReason,
+		StartFailureCount:         a.StartFailureCount,
+		StartBlocked:              a.StartBlocked,
+		StartBackoffUntil:         a.StartBackoffUntil,
+		HasLaunched:               a.HasLaunched,
+		LaunchedMode:              a.LaunchedMode,
+		tmuxSession:               a.tmuxSession,
+		tmuxSocket:                a.tmuxSocket,
+		OutputBuffer:              a.OutputBuffer,
+		lastPaneCapture:           pane,
 	}
 }
 
@@ -746,6 +756,22 @@ func paneShowsQuotaExhausted(lines []string) bool {
 			}
 		}
 		if quotaExhaustionStatusPattern.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func paneShowsBobAPIKeyRejected(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "api key") || !strings.Contains(lower, "401") {
+			continue
+		}
+		if strings.Contains(lower, "verification failed") ||
+			strings.Contains(lower, "invalid or expired api key") ||
+			strings.Contains(lower, `"error":"unauthorized"`) ||
+			strings.Contains(lower, `"error": "unauthorized"`) {
 			return true
 		}
 	}

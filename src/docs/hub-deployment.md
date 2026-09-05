@@ -2,7 +2,7 @@
 
 Hive can run either as a spoke dashboard or as the hub. The same Go binary serves both roles; `HIVE_MODE=hub` selects the hub server in `cmd/hive/main.go`.
 
-Use a self-hosted hub when you need a private registry, private SaaS provisioning, air-gapped control, or a hub URL other than `https://hive.kubestellar.io`. If you only need a hosted spoke, use the hosted Hive Hub instead.
+Use a self-hosted hub when you need a private registry, private SaaS provisioning, air-gapped control, or a hub URL other than `https://hive.hivecommons.dev`. If you only need a hosted spoke, use the hosted Hive Hub instead.
 
 ## What `Dockerfile.hub` builds
 

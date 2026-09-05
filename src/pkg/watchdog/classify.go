@@ -85,6 +85,10 @@ type Observation struct {
 	// credential file there. That is the exact evidence this reconciler must
 	// not trust on its own when deciding whether to page a human.
 	CredentialProven bool
+	// ProviderErrorClass/Line carry an active inference-provider block from the
+	// agent manager. It is a producing/readiness fault, not a dead pane.
+	ProviderErrorClass string
+	ProviderErrorLine  string
 }
 
 // authScreenPatterns match credential screens the marker tables miss: the

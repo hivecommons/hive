@@ -71,11 +71,11 @@ None of the level guidance below works until your hive is connected to your git 
 Hosted hives that stay **unconfigured or inactive are reclaimed ("reaped") on a timer** to free fleet capacity. When that happens:
 
 - Your hive stops appearing under **Usage** on the hub.
-- The old hive URL (`https://<id>.hive.kubestellar.io`) **times out** — it is gone, not just sleeping.
+- The old hive URL (`https://<id>.hive.hivecommons.dev`) **times out** — it is gone, not just sleeping.
 
 **This is normal and recoverable.** Nothing is wrong with your account. To get going again:
 
-1. **Request a new hive.** Go to the hub and click **Request a hive** (the `/get-started` wizard — on the hosted hub that's [hive.kubestellar.io/get-started](https://hive.kubestellar.io/get-started)). You'll get a fresh hive with a new URL — don't wait for the old URL to come back.
+1. **Request a new hive.** Go to the hub and click **Request a hive** (the `/get-started` wizard — on the hosted hub that's [hive.hivecommons.dev/get-started](https://hive.hivecommons.dev/get-started)). You'll get a fresh hive with a new URL — don't wait for the old URL to come back.
 2. **Complete Step 0 right away.** Install the [Forge App](#step-0--before-you-start-do-this-first) — the app for your source control system (GitHub, GitHub Enterprise, GitLab, or Gitea) — in your **first session** on the new hive. An installed Forge App plus regular heartbeats is what keeps a hive from being reaped again.
 3. **Update your bookmarks** to the new hive URL.
 

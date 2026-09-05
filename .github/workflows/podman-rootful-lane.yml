@@ -63,11 +63,19 @@ name: Podman Rootful Lane
 
 on:
   push:
+    paths:
+      - '.github/workflows/podman-rootful-lane.yml'
+      - 'src/deploy/**'
+      - 'justfile'
     branches:
       - v2
       - v4
       - v5
   pull_request:
+    paths:
+      - '.github/workflows/podman-rootful-lane.yml'
+      - 'src/deploy/**'
+      - 'justfile'
     branches:
       - v2
       - v4

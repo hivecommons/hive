@@ -164,6 +164,17 @@ func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 	}
 }
 
+func (s *Server) gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
+	resp := gatewaySectionResponse(gw)
+	for _, st := range s.GatewayHealthState() {
+		if strings.EqualFold(st.Name, gw.Name) {
+			resp["health"] = st
+			break
+		}
+	}
+	return resp
+}
+
 // handleGovernorGatewaysList returns the effective gateway list. It uses
 // ResolvedGateways() so a legacy-only hive (no `gateways:`, classic `litellm:`
 // block) still shows its synthesized "litellm" gateway — nothing is lost when
@@ -172,7 +183,7 @@ func (s *Server) handleGovernorGatewaysList(w http.ResponseWriter, r *http.Reque
 	gws := s.deps.Config.Governor.ResolvedGateways()
 	out := make([]map[string]interface{}, 0, len(gws))
 	for _, gw := range gws {
-		out = append(out, gatewaySectionResponse(gw))
+		out = append(out, s.gatewaySectionResponse(gw))
 	}
 	jsonResponse(w, map[string]interface{}{"gateways": out})
 }
@@ -420,7 +431,7 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	// Live save-time probe so a bad endpoint/key fails visibly now, not as
 	// agent 401s later. Uses the just-submitted key when present (the key file
 	// may not reflect it in the same request on some volumes).
-	resp := map[string]interface{}{"ok": true, "status": "updated", "gateway": gatewaySectionResponse(gw)}
+	resp := map[string]interface{}{"ok": true, "status": "updated", "gateway": s.gatewaySectionResponse(gw)}
 	// SECURITY (audit F6, CWE-200): probe with the SUBMITTED key only, never a
 	// stored one.
 	//
@@ -638,13 +649,24 @@ func (s *Server) gatewayProbeResult(gw config.GatewayConfig, overrideKey string)
 	}
 	bearer, headers, err := s.gatewayProbeAuth(gw.Kind, probeKey, gw.ProjectID)
 	if err != nil {
-		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
+		msg := redactSecret(err.Error(), probeKey)
+		if store := s.gatewayHealthStore(); store != nil {
+			store.RecordError(gw.Name, errors.New(msg), time.Now())
+		}
+		return map[string]interface{}{"ok": false, "error": msg}
 	}
 	n, err := probeModelsWithHeaders(ep, bearer, headers)
 	if err != nil {
 		// Redact both the raw key and the minted bearer (watsonx) from any
-		// echoed upstream error body.
-		return map[string]interface{}{"ok": false, "error": redactSecret(redactSecret(err.Error(), probeKey), bearer)}
+		// echoed upstream error body before the message is stored or returned.
+		msg := redactSecret(redactSecret(err.Error(), probeKey), bearer)
+		if store := s.gatewayHealthStore(); store != nil {
+			store.RecordError(gw.Name, errors.New(msg), time.Now())
+		}
+		return map[string]interface{}{"ok": false, "error": msg}
+	}
+	if store := s.gatewayHealthStore(); store != nil {
+		store.Clear(gw.Name)
 	}
 	return map[string]interface{}{"ok": true, "model_count": n}
 }
@@ -739,7 +761,7 @@ var errGatewayEndpointPrivate = errors.New("endpoint resolves to a private, loop
 // this check is NOT in validateGatewayEndpoint. That helper also validates the
 // UPSERT path, where in-cluster gateways are a supported, documented
 // configuration — the bundled local litellm proxy is http://127.0.0.1:18445 and
-// vllm/llm-d default to *.svc.cluster.local (see HIVE_VLLM_ENDPOINT). Blanket
+// explicit vllm/llm-d endpoints may use *.svc.cluster.local (see HIVE_VLLM_ENDPOINT). Blanket
 // private-address denial there would break real deployments, which is why the
 // F6 fix explicitly rejected it as the remedy.
 //

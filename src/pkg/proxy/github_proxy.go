@@ -30,6 +30,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
@@ -216,6 +217,8 @@ type GitHubProxy struct {
 	// pkg/governor (denominated in tokens, blind to what the gateway charges).
 	// See inference_budget.go (kubestellar/hive#4294).
 	inferenceBudget *inferenceBudgetState
+	// gatewayHealth tracks the current failing precondition per inference gateway.
+	gatewayHealth *inferencehealth.Store
 
 	// tokenSink records per-agent token usage for bare-mode inference
 	// agents, whose usage the file-scanning token collector cannot see
@@ -348,6 +351,7 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		entitlements:    newEntitlementStore(),
 		inferenceAuth:   &inferenceAuthState{},
 		inferenceBudget: &inferenceBudgetState{},
+		gatewayHealth:   inferencehealth.NewStore(),
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -1882,6 +1886,9 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 	if route == nil {
 		return
 	}
+	if p.gatewayHealth != nil {
+		p.gatewayHealth.RecordEndpointHTTPError(route.Backend, route.Endpoint, status, string(truncateBytes(body, 200)), time.Now())
+	}
 
 	// Inference-backend AUTH failure (a stale/invalid gateway key returning 401
 	// on every call). Tracked for ANY inference backend, not just litellm — a
@@ -1963,6 +1970,13 @@ func (p *GitHubProxy) routeWithEntitledModel(route *InferenceRoute, agentName st
 // health signal. Called from every inference forward path on a 2xx response.
 // A nil tracker (impossible after NewGitHubProxy, but cheap to guard) is a
 // no-op.
+func (p *GitHubProxy) recordInferenceSuccessFor(route *InferenceRoute) {
+	if route != nil && p.gatewayHealth != nil {
+		p.gatewayHealth.Clear(route.Backend)
+	}
+	p.recordInferenceSuccess()
+}
+
 func (p *GitHubProxy) recordInferenceSuccess() {
 	if p.inferenceAuth != nil {
 		p.inferenceAuth.recordSuccess()
@@ -1975,6 +1989,14 @@ func (p *GitHubProxy) recordInferenceSuccess() {
 	if p.inferenceBudget != nil {
 		p.inferenceBudget.recordSuccess()
 	}
+}
+
+// GatewayHealth reports currently failing inference gateways.
+func (p *GitHubProxy) GatewayHealth() []inferencehealth.GatewayStatus {
+	if p == nil || p.gatewayHealth == nil {
+		return nil
+	}
+	return p.gatewayHealth.Snapshot()
 }
 
 // InferenceAuthError reports the current inference-backend auth-failure signal:
@@ -2106,6 +2128,9 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		resp, err := client.Do(upstreamReq)
 		if err != nil {
 			p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
+			if p.gatewayHealth != nil {
+				p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
+			}
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
 			return
 		}
@@ -2138,7 +2163,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		// A 2xx means the gateway accepted the key — clear any latched
 		// inference-auth failure so a hive whose key was fixed self-heals.
-		p.recordInferenceSuccess()
+		p.recordInferenceSuccessFor(route)
 
 		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
@@ -2302,6 +2327,9 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
+		if p.gatewayHealth != nil {
+			p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
+		}
 		p.writeHTTPError(conn, http.StatusBadGateway, "inference backend unreachable: "+err.Error())
 		return
 	}
@@ -2327,7 +2355,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 
 	// A 2xx means the gateway accepted the key — clear any latched
 	// inference-auth failure so a hive whose key was fixed self-heals.
-	p.recordInferenceSuccess()
+	p.recordInferenceSuccessFor(route)
 
 	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 

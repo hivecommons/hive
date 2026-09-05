@@ -42,7 +42,7 @@ plainly in the relevant answers below rather than hidden behind a marker:
 
 - **Project:** [hivecommons/hive](https://github.com/hivecommons/hive)
 - **Project Version:** Continuously delivered from branch `v4` (`v4-latest` / `stable` / `candidate` / `edge` channel tags plus automated semver `vX.Y.Z` releases — see [Release processes](#describe-the-projects-release-processes-including-major-minor-and-patch-releases))
-- **Website:** [hive.kubestellar.io](https://hive.kubestellar.io)
+- **Website:** [hive.hivecommons.dev](https://hive.hivecommons.dev)
 - **Date Updated:** 2026-08-28
 - **Template Version:** v1.0.1
 - **Description:** Hive orchestrates fleets of AI coding agents (Claude, GitHub Copilot, Gemini, Goose, Bob, Agy) that autonomously maintain software projects — filing issues, opening pull requests, reviewing code, and, at the highest operator-selected autonomy level, merging on green CI — under deterministic, technically-enforced guardrails rather than prompted behavior. It runs as a single-container Kubernetes/Compose/Podman workload, with an optional hub coordinating many self-hosted "spoke" hives.
@@ -153,7 +153,7 @@ REST + Server-Sent Events for the dashboard/hub surface — no GraphQL is expose
 
 ##### Describe the project defaults
 
-Selected defaults from `src/pkg/config/config.go` `applyDefaults()` (`config.go:4320-4602`) and `src/docs/operator-reference.md`: dashboard port `3002` (`defaultDashboardPort`); governor eval interval `300s` (`defaultEvalIntervalS`); per-agent `replicas` default `1`, `enabled` default `true`, `clear_on_kick` default `true`; `hub.url` defaults to `https://hive.kubestellar.io` with `hub.is_public: true` if unset; token-budget period `7` days at a `90%` critical threshold; auto-merge label default `"lgtm"`. Minimum required config for the process to start at all (enforced by `Config.Validate`): `project.org`, at least one repo, one GitHub credential (`github.token`, `github.app_id`, or `github.forge`), and at least one agent (`src/docs/operator-reference.md` "Minimum required configuration").
+Selected defaults from `src/pkg/config/config.go` `applyDefaults()` (`config.go:4320-4602`) and `src/docs/operator-reference.md`: dashboard port `3002` (`defaultDashboardPort`); governor eval interval `300s` (`defaultEvalIntervalS`); per-agent `replicas` default `1`, `enabled` default `true`, `clear_on_kick` default `true`; `hub.url` has a compiled legacy fallback of `https://hive.kubestellar.io` with `hub.is_public: true` if unset, but hosted-hub operators should explicitly set it to `https://hive.hivecommons.dev` during the cutover; token-budget period `7` days at a `90%` critical threshold; auto-merge label default `"lgtm"`. Minimum required config for the process to start at all (enforced by `Config.Validate`): `project.org`, at least one repo, one GitHub credential (`github.token`, `github.app_id`, or `github.forge`), and at least one agent (`src/docs/operator-reference.md` "Minimum required configuration").
 
 ##### Outline any additional configurations from default to make reasonable use of the project
 
