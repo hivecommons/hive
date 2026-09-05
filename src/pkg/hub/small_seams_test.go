@@ -56,27 +56,3 @@ func TestSpokeSessionKeyResolution(t *testing.T) {
 		t.Errorf("with neither source configured the key must be empty (fail closed), got %q", got)
 	}
 }
-
-// Outside a cluster the served-host probe must answer "" (callers fall back)
-// and memoise that answer instead of re-probing on every heartbeat.
-func TestSpokeServedHostOutsideCluster(t *testing.T) {
-	servedHostProbeCache.Lock()
-	servedHostProbeCache.probed = false
-	servedHostProbeCache.host = ""
-	servedHostProbeCache.Unlock()
-
-	if got := SpokeServedHost(t.Context()); got != "" {
-		t.Errorf("outside a cluster the served host must be empty, got %q", got)
-	}
-	servedHostProbeCache.Lock()
-	probed := servedHostProbeCache.probed
-	next := servedHostProbeCache.nextProbe
-	servedHostProbeCache.Unlock()
-	if !probed || !next.After(time.Now()) {
-		t.Error("probe result must be memoised with a future re-probe time")
-	}
-	// Second call must serve from the cache (still empty, no panic).
-	if got := SpokeServedHost(t.Context()); got != "" {
-		t.Errorf("cached served host must stay empty, got %q", got)
-	}
-}

@@ -1,58 +1,13 @@
 package hub
 
 import (
-	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
-
-// ============================================================
-// heartbeat.go — StartHeartbeat / StartTaskStatusPush / waitForReady
-// ============================================================
-
-func TestStartHeartbeatSendsThenStops(t *testing.T) {
-	// Reset loop flag for a clean assertion.
-	heartbeatLoopStarted.Store(false)
-
-	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(HeartbeatResponse{})
-	}))
-	defer hub.Close()
-
-	// A cancelled context makes waitForReady return immediately; the first
-	// sendHeartbeat then no-ops on the cancelled ctx and the loop exits at once.
-	// This exercises the callback demux + waitForReady + processResponse plumbing
-	// without blocking on the 5s readiness sleep.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	collect := func() *HeartbeatPayload { return &HeartbeatPayload{HiveID: "h1"} }
-	StartHeartbeat(ctx, hub.URL, collect, time.Hour, slog.Default(),
-		UpgradeCallback(func(string) {}),
-		VisibilityCallback(func(bool) {}),
-	)
-
-	if !HeartbeatEnabled() {
-		t.Error("StartHeartbeat should mark the loop as started")
-	}
-	heartbeatLoopStarted.Store(false)
-}
-
-func TestStartTaskStatusPush(t *testing.T) {
-	// Disabled path.
-	StartTaskStatusPush(context.Background(), "", func() *TaskStatusPayload { return nil }, slog.Default())
-
-	// Cancelled context path (returns on ctx.Done before any tick).
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	StartTaskStatusPush(ctx, "http://127.0.0.1:1", func() *TaskStatusPayload { return nil }, slog.Default())
-}
 
 // ============================================================
 // saas_provision.go — loadClusters

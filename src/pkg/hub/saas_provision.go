@@ -24,6 +24,10 @@ import (
 
 var saasHivesDir = "/data/saas/hives"
 
+// serviceAccountDir is the projected service-account volume the control plane
+// reads its own token from (see readSAToken).
+var serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+
 const (
 	maxHivesPerUser   = 3
 	maxSaaSHivesTotal = 0 // 0 = unlimited

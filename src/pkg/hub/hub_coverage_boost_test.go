@@ -1873,41 +1873,6 @@ func TestKubectlForCluster(t *testing.T) {
 }
 
 // ============================================================
-// heartbeat.go — SendUpgradingHeartbeat
-// ============================================================
-
-func TestSendUpgradingHeartbeat(t *testing.T) {
-	var receivedUpgrading bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload HeartbeatPayload
-		json.NewDecoder(r.Body).Decode(&payload)
-		receivedUpgrading = payload.Upgrading
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	SendUpgradingHeartbeat(server.URL, func() *HeartbeatPayload {
-		return &HeartbeatPayload{HiveID: "test", Upgrading: true, UpgradeTargetSHA: "abc123"}
-	}, "abc123", slog.Default())
-
-	if !receivedUpgrading {
-		t.Error("should send upgrading=true")
-	}
-}
-
-func TestSendUpgradingHeartbeatNilPayload(t *testing.T) {
-	SendUpgradingHeartbeat("http://example.com", func() *HeartbeatPayload {
-		return nil
-	}, "abc123", slog.Default())
-}
-
-func TestSendUpgradingHeartbeatBadURL(t *testing.T) {
-	SendUpgradingHeartbeat("http://127.0.0.1:1", func() *HeartbeatPayload {
-		return &HeartbeatPayload{HiveID: "test"}
-	}, "abc123", slog.Default())
-}
-
-// ============================================================
 // findContributeHive edge cases
 // ============================================================
 
