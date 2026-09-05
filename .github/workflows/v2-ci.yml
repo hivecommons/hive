@@ -595,6 +595,17 @@ jobs:
         working-directory: .
         run: bash bin/test_backend_smoke_attribution.sh
 
+      # The other half of "this lane says the true thing" (#6086): it must pin
+      # THIS repository's contributor image, not upstream's. The lane exists to
+      # run the checkout's suite against the CLIs the image ships, and a
+      # hard-coded org made a fork's lane exercise upstream's binaries and stay
+      # green regardless of its own. Extracts the selection step and runs it
+      # against a stubbed podman, because the cases that matter -- lowercasing
+      # an uppercase owner, and the fallback being loud -- a grep cannot see.
+      - name: Backend smoke pins this repository's contributor image
+        working-directory: .
+        run: bash bin/test_backend_smoke_image_owner.sh
+
       # Keyless subset of the backend smoke: backend-list/Dockerfile-pin drift
       # checks plus the stub wire-contract scenarios (real relay, fake hub, a
       # stub CLI binary — no credentials, no network beyond localhost). The

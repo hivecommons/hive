@@ -181,7 +181,38 @@ jobs:
 
       - name: Pull the contributor image
         if: steps.scope.outputs.run == 'true' && matrix.lane == 'pinned'
-        run: podman pull ghcr.io/hivecommons/hive-contributor:latest
+        # Owner-derived, same convention docker.yml uses for its push targets:
+        # a fork publishes ghcr.io/<fork-org>/hive-contributor, so that is the
+        # image whose pinned CLIs its lane must exercise — hard-coding the
+        # upstream org made a fork's lane test upstream's binaries and stay
+        # green regardless of the fork's own image (#6086). Falls back to the
+        # upstream image, loudly, when the owner-scoped one is absent (a fork
+        # that has not published yet still gets a meaningful run rather than a
+        # pull failure), and prints which image the lane pinned either way so
+        # the fallback is legible rather than silent.
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          # Lowercased, because a container reference's path components must
+          # match [a-z0-9] and separators -- "ghcr.io/Tuna-OS/hive-contributor"
+          # is not a valid reference at all, and podman rejects it before any
+          # registry is contacted. Left as-is, every fork whose org is not
+          # already all-lowercase takes the fallback below on EVERY run: the
+          # same "your lane tests upstream's image" defect this change exists
+          # to remove, reached by a different route. GHCR serves the owner
+          # lowercased, so this is the canonical path rather than a guess.
+          OWNER="$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
+          OWNER_IMAGE="ghcr.io/${OWNER}/hive-contributor:latest"
+          UPSTREAM_IMAGE="ghcr.io/hivecommons/hive-contributor:latest"
+          if podman pull "$OWNER_IMAGE"; then
+            IMAGE="$OWNER_IMAGE"
+          else
+            echo "::warning::${OWNER_IMAGE} is not pullable — falling back to ${UPSTREAM_IMAGE}. This lane is testing UPSTREAM's pinned CLIs, not this repository's own contributor image (#6086)."
+            podman pull "$UPSTREAM_IMAGE"
+            IMAGE="$UPSTREAM_IMAGE"
+          fi
+          echo "pinned lane image: $IMAGE"
+          echo "CONTRIBUTOR_IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       - name: Backend smoke (pinned ${{ matrix.backend }}, in-container)
         if: steps.scope.outputs.run == 'true' && matrix.lane == 'pinned'
@@ -196,7 +227,7 @@ jobs:
             -e HIVE_SMOKE_CLAUDE_CREDENTIALS_B64 \
             -e HIVE_SMOKE_CODEX_AUTH_B64 \
             -v "${GITHUB_WORKSPACE}:/opt/hive-src:ro,Z" \
-            ghcr.io/hivecommons/hive-contributor:latest \
+            "${CONTRIBUTOR_IMAGE}" \
             -lc 'bash /opt/hive-src/bin/test_backend_smoke.sh' |& tee smoke.log
 
       - name: Upload evidence
