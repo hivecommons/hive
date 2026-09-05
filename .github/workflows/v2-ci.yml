@@ -807,6 +807,13 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_entrypoint_egress_ruleset.sh
 
+      # The step BEFORE the chain is built: a node missing xt_REDIRECT or
+      # xt_mark must be diagnosed by name and exit with the documented
+      # preflight code 77, leaving no partial HIVE_PROXY chain behind.
+      - name: Entrypoint netfilter extension preflight (#6003)
+        working-directory: .
+        run: bash src/deploy/test_entrypoint_xt_module_preflight.sh
+
       # The guard that keeps the omission above from recurring: every
       # src/deploy/test_*.sh must be named by at least one workflow. This is
       # the src/deploy/ sibling of bin/test_bin_suites_wired.sh (#4363).
