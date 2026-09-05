@@ -48,6 +48,49 @@ Hive reads `/etc/hive/hive.yaml` by default, or `HIVE_CONFIG`/`--config` when se
 
 In Kubernetes, edit the ConfigMap/Secret source and restart the pod; dashboard edits are stored in the `/data` PVC overlay. In Docker Compose, edit the bind-mounted `src/hive.yaml` or the dashboard overlay and restart `hive`.
 
+### Validate without booting: `hive validate`
+
+Since v4.15.0 (#6027) you do not have to apply a config and watch for a
+crash-loop to learn whether it is valid. `hive validate` (alias
+`hive --config-check`) loads the config byte-for-byte the way a real boot does
+— `config.LoadWithDashboardOverlay`, so the dashboard overlay
+(`/data/hive.yaml.dashboard`) **and** the per-agent overlay files under
+`data.agents_dir` (`/data/agent-configs/*.yaml`) are included — then exits
+without starting anything. Validating only `hive.yaml` would miss exactly the
+failure mode that motivated the command: in #6024 the contradiction that
+bricked a spoke lived in an agent overlay file, and once the spoke was
+crash-looping, the dashboard API that is the supported way to fix the config
+was served by the very process the config was killing.
+
+```console
+$ hive validate
+config OK: /etc/hive/hive.yaml
+  agents (3): [guide quality supervisor]
+    supervisor <- /data/agent-configs/supervisor.yaml
+```
+
+- **Config path** — same resolution as a real boot: `/etc/hive/hive.yaml` by
+  default, overridden by `HIVE_CONFIG` or `-config <path>`.
+- **Exit code** — `0` when valid; `1` when not, deliberately the same code as
+  a boot-time config failure, so a CI step or pre-flight init container needs
+  no special casing. On failure it prints `config INVALID: <path>` and the
+  first error.
+- **Provenance** — the `<agent> <- <file>` lines name which overlay file each
+  surviving agent entry came from, so you can see entries that arrived from
+  files you might not have thought to look at. Overlays dropped by the
+  invalid-overlay guard are already gone from the reported roster and were
+  logged at `ERROR` during the load — see
+  [Config layering](config-layering.md#what-makes-an-overlay-valid).
+
+Run it inside the deployment that holds the real overlay files, not against a
+local copy of `hive.yaml`:
+
+```bash
+docker compose exec hive hive validate          # Docker Compose
+kubectl exec deploy/hive -- hive validate       # Kubernetes
+podman exec hive hive validate                  # Podman
+```
+
 ## GitHub credentials are missing or invalid
 
 When no token or App credentials are usable, Hive starts the dashboard but disables write-capable GitHub work. The code logs these exact messages from `src/cmd/hive/main.go` depending on the state:

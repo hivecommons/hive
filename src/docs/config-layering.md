@@ -219,6 +219,10 @@ after every live hive has written the new name.
 ### What makes an overlay valid
 
 The guard catches a **truncated or corrupt** overlay — not an unusual one.
+To check a config — overlays included — before booting into it, run
+[`hive validate`](troubleshooting.md#validate-without-booting-hive-validate):
+it loads exactly what a real boot would and exits `0`/`1` without starting
+anything.
 
 | Overlay | Verdict |
 |---|---|
