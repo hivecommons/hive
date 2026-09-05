@@ -12647,7 +12647,8 @@ const dashboardHTML = `<!DOCTYPE html>
       'acmm-unset':      'ACMM level unset',
       'no-agents':       'No agents running',
       'duplicate-spoke': 'Duplicate spoke instances',
-      'status-flipping': 'Status flipping'
+      'status-flipping': 'Status flipping',
+      'version-absent':  'Heartbeat without a version'
     };
 
     function driftKindLabel(kind) { return DRIFT_KIND_LABELS[kind] || kind || 'Unknown'; }

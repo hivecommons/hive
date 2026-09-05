@@ -78,6 +78,10 @@ const (
 	// DriftKindStatusFlipping: the hive's reported status keeps alternating
 	// between two values on a heartbeat cadence — the row cannot be trusted.
 	DriftKindStatusFlipping = "status-flipping"
+	// DriftKindVersionAbsent: the hive keeps heartbeating but reports no
+	// git_hash, so the hub has nothing to compare against the branch target -
+	// the row cannot be trusted AND no upgrade instruction is ever issued.
+	DriftKindVersionAbsent = "version-absent"
 	// DriftKindAppIDPlaceholder marks a hive still authenticating as the
 	// placeholder App sentinel (config.PlaceholderAppID). Distinct from
 	// app-creds-operator because the fault is the app_id itself, not the key:
@@ -577,6 +581,26 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 				"usually two spoke instances alternating as this hive (a spoke too old to report "+
 				"its pod name cannot be told apart) or an auth check oscillating; "+
 				"use Restart Spoke, or upgrade the spoke so the instances identify themselves")
+	}
+
+	// Heartbeats arriving with no version. The hub decides whether to instruct
+	// an upgrade by comparing the reported git_hash against the branch target;
+	// with no hash there is nothing to compare, so it instructs nothing and the
+	// hive freezes at whatever build it runs while still counting as online.
+	// Nothing else on any operator surface distinguishes that from health.
+	//
+	// Skipped for offline hives and placeholders for the same reason the
+	// fleet-relative signals below skip them: an offline hive is already
+	// flagged as not reporting, so "its beats carry no version" is a
+	// restatement of silence rather than a second fault, and a placeholder is
+	// pool inventory whose version nobody is upgrading toward anything.
+	if h.VersionAbsent && h.Online && !placeholder {
+		add(DriftKindVersionAbsent, DriftCritical,
+			fmt.Sprintf("Heartbeats are arriving but carry no version: the last %d beats reported an empty git_hash. "+
+				"The hub compares that hash against the branch target to decide on an upgrade, so it is sending this "+
+				"hive no upgrade instruction at all - the row cannot be trusted and the hive is not being upgraded. "+
+				"Check the spoke for stats-collection timeouts, then restart it",
+				versionAbsentBeatsToConfirm))
 	}
 
 	// A placeholder legitimately has no App, no agents and ACMM 0. Flagging it

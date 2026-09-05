@@ -287,6 +287,14 @@ type RegistryEntry struct {
 	// old to report a Reporter; when both fire, duplicate-spoke names the
 	// culprit pods.
 	StatusFlipping bool `json:"statusFlipping,omitempty"`
+	// VersionAbsent is true while this hive's last several heartbeats have all
+	// arrived WITHOUT a git_hash (version_absent.go). The hub compares the
+	// reported hash against the branch target to decide whether to instruct an
+	// upgrade, so with no hash it instructs nothing: the hive is frozen at
+	// whatever build it happens to run while still counting as online. Set from
+	// the beat, never from the spoke's own opinion, so a spoke too degraded to
+	// report its version cannot also suppress the signal about that.
+	VersionAbsent bool `json:"versionAbsent,omitempty"`
 	// GitHubAppID is the App ID the spoke reports it is authenticating AS.
 	//
 	// Carried into the registry so the hub can SEE a spoke running the
@@ -1117,6 +1125,12 @@ type HubServer struct {
 	// mutex for the same reason: touched on every beat.
 	statusFlipSeen map[string]*reporterFlipState
 	statusFlipMu   sync.Mutex
+	// versionAbsentSeen tracks each hive's run of consecutive heartbeats that
+	// carried no git_hash (version_absent.go), which is what makes a hive
+	// invisible to the upgrade comparison. Same shape and same separate-mutex
+	// reason as statusFlipSeen: touched on every beat.
+	versionAbsentSeen map[string]*versionAbsentState
+	versionAbsentMu   sync.Mutex
 	// appKeyDelivery tracks, per hive, consecutive GitHub App key deliveries
 	// that the spoke never reflected, so a broken reporter cannot pull key
 	// material onto the wire every beat forever (app_key_backoff.go, #2496).
@@ -1868,12 +1882,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		RepoTargetMisconfigured:  payload.RepoTargetMisconfigured,
 		RepoTargetIssue:          sanitizeProseField(payload.RepoTargetIssue),
 		StatusFlipping:           s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
-		GitHubAppID:              payload.GitHubAppID,
-		GitHubAppSlug:            payload.GitHubAppSlug,
-		GitHubInstallationID:     payload.GitHubInstallationID,
-		GitHubAPIURL:             payload.GitHubAPIURL,
-		GitHubBaseURL:            payload.GitHubBaseURL,
-		PendingGitHubAppInstall:  payload.PendingGitHubAppInstall,
+		// Asked with the SAME expression that fills GitHash above, so the
+		// detector sees exactly the value the upgrade comparison will later
+		// find missing - not the raw payload field, which could be non-empty
+		// yet sanitize away to nothing.
+		VersionAbsent:           s.noteVersionAbsent(payload.HiveID, shortSHA(sanitizeHeartbeatField(payload.GitHash))),
+		GitHubAppID:             payload.GitHubAppID,
+		GitHubAppSlug:           payload.GitHubAppSlug,
+		GitHubInstallationID:    payload.GitHubInstallationID,
+		GitHubAPIURL:            payload.GitHubAPIURL,
+		GitHubBaseURL:           payload.GitHubBaseURL,
+		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
 				return time.Now()
