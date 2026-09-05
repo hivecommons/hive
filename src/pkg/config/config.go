@@ -952,6 +952,20 @@ type AgentConfig struct {
 	enabledSet bool
 	// name is the YAML map key, set during config load
 	name string
+	// sourceFile is the per-agent overlay file this entry was read from
+	// (e.g. /data/agent-configs/supervisor.yaml), empty when the entry came
+	// from the main config. Validation errors quote it so an operator is told
+	// WHICH of the several possible sources defined the offending value
+	// (#6024): hive.yaml, the ConfigMap seed and the overlay directory all
+	// feed the same agent map, and naming only the agent sent an operator
+	// hunting through files that were never the problem.
+	sourceFile string
+}
+
+// SourceFile returns the per-agent overlay file this entry was loaded from,
+// or "" when it came from the main config.
+func (a *AgentConfig) SourceFile() string {
+	return a.sourceFile
 }
 
 // Name returns the human-readable YAML key for this agent.
@@ -4052,6 +4066,12 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("loading agent overlays: %w", err)
 		}
+		// Drop only the offending overlay, never the whole config (#6024).
+		// This must happen BEFORE the merge: once a bad entry is in cfg.Agents
+		// the later validate() fails the load and the process exits before the
+		// dashboard binds, which is precisely the trap - the only supported fix
+		// is an API served by the process that will not start.
+		overlays = cfg.RejectInvalidAgentOverlays(overlays)
 		cfg.MergeAgentOverrides(overlays)
 		// Re-apply defaults for overlay agents.
 		for name := range overlays {
@@ -5093,6 +5113,22 @@ func (g GovernorConfig) ValidateLaunchCmdBackend(backend, launchCmd string) erro
 	return nil
 }
 
+// agentSourceLabel renders an agent's name for a validation error, naming the
+// per-agent overlay file it came from when there is one (#6024).
+//
+// "agent supervisor" alone is ambiguous: hive.yaml, the ConfigMap seed, the
+// dashboard overlay and /data/agent-configs/<name>.yaml all land in the same
+// agent map, so an operator reading the crash message has no way to know which
+// file to edit - and the overlay directory is the one they are least likely to
+// look in. "agent supervisor (from /data/agent-configs/supervisor.yaml)" turns
+// an 8-hour hunt into a single edit.
+func agentSourceLabel(name, sourceFile string) string {
+	if sourceFile == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (from %s)", name, sourceFile)
+}
+
 // isGatewayName reports whether backend names a configured model gateway,
 // matched case-insensitively to mirror ResolveGateway.
 func (g GovernorConfig) isGatewayName(backend string) bool {
@@ -5170,14 +5206,14 @@ func (c *Config) validate() error {
 		// routes that agent through it, matched case-insensitively to mirror
 		// ResolveGateway.
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
-			return fmt.Errorf("agent %s: %w", name, err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
 		}
 		// A launch_cmd that confidently launches a DIFFERENT backend than the
 		// declared one is rejected here, at load/save time, instead of being
 		// accepted silently and producing an agent that is launched as one CLI
 		// but judged as another and relaunched as "hung" forever (#5921).
 		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
-			return fmt.Errorf("agent %s: %w", name, err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
 		}
 		if !ValidateCavemanMode(agent.CavemanMode) {
 			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)

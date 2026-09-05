@@ -1022,6 +1022,15 @@ func main() {
 		fmt.Printf("hive %s (commit %s, branch %s)\n", version, gitShort, gitBranch)
 		return
 	}
+	// `hive validate` / `hive --config-check`: load the config exactly as a real
+	// boot does - agent overlays included, since an overlay file is what bricked
+	// a spoke in #6024 - report the first error, and exit non-zero WITHOUT
+	// starting anything. Before this the only way to learn a config was invalid
+	// was to watch a pod crash-loop. Handled here, ahead of flag.Parse, for the
+	// same reason --version is: it takes its own flag set.
+	if len(os.Args) > 1 && (os.Args[1] == "validate" || os.Args[1] == "--config-check") {
+		os.Exit(runConfigCheck(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
 	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {

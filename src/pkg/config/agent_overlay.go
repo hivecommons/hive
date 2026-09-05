@@ -42,9 +42,72 @@ func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
 			return nil, fmt.Errorf("parsing agent file %s: %w", path, err)
 		}
 		agent.Managed = true
+		agent.sourceFile = path
 		agents[name] = agent
 	}
 	return agents, nil
+}
+
+// RejectInvalidAgentOverlays drops every overlay entry that cannot pass
+// validation, returning the survivors. It is the blast-radius fix for #6024: a
+// single contradictory per-agent file used to fail the whole config load, and
+// because the process exits before the dashboard binds, the documented API fix
+// (PUT /api/config/agent/{name}/...) was unreachable. One bad overlay bricked
+// the entire hive with no supported way back in.
+//
+// Skipping means the OVERLAY is discarded, not the agent: the main config's
+// entry for that name survives untouched and the agent keeps running on it, so
+// the set of agents that run does not change. Only when no base entry exists is
+// the agent genuinely absent - and in that case it could never have started
+// with this config anyway.
+//
+// Every skip is logged at ERROR naming both the agent and the file, because
+// the config the hive is running is now knowingly not the config on disk.
+func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map[string]AgentConfig {
+	if len(overlays) == 0 {
+		return overlays
+	}
+	kept := make(map[string]AgentConfig, len(overlays))
+	for name, agent := range overlays {
+		if err := c.validateAgentOverlay(name, agent); err != nil {
+			_, hasBase := c.Agents[name]
+			slog.Default().Error("config: rejected invalid per-agent overlay file - the hive is booting WITHOUT it so its dashboard stays reachable; fix the file or the agent via the dashboard API (#6024)",
+				"hive_id", c.HiveID,
+				"agent", name,
+				"file", agent.sourceFile,
+				"error", err.Error(),
+				"fell_back_to_base_config", hasBase,
+			)
+			continue
+		}
+		kept[name] = agent
+	}
+	return kept
+}
+
+// validateAgentOverlay runs the per-agent gates that an overlay file can
+// realistically violate. Deliberately the same calls validateAgents makes, so
+// a file rejected here is exactly a file that would have failed the whole load.
+func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
+	if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
+		return err
+	}
+	if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
+		return err
+	}
+	if !ValidateCavemanMode(agent.CavemanMode) {
+		return fmt.Errorf("invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", agent.CavemanMode)
+	}
+	if !ValidateExplainMode(agent.ExplainMode) {
+		return fmt.Errorf("invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", agent.ExplainMode, ExplainModeEnvVar)
+	}
+	if err := validateChannels(name, agent.Channels); err != nil {
+		return err
+	}
+	if err := validateTools(name, agent.Tools); err != nil {
+		return err
+	}
+	return validateConnections(name, agent.Connections)
 }
 
 // MergeAgentOverrides merges overlay agents into the config's agent map.
@@ -138,6 +201,7 @@ func SaveAgentFile(dir, name string, agent AgentConfig) error {
 	// Don't persist internal-only fields
 	agent.Managed = false
 	agent.name = ""
+	agent.sourceFile = ""
 	agent.clearOnKickSet = false
 
 	data, err := yaml.Marshal(&agent)
