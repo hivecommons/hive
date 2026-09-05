@@ -1,11 +1,20 @@
 package spoke
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
+	GitHubAppTokenStatusOK      = "ok"
+	GitHubAppTokenStatusStale   = "stale"
+	GitHubAppTokenStatusMissing = "missing"
+	GitHubAppTokenStatusError   = "error"
+	GitHubAppTokenStaleAfter    = 45 * time.Minute
+
 	agentStatePaused   = "paused"
 	routeBaseDashboard = "hive-dashboard"
 	maxPayloadBytes    = 1 << 20
@@ -27,4 +36,9 @@ func imageTagOf(ref string) string {
 		return ""
 	}
 	return ref[colon+1:]
+}
+
+func HashDashboardToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
