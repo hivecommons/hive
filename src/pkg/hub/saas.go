@@ -14089,7 +14089,6 @@ const dashboardHTML = `<!DOCTYPE html>
         ['online', 'Online', '', true],
         ['offline', 'Offline', 'warn', true],
         ['pool_available', 'Pool', '', false],
-        ['assigned_unclaimed', 'Unclaimed', 'warn', false],
         ['provisioning', 'Provisioning', '', false],
         ['upgrading', 'Upgrading', '', false],
         ['upgrade_failed', 'Upgrade failed', 'bad', false],
