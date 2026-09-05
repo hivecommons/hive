@@ -22,9 +22,15 @@ func TestMinInt(t *testing.T) {
 	}
 }
 
+func withMissingK8sToken(t *testing.T) {
+	t.Helper()
+	oldTokenPath := k8sTokenPath
+	k8sTokenPath = "testdata/missing-serviceaccount-token"
+	t.Cleanup(func() { k8sTokenPath = oldTokenPath })
+}
+
 func TestK8sAPIGetNoToken(t *testing.T) {
-	// In the test environment the service-account token file does not exist,
-	// so k8sAPIGet fails at the very first step (reading the SA token).
+	withMissingK8sToken(t)
 	_, err := k8sAPIGet("/api/v1/nodes")
 	if err == nil {
 		t.Error("expected error when SA token missing")
@@ -32,6 +38,7 @@ func TestK8sAPIGetNoToken(t *testing.T) {
 }
 
 func TestCollectClusterHealthNoCluster(t *testing.T) {
+	withMissingK8sToken(t)
 	// Reset the package cache so we exercise the uncached path.
 	cachedClusterHealthMu.Lock()
 	cachedClusterHealth = nil

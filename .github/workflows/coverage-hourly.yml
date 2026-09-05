@@ -158,6 +158,19 @@ jobs:
             [sandbox]=98
             [pushbroker]=99
 
+            # ── Stale module-path parser repaired on v5 (#6066) ─────────────
+            # These packages were pre-existing below-default floors that became
+            # visible again when the v2-tests coverage classifier was corrected
+            # from the old github.com/kubestellar/hive module path to
+            # github.com/hivecommons/hive. Record their current ceilings so the
+            # parser fix can gate new packages (pkg/effects, pkg/hub/spoke)
+            # without turning unrelated backlog into a blocker.
+            [mutation]=86   # 86.7% on PR #6076
+            [webstatic]=88  # 88.9% on PR #6076
+            [automerge]=88  # 88.6% on PR #6076
+            [mint]=89       # 89.1% on PR #6076
+            [turn]=87       # 87.1% on PR #6076
+
             # ── ./cmd/... floors (#4701) ─────────────────────────────────────
             # CI never ran ./cmd/... at all before #4701 — four cmd/bd tests
             # were merged already-failing and stayed red undetected. cmd keys
