@@ -3091,8 +3091,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			}
 			tail := filtered[tailStart:]
 			showsLogin := paneShowsLoginPrompt(tail)
+			bobKeyRejected := effectiveBackend(agent) == bobBackend && paneShowsBobAPIKeyRejected(tail)
 			quotaExhausted := paneShowsQuotaExhausted(tail)
-			if showsLogin {
+			if showsLogin || bobKeyRejected {
+				showsLogin = true
 				loginStreak++
 			} else {
 				loginStreak = 0
@@ -3197,6 +3199,19 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 					}()
 					return // stop polling; Restart will spawn a new goroutine
 				}
+			}
+
+			if bobKeyRejected {
+				agent.LastError = startFailureReason(bobBackend, StartFailureCredentialRejected, "")
+				m.mu.Lock()
+				delay, blocked := m.recordStartFailureLocked(agent, bobBackend, StartFailureCredentialRejected, "")
+				m.mu.Unlock()
+				m.logger.Warn("bob API key rejected; automatic restart suppressed by start-failure backoff",
+					"agent", agent.Name,
+					"blocked", blocked,
+					"retry_in", delay.Round(time.Second).String(),
+				)
+				return
 			}
 
 			// Detect fatal TLS/network errors that leave the agent visually
@@ -7429,6 +7444,20 @@ func paneShowsQuotaExhausted(lines []string) bool {
 // This is the same shape as lineHasLoginDirective's existing guard: that one
 // exists so "POST /login returns 302" is not read as a login screen. Claude
 // Code's error decoration is the same class of false positive.
+func paneShowsBobAPIKeyRejected(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "api key verification failed") &&
+			(strings.Contains(lower, "invalid or expired api key") || strings.Contains(lower, "http 401") || strings.Contains(lower, "unauthorized")) {
+			return true
+		}
+		if strings.Contains(lower, "failed to fetch user profile") && strings.Contains(lower, "http 401") {
+			return true
+		}
+	}
+	return false
+}
+
 func paneShowsLoginPrompt(lines []string) bool {
 	for _, line := range lines {
 		// An upstream authorization failure is not a login prompt, whatever

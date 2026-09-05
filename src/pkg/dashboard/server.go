@@ -2950,6 +2950,9 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
 	}
+	if backend == "bob" && proc.StartFailureClass == string(agent.StartFailureCredentialRejected) {
+		return true
+	}
 	// METHOD GATE. An inference backend (litellm/vllm/llm-d) authenticates with
 	// an API key supplied by config — there is no interactive login and so no
 	// "needs login" state an operator could act on. Checking this BEFORE the

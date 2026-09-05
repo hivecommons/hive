@@ -148,7 +148,7 @@ new value at the same time.
 | `HIVE_VLLM_MODELS` | No | static fallback aliases | Comma-separated vLLM model IDs used when discovery returns none. |
 | `HIVE_LLMD_MODELS` | No | static fallback aliases | Comma-separated llm-d model IDs used when discovery returns none. |
 | `HIVE_LITELLM_MODELS` | No | static fallback aliases | Comma-separated LiteLLM model IDs used when discovery returns none. |
-| `HIVE_BOB_API_KEY` | Required only for Bob agents in pods unless a key file is mounted or saved on `/data` | `/secrets/bob_api_key` or `/data/secrets/bob_api_key` may be used first | Hive-side Bob API key source. The value is injected into Bob as `BOBSHELL_API_KEY`. |
+| `HIVE_BOB_API_KEY` | Required only for Bob agents in pods unless a key file is mounted or saved on `/data` | `/secrets/bob_api_key` or `/data/secrets/bob_api_key` may be used first | Hive-side Bob API key source. The value is injected into Bob as `BOBSHELL_API_KEY`; Bob HTTP 401 / invalid-or-expired verification failures are surfaced as credential refresh / login-required problems. |
 | `HIVE_BOB_API_URL` | No | `https://api.us-east.bob.ibm.com` | Bob key-test endpoint base URL override. |
 | `BOBSHELL_API_KEY` | Required by Bob CLI when Hive injects or contributor mode uses Bob | none | API key name read by bobshell itself. |
 | `COPILOT_GITHUB_TOKEN` | No | dashboard device-flow token file, if present | Copilot completion/model-discovery token and explicit agent injection. |

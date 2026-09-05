@@ -140,6 +140,12 @@ func TestAgentCLIUnauthenticated(t *testing.T) {
 	if agentCLIUnauthenticated(p, nil) {
 		t.Fatal("nil auth probe must not count as need-login")
 	}
+	// Bob API-key rejection is a credential/login problem even while the key file exists.
+	p = &agent.AgentProcess{Config: config.AgentConfig{Backend: "bob"}, StartFailureClass: string(agent.StartFailureCredentialRejected)}
+	if !agentCLIUnauthenticated(p, authFor(map[string][2]bool{"bob": {true, true}})) {
+		t.Fatal("Bob rejected API key must count as need-login instead of down")
+	}
+
 	// BackendOverride wins over the configured backend, mirroring buildAgents.
 	p = &agent.AgentProcess{
 		Config:          config.AgentConfig{Backend: "claude"},
