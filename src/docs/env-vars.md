@@ -70,6 +70,15 @@ to) is an opaque shared secret. The server does **not** enforce any format:
   credential used by the local proxy. Treat it like a root password for the
   hive. On direct-route or hub-proxied spokes identity is per-user and the
   shared token is server-to-server only.
+- **Transport**: clients must send the shared token in the `Authorization`
+  header (`Bearer <token>` or the raw token value for legacy API clients).
+  `?token=` query-string credentials are rejected because URLs are routinely
+  recorded in ingress/access logs, browser history, screenshots, and shared
+  links. Browser terminal opens first POST to `/api/terminal/handoff` with the
+  caller's normal Authorization header or session cookie, then navigate with a
+  short-lived single-use `code` that cannot be replayed. If a new spoke returns
+  `401` for an old `?token=` terminal/log URL, upgrade the hub or client that
+  generated that link.
 - **Empty value**: leaving it unset leaves the dashboard API unauthenticated
   (unless direct-route per-user authorization is configured). Never deploy an
   internet-reachable hive without it.

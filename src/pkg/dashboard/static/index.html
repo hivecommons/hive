@@ -4569,9 +4569,9 @@
             ? pausedAgentActionHtml(a)
             : `<button class="btn-toggle ${isOff ? 'off' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="false" title="${esc(agentToggleTitle(a, false, isOff))}">${isOff ? '▶ start' : '⏸ pause'}</button>`}
           ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>`)}
-          ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>`)}
-          ${sessionChip(a, '⬇ log', `<a href="${fullLogUrl(a.name, true)}" download class="terminal-link" title="Download the full retained log of this agent's latest run as a text file">⬇ log</a>`)}
-          <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" title="Browse archived logs of this agent's previous kicks — history survives restarts and hive upgrades">🕘 past kicks</a>
+          ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>`)}
+          ${sessionChip(a, '⬇ log', `<a href="${fullLogUrl(a.name, true)}" download class="terminal-link" data-action="openAuthenticatedLink" title="Download the full retained log of this agent's latest run as a text file">⬇ log</a>`)}
+          <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Browse archived logs of this agent's previous kicks — history survives restarts and hive upgrades">🕘 past kicks</a>
           <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
           <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" style="font-size:1rem;opacity:0.7" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
           <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" style="margin-left:auto" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
@@ -6090,12 +6090,12 @@
     const TMUX_SESSION_PREFIX = 'hive-';
     const TTYD_PORT = 7681;
     const TERMINAL_ASSERTION_RENEW_PATH = '/api/terminal/assertion/renew';
+    const TERMINAL_HANDOFF_PATH = '/api/terminal/handoff';
     function terminalUrl(agentName) {
       const session = TMUX_SESSION_PREFIX + agentName;
       const proto = window.location.protocol;
       const host = window.location.host;
-      const t = localStorage.getItem('hive-token'); const tokenParam = t ? `&token=${encodeURIComponent(t)}` : '';
-      return `${proto}//${host}/terminal/?arg=${encodeURIComponent(session)}${tokenParam}`;
+      return `${proto}//${host}/terminal/?arg=${encodeURIComponent(session)}`;
     }
     function isHostedHiveHost() {
       return (window.location.hostname || '').toLowerCase().endsWith('.hive.kubestellar.io');
@@ -6116,6 +6116,34 @@
         showToast('Could not refresh terminal access: ' + e.message, 'error');
       }
       return false;
+    }
+
+    async function dashboardTokenConfigured() {
+      try {
+        const r = await fetch('/api/auth/token', { cache: 'no-store' });
+        if (!r.ok) return true;
+        const d = await r.json().catch(() => ({}));
+        return d.configured === true || d.configured === 'true';
+      } catch {
+        return true;
+      }
+    }
+
+    async function createTerminalHandoff() {
+      try {
+        const resp = await fetch(TERMINAL_HANDOFF_PATH, {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        if (!data.code) throw new Error('server returned no handoff code');
+        return data.code;
+      } catch (e) {
+        showToast('Could not prepare terminal access: ' + (e.message || e), 'error');
+        return '';
+      }
     }
     /* A DISABLED agent (enabled:false) is never started, so it has no tmux
        session and no pane to capture. Its ▶ terminal dead-ends on
@@ -6358,15 +6386,69 @@
     }
 
     async function openTerminal(agentName, href) {
-      const url = href || terminalUrl(agentName);
+      const baseUrl = href || terminalUrl(agentName);
       const tab = window.open('about:blank', '_blank');
       if (tab) tab.opener = null;
-      const ok = await renewTerminalAssertion();
-      if (ok) {
-        if (tab) tab.location.href = url;
-        else window.open(url, '_blank', 'noopener');
+      await renewTerminalAssertion();
+      // Token-secured self-hosted hives do not have a hive_session cookie for
+      // assertion renewal, but the handoff POST authenticates with the
+      // Authorization header that the fetch wrapper attaches to mutations.
+      const code = await createTerminalHandoff();
+      if (code) {
+        const url = new URL(baseUrl, window.location.href);
+        url.searchParams.set('code', code);
+        if (tab) tab.location.href = url.toString();
+        else window.open(url.toString(), '_blank', 'noopener');
+      } else if (!(await dashboardTokenConfigured())) {
+        if (tab) tab.location.href = baseUrl;
+        else window.open(baseUrl, '_blank', 'noopener');
       } else if (tab) {
         tab.close();
+      }
+    }
+
+
+    window.hiveOpenAuthenticatedChildLink = function(href, download) {
+      const url = new URL(href, window.location.href).toString();
+      openAuthenticatedLink(url, download);
+    };
+    async function openAuthenticatedLink(href, download) {
+      try {
+        const headers = {};
+        const t = localStorage.getItem('hive-token');
+        if (t) headers['Authorization'] = 'Bearer ' + t;
+        const resp = await fetch(href, { credentials: 'same-origin', cache: 'no-store', headers });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const contentType = resp.headers.get('Content-Type') || '';
+        if (!download && contentType.includes('text/html')) {
+          const html = await resp.text();
+          const tab = window.open('about:blank', '_blank');
+          if (!tab) throw new Error('popup blocked');
+          tab.document.open();
+          tab.document.write(html + `<script>(function(){document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href')||'';if(h.indexOf('/api/agents/')===0&&window.opener&&window.opener.hiveOpenAuthenticatedChildLink){e.preventDefault();window.opener.hiveOpenAuthenticatedChildLink(h,a.href.indexOf('download=1')!==-1);}});})();<\/script>`);
+          tab.document.close();
+          return;
+        }
+        const blob = await resp.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        if (download) {
+          const a = document.createElement('a');
+          a.href = objectUrl;
+          a.download = '';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+        } else {
+          const tab = window.open(objectUrl, '_blank', 'noopener');
+          if (!tab) {
+            URL.revokeObjectURL(objectUrl);
+            throw new Error('popup blocked');
+          }
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+        }
+      } catch (e) {
+        showToast('Could not open link: ' + (e.message || e), 'error');
       }
     }
 
@@ -6374,28 +6456,24 @@
     // full retained tmux scrollback (issue #3693). The live "▶ terminal" only
     // shows the last screenful; this returns the whole latest-run buffer as
     // plain, selectable, searchable text. download=1 makes the browser save it
-    // as a .log file instead of rendering it inline. The token param mirrors
-    // terminalUrl so it authenticates on direct-route spokes.
+    // as a .log file instead of rendering it inline. Dashboard navigations never
+    // carry the shared token in the URL; token-secured spokes use
+    // authenticated fetches for API calls instead.
     function fullLogUrl(agentName, download) {
       const proto = window.location.protocol;
       const host = window.location.host;
-      const t = localStorage.getItem('hive-token');
       const dl = download ? 'download=1' : '';
-      const tok = t ? `token=${encodeURIComponent(t)}` : '';
-      const qs = [dl, tok].filter(Boolean).join('&');
-      return `${proto}//${host}/api/agents/${encodeURIComponent(agentName)}/log${qs ? '?' + qs : ''}`;
+      return `${proto}//${host}/api/agents/${encodeURIComponent(agentName)}/log${dl ? '?' + dl : ''}`;
     }
 
     // kickHistoryUrl points at the server-rendered index of the agent's
     // durable per-kick log archives (issue #4296): the last several kicks'
-    // logs, surviving agent restarts and hive upgrades. The token param
-    // mirrors fullLogUrl so it authenticates on direct-route spokes.
+    // logs, surviving agent restarts and hive upgrades. Dashboard navigations never
+    // carry the shared token in the URL.
     function kickHistoryUrl(agentName) {
       const proto = window.location.protocol;
       const host = window.location.host;
-      const t = localStorage.getItem('hive-token');
-      const tok = t ? `?token=${encodeURIComponent(t)}` : '';
-      return `${proto}//${host}/agents/${encodeURIComponent(agentName)}/kicks${tok}`;
+      return `${proto}//${host}/agents/${encodeURIComponent(agentName)}/kicks`;
     }
 
     /* SINGLE source of truth for the 🔑 "needs login" badge. Mirrors the
@@ -6602,7 +6680,7 @@
         const disabledBadge = agentIsDisabled(a) ? ` <span class="status-badge disabled" title="Disabled in config — the governor never starts this agent. Configure it with the gear to enable.">disabled</span>` : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${disabledBadge}${replicaBadge} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${disabledBadge}${replicaBadge} ${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name)}
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
@@ -14626,6 +14704,7 @@ function burnAreaChart() {
         case 'kick': kick(agent); break;
         case 'kickEmpty': { const inp = document.getElementById('kick-prompt-' + agent); if (inp) inp.value = ''; kick(agent); } break;
         case 'openTerminal': e.preventDefault(); openTerminal(agent, el.href); break;
+        case 'openAuthenticatedLink': e.preventDefault(); openAuthenticatedLink(el.href, el.hasAttribute('download')); break;
         case 'copyTerminalUrl': e.stopPropagation(); copyTerminalUrl(agent); break;
         case 'submitLoginCode': e.stopPropagation(); submitLoginCode(agent); break;
         case 'showTerminalKeyboardHint': e.stopPropagation(); showTerminalKeyboardHint(); break;

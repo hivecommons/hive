@@ -10,7 +10,7 @@ The proxy listens on `HIVE_PROXY_PORT` (default `3001`) and forwards API traffic
 
 For mutating `/api` requests, the proxy requires a bearer token when `HIVE_DASHBOARD_TOKEN` is set. It strips user-supplied `X-Hive-User`, `X-Hive-Role`, and `X-Hive-Internal` headers before proxying and injects `X-Hive-Internal` itself for trusted API calls. This prevents a browser client from forging dashboard-internal identity headers.
 
-Hosted terminal access (`*.hive.kubestellar.io`) requires the hub user cookie. Non-hosted terminal WebSockets require the dashboard token query parameter when a token is configured.
+Terminal access requires either the hosted hub identity cookie plus per-hive authorization, or a spoke-minted `hive_terminal_assertion` cookie prepared by the Go dashboard. The shared dashboard token is never accepted from `?token=` terminal URLs; token-secured browser clients must call `/api/terminal/handoff` with the normal Authorization header before navigating to `/terminal`.
 
 ## Security headers
 

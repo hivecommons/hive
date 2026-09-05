@@ -299,7 +299,11 @@ header, using either the `Bearer <token>` scheme (hosted clients) or the
 legacy `token <token>` scheme (what `gh auth token` and older hive CLIs
 send). Both are accepted; the legacy scheme is retained for backward
 compatibility. Credentials in the query string (`?token=`) are NOT supported
-and are rejected, because query strings land in ingress and access logs.
+and are rejected, because query strings land in ingress and access logs. The
+same rule applies to the shared dashboard owner token: send it in the
+`Authorization` header, not in URLs. Dashboard terminal links use
+`/api/terminal/handoff` to mint a ≤60-second single-use `code` for the browser
+navigation instead of putting the owner token in the terminal URL.
 
 Authorization: every `/api/v1` path except `/api/v1/me` additionally requires
 the caller to be in the hive's authorized-users allowlist (any role), and

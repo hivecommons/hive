@@ -25,14 +25,15 @@ type terminalFixture struct {
 	server *httptest.Server
 
 	// captured from the upgrade request
-	path      string
-	query     string
-	authz     string
-	cookie    string
-	subproto  string
-	arg       string
-	initMsg   chan []byte // the first (JSON) client message
-	clientMsg chan []byte // every subsequent client message, command byte included
+	path         string
+	query        string
+	authz        string
+	cookie       string
+	subproto     string
+	arg          string
+	handoffAuthz string
+	initMsg      chan []byte // the first (JSON) client message
+	clientMsg    chan []byte // every subsequent client message, command byte included
 
 	// serverSend queues frames for the handler to write to the client.
 	serverSend chan []byte
@@ -51,6 +52,12 @@ func newTerminalFixture(t *testing.T, refuse int) *terminalFixture {
 	}
 	upgrader := websocket.Upgrader{Subprotocols: []string{"tty"}}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/terminal/handoff" {
+			f.handoffAuthz = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":"handoff-123"}`))
+			return
+		}
 		f.path = r.URL.Path
 		f.query = r.URL.RawQuery
 		f.authz = r.Header.Get("Authorization")
@@ -122,12 +129,12 @@ func (f *terminalFixture) recv(t *testing.T) []byte {
 }
 
 // TestDialTerminalPresentsEveryCredentialLane pins the three-lane handshake:
-// the shared token in the QUERY (the only place the Node proxy's websocket
-// gate reads it, and a place the Go server accepts), the session cookie
-// verbatim, and ttyd's own basic-auth credential — derived exactly as the
-// entrypoint derives it, hive:<token> — in the Authorization header. Getting
-// any lane wrong locks out one deployment shape while the others keep
-// working, which is precisely the class of bug a test must pin per lane.
+// dashboard Authorization on the handoff POST, a short-lived handoff code in
+// the websocket query, the session cookie verbatim, and ttyd's own basic-auth
+// credential — derived exactly as the entrypoint derives it, hive:<token> — in
+// the Authorization header. Getting any lane wrong locks out one deployment
+// shape while the others keep working, which is precisely the class of bug a
+// test must pin per lane.
 func TestDialTerminalPresentsEveryCredentialLane(t *testing.T) {
 	f := newTerminalFixture(t, 0)
 	const token = "tok-123"
@@ -145,8 +152,14 @@ func TestDialTerminalPresentsEveryCredentialLane(t *testing.T) {
 	if f.arg != "hive-scanner" {
 		t.Errorf("?arg = %q, want hive-scanner", f.arg)
 	}
-	if !strings.Contains(f.query, "token="+token) {
-		t.Errorf("query %q does not carry the dashboard token", f.query)
+	if strings.Contains(f.query, "token=") {
+		t.Errorf("query %q leaked the dashboard token", f.query)
+	}
+	if !strings.Contains(f.query, "code=handoff-123") {
+		t.Errorf("query %q does not carry the terminal handoff code", f.query)
+	}
+	if f.handoffAuthz != "Bearer "+token {
+		t.Errorf("handoff Authorization = %q, want bearer dashboard token", f.handoffAuthz)
 	}
 	if f.cookie != cookie {
 		t.Errorf("Cookie = %q, want %q (verbatim)", f.cookie, cookie)

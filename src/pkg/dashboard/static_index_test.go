@@ -162,6 +162,11 @@ func TestStaticTerminalLinksRenewAssertionBeforeOpening(t *testing.T) {
 	html := string(body)
 	for _, want := range []string{
 		"const TERMINAL_ASSERTION_RENEW_PATH = '/api/terminal/assertion/renew';",
+		"const TERMINAL_HANDOFF_PATH = '/api/terminal/handoff';",
+		"async function createTerminalHandoff()",
+		"async function dashboardTokenConfigured()",
+		"async function openAuthenticatedLink",
+		"case 'openAuthenticatedLink': e.preventDefault();",
 		"async function renewTerminalAssertion()",
 		"credentials: 'same-origin'",
 		"case 'openTerminal': e.preventDefault(); openTerminal(agent, el.href); break;",
@@ -174,5 +179,8 @@ func TestStaticTerminalLinksRenewAssertionBeforeOpening(t *testing.T) {
 	}
 	if strings.Contains(html, "window.open(terminalUrl(name), '_blank', 'noopener');") {
 		t.Fatal("welcome terminal action still opens /terminal directly without renewing the assertion")
+	}
+	if strings.Contains(html, "token=${encodeURIComponent(t)}") || strings.Contains(html, "tokenParam") {
+		t.Fatal("static dashboard still appends the shared token to URLs")
 	}
 }

@@ -269,6 +269,11 @@ let any holder act as an owner and defeat the per-hive allowlist. Those hives
 identify callers by the `hive_session` cookie the GitHub device-flow login
 mints, resolved on every request against the live allowlist.
 
+Terminal attach never appends the shared token to `/terminal` URLs. When a
+shared-token hive needs a browser/WebSocket terminal open, the client first
+posts to `/api/terminal/handoff` with the normal Authorization header and uses
+the returned short-lived single-use `code` in the terminal URL.
+
 `HIVE_DASHBOARD_COOKIE` is a **cookie header value**, not a bare session id —
 the same string a browser would send:
 

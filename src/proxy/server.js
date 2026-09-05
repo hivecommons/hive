@@ -888,7 +888,7 @@ const apiProxy = createProxyMiddleware({
       }
     },
     error(err, req, res) {
-      console.error(`[proxy] ${req.method} ${req.url} → ${err.message}`);
+      console.error(`[proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
       if (res.writeHead) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Go API unavailable', detail: err.message }));
@@ -947,7 +947,7 @@ app.use('/gh-setup', createProxyMiddleware({
   pathRewrite: (p) => '/gh-setup' + p.replace(/^\/(?=\?|$)/, ''),
   on: {
     error(err, req, res) {
-      console.error(`[gh-setup-proxy] ${req.method} ${req.url} → ${err.message}`);
+      console.error(`[gh-setup-proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
       if (res.writeHead) {
         res.writeHead(502, { 'Content-Type': 'text/plain' });
         res.end('GitHub App setup endpoint unavailable');
@@ -955,6 +955,43 @@ app.use('/gh-setup', createProxyMiddleware({
     },
   },
 }));
+
+function stripSensitiveTerminalQuery(rawUrl) {
+  try {
+    const u = new URL(rawUrl, 'http://hive.local');
+    u.searchParams.delete('token');
+    u.searchParams.delete('code');
+    return u.pathname + (u.search ? u.search : '');
+  } catch {
+    return String(rawUrl || '').replace(/([?&])(token|code)=[^&]*/gi, '$1$2=[redacted]');
+  }
+}
+
+function redactURL(rawUrl) {
+  try {
+    const u = new URL(rawUrl, 'http://hive.local');
+    if (u.searchParams.has('token')) u.searchParams.set('token', '[redacted]');
+    if (u.searchParams.has('code')) u.searchParams.set('code', '[redacted]');
+    return u.pathname + (u.search ? u.search : '');
+  } catch {
+    return String(rawUrl || '').replace(/([?&])(token|code)=[^&]*/gi, '$1$2=[redacted]');
+  }
+}
+
+
+const terminalGoProxy = createProxyMiddleware({
+  target: GO_API_URL,
+  changeOrigin: true,
+  on: {
+    error(err, req, res) {
+      console.error(`[terminal-go-proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
+      if (res.writeHead) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Terminal handoff endpoint unavailable');
+      }
+    },
+  },
+});
 
 const ttydProxy = createProxyMiddleware({
   target: TTYD_URL,
@@ -969,10 +1006,10 @@ const ttydProxy = createProxyMiddleware({
   // pooling buys nothing here anyway, because the endpoint's real traffic
   // is a single long-lived websocket.
   agent: new httpBase.Agent({ keepAlive: false }),
-  pathRewrite: (p) => p.replace(/^\/terminal/, '') || '/',
+  pathRewrite: (p) => stripSensitiveTerminalQuery(p.replace(/^\/terminal/, '') || '/'),
   on: {
     error(err, req, res) {
-      console.error(`[ttyd-proxy] ${req.method} ${req.url} → ${err.message}`);
+      console.error(`[ttyd-proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
       if (res.writeHead) {
         res.writeHead(502, { 'Content-Type': 'text/plain' });
         res.end('Terminal unavailable');
@@ -981,30 +1018,35 @@ const ttydProxy = createProxyMiddleware({
   },
 });
 app.use('/terminal', (req, res, next) => {
+  if (new URL(req.url, `http://${req.headers.host || 'hive.local'}`).searchParams.has('code')) {
+    req.url = '/terminal' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+    terminalGoProxy(req, res, next);
+    return;
+  }
   const host = req.headers.host || '';
   const isHosted = isHostedHost(host);
-  if (isHosted) {
+  if (isHosted || DASHBOARD_TOKEN) {
     const cookies = parseCookies(req.headers.cookie);
-    // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
-    // signature — a non-empty value is NOT proof of authentication.
+    // SECURITY (CWE-345): terminal access must come from a verified hub cookie
+    // or a spoke-minted terminal assertion. The shared dashboard token is never
+    // accepted from ?token=; URLs are logged by browsers and ingress layers.
     const user = resolveTerminalIdentity(cookies);
     if (!user) {
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
         return;
       }
-      res.status(401).send('Terminal access requires authentication');
+      res.status(401).send('Terminal access requires authentication; upgrade the dashboard client if it generated a ?token= terminal URL');
       return;
     }
-    // SECURITY (CWE-862, finding C3 + follow-up): authentication is hub-WIDE —
-    // the signed hive_hub_user cookie only proves this is some real hub user,
-    // because it is scoped to .hive.kubestellar.io and every hive's domain
-    // receives it. AUTHORIZATION is per-hive. PRIMARY gate: a short-lived signed
-    // {user,hive,role,exp} assertion for THIS hive with a sufficient role.
-    // FALLBACK: the #2756 static allowlist + OpenShift fail-closed. A cookie
-    // authorized on hive A must not open a shell on hive B.
+    // SECURITY (CWE-862, finding C3 + follow-up): PRIMARY gate: a short-lived
+    // signed {user,hive,role,exp} assertion for THIS hive with a sufficient
+    // role. FALLBACK: hosted hub-cookie users go through the #2756 static
+    // allowlist + OpenShift fail-closed path. Token-secured terminal opens are
+    // prepared by /api/terminal/handoff, which mints the assertion cookie before
+    // the browser navigates here.
     if (!authorizeTerminal(user, cookies[TERMINAL_ASSERTION_COOKIE])) {
-      console.warn(`[terminal] 403: hub user ${JSON.stringify(user)} not authorized for hive ${JSON.stringify(HIVE_ID)}`);
+      console.warn(`[terminal] 403: user ${JSON.stringify(user)} not authorized for hive ${JSON.stringify(HIVE_ID)}`);
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
         return;
@@ -1013,6 +1055,7 @@ app.use('/terminal', (req, res, next) => {
       return;
     }
   }
+  req.url = stripSensitiveTerminalQuery(req.url);
   next();
 }, ttydProxy);
 
@@ -1080,6 +1123,10 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
   if (req.url.startsWith('/terminal')) {
+    if (new URL(req.url, `http://${req.headers.host || 'hive.local'}`).searchParams.has('code')) {
+      terminalGoProxy.upgrade(req, socket, head);
+      return;
+    }
     const host = req.headers.host || '';
     const isHosted = isHostedHost(host);
     if (isHosted) {
@@ -1101,16 +1148,15 @@ server.on('upgrade', (req, socket, head) => {
         return;
       }
     } else if (DASHBOARD_TOKEN) {
-      const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
-      const token = params.get('token') || '';
-      const supplied = Buffer.from(token);
-      const expected = Buffer.from(DASHBOARD_TOKEN);
-      if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+      const cookies = parseCookies(req.headers.cookie);
+      const user = resolveTerminalIdentity(cookies);
+      if (!user || !authorizeTerminal(user, cookies[TERMINAL_ASSERTION_COOKIE])) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
     }
+    req.url = stripSensitiveTerminalQuery(req.url);
     ttydProxy.upgrade(req, socket, head);
   }
 });

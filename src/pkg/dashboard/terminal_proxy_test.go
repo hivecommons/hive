@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -9,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub"
 )
 
 // startFakeTtyd runs a local HTTP server standing in for ttyd and points
@@ -37,7 +41,10 @@ func newTerminalTestHandler(t *testing.T, authToken string) http.Handler {
 	if authToken == "" {
 		return NewServer(0, logger).Handler()
 	}
-	return NewServerWithAuth(0, authToken, logger).Handler()
+	t.Setenv(hub.EnvTerminalKey, "terminal-proxy-test-key")
+	s := NewServerWithAuth(0, authToken, logger)
+	s.deps = &Dependencies{Config: &config.Config{HiveID: "terminal-proxy-test"}}
+	return s.Handler()
 }
 
 // The dashboard builds terminal links as /terminal/?arg=hive-<agent> (see
@@ -84,10 +91,10 @@ func TestTerminalProxyPathRewrites(t *testing.T) {
 }
 
 // Terminal access must sit behind the same auth gate as the rest of the
-// dashboard: no credential → 401, and the ?token= the dashboard link appends
-// must be accepted.
+// dashboard: no credential → 401, ?token= is rejected, and a short-lived
+// handoff code minted by an authenticated request is accepted once.
 func TestTerminalProxyAuth(t *testing.T) {
-	startFakeTtyd(t)
+	last := startFakeTtyd(t)
 	const token = "test-terminal-token"
 	h := newTerminalTestHandler(t, token)
 
@@ -99,8 +106,38 @@ func TestTerminalProxyAuth(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/terminal/?arg=hive-quality&token="+token, nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("with ?token=: got %d, want 401 (body %q)", rec.Code, rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, terminalHandoffPath, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("with ?token=: got %d, want 200 (body %q)", rec.Code, rec.Body.String())
+		t.Fatalf("create handoff: got %d (body %q)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Code == "" {
+		t.Fatalf("handoff response did not include code: body=%q err=%v", rec.Body.String(), err)
+	}
+	code := body.Code
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/terminal/?arg=hive-quality&code="+code, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("with handoff code: got %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(*last, "code=") || strings.Contains(*last, "token=") {
+		t.Fatalf("backend saw sensitive query value: %q", *last)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/terminal/?arg=hive-quality&code="+code, nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed handoff code: got %d, want 401", rec.Code)
 	}
 }
 

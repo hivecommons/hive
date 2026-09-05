@@ -1,0 +1,1 @@
+- Stop accepting the shared dashboard owner token from `?token=` URLs; browser terminal links now use authenticated, short-lived single-use handoff codes and query `token`/`code` values are redacted in dashboard request logs.
