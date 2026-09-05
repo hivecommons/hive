@@ -26,8 +26,10 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_SHA` | No | build SHA | Passed to launched agents and used in hub upgrade/status paths. |
 | `HIVE_ADVISORY_ISSUE` | No | none | Passed to launched agents so advisory findings can target a configured issue. |
 | `HIVE_TTYD_PORT` | No | `7681` | Web terminal port used by the entrypoint and terminal proxy. |
-| `HIVE_METRICS_ENABLED` | No | disabled | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. |
+| `HIVE_METRICS_ENABLED` | No | disabled | Enables the Prometheus `/metrics` endpoint when set to `1`, `true`, `yes`, or `on`. The endpoint is unauthenticated unless `HIVE_METRICS_TOKEN` is also set. |
+| `HIVE_METRICS_TOKEN` | No | none | Optional bearer token guarding `/metrics`. When set, scrapes must send an `Authorization` header carrying the token as a bearer credential (configure Prometheus `bearer_token`); when empty, the endpoint stays open for backward compatibility. |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
+| `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` (fail-closed) | Set exactly `true` to allow git knowledge sources whose host resolves to a private/internal address; otherwise the SSRF check rejects them. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
 | `HIVE_PROXY_PROOF_REQUIRED` | No | `false` | Requires the internal proxy proof header when set to `true`. |
 | `HIVE_CONTRIBUTORS_DIR` | No | hub default | Contributor registry directory override. |
@@ -65,6 +67,8 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `ANTHROPIC_API_KEY` | Required by `cmd/apiproxy` unless `PROXY_AUTH_TOKEN` is set; agent inference backends receive a synthetic value | none | Anthropic-compatible API key for apiproxy auth or CLI compatibility. |
 | `PROXY_AUTH_TOKEN` | No | `ANTHROPIC_API_KEY` | Preferred auth token for `cmd/apiproxy`. |
 | `CONTEXT7_API_KEY` | No | none | Optional key for Context7 knowledge API integration. |
+| `CODEX_API_KEY` | No | none | Codex CLI credential; its presence (or `OPENAI_API_KEY`) tells the dashboard auth-state probe that Codex agents are authenticated, suppressing the login-needed badge. |
+| `OPENAI_API_KEY` | No | none | Alternate Codex CLI credential checked by the same auth-state probe. |
 | `GOOSE_PROVIDER` | No | Goose CLI default | Provider passed through Goose backend/model resolution. |
 | `GOOSE_MODEL` | No | Goose CLI default | Model passed through Goose backend/model resolution and contributor relay fallback. |
 | `BD_DIR` | No | current directory | `bd` beads CLI data directory. |
