@@ -162,10 +162,12 @@ type RegistryEntry struct {
 	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
 	// banner. It is separate from BudgetExhausted, which is hive-local governor
 	// budget; this means the upstream provider is refusing token purchases.
-	ProviderLimitReason  string `json:"providerLimitReason,omitempty"`
-	ProviderLimitRebuffs int    `json:"providerLimitRebuffs,omitempty"`
-	PrimaryRepo          string `json:"primaryRepo"`
-	DashboardURL         string `json:"dashboardUrl"`
+	ProviderLimitReason   string   `json:"providerLimitReason,omitempty"`
+	ProviderLimitRebuffs  int      `json:"providerLimitRebuffs,omitempty"`
+	ProviderLimitHiveWide bool     `json:"providerLimitHiveWide,omitempty"`
+	ProviderLimitAgents   []string `json:"providerLimitAgents,omitempty"`
+	PrimaryRepo           string   `json:"primaryRepo"`
+	DashboardURL          string   `json:"dashboardUrl"`
 	// PublicURLSelfCheck is the spoke's own reachability verdict for
 	// DashboardURL. It is intentionally separate from the hub-side probe:
 	// private-network hives may be unreachable from the public hub while alive
@@ -281,6 +283,8 @@ type RegistryEntry struct {
 	GitHubAppTokenStatus     string       `json:"githubAppTokenStatus,omitempty"`
 	GitHubAppTokenLastMintAt string       `json:"githubAppTokenLastMintAt,omitempty"`
 	GitHubAppTokenError      string       `json:"githubAppTokenError,omitempty"`
+	GitHubAppErrorClass      string       `json:"githubAppErrorClass,omitempty"`
+	GitHubAppHTTPStatus      int          `json:"githubAppHttpStatus,omitempty"`
 	RepoTargetMisconfigured  bool         `json:"repoTargetMisconfigured,omitempty"`
 	RepoTargetIssue          string       `json:"repoTargetIssue,omitempty"`
 	// ConflictingReporters names two spoke instances that are BOTH reporting
@@ -1773,15 +1777,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
-		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),
-		GatewayHealth:        sanitizeGatewayHealth(payload.GatewayHealth),
-		ProviderLimitReason:  sanitizeProseField(payload.ProviderLimitReason),
-		ProviderLimitRebuffs: clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
-		DashboardURL:         payload.DashboardURL,
-		PublicURLSelfCheck:   sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
-		RouteExists:          sanitizeRouteExistenceCheck(payload.RouteExists),
-		SnapshotURL:          payload.SnapshotURL,
-		ACMMLevel:            clampInt(payload.ACMMLevel, 0, 6),
+		InferenceAuthError:    sanitizeField(payload.InferenceAuthError),
+		GatewayHealth:         sanitizeGatewayHealth(payload.GatewayHealth),
+		ProviderLimitReason:   sanitizeProseField(payload.ProviderLimitReason),
+		ProviderLimitRebuffs:  clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
+		ProviderLimitHiveWide: payload.ProviderLimitHiveWide,
+		ProviderLimitAgents:   sanitizeAgentNameList(payload.ProviderLimitAgents),
+		DashboardURL:          payload.DashboardURL,
+		PublicURLSelfCheck:    sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
+		RouteExists:           sanitizeRouteExistenceCheck(payload.RouteExists),
+		SnapshotURL:           payload.SnapshotURL,
+		ACMMLevel:             clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {
@@ -1861,6 +1867,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].Restarts.LastRestartAt = sanitizeField(payload.Agents[i].Restarts.LastRestartAt)
 				payload.Agents[i].Restarts.LastReason = sanitizeProseField(payload.Agents[i].Restarts.LastReason)
 				payload.Agents[i].Restarts.PodRestarts = clampInt(payload.Agents[i].Restarts.PodRestarts, 0, 1_000_000)
+				payload.Agents[i].StartBlockedReason = sanitizeProseField(payload.Agents[i].StartBlockedReason)
+				payload.Agents[i].StartFailureReason = sanitizeProseField(payload.Agents[i].StartFailureReason)
+				payload.Agents[i].StartFailureCount = clampInt(payload.Agents[i].StartFailureCount, 0, 1_000_000)
+				payload.Agents[i].StartFailureLastAt = sanitizeField(payload.Agents[i].StartFailureLastAt)
+				payload.Agents[i].StartFailureSignal = sanitizeHeartbeatField(payload.Agents[i].StartFailureSignal)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -1890,6 +1901,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppTokenStatus:     sanitizeHeartbeatField(payload.GitHubAppTokenStatus),
 		GitHubAppTokenLastMintAt: sanitizeField(payload.GitHubAppTokenLastMintAt),
 		GitHubAppTokenError:      sanitizeProseField(payload.GitHubAppTokenError),
+		GitHubAppErrorClass:      sanitizeHeartbeatField(payload.GitHubAppErrorClass),
+		GitHubAppHTTPStatus:      clampInt(payload.GitHubAppHTTPStatus, 0, 599),
 		RepoTargetMisconfigured:  payload.RepoTargetMisconfigured,
 		RepoTargetIssue:          sanitizeProseField(payload.RepoTargetIssue),
 		StatusFlipping:           s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),

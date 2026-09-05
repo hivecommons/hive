@@ -330,11 +330,21 @@ type AgentProcess struct {
 	// Set only on the missing-key branch, cleared on every launch attempt.
 	awaitingBobKey bool
 
-	StartFailureClass  string
-	StartFailureReason string
-	StartFailureCount  int
-	StartBlocked       bool
-	StartBackoffUntil  time.Time
+	// Start-failure record (#5958, incident #5921). StartFailureClass is the
+	// stable kind, StartFailureReason the operator-facing sentence, and
+	// StartFailureCount how many CONSECUTIVE failures of that same class have
+	// happened. StartBlocked is set once the count reaches
+	// startFailureBlockThreshold(); StartBackoffUntil paces the automatic
+	// relaunch loop from the first failure onward. See start_failure.go — the
+	// mechanism deliberately mirrors the ProviderError* fields above.
+	StartFailureClass    string
+	StartFailureReason   string
+	StartFailureCount    int
+	StartFailureLastAt   time.Time
+	StartFailureExitCode *int
+	StartFailureSignal   string
+	StartBlocked         bool
+	StartBackoffUntil    time.Time
 
 	// lastLaunchFailureBanner is the exact in-pane shell line typed by the most
 	// recent aborted launch (see announceLaunchFailureInPane), "" after a

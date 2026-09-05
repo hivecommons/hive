@@ -127,19 +127,19 @@ func TestQuotaExhaustedCountsAndReasons(t *testing.T) {
 }
 
 func TestProviderLimitHeartbeatFields(t *testing.T) {
-	reason, rebuffs := ProviderLimitHeartbeatFields([]AgentSummary{{State: "running", QuotaExhausted: true}}, nil)
+	reason, rebuffs, _, _ := ProviderLimitHeartbeatFields([]AgentSummary{{State: "running", QuotaExhausted: true}}, nil)
 	if rebuffs != 0 || reason != "1 agent(s) out of provider quota" {
 		t.Fatalf("pane quota fallback = %q/%d", reason, rebuffs)
 	}
 
-	reason, rebuffs = ProviderLimitHeartbeatFields(nil, func() (string, time.Time, time.Time, int) {
+	reason, rebuffs, _, _ = ProviderLimitHeartbeatFields(nil, func() (string, time.Time, time.Time, int) {
 		return "credit balance too low", time.Now(), time.Now(), 1
 	})
 	if rebuffs != 1 || reason != "provider spending limit reached — credit balance too low" {
 		t.Fatalf("single rebuff = %q/%d", reason, rebuffs)
 	}
 
-	reason, rebuffs = ProviderLimitHeartbeatFields(nil, func() (string, time.Time, time.Time, int) {
+	reason, rebuffs, _, _ = ProviderLimitHeartbeatFields(nil, func() (string, time.Time, time.Time, int) {
 		return "credit balance too low", time.Now(), time.Now(), 4
 	})
 	if rebuffs != 4 || reason != "provider spending limit reached — 4 refused calls: credit balance too low" {

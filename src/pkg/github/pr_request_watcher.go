@@ -152,7 +152,8 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 	}
 	// Shared with PrepareRequestDirs, which creates this queue unconditionally
 	// at boot so requests can accumulate even before a watcher runs.
-	if !ensureRequestDir(c.logger, "pr", prRequestDir()) {
+	dir := prRequestDir()
+	if !ensureRequestDir(c.logger, "pr", dir) {
 		close(done)
 		return done
 	}
@@ -177,18 +178,22 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 				if ctx.Err() != nil {
 					return
 				}
-				c.processPRRequests(ctx, nowFn)
+				c.processPRRequestsInDir(ctx, nowFn, dir)
 			}
 		}
 	}()
-	c.logger.Info("pr-request watcher started", slog.String("dir", prRequestDir()))
+	c.logger.Info("pr-request watcher started", slog.String("dir", dir))
 	return done
 }
 
 // processPRRequests handles one scan of the request dir. Exported-in-spirit for
 // tests via ProcessPRRequestsOnce.
 func (c *Client) processPRRequests(ctx context.Context, nowFn func() time.Time) {
-	entries, err := os.ReadDir(prRequestDir())
+	c.processPRRequestsInDir(ctx, nowFn, prRequestDir())
+}
+
+func (c *Client) processPRRequestsInDir(ctx context.Context, nowFn func() time.Time, dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
@@ -198,7 +203,7 @@ func (c *Client) processPRRequests(ctx context.Context, nowFn func() time.Time) 
 		if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".result.json") {
 			continue
 		}
-		path := filepath.Join(prRequestDir(), name)
+		path := filepath.Join(dir, name)
 		c.handleOnePRRequest(ctx, path, nowFn)
 	}
 }

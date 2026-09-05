@@ -126,7 +126,8 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 	}
 	// Shared with PrepareRequestDirs, which creates this queue unconditionally
 	// at boot so findings can accumulate even before a watcher runs.
-	if !ensureRequestDir(c.logger, "issue", issueRequestDir()) {
+	dir := issueRequestDir()
+	if !ensureRequestDir(c.logger, "issue", dir) {
 		close(done)
 		return done
 	}
@@ -151,16 +152,20 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 				if ctx.Err() != nil {
 					return
 				}
-				c.processIssueRequests(ctx, nowFn)
+				c.processIssueRequestsInDir(ctx, nowFn, dir)
 			}
 		}
 	}()
-	c.logger.Info("issue-request watcher started", slog.String("dir", issueRequestDir()))
+	c.logger.Info("issue-request watcher started", slog.String("dir", dir))
 	return done
 }
 
 func (c *Client) processIssueRequests(ctx context.Context, nowFn func() time.Time) {
-	entries, err := os.ReadDir(issueRequestDir())
+	c.processIssueRequestsInDir(ctx, nowFn, issueRequestDir())
+}
+
+func (c *Client) processIssueRequestsInDir(ctx context.Context, nowFn func() time.Time, dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
@@ -169,7 +174,7 @@ func (c *Client) processIssueRequests(ctx context.Context, nowFn func() time.Tim
 		if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".result.json") {
 			continue
 		}
-		path := filepath.Join(issueRequestDir(), name)
+		path := filepath.Join(dir, name)
 		c.handleOneIssueRequest(ctx, path, nowFn)
 	}
 }

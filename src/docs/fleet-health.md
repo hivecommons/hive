@@ -88,17 +88,22 @@ shadowed by a shallower one:
 2. **GitHub App broken** — applies when an actual App/auth problem is reported
    or no gateway fault is present. The chip names the specific failure when the
    spoke reported one (for example "GitHub App: repo-not-covered", which needs
-   a different remedy than a bad key).
+   a different remedy than a bad key). New spokes also send the App host,
+   App ID, installation ID, HTTP status, and error class, so token-mint 404s
+   render as an installation mismatch instead of a generic auth failure.
 3. **Provider spending limit reached** — the model provider is refusing
    calls; shown with the refused-call count when known.
 4. **Budget exhausted / budget misconfigured** — the hive's own token budget
    closed the gate (see [the budget signals](#budget-exhausted-vs-budget-misconfigured)).
 5. **Blocked agents** — all blocked agents share one cause when possible:
    "N agent(s) out of provider quota", "N agent(s) stuck at login —
-   re-login needed", "N agent(s) down — restart needed", "N agent(s) idle
-   with work queued", "agent restarts: NAME ×N/24h (reason)", or the generic
-   "N agent(s) blocked". Agent restart storms use the hub threshold
-   `HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD` (default `5`).
+   re-login needed", "starting failed ×N: <reason> (last <age>)",
+   "N agent(s) down — restart needed", "N agent(s) idle with work queued",
+   "agent restarts: NAME ×N/24h (reason)", or the generic "N agent(s)
+   blocked". Agent restart storms use the hub threshold
+   `HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD` (default `5`). Provider quota
+   is counted per named quota-exhausted agent unless the heartbeat explicitly
+   marks the provider limit as hive-wide.
 6. **No agents running** (red) or **all agents paused** (amber — pausing is
    operator choice, not an outage, but queued work will not move until
    someone resumes them).
@@ -263,6 +268,7 @@ For L3-L6 hives, newer spokes add optional heartbeat fields that explain stale w
 | Symptom on `/fleet` | What it means | Fix, and where |
 |---|---|---|
 | "GitHub App broken" / "GitHub App: repo-not-covered" | The hive cannot authenticate to its repo, or the App is installed but this repo is not selected | Install or repair the App; for repo-not-covered, add the repo to the App installation. Follow the row's **open** link, or see [GitHub App setup](github-app-setup.md) |
+| "GitHub App N on HOST: installation M not found (404) …" | The spoke can identify the App/host it used, but GitHub did not find that installation for the App on that host | Reinstall the App for the target account, or fix `github.app_id`, `github.installation_id`, or the GitHub Enterprise host |
 | "GitHub App: repo-moved" | The App installation is healthy, but it covers this hive's repositories under a **different account** — they were transferred to another org | Point the hive's configured organization at the account named in the message. Do **not** add the repo to the old org's installation: it has left that account, so there is nothing there to add |
 | "provider spending limit reached — N refused calls" | The model provider is refusing calls on billing/limit grounds | Raise the provider's spending limit or wait for it to reset (provider console — no hint link) |
 | "budget exhausted — spend X of Y, kicks suppressed" | The hive spent its window's tokens; the governor halted kicks | Raise the limit in the spoke dashboard (Settings → Budget), or wait for the window to roll |
@@ -270,6 +276,7 @@ For L3-L6 hives, newer spokes add optional heartbeat fields that explain stale w
 | "N agent(s) stuck at login — re-login needed" | Every blocked agent is wedged at a login prompt | Run the Copilot device-flow login on the spoke dashboard `/login` |
 | "N agent(s) out of provider quota" | Agents hit per-account model quota | Wait for quota reset or change the account/model on the agent cards |
 | "N agent(s) down — restart needed" | Agent sessions failed or died | Restart the agents from the spoke dashboard |
+| "starting failed ×N: REASON (last AGE ago)" | The spoke has a current launch failure, even if it has not reached the blocked threshold yet | Follow the named reason (for example login, missing CLI, rejected key, or no prompt); restart only after fixing that cause |
 | "N agent(s) idle with work queued" | Sessions are alive but agents sat past the idle threshold with work available | Kick the agents or review their schedules — this is not a restart problem |
 | "agent restarts: NAME ×N/24h (reason)" | One agent has been relaunched at least the configured threshold within the recent window | Use the `/fleet` reset button next to the restart chip before troubleshooting; the hub records a reset marker and asks the spoke to zero its counter on the next heartbeat so recurrence is visible |
 | "no agents running" | Agents are expected on but none are running | Start/resume agents on the spoke dashboard |

@@ -87,6 +87,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 				e := base(3)
 				e.ProviderLimitReason = "provider spending limit reached — 682 refused calls: litellm refused the request on a spending limit (429)"
 				e.ProviderLimitRebuffs = 682
+				e.ProviderLimitHiveWide = true
 				return e
 			}(),
 			rollup: agentFleetRollup{Expected: 3, Running: 0, Known: 3, Problems: 3, IdleWithWork: 3},
@@ -100,6 +101,7 @@ func TestHiveHealthForReasons(t *testing.T) {
 				e := base(3)
 				e.ProviderLimitReason = "litellm refused the request on a spending limit (429)"
 				e.ProviderLimitRebuffs = 682
+				e.ProviderLimitHiveWide = true
 				return e
 			}(),
 			rollup: agentFleetRollup{Expected: 3, Running: 0, Known: 3, Problems: 3, IdleWithWork: 3},
@@ -384,11 +386,13 @@ func TestHiveHealth_LiveFleetDetectorCoverageFromRawSignals(t *testing.T) {
 				e := base
 				e.ProviderLimitReason = "litellm refused the request on a spending limit (429)"
 				e.ProviderLimitRebuffs = 682
+				e.ProviderLimitHiveWide = true
 				return e
 			}(),
 			agents: []AgentSummary{agent("quality"), agent("scanner")},
 			blockers: hiveBlockers{
-				ProviderLimitReason: "litellm refused the request on a spending limit (429)",
+				ProviderLimitReason:   "litellm refused the request on a spending limit (429)",
+				ProviderLimitHiveWide: true,
 			},
 			wantProblems: 2,
 			wantReason:   "provider spending limit reached — 682 refused calls",

@@ -109,9 +109,47 @@ certificate shows a single host — deleting its secret would take it down, and
 cert-manager would mint a replacement rather than falling through to the
 wildcard (confirmed during the #5977 investigation).
 
-## Renewal is now a single point of failure
+## Renewal is now a single point of failure — and it is watched
 
 Once spokes rely on the wildcard, its renewal covers every dashboard URL on the
-domain: a failed renewal takes down all of them at once rather than one. The
-DNS-01 path and the wildcard's expiry both deserve monitoring before this is
-enabled fleet-wide — that is tracked in #5977 rather than implemented here.
+domain: a failed renewal takes all of them down at once rather than one.
+
+The hub therefore checks the certificate on every cluster-health build, and only
+on clusters that have opted in — everywhere else spokes still carry their own
+certificates and nothing here is load-bearing. The result rides in the
+`/api/cluster-health` payload as `wildcard_tls` and renders on the cluster row
+of the fleet-health panel. A healthy certificate is deliberately silent.
+
+| `status` | What it means | What to do |
+| --- | --- | --- |
+| `ok` | Covers the domain, more than 21 days left | Nothing |
+| `expiring` | Under 21 days left | Renewal is **overdue** — cert-manager starts renewing a 90-day certificate at 30 days out, so reaching 21 means the DNS-01 path or the ACME quota is stuck |
+| `expired` | Past `notAfter` | Every wildcard-served spoke on the cluster is failing TLS validation now |
+| `missing` | Opted in, and the secret does not exist | Spokes provisioned without a `tls:` block are being served ingress-nginx's self-signed certificate. Either restore the secret or remove `wildcard_tls_secret` from the cluster |
+| `domain_mismatch` | The certificate does not carry `*.<cluster domain>` | The opt-in is pointing at a certificate that cannot serve the hosts it caused `tls:` blocks to be dropped from |
+| `not_served` | ingress-nginx is not advertising `--default-ssl-certificate=<wildcard_tls_secret>` | Configure the controller to serve the wildcard secret by default before relying on omitted `tls:` blocks |
+| `unreadable` | The secret exists but its `tls.crt` will not parse | Look at the secret directly |
+
+The 21-day threshold is "renewal is overdue", not "expiry is close". Warning at
+cert-manager's own 30-day renewal point would fire on every healthy renewal on
+every opted-in cluster, and an alert that is normally firing is one nobody
+reads.
+
+### This is also the only check on the opt-in itself
+
+`wildcard_tls_secret` is an operator assertion, and the provisioner cannot
+verify it: it has to decide without a cluster round-trip, and guessing wrong
+takes the cluster down. The health build already talks to every cluster on a
+timer, so the assertion is verified there instead — where being wrong costs a
+warning rather than an outage. `missing` and `domain_mismatch` are exactly that
+assertion turning out to be false, and neither is visible from `clusters.json`.
+
+The check is read-only: one `kubectl get secret` per opted-in cluster per health
+build. A cluster the hub cannot reach reports **nothing** rather than a
+reassuring `ok` — the same unknown-is-not-healthy rule the stuck-pod and
+leaked-namespace signals on that panel follow.
+
+Still not automated, and still worth doing by hand before enabling this
+fleet-wide: watching the DNS-01 solver itself. This check sees the certificate
+that is installed, so it reports a renewal that failed — it cannot see one that
+is *about* to fail for a Cloudflare credential reason.

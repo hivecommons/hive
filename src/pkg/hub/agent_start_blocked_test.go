@@ -61,6 +61,32 @@ func TestVerdict_StartBlockedReasonReachesTheRow(t *testing.T) {
 // The spoke's diagnosis outranks the hub's generic phrasing for the same fault.
 // "copilot: not logged in" and "sitting at login prompt" describe one condition;
 // only the first says relaunching has been given up on.
+func TestVerdict_PreThresholdStartFailureNamesReason(t *testing.T) {
+	now := time.Date(2026, 9, 4, 23, 0, 0, 0, time.UTC)
+	a := modernWorking(now)
+	a.Name = "supervisor"
+	a.State = "failed"
+	a.StartFailureReason = "copilot: no CLI prompt after launch"
+	a.StartFailureCount = 2
+	a.StartFailureLastAt = now.Add(-5 * time.Minute).Format(time.RFC3339)
+
+	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	want := "starting failed ×2: copilot: no CLI prompt after launch (last 5m ago)"
+	if !v.Problem || !v.Stuck || v.BlockedReason != want {
+		t.Fatalf("verdict = %+v, want blocker %q", v, want)
+	}
+}
+
+func TestVerdict_AbsentStartFailureKeepsGenericDown(t *testing.T) {
+	now := time.Now()
+	a := modernWorking(now)
+	a.State = "failed"
+	v := deriveAgentVerdict(a, hiveBlockers{}, 5, now)
+	if !v.Problem || v.BlockedReason != "" || v.RunState != runDead {
+		t.Fatalf("verdict = %+v, want legacy generic dead verdict", v)
+	}
+}
+
 func TestVerdict_StartBlockedReasonOutranksGenericLoginWording(t *testing.T) {
 	now := time.Now()
 	a := startBlocked(now, "copilot: not logged in")
@@ -195,5 +221,24 @@ func TestNewAgentSummaryCarriesStartBlockedReason(t *testing.T) {
 	})
 	if as.StartBlockedReason != "copilot: not logged in" {
 		t.Errorf("StartBlockedReason = %q, want it carried through", as.StartBlockedReason)
+	}
+}
+
+func TestNewAgentSummaryCarriesCurrentStartFailure(t *testing.T) {
+	now := time.Date(2026, 9, 4, 23, 4, 0, 0, time.FixedZone("local", -4*60*60))
+	exitCode := 77
+	as := NewAgentSummary("supervisor", "failed", "ADVISORY", AgentActivity{
+		StartFailureReason:   "copilot: no CLI prompt after launch",
+		StartFailureCount:    2,
+		StartFailureLastAt:   now,
+		StartFailureExitCode: &exitCode,
+		StartFailureSignal:   "TERM",
+	})
+	if as.StartFailureReason != "copilot: no CLI prompt after launch" ||
+		as.StartFailureCount != 2 ||
+		as.StartFailureLastAt != now.UTC().Format(time.RFC3339) ||
+		as.StartFailureExitCode == nil || *as.StartFailureExitCode != 77 ||
+		as.StartFailureSignal != "TERM" {
+		t.Fatalf("start failure fields were not carried through: %+v", as)
 	}
 }

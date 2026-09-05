@@ -365,6 +365,14 @@ type AgentSummary struct {
 	// blocked, which is also what a legacy spoke that predates the field sends,
 	// so its absence is read as "no such fault", never as unknown.
 	StartBlockedReason string `json:"startBlockedReason,omitempty"`
+	// StartFailure* carries the current pre-threshold start failure too, so the
+	// hub can explain "starting failed ×N" before the spoke gives up.
+	StartFailureReason   string `json:"startFailureReason,omitempty"`
+	StartFailureCount    int    `json:"startFailureCount,omitempty"`
+	StartFailureLastAt   string `json:"startFailureLastAt,omitempty"`
+	StartBlocked         bool   `json:"startBlocked,omitempty"`
+	StartFailureExitCode *int   `json:"startFailureExitCode,omitempty"`
+	StartFailureSignal   string `json:"startFailureSignal,omitempty"`
 	// Restarts is the spoke's per-agent restart telemetry. Total is the
 	// lifetime/persisted counter, Last24h is the rolling recent count, and the
 	// last fields explain the newest restart. The hub may add ResetAt/ResetBy
@@ -407,8 +415,14 @@ type AgentActivity struct {
 	Backend        string
 	Enabled        bool
 	// StartBlockedReason — see the matching AgentSummary field.
-	StartBlockedReason string
-	Restarts           AgentRestartTelemetry
+	StartBlockedReason   string
+	StartFailureReason   string
+	StartFailureCount    int
+	StartFailureLastAt   time.Time
+	StartBlocked         bool
+	StartFailureExitCode *int
+	StartFailureSignal   string
+	Restarts             AgentRestartTelemetry
 }
 
 // NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
@@ -434,7 +448,12 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		Enabled:        act.Enabled,
 		Restarts:       act.Restarts,
 
-		StartBlockedReason: act.StartBlockedReason,
+		StartBlockedReason:   act.StartBlockedReason,
+		StartFailureReason:   act.StartFailureReason,
+		StartFailureCount:    act.StartFailureCount,
+		StartBlocked:         act.StartBlocked,
+		StartFailureExitCode: act.StartFailureExitCode,
+		StartFailureSignal:   act.StartFailureSignal,
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -444,6 +463,9 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 	}
 	if !act.LastActivityAt.IsZero() {
 		as.LastActivityAt = act.LastActivityAt.UTC().Format(time.RFC3339)
+	}
+	if !act.StartFailureLastAt.IsZero() {
+		as.StartFailureLastAt = act.StartFailureLastAt.UTC().Format(time.RFC3339)
 	}
 	if act.KickInterval > 0 {
 		as.KickIntervalSec = int64(act.KickInterval / time.Second)
@@ -684,10 +706,12 @@ type HeartbeatPayload struct {
 	// refusal banner (distinct from hive-local governor budget). Empty means no
 	// signal or an old spoke. ProviderLimitRebuffs counts matched refused calls
 	// while latched, when known.
-	ProviderLimitReason  string         `json:"provider_limit_reason,omitempty"`
-	ProviderLimitRebuffs int            `json:"provider_limit_rebuffs,omitempty"`
-	Health               map[string]any `json:"health"`
-	DashboardURL         string         `json:"dashboard_url"`
+	ProviderLimitReason   string         `json:"provider_limit_reason,omitempty"`
+	ProviderLimitRebuffs  int            `json:"provider_limit_rebuffs,omitempty"`
+	ProviderLimitHiveWide bool           `json:"provider_limit_hive_wide,omitempty"`
+	ProviderLimitAgents   []string       `json:"provider_limit_agents,omitempty"`
+	Health                map[string]any `json:"health"`
+	DashboardURL          string         `json:"dashboard_url"`
 	// Output-freshness telemetry is optional and backward compatible: older
 	// spokes omit it, and the hub keeps the pre-existing no-write verdict.
 	LastWriteCapableKickAt string `json:"last_write_capable_kick_at,omitempty"`
@@ -739,6 +763,8 @@ type HeartbeatPayload struct {
 	GitHubAppTokenStatus     string `json:"github_app_token_status,omitempty"`
 	GitHubAppTokenLastMintAt string `json:"github_app_token_last_mint_at,omitempty"`
 	GitHubAppTokenError      string `json:"github_app_token_error,omitempty"`
+	GitHubAppErrorClass      string `json:"github_app_error_class,omitempty"`
+	GitHubAppHTTPStatus      int    `json:"github_app_http_status,omitempty"`
 	// RepoTargetMisconfigured carries an operator-facing config-shape issue
 	// detected by the spoke. It is visibility only: the spoke keeps running and
 	// the hub does not rewrite the project fields.

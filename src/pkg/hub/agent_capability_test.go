@@ -44,6 +44,58 @@ func TestVerdict_BoundGatewayFaultBlocksCapabilityAndAbleCount(t *testing.T) {
 	}
 }
 
+func TestVerdict_ProviderLimitOnlyBlocksNamedQuotaAgents(t *testing.T) {
+	now := time.Now()
+	guide := modernWorking(now)
+	guide.Name = "guide"
+	guide.QuotaExhausted = true
+	quality := modernWorking(now)
+	quality.Name = "quality"
+	scanner := modernWorking(now)
+	scanner.Name = "scanner"
+
+	blockers := hiveBlockers{
+		ProviderLimitReason: "1 agent(s) out of provider quota",
+		ProviderLimitAgents: []string{"guide"},
+	}
+	r := rollupAgents([]AgentSummary{guide, quality, scanner}, blockers, 5, now)
+	if r.Problems != 1 || r.QuotaExhausted != 1 || r.Able != 2 {
+		t.Fatalf("rollup = %+v, want one quota problem and two able agents", r)
+	}
+	v := deriveAgentVerdict(guide, blockers, 5, now)
+	if v.BlockedReason != "1 agent(s) out of provider quota (affected: guide)" {
+		t.Fatalf("blocked reason = %q", v.BlockedReason)
+	}
+	if v := deriveAgentVerdict(quality, blockers, 5, now); v.Problem {
+		t.Fatalf("unnamed quota agent was blocked: %+v", v)
+	}
+}
+
+func TestVerdict_ProviderLimitHiveWideBlocksAllAgents(t *testing.T) {
+	now := time.Now()
+	guide := modernWorking(now)
+	guide.Name = "guide"
+	scanner := modernWorking(now)
+	scanner.Name = "scanner"
+	blockers := hiveBlockers{
+		ProviderLimitReason:   "provider spending limit reached",
+		ProviderLimitHiveWide: true,
+	}
+	r := rollupAgents([]AgentSummary{guide, scanner}, blockers, 5, now)
+	if r.Problems != 2 || r.QuotaExhausted != 2 {
+		t.Fatalf("rollup = %+v, want hive-wide quota to block both agents", r)
+	}
+}
+
+func TestVerdict_ProviderLimitReasonWithoutQuotaNamesBlocksNoAgents(t *testing.T) {
+	now := time.Now()
+	blockers := hiveBlockers{ProviderLimitReason: "1 agent(s) out of provider quota"}
+	r := rollupAgents([]AgentSummary{modernWorking(now)}, blockers, 5, now)
+	if r.Problems != 0 || r.Able != 1 {
+		t.Fatalf("rollup = %+v, want aggregate non-hive-wide reason ignored for agent blockers", r)
+	}
+}
+
 func TestVerdict_WorkingAndAble(t *testing.T) {
 	now := time.Now()
 	v := deriveAgentVerdict(modernWorking(now), hiveBlockers{}, 5, now)

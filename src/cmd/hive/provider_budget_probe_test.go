@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -243,7 +244,7 @@ func TestProviderLimitHeartbeatFieldsFallsBackToAgentQuota(t *testing.T) {
 	dashboard.SetInferenceBudgetProvider(nil)
 	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
 
-	reason, rebuffs := hub.ProviderLimitHeartbeatFields([]hub.AgentSummary{
+	reason, rebuffs, hiveWide, names := hub.ProviderLimitHeartbeatFields([]hub.AgentSummary{
 		{Name: "guide", State: "running", QuotaExhausted: true},
 		{Name: "scanner", State: "running", QuotaExhausted: true},
 		{Name: "paused", State: "paused", Paused: true, QuotaExhausted: true},
@@ -251,6 +252,12 @@ func TestProviderLimitHeartbeatFieldsFallsBackToAgentQuota(t *testing.T) {
 	}, dashboard.InferenceBudgetExceeded)
 	if rebuffs != 0 {
 		t.Fatalf("rebuffs = %d, want 0 for pane-derived quota", rebuffs)
+	}
+	if hiveWide {
+		t.Fatal("pane-derived quota must not be marked hive-wide")
+	}
+	if got := strings.Join(names, ","); got != "guide,scanner" {
+		t.Fatalf("names = %q, want guide,scanner", got)
 	}
 	if reason != "2 agent(s) out of provider quota" {
 		t.Fatalf("reason = %q, want provider quota count", reason)
