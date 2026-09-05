@@ -61,6 +61,7 @@ import (
 	"github.com/hivecommons/hive/pkg/holdguard"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
+	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -99,18 +100,18 @@ const (
 // import pkg/dashboard back — that would be an import cycle, since dashboard
 // already imports hub. A field-by-field copy, mirroring how the fleet-stat
 // scalars are lifted out of their snapshot at the beat's build site.
-func buildRepoActivityWire(repos []collect.RepoActivity) []hub.RepoActivityWire {
+func buildRepoActivityWire(repos []collect.RepoActivity) []spoke.RepoActivityWire {
 	if len(repos) == 0 {
 		return nil
 	}
-	stat := func(s collect.ActivityActionStat) hub.ActivityStatWire {
-		return hub.ActivityStatWire{Count: s.Count, NewestAt: s.NewestAt}
+	stat := func(s collect.ActivityActionStat) spoke.ActivityStatWire {
+		return spoke.ActivityStatWire{Count: s.Count, NewestAt: s.NewestAt}
 	}
-	out := make([]hub.RepoActivityWire, 0, len(repos))
+	out := make([]spoke.RepoActivityWire, 0, len(repos))
 	for _, r := range repos {
-		agents := make([]hub.AgentRepoActivityWire, 0, len(r.Agents))
+		agents := make([]spoke.AgentRepoActivityWire, 0, len(r.Agents))
 		for _, a := range r.Agents {
-			agents = append(agents, hub.AgentRepoActivityWire{
+			agents = append(agents, spoke.AgentRepoActivityWire{
 				Agent:      a.Agent,
 				Issues:     stat(a.Issues),
 				PRs:        stat(a.PRs),
@@ -122,7 +123,7 @@ func buildRepoActivityWire(repos []collect.RepoActivity) []hub.RepoActivityWire 
 				Reconciled: stat(a.Reconciled),
 			})
 		}
-		out = append(out, hub.RepoActivityWire{
+		out = append(out, spoke.RepoActivityWire{
 			Repo:       r.Repo,
 			Issues:     stat(r.Issues),
 			PRs:        stat(r.PRs),

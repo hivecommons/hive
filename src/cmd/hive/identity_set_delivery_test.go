@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/hub"
+	hub "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // TestIdentityTravelsAsOneSet pins that the App and its forge URLs arrive

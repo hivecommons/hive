@@ -5,7 +5,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
-	"github.com/hivecommons/hive/pkg/hub"
+	hub "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 func outputFreshnessHeartbeatFields(acmmLevel int, govState governor.State, agents []hub.AgentSummary) (lastWriteKickAt, disposition, reason string, notWritableQueued int) {
