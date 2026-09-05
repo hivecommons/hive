@@ -17,15 +17,33 @@ jobs:
     env:
       PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
     steps:
+      # Login and pull are advisory for the same reason the verification below
+      # is: this check exists to report on PR CONTENTS, and a registry-side
+      # failure (org rename, package visibility change, GHCR outage — #6085
+      # documents 11 consecutive runs red on `manifest unknown` after the
+      # kubestellar→hivecommons move) says nothing about the PR. Failing here
+      # turns every open PR red at once before any content is examined, while
+      # the one step allowed to have an opinion is continue-on-error. When the
+      # image is unreachable the job logs it and stays green — an unreachable
+      # verifier is strictly less informative than a verifier that ran and
+      # objected, so it must not be treated more harshly.
       - name: Login to GHCR
+        continue-on-error: true
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Pull verifier image
+        id: pull
+        continue-on-error: true
         run: docker pull "$PR_VERIFIER_IMAGE"
+      - name: Report unreachable verifier image
+        if: steps.pull.outcome != 'success'
+        run: |
+          echo "::warning::PR Verifier image $PR_VERIFIER_IMAGE could not be pulled — verification was SKIPPED, not passed. This is a registry/image problem, not a PR problem (#6085)."
       - name: Verifier action
+        if: steps.pull.outcome == 'success'
         id: verifier
         continue-on-error: true
         run: |

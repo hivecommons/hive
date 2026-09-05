@@ -126,6 +126,17 @@ jobs:
       - name: arm64 lane probes PR code, not the published image (#5370)
         run: bash deploy/test_arm64_lane_probes_pr_code.sh
 
+      # PR Verifier treated the VERIFICATION as advisory but the GHCR login and
+      # image pull as fatal, so a registry-side change failed the check on every
+      # open PR at once, before any PR content was examined (#6085: 11
+      # consecutive runs red on `manifest unknown` after the org move). This
+      # pins the relative invariant -- registry access is never treated more
+      # harshly than the verification it enables -- and it is a static check
+      # because pr-verifier.yml runs on pull_request_target, so a PR that fixes
+      # it executes the BASE branch's copy and cannot show itself passing.
+      - name: PR Verifier reports on the PR, not on registry reachability (#6085)
+        run: bash deploy/test_pr_verifier_advisory.sh
+
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
       # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
