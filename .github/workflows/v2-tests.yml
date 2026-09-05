@@ -403,14 +403,16 @@ jobs:
         id: partition
         run: |
           R=3
-          # Anchored: drops pkg/hub and its subpackages (the hub job runs
-          # ./pkg/hub/...) and exactly pkg/agent (the agent jobs run it).
+          # Anchored: drops the monolithic pkg/hub package (the hub job shards
+          # that package by test function) and legacy hub subpackages that were
+          # not part of the rest-bucket contract. Keep pkg/hub/spoke included so
+          # its package-level coverage floor applies going forward (#6066).
           # pkg/hubbackup et al. stay here.
           # ./internal/... carries the shared test helpers (internal/testutil)
           # and their contract tests, such as the time.Sleep ratchet in
           # sleep_ratchet_test.go.
           go list ./pkg/... ./cmd/... ./internal/... \
-            | grep -Ev '^github\.com/hivecommons/hive/pkg/hub(/|$)' \
+            | awk '$0 == "github.com/hivecommons/hive/pkg/hub" { next } $0 ~ /^github\.com\/hivecommons\/hive\/pkg\/hub\// && $0 != "github.com/hivecommons/hive/pkg/hub/spoke" { next } { print }' \
             | grep -Ev '^github\.com/hivecommons/hive/pkg/agent$' \
             | LC_ALL=C sort > rest-pkgs.txt
           if [ ! -s rest-pkgs.txt ]; then
@@ -719,6 +721,19 @@ jobs:
             [sandbox]=98
             [pushbroker]=99
 
+            # ── Stale module-path parser repaired on v5 (#6066) ─────────────
+            # These packages were pre-existing below-default floors that became
+            # visible again when the v2-tests coverage classifier was corrected
+            # from the old github.com/kubestellar/hive module path to
+            # github.com/hivecommons/hive. Record their current ceilings so the
+            # parser fix can gate new packages (pkg/effects, pkg/hub/spoke)
+            # without turning unrelated backlog into a blocker.
+            [mutation]=86   # 86.7% on PR #6076
+            [webstatic]=88  # 88.9% on PR #6076
+            [automerge]=88  # 88.6% on PR #6076
+            [mint]=89       # 89.1% on PR #6076
+            [turn]=87       # 87.1% on PR #6076
+
             # ── ./cmd/... floors (#4701) ─────────────────────────────────────
             # See coverage-hourly.yml for the rationale. cmd keys are prefixed
             # ("cmd/<name>") so cmd/hivectl can never collide with
@@ -766,7 +781,7 @@ jobs:
               gt = 0; gc = 0
               for (p in tot) {
                 printf "%s %.1f\n", p, cov[p] * 100 / tot[p]
-                if (p ~ /^github\.com\/kubestellar\/hive\/pkg\//) {
+                if (p ~ /^github\.com\/hivecommons\/hive\/pkg\//) {
                   gt += tot[p]; gc += cov[p]
                 }
               }
@@ -785,7 +800,7 @@ jobs:
           # for trend continuity.
           cat test-*.log > cover-run.log
           grep -E '^(ok|FAIL|\?)' cover-run.log \
-            | awk '$2 ~ /^github\.com\/kubestellar\/hive\/(pkg|cmd)\// {print $1, $2}' \
+            | awk '$2 ~ /^github\.com\/hivecommons\/hive\/(pkg|cmd)\// {print $1, $2}' \
             | LC_ALL=C sort -u > pkg-states.txt
 
           # Floor-map key: cmd packages get a "cmd/" prefix so cmd/hivectl can
