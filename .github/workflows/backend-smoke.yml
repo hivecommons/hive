@@ -92,7 +92,7 @@ jobs:
     # `runs-on` can read the matrix context (the job-level `if` cannot — see the
     # note on the lane list below), so the split is expressed here rather than
     # by forking the job.
-    runs-on: ${{ matrix.lane == 'pinned' && 'ubuntu-latest' || fromJSON('["self-hosted","hive"]') }}
+    runs-on: ${{ matrix.lane == 'pinned' && 'ubuntu-latest' || fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -214,7 +214,7 @@ jobs:
     # "contributors broken today" are different problems with different
     # urgency, and must never collapse into one issue thread.
     if: failure() && github.event_name == 'schedule'
-    runs-on: [self-hosted, hive]
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: [smoke]
     permissions:
       contents: read

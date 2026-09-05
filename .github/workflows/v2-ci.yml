@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -823,9 +823,20 @@ jobs:
       - name: Every src/deploy/ test suite is wired into a workflow (#5529)
         working-directory: .
         run: bash src/deploy/test_deploy_suites_wired.sh
+
+      # Runner labels must degrade to a GitHub-hosted runner where no fleet
+      # exists (#6083). A fork that inherits a bare [self-hosted, hive] gets
+      # jobs that queue forever, cannot be cancelled, and wedge the workflow's
+      # concurrency group behind them — silently, because a job that never
+      # starts reports nothing. Checked here rather than remembered: the
+      # fork-guarded spelling was added deliberately and three jobs in the same
+      # files were still left bare.
+      - name: Runner labels are fork-portable (#6083)
+        working-directory: .
+        run: bash src/deploy/test_runner_labels_portable.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: [self-hosted, hive]
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: build-and-test
     permissions:
       contents: read
@@ -1036,7 +1047,7 @@ jobs:
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: [self-hosted, hive]
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: [build-and-test, docker]
     permissions:
       contents: read
