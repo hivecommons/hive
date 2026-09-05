@@ -1087,7 +1087,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// deadline, so a body that keeps flowing is never cut while a stall
 		// longer than responseBodyStallTimeout errors out and lets the
 		// handler's deferred Closes reclaim the sockets.
-		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: responseBodyStallTimeout}
+		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: bodyStallTimeout()}
 
 		_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := resp.Write(client); err != nil {
@@ -1256,12 +1256,23 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 // per-Read bound (re-armed on every read by stallBoundedBody), not a cap on
 // total transfer time, so a large-but-flowing response is never cut while an
 // upstream that goes silent mid-body releases the handler — and with it the
-// three sockets of the exchange — within one stall window. A var, not a
-// const, so tests can shorten it (same motivation as tunnelHalfCloseDrain,
-// which is additionally atomic because its reader outlives the writing test).
-// Matches httpReadTimeout: the same patience already extended to the header
-// phase.
-var responseBodyStallTimeout = httpReadTimeout
+// three sockets of the exchange — within one stall window. Overridable, not a
+// const, so tests can shorten it — and atomic for the same reason as
+// tunnelHalfCloseDrain (#5553): the reading goroutine can outlive the test
+// that started it. A handler test that returns after a fixed sleep leaves
+// proxyHTTP still parsing the response when the NEXT test's shortenBodyStall
+// writes the bound — a plain var made that an unsynchronised write-after-read
+// (-race failure on v4, #6110, reported against whichever test held the
+// baton). Defaults to httpReadTimeout: the same patience already extended to
+// the header phase.
+var responseBodyStallTimeout atomic.Int64
+
+func init() { responseBodyStallTimeout.Store(int64(httpReadTimeout)) }
+
+// bodyStallTimeout returns the current response-body stall bound.
+func bodyStallTimeout() time.Duration {
+	return time.Duration(responseBodyStallTimeout.Load())
+}
 
 // stallBoundedBody wraps a proxied response body so every underlying Read is
 // preceded by re-arming a read deadline on the upstream conn. Close clears the
