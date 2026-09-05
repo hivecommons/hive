@@ -27,9 +27,23 @@ One JSON object per line (JSONL), append-only. Written by
 | `action` | `Action` | yes | The action name, e.g. `config_governor_save`, `pr_merged`, `hook_failed`. |
 | `detail` | `Detail` | no (`omitempty`) | Free-form `k=v` pairs joined by `, `. See the parsing note. |
 | `agent` | `Agent` | no (`omitempty`) | The agent the action concerns, when it concerns one. |
+| `user_name` | `UserName` | **API responses only** (`omitempty`) | Display name for an opaque OIDC actor key. Stamped at serve time by `GET /api/audit` — **never written to the file or the ring**. See below. |
 
-Two fields are omitted entirely rather than emitted empty, so **a consumer must
-treat a missing `detail` or `agent` as absent, not as an empty string**.
+Optional fields are omitted entirely rather than emitted empty, so **a consumer
+must treat a missing `detail`, `agent`, or `user_name` as absent, not as an
+empty string**.
+
+### `user_name` exists only on the API surface
+
+When `user` is an opaque OIDC identity key, `handleAuditLog` attaches the
+hub-delivered display name as `user_name` on the copies it serves. The on-disk
+`audit.jsonl` and the in-memory ring keep only the raw key, so history survives
+display-name changes. Consequences:
+
+- A parser of the **file** will never see `user_name`; a consumer of the
+  **API** may. Do not treat its absence in the file as data loss.
+- `user_name` is cosmetic. Correlate entries by `user` (the stable key), never
+  by `user_name`.
 
 ## Parsing `detail`
 
@@ -83,13 +97,32 @@ Reads that need history beyond the current file must walk the rotated and `.gz`
 backups. `OutputActionsSince` does this, with a decompression cap that bounds a
 malicious or corrupt `.gz` — see [security](security.md).
 
+## `GET /api/audit`
+
+The dashboard serves recent entries at `GET /api/audit`
+(`pkg/dashboard/audit.go`, `handleAuditLog`):
+
+- **Auth**: requires at least the read-write dashboard role; lesser roles get
+  `403`.
+- **Shape**: a JSON object `{"entries": [...]}` — the entries are wrapped in an
+  envelope, not served as a bare array.
+- **Ordering**: newest first.
+- **Cap**: at most 200 entries (`auditMaxEntries`), which is *smaller* than the
+  500-entry in-memory ring — the API never returns the whole ring, let alone
+  the whole file.
+- **Enrichment**: `user_name` is stamped here, on served copies only (see
+  above).
+
 ## In-memory ring vs the file
 
-The dashboard also keeps the most recent 500 entries in memory for fast display.
-That ring is **capped and reset on restart**; the file is the durable record.
+The dashboard also keeps the most recent 500 entries in memory
+(`auditRingCap`) for fast display. On restart the ring is **rebuilt from the
+current `audit.jsonl`** — the last 500 entries of the current file only;
+rotated backups are not walked (`loadFromDiskPath`). The file is the durable
+record.
 
-Consumers that need completeness must read the file, not the API surface backed
-by the ring.
+Consumers that need completeness must read the file (including rotated
+backups), not the API surface backed by the ring.
 
 ## Related
 
