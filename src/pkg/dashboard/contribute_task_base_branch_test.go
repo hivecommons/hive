@@ -146,9 +146,148 @@ func TestTaskBaseBranch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := taskBaseBranch(tc.title, "v4"); got != tc.want {
-				t.Errorf("taskBaseBranch(%q, \"v4\") = %q, want %q", tc.title, got, tc.want)
+			if got := taskBaseBranch(tc.title, "hivecommons/hive", "v4"); got != tc.want {
+				t.Errorf("taskBaseBranch(%q, own repo, \"v4\") = %q, want %q", tc.title, got, tc.want)
 			}
 		})
+	}
+}
+
+// Regression coverage for hivecommons/hive#6081.
+//
+// #5729 (above) established that the prompt must CARRY the base branch. It
+// named the wrong one: upstreamBranch() is the branch this hive's BINARY was
+// built from, and it was passed through for every task regardless of which
+// repository the issue was in. A self-hosted hive built from `v4` therefore
+// stamped `v4` onto 100% of its tasks for four repositories whose default
+// branch is `main`.
+//
+// The tests above could not catch it: every one of them dispatches for
+// hivecommons/hive, where the hive's own branch happens to be the right
+// answer. These dispatch for a foreign repo.
+//
+// Why it is worse than the observed transcript suggests: that hive
+// self-corrected only because a MISSING branch is loud. A repository that HAS
+// a `v4` which is not its default resolves, opens the PR against it, and
+// satisfies the prompt's own "confirm the PR's base" step.
+
+// promptForRepo renders an assignment prompt for a hive built from hubBranch,
+// dispatching for an arbitrary repository.
+func promptForRepo(t *testing.T, hubBranch, repoFull, title string) string {
+	t.Helper()
+	withGitBranch(t, hubBranch)
+	return buildTaskPrompt(repoFull, 101, title)
+}
+
+// TestBuildTaskPrompt_ForeignRepoDoesNotInheritTheHiveBranch is the reported
+// bug: a hive built from v4 dispatching for Danathar/arch-bootc (default
+// branch main) must not tell the agent to base its work on v4.
+func TestBuildTaskPrompt_ForeignRepoDoesNotInheritTheHiveBranch(t *testing.T) {
+	prompt := promptForRepo(t, "v4", "Danathar/arch-bootc", "the installer drops a mount option")
+
+	if strings.Contains(prompt, "--base v4") || strings.Contains(prompt, "'v4' branch") {
+		t.Errorf("the hive's own build branch was named as the base for a foreign repo; got: %q", prompt)
+	}
+	if strings.Contains(prompt, "upstream/v4") {
+		t.Errorf("the hive's own build branch was named as the head start point for a foreign repo; got: %q", prompt)
+	}
+	// Declining to name a branch is only correct because the fallback wording
+	// tells the agent how to find the right one.
+	if !strings.Contains(prompt, "defaultBranchRef") {
+		t.Errorf("prompt must tell the agent to resolve the repository's own default branch; got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Danathar/arch-bootc") {
+		t.Errorf("the fallback wording must name the repository to resolve; got: %q", prompt)
+	}
+}
+
+// The load-bearing half of #5729 survives the fix. Whichever wording is used,
+// the agent must be told not to trust the branch the checkout is sitting on --
+// that is what the reused checkout makes dangerous, and it is the one clause
+// both wordings share.
+func TestBuildTaskPrompt_ForeignRepoStillForbidsInheritingTheCheckout(t *testing.T) {
+	prompt := promptForRepo(t, "v4", "Danathar/arch-bootc", "the installer drops a mount option")
+
+	if !strings.Contains(prompt, "Do not assume the branch the checkout is currently on") {
+		t.Errorf("foreign-repo prompt dropped the do-not-inherit-the-checkout clause; got: %q", prompt)
+	}
+}
+
+// The discriminating counterpart, and the reason this is a narrowing rather
+// than a removal: dispatching for the hive's OWN repo must still name the
+// branch explicitly, which is all of #5729's value.
+func TestBuildTaskPrompt_OwnRepoStillNamesTheHiveBranch(t *testing.T) {
+	prompt := promptForRepo(t, "v4", "hivecommons/hive", "the dashboard drops a websocket frame")
+
+	if !strings.Contains(prompt, "gh pr create --base v4") {
+		t.Errorf("the hive's own repo lost its explicit base branch; got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "upstream/v4") {
+		t.Errorf("the hive's own repo lost its explicit head start point; got: %q", prompt)
+	}
+}
+
+// A release-line tag is orthogonal to whose repo it is: an issue titled
+// "[v5] ..." is work for v5 in whatever repository it was filed in. The fix
+// must not swallow that override on the way past.
+func TestBuildTaskPrompt_ForeignRepoKeepsTheReleaseLineOverride(t *testing.T) {
+	prompt := promptForRepo(t, "v4", "Danathar/arch-bootc", "[v5] backport the mount-option guard")
+
+	if !strings.Contains(prompt, "gh pr create --base v5") {
+		t.Errorf("a [v5] issue lost its release-line base in a foreign repo; got: %q", prompt)
+	}
+	if strings.Contains(prompt, "--base v4") {
+		t.Errorf("the hive's own branch leaked past the release-line override; got: %q", prompt)
+	}
+}
+
+// TestTaskBaseBranch_ForeignRepoDeclines pins the selection rule directly, so
+// a failure names the rule rather than a prompt substring.
+func TestTaskBaseBranch_ForeignRepoDeclines(t *testing.T) {
+	cases := []struct {
+		name  string
+		repo  string
+		title string
+		want  string
+	}{
+		{"the hive's own repo inherits", "hivecommons/hive", "a plain title", "v4"},
+		{"the pre-transfer org still inherits", "kubestellar/hive", "a plain title", "v4"},
+		{"owner case does not matter", "HiveCommons/Hive", "a plain title", "v4"},
+		{"a foreign repo declines", "Danathar/arch-bootc", "a plain title", ""},
+		{"a foreign repo named hive-ish declines", "Danathar/hive-tools", "a plain title", ""},
+		{"a fork of hive declines rather than guessing", "Danathar/hive", "a plain title", ""},
+		{"an unqualified repo declines", "hive", "a plain title", ""},
+		{"an empty repo declines", "", "a plain title", ""},
+		// The release line is about the WORK, not the repository, so it wins in
+		// either kind of repo.
+		{"release line wins in the hive's own repo", "hivecommons/hive", "[v5] something", "v5"},
+		{"release line wins in a foreign repo", "Danathar/arch-bootc", "[v5] something", "v5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := taskBaseBranch(tc.title, tc.repo, "v4"); got != tc.want {
+				t.Errorf("taskBaseBranch(%q, %q, \"v4\") = %q, want %q", tc.title, tc.repo, got, tc.want)
+			}
+		})
+	}
+}
+
+// The fallback wording is no longer a rarely-reached edge: after #6081 every
+// task for a repository other than this one uses it, so it has to carry the
+// same operational detail the named-branch wording does. #5729's evidence was
+// that an agent follows the instruction it was given, and an instruction with
+// no verification step is one nothing checks.
+func TestBuildTaskPrompt_FallbackWordingCarriesTheFullProcedure(t *testing.T) {
+	prompt := promptForRepo(t, "v4", "Danathar/arch-bootc", "the installer drops a mount option")
+
+	for _, want := range []string{
+		"defaultBranchRef",
+		"git fetch upstream",
+		"git checkout -b <your-branch> upstream/<default-branch>",
+		"confirm the PR's base",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("fallback wording is missing %q; got: %q", want, prompt)
+		}
 	}
 }
