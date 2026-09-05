@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/hub"
+	hub "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // userSession is a per-user server-side session created after a successful,
