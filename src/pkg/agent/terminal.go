@@ -89,8 +89,24 @@ func (t tmuxTerminal) SessionAttached(agent *AgentProcess) bool {
 	return n > 0
 }
 
+// SendLiteral types text into the pane verbatim.
+//
+// The text is passed after a "--" end-of-options marker. tmux parses the
+// arguments of send-keys with getopt, so without the marker any text that
+// begins with "-" is read as a flag and the whole command is rejected
+// ("unknown flag"), typing nothing. SendKick delivers a kick as 400-rune
+// chunks, and a chunk boundary that lands just before a hyphen — inside
+// "onboard-ai-platform", "hold-gated", "[ONB-2651]", or a markdown bullet —
+// produced a chunk starting with "-", so one 400-character slice of the kick
+// silently vanished. Observed live (2026-09-05): the held-PR snapshot in a
+// quality kick arrived as "onboard-ai" followed by text from the next chunk,
+// and the agent stood down on the corrupted list. A failed send is logged
+// rather than dropped so the next occurrence is diagnosable from the hive log.
 func (t tmuxTerminal) SendLiteral(agent *AgentProcess, text string) {
-	_ = t.m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
+	if err := t.m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", "--", text).Run(); err != nil && t.m.logger != nil {
+		t.m.logger.Warn("tmux send-keys failed; literal text was not typed into the pane",
+			"agent", agent.Name, "session", agent.tmuxSession, "runes", len([]rune(text)), "error", err)
+	}
 }
 
 func (t tmuxTerminal) SendKeys(agent *AgentProcess, keys ...string) {
