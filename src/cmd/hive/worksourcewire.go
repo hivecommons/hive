@@ -242,6 +242,7 @@ func (w *spokeWire) wireSpokeManagersAndLinear() {
 			newClient.SetIssueFilter(w.cfg.Project.IssueFilter)
 
 			w.ghClient = newClient
+			w.installMutationBoundary(w.ghClient)
 			w.appAuth = newAppAuth
 			w.agentMgr.SetAppAuth(newAppAuth)
 			// Deliver fresh per-agent scoped tokens to already-running agents

@@ -158,6 +158,7 @@ type Server struct {
 	convergenceModeTrk  *convergenceModeTracker
 	convergenceSoakOnce sync.Once
 	convergenceSoakTrk  *convergenceSoakTracker
+	mutationStats       func() interface{}
 
 	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time

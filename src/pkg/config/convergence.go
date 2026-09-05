@@ -17,11 +17,13 @@ import (
 //     gated code paths; they are entirely inert. Exact pre-enrollment baseline.
 //   - "shadow": decisions are computed and surfaced as read-only diagnostics
 //     (API/SSE fields, log lines, soak telemetry) but NEVER enforced — no kick
-//     is withheld, no queue row changes, no routing changes.
+//     is withheld, no queue row changes, no routing changes. Mutation-boundary
+//     claims and journal entries are recorded, and conflicts are logged as
+//     would-have-denied only.
 //   - "enforce": the SAME decision shadow computes may gate ONLY the explicitly
-//     enrolled path — the #4247 internal scheduled/cached issue-dispatch
-//     boundary. Every path not explicitly enrolled behaves identically in all
-//     three modes.
+//     enrolled paths: the #4247 internal scheduled/cached issue-dispatch
+//     boundary and the #6056 external mutation boundary. Every path not
+//     explicitly enrolled behaves identically in all three modes.
 //
 // This toggle does NOT govern the contributor-neutral admission already landed
 // by #3857/#3904 (ReadyQueue/selectTask dependency gating) — that is existing,

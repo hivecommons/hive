@@ -154,6 +154,15 @@ func (s *Server) SeedConvergenceSoak(entries []ConvergenceSoakEntry) {
 	s.convergenceSoak().seed(entries)
 }
 
+// SetMutationStats wires the live mutation-boundary counters into convergence
+// status responses. Nil leaves the response at its zero/default shape.
+func (s *Server) SetMutationStats(stats func() interface{}) {
+	if s == nil {
+		return
+	}
+	s.mutationStats = stats
+}
+
 // handleConvergenceSoak serves GET /api/convergence/soak — the longitudinal
 // read/export path. OWNER-ONLY, matching the settings surface that controls
 // the mode: the soak comparison is an operator concern and the rows carry
@@ -163,12 +172,17 @@ func (s *Server) handleConvergenceSoak(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mode, generation := s.ConvergenceModeGeneration()
+	mutationStats := interface{}(nil)
+	if s.mutationStats != nil {
+		mutationStats = s.mutationStats()
+	}
 	jsonResponse(w, map[string]interface{}{
 		"commit":        versionShort,
 		"mode":          mode,
 		"generation":    generation,
 		"enrolled_path": convergenceSoakEnrolledPath,
 		"max_entries":   convergenceSoakMaxEntries,
+		"mutation":      mutationStats,
 		"entries":       s.ConvergenceSoakHistory(),
 	})
 }

@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
-// EffectCreatePR is the ONE external effect this vertical implements, exactly
-// as named by the accepted #4255 C2 binding: GitHub pull-request creation for
-// the assigned task. The identifier is versioned; a semantics change is a new
-// effect kind, never a silent reinterpretation of journal entries.
+// EffectCreatePR is the original external effect named by the accepted #4255 C2
+// binding. The wired vertical now admits the broader external-effect boundary
+// set enrolled by cmd/hive (PR/issue/comment/merge/label/review/push); each
+// caller supplies its effect kind explicitly so semantics changes are new kind
+// strings, never silent reinterpretations of journal entries.
 const EffectCreatePR = "github.create-pr/v1"
 
 // Operation statuses: the reconstructable record distinguishing an external
@@ -105,7 +107,7 @@ type Effect struct {
 	Subject string `json:"subject"`
 	// ClaimKey is the canonical mutation claim key authorizing the effect.
 	ClaimKey string `json:"claim_key"`
-	// Kind is the effect kind; this vertical only ever writes EffectCreatePR.
+	// Kind is the effect kind.
 	Kind string `json:"kind"`
 	// Inputs are ALL load-bearing effect inputs (head branch, base branch,
 	// repository, title digest, ...), canonicalized by the caller.
@@ -120,8 +122,8 @@ func (e Effect) Validate() error {
 	if e.DesiredGeneration < 1 {
 		return fmt.Errorf("%w: desired generation %d is impossible", ErrInvalidEffect, e.DesiredGeneration)
 	}
-	if e.Kind != EffectCreatePR {
-		return fmt.Errorf("%w: effect kind %q is not implemented by this vertical (only %s)", ErrInvalidEffect, e.Kind, EffectCreatePR)
+	if strings.TrimSpace(e.Kind) == "" {
+		return fmt.Errorf("%w: effect kind is required", ErrInvalidEffect)
 	}
 	if len(e.Inputs) == 0 {
 		return fmt.Errorf("%w: an external effect declares its inputs", ErrInvalidEffect)

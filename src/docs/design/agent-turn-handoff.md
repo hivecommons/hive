@@ -20,13 +20,25 @@ than as a stale paragraph nobody re-reads.
 
 ## Summary of findings
 
-1. **Hive has already built handoff's two hard mechanisms — twice — and wired
-   neither.** `pkg/convergence/mutation` (accepted on #4255) implements a
+1. **Hive has already built handoff's two hard mechanisms — twice — and one is
+   now wired.** `pkg/convergence/mutation` (accepted on #4255) implements a
    durable, epoch-fenced claim ledger *and* an idempotent operation journal.
    `pkg/turn` (step 2 of this RFC, #4933) implements a second operation journal
-   with its own idempotency-key derivation. **Nothing in the repository imports
-   either package.** Step 3's most consequential finding is not a missing
-   mechanism; it is duplication between two unwired prototypes.
+   with its own idempotency-key derivation. #6056 wires the mutation vertical
+   through `cmd/hive/mutationwire.go` and the `pkg/effects` seam around PR
+   create, issue create/comment, merge, label, review, and sandbox branch-push
+   effects. Step 3's most consequential finding is no longer complete
+   reachability absence; it is the remaining duplication between a live
+   mutation boundary and the still-independent turn journal.
+
+   Runtime mode semantics are the shared #4246/#4263 convergence semantics:
+   `off` installs a nil/no-op boundary and preserves legacy behavior; `shadow`
+   acquires and journals mutation attempts but logs overlap/epoch conflicts as
+   "would have denied" without blocking the external effect; `enforce` requires
+   the durable claim acquisition to succeed and returns a typed denied error
+   before the PR/issue/comment/merge/label/review/push effect when the
+   (repo, kind, target) claim overlaps an active writer. The ledger and journal
+   live under the spoke data directory at `/data/convergence/mutation/`.
 2. **No existing store has all three properties handoff needs.** Atomic
    compare-and-set on claim, cross-process serialization, and a
    corruption-resistant persist are spread across three implementations, each

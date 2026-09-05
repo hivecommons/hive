@@ -69,9 +69,9 @@ that status is the thing to check before treating a page as current behaviour:
 
 - [Evaluating a handoff path for the re-entrant turn model](agent-turn-handoff.md)
   — **spike / investigation, no decision taken.** Step 3 of the same RFC. Its
-  finding is that hive has already built handoff's two hard mechanisms twice and
-  wired neither: `pkg/convergence/mutation` (#4255) holds an epoch-fenced claim
-  ledger and an idempotent operation journal, `pkg/turn` holds a second journal,
+  finding is that hive built handoff's two hard mechanisms twice: as of #6056
+  `pkg/convergence/mutation` (#4255) is wired around the runtime
+  external-effect boundary, while `pkg/turn` remains a second journal,
   and nothing imports either. No single store has all three properties handoff
   needs — atomic claim, cross-process serialization, corruption-resistant
   persist — and the three partial implementations each hold a different two.

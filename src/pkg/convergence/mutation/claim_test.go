@@ -101,7 +101,6 @@ func TestEffectLogicalID_ExcludesOwnerAndEpoch(t *testing.T) {
 func TestEffectValidate_Refusals(t *testing.T) {
 	bad := []Effect{
 		{},
-		func() Effect { e := testEffect(); e.Kind = "github.merge-pr/v1"; return e }(),
 		func() Effect { e := testEffect(); e.DesiredGeneration = 0; return e }(),
 		func() Effect { e := testEffect(); e.Inputs = nil; return e }(),
 		func() Effect { e := testEffect(); e.ClaimKey = ""; return e }(),

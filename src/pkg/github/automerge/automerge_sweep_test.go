@@ -13,6 +13,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -65,6 +66,44 @@ func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	if audits[0].HeadSHA != "sha7" {
 		t.Fatalf("audit head SHA = %q, want sha7", audits[0].HeadSHA)
 	}
+}
+
+func TestSweepQueuedAutoMergesRoutesMergeThroughMutationBoundary(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{{
+		number:          7,
+		author:          "alice",
+		queuedBy:        "bob",
+		label:           true,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	rec := &recordingBoundary{}
+	engine := New(client, Options{
+		MergerAuthorizer: func(login string) bool { return login == "bob" },
+		MutationBoundary: rec,
+	})
+	if _, err := engine.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(rec.claims) != 1 || rec.claims[0].Kind != effects.KindPullRequestMerge || rec.claims[0].Repo != "acme/widget" || rec.claims[0].Target != "7" {
+		t.Fatalf("mutation claims = %#v, want merge claim for acme/widget#7", rec.claims)
+	}
+}
+
+type recordingBoundary struct {
+	claims []effects.Claim
+}
+
+func (b *recordingBoundary) Execute(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	b.claims = append(b.claims, claim)
+	return effect(ctx)
 }
 
 func TestSweepQueuedAutoMergesIgnoresForgedNonAppQueueApproval(t *testing.T) {

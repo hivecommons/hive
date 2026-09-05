@@ -201,6 +201,7 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 	go w.agentMgr.StartCopilotSessionRefresh(w.ctx)
 	if w.ghClient != nil {
 		w.agentMgr.SetSandboxPRClient(w.ghClient)
+		w.agentMgr.SetSandboxMutationBoundary(w.mutationBoundary)
 	}
 
 	// PR-open-as-the-App-bot: agents push their branch (App-token credential
@@ -354,6 +355,7 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		if w.approvalDesk != nil && w.approvalInbox != nil {
 			autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(w.approvalDesk, w.approvalInbox, w.cfg, w.logger)
 		}
+		autoMergeOpts.MutationBoundary = w.mutationBoundary
 		automerge.StartSelfAuthoredAutoMergeSweep(w.ctx, w.ghClient, w.cfg.AutoMerge.MaxMerges, w.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(w.cfg.ACMMLevel), w.cfg.ACMMLevel, autoMergeOpts)
 	}
 
