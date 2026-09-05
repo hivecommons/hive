@@ -503,6 +503,16 @@ func (o DigestOptions) resolvedRenderCap() int {
 // resolved on the findings by the time ranking runs, so only the path check
 // needs verify.
 //
+// A finding its own author has WITHDRAWN (findingRetracted) ranks below every
+// finding nobody has withdrawn, in ANY band. This is the one demotion that
+// crosses severity bands, and the reason is the same sentence that keeps the
+// others inside theirs: unverified means nobody re-checked, so an unverified
+// critical may still be the worst thing here. A retraction is the opposite --
+// the reporting agent DID re-check and said the finding does not stand -- so
+// its filed severity is the one claim it no longer makes. It still backfills
+// rather than being dropped, because the bead is open and only a maintainer
+// closes it (hivecommons/hive#2364).
+//
 // verify, when non-nil, reports whether a finding's file path still exists at
 // the analyzed snapshot. Verification is on-demand and ordered: the ranked list
 // is walked from the top and verify is called only until cap findings are in
@@ -556,6 +566,9 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 	// confirmed low — demoting across bands would let a cosmetic nit displace a
 	// security finding whose file was merely renamed.
 	var kept []Finding
+	// Withdrawn findings are collected across ALL bands and placed last -- see
+	// the band-crossing paragraph in the doc comment above.
+	var retracted []Finding
 	for i := 0; i < len(all) && len(kept) < cap; {
 		rank := severityRank(all[i].Severity)
 		j := i
@@ -571,6 +584,13 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 			if len(kept) == cap {
 				break
 			}
+			if findingRetracted(f) {
+				// Set aside BEFORE markPathStale: a withdrawn finding is only
+				// reached if slots go unclaimed, and verify is a lookup the
+				// ranking promises not to spend on findings it never renders.
+				retracted = append(retracted, f)
+				continue
+			}
 			markPathStale(&f)
 			if f.evidenceUnverified() {
 				unverified = append(unverified, f)
@@ -582,6 +602,15 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 			kept = append(kept, unverified[k])
 		}
 		i = j
+	}
+	// Nothing live is left to show: rather than render a short digest, fill the
+	// remaining slots with the withdrawn findings, in the order they ranked.
+	// They arrive carrying the renderer's withdrawal caption, which is what
+	// tells a maintainer the bead wants closing rather than fixing.
+	for k := 0; len(kept) < cap && k < len(retracted); k++ {
+		f := retracted[k]
+		markPathStale(&f)
+		kept = append(kept, f)
 	}
 
 	capped := make(map[string][]Finding, len(byAgent))
@@ -1092,7 +1121,14 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 			// letting it cover this one is the overclaim that got a stale
 			// finding reported as a fabrication.
 			prov := ""
-			if f.ProvenanceStale && f.ProvenanceSHA != "" {
+			if findingRetracted(f) {
+				// The reporting agent withdrew this finding in the detail
+				// rendered directly below, but the bead is still open at this
+				// severity -- only a maintainer closes it. Say which of the two
+				// the reader is looking at, so the entry reads as a bead to
+				// close rather than a problem to fix (#2364).
+				prov = " ⚠️ _(withdrawn by the reporting agent in the detail below — the bead is still open at this severity, so it wants closing rather than fixing)_"
+			} else if f.ProvenanceStale && f.ProvenanceSHA != "" {
 				prov = fmt.Sprintf(" ⚠️ _(evidence computed at `%s`, not re-verified at the analyzed commit)_", shortSHA(f.ProvenanceSHA))
 			} else if f.CachedReplays > 0 && f.ProvenanceSHA == "" {
 				// A no-provenance finding whose only "confirmations" were
