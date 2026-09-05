@@ -93,7 +93,7 @@ eval "set -- $(claude_family_local_perm_flag_shell)"
 printf '%s\0' "$@"
 `)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "HIVE_WORKSPACE_DIR=") || strings.HasPrefix(entry, "HIVE_CLAUDE_DANGEROUSLY_") {
+		if strings.HasPrefix(entry, "HIVE_WORKSPACE_DIR=") || strings.HasPrefix(entry, "HIVE_AGENT_CWD=") || strings.HasPrefix(entry, "HIVE_CLAUDE_DANGEROUSLY_") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, entry)
@@ -116,10 +116,29 @@ func argValue(args []string, key string) (string, bool) {
 	return "", false
 }
 
+func argValues(args []string, key string) []string {
+	var vals []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == key {
+			vals = append(vals, args[i+1])
+		}
+	}
+	return vals
+}
+
 // TestClaudeLocalSandboxIsMandatory asserts the three controls that turn the
-// native sandbox into a boundary instead of a best-effort hint.
+// native sandbox into a boundary instead of a best-effort hint, and the exact
+// grants: both write roots (workspace and HIVE_AGENT_CWD, #6082) and the
+// `//`-prefixed absolute permission-rule spelling — a single leading `/`
+// anchors at the settings source, not the filesystem root, so the old
+// single-slash rules were silently inert (#6087, the condition #5147 was
+// closed for).
 func TestClaudeLocalSandboxIsMandatory(t *testing.T) {
-	args := claudeLocalSandboxArgs(t)
+	agentCwd := filepath.Join(t.TempDir(), "agent-cwd")
+	if err := os.MkdirAll(agentCwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := claudeLocalSandboxArgs(t, "HIVE_AGENT_CWD="+agentCwd)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "dangerously-skip-permissions") {
 		t.Fatalf("default local Claude argv still bypasses permissions: %q", args)
@@ -127,10 +146,11 @@ func TestClaudeLocalSandboxIsMandatory(t *testing.T) {
 	if mode, ok := argValue(args, "--permission-mode"); !ok || mode != "dontAsk" {
 		t.Fatalf("permission mode = %q, %v; want dontAsk", mode, ok)
 	}
-	workspace, ok := argValue(args, "--add-dir")
-	if !ok || !strings.Contains(workspace, "workspace with spaces") {
-		t.Fatalf("workspace grant was lost or word-split: %q", args)
+	addDirs := argValues(args, "--add-dir")
+	if len(addDirs) != 2 || !strings.Contains(addDirs[0], "workspace with spaces") || addDirs[1] != agentCwd {
+		t.Fatalf("--add-dir grants = %q, want workspace then agent cwd: %q", addDirs, args)
 	}
+	workspace := addDirs[0]
 
 	raw, ok := argValue(args, "--settings")
 	if !ok {
@@ -155,10 +175,21 @@ func TestClaudeLocalSandboxIsMandatory(t *testing.T) {
 	if !settings.Sandbox.Enabled || !settings.Sandbox.FailIfUnavailable || settings.Sandbox.AllowUnsandboxedCommands {
 		t.Fatalf("sandbox is not mandatory: %+v", settings.Sandbox)
 	}
-	if len(settings.Sandbox.Filesystem.AllowWrite) != 1 || settings.Sandbox.Filesystem.AllowWrite[0] != workspace {
-		t.Fatalf("sandbox write roots = %q, want only %q", settings.Sandbox.Filesystem.AllowWrite, workspace)
+	wantRoots := []string{workspace, agentCwd}
+	if len(settings.Sandbox.Filesystem.AllowWrite) != len(wantRoots) {
+		t.Fatalf("sandbox write roots = %q, want %q", settings.Sandbox.Filesystem.AllowWrite, wantRoots)
 	}
-	wantPermissions := []string{"Edit(" + workspace + "/**)", "Write(" + workspace + "/**)"}
+	for i, want := range wantRoots {
+		if settings.Sandbox.Filesystem.AllowWrite[i] != want {
+			t.Fatalf("sandbox write roots = %q, want %q", settings.Sandbox.Filesystem.AllowWrite, wantRoots)
+		}
+	}
+	// The extra leading slash is the point: "Edit(/" + <absolute path> gives
+	// the `//` absolute form Claude Code's rule matcher requires (#6087).
+	wantPermissions := []string{
+		"Edit(/" + workspace + "/**)", "Write(/" + workspace + "/**)",
+		"Edit(/" + agentCwd + "/**)", "Write(/" + agentCwd + "/**)",
+	}
 	if len(settings.Permissions.Allow) != len(wantPermissions) {
 		t.Fatalf("tool write permissions = %q, want %q", settings.Permissions.Allow, wantPermissions)
 	}
@@ -166,6 +197,42 @@ func TestClaudeLocalSandboxIsMandatory(t *testing.T) {
 		if settings.Permissions.Allow[i] != want {
 			t.Fatalf("tool write permissions = %q, want %q", settings.Permissions.Allow, wantPermissions)
 		}
+	}
+}
+
+// TestClaudeLocalSandboxWithoutAgentCwdGrantsWorkspaceOnly pins the graceful
+// degradation: an entrypoint that never exported HIVE_AGENT_CWD (container
+// mode, older launchers) still gets a correct workspace-only sandbox rather
+// than an empty-string root.
+func TestClaudeLocalSandboxWithoutAgentCwdGrantsWorkspaceOnly(t *testing.T) {
+	args := claudeLocalSandboxArgs(t)
+	addDirs := argValues(args, "--add-dir")
+	if len(addDirs) != 1 || !strings.Contains(addDirs[0], "workspace with spaces") {
+		t.Fatalf("--add-dir grants = %q, want exactly the workspace", addDirs)
+	}
+	raw, ok := argValue(args, "--settings")
+	if !ok {
+		t.Fatalf("Claude local argv has no sandbox settings: %q", args)
+	}
+	var settings struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+		Sandbox struct {
+			Filesystem struct {
+				AllowWrite []string `json:"allowWrite"`
+			} `json:"filesystem"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		t.Fatalf("settings argument is not JSON: %v\n%s", err, raw)
+	}
+	if len(settings.Sandbox.Filesystem.AllowWrite) != 1 || settings.Sandbox.Filesystem.AllowWrite[0] != addDirs[0] {
+		t.Fatalf("sandbox write roots = %q, want only %q", settings.Sandbox.Filesystem.AllowWrite, addDirs[0])
+	}
+	want := []string{"Edit(/" + addDirs[0] + "/**)", "Write(/" + addDirs[0] + "/**)"}
+	if len(settings.Permissions.Allow) != 2 || settings.Permissions.Allow[0] != want[0] || settings.Permissions.Allow[1] != want[1] {
+		t.Fatalf("tool write permissions = %q, want %q", settings.Permissions.Allow, want)
 	}
 }
 
