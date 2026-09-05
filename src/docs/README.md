@@ -16,6 +16,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Changelog](https://github.com/hivecommons/hive/blob/v4/CHANGELOG.md) — recent user-visible changes and release notes.
 - [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, switching a hive to a channel, and the `stable (v4)` version pill.
 - [v4 stable soak and promotion policy](stable-soak-policy.md) — the proposed gate between `candidate` and `stable`: soak conditions, immutable short-SHA rollback tags, and the emergency exception path. Until the CI promotion step lands, `stable` is a compatibility tag, not evidence of longer soak.
+- [v4 → v5 forward-port sync policy](v5-sync-policy.md) — proposed cadence, ownership, merge-commit top-up procedure, and the PR/review contract for keeping `v5` topped up with `v4`; protects the v5 GA bar from unbounded drift.
 - [HiveCommons migration tracker](hivecommons-migration.md) — phased org/package migration status, operator promises, and communications checklist.
 - [dibs domain cutover](dibs-domain-cutover.md) — staged operator sequence for moving dibs to `dibs.hivecommons.dev`, including DNS, Let's Encrypt quota hold, Certificate/Ingress manifests, redirect verification, and rollback.
 - [Serving spokes from the fleet wildcard certificate](spoke-wildcard-tls.md) — how to point a cluster's provisioned spokes at the wildcard instead of one certificate per hive, the two cluster prerequisites that must hold first, and which hosts a wildcard cannot cover.
