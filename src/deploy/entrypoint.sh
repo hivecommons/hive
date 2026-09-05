@@ -708,6 +708,18 @@ if [ "$(id -u)" = "0" ]; then
   # group-writable mode would let any agent swap that file and spoof the
   # identity the gate validates against. Re-asserted on every boot.
   chmod 755 /var/run/hive-metrics/agent-tokens 2>/dev/null || true
+  # The token-access audit log (GET /api/token-access) is APPENDED by the
+  # per-UID agent processes — gh-wrapper.sh on every gh call and
+  # git-credential-hive.sh on every credential lookup — but the directory
+  # above is deliberately not agent-writable, so an agent can never create
+  # the file and every append failed silently: the audit endpoint on a
+  # per-UID hive stayed empty forever. Pre-create it here, owned by dev with
+  # group "node" (every agent UID) writable, so the appends land. The
+  # directory itself stays 0755: only this one file opens up, the
+  # bot-identity file the gh-wrapper author gate trusts is untouched.
+  touch /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  chown dev:node /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  chmod 664 /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
 
   # Fix permissions on bind-mounted secret files (host may own them as
   # a different UID with mode 600, making them unreadable by dev/UID 1001)
