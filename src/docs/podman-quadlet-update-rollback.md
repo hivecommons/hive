@@ -46,6 +46,8 @@ bin/hive-podman-update.sh resolve ghcr.io/hivecommons/hive:stable
 bin/hive-podman-update.sh pin ghcr.io/hivecommons/hive:stable    # RESTARTS HIVE
 bin/hive-podman-update.sh rollback                               # RESTARTS HIVE
 bin/hive-podman-update.sh unpin
+bin/hive-podman-update.sh reconcile          # read-only; 78 when the host is stale
+bin/hive-podman-update.sh reconcile apply    # re-copies the repo-owned files
 ```
 
 `--rootful` drives the system manager through `sudo`; the default is the user
@@ -58,6 +60,98 @@ end healthy, 64 an unusable invocation.
 `bin/test_hive_podman_update.sh` covers it with every input mocked — no Podman,
 no Quadlet, no privileges, no pull — and the cases that matter are the failed
 ones, because a rollback that only works from a healthy unit is not a rollback.
+
+## The image is not the whole deployment (#6078)
+
+Updating the image moves the **binary**. It does not move the files this host
+runs *from*, and there are eight of them:
+
+| File | Installed to | Owned by |
+| --- | --- | --- |
+| `nginx.conf` | `%E/hive/nginx.conf` | the repo |
+| `hive.network`, `hive-data.volume`, `hive.container`, `hive-gateway.container` | the Quadlet directory | the repo |
+| `hive-boot.target`, `hive-boot-gate.service` | the systemd unit directory | the repo |
+| `hive.yaml`, `hive.env`, `secrets/` | `%E/hive/` | **the operator** |
+
+The gateway does not read `nginx.conf` out of the image — `hive-gateway.container`
+bind-mounts it from the host — so a change to `src/deploy/nginx.conf` ships,
+releases, and never reaches a deployment that is already running.
+
+That was measured, not theorised. #5200 fixed the gateway dropping the WebSocket
+upgrade on `/api/` and merged on 2026-08-30. Six days later a host installed on
+2026-08-22 was still returning HTTP 400 on the contributor handshake while
+`/api/contribute/status` reported a `served_sha` that **contained** the fix —
+because that SHA describes the binary. Copying the current conf in by hand and
+restarting only the gateway fixed it immediately.
+
+`hive.container` has the same staleness with no symptom at all: its `Image=`
+moved from `ghcr.io/kubestellar/hive` to `ghcr.io/hivecommons/hive`, and a host
+still naming the old path polls it, finds it unchanged, and reports
+`UPDATED=false`, exit 0, timer green — byte-identical to a host that is
+genuinely current. It keeps working only while the old org stays mirrored.
+
+### What `reconcile` does about it
+
+```sh
+bin/hive-podman-update.sh reconcile          # compare only. 0 in sync, 78 stale.
+bin/hive-podman-update.sh reconcile apply    # re-copy the ones that fell behind
+```
+
+It compares the eight repo-owned files against the checkout it is run from and,
+with `apply`, re-copies the ones that differ. It **never** writes `hive.yaml`,
+`hive.env` or `secrets/`, and prints that list before it writes anything —
+which is the whole reason it exists rather than `setup --force`, since that
+re-copies those three too and regenerating `hive.env` takes
+`HIVE_DASHBOARD_TOKEN` with it.
+
+Two things it deliberately does not do:
+
+- **It needs a checkout.** Every other command in this script works against the
+  host alone. Run it from a clone, or point `HIVE_UPDATE_SRC_ROOT` at one. With
+  no checkout it refuses and says so, rather than reporting that everything
+  matches — "not checked" and "up to date" must not print the same thing.
+- **It does not recreate the container.** A rewritten `hive.container` is picked
+  up by `daemon-reload`, but the *running* container keeps the reference it was
+  created with until something recreates it, and that is downtime. `apply` says
+  so and names the two commands that do it.
+
+`reconcile` exits **78 on drift**, on purpose. The second half of #6078 is that
+a frozen host is indistinguishable from a current one in everything a monitor
+can read; this exit status is the readable state that did not exist before.
+
+### Where it happens on its own
+
+`pin` refreshes the **gateway config** and restarts the gateway, because that
+file carries no operator state, `pin` has already been told to move this
+deployment forward, and it restarts the gateway a few lines later anyway.
+Leaving it stale there is exactly the reported defect: an operator runs an
+explicit update, is told it is serving, and keeps the old gateway. Unit files
+are reported by `pin`, never rewritten by it.
+
+`status` reports drift without being asked. That is the only cover the
+**auto-update** path gets: `podman auto-update` is a systemd timer calling
+podman directly, so no script is in that path and there is no "refresh on every
+update" to hook. Detection is what is available, so detection is what it does.
+
+### Existing hosts need one manual run
+
+This fix ships *inside* the files that are never refreshed, so it cannot reach
+the hosts that need it most. Every deployment installed before it merges needs
+one run from a checkout, once:
+
+```sh
+git clone https://github.com/hivecommons/hive && cd hive
+bin/hive-podman-update.sh reconcile              # see what is stale
+bin/hive-podman-update.sh reconcile apply        # add --rootful for a system install
+```
+
+If that reports a rewritten `hive.container`, the running container is still on
+the old image reference until you recreate it:
+
+```sh
+systemctl --user restart hive.service            # or: sudo systemctl restart, rootful
+```
+
 
 ## How the pin works
 

@@ -190,6 +190,21 @@ reset_env() {
   export HIVE_UPDATE_QUADLET_DIR="$QUADLET_DIR"
   rm -rf "$QUADLET_DIR"; mkdir -p "$QUADLET_DIR"
 
+  # The managed-file destinations (#6078). These MUST be redirected: without
+  # them `pin` writes the refreshed gateway config into the real
+  # ~/.config/hive/nginx.conf of whoever runs the suite, and `status` compares
+  # against their actual host. Every managed-file case below drives these three
+  # directories instead.
+  export CONF_DIR="${TEST_TMP}/conf"
+  export HIVE_UPDATE_CONF_DIR="$CONF_DIR"
+  rm -rf "$CONF_DIR"; mkdir -p "$CONF_DIR"
+  export BOOT_UNIT_DIR="${TEST_TMP}/systemd-user"
+  export HIVE_UPDATE_SYSTEMD_UNIT_DIR="$BOOT_UNIT_DIR"
+  rm -rf "$BOOT_UNIT_DIR"; mkdir -p "$BOOT_UNIT_DIR"
+  # The real checkout by default, so the comparison runs against the files this
+  # PR actually ships; cases that want a host with no repo override it.
+  export HIVE_UPDATE_SRC_ROOT="$ROOT"
+
   export STATE_DIR="${TEST_TMP}/state"
   rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
   printf 'active\n'  >"$STATE_DIR/ActiveState"
@@ -605,6 +620,241 @@ FAKE_AUTOUPDATE_LABEL=registry FAKE_TIMER_STATE=enabled \
   case_expect "status reports the label the RUNNING container carries" 0 "registry" autoupdate status
 
 echo
+echo "== reconcile: the files this host RUNS FROM, not the image (#6078) =="
+
+# Puts the host in the state a fresh install leaves it in: every repo-owned
+# file copied out of the checkout. Cases then age exactly one file, so a
+# failure names the file that stopped being reconciled rather than reporting
+# that "something" drifted.
+seed_managed_host() {
+  install -Dm644 "${ROOT}/src/deploy/nginx.conf" "${CONF_DIR}/nginx.conf"
+  local u
+  for u in hive.network hive-data.volume hive.container hive-gateway.container; do
+    install -Dm644 "${ROOT}/src/deploy/quadlet/${u}" "${QUADLET_DIR}/${u}"
+  done
+  for u in hive-boot.target hive-boot-gate.service; do
+    install -Dm644 "${ROOT}/src/deploy/systemd/${u}" "${BOOT_UNIT_DIR}/${u}"
+  done
+}
+
+# The operator files reconcile must never write. Seeded with contents no
+# template contains, so "was it preserved" is a content check rather than a
+# timestamp one.
+seed_operator_files() {
+  printf 'dashboard:\n  port: 3002\n# an operator edit\n' >"${CONF_DIR}/hive.yaml"
+  printf 'HIVE_DASHBOARD_TOKEN=deadbeefcafe\n' >"${CONF_DIR}/hive.env"
+  mkdir -p "${CONF_DIR}/secrets"
+  printf 'private-key-material\n' >"${CONF_DIR}/secrets/id_ed25519"
+}
+
+reset_env; seed_managed_host
+case_expect "a host that matches the checkout reconciles clean" 0 \
+  "every repo-owned file on this host matches the checkout" reconcile
+reset_env; seed_managed_host
+case_expect "check is the default action" 0 "Managed files" reconcile check
+
+# THE REPORTED BUG. An install from 2026-08-22 keeps serving that day's
+# nginx.conf while the image rolls forward, so the WebSocket fix in #5200 was
+# merged, released, reported present in served_sha, and still dark on the host.
+reset_env; seed_managed_host
+printf 'user nginx;\n# the 2026-08-22 gateway config\n' >"${CONF_DIR}/nginx.conf"
+case_expect "a stale gateway config is reported as stale" 78 \
+  "STALE   gateway config" reconcile check
+reset_env; seed_managed_host
+printf 'user nginx;\n# the 2026-08-22 gateway config\n' >"${CONF_DIR}/nginx.conf"
+case_expect "and check exits non-zero so a monitor can read it" 78 \
+  "this host is running files older than the checkout" reconcile check
+
+# check must be READ-ONLY. A "reporting" command that quietly fixed things
+# would make the drift invisible again, one level up.
+reset_env; seed_managed_host
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+run_update reconcile check >/dev/null
+check "check writes nothing" '[ "$(cat "${CONF_DIR}/nginx.conf")" = "stale" ]'
+check "check restarts nothing" '! grep -qE "systemctl (restart|stop|start)" "$SYSTEMCTL_CALL_LOG"'
+
+reset_env; seed_managed_host
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+case_expect "apply rewrites the stale gateway config" 0 \
+  "wrote   gateway config" reconcile apply
+check "apply put the checkout's gateway config on the host" \
+  'cmp -s "${ROOT}/src/deploy/nginx.conf" "${CONF_DIR}/nginx.conf"'
+check "apply restarted the gateway onto it" \
+  'grep -qF "restart hive-gateway.service" "$SYSTEMCTL_CALL_LOG"'
+
+# The second instance from the issue thread, and the more dangerous one: a
+# stale Image= breaks NOTHING observable. podman auto-update polls the old
+# registry path, finds it unchanged, prints UPDATED=false and exits 0 -- which
+# is byte-identical to a host that is genuinely current.
+stale_image_unit() {
+  sed 's|ghcr.io/hivecommons/hive:stable|ghcr.io/kubestellar/hive:stable|' \
+    "${ROOT}/src/deploy/quadlet/hive.container" >"${QUADLET_DIR}/hive.container"
+}
+
+reset_env; seed_managed_host; stale_image_unit
+case_expect "a hive.container pointing at the moved registry org is reported" 78 \
+  "STALE   quadlet unit" reconcile check
+
+reset_env; seed_managed_host; stale_image_unit
+run_update reconcile apply >/dev/null
+check "apply puts the current image reference on the host" \
+  'grep -qF "Image=ghcr.io/hivecommons/hive:stable" "${QUADLET_DIR}/hive.container"'
+check "a unit rewrite is followed by daemon-reload" \
+  'grep -qF "daemon-reload" "$SYSTEMCTL_CALL_LOG"'
+
+reset_env; seed_managed_host; stale_image_unit
+case_expect "and apply says the running container has NOT moved yet" 0 \
+  "the running container still uses the reference it was created with" reconcile apply
+
+reset_env; seed_managed_host
+rm -f "${BOOT_UNIT_DIR}/hive-boot-gate.service"
+case_expect "a missing boot unit is reported, not silently ignored" 78 \
+  "missing boot unit" reconcile check
+
+# A host whose gateway unit is not installed on this manager: the file still
+# belongs on disk, so writing it is right and failing the run is not. This is
+# the same judgement ensure_gateway_serving already makes.
+reset_env; seed_managed_host
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+FAKE_GATEWAY_UNIT_KNOWN=no \
+  case_expect "apply still places the config when the gateway unit is unknown" 0 \
+  "nothing was restarted" reconcile apply
+check "and the file is on disk even though nothing was restarted" \
+  'cmp -s "${ROOT}/src/deploy/nginx.conf" "${CONF_DIR}/nginx.conf"'
+
+# The reason this command exists instead of `setup --force`: that path re-copies
+# hive.yaml and hive.env too, and regenerating hive.env takes the dashboard
+# token with it. If reconcile ever grows the same reach, these three fail.
+reset_env; seed_managed_host; seed_operator_files
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+run_update reconcile apply >/dev/null
+check "apply preserves an operator's hive.yaml" \
+  'grep -qF "an operator edit" "${CONF_DIR}/hive.yaml"'
+check "apply preserves the generated dashboard token" \
+  'grep -qF "HIVE_DASHBOARD_TOKEN=deadbeefcafe" "${CONF_DIR}/hive.env"'
+check "apply preserves key material under secrets/" \
+  'grep -qF "private-key-material" "${CONF_DIR}/secrets/id_ed25519"'
+reset_env; seed_managed_host; seed_operator_files
+case_expect "and it names what it will not touch before writing" 0 \
+  "these hold operator edits" reconcile check
+
+# A host with no checkout must say it did not compare. Reporting "matches"
+# there would be the same lie as the served_sha that hid #6078 for two weeks.
+reset_env; export HIVE_UPDATE_SRC_ROOT="${TEST_TMP}/not-a-checkout"
+case_expect "reconcile refuses without a checkout" 78 \
+  "there is nothing to compare the host against" reconcile check
+reset_env; export HIVE_UPDATE_SRC_ROOT="${TEST_TMP}/not-a-checkout"
+case_expect "and it says how to get one" 78 "git clone" reconcile check
+
+reset_env
+case_expect "reconcile rejects a bad action" 64 "reconcile takes check or apply" reconcile sideways
+
+echo
+echo "== drift is visible without being asked for (#6078) =="
+
+# The half of the issue that survives whatever fix lands: `podman auto-update`
+# is a timer calling podman, so no script can hook it. status is where an
+# operator or a monitor finds out the host stopped moving.
+reset_env; seed_managed_host
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+case_expect "status flags a stale managed file without being asked" 0 \
+  "STALE   gateway config" status
+reset_env; seed_managed_host
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+case_expect "status points at the command that fixes it" 0 \
+  "reconcile apply" status
+reset_env; seed_managed_host
+case_expect "a current host says so explicitly" 0 \
+  "every repo-owned file on this host matches" status
+
+# "not checked" and "up to date" must not print the same. This is the exact
+# confusion the issue is about, so status refuses to imply the second.
+reset_env; export HIVE_UPDATE_SRC_ROOT="${TEST_TMP}/not-a-checkout"
+case_expect "status distinguishes 'not checked' from 'up to date'" 0 \
+  "this is not 'up to date': it is 'not checked'" status
+
+reset_env; seed_managed_host
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+run_update status >/dev/null
+check "status still writes nothing while reporting drift" \
+  '[ "$(cat "${CONF_DIR}/nginx.conf")" = "stale" ]'
+
+echo
+echo "== pin carries the gateway config with the image (#6078) =="
+
+# The issue's second preference, applied to the one path a script can reach:
+# an explicit update must not leave the gateway on the config it was installed
+# with. The image and the config ship in the same commit; they must land
+# together.
+reset_env; seed_managed_host
+printf 'user nginx;\n# the config this host was installed with\n' >"${CONF_DIR}/nginx.conf"
+case_expect "pin refreshes a stale gateway config" 0 \
+  "refreshed the gateway config" pin "${REPO}:stable"
+check "pin left the checkout's gateway config on the host" \
+  'cmp -s "${ROOT}/src/deploy/nginx.conf" "${CONF_DIR}/nginx.conf"'
+
+# The discriminating half: an in-sync host must not be rewritten or have its
+# gateway bounced for nothing.
+reset_env; seed_managed_host
+out="$(run_update pin "${REPO}:stable")"
+check "pin says nothing about the gateway config when it already matches" \
+  '! printf "%s" "$out" | grep -qF "refreshed the gateway config"'
+
+# Unit files are reported, never rewritten by pin: a unit change needs a
+# container recreate to mean anything, and rewriting hive.container under an
+# active pin edits the file the pin exists to leave alone.
+reset_env; seed_managed_host; stale_image_unit
+case_expect "pin reports stale unit files rather than rewriting them" 0 \
+  "were NOT rewritten" pin "${REPO}:stable"
+check "pin left the stale unit exactly as it found it" \
+  'grep -qF "Image=ghcr.io/kubestellar/hive:stable" "${QUADLET_DIR}/hive.container"'
+
+# Operator state is not pin's to touch either.
+reset_env; seed_managed_host; seed_operator_files
+printf 'stale\n' >"${CONF_DIR}/nginx.conf"
+run_update pin "${REPO}:stable" >/dev/null
+check "pin preserves the dashboard token while refreshing the gateway" \
+  'grep -qF "HIVE_DASHBOARD_TOKEN=deadbeefcafe" "${CONF_DIR}/hive.env"'
+
+# A host with no checkout must still be able to pin. The refresh is a bonus on
+# that path, not a precondition for updating an image.
+reset_env; export HIVE_UPDATE_SRC_ROOT="${TEST_TMP}/not-a-checkout"
+case_expect "pin still works when run from outside a checkout" 0 \
+  "serving end to end" pin "${REPO}:stable"
+
+echo
+echo "== the two scripts' file lists cannot drift apart (#6078) =="
+
+# bin/hive-podman-setup.sh decides what an install PUTS on the host;
+# bin/hive-podman-update.sh decides what reconcile KEEPS current. A unit added
+# to the first and forgotten in the second is installed once and then frozen
+# forever -- which is #6078 again, for a file that does not exist yet. Compared
+# here rather than trusted to review.
+array_literal() {
+  sed -n 's/^'"$2"'=(\(.*\))$/\1/p' "$1" | head -n1
+}
+setup_units() { array_literal "${ROOT}/bin/hive-podman-setup.sh" "$1"; }
+update_units() { array_literal "$UPDATE" "$1"; }
+
+check "setup's UNITS list was found at all" '[ -n "$(setup_units UNITS)" ]'
+check "update's MANAGED_UNITS list was found at all" '[ -n "$(update_units MANAGED_UNITS)" ]'
+check "reconcile covers exactly the quadlet units setup installs" \
+  '[ "$(setup_units UNITS)" = "$(update_units MANAGED_UNITS)" ]'
+check "setup's BOOT_UNITS list was found at all" '[ -n "$(setup_units BOOT_UNITS)" ]'
+check "reconcile covers exactly the boot units setup installs" \
+  '[ "$(setup_units BOOT_UNITS)" = "$(update_units MANAGED_BOOT_UNITS)" ]'
+
+# The gateway config is the file the issue was filed about, so it must be in
+# the managed set; the operator files must never appear there.
+reset_env; seed_managed_host
+out="$(run_update reconcile check)"
+check "nginx.conf is one of the files reconcile manages" \
+  'printf "%s" "$out" | grep -qF "match   gateway config"'
+check "hive.yaml is never listed as a managed file" \
+  '! printf "%s" "$out" | grep -qE "(match|STALE|missing) +[a-z ]*: .*hive[.]yaml"'
+check "hive.env is never listed as a managed file" \
+  '! printf "%s" "$out" | grep -qE "(match|STALE|missing) +[a-z ]*: .*hive[.]env"'
+
 echo "== invocation =="
 reset_env
 case_expect "an unknown command is EX_USAGE" 64 "unknown command" nonsense

@@ -42,6 +42,17 @@
 #                   bad update, when the top of the history is the bad pin.
 #   unpin           remove the drop-in, returning the unit to the floating tag
 #                   in hive.container, and restart.
+#   reconcile [check|apply]
+#                   Compare the repo-owned files this host RUNS FROM against
+#                   the checkout, and with `apply` re-copy the ones that have
+#                   fallen behind (#6078). Covers the gateway config and the
+#                   Quadlet and boot units; never touches hive.yaml, hive.env
+#                   or secrets/, which hold operator state. `check` is the
+#                   default and is read-only, and EXITS NON-ZERO on drift so a
+#                   monitor has something to read -- an image-frozen host is
+#                   otherwise byte-identical to a current one.
+#                   Needs a checkout: this is the one command that reads the
+#                   repo as well as the host.
 #   autoupdate <on|off|status>
 #                   OPT-IN health-aware auto-update (#4411). `on` installs
 #                   20-autoupdate.conf (AutoUpdate=registry) beside the pin
@@ -117,14 +128,14 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    status|resolve|pin|rollback|unpin|autoupdate)
+    status|resolve|pin|rollback|unpin|autoupdate|reconcile)
       # `autoupdate status` is a command plus an ACTION, and the action happens
       # to be spelled the same as another command. Only the argument-taking
       # commands may absorb a second one of these words; `status rollback` is
       # still two commands and still an error.
       if [ -z "$CMD" ]; then
         CMD="$1"
-      elif [ -z "$REF" ] && case "$CMD" in autoupdate|pin|resolve) true ;; *) false ;; esac; then
+      elif [ -z "$REF" ] && case "$CMD" in autoupdate|reconcile|pin|resolve) true ;; *) false ;; esac; then
         REF="$1"
       else
         printf 'two commands given: %s and %s\n' "$CMD" "$1" >&2; usage
@@ -149,6 +160,9 @@ if [ "$ROOTFUL" -eq 1 ]; then
   MODE_FLAG=" --rootful"
   SCTL_LABEL="sudo systemctl"
   QUADLET_DIR="${HIVE_UPDATE_QUADLET_DIR:-/etc/containers/systemd}"
+  # %E in the shipped units, which Quadlet expands to /etc for a system unit.
+  CONF_DIR="${HIVE_UPDATE_CONF_DIR:-/etc/hive}"
+  SYSTEMD_UNIT_DIR="${HIVE_UPDATE_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
   sctl() { sudo systemctl "$@"; }
   pod()  { sudo podman "$@"; }
   as_owner() { sudo "$@"; }
@@ -157,6 +171,9 @@ else
   MODE_FLAG=""
   SCTL_LABEL="systemctl --user"
   QUADLET_DIR="${HIVE_UPDATE_QUADLET_DIR:-$HOME/.config/containers/systemd}"
+  # %E expands to ~/.config for a user unit; both match bin/hive-podman-setup.sh.
+  CONF_DIR="${HIVE_UPDATE_CONF_DIR:-$HOME/.config/hive}"
+  SYSTEMD_UNIT_DIR="${HIVE_UPDATE_SYSTEMD_UNIT_DIR:-$HOME/.config/systemd/user}"
   sctl() { systemctl --user "$@"; }
   pod()  { podman "$@"; }
   as_owner() { "$@"; }
@@ -168,6 +185,10 @@ AUTOUPDATE_DROPIN="${DROPIN_DIR}/${AUTOUPDATE_NAME}"
 # The tracked source of the opt-in file. Copied rather than generated so the
 # rationale in its header travels to the host with it.
 AUTOUPDATE_SRC="${HIVE_UPDATE_AUTOUPDATE_SRC:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/src/deploy/quadlet/optional/hive-autoupdate.conf}"
+
+# The checkout this script was run out of. `reconcile` is the one command
+# needing the repo as well as the host; the rest work against the host alone.
+SRC_ROOT="${HIVE_UPDATE_SRC_ROOT:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}"
 
 show()  { sctl show "$UNIT" -p "$1" --value 2>/dev/null; }
 state() { printf '%s/%s/%s' "$(show ActiveState)" "$(show SubState)" "$(show Result)"; }
@@ -429,6 +450,265 @@ ensure_gateway_serving() {
   return 1
 }
 
+# --- managed files: what the repo owns on this host (#6078) ------------------
+#
+# THE DEFECT. A Quadlet install copies repo files ONTO the host and runs them
+# from there: the gateway reads %E/hive/nginx.conf, and Quadlet reads the four
+# unit files out of the Quadlet directory. Updating Hive replaces the IMAGE, so
+# the Go binary moves; nothing in that path re-copies any of these files. A fix
+# to src/deploy/nginx.conf therefore ships, releases, and never reaches a
+# deployment that is already running -- measured on a host installed 2026-08-22
+# and still serving the 2026-08-22 gateway config two weeks later, while
+# /api/contribute/status reported a served_sha that CONTAINED the fix, because
+# that SHA describes the binary and not the gateway.
+#
+# Two different mechanisms produce the same staleness, and the difference
+# matters because only one of them is a policy question:
+#
+#   nginx.conf   goes through place() in bin/hive-podman-setup.sh, which
+#                deliberately refuses to overwrite without --force. That is
+#                right for hive.yaml and hive.env, which hold operator edits and
+#                a generated dashboard token, and wrong for this file, which no
+#                operator is expected to edit.
+#   unit files   are install -Dm644'd unconditionally by that same script, so a
+#                re-run DOES refresh them. They are stale only because nothing
+#                ever re-runs it.
+#
+# So the gap is not "place() is too cautious". It is that there has never been a
+# command that refreshes the files the REPO owns without also rewriting the ones
+# the OPERATOR owns -- `setup --force` does both, and regenerating hive.env
+# takes the dashboard token with it, which is why it is not a workaround.
+#
+# WHY THIS CANNOT HOOK INTO AUTO-UPDATE. `podman auto-update` is driven by
+# podman-auto-update.timer calling podman directly. This script is not in that
+# path and cannot insert itself into it, so there is no "refresh on every
+# update" for the automatic path to have. What that path gets instead is
+# DETECTION: `status` compares the host against the checkout and says so, which
+# is the only thing that turns a silent freeze into something an operator or a
+# monitor can read.
+
+# Same list, same order, as UNITS/BOOT_UNITS in bin/hive-podman-setup.sh. The
+# two are checked against each other by bin/test_hive_podman_update.sh rather
+# than kept in step by hand.
+MANAGED_UNITS=(hive.network hive-data.volume hive.container hive-gateway.container)
+MANAGED_BOOT_UNITS=(hive-boot.target hive-boot-gate.service)
+
+# Named, not merely omitted. These are the place() files that carry operator
+# state -- edits in hive.yaml, HIVE_DASHBOARD_TOKEN and any PAT in hive.env,
+# key material under secrets/ -- and `reconcile` prints this list so an
+# operator can see what it is NOT going to touch before it writes anything.
+OPERATOR_OWNED=(hive.yaml hive.env secrets/)
+
+# One `<source>\t<destination>\t<label>` line per repo-owned file.
+managed_files() {
+  local name
+  printf '%s\t%s\t%s\n' \
+    "${SRC_ROOT}/src/deploy/nginx.conf" "${CONF_DIR}/nginx.conf" "gateway config"
+  for name in "${MANAGED_UNITS[@]}"; do
+    printf '%s\t%s\t%s\n' \
+      "${SRC_ROOT}/src/deploy/quadlet/${name}" "${QUADLET_DIR}/${name}" "quadlet unit"
+  done
+  for name in "${MANAGED_BOOT_UNITS[@]}"; do
+    printf '%s\t%s\t%s\n' \
+      "${SRC_ROOT}/src/deploy/systemd/${name}" "${SYSTEMD_UNIT_DIR}/${name}" "boot unit"
+  done
+}
+
+# Whether this script was run from somewhere that has the files to compare
+# against. Every managed-file path is guarded by this: a missing checkout must
+# report "cannot compare" and never "everything matches", which is the same
+# class of lie as the served_sha that started #6078.
+have_checkout() { [ -d "${SRC_ROOT}/src/deploy/quadlet" ]; }
+
+# same | drift | absent | nosrc, for one managed file.
+managed_state() {
+  local src="$1" dest="$2"
+  [ -f "$src" ]  || { printf 'nosrc\n';  return 0; }
+  [ -f "$dest" ] || { printf 'absent\n'; return 0; }
+  if cmp -s "$src" "$dest"; then printf 'same\n'; else printf 'drift\n'; fi
+}
+
+# Report every managed file. With verbose=1 the matching ones are printed too,
+# which is what `reconcile` wants; `status` passes 0 and prints only what is
+# wrong. Returns 0 when the host matches the checkout and 1 when anything is
+# stale, missing, or unreadable -- so a caller can gate on the exit status
+# rather than parsing this output.
+managed_report() {
+  local verbose="${1:-0}" drifted=0 src dest label st
+  while IFS=$'\t' read -r src dest label; do
+    st="$(managed_state "$src" "$dest")"
+    case "$st" in
+      same)
+        [ "$verbose" = "1" ] && ok "match   ${label}: ${dest}"
+        ;;
+      drift)
+        warn "STALE   ${label}: ${dest}"
+        info "        differs from ${src}"
+        drifted=1
+        ;;
+      absent)
+        warn "missing ${label}: ${dest}"
+        info "        the checkout has ${src}"
+        drifted=1
+        ;;
+      nosrc)
+        bad "no source for ${label} in the checkout: ${src}"
+        drifted=1
+        ;;
+    esac
+  done < <(managed_files)
+  return "$drifted"
+}
+
+# The gateway config, refreshed on the manual update path.
+#
+# This is the one managed file `pin` rewrites on its own, and the reasoning is
+# specific to it rather than a general licence to mutate the host: it carries no
+# operator state, `pin` has already been told to move this deployment forward,
+# and `pin` restarts the gateway a few lines later anyway. Leaving it alone here
+# is exactly the #6078 defect -- an operator runs an explicit update, is told it
+# is serving, and keeps the old gateway.
+#
+# The unit files are deliberately NOT rewritten here. Changing hive.container
+# under an active digest pin edits the file the pin exists to leave alone, and a
+# unit change needs a container recreate to mean anything, which is a downtime
+# decision that belongs to the operator. `pin` reports their drift instead.
+refresh_gateway_config() {
+  local src="${SRC_ROOT}/src/deploy/nginx.conf" dest="${CONF_DIR}/nginx.conf"
+  have_checkout || return 0
+  case "$(managed_state "$src" "$dest")" in
+    same)   return 0 ;;
+    nosrc)  warn "no ${src} in this checkout -- leaving the installed gateway config alone"
+            return 0 ;;
+  esac
+  if ! as_owner install -Dm644 "$src" "$dest"; then
+    bad "could not write ${dest} -- the gateway keeps the config it had"
+    return 1
+  fi
+  ok "refreshed the gateway config: ${dest}"
+  info "it differed from ${src}; nothing else on this host was rewritten"
+  restart_gateway_onto_new_config
+}
+
+# nginx reads its config at start, and `systemctl start` on a unit that is
+# already running is a no-op -- so a refreshed config under a live gateway
+# would be written and never read. Restarting is the point of writing it.
+#
+# A gateway that is not installed on this manager is reported and is NOT a
+# failure: the file is still correctly placed for whenever it is, and
+# ensure_gateway_serving already treats an unknown gateway the same way.
+restart_gateway_onto_new_config() {
+  if ! sctl cat "$GATEWAY_UNIT" >/dev/null 2>&1; then
+    warn "${GATEWAY_UNIT} is not known to this manager -- the file is in place, nothing was restarted"
+    return 0
+  fi
+  if ! sctl restart "$GATEWAY_UNIT" >/dev/null 2>&1; then
+    bad "${GATEWAY_UNIT} did not restart onto the new config"
+    return 1
+  fi
+  ok "restarted ${GATEWAY_UNIT} onto it"
+  return 0
+}
+
+do_reconcile() {
+  local action="${REF:-check}"
+  case "$action" in
+    check|apply) : ;;
+    *) printf 'reconcile takes check or apply (got %s)\n' "$action" >&2; usage ;;
+  esac
+
+  head1 "Managed files -- $MODE_LABEL"
+  if ! have_checkout; then
+    bad "no checkout at ${SRC_ROOT} -- there is nothing to compare the host against"
+    info "run this from a Hive checkout, or point HIVE_UPDATE_SRC_ROOT at one:"
+    info "    git clone https://github.com/hivecommons/hive && cd hive"
+    info "    bin/hive-podman-update.sh reconcile ${action}${MODE_FLAG}"
+    exit "$EX_CONFIG"
+  fi
+  info "checkout   ${SRC_ROOT}"
+  info "gateway    ${CONF_DIR}"
+  info "quadlet    ${QUADLET_DIR}"
+  info "boot units ${SYSTEMD_UNIT_DIR}"
+
+  head1 "Not touched, in either mode"
+  local kept
+  for kept in "${OPERATOR_OWNED[@]}"; do
+    info "${CONF_DIR}/${kept}"
+  done
+  info "these hold operator edits, HIVE_DASHBOARD_TOKEN and key material --"
+  info "which is why this exists at all instead of 'setup --force'"
+
+  head1 "Comparison"
+  local drifted=0
+  managed_report 1 || drifted=1
+  if [ "$drifted" -eq 0 ]; then
+    head1 "Result"
+    ok "every repo-owned file on this host matches the checkout"
+    exit 0
+  fi
+
+  if [ "$action" = "check" ]; then
+    head1 "Result"
+    # Non-zero on drift ON PURPOSE. #6078's second half is that a frozen host
+    # is byte-identical to a current one in everything a monitor can read, so
+    # this exit status is the readable state that did not exist before.
+    bad "this host is running files older than the checkout"
+    info "apply them: $0 reconcile apply${MODE_FLAG}"
+    exit "$EX_CONFIG"
+  fi
+
+  head1 "Apply"
+  local src dest label st gateway_changed=0 units_changed=0 failed=0
+  while IFS=$'\t' read -r src dest label; do
+    st="$(managed_state "$src" "$dest")"
+    [ "$st" = "same" ] && continue
+    if [ "$st" = "nosrc" ]; then
+      bad "skipped ${label}: ${src} is not in this checkout"
+      failed=1
+      continue
+    fi
+    if ! as_owner install -Dm644 "$src" "$dest"; then
+      bad "could not write ${dest}"
+      failed=1
+      continue
+    fi
+    ok "wrote   ${label}: ${dest}"
+    case "$label" in
+      "gateway config") gateway_changed=1 ;;
+      *)                units_changed=1 ;;
+    esac
+  done < <(managed_files)
+
+  if [ "$units_changed" -eq 1 ]; then
+    sctl daemon-reload
+    ok "daemon-reload: the Quadlet generator has re-read the units"
+    # The measured trap behind the second half of #6078. A rewritten
+    # hive.container can carry a NEW Image= -- the registry org moved from
+    # ghcr.io/kubestellar to ghcr.io/hivecommons -- and the generated unit
+    # picks that up on reload, but the RUNNING container keeps the reference it
+    # was created with until something recreates it. Nothing here does that,
+    # because it is downtime.
+    warn "the running container still uses the reference it was created with"
+    info "unit ExecStart now names   $(unit_image)"
+    info "running container          $(running_image)"
+    info "recreate it when you are ready to take the downtime:"
+    info "    $SCTL_LABEL restart $UNIT      or   $0 pin <ref>${MODE_FLAG}"
+  fi
+
+  if [ "$gateway_changed" -eq 1 ]; then
+    restart_gateway_onto_new_config || failed=1
+    ensure_gateway_serving || failed=1
+  fi
+
+  head1 "Result"
+  if [ "$failed" -eq 0 ]; then
+    ok "the host now matches the checkout"
+    exit 0
+  fi
+  bad "some managed files were not applied -- this host is still partly stale"
+  info "re-read the comparison above; nothing is retried silently"
+  exit "$EX_CONFIG"
+}
 # --- commands ---------------------------------------------------------------
 
 do_status() {
@@ -468,6 +748,24 @@ do_status() {
   else
     warn "no earlier HEALTHY pin recorded -- rollback has nowhere to go"
     info "the first pin this script makes has no predecessor; that is expected"
+  fi
+
+  # #6078. Reported without being asked for, because the failure this closes is
+  # precisely that nothing on a frozen host looks wrong: `podman auto-update`
+  # prints UPDATED=false and exits 0 whether the deployment is current or
+  # pointed at files that stopped moving weeks ago, and served_sha describes the
+  # BINARY, so it advances while the gateway config does not.
+  head1 "Managed files vs the checkout (#6078)"
+  if ! have_checkout; then
+    info "not run from a checkout (${SRC_ROOT}) -- no comparison was made"
+    info "this is not 'up to date': it is 'not checked'"
+  elif managed_report 0; then
+    ok "every repo-owned file on this host matches ${SRC_ROOT}"
+  else
+    warn "this host is running repo files older than the checkout above"
+    info "the image and these files move independently -- served_sha describes"
+    info "only the binary, so a stale gateway config is invisible in it"
+    info "refresh them: $0 reconcile apply${MODE_FLAG}"
   fi
 
   # #4411. Reported here as well as under `autoupdate status` because the
@@ -545,6 +843,18 @@ do_pin() {
     # itself served on it -- so it is recorded before the gateway check, whose
     # failure is a fault in front of Hive, not in the image.
     mark_top_outcome healthy
+    # #6078: the image just moved, so the gateway config shipped alongside it
+    # must move too. Without this the operator is told the update succeeded
+    # while nginx keeps the config it was installed with, which is how a merged
+    # gateway fix stayed dark on a running host for two weeks.
+    head1 "Managed files"
+    refresh_gateway_config || true
+    if have_checkout && ! managed_report 0; then
+      warn "unit files on this host are older than the checkout, and were NOT rewritten"
+      info "a unit change needs a container recreate to mean anything, which is"
+      info "downtime this command has already spent once -- do it deliberately:"
+      info "    $0 reconcile apply${MODE_FLAG}"
+    fi
     if ensure_gateway_serving; then
       head1 "Result"
       ok "updated to $digest and it is serving end to end"
@@ -781,4 +1091,5 @@ case "$CMD" in
   pin)        do_pin ;;
   rollback)   do_rollback ;;
   unpin)      do_unpin ;;
+  reconcile)  do_reconcile ;;
 esac
