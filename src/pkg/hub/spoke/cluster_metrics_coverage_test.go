@@ -1,4 +1,4 @@
-package hub
+package spoke
 
 import (
 	"log/slog"
@@ -84,11 +84,11 @@ func TestHiveSlotsForNode(t *testing.T) {
 		t.Errorf("no free CPU should be 0 slots, got %d", got)
 	}
 	// Memory-bound: plenty of CPU but tiny free memory.
-	if hiveMemRequestBytes > 0 && hiveCPURequestMillis > 0 {
+	if true {
 		// Free CPU large, free mem exactly one hive footprint -> min() picks mem.
 		got := hiveSlotsForNode(
-			hiveCPURequestMillis*100, // lots of CPU room
-			hiveMemRequestBytes*2,    // room for exactly 2 by memory
+			1000*100,        // lots of CPU room
+			(2*giToBytes)*2, // room for exactly 2 by memory
 			0, 0, true, false,
 		)
 		if got != 2 {

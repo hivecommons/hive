@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	cryptoRand "crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -664,7 +663,7 @@ type SaaSHive struct {
 	// installation belonged to another, so every freshly minted token returned
 	// "404 Not Found" while cached ones kept working — 84 failures in three
 	// hours on one hive, with no config field visibly wrong.
-	RequestedAppReset bool `json:"requested_app_reset,omitempty"`
+	RequestedAppReset  bool                         `json:"requested_app_reset,omitempty"`
 	AgentRestartResets map[string]AgentRestartReset `json:"agent_restart_resets,omitempty"`
 
 	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
@@ -873,7 +872,7 @@ type AgentRestartReset struct {
 	ResetAt       string `json:"reset_at"`
 	By            string `json:"by,omitempty"`
 	TotalBaseline int    `json:"total_baseline"`
-	Pending        bool   `json:"pending,omitempty"`
+	Pending       bool   `json:"pending,omitempty"`
 }
 
 type CreateHiveRequest struct {
@@ -2597,15 +2596,6 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 
 	logger.Info("audit: saas hive provisioned", "hive_id", h.ID, "owner", h.Owner, "org", h.Org, "cluster", cluster.ID)
 	return nil
-}
-
-// HashDashboardToken returns the SHA-256 hex digest of a spoke dashboard
-// token — the form the hub stores (SaaSHive.DashboardTokenHash) and the spoke
-// reports over the heartbeat, so neither side ever transmits or persists a
-// second copy of the raw credential.
-func HashDashboardToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
 }
 
 // deprovisionHive performs best-effort cleanup of all resources associated

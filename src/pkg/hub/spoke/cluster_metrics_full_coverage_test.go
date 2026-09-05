@@ -1,4 +1,4 @@
-package hub
+package spoke
 
 import (
 	"log/slog"
