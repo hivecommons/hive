@@ -354,6 +354,7 @@ func (w *spokeWire) handleHubGitHubAppConfig(ghCfg *hub.HeartbeatGitHubAppConfig
 		}
 		newClient.SetIssueFilter(w.cfg.Project.IssueFilter)
 		w.ghClient = newClient
+		w.installMutationBoundary(w.ghClient)
 		w.appAuth = newAppAuth
 		w.agentMgr.SetAppAuth(newAppAuth)
 		// Immediate per-agent token delivery: hosted spokes get their

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
 )
@@ -43,6 +44,12 @@ func (m *Manager) SetSandboxPRClient(client PRCreator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sandboxPRClient = client
+}
+
+func (m *Manager) SetSandboxMutationBoundary(boundary effects.Boundary) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxMutation = boundary
 }
 
 func (m *Manager) SetSandboxAuditCallback(fn func(agent, action, detail string)) {
@@ -114,6 +121,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	runCtx, cancel := context.WithCancel(context.Background())
 	agent.cancel = cancel
 	launcher, runner := m.sandboxLauncher, m.sandboxRunner
+	mutationBoundary := m.sandboxMutation
 	cloneMinter := m.tieredSandboxMinterLocked(m.agentMode(agent).TokenTier())
 	var pushMinter pushbroker.TokenMinter
 	var prClient PRCreator
@@ -123,7 +131,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		prClient = m.sandboxPRClient
 		pushEnabled = true
 	}
-	go m.runSandboxKick(runCtx, agent.Name, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient)
+	go m.runSandboxKick(runCtx, agent.Name, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
 	return nil
 }
 
@@ -151,7 +159,7 @@ func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter 
 	}
 }
 
-func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator) {
+func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
 	exec := &SandboxExecutor{
 		Launcher:    launcher,
 		Runner:      runner,
@@ -159,6 +167,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		Minter:      minter,
 		PushEnabled: pushEnabled,
 		PRClient:    prClient,
+		Mutation:    mutationBoundary,
 		Logger:      m.logger,
 	}
 	res, err := exec.Run(ctx, spec)

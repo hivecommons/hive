@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claude"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
 	"github.com/hivecommons/hive/pkg/watchdog"
@@ -559,6 +560,7 @@ type Manager struct {
 	sandboxRunner                     sandboxCommandRunner
 	sandboxPushMinter                 pushbroker.TokenMinter
 	sandboxPRClient                   PRCreator
+	sandboxMutation                   effects.Boundary
 	sandboxAuditCallback              atomic.Pointer[func(agent, action, detail string)]
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux

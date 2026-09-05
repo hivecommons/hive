@@ -12,6 +12,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -461,7 +462,20 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 	if len(usable) > 0 {
 		req.Labels = &usable
 	}
-	issue, _, err := c.client.Issues.Create(ctx, owner, repoName, req)
+	var issue *gh.Issue
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindIssueCreate,
+		Target: effects.StableDigest(title),
+		Inputs: map[string]string{"title": effects.StableDigest(title), "body": effects.StableDigest(body), "labels": strings.Join(usable, ",")},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+	})
 	if err != nil {
 		return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
 	}

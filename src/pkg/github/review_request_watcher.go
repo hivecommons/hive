@@ -12,6 +12,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 )
 
 // ReviewRequestDir is where agents drop PR-review requests. An agent that wants
@@ -226,7 +227,16 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	if leak, ok := c.scanCanaryText(req.Body, "hive-review:"+req.Repo); ok && c.canaryFailClosed {
 		err = fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 	} else {
-		_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+		_, err = effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+			Repo:   owner + "/" + repoName,
+			Kind:   effects.KindReviewSubmit,
+			Target: strconv.Itoa(req.Number),
+			Actor:  req.Agent,
+			Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body)},
+		}, func(ctx context.Context) (effects.Result, error) {
+			_, _, apiErr := c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
+			return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(req.Number)}, apiErr
+		})
 	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon

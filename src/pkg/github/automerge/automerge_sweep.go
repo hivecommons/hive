@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -35,6 +36,7 @@ type Options struct {
 	MergerAuthorizer MergerAuthorizer
 	RequiredChecks   map[string]bool
 	ApprovalDesk     hgithub.ApprovalDeskHook
+	MutationBoundary effects.Boundary
 }
 
 // Engine owns the automerge sweep policy state.
@@ -50,6 +52,7 @@ type Engine struct {
 	requiredChecks   map[string]bool
 
 	approvalDesk hgithub.ApprovalDeskHook
+	mutation     effects.Boundary
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -65,6 +68,12 @@ func New(transport Transport, opts Options) *Engine {
 		mergerAuthz:    opts.MergerAuthorizer,
 		requiredChecks: opts.RequiredChecks,
 		approvalDesk:   opts.ApprovalDesk,
+		mutation:       opts.MutationBoundary,
+	}
+	if e.mutation == nil {
+		if provider, ok := transport.(interface{ MutationBoundary() effects.Boundary }); ok {
+			e.mutation = provider.MutationBoundary()
+		}
 	}
 	return e
 }
@@ -693,9 +702,23 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
 	}
 
-	mergeResult, _, err := c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-		SHA:         evaluatedHeadSHA,
-		MergeMethod: "squash",
+	var mergeResult *gh.PullRequestMergeResult
+	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindPullRequestMerge,
+		Target: fmt.Sprintf("%d", number),
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": "squash", "expect_sha": evaluatedHeadSHA, "lane": "self-authored"},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
+			SHA:         evaluatedHeadSHA,
+			MergeMethod: "squash",
+		})
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
 		return AutoMergeSweepEvent{}, "merge-failed", err
@@ -855,9 +878,23 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, deskReason, nil
 	}
 
-	mergeResult, _, err := c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-		SHA:         headSHA,
-		MergeMethod: "squash",
+	var mergeResult *gh.PullRequestMergeResult
+	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindPullRequestMerge,
+		Target: fmt.Sprintf("%d", number),
+		Actor:  "automerge",
+		Inputs: map[string]string{"method": "squash", "expect_sha": headSHA, "lane": "queued"},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
+			SHA:         headSHA,
+			MergeMethod: "squash",
+		})
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
 		return AutoMergeSweepEvent{}, "merge-failed", err

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/effects"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
@@ -97,6 +98,7 @@ type Broker struct {
 	Runner         CommandRunner
 	Logger         *slog.Logger
 	Now            func() time.Time
+	Mutation       effects.Boundary
 }
 
 type Result struct {
@@ -190,7 +192,16 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 	// Append AFTER PushEnv: it strips inherited credential variables, and this
 	// one is deliberately supplied rather than inherited.
 	env := append(PushEnv(os.Environ()), pushTokenEnvVar+"="+token)
-	if _, err := b.runner().Run(ctx, b.Workspace, env, "git", args...); err != nil {
+	_, err = effects.Execute(ctx, b.Mutation, effects.Claim{
+		Repo:   b.Repo,
+		Kind:   effects.KindBranchPush,
+		Target: b.Branch,
+		Inputs: map[string]string{"commit": res.Commit, "remote": b.remote()},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, runErr := b.runner().Run(ctx, b.Workspace, env, "git", args...)
+		return effects.Result{Provenance: res.Commit}, runErr
+	})
+	if err != nil {
 		return b.fail(res, fmt.Errorf("git push failed: %w", err))
 	}
 	res.Pushed = true

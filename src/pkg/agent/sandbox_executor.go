@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/effects"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/outputschema"
@@ -89,6 +90,7 @@ type SandboxExecutor struct {
 	PRClient    PRCreator
 	Logger      *slog.Logger
 	Now         func() time.Time
+	Mutation    effects.Boundary
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -182,6 +184,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Minter:    e.Minter,
 		Runner:    e.runner(),
 		Logger:    e.Logger,
+		Mutation:  e.Mutation,
 	}
 	bres, brokerErr := broker.Run(ctx)
 	res.Broker = &bres

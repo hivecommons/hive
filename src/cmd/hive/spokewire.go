@@ -32,6 +32,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/defsrc"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -121,6 +122,8 @@ type spokeWire struct {
 	lastAutoMergeSweep         time.Time
 	refreshDashboard           func()
 	hubURL                     string
+	mutationBoundary           effects.Boundary
+	mutationStats              *effects.Recorder
 	trajLane                   *trajectory.Lane
 	replanLane                 *planning.ReplanLane
 	retroLane                  *retro.Lane
@@ -150,6 +153,7 @@ func (w *spokeWire) runCleanups() {
 func (w *spokeWire) run() {
 	w.wireSpokeConfigAndSignals()
 	w.wireSpokeAuthGovernor()
+	w.wireMutationBoundary()
 	w.wireSpokeAgentsAndRequests()
 	w.wireSpokeStateDashboard()
 	w.wireSpokeMetricsAndKnowledgeAPI()

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
@@ -172,7 +173,34 @@ type Client struct {
 	// commitTreeMu.
 	commitTreeMu sync.RWMutex
 	commitTrees  map[string]string
+	mutationMu   sync.RWMutex
+	mutation     effects.Boundary
 }
+
+// SetMutationBoundary installs the convergence mutation boundary around
+// external GitHub write effects. nil restores the legacy passthrough path.
+func (c *Client) SetMutationBoundary(boundary effects.Boundary) {
+	if c == nil {
+		return
+	}
+	c.mutationMu.Lock()
+	defer c.mutationMu.Unlock()
+	c.mutation = boundary
+}
+
+func (c *Client) mutationBoundary() effects.Boundary {
+	if c == nil {
+		return nil
+	}
+
+	c.mutationMu.RLock()
+	defer c.mutationMu.RUnlock()
+	return c.mutation
+}
+
+// MutationBoundary returns the installed external-effect boundary for packages
+// such as automerge that operate through a narrow transport interface.
+func (c *Client) MutationBoundary() effects.Boundary { return c.mutationBoundary() }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
 	if c == nil {
@@ -1068,7 +1096,15 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	}
 	body = logscrub.ScrubString(body)
 	owner, repoName := c.splitRepo(repo)
-	_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindIssueComment,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"body": effects.StableDigest(body)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		comment, _, apiErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
+	})
 	return err
 }
 
@@ -1113,10 +1149,18 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
-	_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
-		CommitID: gh.Ptr(headSHA),
-		Body:     gh.Ptr(body),
-		Event:    gh.Ptr("APPROVE"),
+	_, err = effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindReviewSubmit,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"event": "APPROVE", "head_sha": headSHA, "body": effects.StableDigest(body)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, _, apiErr := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
+			CommitID: gh.Ptr(headSHA),
+			Body:     gh.Ptr(body),
+			Event:    gh.Ptr("APPROVE"),
+		})
+		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
 	})
 	if err != nil {
 		return fmt.Errorf("approving PR: %w", err)
@@ -1127,7 +1171,7 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	c.recordCreationAudit(AuditActionPRReviewed, InvocationMeta{Agent: AttributionAgentGovernor},
 		"repo", owner+"/"+repoName, "number", strconv.Itoa(number),
 		"agent", queuedBy, "state", "approved")
-	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, []string{label}); err != nil {
+	if err := c.AddLabels(ctx, owner+"/"+repoName, number, []string{label}); err != nil {
 		return fmt.Errorf("adding %s label: %w", label, err)
 	}
 	return nil
@@ -1160,7 +1204,15 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
-	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindLabelMutation,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"labels": strings.Join(labels, ",")},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, _, apiErr := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
+		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
+	})
 	return err
 }
 

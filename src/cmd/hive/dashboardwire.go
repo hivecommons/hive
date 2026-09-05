@@ -127,6 +127,12 @@ func (w *spokeWire) wireSpokeStateDashboard() {
 	}
 
 	w.dashSrv = dashboard.NewServerWithAuth(w.cfg.Dashboard.Port, w.cfg.Dashboard.AuthToken, w.logger)
+	w.dashSrv.SetMutationStats(func() interface{} {
+		if w.mutationStats == nil {
+			return nil
+		}
+		return w.mutationStats.Snapshot()
+	})
 	// SIGTERM (pod roll, hive self-upgrade) kills the process and every
 	// contributor WebSocket with it, and until #5390 it did so without a word:
 	// the peer saw a bare 1006, indistinguishable from a network fault, which is

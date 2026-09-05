@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -130,11 +131,24 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 		}, nil
 	}
 
-	pr, _, err := c.client.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
-		Title: gh.Ptr(title),
-		Head:  gh.Ptr(head),
-		Base:  gh.Ptr(base),
-		Body:  gh.Ptr(body),
+	var pr *gh.PullRequest
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindPullRequestCreate,
+		Target: head,
+		Inputs: map[string]string{"head": head, "base": base, "title": effects.StableDigest(title), "body": effects.StableDigest(body)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		pr, _, apiErr = c.client.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
+			Title: gh.Ptr(title),
+			Head:  gh.Ptr(head),
+			Base:  gh.Ptr(base),
+			Body:  gh.Ptr(body),
+		})
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: pr.GetHTMLURL()}, nil
 	})
 	if err != nil {
 		// A concurrent creator may have raced us; treat an existing-PR 422 as a
@@ -194,7 +208,20 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	if expectSHA = strings.TrimSpace(expectSHA); expectSHA != "" {
 		opts.SHA = expectSHA
 	}
-	res, _, err := c.client.PullRequests.Merge(ctx, owner, repo, number, "", opts)
+	var res *gh.PullRequestMergeResult
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindPullRequestMerge,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"method": mergeMethod, "expect_sha": expectSHA},
+	}, func(ctx context.Context) (effects.Result, error) {
+		var apiErr error
+		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, "", opts)
+		if apiErr != nil {
+			return effects.Result{}, apiErr
+		}
+		return effects.Result{Provenance: res.GetSHA()}, nil
+	})
 	if err != nil {
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}
@@ -224,7 +251,14 @@ func (c *Client) UpdateBranch(ctx context.Context, repo string, number int) erro
 	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 {
 		owner, repo = parts[0], parts[1]
 	}
-	_, _, err := c.client.PullRequests.UpdateBranch(ctx, owner, repo, number, nil)
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindBranchUpdate,
+		Target: strconv.Itoa(number),
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, _, apiErr := c.client.PullRequests.UpdateBranch(ctx, owner, repo, number, nil)
+		return effects.Result{Provenance: owner + "/" + repo + "#" + strconv.Itoa(number)}, apiErr
+	})
 	if err != nil {
 		return fmt.Errorf("updating branch for PR %s/%s#%d: %w", owner, repo, number, err)
 	}
