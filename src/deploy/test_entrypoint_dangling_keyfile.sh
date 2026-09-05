@@ -112,7 +112,9 @@ YAML
 # --- the regression itself --------------------------------------------------
 
 out="$(run_merge /secrets/gh-app-key.pem missing)"
-if printf '%s' "$out" | grep -q "key_file=/secrets/gh-app-key.pem"; then
+# herestrings, not pipes, throughout: grep -q closing a pipe early would EPIPE
+# printf and, under pipefail, turn a successful match into a spurious FAIL (#5969)
+if grep -q -- "key_file=/secrets/gh-app-key.pem" <<<"$out"; then
   pass "a missing /secrets key_file is reported (the #4368 shape)"
 else
   fail "a missing /secrets key_file is reported (the #4368 shape)" \
@@ -122,7 +124,7 @@ fi
 # --- the case that already worked, which must keep working ------------------
 
 out="$(run_merge /data/gh-app-key.pem missing)"
-if printf '%s' "$out" | grep -q "key_file=/data/gh-app-key.pem"; then
+if grep -q -- "key_file=/data/gh-app-key.pem" <<<"$out"; then
   pass "a missing /data key_file is still reported"
 else
   fail "a missing /data key_file is still reported" \
@@ -132,14 +134,14 @@ fi
 # --- no false positives -----------------------------------------------------
 
 out="$(run_merge /secrets/gh-app-key.pem create)"
-if printf '%s' "$out" | grep -q "does not exist"; then
+if grep -q -- "does not exist" <<<"$out"; then
   fail "a key_file that EXISTS is not reported" "stderr was: $out"
 else
   pass "a key_file that exists is not reported"
 fi
 
 out="$(run_merge /opt/operator/custom.pem missing)"
-if printf '%s' "$out" | grep -q "does not exist"; then
+if grep -q -- "does not exist" <<<"$out"; then
   fail "an operator path outside both prefixes is left alone" "stderr was: $out"
 else
   pass "an operator path outside both prefixes is left alone"
