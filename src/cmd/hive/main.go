@@ -222,8 +222,18 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	// reason. Without this the hub sees state=failed and renders the same
 	// "restart needed" that sent operators clicking a button which could not
 	// fix a login prompt or a rejected key.
-	if reason, _, blocked, ok := mgr.StartFailureState(name); ok && blocked {
-		act.StartBlockedReason = reason
+	if sf, ok := mgr.StartFailureState(name); ok && strings.TrimSpace(sf.Reason) != "" && sf.Count > 0 {
+		act.StartFailureReason = sf.Reason
+		act.StartFailureCount = sf.Count
+		act.StartFailureLastAt = sf.LastAt
+		act.StartBlocked = sf.Blocked
+		if sf.Blocked {
+			act.StartBlockedReason = sf.Reason
+		}
+		if sf.LastExitCode != nil {
+			act.StartFailureExitCode = sf.LastExitCode
+		}
+		act.StartFailureSignal = sf.LastSignal
 	}
 	if total, last24h, lastAt, reason, ok := mgr.RestartTelemetry(name); ok {
 		act.Restarts.Total = total
@@ -277,15 +287,23 @@ func quotaExhaustedAgentReason(count int) string {
 	return fmt.Sprintf("%d agent(s) out of provider quota", count)
 }
 
-func providerLimitHeartbeatFields(agents []hub.AgentSummary) (reason string, rebuffs int) {
+func providerLimitHeartbeatFields(agents []hub.AgentSummary) (reason string, rebuffs int, hiveWide bool, names []string) {
 	errMsg, _, _, rebuffs := dashboard.InferenceBudgetExceeded()
 	if errMsg != "" {
 		if rebuffs > 1 {
-			return fmt.Sprintf("provider spending limit reached — %d refused calls: %s", rebuffs, errMsg), rebuffs
+			return fmt.Sprintf("provider spending limit reached — %d refused calls: %s", rebuffs, errMsg), rebuffs, true, nil
 		}
-		return "provider spending limit reached — " + errMsg, rebuffs
+		return "provider spending limit reached — " + errMsg, rebuffs, true, nil
 	}
-	return quotaExhaustedAgentReason(quotaExhaustedAgentCount(agents)), 0
+	for _, a := range agents {
+		if a.QuotaExhausted && !a.Paused &&
+			!strings.EqualFold(a.State, "paused") &&
+			strings.EqualFold(a.State, "running") {
+			names = append(names, a.Name)
+		}
+	}
+	sort.Strings(names)
+	return quotaExhaustedAgentReason(len(names)), 0, false, names
 }
 
 func outputFreshnessHeartbeatFields(acmmLevel int, govState governor.State, agents []hub.AgentSummary) (lastWriteKickAt, disposition, reason string, notWritableQueued int) {
@@ -786,6 +804,56 @@ func githubAppTokenHeartbeatFields(cfg *config.Config, detail string) (status, l
 		return hub.GitHubAppTokenStatusStale, lastMintAt, detail
 	}
 	return hub.GitHubAppTokenStatusOK, lastMintAt, ""
+}
+
+var githubHTTPStatusRe = regexp.MustCompile(`\b([1-5][0-9]{2})\b`)
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func githubAppStructuredFailure(state, detail string) (class string, httpStatus int) {
+	switch strings.TrimSpace(state) {
+	case github.AppStateNotInstalled.String():
+		class = "not-installed"
+	case github.AppStateWrongInstallation.String():
+		class = "wrong-installation"
+	case github.AppStateInsufficientPerms.String():
+		class = "insufficient-permissions"
+	case github.AppStateKeyMissing.String():
+		class = "key-missing"
+	case github.AppStateKeyInvalid.String():
+		class = "key-invalid"
+	case github.AppStateNoAppAssigned.String():
+		class = "no-app-assigned"
+	case github.AppStateRepoNotCovered.String():
+		class = "repo-not-covered"
+	case github.AppStateRepoMoved.String():
+		class = "repo-moved"
+	case github.AppStateWriteForbidden.String():
+		class = "write-forbidden"
+	}
+	if class == "" && strings.TrimSpace(detail) != "" {
+		class = "token-error"
+	}
+	for _, m := range githubHTTPStatusRe.FindAllStringSubmatch(detail, -1) {
+		if len(m) == 2 {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				httpStatus = n
+			}
+		}
+	}
+	if httpStatus != 0 {
+		if (class == "token-error" || class == "not-installed") && httpStatus == http.StatusNotFound {
+			class = "installation-not-found"
+		}
+	}
+	return class, httpStatus
 }
 
 // githubAuth is the outcome of resolving this hive's GitHub credentials at
@@ -3942,7 +4010,9 @@ func main() {
 				tasksCompleted7d = &n
 			}
 
-			providerLimitReason, providerLimitRebuffs := providerLimitHeartbeatFields(agents)
+			providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := providerLimitHeartbeatFields(agents)
+			ghAppTokenStatus, ghAppTokenLastMintAt, ghAppTokenError := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
+			ghAppErrorClass, ghAppHTTPStatus := githubAppStructuredFailure(dashSrv.GetGitHubAppState(), firstNonEmpty(dashSrv.GetGitHubAppPermIssue(), ghAppTokenError))
 
 			// Remediation-hint detectors (#5577). All three read state the
 			// spoke already maintains — no new GitHub calls, no new file
@@ -4043,6 +4113,8 @@ func main() {
 				}(),
 				ProviderLimitReason:     providerLimitReason,
 				ProviderLimitRebuffs:    providerLimitRebuffs,
+				ProviderLimitHiveWide:   providerLimitHiveWide,
+				ProviderLimitAgents:     providerLimitAgents,
 				LastWriteCapableKickAt:  lastWriteKickAt,
 				LastKickDisposition:     kickDisposition,
 				LastKickSkipReason:      kickSkipReason,
@@ -4172,24 +4244,17 @@ func main() {
 				// base_url and api_url — a GHE placeholder with base_url:"" but
 				// api_url: github.ibm.com must report github.ibm.com, not be
 				// silently rendered as github.com in the spokes table.
-				GitHubHost:         cfg.GitHub.HostLabel(),
-				GitHubAppRequired:  dashSrv.IsGitHubAppRequired(),
-				GitHubAppPermIssue: dashSrv.GetGitHubAppPermIssue(),
-				GitHubAppState:     dashSrv.GetGitHubAppState(),
-				GitHubAppTokenStatus: func() string {
-					status, _, _ := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
-					return status
-				}(),
-				GitHubAppTokenLastMintAt: func() string {
-					_, lastMintAt, _ := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
-					return lastMintAt
-				}(),
-				GitHubAppTokenError: func() string {
-					_, _, errMsg := githubAppTokenHeartbeatFields(cfg, dashSrv.GetGitHubAppPermIssue())
-					return errMsg
-				}(),
-				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
-				AutoUpgrade:             cfg.Hub.AutoUpgrade,
+				GitHubHost:               cfg.GitHub.HostLabel(),
+				GitHubAppRequired:        dashSrv.IsGitHubAppRequired(),
+				GitHubAppPermIssue:       dashSrv.GetGitHubAppPermIssue(),
+				GitHubAppState:           dashSrv.GetGitHubAppState(),
+				GitHubAppTokenStatus:     ghAppTokenStatus,
+				GitHubAppTokenLastMintAt: ghAppTokenLastMintAt,
+				GitHubAppTokenError:      ghAppTokenError,
+				GitHubAppErrorClass:      ghAppErrorClass,
+				GitHubAppHTTPStatus:      ghAppHTTPStatus,
+				PendingGitHubAppInstall:  dashSrv.IsPendingGitHubAppInstall(),
+				AutoUpgrade:              cfg.Hub.AutoUpgrade,
 				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
 					if os.Getenv("HIVE_CLUSTER_ID") == "" {
 						return nil
@@ -4381,7 +4446,7 @@ func main() {
 				if cfg.ACMMLevel != nil {
 					acmmLvl = *cfg.ACMMLevel
 				}
-				providerLimitReason, providerLimitRebuffs := providerLimitHeartbeatFields(agents)
+				providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := providerLimitHeartbeatFields(agents)
 				lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 					outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
 				return &hub.HeartbeatPayload{
@@ -4410,6 +4475,8 @@ func main() {
 					RepoTargetIssue:         repoTargetIssueMessage(),
 					ProviderLimitReason:     providerLimitReason,
 					ProviderLimitRebuffs:    providerLimitRebuffs,
+					ProviderLimitHiveWide:   providerLimitHiveWide,
+					ProviderLimitAgents:     providerLimitAgents,
 					LastWriteCapableKickAt:  lastWriteKickAt,
 					LastKickDisposition:     kickDisposition,
 					LastKickSkipReason:      kickSkipReason,

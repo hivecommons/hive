@@ -295,6 +295,7 @@ func TestRemediationPerSignature(t *testing.T) {
 			entry: func() RegistryEntry {
 				e := stale(remEntry(4))
 				e.ProviderLimitReason = "credit balance too low"
+				e.ProviderLimitHiveWide = true
 				return e
 			}(),
 			rollup:     okRollup(),

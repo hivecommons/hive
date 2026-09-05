@@ -166,11 +166,14 @@ func TestProviderLimitHeartbeatFields_SingleRebuffPhrasing(t *testing.T) {
 	})
 	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
 
-	reason, rebuffs := providerLimitHeartbeatFields([]hub.AgentSummary{
+	reason, rebuffs, hiveWide, names := providerLimitHeartbeatFields([]hub.AgentSummary{
 		{Name: "guide", State: "running", QuotaExhausted: true},
 	})
 	if rebuffs != 1 {
 		t.Fatalf("rebuffs = %d, want 1", rebuffs)
+	}
+	if !hiveWide || len(names) != 0 {
+		t.Fatalf("hiveWide/names = %v/%v, want hive-wide provider latch", hiveWide, names)
 	}
 	want := "provider spending limit reached — credit balance too low"
 	if reason != want {
@@ -184,9 +187,12 @@ func TestProviderLimitHeartbeatFields_MultiRebuffPhrasing(t *testing.T) {
 	})
 	t.Cleanup(func() { dashboard.SetInferenceBudgetProvider(nil) })
 
-	reason, rebuffs := providerLimitHeartbeatFields(nil)
+	reason, rebuffs, hiveWide, names := providerLimitHeartbeatFields(nil)
 	if rebuffs != 4 {
 		t.Fatalf("rebuffs = %d, want 4", rebuffs)
+	}
+	if !hiveWide || len(names) != 0 {
+		t.Fatalf("hiveWide/names = %v/%v, want hive-wide provider latch", hiveWide, names)
 	}
 	want := "provider spending limit reached — 4 refused calls: credit balance too low"
 	if reason != want {

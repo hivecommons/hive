@@ -115,9 +115,54 @@ func TestHiveHealthFor_GatewayAuthReason(t *testing.T) {
 			LastErrorAt: now.Add(-time.Minute).Format(time.RFC3339),
 		}},
 	}
-	v := hiveHealthFor(e, okRollup(), okApp(), 21, now)
+	v := hiveHealthFor(e, okRollup(), GitHubAppHealth{Bucket: ghAppBucketBroken, Detail: "GitHub App 123 broken"}, 21, now)
 	if v.Reason != "inference gateway 'litellm' rejected key (401)" {
 		t.Fatalf("reason = %q", v.Reason)
+	}
+}
+
+func TestHiveHealthFor_GitHubAppStructuredReason(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:               true,
+		ACMMLevel:            4,
+		GitHubAppState:       "not-installed",
+		GitHubHost:           "github.ibm.com",
+		GitHubAppID:          123,
+		GitHubInstallationID: 456,
+		GitHubAppErrorClass:  "installation-not-found",
+		GitHubAppHTTPStatus:  404,
+	}
+	app := githubAppHealthFor(e, now)
+	v := hiveHealthFor(e, okRollup(), app, 21, now)
+	want := "GitHub App 123 on github.ibm.com: installation 456 not found (404) — reinstall or fix app_id/installation_id"
+	if v.Reason != want {
+		t.Fatalf("reason = %q, want %q", v.Reason, want)
+	}
+}
+
+func TestHiveHealthFor_PerAgentQuotaUsesRollupInsteadOfPrecondition(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:              true,
+		ACMMLevel:           4,
+		ProviderLimitReason: "1 agent(s) out of provider quota",
+		ProviderLimitAgents: []string{"guide"},
+	}
+	rollup := agentFleetRollup{Expected: 3, Running: 2, Able: 2, Known: 3, Problems: 1, QuotaExhausted: 1}
+	v := hiveHealthFor(e, rollup, okApp(), 21, now)
+	if v.Reason != "1 agent(s) out of provider quota" {
+		t.Fatalf("reason = %q, want per-agent quota rollup", v.Reason)
+	}
+}
+
+func TestHiveHealthFor_StartFailureReasonBeatsGenericDown(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	reason := "starting failed ×2: copilot: no CLI prompt after launch (last 5m ago)"
+	rollup := agentFleetRollup{Expected: 1, Known: 1, Problems: 1, StartFailures: 1, StartFailureReason: reason, DeadOrGone: 1}
+	v := hiveHealthFor(RegistryEntry{Online: true, ACMMLevel: 4}, rollup, okApp(), 21, now)
+	if v.Reason != reason {
+		t.Fatalf("reason = %q, want precise start failure", v.Reason)
 	}
 }
 

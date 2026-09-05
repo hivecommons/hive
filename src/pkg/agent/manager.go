@@ -362,11 +362,14 @@ type AgentProcess struct {
 	// startFailureBlockThreshold(); StartBackoffUntil paces the automatic
 	// relaunch loop from the first failure onward. See start_failure.go — the
 	// mechanism deliberately mirrors the ProviderError* fields above.
-	StartFailureClass  string
-	StartFailureReason string
-	StartFailureCount  int
-	StartBlocked       bool
-	StartBackoffUntil  time.Time
+	StartFailureClass    string
+	StartFailureReason   string
+	StartFailureCount    int
+	StartFailureLastAt   time.Time
+	StartFailureExitCode *int
+	StartFailureSignal   string
+	StartBlocked         bool
+	StartBackoffUntil    time.Time
 
 	// lastLaunchFailureBanner is the exact in-pane shell line typed by the most
 	// recent aborted launch (see announceLaunchFailureInPane), "" after a
@@ -6351,6 +6354,9 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		StartFailureClass:         a.StartFailureClass,
 		StartFailureReason:        a.StartFailureReason,
 		StartFailureCount:         a.StartFailureCount,
+		StartFailureLastAt:        a.StartFailureLastAt,
+		StartFailureExitCode:      a.StartFailureExitCode,
+		StartFailureSignal:        a.StartFailureSignal,
 		StartBlocked:              a.StartBlocked,
 		StartBackoffUntil:         a.StartBackoffUntil,
 		HasLaunched:               a.HasLaunched,

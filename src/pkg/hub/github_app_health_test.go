@@ -136,3 +136,58 @@ func TestGitHubAppHealthDetail(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubAppHealthStructuredDetails(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		in   RegistryEntry
+		want string
+	}{
+		{
+			name: "installation token 404 names identity",
+			in: RegistryEntry{
+				GitHubAppRequired:    true,
+				GitHubAppState:       "not-installed",
+				GitHubHost:           "github.ibm.com",
+				GitHubAppID:          123,
+				GitHubInstallationID: 456,
+				GitHubAppErrorClass:  "installation-not-found",
+				GitHubAppHTTPStatus:  404,
+				GitHubAppTokenError:  "creating installation token: 404",
+			},
+			want: "GitHub App 123 on github.ibm.com: installation 456 not found (404) — reinstall or fix app_id/installation_id",
+		},
+		{
+			name: "invalid key",
+			in: RegistryEntry{
+				GitHubAppRequired:   true,
+				GitHubAppState:      "key-invalid",
+				GitHubHost:          "github.com",
+				GitHubAppID:         123,
+				GitHubAppErrorClass: "key-invalid",
+			},
+			want: "GitHub App 123 on github.com: private key rejected — fix app_id or the installed private key",
+		},
+		{
+			name: "wrong installation",
+			in: RegistryEntry{
+				GitHubAppRequired:    true,
+				GitHubAppState:       "wrong-installation",
+				GitHubHost:           "github.ibm.com",
+				GitHubAppID:          123,
+				GitHubInstallationID: 456,
+				GitHubAppErrorClass:  "wrong-installation",
+			},
+			want: "GitHub App 123 on github.ibm.com: installation 456 belongs to a different account — fix installation_id",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := githubAppHealthFor(tc.in, now)
+			if got.Detail != tc.want {
+				t.Fatalf("detail = %q, want %q", got.Detail, tc.want)
+			}
+		})
+	}
+}
