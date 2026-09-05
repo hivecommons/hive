@@ -40,6 +40,9 @@ import (
 )
 
 func (s *Server) RegisterAPI(deps *Dependencies) {
+	if s.logger == nil {
+		s.logger = slog.Default()
+	}
 	s.deps = deps
 	s.loadSidebarFromDisk()
 	s.registerContributeRoutes()

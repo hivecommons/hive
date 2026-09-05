@@ -1,0 +1,1 @@
+- Fixed the contributor WebSocket hub startup path so persisted contributor state is loaded from the configured data directory and nil loggers no longer panic during restore.

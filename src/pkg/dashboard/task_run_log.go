@@ -33,9 +33,11 @@ import (
 	"time"
 )
 
-// taskRunLogPath is where terminal task reports are appended, one JSON object
-// per line. A var (not const) so tests point it at a scratch file.
-var taskRunLogPath = "/data/contributors/task_runs.jsonl"
+const taskRunLogFileName = "task_runs.jsonl"
+
+// taskRunLogPath is where terminal task reports are appended when no hub/server
+// override is available. A var (not const) so tests point it at a scratch file.
+var taskRunLogPath = filepath.Join(defaultContributorsDir, taskRunLogFileName)
 
 // taskRunLogMaxBytes bounds the live file. On overflow the file is rotated to
 // a single ".1" predecessor (replacing any previous one), so disk use is
@@ -146,7 +148,7 @@ func (h *ContributeWSHub) appendTaskRun(rec TaskRunRecord) {
 
 	taskRunMu.Lock()
 	defer taskRunMu.Unlock()
-	path := taskRunLogPath
+	path := h.taskRunLogPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		if h != nil && h.logger != nil {
 			h.logger.Warn("[contribute-ws] task-run log directory creation failed", "error", err)
@@ -255,6 +257,13 @@ func readTaskRunStats(path string, window time.Duration) ([]taskRunBackendStats,
 	return out, total, nil
 }
 
+func (h *ContributeWSHub) taskRunLogPath() string {
+	if h != nil && h.taskRunLogFile != "" {
+		return h.taskRunLogFile
+	}
+	return taskRunLogPath
+}
+
 // handleContributeRunStats serves GET /api/contribute/run-stats: per-backend
 // scenario counts, completion-signal compliance, and duration percentiles over
 // a trailing window (?days=N, default 7, 0 = everything in the live log).
@@ -267,7 +276,13 @@ func (s *Server) handleContributeRunStats(w http.ResponseWriter, r *http.Request
 			days = n
 		}
 	}
-	stats, total, err := readTaskRunStats(taskRunLogPath, time.Duration(days)*24*time.Hour)
+	path := taskRunLogPath
+	if s != nil && s.contributeHub != nil {
+		path = s.contributeHub.taskRunLogPath()
+	} else if s != nil {
+		path = filepath.Join(s.contributorsDirOrDefault(), taskRunLogFileName)
+	}
+	stats, total, err := readTaskRunStats(path, time.Duration(days)*24*time.Hour)
 	if err != nil {
 		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
 		return

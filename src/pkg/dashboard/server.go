@@ -118,6 +118,9 @@ type Server struct {
 	// stale-threshold rebuild decision can be exercised against real mtimes
 	// without touching the host filesystem. Read via s.snapshotDirOrDefault().
 	snapshotDir string
+	// contributorsDir overrides the durable contributor state directory. Empty
+	// derives from the configured data directory roots (normally /data).
+	contributorsDir string
 	// buildSnapshotFn, if non-nil, replaces the Node builder invocation in
 	// buildSnapshot (#5235) — the same nil-in-production hook convention as
 	// pkg/hub's afterGenerationsReadAttempt (#5080). Production leaves this
@@ -854,6 +857,9 @@ const trendHistoryMinIntervalMs = 300_000
 const sseRetryMs = 3000
 
 func NewServer(port int, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	s := &Server{
 		port:             port,
 		sseClients:       make(map[chan []byte]struct{}),
@@ -873,6 +879,9 @@ func NewServer(port int, logger *slog.Logger) *Server {
 }
 
 func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	s := &Server{
 		port:             port,
 		authToken:        authToken,
