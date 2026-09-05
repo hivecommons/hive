@@ -54,8 +54,18 @@ linters:
     # is now written \u200b: identical bytes, visible in source, so ST1018 is
     # satisfied without weakening the injection test.
     - staticcheck
+    - depguard
 
   settings:
+    depguard:
+      rules:
+        no-hub-from-spoke-dashboard:
+          files:
+            - "pkg/hub/spoke/**"
+            - "pkg/dashboard/**"
+          deny:
+            - pkg: "github.com/hivecommons/hive/pkg/hub"
+              desc: "spoke/dashboard must stay behind the hub boundary; import pkg/hub/spoke or wire types instead"
     staticcheck:
       # The SA* family is the bug detector -- misused stdlib, impossible
       # conditions, ignored results. That is what this gate is for, and the

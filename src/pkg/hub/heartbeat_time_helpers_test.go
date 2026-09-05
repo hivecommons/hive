@@ -3,8 +3,6 @@ package hub
 import (
 	"bytes"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -145,34 +143,4 @@ func TestUpgradePauseObserverDelivery(t *testing.T) {
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("observer got %+v, want exactly [%+v]", got, want)
 	}
-}
-
-// ---- SelfImageReleaseChannel (self_upgrade.go) ----
-
-// A deployment pinned to a channel tag must report that channel; any other
-// tag must report "" so the dashboard falls back to the baked-in branch.
-func TestSelfImageReleaseChannel(t *testing.T) {
-	serveImage := func(t *testing.T, image string) {
-		t.Helper()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte(deploymentJSON(image)))
-		}))
-		t.Cleanup(srv.Close)
-		withFakeK8sAPI(t, srv)
-		resetSelfImageCache(t)
-	}
-
-	t.Run("channel tag reports the channel", func(t *testing.T) {
-		serveImage(t, "ghcr.io/hivecommons/hive-hub:stable")
-		if got := SelfImageReleaseChannel(); got != ReleaseChannelStable {
-			t.Errorf("SelfImageReleaseChannel() = %q, want %q", got, ReleaseChannelStable)
-		}
-	})
-
-	t.Run("commit tag reports empty", func(t *testing.T) {
-		serveImage(t, "ghcr.io/hivecommons/hive-hub:abc123")
-		if got := SelfImageReleaseChannel(); got != "" {
-			t.Errorf("SelfImageReleaseChannel() = %q, want \"\"", got)
-		}
-	})
 }

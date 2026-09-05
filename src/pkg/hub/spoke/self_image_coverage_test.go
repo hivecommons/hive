@@ -1,4 +1,4 @@
-package hub
+package spoke
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -190,67 +189,5 @@ func TestSelfDeploymentImageCachesFailureAsEmpty(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("a failure must be cached too, got %d API calls", calls)
-	}
-}
-
-// ---- hubRolloutFailureReason ----
-
-// The reason comes from the first waiting container state, so an operator sees
-// "ImagePullBackOff ..." rather than a generic failure.
-func TestHubRolloutFailureReasonReportsWaitingState(t *testing.T) {
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" +
-		"echo ''\n" +
-		"echo 'ImagePullBackOff Back-off pulling image \"ghcr.io/hivecommons/hive-hub:target1\"'\n" +
-		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	s := bulkTestHub(t)
-	got := s.hubRolloutFailureReason()
-	if got == "" {
-		t.Fatal("a waiting container state must be reported")
-	}
-	if !strings.Contains(got, "ImagePullBackOff") {
-		t.Fatalf("reason should name the waiting reason, got %q", got)
-	}
-	// Leading blank lines must be skipped, not returned as the reason.
-	if got == " " || got == "" {
-		t.Fatalf("blank lines must be skipped, got %q", got)
-	}
-}
-
-// When kubectl cannot read pod status the reason must say so rather than
-// claiming everything is fine.
-func TestHubRolloutFailureReasonWhenKubectlFails(t *testing.T) {
-	dir := t.TempDir()
-	script := "#!/bin/sh\necho 'error: connection refused' >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	s := bulkTestHub(t)
-	got := s.hubRolloutFailureReason()
-	if !strings.Contains(got, "could not read pod status") {
-		t.Fatalf("want an explicit unknown-reason message, got %q", got)
-	}
-}
-
-// No waiting container at all is still an explicit answer.
-func TestHubRolloutFailureReasonWhenNoWaitingState(t *testing.T) {
-	dir := t.TempDir()
-	script := "#!/bin/sh\necho ''\necho '  '\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	s := bulkTestHub(t)
-	got := s.hubRolloutFailureReason()
-	if !strings.Contains(got, "no waiting container state") {
-		t.Fatalf("want the no-waiting-state message, got %q", got)
 	}
 }

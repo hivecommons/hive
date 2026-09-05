@@ -174,7 +174,7 @@ func TestResidual2SessionKeyIsNotAVerificationComparand(t *testing.T) {
 	// SpokeSessionKey must remain callable-but-unused on the Go side. A new
 	// caller is the tripwire: it would be verifying with a value the hub no
 	// longer ever ships.
-	for _, f := range []string{"hub_cookie.go", "hub_session_revocation.go", "terminal_assertion.go"} {
+	for _, f := range []string{"hub_cookie.go", "hub_session_revocation.go", "spoke/terminal_assertion.go"} {
 		src := residual2ReadSource(t, f)
 		if strings.Contains(src, "SpokeSessionKey()") {
 			t.Errorf("%s calls SpokeSessionKey() — the hub no longer injects HIVE_SESSION_KEY at all, so "+
