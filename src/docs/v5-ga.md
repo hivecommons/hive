@@ -1,6 +1,7 @@
 # v5 GA readiness bar
 
-This page is the operator-facing mirror of the **v5 GA bar** tracker. It is a
+This page is the operator-facing mirror of the **v5 GA bar** tracker
+([hivecommons/hive#6016](https://github.com/hivecommons/hive/issues/6016)). It is a
 release-readiness definition, not a promise that every item is complete today:
 `edge` is the active v5 channel, while `stable` and `candidate` remain on v4
 until maintainers explicitly promote the v5 line.
@@ -19,7 +20,7 @@ cannot be counted as complete.
 | v5 channel publication | Every successful `v5` Docker build publishes immutable short-SHA image tags and moves only the `edge` channel; `stable`/`candidate` remain v4 until a promotion policy lands. | `docker.yml` run summary and GHCR manifests for `ghcr.io/hivecommons/hive`, `hive-contributor`, and `hive-hub`; compare `edge` digest to the `v5-latest`/short-SHA digest. | Measurable now; must be checked for the GA candidate SHA. |
 | Digest-verifiable rollback | Operators can resolve the GA candidate and rollback targets to immutable digests for all three images. | GHCR manifest inspection for the GA candidate's short-SHA tag and the documented rollback/channel-switch procedure. | Blocked until the rollback/channel-switch procedure is documented. |
 | Tagged release docs | The tagged-release path documents whether semver tags are cut from `v5`, still cut only from `v4`, or deliberately deferred for the v5 GA candidate. | `src/docs/releases.md` and the tagged-release workflow triggers. | Not complete; current page is v4-oriented. |
-| Migration guide | A v4-to-v5 migration guide exists and names supported prerequisites, data/config compatibility, downgrade/rollback limits, and the channel choice operators should use during migration. | The merged migration guide (for example `UPGRADE.md` or a docs page linked from `src/docs/README.md`). | Not complete until the guide lands (candidate tracker: #5559). |
+| Migration guide | A v4-to-v5 migration guide exists and names supported prerequisites, data/config compatibility, downgrade/rollback limits, and the channel choice operators should use during migration. | The merged migration guide (for example `UPGRADE.md` or a docs page linked from `src/docs/README.md`). | Guide exists: [`UPGRADE.md`](../../UPGRADE.md) landed via #5559 and is linked from `src/docs/README.md`; row closes when maintainers confirm it covers the GA candidate's prerequisites and rollback limits. |
 | Dual-version validation | At least one documented validation run covers v4 and v5 hub/spoke operation during transition, including heartbeat, branch/channel switching, and rollback expectations. | A linked test report, PR, issue comment, or CI artifact that states the exact v4/v5 SHAs and scenario. | Not complete; no durable source is named yet. |
 | Reviewer lane production exercise | A reviewer-lane PR has run in production after the #5617 follow-ups, with the result visible in the PR or governor artifacts. | The linked reviewer-lane PR/evidence artifact and the #5617 tracker closure state. | Not complete until #5617 follow-ups are closed and evidenced. |
 | Formal-model safety gate | Formal-verification expectations for v5 are documented and the escalation/merge/hold models have no expected-fail safety witnesses for the GA candidate. | The formal-verification workflow/test results plus any model witness tracker referenced from `src/docs/formal-verification.md`. | Measurable only for models wired into CI; open expected-fail witnesses block GA. |
@@ -29,9 +30,12 @@ cannot be counted as complete.
 
 ## Tracker checklist template
 
-Create or maintain one issue named **v5 GA bar** and keep this checklist in sync
-with the table above. Each checkbox should link to the PR, workflow run, issue,
-or artifact that proves it is complete.
+The live tracker is
+[hivecommons/hive#6016](https://github.com/hivecommons/hive/issues/6016).
+Keep its checklist in sync with the table above. Each checkbox should link to
+the PR, workflow run, issue, or artifact that proves it is complete. If the
+tracker is ever replaced (for example by a milestone), update this link in the
+same change.
 
 ```markdown
 ## v5 GA bar
