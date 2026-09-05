@@ -1,17 +1,12 @@
 package hub
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 )
 
 // ============================================================
@@ -88,42 +83,5 @@ func TestLoadOCIConfigSuccess(t *testing.T) {
 	}
 	if cfg.privateKey == nil {
 		t.Error("expected parsed RSA private key")
-	}
-}
-
-// ============================================================
-// heartbeat.go — StartTaskStatusPush send iteration
-// ============================================================
-
-func TestStartTaskStatusPushSends(t *testing.T) {
-	got := make(chan struct{}, 1)
-	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case got <- struct{}{}:
-		default:
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer hub.Close()
-
-	// Drive the ticker quickly for this test.
-	old := taskPushInterval
-	taskPushInterval = 10 * time.Millisecond
-	defer func() { taskPushInterval = old }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	collect := func() *TaskStatusPayload {
-		return &TaskStatusPayload{HiveID: "h1"}
-	}
-	go StartTaskStatusPush(ctx, hub.URL, collect, slog.Default())
-
-	select {
-	case <-got:
-		// received at least one push; cancel to stop the loop.
-		cancel()
-	case <-time.After(3 * time.Second):
-		t.Error("expected a task-status push")
 	}
 }

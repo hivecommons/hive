@@ -477,3 +477,13 @@ func urlUnreachableEligible(registeredAt string, now time.Time) bool {
 	}
 	return now.Sub(t) >= urlUnreachableMinAge
 }
+
+// dashboardHost extracts the lowercase hostname from a dashboard URL, or ""
+// when the URL is unparsable or hostless.
+func dashboardHost(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
