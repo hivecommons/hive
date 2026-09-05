@@ -279,6 +279,11 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		w.ghClient.SetHiveIdentity(hiveIdentity(w.cfg))
+		// github.app_signed_commits: re-author each agent branch through
+		// createCommitOnBranch before the PR opens, so its commit is
+		// GitHub-signed and authored by the App bot. Read through a func so a
+		// config reload takes effect on the next request.
+		w.ghClient.SetSignedCommits(func() bool { return w.cfg.GitHub.AppSignedCommitsEnabled() })
 		startRequestWatchers(w.ctx, requestwatch.New(w.ghClient, w.agentMgr.AuthorizePROpen, w.agentMgr.AuthorizeIssueOpen, holdLabel, nil), w.logger)
 		// Review relay: agents request PR reviews by dropping a file (hive-review)
 		// instead of running `gh pr review` in their own shell, which the hive

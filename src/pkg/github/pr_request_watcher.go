@@ -76,9 +76,21 @@ type PRResponse struct {
 	// Never set together with DuplicateTree: see the precedence note in
 	// handleOnePRRequest. A duplicate request opened no PR, so there is nothing
 	// of this request's to have authorised.
-	SelfAuthorized bool   `json:"self_authorized,omitempty"`
-	Error          string `json:"error,omitempty"`
-	At             string `json:"at"`
+	SelfAuthorized bool `json:"self_authorized,omitempty"`
+	// SignedCommit is the oid of the GitHub-signed commit the watcher re-authored
+	// the head branch to before opening the PR (github.app_signed_commits). The
+	// agent's own commits are no longer on the branch: this one carries their
+	// messages. Empty when signing is off or was skipped.
+	SignedCommit string `json:"signed_commit,omitempty"`
+	// SignedSkipped says why the branch was NOT re-authored although signing is
+	// on — a change the mutation cannot express, a branch that moved under us,
+	// an API failure. The PR still opened on the agent's own unsigned commits,
+	// so a `required_signatures` rule on the base will block it until a human
+	// signs it; the reason is reported so the agent can say so rather than
+	// reading the block as an unexplained failure.
+	SignedSkipped string `json:"signed_skipped,omitempty"`
+	Error         string `json:"error,omitempty"`
+	At            string `json:"at"`
 }
 
 // PRRequestAuthorizer decides whether a PR-open request may proceed. It receives
@@ -301,8 +313,30 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		body = AppendTrailer(body, meta)
 	}
 
+	// Signed commits (github.app_signed_commits): re-author the head branch
+	// through createCommitOnBranch so the PR's commit is GitHub-signed and
+	// authored by the App bot. After every gate above — they judged the branch
+	// the agent pushed, and the rewrite changes nothing they judged (same tree,
+	// same messages) — and before CreatePR, so the PR is born on the signed
+	// commit. Never blocks the PR: a change the mutation cannot express, or an
+	// API failure, falls back to the agent's own push with the reason reported.
+	var signed signedCommitResult
+	if c.prSignedCommits != nil && c.prSignedCommits() {
+		signed = c.reauthorBranchSigned(ctx, req)
+		if signed.Skipped != "" {
+			c.logger.Warn("pr-request watcher: could not re-author the branch as a GitHub-signed commit; opening the PR on the agent's own commits",
+				slog.String("repo", req.Repo), slog.String("head", req.Head),
+				slog.String("agent", req.Agent), slog.String("reason", signed.Skipped))
+		} else {
+			c.logger.Info("pr-request watcher: head branch re-authored as one GitHub-signed commit by the App bot",
+				slog.String("repo", req.Repo), slog.String("head", req.Head),
+				slog.String("commit", signed.OID), slog.Int("replaced_commits", signed.Replaced),
+				slog.String("agent", req.Agent))
+		}
+	}
+
 	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, title, body)
-	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339), SignedCommit: signed.OID, SignedSkipped: signed.Skipped}
 	if err != nil {
 		c.failPRRequest(path, req, err, nowFn)
 		return
