@@ -360,7 +360,8 @@ func TestIssueRequestWatcher_StartLoop(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c.StartIssueRequestWatcher(ctx, func(agent string, uid int, kind string) error { return nil }, nil)
+	done := c.StartIssueRequestWatcher(ctx, func(agent string, uid int, kind string) error { return nil }, nil)
+	drainAfter(t, cancel, done)
 
 	if _, err := WriteIssueRequest(dir, IssueRequest{
 		Repo: "o/r", Title: "[sec-check] via ticker", Body: "b", Agent: "sec-check",
@@ -375,7 +376,7 @@ func TestIssueRequestWatcher_StartLoop(t *testing.T) {
 		t.Fatalf("ticker loop never processed the request (created=%d)", got)
 	}
 	cancel() // loop exit path
-	time.Sleep(50 * time.Millisecond)
+	<-done
 }
 
 // The watcher disables itself (no panic, no goroutine) when the request dir
@@ -395,7 +396,8 @@ func TestIssueRequestWatcher_StartWithUncreatableDir(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	c.StartIssueRequestWatcher(ctx, nil, nil) // must return without panicking
+	done := c.StartIssueRequestWatcher(ctx, nil, nil) // must return without panicking
+	<-done
 }
 
 // The production path constant is used when no test override is set.

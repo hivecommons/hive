@@ -1,0 +1,1 @@
+- Fixed a v4 issue request watcher test race by joining watcher goroutines before restoring test globals and pinning PR/issue watcher directories per loop.
