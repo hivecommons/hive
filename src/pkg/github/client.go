@@ -77,6 +77,13 @@ type Client struct {
 	// `exec hive-open-pr`). nil means "never hold" (backward-compatible no-op).
 	// Set by StartPRRequestWatcher.
 	prHoldLabel func(agent string) bool
+	// prSignedCommits, when set and returning true, makes the PR-request watcher
+	// re-author each head branch through createCommitOnBranch before opening the
+	// PR, so the commit is GitHub-signed (Verified) and authored by the App bot.
+	// A func rather than a bool so a config reload is honoured on the next
+	// request without rebuilding the client. nil means off. See
+	// reauthorBranchSigned.
+	prSignedCommits func() bool
 	// prOpenedHook, when set, is told about every NEW PR the request watcher
 	// opens (agent, repo, number, url) — the seam progress surfaces such as
 	// the Linear session emitter hook. atomic so SetPROpenedHook is safe

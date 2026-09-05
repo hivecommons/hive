@@ -2920,6 +2920,24 @@ type GitHubConfig struct {
 	// injected solely for agents whose tier CanPush() and only when a real App is
 	// installed (m.appAuth != nil), so an App-less or advisory hive is unaffected.
 	AppAuthoredPRs *bool `yaml:"app_authored_prs,omitempty"`
+	// AppSignedCommits makes every agent-opened PR carry commits that GitHub
+	// itself signed. Agents commit with plain git in their pane and cannot sign:
+	// a GitHub App has no account to hold a GPG or SSH key. GitHub does sign
+	// commits created through the createCommitOnBranch GraphQL mutation and
+	// marks them Verified, so when this is on the PR-request watcher — the one
+	// server-side choke point every agent PR passes through — re-authors the
+	// head branch through that mutation with the App installation token before
+	// opening the PR: one commit, signed by GitHub, authored by "<slug>[bot]",
+	// carrying the agents' original messages (DCO trailers included). Without
+	// it a `required_signatures` ruleset on the base branch blocks every agent
+	// PR from merging no matter who approves it.
+	//
+	// Opt-in (nil == false) — it rewrites the agent's branch. Only meaningful
+	// with an installed App; PAT-authenticated hives ignore it. Falls back to the
+	// plain push, with a WARN and a reason in the request's result file, for
+	// changes the mutation cannot express (file modes, symlinks, submodules) or
+	// that are too large — the PR still opens, just unsigned.
+	AppSignedCommits *bool `yaml:"app_signed_commits,omitempty"`
 	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
 	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
 	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
@@ -3442,6 +3460,13 @@ func (c *Config) EffectiveAIAuthor() string {
 // `app_authored_prs: false` disables it. Note this is only the INTENT — the
 // token is still injected solely for CanPush() tiers with a real App installed,
 // so an App-less or advisory hive never actually writes regardless of this flag.
+// AppSignedCommitsEnabled reports whether the PR-request watcher re-authors
+// agent branches through createCommitOnBranch so their commits are GitHub-
+// signed. Opt-in: nil and false both mean off. See AppSignedCommits.
+func (g GitHubConfig) AppSignedCommitsEnabled() bool {
+	return g.AppSignedCommits != nil && *g.AppSignedCommits
+}
+
 func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 	if g.AppAuthoredPRs == nil {
 		return true

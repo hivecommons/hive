@@ -1888,6 +1888,11 @@ func main() {
 		// mistaking it for a human's. The App bot is recognised without this;
 		// hiveIdentity() is the same resolver the duplicate-PR guard uses.
 		ghClient.SetHiveIdentity(hiveIdentity(cfg))
+		// github.app_signed_commits: re-author each agent branch through
+		// createCommitOnBranch before the PR opens, so its commit is
+		// GitHub-signed and authored by the App bot. Read through a func so a
+		// config reload takes effect on the next request.
+		ghClient.SetSignedCommits(func() bool { return cfg.GitHub.AppSignedCommitsEnabled() })
 		ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, holdLabel, nil)
 		// Issue relay: agents request issue creation and comments by dropping a
 		// file (hive-open-issue via the gh wrapper) instead of calling GitHub

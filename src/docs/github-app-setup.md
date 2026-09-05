@@ -162,6 +162,26 @@ github:
 
 For GitHub Enterprise, also set `api_url`/`base_url` or the supported `forge` value so install URLs and API calls target the same host.
 
+### Signed commits on agent PRs (`app_signed_commits`)
+
+Agents commit with plain `git` in their pane and cannot sign: a GitHub App has no account to hold a GPG or SSH key. A base branch whose ruleset **requires signed commits** therefore blocks every agent PR from merging, however many approvals it has. GitHub does sign commits it creates itself — commits authored through the `createCommitOnBranch` GraphQL mutation are GPG-signed by GitHub and shown as **Verified**, and a GitHub App may author them directly.
+
+```yaml
+github:
+  app_signed_commits: true   # opt-in; needs an installed App
+```
+
+With it on, the PR-request watcher (the choke point every `hive-open-pr` request passes through) re-authors the head branch before it opens the PR: it reads the `base...head` diff, builds one commit through the mutation with the App installation token — same tree, the agents' original commit messages and DCO trailers as the message — force-updates the branch to it, and then opens the PR. The PR arrives with a single commit, signed by GitHub, authored by `<app_slug>[bot]`, that a `required_signatures` rule accepts.
+
+What it does not do, and falls back on (the PR still opens on the agent's own commits, the reason lands in the request's `.result.json` as `signed_skipped` and in the hive log at WARN):
+
+- changes the mutation cannot express: executable bits, symlinks, submodule pointers;
+- changes above 20 MiB of file content, or past the compare API's 300-file list;
+- a head branch that moved (the agent pushed again) between reading the diff and updating the ref — nothing is replaced that the signed commit does not carry;
+- a head branch that already has an open PR — that PR is reused untouched, as before.
+
+It covers the PR as opened. A commit an agent pushes to the branch afterwards is plain git again and unsigned. Leave it off (the default) on hives whose base branches do not require signatures; it rewrites agent branches for no benefit there.
+
 ## Choosing a Setup URL
 
 The Setup URL is a **browser redirect target**, not a callback GitHub's servers
