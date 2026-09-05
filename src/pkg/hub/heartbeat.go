@@ -688,6 +688,12 @@ type HeartbeatPayload struct {
 	ProviderLimitRebuffs int            `json:"provider_limit_rebuffs,omitempty"`
 	Health               map[string]any `json:"health"`
 	DashboardURL         string         `json:"dashboard_url"`
+	// Output-freshness telemetry is optional and backward compatible: older
+	// spokes omit it, and the hub keeps the pre-existing no-write verdict.
+	LastWriteCapableKickAt string `json:"last_write_capable_kick_at,omitempty"`
+	LastKickDisposition    string `json:"last_kick_disposition,omitempty"`
+	LastKickSkipReason     string `json:"last_kick_skip_reason,omitempty"`
+	NotWritableQueued      int    `json:"not_writable_queued,omitempty"`
 	// PublicURLSelfCheck is the spoke's own end-to-end probe of the dashboard
 	// URL it is advertising to the hub. It exists because the hub's public
 	// network can be the wrong vantage point for private-network hives: a URL

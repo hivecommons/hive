@@ -1,0 +1,1 @@
+- Fleet health now carries output-freshness telemetry so L3-L6 no-write verdicts explain whether kicks are broken, intentionally idle, advisory-only, budget-suppressed, or queued work is not writable ([#6036](https://github.com/hivecommons/hive/issues/6036)).

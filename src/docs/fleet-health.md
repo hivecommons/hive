@@ -254,6 +254,10 @@ The scalar quadrant signals (budget spend/limit/exhausted, hold totals)
 follow the same nil-means-not-measured rule: an old spoke that never sends
 them is simply not judged on them.
 
+## Output-freshness telemetry
+
+For L3-L6 hives, newer spokes add optional heartbeat fields that explain stale write/merge streams: the most recent write-capable kick, the last kick disposition or skip reason, and how many queued items were deliberately deemed not writable. The hub treats missing fields as an old spoke and keeps the legacy red `no write in Nd (M queued)` behavior. When the fields are present, the verdict can distinguish a broken pipeline (recent write-capable kicks but no writes) from quiet-by-design states such as no due agents, budget-suppressed kicks, advisory-only operation, or work that agents intentionally declined as not writable.
+
 ## Troubleshooting: symptom → hint → fix
 
 | Symptom on `/fleet` | What it means | Fix, and where |
@@ -272,7 +276,11 @@ them is simply not judged on them.
 | "all agents paused — resume to produce output" (amber) | Every agent is operator-paused while work is queued | Resume agents when you want the queue to move — deliberate pause is respected, not faulted |
 | "repo Issues disabled — advisory/issues have nowhere to go" | The repo's Issues tab is off (common on forks) | Enable Issues in the repo's settings on your forge |
 | "advisory stale" / "advisory posting failing" | The L2 output — the advisory digest — is old, or the spoke reported a posting error | See [advisory digest staleness](advisory-staleness.md) |
-| "no write in Nh (M queued)" / "no create output" | Preconditions are green but the write stream stalled with work available | Check agent activity and logs on the spoke dashboard; if an error-streak chip appears instead, follow that hint first |
+| "pipeline broken — write-capable kick … but no writes" | Kicks are reaching write-capable agents, but no work-source writes are appearing | Check the kicked agent logs and write permissions on the spoke dashboard |
+| "nothing to write — governor idle since … because …" | The governor is intentionally idle (for example no due agents), so stale writes are not a broken pipeline | Review schedules only if you expected an agent to be due |
+| "advisory-only — …" | The hive is in an advisory-only band/path, so writes are not expected from that activity | Nothing, unless you intended L3+ write behavior |
+| "nothing writable — N queued deemed not writable" | Agents classified queued items as held or not writable and stood down | Review the queued/held items; no restart is implied |
+| "no write in Nh (M queued)" / "no create output" | Older spoke or no freshness telemetry: preconditions are green but the write stream appears stalled | Check agent activity and logs on the spoke dashboard; if an error-streak chip appears instead, follow that hint first |
 | "no merge in Nh (M queued)" (L6) | PRs are being created but nothing merges | Check merge-agent grants and required checks on the queued PRs |
 | "agent NAME model calls failing (N consecutive) — pin a working model" | The agent's turns run but every model call dies | Pin a working model on the agent card in the spoke dashboard |
 | "agent(s) NAME stuck at Copilot consent — restarting in a loop" | The kick path keeps restarting an agent parked on a consent screen | Complete the consent flow on the spoke dashboard; the alarm clears itself within the hour |

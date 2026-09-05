@@ -695,6 +695,8 @@ func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
 	}
 
 	providerLimitReason, providerLimitRebuffs := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
+	lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
+		outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
 
 	// Remediation-hint detectors (#5577). All three read state the
 	// spoke already maintains — no new GitHub calls, no new file
@@ -792,6 +794,10 @@ func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
 		}(),
 		ProviderLimitReason:     providerLimitReason,
 		ProviderLimitRebuffs:    providerLimitRebuffs,
+		LastWriteCapableKickAt:  lastWriteKickAt,
+		LastKickDisposition:     kickDisposition,
+		LastKickSkipReason:      kickSkipReason,
+		NotWritableQueued:       notWritableQueued,
 		RepoTargetMisconfigured: w.repoTargetMisconfigured(),
 		RepoTargetIssue:         w.repoTargetIssueMessage(),
 		Repos:                   w.cfg.Project.Repos,
@@ -1177,6 +1183,8 @@ func (w *spokeWire) buildUpgradingHeartbeatPayload() *hub.HeartbeatPayload {
 		acmmLvl = *w.cfg.ACMMLevel
 	}
 	providerLimitReason, providerLimitRebuffs := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
+	lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
+		outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
 	return &hub.HeartbeatPayload{
 		HiveID: w.cfg.HiveID,
 		Org:    w.cfg.Project.Org,
@@ -1203,6 +1211,10 @@ func (w *spokeWire) buildUpgradingHeartbeatPayload() *hub.HeartbeatPayload {
 		RepoTargetIssue:         w.repoTargetIssueMessage(),
 		ProviderLimitReason:     providerLimitReason,
 		ProviderLimitRebuffs:    providerLimitRebuffs,
+		LastWriteCapableKickAt:  lastWriteKickAt,
+		LastKickDisposition:     kickDisposition,
+		LastKickSkipReason:      kickSkipReason,
+		NotWritableQueued:       notWritableQueued,
 		// Remediation-hint detectors (#5577): all three are
 		// cheap in-memory reads, so even this minimal upgrading
 		// beat carries them — the pod is about to restart, and

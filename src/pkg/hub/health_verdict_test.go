@@ -552,3 +552,89 @@ func TestSanitizeRepoActivity(t *testing.T) {
 		t.Errorf("agent activity not sanitized: %+v", got[0].Agents)
 	}
 }
+
+func TestHiveHealthFor_OutputFreshnessTelemetryExplainsNoWrite(t *testing.T) {
+	now := time.Date(2026, 9, 4, 15, 0, 0, 0, time.UTC)
+	old := now.Add(-4 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	base := func() RegistryEntry {
+		return withActivity(RegistryEntry{
+			Online:    true,
+			ACMMLevel: 4,
+			Agents: []AgentSummary{{
+				Name: "quality", State: agentStateRunning, Enabled: true,
+				ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+			}},
+		}, ractivity("o/r", old, old, "", ""))
+	}
+	tests := []struct {
+		name       string
+		mutate     func(*RegistryEntry)
+		wantState  string
+		wantReason string
+	}{
+		{
+			name: "recent write-capable kick means pipeline broken",
+			mutate: func(e *RegistryEntry) {
+				e.LastKickDisposition = "kick-capable"
+				e.LastWriteCapableKickAt = now.Add(-30 * time.Minute)
+			},
+			wantState:  HealthStateRed,
+			wantReason: "pipeline broken — write-capable kick 30m ago but no writes (8 queued)",
+		},
+		{
+			name: "governor idle means nothing due",
+			mutate: func(e *RegistryEntry) {
+				e.LastKickDisposition = "no-due-agents"
+				e.LastKickSkipReason = "no agents due in the current governor mode"
+				e.LastWriteCapableKickAt = now.Add(-4 * 24 * time.Hour)
+			},
+			wantState:  HealthStateAmber,
+			wantReason: "nothing to write — governor idle since 2026-08-31T15:00:00Z (4d ago) because no agents due in the current governor mode",
+		},
+		{
+			name: "advisory only band does not become pipeline red",
+			mutate: func(e *RegistryEntry) {
+				e.LastKickDisposition = "advisory-only"
+				e.LastKickSkipReason = "ACMM advisory band produces advisory output, not writes"
+			},
+			wantState:  HealthStateAmber,
+			wantReason: "advisory-only — ACMM advisory band produces advisory output, not writes",
+		},
+		{
+			name: "not writable queued items explain stale stream",
+			mutate: func(e *RegistryEntry) {
+				e.LastKickDisposition = "agent-decided-not-writable"
+				e.NotWritableQueued = 8
+			},
+			wantState:  HealthStateAmber,
+			wantReason: "nothing writable — 8 queued deemed not writable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := base()
+			tt.mutate(&e)
+			v := hiveHealthFor(e, okRollup(), okApp(), 8, now)
+			if v.State != tt.wantState || v.Reason != tt.wantReason {
+				t.Fatalf("verdict = %s/%q, want %s/%q", v.State, v.Reason, tt.wantState, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestHiveHealthFor_OutputFreshnessLegacyKeepsNoWriteRed(t *testing.T) {
+	now := time.Date(2026, 9, 4, 15, 0, 0, 0, time.UTC)
+	old := now.Add(-4 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	e := withActivity(RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "quality", State: agentStateRunning, Enabled: true,
+			ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true,
+		}},
+	}, ractivity("o/r", old, old, "", ""))
+	v := hiveHealthFor(e, okRollup(), okApp(), 8, now)
+	if v.State != HealthStateRed || v.Reason != "no write in 4d (8 queued)" {
+		t.Fatalf("legacy verdict = %s/%q, want red/no write in 4d", v.State, v.Reason)
+	}
+}
