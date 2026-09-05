@@ -81,6 +81,15 @@ jobs:
       - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
         run: bash deploy/test_entrypoint_netadmin_ambient.sh
 
+      - name: Entrypoint egress ruleset contract tests
+        run: bash deploy/test_entrypoint_egress_ruleset.sh
+
+      - name: Entrypoint iptables gate contract tests
+        run: bash deploy/test_entrypoint_iptables_gate.sh
+
+      - name: Entrypoint xt module preflight contract tests
+        run: bash deploy/test_entrypoint_xt_module_preflight.sh
+
       # #4368: the entrypoint warns when the overlay's github.key_file names a
       # PEM that is not on disk — and used to look only at /data/, while the
       # provisioning template seeded /secrets/gh-app-key.pem for every App-using
@@ -325,6 +334,14 @@ jobs:
         working-directory: .
         run: bash bin/test_kick_governor.sh
 
+      - name: DIBS cutover preflight contract tests
+        working-directory: .
+        run: bash bin/test_dibs_cutover_preflight.sh
+
+      - name: DIBS cutover verification contract tests
+        working-directory: .
+        run: bash bin/test_dibs_cutover_verify.sh
+
       # bin/merge-gate.sh reads actionable.json (enumerate-actionable.sh's
       # output) and writes merge-eligible.json — the ONE file agents are told
       # to trust before running `gh pr merge`. Every CI-check/mergeable/hold-
@@ -563,6 +580,10 @@ jobs:
       - name: Backend smoke (keyless subset)
         working-directory: .
         run: bash bin/test_backend_smoke.sh
+
+      - name: Backend smoke attribution contract tests
+        working-directory: .
+        run: bash bin/test_backend_smoke_attribution.sh
 
       # `just contribute-k8s` now emits a runnable contributor workload (#2549):
       # a headless Deployment (#2660) with a status-file probe. This runs the

@@ -28,7 +28,7 @@ on:
   # to bypass missing green evidence. The paths filter mirrors pull_request, so
   # this adds a run only where the suite is relevant.
   push:
-    branches: [v2, v4]
+    branches: [v2, v4, v5]
     paths:
       - 'src/**'
       - 'bin/**'

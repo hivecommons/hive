@@ -50,7 +50,7 @@ chmod +x "$tmp/bin/docker"
 run_case() {
   local mode=$1 run=$2 capture=$3
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
-    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v4 abcdef123456 "$run" v4 false
+    "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v5 abcdef123456 "$run" v5 false edge
 }
 
 run_custom_case() {
@@ -62,20 +62,22 @@ run_custom_case() {
 capture="$tmp/create-new"
 run_case missing 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
-grep -q 'hive:v4-latest' "$capture"
-if grep -q 'hive:stable' "$capture"; then
-  echo "v4 merge publish moved stable instead of candidate only" >&2
+grep -q 'hive:v5-latest' "$capture"
+grep -q 'hive:edge' "$capture"
+if grep -q 'hive:stable\|hive:candidate' "$capture"; then
+  echo "v5 publish moved v4-owned stable/candidate tags" >&2
   exit 1
 fi
 
 capture="$tmp/create-forward"
 run_case 99 100 "$capture"
-grep -q 'hive:v4-latest' "$capture"
+grep -q 'hive:v5-latest' "$capture"
+grep -q 'hive:edge' "$capture"
 
 capture="$tmp/create-stale"
 run_case sha-missing-moving-newer 100 "$capture"
 grep -q 'hive:abcdef1' "$capture"
-if grep -q 'hive:v4-latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
+if grep -q 'hive:v5-latest\|hive:stable\|hive:candidate\|hive:edge' "$capture"; then
   echo "stale run moved a mutable tag" >&2
   exit 1
 fi
@@ -89,7 +91,8 @@ fi
 
 capture="$tmp/create-legacy"
 run_case legacy 100 "$capture"
-grep -q 'hive:v4-latest' "$capture"
+grep -q 'hive:v5-latest' "$capture"
+grep -q 'hive:edge' "$capture"
 
 if run_case failure 100 "$tmp/create-failure"; then
   echo "registry inspection failure did not fail closed" >&2
