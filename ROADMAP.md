@@ -93,6 +93,37 @@ issues. Accepted workstreams:
 A documented migration path from v4 hubs and spokes, with dual-version
 operation during the transition, is part of the v5 GA bar.
 
+## Hosted Hive Hub
+
+The hosted hub at [hive.hivecommons.dev](https://hive.hivecommons.dev) is the
+project's zero-friction on-ramp: OAuth-protected dashboards, a public
+registry, cross-hive leaderboards, and provisioned hives with no cluster
+required. It is developed in this repo (`src/pkg/hub/`) and has recently
+absorbed significant work — hosted-hive provisioning and admin tooling,
+multi-login, the fleet wildcard certificate for provisioned spokes
+([#5981](https://github.com/hivecommons/hive/pull/5981)), and the domain
+cutover to `hive.hivecommons.dev`
+([#5955](https://github.com/hivecommons/hive/pull/5955), see
+[UPGRADE.md](UPGRADE.md)).
+
+Direction:
+
+- **Hosted is the funnel, self-hosted is the destination.** The hosted hub
+  exists to let adopters evaluate and run small hives without
+  infrastructure; larger fleets are expected to graduate to a self-hosted
+  hub (as tunaos.org did). Feature work lands in the shared codebase so
+  both deployments stay equivalent.
+- **Fleet features land on the hosted hub first.** The v5 constellation
+  ([#5691](https://github.com/hivecommons/hive/issues/5691)) and backend
+  capacity/placement ([#5698](https://github.com/hivecommons/hive/issues/5698))
+  workstreams are exercised by the hosted fleet before they are
+  recommended to self-hosted operators.
+- **Best-effort service, explicit expectations.** The hosted hub carries
+  no SLA today. Tenancy limits, data-retention, and account expectations
+  will be documented as they are settled; until then, treat hosted hives
+  as evaluation-grade ([#6017](https://github.com/hivecommons/hive/issues/6017)
+  tracks this documentation gap).
+
 ## Recently shipped (August 2026)
 
 Highlights from the last month of merges to `v4` (and `v5` where noted):
