@@ -300,7 +300,7 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 			return noWritersOnDuty(v, "merge", roster)
 		}
 		last, ok := newestOutput(e.RepoActivity, func(r RepoActivityWire) string { return r.Merges.NewestAt })
-		return bandFreshness(v, last, ok, queuedWork, now, "merge")
+		return explainOutputFreshness(e, bandFreshness(v, last, ok, queuedWork, now, "merge"), queuedWork, now)
 
 	default:
 		// L3–L5: judged on authored WRITES to the work source — issue/PR
@@ -318,7 +318,7 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 			return maxRFC3339(maxRFC3339(r.Issues.NewestAt, r.PRs.NewestAt),
 				maxRFC3339(r.Comments.NewestAt, r.Reviews.NewestAt))
 		})
-		verdict := bandFreshness(v, last, ok, queuedWork, now, "write")
+		verdict := explainOutputFreshness(e, bandFreshness(v, last, ok, queuedWork, now, "write"), queuedWork, now)
 		// A stale write stream is NOT an agent fault when the hive's output is
 		// parked on the HUMAN side of the gate: hold-labeled PRs awaiting
 		// review mean the agents produced, then correctly stood down to avoid
@@ -336,6 +336,70 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 		}
 		return verdict
 	}
+}
+
+func explainOutputFreshness(e RegistryEntry, v HealthVerdict, queuedWork int, now time.Time) HealthVerdict {
+	if v.State != HealthStateRed || !v.staleOutput {
+		return v
+	}
+	disposition := strings.TrimSpace(e.LastKickDisposition)
+	reason := strings.TrimSpace(e.LastKickSkipReason)
+	switch disposition {
+	case "advisory-only":
+		v.State = HealthStateAmber
+		v.staleOutput = false
+		if reason == "" {
+			reason = "ACMM advisory band produces advisory output, not writes"
+		}
+		v.Reason = "advisory-only — " + reason
+		return v
+	case "idle", "no-due-agents":
+		v.State = HealthStateAmber
+		v.staleOutput = false
+		if reason == "" {
+			reason = "no write-capable agents due"
+		}
+		v.Reason = "nothing to write — governor idle" + outputIdleSince(e.LastWriteCapableKickAt, now) + " because " + reason
+		return v
+	case "budget-suppressed":
+		v.State = HealthStateAmber
+		v.staleOutput = false
+		if reason == "" {
+			reason = "budget suppressed kicks"
+		}
+		v.Reason = "nothing written — " + reason
+		return v
+	case "agent-decided-not-writable":
+		v.State = HealthStateAmber
+		v.staleOutput = false
+		n := e.NotWritableQueued
+		if n <= 0 {
+			n = queuedWork
+		}
+		if n > 0 {
+			v.Reason = fmt.Sprintf("nothing writable — %d queued deemed not writable", n)
+		} else if reason != "" {
+			v.Reason = "nothing writable — " + reason
+		} else {
+			v.Reason = "nothing writable — agents declined write"
+		}
+		return v
+	case "kick-capable":
+		if !e.LastWriteCapableKickAt.IsZero() && now.Sub(e.LastWriteCapableKickAt) <= healthRecencyWindow {
+			v.Reason = fmt.Sprintf("pipeline broken — write-capable kick %s but no writes (%d queued)",
+				humanizeAge(now.Sub(e.LastWriteCapableKickAt)), queuedWork)
+		}
+		return v
+	default:
+		return v
+	}
+}
+
+func outputIdleSince(t time.Time, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return " since " + t.UTC().Format(time.RFC3339) + " (" + humanizeAge(now.Sub(t)) + ")"
 }
 
 // grantRoster splits a hive's agents holding a write grant into the ones the

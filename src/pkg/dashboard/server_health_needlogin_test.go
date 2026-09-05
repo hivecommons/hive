@@ -9,12 +9,17 @@ package dashboard
 
 import (
 	"encoding/json"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // healthChecksOf runs HealthSummary and decodes its checks through JSON (the
@@ -44,6 +49,145 @@ func agentsCheckOf(t *testing.T, s *Server) (status, detail string) {
 	}
 	t.Fatalf("no 'agents' check in HealthSummary")
 	return "", ""
+}
+
+func healthCheckOf(t *testing.T, s *Server, name string) (status, detail string) {
+	t.Helper()
+	for _, c := range healthChecksOf(t, s) {
+		if c.Name == name {
+			return c.Status, c.Detail
+		}
+	}
+	t.Fatalf("no %q check in HealthSummary", name)
+	return "", ""
+}
+
+func TestHealthSummary_QuietByDesignAgentsAreIdleNotDown(t *testing.T) {
+	deps := testDeps(t)
+	deps.Config.Agents = map[string]config.AgentConfig{
+		"reviewer": {Backend: "copilot", Enabled: true, OnDemand: true},
+		"nightly":  {Backend: "copilot", Enabled: true},
+		"paused":   {Backend: "copilot", Enabled: true, Paused: true},
+		"crashed":  {Backend: "copilot", Enabled: true},
+	}
+	deps.Config.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]config.Cadence{
+			"nightly": "pause",
+			"paused":  "15m",
+			"crashed": "15m",
+		}},
+	}}
+	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
+	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	healthAgentStatuses = func() map[string]*agent.AgentProcess {
+		return map[string]*agent.AgentProcess{
+			"reviewer": {State: agent.StateStopped, Config: deps.Config.Agents["reviewer"]},
+			"nightly":  {State: agent.StateStopped, Config: deps.Config.Agents["nightly"]},
+			"paused":   {State: agent.StatePaused, Paused: true, Config: deps.Config.Agents["paused"]},
+			"crashed":  {State: agent.StateStopped, Config: deps.Config.Agents["crashed"]},
+		}
+	}
+	t.Cleanup(func() { healthAgentStatuses = nil })
+	SetBackendAuthProvider(func(string) (bool, bool) { return true, true })
+	t.Cleanup(func() { SetBackendAuthProvider(nil) })
+
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+	s.startedAt = time.Now().Add(-2 * healthBootGrace)
+
+	status, detail := agentsCheckOf(t, s)
+	if status != "fail" {
+		t.Fatalf("agents status = %q, want fail for genuinely crashed expected-active agent", status)
+	}
+	for _, want := range []string{"1 paused", "2 idle: nightly (off-schedule), reviewer (on-demand)", "1 down: crashed"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("agents detail = %q, want segment %q", detail, want)
+		}
+	}
+}
+
+func scannedTokenCollector(t *testing.T, dir string, live bool) *tokens.Collector {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	c := tokens.NewCollector(dir, logger)
+	c.SetPersistPath(filepath.Join(t.TempDir(), "token-summary.json"))
+	if live {
+		c.SetCopilotLiveCapture(time.Now().UnixMilli())
+	}
+	stop := make(chan struct{})
+	close(stop)
+	c.Start(stop)
+	return c
+}
+
+func tokenHealthServer(t *testing.T, agentCfgs map[string]config.AgentConfig, statuses map[string]*agent.AgentProcess, collector *tokens.Collector) *Server {
+	t.Helper()
+	deps := testDeps(t)
+	deps.Config.Agents = agentCfgs
+	idleMode := config.ModeConfig{Cadences: map[string]config.Cadence{}}
+	for name, ac := range agentCfgs {
+		if !ac.OnDemand {
+			idleMode.Cadences[name] = "15m"
+		}
+	}
+	deps.Config.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": idleMode}}
+	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
+	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	deps.Tokens = collector
+	healthAgentStatuses = func() map[string]*agent.AgentProcess { return statuses }
+	t.Cleanup(func() { healthAgentStatuses = nil })
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+	s.startedAt = time.Now().Add(-2 * healthBootGrace)
+	return s
+}
+
+func TestHealthSummary_ZeroTokensQuietCasesAreSkipped(t *testing.T) {
+	collector := scannedTokenCollector(t, t.TempDir(), false)
+	pausedCfg := config.AgentConfig{Backend: "copilot", Enabled: true, Paused: true}
+	pausedSrv := tokenHealthServer(t,
+		map[string]config.AgentConfig{"scanner": pausedCfg},
+		map[string]*agent.AgentProcess{"scanner": {State: agent.StatePaused, Paused: true, Config: pausedCfg}},
+		collector)
+	if st, detail := healthCheckOf(t, pausedSrv, "tokens"); st != "skip" || detail != "zero consumed — all agents paused" {
+		t.Fatalf("paused tokens check = %q/%q, want skip/all paused", st, detail)
+	}
+
+	idleCollector := scannedTokenCollector(t, t.TempDir(), false)
+	idleCfg := config.AgentConfig{Backend: "copilot", Enabled: true, OnDemand: true}
+	idleSrv := tokenHealthServer(t,
+		map[string]config.AgentConfig{"reviewer": idleCfg},
+		map[string]*agent.AgentProcess{"reviewer": {State: agent.StateStopped, Config: idleCfg}},
+		idleCollector)
+	if st, detail := healthCheckOf(t, idleSrv, "tokens"); st != "skip" || !strings.Contains(detail, "no agents due") {
+		t.Fatalf("no-due tokens check = %q/%q, want skip/no agents due", st, detail)
+	}
+
+	runningCollector := scannedTokenCollector(t, t.TempDir(), false)
+	runningCfg := config.AgentConfig{Backend: "copilot", Enabled: true, OnDemand: true}
+	runningSrv := tokenHealthServer(t,
+		map[string]config.AgentConfig{"reviewer": runningCfg},
+		map[string]*agent.AgentProcess{"reviewer": {State: agent.StateRunning, Config: runningCfg}},
+		runningCollector)
+	if st, detail := healthCheckOf(t, runningSrv, "tokens"); st != "warn" || !strings.Contains(detail, "metering disabled") {
+		t.Fatalf("running on-demand tokens check = %q/%q, want warn/metering cause", st, detail)
+	}
+}
+
+func TestHealthSummary_ZeroTokensReportsCause(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte(`{"role":"user","message":"scanner waiting"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session fixture: %v", err)
+	}
+	collector := scannedTokenCollector(t, dir, true)
+	scannerCfg := config.AgentConfig{Backend: "copilot", Enabled: true}
+	s := tokenHealthServer(t,
+		map[string]config.AgentConfig{"scanner": scannerCfg},
+		map[string]*agent.AgentProcess{"scanner": {State: agent.StateRunning, Config: scannerCfg}},
+		collector)
+	if st, detail := healthCheckOf(t, s, "tokens"); st != "warn" || !strings.Contains(detail, "no model calls recorded") {
+		t.Fatalf("tokens check = %q/%q, want warn with zero-token cause", st, detail)
+	}
 }
 
 // TestHealthSummary_NeedLoginBucket locks in the full classification: an

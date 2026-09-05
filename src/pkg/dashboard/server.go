@@ -23,6 +23,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hub"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
@@ -3033,6 +3034,147 @@ func (s *Server) HealthSummary() map[string]any {
 	return s.healthSummaryFor(status, ready)
 }
 
+func (s *Server) healthGovernorMode() string {
+	if s == nil || s.deps == nil || s.deps.Governor == nil {
+		return ""
+	}
+	return string(s.deps.Governor.GetState().Mode)
+}
+
+func (s *Server) agentIdleByDesign(name string, proc *agent.AgentProcess, currentMode string, onDemandFromPack map[string]bool) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || proc == nil {
+		return ""
+	}
+	onDemand := proc.Config.OnDemand
+	if ac, ok := s.deps.Config.Agents[name]; ok {
+		onDemand = ac.OnDemand
+	}
+	if onDemand || onDemandFromPack[name] {
+		return "on-demand"
+	}
+	if s.agentExplicitlyOffSchedule(name, currentMode) {
+		return "off-schedule"
+	}
+	return ""
+}
+
+func (s *Server) agentExplicitlyOffSchedule(name, currentMode string) bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	cad := s.deps.Config.CadenceValueForMode(name, strings.ToLower(strings.TrimSpace(currentMode)))
+	return cad != "" && cad.IsPaused()
+}
+
+func (s *Server) zeroTokenHealth(ts *tokens.AggregateSummary) (status, detail string) {
+	detail = "zero consumed — no model calls recorded"
+	if s == nil || s.deps == nil {
+		return "warn", detail
+	}
+	if s.allAgentsPaused() {
+		return "skip", "zero consumed — all agents paused"
+	}
+	if s.noAgentsDue() {
+		return "skip", "zero consumed — no agents due in the current governor mode"
+	}
+	if diag := s.deps.Tokens.Diagnostics(); diag.LastScanError != "" {
+		return "warn", "zero consumed — token parser/sink error: " + diag.LastScanError
+	} else if diag.LastClaudeScanError != "" {
+		return "warn", "zero consumed — Claude token parser error: " + diag.LastClaudeScanError
+	} else if diag.LastCopilotScanError != "" {
+		return "warn", "zero consumed — Copilot token parser error: " + diag.LastCopilotScanError
+	} else if diag.LastBobScanError != "" {
+		return "warn", "zero consumed — Bob token parser error: " + diag.LastBobScanError
+	} else if diag.LiveCaptureEnabled && ts != nil && ts.SessionCount > 0 {
+		return "warn", "zero consumed — sessions still open or live-capture has not accounted usage yet"
+	}
+	if ts != nil && ts.SessionCount > 0 {
+		return "warn", "zero consumed — sessions made no model calls"
+	}
+	if s.hasRunningMeteredAgentWithoutLiveCapture() {
+		return "warn", "zero consumed — token sink or live metering disabled/misconfigured"
+	}
+	return "warn", detail
+}
+
+func (s *Server) allAgentsPaused() bool {
+	if s == nil || s.deps == nil || s.deps.AgentMgr == nil {
+		return false
+	}
+	statuses := s.deps.AgentMgr.AllStatuses()
+	if healthAgentStatuses != nil {
+		statuses = healthAgentStatuses()
+	}
+	seen := false
+	for name, proc := range statuses {
+		if proc == nil || agentDisabledInConfig(s.deps.Config, name, proc) {
+			continue
+		}
+		seen = true
+		if !proc.Paused && proc.State != agent.StatePaused {
+			return false
+		}
+	}
+	return seen
+}
+
+func (s *Server) noAgentsDue() bool {
+	if s == nil || s.deps == nil || s.deps.AgentMgr == nil || s.deps.Config == nil {
+		return false
+	}
+	statuses := s.deps.AgentMgr.AllStatuses()
+	if healthAgentStatuses != nil {
+		statuses = healthAgentStatuses()
+	}
+	currentMode := s.healthGovernorMode()
+	onDemandFromPack := config.OnDemandAgentsFromPacks()
+	seen := false
+	for name, proc := range statuses {
+		if proc == nil || agentDisabledInConfig(s.deps.Config, name, proc) || proc.Paused || proc.State == agent.StatePaused {
+			continue
+		}
+		if proc.State == agent.StateRunning {
+			return false
+		}
+		seen = true
+		onDemand := proc.Config.OnDemand
+		if ac, ok := s.deps.Config.Agents[name]; ok {
+			onDemand = ac.OnDemand
+		}
+		if !onDemand && !onDemandFromPack[name] && !s.agentExplicitlyOffSchedule(name, currentMode) {
+			return false
+		}
+	}
+	return seen
+}
+
+func (s *Server) hasRunningMeteredAgentWithoutLiveCapture() bool {
+	if s == nil || s.deps == nil || s.deps.AgentMgr == nil || s.deps.Tokens == nil {
+		return false
+	}
+	if s.deps.Tokens.Diagnostics().LiveCaptureEnabled {
+		return false
+	}
+	statuses := s.deps.AgentMgr.AllStatuses()
+	if healthAgentStatuses != nil {
+		statuses = healthAgentStatuses()
+	}
+	for _, proc := range statuses {
+		if proc == nil || proc.State != agent.StateRunning {
+			continue
+		}
+		backend := strings.ToLower(strings.TrimSpace(proc.BackendOverride))
+		if backend == "" {
+			backend = strings.ToLower(strings.TrimSpace(proc.Config.Backend))
+		}
+		switch backend {
+		case "copilot", "inference", "litellm", "vllm", "llm-d":
+			return true
+		}
+	}
+	return false
+}
+
 // healthSummaryFor computes the deep-health checks against an explicit status
 // payload and readiness verdict, so UpdateStatus can embed a snapshot judged
 // against the payload it is ABOUT to install — judging s.status there would
@@ -3105,16 +3247,19 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		stalled := 0
 		unsubstituted := 0
 		down := 0
+		idle := 0
 		needLogin := 0
 		// The names behind the counts. "1 down" alone is unactionable — the
 		// operator's next question is always WHICH one, and the answer was
 		// dropped right here where it was known.
-		var downNames, stalledNames, needLoginNames []string
+		var downNames, stalledNames, needLoginNames, idleNames []string
 		authFn := getBackendAuthFn()
 		statuses := s.deps.AgentMgr.AllStatuses()
 		if healthAgentStatuses != nil {
 			statuses = healthAgentStatuses()
 		}
+		currentMode := s.healthGovernorMode()
+		onDemandFromPack := config.OnDemandAgentsFromPacks()
 		for name, proc := range statuses {
 			if proc.Paused {
 				paused++
@@ -3159,6 +3304,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 					disabled++
 					continue
 				}
+				if reason := s.agentIdleByDesign(name, proc, currentMode, onDemandFromPack); reason != "" {
+					idle++
+					idleNames = append(idleNames, fmt.Sprintf("%s (%s)", name, reason))
+					continue
+				}
 				// A non-running agent whose CLI has no credentials is not
 				// crashed — it is waiting for a human to click Login on the
 				// agent panel. Bucket it separately so the operator reads an
@@ -3177,6 +3327,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		// stable across beats so the hub does not see a "changed" status that
 		// is really the same agents in a different order.
 		sort.Strings(downNames)
+		sort.Strings(idleNames)
 		sort.Strings(stalledNames)
 		sort.Strings(needLoginNames)
 		detail := fmt.Sprintf("%d running", running)
@@ -3185,6 +3336,9 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		}
 		if disabled > 0 {
 			detail += fmt.Sprintf(", %d disabled", disabled)
+		}
+		if idle > 0 {
+			detail += fmt.Sprintf(", %d idle: %s", idle, strings.Join(idleNames, ", "))
 		}
 		if down > 0 {
 			detail += fmt.Sprintf(", %d down: %s", down, strings.Join(downNames, ", "))
@@ -3258,8 +3412,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		ts := s.deps.Tokens.Summary()
 		if ts != nil {
 			if ts.TotalTokens == 0 {
-				checks = append(checks, check{Name: "tokens", Status: "warn", Detail: "zero consumed"})
-				warns++
+				st, detail := s.zeroTokenHealth(ts)
+				checks = append(checks, check{Name: "tokens", Status: st, Detail: detail})
+				if st == "warn" {
+					warns++
+				}
 			} else {
 				checks = append(checks, check{Name: "tokens", Status: "pass", Detail: fmt.Sprintf("%d total", ts.TotalTokens)})
 			}
