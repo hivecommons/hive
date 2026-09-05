@@ -2,6 +2,7 @@ package hub
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -116,15 +117,22 @@ func QuotaExhaustedAgentReason(count int) string {
 // InferenceBudgetProvider supplies the current provider spending-limit latch.
 type InferenceBudgetProvider func() (cause string, since, lastRebuff time.Time, rebuffs int)
 
-func ProviderLimitHeartbeatFields(agents []AgentSummary, budget InferenceBudgetProvider) (reason string, rebuffs int) {
+func ProviderLimitHeartbeatFields(agents []AgentSummary, budget InferenceBudgetProvider) (reason string, rebuffs int, hiveWide bool, agentNames []string) {
 	if budget != nil {
 		errMsg, _, _, rebuffs := budget()
 		if errMsg != "" {
 			if rebuffs > 1 {
-				return fmt.Sprintf("provider spending limit reached — %d refused calls: %s", rebuffs, errMsg), rebuffs
+				return fmt.Sprintf("provider spending limit reached — %d refused calls: %s", rebuffs, errMsg), rebuffs, true, nil
 			}
-			return "provider spending limit reached — " + errMsg, rebuffs
+			return "provider spending limit reached — " + errMsg, rebuffs, true, nil
 		}
 	}
-	return QuotaExhaustedAgentReason(QuotaExhaustedAgentCount(agents)), 0
+	names := make([]string, 0, len(agents))
+	for _, a := range agents {
+		if a.QuotaExhausted && !a.Paused && !strings.EqualFold(a.State, agentStatePaused) {
+			names = append(names, a.Name)
+		}
+	}
+	sort.Strings(names)
+	return QuotaExhaustedAgentReason(len(names)), 0, false, names
 }

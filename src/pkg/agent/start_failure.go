@@ -298,6 +298,7 @@ func (m *Manager) markStartFailureLocked(agent *AgentProcess, class StartFailure
 	agent.StartFailureClass = string(class)
 	agent.StartFailureReason = reason
 	agent.StartFailureCount++
+	agent.StartFailureLastAt = now
 	agent.LastError = reason
 	agent.StartBlocked = agent.StartFailureCount >= startFailureBlockThreshold()
 	delay := startFailureBackoffDelay(agent.StartFailureCount)
@@ -333,6 +334,9 @@ func (m *Manager) clearStartFailureLocked(agent *AgentProcess) {
 	agent.StartFailureClass = ""
 	agent.StartFailureReason = ""
 	agent.StartFailureCount = 0
+	agent.StartFailureLastAt = time.Time{}
+	agent.StartFailureExitCode = nil
+	agent.StartFailureSignal = ""
 	agent.StartBlocked = false
 	agent.StartBackoffUntil = time.Time{}
 }
@@ -353,14 +357,30 @@ func (m *Manager) startFailureBackoffRemainingLocked(agent *AgentProcess, now ti
 // the fleet-visible bit: it means the agent has failed the same way
 // startFailureBlockThreshold times and is no longer being relaunched on the
 // tick.
-func (m *Manager) StartFailureState(name string) (reason string, count int, blocked bool, ok bool) {
+type StartFailureSnapshot struct {
+	Reason       string
+	Count        int
+	LastAt       time.Time
+	LastExitCode *int
+	LastSignal   string
+	Blocked      bool
+}
+
+func (m *Manager) StartFailureState(name string) (StartFailureSnapshot, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	agent, found := m.agents[name]
 	if !found || agent == nil {
-		return "", 0, false, false
+		return StartFailureSnapshot{}, false
 	}
-	return agent.StartFailureReason, agent.StartFailureCount, agent.StartBlocked, true
+	return StartFailureSnapshot{
+		Reason:       agent.StartFailureReason,
+		Count:        agent.StartFailureCount,
+		LastAt:       agent.StartFailureLastAt,
+		LastExitCode: agent.StartFailureExitCode,
+		LastSignal:   agent.StartFailureSignal,
+		Blocked:      agent.StartBlocked,
+	}, true
 }
 
 // startBlockedDescription renders the blocked state for an operator-facing

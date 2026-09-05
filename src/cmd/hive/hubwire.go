@@ -694,9 +694,15 @@ func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
 		tasksCompleted7d = &n
 	}
 
-	providerLimitReason, providerLimitRebuffs := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
+	providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 	lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 		outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
+	ghAppTokenStatus, ghAppTokenLastMintAt, ghAppTokenError :=
+		githubAppTokenHeartbeatFields(w.cfg, w.dashSrv.GetGitHubAppPermIssue())
+	ghAppErrorClass, ghAppHTTPStatus := githubAppStructuredFailure(
+		w.dashSrv.GetGitHubAppState(),
+		firstNonEmpty(w.dashSrv.GetGitHubAppPermIssue(), ghAppTokenError),
+	)
 
 	// Remediation-hint detectors (#5577). All three read state the
 	// spoke already maintains — no new GitHub calls, no new file
@@ -794,6 +800,8 @@ func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
 		}(),
 		ProviderLimitReason:     providerLimitReason,
 		ProviderLimitRebuffs:    providerLimitRebuffs,
+		ProviderLimitHiveWide:   providerLimitHiveWide,
+		ProviderLimitAgents:     providerLimitAgents,
 		LastWriteCapableKickAt:  lastWriteKickAt,
 		LastKickDisposition:     kickDisposition,
 		LastKickSkipReason:      kickSkipReason,
@@ -871,24 +879,17 @@ func (w *spokeWire) buildHeartbeatPayload() *hub.HeartbeatPayload {
 		// base_url and api_url — a GHE placeholder with base_url:"" but
 		// api_url: github.ibm.com must report github.ibm.com, not be
 		// silently rendered as github.com in the spokes table.
-		GitHubHost:         w.cfg.GitHub.HostLabel(),
-		GitHubAppRequired:  w.dashSrv.IsGitHubAppRequired(),
-		GitHubAppPermIssue: w.dashSrv.GetGitHubAppPermIssue(),
-		GitHubAppState:     w.dashSrv.GetGitHubAppState(),
-		GitHubAppTokenStatus: func() string {
-			status, _, _ := githubAppTokenHeartbeatFields(w.cfg, w.dashSrv.GetGitHubAppPermIssue())
-			return status
-		}(),
-		GitHubAppTokenLastMintAt: func() string {
-			_, lastMintAt, _ := githubAppTokenHeartbeatFields(w.cfg, w.dashSrv.GetGitHubAppPermIssue())
-			return lastMintAt
-		}(),
-		GitHubAppTokenError: func() string {
-			_, _, errMsg := githubAppTokenHeartbeatFields(w.cfg, w.dashSrv.GetGitHubAppPermIssue())
-			return errMsg
-		}(),
-		PendingGitHubAppInstall: w.dashSrv.IsPendingGitHubAppInstall(),
-		AutoUpgrade:             w.cfg.Hub.AutoUpgrade,
+		GitHubHost:               w.cfg.GitHub.HostLabel(),
+		GitHubAppRequired:        w.dashSrv.IsGitHubAppRequired(),
+		GitHubAppPermIssue:       w.dashSrv.GetGitHubAppPermIssue(),
+		GitHubAppState:           w.dashSrv.GetGitHubAppState(),
+		GitHubAppTokenStatus:     ghAppTokenStatus,
+		GitHubAppTokenLastMintAt: ghAppTokenLastMintAt,
+		GitHubAppTokenError:      ghAppTokenError,
+		GitHubAppErrorClass:      ghAppErrorClass,
+		GitHubAppHTTPStatus:      ghAppHTTPStatus,
+		PendingGitHubAppInstall:  w.dashSrv.IsPendingGitHubAppInstall(),
+		AutoUpgrade:              w.cfg.Hub.AutoUpgrade,
 		ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
 			if os.Getenv("HIVE_CLUSTER_ID") == "" {
 				return nil
@@ -1182,7 +1183,7 @@ func (w *spokeWire) buildUpgradingHeartbeatPayload() *hub.HeartbeatPayload {
 	if w.cfg.ACMMLevel != nil {
 		acmmLvl = *w.cfg.ACMMLevel
 	}
-	providerLimitReason, providerLimitRebuffs := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
+	providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := hub.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 	lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 		outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
 	return &hub.HeartbeatPayload{
@@ -1211,6 +1212,8 @@ func (w *spokeWire) buildUpgradingHeartbeatPayload() *hub.HeartbeatPayload {
 		RepoTargetIssue:         w.repoTargetIssueMessage(),
 		ProviderLimitReason:     providerLimitReason,
 		ProviderLimitRebuffs:    providerLimitRebuffs,
+		ProviderLimitHiveWide:   providerLimitHiveWide,
+		ProviderLimitAgents:     providerLimitAgents,
 		LastWriteCapableKickAt:  lastWriteKickAt,
 		LastKickDisposition:     kickDisposition,
 		LastKickSkipReason:      kickSkipReason,

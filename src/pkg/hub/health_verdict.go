@@ -131,13 +131,19 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 			// "repo-not-covered" (App installed but this repo not ticked) needs
 			// a completely different remedy than a missing/invalid key.
 			if st := strings.TrimSpace(e.GitHubAppState); st != "" && st != GitHubAppTokenStatusOK && st != "unknown" {
-				v.Reason = "GitHub App: " + st
+				if detail := strings.TrimSpace(app.Detail); detail != "" {
+					v.Reason = detail
+				} else {
+					v.Reason = "GitHub App: " + st
+				}
+			} else if detail := strings.TrimSpace(app.Detail); detail != "" {
+				v.Reason = detail
 			} else {
 				v.Reason = "GitHub App broken"
 			}
 			return v
 		}
-		if reason := strings.TrimSpace(e.ProviderLimitReason); reason != "" {
+		if reason := strings.TrimSpace(e.ProviderLimitReason); reason != "" && e.ProviderLimitHiveWide {
 			v.State = HealthStateRed
 			v.cause = causeProviderQuota
 			v.Reason = providerLimitHealthReason(reason, e.ProviderLimitRebuffs)
@@ -187,6 +193,18 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 				// count — the EPM/alchemy at-a-glance case.
 				v.cause = causeLoginStuck
 				v.Reason = fmt.Sprintf("%d agent(s) stuck at login — re-login needed", rollup.LoginStuck)
+			case rollup.StartFailures == rollup.Problems:
+				if rollup.StartFailures == 1 && rollup.StartFailureReason != "" && rollup.StartFailureReason != "mixed" {
+					v.Reason = rollup.StartFailureReason
+				} else {
+					v.Reason = fmt.Sprintf("%d agent(s) starting failed — see agent verdicts", rollup.StartFailures)
+				}
+			case rollup.RestartStorms == rollup.Problems:
+				if rollup.RestartStorms == 1 && rollup.RestartStormReason != "" && rollup.RestartStormReason != "mixed" {
+					v.Reason = rollup.RestartStormReason
+				} else {
+					v.Reason = fmt.Sprintf("%d agent(s) restarting repeatedly — see agent verdicts", rollup.RestartStorms)
+				}
 			case rollup.DeadOrGone == rollup.Problems:
 				// Katamari/ibm-aiops-orchestrator live shapes: failed/dead agents
 				// need a restart whether the outage is partial or every expected

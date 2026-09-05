@@ -363,16 +363,21 @@ func TestSnapshotCarriesStartFailureRecord(t *testing.T) {
 // indistinguishable from a healthy one.
 func TestStartFailureStateReportsUnknownAgent(t *testing.T) {
 	m := &Manager{agents: map[string]*AgentProcess{}}
-	if _, _, _, ok := m.StartFailureState("nope"); ok {
+	if _, ok := m.StartFailureState("nope"); ok {
 		t.Error("StartFailureState claimed to know an agent that does not exist")
 	}
 
 	a := newStartFailureAgent("supervisor")
 	m.agents["supervisor"] = a
-	m.markStartFailureLocked(a, StartFailureLoginRequired, "copilot: not logged in", time.Now())
+	now := time.Now()
+	m.markStartFailureLocked(a, StartFailureLoginRequired, "copilot: not logged in", now)
+	exitCode := 77
+	a.StartFailureExitCode = &exitCode
+	a.StartFailureSignal = "TERM"
 
-	reason, count, blocked, ok := m.StartFailureState("supervisor")
-	if !ok || reason != "copilot: not logged in" || count != 1 || blocked {
-		t.Errorf("StartFailureState = (%q, %d, %v, %v)", reason, count, blocked, ok)
+	got, ok := m.StartFailureState("supervisor")
+	if !ok || got.Reason != "copilot: not logged in" || got.Count != 1 || got.Blocked || !got.LastAt.Equal(now) ||
+		got.LastExitCode == nil || *got.LastExitCode != 77 || got.LastSignal != "TERM" {
+		t.Errorf("StartFailureState = (%+v, %v)", got, ok)
 	}
 }
