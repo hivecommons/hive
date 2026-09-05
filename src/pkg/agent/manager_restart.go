@@ -645,6 +645,10 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 }
 
 func (m *Manager) Restart(ctx context.Context, name string) error {
+	return m.RestartWithReason(ctx, name, "operator")
+}
+
+func (m *Manager) RestartWithReason(ctx context.Context, name, reason string) error {
 	// Detach from the caller's cancellation. Restart is routinely invoked from
 	// goroutines whose OWN context is the per-launch agentCtx this function is
 	// about to cancel (pollTmuxOutputForAgent's token-detected and TLS-error
@@ -706,7 +710,7 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
-	m.recordRestartLocked(agent, "operator")
+	m.recordRestartLocked(agent, reason)
 	agent.forceRelaunch = true
 	m.logger.Info("audit: agent restarting", "name", name, "restart_count", agent.RestartCount)
 

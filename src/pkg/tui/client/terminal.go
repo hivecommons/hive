@@ -104,12 +104,9 @@ func (c *Client) ttydCredential() string {
 // "hive-<agent>"; session is the full name) through the dashboard's /terminal
 // proxy, carrying every credential lane the route can require:
 //
-//   - ?token= for the dashboard's own gate. The Node proxy's upgrade handler
-//     reads ONLY the query parameter (src/proxy/server.js), and the Go
-//     server's authenticate() accepts it there too — while an Authorization
-//     header would SHADOW it on the Go server (the header is preferred when
-//     present), which is exactly why the shared token does not travel as
-//     Bearer on this dial the way it does on doJSON.
+//   - a short-lived ?code= minted by POST /api/terminal/handoff using the
+//     normal dashboard Authorization header/cookie. The shared dashboard token
+//     never travels in the websocket URL.
 //   - Cookie for the per-user session lanes: a spoke's hive_session, a hub's
 //     hive_hub_user, and the per-hive terminal assertion that rides with it.
 //     Same value, same reasoning as authorize().
@@ -126,7 +123,16 @@ func (c *Client) ttydCredential() string {
 // it, unwrapped, so the caller can classify with IsUnauthorized/IsForbidden —
 // the same contract CheckCredentials keeps.
 func (c *Client) DialTerminal(ctx context.Context, session string) (*TerminalSession, error) {
-	wsURL, err := c.terminalWSURL(session)
+	code := ""
+	if c.token != "" || c.cookie != "" {
+		var err error
+		code, err = c.createTerminalHandoff(ctx)
+		if err != nil && c.cookie == "" {
+			return nil, err
+		}
+	}
+
+	wsURL, err := c.terminalWSURL(session, code)
 	if err != nil {
 		return nil, err
 	}
@@ -177,14 +183,24 @@ func (c *Client) DialTerminal(ctx context.Context, session string) (*TerminalSes
 	return &TerminalSession{conn: conn, authToken: authToken}, nil
 }
 
+type terminalHandoffResponse struct {
+	Code string `json:"code"`
+}
+
+func (c *Client) createTerminalHandoff(ctx context.Context) (string, error) {
+	var resp terminalHandoffResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/api/terminal/handoff", nil, &resp); err != nil {
+		return "", err
+	}
+	if resp.Code == "" {
+		return "", fmt.Errorf("terminal handoff response missing code")
+	}
+	return resp.Code, nil
+}
+
 // terminalWSURL builds the websocket URL for one session: scheme swapped to
-// ws/wss, ?arg= for the session, ?token= when a shared token is configured.
-//
-// The token travels in the QUERY on this one route. That is not a downgrade
-// invented here: it is the query the dashboard's own terminal links already
-// carry (terminalUrl() in static/index.html), because the Node proxy's
-// websocket gate reads nothing else.
-func (c *Client) terminalWSURL(session string) (string, error) {
+// ws/wss, ?arg= for the session, and a short-lived ?code= when one was minted.
+func (c *Client) terminalWSURL(session, code string) (string, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return "", fmt.Errorf("parse %s %q: %w", BaseURLEnv, c.baseURL, err)
@@ -198,8 +214,8 @@ func (c *Client) terminalWSURL(session string) (string, error) {
 	u.Path = strings.TrimRight(u.Path, "/") + TerminalWSPath
 	q := u.Query()
 	q.Set("arg", session)
-	if c.token != "" {
-		q.Set("token", c.token)
+	if code != "" {
+		q.Set("code", code)
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil

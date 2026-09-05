@@ -24,6 +24,8 @@ const detailLimit = 200
 
 type GatewayStatus struct {
 	Name        string `json:"name"`
+	Endpoint    string `json:"endpoint,omitempty"`
+	Host        string `json:"host,omitempty"`
 	ErrorClass  string `json:"error_class,omitempty"`
 	HTTPStatus  int    `json:"http_status,omitempty"`
 	Detail      string `json:"detail,omitempty"`
@@ -38,18 +40,26 @@ type Store struct {
 func NewStore() *Store { return &Store{faults: map[string]GatewayStatus{}} }
 
 func (s *Store) RecordError(name string, err error, at time.Time) {
+	s.RecordEndpointError(name, "", err, at)
+}
+
+func (s *Store) RecordEndpointError(name, endpoint string, err error, at time.Time) {
 	if s == nil || strings.TrimSpace(name) == "" || err == nil {
 		return
 	}
 	class, status := ClassifyError(err)
-	s.record(GatewayStatus{Name: strings.TrimSpace(name), ErrorClass: class, HTTPStatus: status, Detail: safeDetail(err.Error()), LastErrorAt: at.UTC().Format(time.RFC3339)})
+	s.record(GatewayStatus{Name: strings.TrimSpace(name), Endpoint: safeDetail(endpoint), Host: endpointHost(endpoint, err), ErrorClass: class, HTTPStatus: status, Detail: safeDetail(err.Error()), LastErrorAt: at.UTC().Format(time.RFC3339)})
 }
 
 func (s *Store) RecordHTTPError(name string, status int, detail string, at time.Time) {
+	s.RecordEndpointHTTPError(name, "", status, detail, at)
+}
+
+func (s *Store) RecordEndpointHTTPError(name, endpoint string, status int, detail string, at time.Time) {
 	if s == nil || strings.TrimSpace(name) == "" {
 		return
 	}
-	s.record(GatewayStatus{Name: strings.TrimSpace(name), ErrorClass: ClassifyHTTPStatus(status), HTTPStatus: status, Detail: safeDetail(detail), LastErrorAt: at.UTC().Format(time.RFC3339)})
+	s.record(GatewayStatus{Name: strings.TrimSpace(name), Endpoint: safeDetail(endpoint), Host: endpointHost(endpoint, nil), ErrorClass: ClassifyHTTPStatus(status), HTTPStatus: status, Detail: safeDetail(detail), LastErrorAt: at.UTC().Format(time.RFC3339)})
 }
 
 func (s *Store) Clear(name string) {
@@ -141,8 +151,13 @@ func Reason(st GatewayStatus) string {
 		name = "unknown"
 	}
 	switch st.ErrorClass {
-	case ClassDNS, ClassConnect:
-		return "inference gateway '" + name + "' unreachable (" + st.ErrorClass + ")"
+	case ClassDNS:
+		if host := strings.TrimSpace(st.Host); host != "" {
+			return name + " endpoint " + host + " not resolvable on this cluster — set inference." + name + ".endpoint or disable"
+		}
+		return "inference gateway '" + name + "' unreachable (dns)"
+	case ClassConnect:
+		return "inference gateway '" + name + "' unreachable (connect)"
 	case ClassAuth:
 		if st.HTTPStatus > 0 {
 			return "inference gateway '" + name + "' rejected key (" + strconv.Itoa(st.HTTPStatus) + ")"
@@ -185,4 +200,19 @@ func safeDetail(s string) string {
 		return s[:detailLimit]
 	}
 	return s
+}
+
+func endpointHost(endpoint string, err error) string {
+	if u, parseErr := url.Parse(strings.TrimSpace(endpoint)); parseErr == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		err = urlErr.Err
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && strings.TrimSpace(dnsErr.Name) != "" {
+		return strings.TrimSpace(dnsErr.Name)
+	}
+	return ""
 }

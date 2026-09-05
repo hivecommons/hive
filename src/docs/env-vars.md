@@ -72,6 +72,15 @@ to) is an opaque shared secret. The server does **not** enforce any format:
   credential used by the local proxy. Treat it like a root password for the
   hive. On direct-route or hub-proxied spokes identity is per-user and the
   shared token is server-to-server only.
+- **Transport**: clients must send the shared token in the `Authorization`
+  header (`Bearer <token>` or the raw token value for legacy API clients).
+  `?token=` query-string credentials are rejected because URLs are routinely
+  recorded in ingress/access logs, browser history, screenshots, and shared
+  links. Browser terminal opens first POST to `/api/terminal/handoff` with the
+  caller's normal Authorization header or session cookie, then navigate with a
+  short-lived single-use `code` that cannot be replayed. If a new spoke returns
+  `401` for an old `?token=` terminal/log URL, upgrade the hub or client that
+  generated that link.
 - **Empty value**: leaving it unset leaves the dashboard API unauthenticated
   (unless direct-route per-user authorization is configured). Never deploy an
   internet-reachable hive without it.
@@ -141,7 +150,7 @@ new value at the same time.
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
-| `HIVE_VLLM_ENDPOINT` | No | `http://hive-vllm-svc.hive-inference.svc.cluster.local:8000` in code; `src/deploy/k8s/deployment.yaml` sets `http://vllm-svc.hive-inference.svc.cluster.local:8000` | Comma-separated vLLM endpoint list. |
+| `HIVE_VLLM_ENDPOINT` | No | unset in code; hosted provisioning or an explicit deployment may set a cluster-reachable endpoint | Comma-separated vLLM endpoint list. Unset disables the built-in vLLM gateway route. |
 | `HIVE_LLMD_ENDPOINT` | No | `http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000` in code; `src/deploy/k8s/deployment.yaml` sets `http://llm-d-epp.hive-inference.svc.cluster.local:8000` | Comma-separated llm-d endpoint list. |
 | `HIVE_LITELLM_ENDPOINT` | No | YAML `governor.litellm.endpoint`; unset means LiteLLM is unregistered unless `local_proxy` is true | Runtime LiteLLM base URL override. |
 | `HIVE_VLLM_API_KEY` | No | none | Default bearer token for vLLM model discovery when no backend-specific `api_key_env` or file resolves. |
@@ -150,7 +159,7 @@ new value at the same time.
 | `HIVE_VLLM_MODELS` | No | static fallback aliases | Comma-separated vLLM model IDs used when discovery returns none. |
 | `HIVE_LLMD_MODELS` | No | static fallback aliases | Comma-separated llm-d model IDs used when discovery returns none. |
 | `HIVE_LITELLM_MODELS` | No | static fallback aliases | Comma-separated LiteLLM model IDs used when discovery returns none. |
-| `HIVE_BOB_API_KEY` | Required only for Bob agents in pods unless a key file is mounted or saved on `/data` | `/secrets/bob_api_key` or `/data/secrets/bob_api_key` may be used first | Hive-side Bob API key source. The value is injected into Bob as `BOBSHELL_API_KEY`. |
+| `HIVE_BOB_API_KEY` | Required only for Bob agents in pods unless a key file is mounted or saved on `/data` | `/secrets/bob_api_key` or `/data/secrets/bob_api_key` may be used first | Hive-side Bob API key source. The value is injected into Bob as `BOBSHELL_API_KEY`; Bob HTTP 401 / invalid-or-expired verification failures are surfaced as credential refresh / login-required problems. |
 | `HIVE_BOB_API_URL` | No | `https://api.us-east.bob.ibm.com` | Bob key-test endpoint base URL override. |
 | `BOBSHELL_API_KEY` | Required by Bob CLI when Hive injects or contributor mode uses Bob | none | API key name read by bobshell itself. |
 | `COPILOT_GITHUB_TOKEN` | No | dashboard device-flow token file, if present | Copilot completion/model-discovery token and explicit agent injection. |

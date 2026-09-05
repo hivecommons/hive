@@ -4553,7 +4553,7 @@ func parseEndpointList(raw string) []string {
 		}
 	}
 	if len(out) == 0 {
-		return []string{raw}
+		return nil
 	}
 	return out
 }

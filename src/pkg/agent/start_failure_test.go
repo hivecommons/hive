@@ -36,7 +36,7 @@ func TestStartFailureReasonsAreActionable(t *testing.T) {
 		want    string
 	}{
 		{"copilot", StartFailureLoginRequired, "", "copilot: not logged in"},
-		{"bob", StartFailureCredentialRejected, "401", "bob: API key rejected (401)"},
+		{"bob", StartFailureCredentialRejected, "401", "bob API key invalid or expired — refresh HIVE_BOB_API_KEY (401)"},
 		{"bob", StartFailureCredentialMissing, "", "bob: no API key configured"},
 		{"copilot", StartFailureBinaryMissing, "", "copilot: CLI binary not found"},
 		{"copilot", StartFailureNoOutput, "", "copilot: no CLI prompt after launch"},

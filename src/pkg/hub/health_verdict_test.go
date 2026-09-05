@@ -60,6 +60,24 @@ func TestHiveHealthFor_GatewayFaultPrecedesInferredAppBroken(t *testing.T) {
 	}
 }
 
+func TestHiveHealthFor_GatewayDNSNamesEndpointHost(t *testing.T) {
+	now := time.Date(2026, 9, 4, 23, 0, 0, 0, time.UTC)
+	e := RegistryEntry{
+		Online:    true,
+		ACMMLevel: 4,
+		Agents: []AgentSummary{{
+			Name: "quality", State: agentStateRunning, Backend: "vllm", Enabled: true, ExpectedActive: true, CanOpenIssue: true, CanOpenPR: true, CanMerge: true,
+		}},
+		GatewayHealth: []inferencehealth.GatewayStatus{{
+			Name: "vllm", Host: "hive-vllm-svc.hive-inference.svc.cluster.local", ErrorClass: inferencehealth.ClassDNS, LastErrorAt: now.Format(time.RFC3339),
+		}},
+	}
+	v := hiveHealthFor(e, okRollup(), okApp(), 3, now)
+	if want := "vllm endpoint hive-vllm-svc.hive-inference.svc.cluster.local not resolvable on this cluster — set inference.vllm.endpoint or disable"; v.Reason != want {
+		t.Fatalf("reason = %q, want %q", v.Reason, want)
+	}
+}
+
 func TestHiveHealthFor_UnusedGatewayFaultDoesNotShadowAppVerdict(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	e := RegistryEntry{

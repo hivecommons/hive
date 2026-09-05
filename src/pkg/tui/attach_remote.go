@@ -30,7 +30,7 @@ type remoteAttach struct {
 	agent   string
 	session *client.TerminalSession
 	// target is the dashboard base URL, for the banner. NEVER the full dial
-	// URL: that carries ?token=, and the banner is written to a scrollback
+	// URL: that may carry a short-lived ?code=, and the banner is written to a scrollback
 	// that outlives the session.
 	target string
 	// viaFallback records that a loopback dashboard was expected to have a

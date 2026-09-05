@@ -164,7 +164,11 @@ func startFailureReason(backend string, class StartFailureClass, detail string) 
 	case StartFailureLoginRequired:
 		base = backend + ": not logged in"
 	case StartFailureCredentialRejected:
-		base = backend + ": API key rejected"
+		if backend == bobBackend {
+			base = "bob API key invalid or expired — refresh " + config.DefaultBobAPIKeyEnv
+		} else {
+			base = backend + ": API key rejected"
+		}
 	case StartFailureCredentialMissing:
 		base = backend + ": no API key configured"
 	case StartFailureBackendMismatch:

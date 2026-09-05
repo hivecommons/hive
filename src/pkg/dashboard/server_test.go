@@ -782,7 +782,7 @@ func TestSecurityHeaders_Present(t *testing.T) {
 	headers := map[string]string{
 		"X-Frame-Options":        "DENY",
 		"X-Content-Type-Options": "nosniff",
-		"X-Xss-Protection":      "1; mode=block",
+		"X-Xss-Protection":       "1; mode=block",
 		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	}
 	for name, want := range headers {
@@ -837,7 +837,7 @@ func TestAuthMiddleware_AcceptsBearerToken(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_AcceptsQueryToken(t *testing.T) {
+func TestAuthMiddleware_RejectsQueryToken(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	s := NewServerWithAuth(0, "secret-token-123", logger)
 	handler := s.Handler()
@@ -849,8 +849,8 @@ func TestAuthMiddleware_AcceptsQueryToken(t *testing.T) {
 		t.Fatalf("request error: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 for query-token request, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for query-token request, got %d", resp.StatusCode)
 	}
 }
 

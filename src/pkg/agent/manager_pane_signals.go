@@ -762,6 +762,22 @@ func paneShowsQuotaExhausted(lines []string) bool {
 	return false
 }
 
+func paneShowsBobAPIKeyRejected(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "api key") || !strings.Contains(lower, "401") {
+			continue
+		}
+		if strings.Contains(lower, "verification failed") ||
+			strings.Contains(lower, "invalid or expired api key") ||
+			strings.Contains(lower, `"error":"unauthorized"`) ||
+			strings.Contains(lower, `"error": "unauthorized"`) {
+			return true
+		}
+	}
+	return false
+}
+
 // paneShowsLoginPrompt returns true if any line in the pane output matches a
 // known login/authentication prompt pattern.
 //

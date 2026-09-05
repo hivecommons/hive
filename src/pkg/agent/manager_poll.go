@@ -51,8 +51,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			}
 			tail := filtered[tailStart:]
 			showsLogin := paneShowsLoginPrompt(tail)
+			bobKeyRejected := effectiveBackend(agent) == bobBackend && paneShowsBobAPIKeyRejected(tail)
 			quotaExhausted := paneShowsQuotaExhausted(tail)
-			if showsLogin {
+			if showsLogin || bobKeyRejected {
+				showsLogin = true
 				loginStreak++
 			} else {
 				loginStreak = 0
@@ -133,7 +135,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 						"max_attempts", tokenRestartMaxAttempts,
 					)
 					go func() {
-						if err := m.Restart(ctx, agent.Name); err != nil {
+						if err := m.RestartWithReason(ctx, agent.Name, "login token refreshed"); err != nil {
 							m.logger.Warn("token-triggered restart failed",
 								"agent", agent.Name,
 								"error", err,
@@ -142,6 +144,19 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 					}()
 					return // stop polling; Restart will spawn a new goroutine
 				}
+			}
+
+			if bobKeyRejected {
+				agent.LastError = startFailureReason(bobBackend, StartFailureCredentialRejected, "")
+				m.mu.Lock()
+				delay, blocked := m.recordStartFailureLocked(agent, bobBackend, StartFailureCredentialRejected, "")
+				m.mu.Unlock()
+				m.logger.Warn("bob API key rejected; automatic restart suppressed by start-failure backoff",
+					"agent", agent.Name,
+					"blocked", blocked,
+					"retry_in", delay.Round(time.Second).String(),
+				)
+				return
 			}
 
 			// Detect fatal TLS/network errors that leave the agent visually
@@ -166,7 +181,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 					agent.lastTokenRestart = time.Now()
 					agent.LastError = "transient TLS/network error"
 					go func() {
-						if err := m.Restart(ctx, agent.Name); err != nil {
+						if err := m.RestartWithReason(ctx, agent.Name, "transient network error"); err != nil {
 							m.logger.Warn("tls-error-triggered restart failed",
 								"agent", agent.Name,
 								"error", err,

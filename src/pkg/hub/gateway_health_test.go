@@ -28,7 +28,7 @@ func TestSanitizeGatewayHealth_FiltersAndNormalizes(t *testing.T) {
 		{Name: "badtime", ErrorClass: inferencehealth.Class5xx, HTTPStatus: 700, LastErrorAt: "yesterday-ish"},
 		{Name: "negstatus", ErrorClass: inferencehealth.ClassConnect, HTTPStatus: -3, LastErrorAt: "2026-01-02T03:04:05Z"},
 		// Detail is prose-sanitized: markup and control chars removed.
-		{Name: "detail", ErrorClass: inferencehealth.ClassAuth, Detail: "a <script>\x1b[31m`bad`\n stuff"},
+		{Name: "detail", Endpoint: "http://gw.example/v1", Host: "gw.example", ErrorClass: inferencehealth.ClassAuth, Detail: "a <script>\x1b[31m`bad`\n stuff"},
 	}
 	out := sanitizeGatewayHealth(in)
 	if len(out) != 4 {
@@ -49,6 +49,8 @@ func TestSanitizeGatewayHealth_FiltersAndNormalizes(t *testing.T) {
 	}
 	if st := byName["detail"]; strings.ContainsAny(st.Detail, "<>`\x1b\n") {
 		t.Errorf("detail not sanitized: %q", st.Detail)
+	} else if st.Endpoint != "http://gw.example/v1" || st.Host != "gw.example" {
+		t.Errorf("endpoint/host not preserved: %+v", st)
 	}
 	// Output is sorted by lowercase name.
 	for i := 1; i < len(out); i++ {

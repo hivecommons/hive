@@ -769,8 +769,10 @@ governor:
     default_model: qwen2.5-0.5b-instruct
 ```
 
-Swap `backend: vllm` to hit `HIVE_VLLM_ENDPOINT` directly (the base deployment
-wires both `HIVE_VLLM_ENDPOINT` and `HIVE_LLMD_ENDPOINT`). Verify any key against
+Swap `backend: vllm` to hit `HIVE_VLLM_ENDPOINT` directly. Hive does not
+default this to an in-cluster Service; set it only when the target cluster can
+resolve and reach that endpoint (hosted provisioning injects it from the
+cluster `inference_endpoint` setting). Verify any key against
 `src/pkg/config/config.go` before adding it.
 
 ---

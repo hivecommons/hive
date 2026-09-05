@@ -52,6 +52,11 @@ func startAttachFixture(t *testing.T, script func(conn *websocket.Conn)) (*httpt
 	var dials atomic.Int32
 	upgrader := websocket.Upgrader{Subprotocols: []string{"tty"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/terminal/handoff" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":"attach-handoff"}`))
+			return
+		}
 		if r.URL.Path != client.TerminalWSPath {
 			http.NotFound(w, r)
 			return
