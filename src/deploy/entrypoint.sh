@@ -312,6 +312,73 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 " "$_hgh_cfg" 2>/dev/null || true
 }
 
+# hive_git_bot_identity echoes the git identity every agent commits as, as a
+# single "name<TAB>email" line, derived from the SAME config the Go binary uses
+# for Config.EffectiveAIAuthor() (pkg/config/config.go):
+#
+#   1. project.ai_author, when set — the operator's explicit choice, always wins.
+#   2. else, unless github.app_authored_prs is false, the App bot
+#      "<github.app_slug or kubestellar-hive>[bot]" — but ONLY when the App is
+#      usable (real app_id, not the placeholder sentinel, and an
+#      installation_id), mirroring GitHubConfig.HasUsableApp(): a hive with no
+#      installed App has no bot that can author anything.
+#   3. else the legacy "kubestellar-hive <hive-bot@kubestellar.io>" pair, so a
+#      hive that never opted in behaves exactly as before.
+#
+# The email is "<login>@users.noreply.github.com": that is the address GitHub
+# attributes to a bot login, so the commit shows the App's avatar and links to
+# it, and it satisfies rulesets that require attributed changes. (Measured: a
+# commit authored "onboard-ai-hive-bot[bot] <onboard-ai-hive-bot[bot]@users.
+# noreply.github.com>" resolves to author_login onboard-ai-hive-bot[bot]; the
+# legacy pair resolves to nothing.)
+#
+# WHY THIS EXISTS. /etc/gitconfig used to hardcode the public kubestellar-hive
+# identity for every agent on every hive. A self-hosted hive with its own App
+# then authored commits as a bot that does not exist for it, unattributed, and
+# each agent improvised its own fix: one kick set the App login by hand, the
+# next committed as "hive-quality <quality@hive.local>", the next as the
+# hardcoded default — three identities on three consecutive PRs from the same
+# agent. PR authorship (hive-open-pr) was already the App; commit authorship
+# never was.
+#
+# Only [A-Za-z0-9._-] plus the literal "[bot]" suffix are accepted in a login;
+# anything else falls back to the legacy pair rather than reaching a gitconfig
+# line unquoted. Defined here because both boot phases need it — see
+# hive_ghe_git_host.
+hive_git_bot_identity() {
+  _hgbi_cfg="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+  _hgbi_login=""
+  if [ -f "$_hgbi_cfg" ]; then
+    _hgbi_login="$(python3 -c "
+import re, sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        cfg = yaml.safe_load(f) or {}
+except Exception:
+    sys.exit(0)
+proj = cfg.get('project') or {}
+gh = cfg.get('github') or {}
+login = (proj.get('ai_author') or '').strip()
+if not login and gh.get('app_authored_prs') is not False:
+    try:
+        app_id = int(gh.get('app_id') or 0)
+        inst_id = int(gh.get('installation_id') or 0)
+    except (TypeError, ValueError):
+        app_id, inst_id = 0, 0
+    # 999999999 is config.PlaceholderAppID — a claimed-but-unprovisioned hive.
+    if app_id and app_id != 999999999 and inst_id:
+        login = ((gh.get('app_slug') or '').strip() or 'kubestellar-hive') + '[bot]'
+if re.fullmatch(r'[A-Za-z0-9._-]+(\\[bot\\])?', login):
+    print(login)
+" "$_hgbi_cfg" 2>/dev/null || true)"
+  fi
+  if [ -n "$_hgbi_login" ]; then
+    printf '%s\t%s@users.noreply.github.com\n' "$_hgbi_login" "$_hgbi_login"
+  else
+    printf 'kubestellar-hive\thive-bot@kubestellar.io\n'
+  fi
+}
+
 # hive_write_system_gitconfig writes /etc/gitconfig — the SYSTEM-level git
 # config, read by EVERY UID regardless of $HOME.
 #
@@ -344,6 +411,9 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 hive_write_system_gitconfig() {
   _hwsg_path="${HIVE_SYSTEM_GITCONFIG:-/etc/gitconfig}"
   _hwsg_host="$(hive_ghe_git_host)"
+  _hwsg_identity="$(hive_git_bot_identity)"
+  _hwsg_name="${_hwsg_identity%%	*}"
+  _hwsg_email="${_hwsg_identity#*	}"
 
   # Refuse a planted symlink: /etc/gitconfig is read by every UID including
   # root, so it must never be redirected somewhere agent-writable.
@@ -356,8 +426,8 @@ hive_write_system_gitconfig() {
     echo "# System-level so EVERY agent UID reads it regardless of \$HOME. Contains no secret:"
     echo "# it names a helper path; the helper mints the per-agent scoped token."
     echo "[user]"
-    echo "	name = kubestellar-hive"
-    echo "	email = hive-bot@kubestellar.io"
+    echo "	name = ${_hwsg_name}"
+    echo "	email = ${_hwsg_email}"
     echo "[credential]"
     echo "	helper = "
     echo '[credential "https://github.com"]'
@@ -376,6 +446,7 @@ hive_write_system_gitconfig() {
   else
     echo "[entrypoint] git credential helper wired system-wide in $_hwsg_path (github.com) — readable by every agent UID"
   fi
+  echo "[entrypoint] agents commit as ${_hwsg_name} <${_hwsg_email}> (system gitconfig)"
 }
 
 # Detect Kubernetes vs Docker environment
@@ -1942,8 +2013,9 @@ mkdir -p /data/vaults/hive-wiki
 # These do not fight: git precedence is system < global < local, and both
 # layers set the SAME helper for the SAME hosts, so the global layer shadows
 # nothing. What went wrong before was having ONLY layer 2.
-git config --global user.name "kubestellar-hive"
-git config --global user.email "hive-bot@kubestellar.io"
+_hgc_identity="$(hive_git_bot_identity)"
+git config --global user.name "${_hgc_identity%%	*}"
+git config --global user.email "${_hgc_identity#*	}"
 git config --global --replace-all credential.helper ""
 git config --global --replace-all "credential.https://github.com.helper" "/usr/local/bin/git-credential-hive.sh"
 

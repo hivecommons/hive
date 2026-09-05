@@ -51,14 +51,15 @@ trap cleanup EXIT
 # privileges and execs the hive binary); running the real function is the
 # entire point, so we take the function bodies verbatim rather than
 # reimplementing them here — a reimplementation could not catch a drift bug.
-sed -n '/^hive_ghe_git_host() {/,/^}/p;/^hive_write_system_gitconfig() {/,/^}/p' \
+sed -n '/^hive_ghe_git_host() {/,/^}/p;/^hive_git_bot_identity() {/,/^}/p;/^hive_write_system_gitconfig() {/,/^}/p' \
   "$ENTRYPOINT" > "$TMP/funcs.sh"
 
 if grep -q '^hive_write_system_gitconfig() {' "$TMP/funcs.sh" \
-   && grep -q '^hive_ghe_git_host() {' "$TMP/funcs.sh"; then
-  pass "entrypoint defines hive_ghe_git_host and hive_write_system_gitconfig"
+   && grep -q '^hive_ghe_git_host() {' "$TMP/funcs.sh" \
+   && grep -q '^hive_git_bot_identity() {' "$TMP/funcs.sh"; then
+  pass "entrypoint defines hive_ghe_git_host, hive_git_bot_identity and hive_write_system_gitconfig"
 else
-  fail "entrypoint defines hive_ghe_git_host and hive_write_system_gitconfig" \
+  fail "entrypoint defines hive_ghe_git_host, hive_git_bot_identity and hive_write_system_gitconfig" \
        "extraction from $ENTRYPOINT produced no matching function"
   echo "=== $PASS passed, $FAIL failed ==="
   exit 1
@@ -160,6 +161,69 @@ YAML
   fi
 else
   echo "  SKIP: python3+pyyaml unavailable — GHE host derivation not exercised"
+fi
+
+# ── Case 2b: the commit identity must come from THIS hive's config, not a
+# hardcoded public one. /etc/gitconfig used to name kubestellar-hive
+# <hive-bot@kubestellar.io> on every hive; a self-hosted hive with its own App
+# then authored unattributed commits and each agent improvised a different
+# identity per kick. The writer now derives the same answer as
+# Config.EffectiveAIAuthor(): ai_author wins, else the usable App's "<slug>[bot]",
+# else the legacy pair. Each case runs the REAL writer and reads the result back
+# through git with an empty $HOME, exactly as an agent UID would.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' 2>/dev/null; then
+  identity_case() {
+    # $1 = case name, $2 = hive.yaml body, $3 = want user.name, $4 = want user.email
+    local sys="$TMP/gitconfig-identity-$RANDOM" cfg="$TMP/identity-$RANDOM.yaml" got_name got_email
+    printf '%s\n' "$2" > "$cfg"
+    run_writer "$sys" "$cfg"
+    got_name="$(HOME="$AGENT_HOME" XDG_CONFIG_HOME="$AGENT_HOME" GIT_CONFIG_SYSTEM="$sys" git config --get user.name 2>/dev/null)"
+    got_email="$(HOME="$AGENT_HOME" XDG_CONFIG_HOME="$AGENT_HOME" GIT_CONFIG_SYSTEM="$sys" git config --get user.email 2>/dev/null)"
+    if [ "$got_name" = "$3" ] && [ "$got_email" = "$4" ]; then
+      pass "identity: $1 → $3 <$4>"
+    else
+      fail "identity: $1" "got '${got_name:-<unset>}' <${got_email:-<unset>}>, want '$3' <$4>"
+    fi
+  }
+
+  identity_case "project.ai_author wins" \
+    $'project:\n  ai_author: onboard-ai-hive-bot[bot]\ngithub:\n  app_slug: other-app\n  app_id: 1\n  installation_id: 2' \
+    "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot[bot]@users.noreply.github.com"
+  identity_case "usable App derives <slug>[bot]" \
+    $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647\n  installation_id: 157135368' \
+    "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot[bot]@users.noreply.github.com"
+  identity_case "usable App without a slug is the public App bot" \
+    $'github:\n  app_id: 4744647\n  installation_id: 157135368' \
+    "kubestellar-hive[bot]" "kubestellar-hive[bot]@users.noreply.github.com"
+  identity_case "App configured but not installed keeps the legacy pair" \
+    $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647' \
+    "kubestellar-hive" "hive-bot@kubestellar.io"
+  identity_case "placeholder App id keeps the legacy pair" \
+    $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 999999999\n  installation_id: 5' \
+    "kubestellar-hive" "hive-bot@kubestellar.io"
+  identity_case "app_authored_prs: false opts out" \
+    $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647\n  installation_id: 5\n  app_authored_prs: false' \
+    "kubestellar-hive" "hive-bot@kubestellar.io"
+  # A login that could break out of the [user] section must never reach the
+  # file: every git invocation in the container reads this config.
+  identity_case "unsafe ai_author falls back rather than being written" \
+    $'project:\n  ai_author: "bad name\\n[core]\\n\\tsshCommand = evil"' \
+    "kubestellar-hive" "hive-bot@kubestellar.io"
+else
+  echo "  SKIP: python3+pyyaml unavailable — commit identity derivation not exercised"
+fi
+
+# ── Case 2c: the dev-phase global config must use the SAME derived identity,
+# not a second hardcoded pair — two layers naming different authors is exactly
+# the drift #5343 warned about.
+if grep -q 'git config --global user.name "kubestellar-hive"' "$ENTRYPOINT"; then
+  fail "dev-user global identity is derived, not hardcoded" \
+       "the --global user.name line still hardcodes kubestellar-hive"
+elif grep -q 'git config --global user.name "\${_hgc_identity%%' "$ENTRYPOINT"; then
+  pass "dev-user global identity is derived from hive_git_bot_identity"
+else
+  fail "dev-user global identity is derived, not hardcoded" \
+       "could not find the derived --global user.name line"
 fi
 
 # ── Case 3: the writer must be invoked from the ROOT phase. /etc is root-owned;
