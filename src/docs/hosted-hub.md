@@ -127,6 +127,11 @@ Key signals:
   with ticks for issue, PR, and merge capability.
 - Filters at the top let you narrow by **problems only**, **advisory output**,
   **budget**, and **gh app** health.
+- Per-hive drift badges (`heartbeat-stale`, `duplicate-spoke`, `identity-split`,
+  `version-absent`, and more) flag rows whose state deviates from the fleet or
+  cannot be trusted. Each kind, its severity, and who is expected to fix it
+  (hive owner vs hub operator) are listed in the
+  [fleet drift signals reference](fleet-drift-signals.md).
 
 ## Common problems and fixes
 
