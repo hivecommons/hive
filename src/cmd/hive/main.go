@@ -225,6 +225,14 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	if reason, _, blocked, ok := mgr.StartFailureState(name); ok && blocked {
 		act.StartBlockedReason = reason
 	}
+	if total, last24h, lastAt, reason, ok := mgr.RestartTelemetry(name); ok {
+		act.Restarts.Total = total
+		act.Restarts.Last24h = last24h
+		act.Restarts.LastReason = reason
+		if !lastAt.IsZero() {
+			act.Restarts.LastRestartAt = lastAt.UTC().Format(time.RFC3339)
+		}
+	}
 
 	return act
 }
@@ -4663,6 +4671,12 @@ func main() {
 				logger.Warn("branch switch via heartbeat failed", "tag", tag, "image", image, "error", err)
 				return
 			}
+		}), hub.AgentRestartResetCallback(func(name string) {
+			if err := agentMgr.ResetRestartCount(name); err != nil {
+				logger.Warn("agent restart reset from hub failed", "agent", name, "error", err)
+				return
+			}
+			logger.Info("audit: agent restart counter reset from hub", "agent", name)
 		}), hub.AuthorizedUsersCallback(func(users []string, names map[string]string) {
 			// The hub delivered its authoritative access list. Reconcile our
 			// login allowlist so Manage Access grants take effect on this
@@ -7410,22 +7424,54 @@ func turnLossToSnapshot(loss agent.TurnLoss) *snapshot.AgentTurnLoss {
 	return out
 }
 
+func restartEventsToSnapshot(events []agent.RestartEvent) []snapshot.AgentRestartEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	out := make([]snapshot.AgentRestartEvent, 0, len(events))
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, ev := range events {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		out = append(out, snapshot.AgentRestartEvent{At: ev.At, Reason: ev.Reason})
+	}
+	return out
+}
+
+func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []agent.RestartEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	out := make([]agent.RestartEvent, 0, len(events))
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, ev := range events {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		out = append(out, agent.RestartEvent{At: ev.At, Reason: ev.Reason})
+	}
+	return out
+}
+
 func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
 		as := snapshot.AgentState{
-			Paused:          proc.Paused,
-			PinnedCLI:       proc.PinnedCLI,
-			PinnedModel:     proc.PinnedModel,
-			ModelOverride:   proc.ModelOverride,
-			BackendOverride: proc.BackendOverride,
-			RestartCount:    proc.RestartCount,
-			LastKick:        proc.LastKick,
-			PausedReason:    proc.PausedReason,
-			PausedTrigger:   proc.PausedTrigger,
-			PausedBy:        proc.PausedBy,
-			TurnLoss:        turnLossToSnapshot(proc.TurnLoss),
+			Paused:            proc.Paused,
+			PinnedCLI:         proc.PinnedCLI,
+			PinnedModel:       proc.PinnedModel,
+			ModelOverride:     proc.ModelOverride,
+			BackendOverride:   proc.BackendOverride,
+			RestartCount:      proc.RestartCount,
+			RestartEvents:     restartEventsToSnapshot(proc.RestartEvents),
+			LastRestartReason: proc.LastRestartReason,
+			LastKick:          proc.LastKick,
+			PausedReason:      proc.PausedReason,
+			PausedTrigger:     proc.PausedTrigger,
+			PausedBy:          proc.PausedBy,
+			TurnLoss:          turnLossToSnapshot(proc.TurnLoss),
 		}
 		if !proc.PausedAt.IsZero() {
 			t := proc.PausedAt

@@ -93,8 +93,8 @@ func TestQuadrantSortsReachable(t *testing.T) {
 // empty. The row shape changed, so a v3 cache must be rejected.
 func TestQuadrantCacheVersionBumped(t *testing.T) {
 	html := dashScript(t)
-	if !strings.Contains(html, "var HIVES_CACHE_VERSION = 5;") {
-		t.Error("HIVES_CACHE_VERSION was not bumped — a cached v3 paint would render the Quadrant column empty")
+	if !strings.Contains(html, "var HIVES_CACHE_VERSION = 6;") {
+		t.Error("HIVES_CACHE_VERSION was not bumped — a cached pre-restart-telemetry paint would render the Quadrant column empty")
 	}
 	// The fleet average must be cached WITH the rows, or a cached paint draws
 	// kites with no reference polygon and every row reads as an absolute.

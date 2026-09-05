@@ -2,7 +2,9 @@ package hub
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,6 +12,20 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
+
+const (
+	EnvAgentRestartProblemThreshold     = "HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD"
+	DefaultAgentRestartProblemThreshold = 5
+)
+
+func agentRestartProblemThreshold() int {
+	if raw := strings.TrimSpace(os.Getenv(EnvAgentRestartProblemThreshold)); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DefaultAgentRestartProblemThreshold
+}
 
 // Fleet-divergence derivation.
 //
@@ -55,6 +71,8 @@ const (
 	runStuckAtLogin
 	// runQuotaExhausted — running but the provider/monthly quota is exhausted.
 	runQuotaExhausted
+	// runRestartStorm — the agent has restarted too often in the recent window.
+	runRestartStorm
 	// runSessionGone — the manager believes it runs, but the tmux session is
 	// gone (zombie).
 	runSessionGone
@@ -76,6 +94,8 @@ func (s agentRunState) String() string {
 		return "stuck-at-login"
 	case runQuotaExhausted:
 		return "quota-exhausted"
+	case runRestartStorm:
+		return "restart-storm"
 	case runSessionGone:
 		return "session-gone"
 	case runDead:
@@ -217,6 +237,8 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 		v.RunState = runQuietByDesign
 	case a.QuotaExhausted:
 		v.RunState = runQuotaExhausted
+	case agentRestartStorm(a):
+		v.RunState = runRestartStorm
 	case kind == agentInactiveNeedsLogin:
 		// A login prompt outranks the off-schedule quiet branch below: a
 		// wedged interactive credential is a HIVE-wide fault (every kick to
@@ -327,6 +349,8 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 		v.BlockedReason = "sitting at login prompt"
 	case quotaBlocked:
 		v.BlockedReason = "provider quota exhausted"
+	case agentRestartStorm(a):
+		v.BlockedReason = agentRestartProblemReason(a)
 	case gatewayBlocked:
 		v.BlockedReason = inferencehealth.Reason(gwFault)
 	case hiveBlocked:
@@ -369,7 +393,7 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 			// credential is hive-wide and the wire may omit expectedActive
 			// entirely (the EPM/alchemy case) — gating on it hid the fault.
 			v.Stuck = true
-		case runQuotaExhausted:
+		case runQuotaExhausted, runRestartStorm:
 			// Provider quota exhaustion is a hive/provider fault even if the
 			// schedule bit is absent on the wire.
 			v.Stuck = true
@@ -409,9 +433,24 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 	// state already denies that above, so the count stays honest without the
 	// alarm. When the mode next schedules the agent, ExpectedActive carries it
 	// into this gate on its own.
-	v.Problem = (a.ExpectedActive || v.RunState == runStuckAtLogin || v.RunState == runQuotaExhausted) && !v.QuietByDesign && !v.Able
+	v.Problem = (a.ExpectedActive || v.RunState == runStuckAtLogin || v.RunState == runQuotaExhausted || v.RunState == runRestartStorm) && !v.QuietByDesign && !v.Able
 
 	return v
+}
+
+func agentRestartStorm(a AgentSummary) bool {
+	return a.Restarts.Last24h >= agentRestartProblemThreshold()
+}
+
+func agentRestartProblemReason(a AgentSummary) string {
+	if !agentRestartStorm(a) {
+		return ""
+	}
+	reason := strings.TrimSpace(a.Restarts.LastReason)
+	if reason == "" {
+		return fmt.Sprintf("agent restarts: %s ×%d/24h", a.Name, a.Restarts.Last24h)
+	}
+	return fmt.Sprintf("agent restarts: %s ×%d/24h (%s)", a.Name, a.Restarts.Last24h, reason)
 }
 
 // markUnknown sets the unknown/legacy capability tier and clears the derived
@@ -460,6 +499,7 @@ type agentFleetRollup struct {
 	DeadOrGone int `json:"deadOrGone,omitempty"`
 	// QuotaExhausted is how many Problems are provider/monthly quota limited.
 	QuotaExhausted int `json:"quotaExhausted,omitempty"`
+	RestartStorms int `json:"restartStorms,omitempty"`
 	// Known is how many agents reported the new divergence signals (non-legacy).
 	// When Known==0 the whole hive is UNKNOWN (a spoke not yet rolled to this
 	// build) and its dot is gray, never green — absence of a problem we cannot
@@ -502,6 +542,7 @@ type AgentVerdictJSON struct {
 	// build). The frontend renders these rows as "unknown", never as off/✗.
 	Unknown       bool   `json:"unknown,omitempty"`
 	BlockedReason string `json:"blockedReason,omitempty"`
+	RestartProblem string `json:"restartProblem,omitempty"`
 }
 
 // buildAgentVerdicts derives the per-agent verdict rows for one hive, skipping
@@ -540,6 +581,7 @@ func buildAgentVerdicts(agents []AgentSummary, blockers hiveBlockers, queuedWork
 			Problem:         v.Problem,
 			Unknown:         v.CapabilityTier == tierGray,
 			BlockedReason:   v.BlockedReason,
+			RestartProblem:  agentRestartProblemReason(a),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -667,6 +709,8 @@ func rollupAgents(agents []AgentSummary, blockers hiveBlockers, queuedWork int, 
 				r.IdleWithWork++
 			case runQuotaExhausted:
 				r.QuotaExhausted++
+			case runRestartStorm:
+				r.RestartStorms++
 			case runDead, runSessionGone:
 				r.DeadOrGone++
 			case runWorking:

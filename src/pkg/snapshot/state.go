@@ -82,21 +82,23 @@ type AgentState struct {
 	// PausedBy is the acting user behind the pause when one is known (the
 	// authenticated dashboard user); empty for system-initiated pauses.
 	// Persisted so pause provenance survives restarts (#4041).
-	PausedBy        string           `json:"paused_by,omitempty"`
-	PinnedCLI       string           `json:"pinned_cli,omitempty"`
-	PinnedModel     string           `json:"pinned_model,omitempty"`
-	ModelOverride   string           `json:"model_override,omitempty"`
-	BackendOverride string           `json:"backend_override,omitempty"`
-	RestartCount    int              `json:"restart_count"`
-	DisplayName     string           `json:"display_name,omitempty"`
-	Description     string           `json:"description,omitempty"`
-	Enabled         *bool            `json:"enabled,omitempty"`
-	ClearOnKick     *bool            `json:"clear_on_kick,omitempty"`
-	StaleTimeout    *int             `json:"stale_timeout,omitempty"`
-	RestartStrategy string           `json:"restart_strategy,omitempty"`
-	LaunchCmd       string           `json:"launch_cmd,omitempty"`
-	LastKick        *time.Time       `json:"last_kick,omitempty"`
-	KickHistory     []AgentKickEntry `json:"kick_history,omitempty"`
+	PausedBy          string              `json:"paused_by,omitempty"`
+	PinnedCLI         string              `json:"pinned_cli,omitempty"`
+	PinnedModel       string              `json:"pinned_model,omitempty"`
+	ModelOverride     string              `json:"model_override,omitempty"`
+	BackendOverride   string              `json:"backend_override,omitempty"`
+	RestartCount      int                 `json:"restart_count"`
+	RestartEvents     []AgentRestartEvent `json:"restart_events,omitempty"`
+	LastRestartReason string              `json:"last_restart_reason,omitempty"`
+	DisplayName       string              `json:"display_name,omitempty"`
+	Description       string              `json:"description,omitempty"`
+	Enabled           *bool               `json:"enabled,omitempty"`
+	ClearOnKick       *bool               `json:"clear_on_kick,omitempty"`
+	StaleTimeout      *int                `json:"stale_timeout,omitempty"`
+	RestartStrategy   string              `json:"restart_strategy,omitempty"`
+	LaunchCmd         string              `json:"launch_cmd,omitempty"`
+	LastKick          *time.Time          `json:"last_kick,omitempty"`
+	KickHistory       []AgentKickEntry    `json:"kick_history,omitempty"`
 	// TurnLoss records what teardowns discarded from this agent's in-flight
 	// turns. RestartCount above says how OFTEN an agent was restarted;
 	// this says what those restarts COST, which is RFC #4002's open question 3
@@ -107,6 +109,11 @@ type AgentState struct {
 	// the measurement is worthless unless it survives the very event it
 	// measures.
 	TurnLoss *AgentTurnLoss `json:"turn_loss,omitempty"`
+}
+
+type AgentRestartEvent struct {
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason"`
 }
 
 // AgentTurnLoss is the persisted form of agent.TurnLoss. It is duplicated here

@@ -569,3 +569,53 @@ func TestRollup_ProblemsAndKnown(t *testing.T) {
 		t.Errorf("all-legacy hive must be known=0 problems=0, got %+v", allLegacy)
 	}
 }
+
+func TestVerdict_RestartStormThresholdBoundary(t *testing.T) {
+	t.Setenv(EnvAgentRestartProblemThreshold, "5")
+	now := time.Now()
+	a := modernWorking(now)
+	a.Restarts = AgentRestartTelemetry{Total: 10, Last24h: 4, LastReason: "crash"}
+	if v := deriveAgentVerdict(a, hiveBlockers{}, 0, now); v.Problem || v.RunState == runRestartStorm {
+		t.Fatalf("below threshold verdict = %+v, want no restart problem", v)
+	}
+	a.Restarts.Last24h = 5
+	v := deriveAgentVerdict(a, hiveBlockers{}, 0, now)
+	if !v.Problem || v.RunState != runRestartStorm || v.BlockedReason != "agent restarts: scanner ×5/24h (crash)" {
+		t.Fatalf("at threshold verdict = %+v", v)
+	}
+	r := rollupAgents([]AgentSummary{a}, hiveBlockers{}, 0, now)
+	if r.Problems != 1 || r.RestartStorms != 1 {
+		t.Fatalf("rollup problems=%d restartStorms=%d, want 1/1", r.Problems, r.RestartStorms)
+	}
+}
+
+func TestApplyAgentRestartResetBaselines(t *testing.T) {
+	now := time.Date(2026, 9, 4, 21, 10, 0, 0, time.UTC)
+	agents := []AgentSummary{{Name: "scanner", Restarts: AgentRestartTelemetry{Total: 12, Last24h: 9}}}
+	applyAgentRestartResetBaselines(agents, map[string]AgentRestartReset{
+		"scanner": {ResetAt: now.Add(-time.Hour).Format(time.RFC3339), By: "andy", TotalBaseline: 10},
+	}, now)
+	if agents[0].Restarts.Last24h != 2 || agents[0].Restarts.ResetBy != "andy" {
+		t.Fatalf("reset-adjusted restarts = %+v, want delta 2 by andy", agents[0].Restarts)
+	}
+}
+
+func TestPendingAgentRestartResetsForHeartbeatDrains(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	if err := saveSaaSHive(&SaaSHive{ID: "h1", AgentRestartResets: map[string]AgentRestartReset{
+		"scanner": {ResetAt: time.Now().UTC().Format(time.RFC3339), TotalBaseline: 3, Pending: true},
+	}}); err != nil {
+		t.Fatalf("save hive: %v", err)
+	}
+	got := pendingAgentRestartResetsForHeartbeat("h1")
+	if len(got) != 1 || got[0] != "scanner" {
+		t.Fatalf("pending resets = %#v", got)
+	}
+	if again := pendingAgentRestartResetsForHeartbeat("h1"); len(again) != 0 {
+		t.Fatalf("pending reset was not drained: %#v", again)
+	}
+	if h := loadSaaSHive("h1"); h.AgentRestartResets["scanner"].TotalBaseline != 0 {
+		t.Fatalf("delivered reset must switch to spoke-zero baseline: %+v", h.AgentRestartResets["scanner"])
+	}
+}

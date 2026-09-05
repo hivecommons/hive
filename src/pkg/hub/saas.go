@@ -596,6 +596,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// which is the authoritative check for both.
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/secondary-app", s.requireAuth(s.handleSetHiveSecondaryApp))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/restart-spoke", s.requireAuth(s.handleRestartSpoke))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/agents/{agent}/restarts/reset", s.requireAuth(s.handleResetAgentRestarts))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -3818,6 +3819,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// count. (isPlaceholderEntry is the same authoritative test computeFleet‐
 		// Stats and the alert layer use.)
 		if len(result[i].Agents) > 0 && !isPlaceholderEntry(result[i]) {
+			if sh := loadSaaSHive(result[i].ID); sh != nil {
+				applyAgentRestartResetBaselines(result[i].Agents, sh.AgentRestartResets, journeyNow)
+			}
 			blockers := hiveBlockers{
 				GitHubAppRequired:       result[i].GitHubAppRequired,
 				GitHubAppPermIssue:      result[i].GitHubAppPermIssue,
@@ -3831,6 +3835,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			rollup := rollupAgents(result[i].Agents, blockers, queuedWork, journeyNow)
 			result[i].FleetRollup = &rollup
 			result[i].AgentVerdicts = buildAgentVerdicts(result[i].Agents, blockers, queuedWork, journeyNow)
+			if rollup.RestartStorms > 0 {
+				appendDriftSignal(&result[i].Drift, DriftKindAgentRestartStorm, DriftCritical,
+					fmt.Sprintf("%d agent(s) restarted at least %d times in the last 24h",
+						rollup.RestartStorms, agentRestartProblemThreshold()))
+			}
 			result[i].AgentRosterMismatch = computeAgentRosterMismatch(result[i].ACMMLevel, result[i].Agents)
 
 			// Hive-health verdict: reuse the rollup + app-health + queue depth we
@@ -5236,6 +5245,119 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "project_name": name})
+}
+
+func (s *HubServer) handleResetAgentRestarts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	agentName := sanitizeHeartbeatField(r.PathValue("agent"))
+	username := s.getAuthUser(r)
+	if agentName == "" || !isValidName(agentName) {
+		http.Error(w, `{"error":"invalid agent name"}`, http.StatusBadRequest)
+		return
+	}
+	h := loadSaaSHive(id)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if !userIsHiveOwner(username, h) {
+		http.Error(w, `{"error":"only the owner can reset agent restarts"}`, http.StatusForbidden)
+		return
+	}
+
+	total := 0
+	s.mu.RLock()
+	for _, reg := range s.registry.Hives {
+		if reg.ID != id {
+			continue
+		}
+		for _, a := range reg.Agents {
+			if a.Name == agentName {
+				total = a.Restarts.Total
+				break
+			}
+		}
+		break
+	}
+	s.mu.RUnlock()
+
+	if h.AgentRestartResets == nil {
+		h.AgentRestartResets = make(map[string]AgentRestartReset)
+	}
+	reset := AgentRestartReset{
+		ResetAt:       time.Now().UTC().Format(time.RFC3339),
+		By:            username,
+		TotalBaseline: total,
+		Pending:       true,
+	}
+	h.AgentRestartResets[agentName] = reset
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to save"}`, http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("audit: agent restart counter reset", "hive_id", id, "agent", agentName, "by", username, "total_baseline", total)
+	s.recordTimeline(id, TimelineRestarted, fmt.Sprintf("agent %s restart counter reset", agentName), username)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "agent": agentName, "reset_at": reset.ResetAt, "by": username})
+}
+
+func pendingAgentRestartResetsForHeartbeat(hiveID string) []string {
+	h := loadSaaSHive(hiveID)
+	if h == nil || len(h.AgentRestartResets) == 0 {
+		return nil
+	}
+	var names []string
+	changed := false
+	for name, reset := range h.AgentRestartResets {
+		if !reset.Pending {
+			continue
+		}
+		names = append(names, name)
+		reset.Pending = false
+		reset.TotalBaseline = 0
+		h.AgentRestartResets[name] = reset
+		changed = true
+	}
+	if changed {
+		_ = saveSaaSHive(h)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func applyAgentRestartResetBaselines(agents []AgentSummary, resets map[string]AgentRestartReset, now time.Time) {
+	if len(resets) == 0 {
+		return
+	}
+	cutoff := now.Add(-24 * time.Hour)
+	for i := range agents {
+		reset, ok := resets[agents[i].Name]
+		if !ok {
+			continue
+		}
+		agents[i].Restarts.ResetAt = reset.ResetAt
+		agents[i].Restarts.ResetBy = reset.By
+		resetAt, err := time.Parse(time.RFC3339, reset.ResetAt)
+		if err != nil || resetAt.Before(cutoff) {
+			continue
+		}
+		delta := agents[i].Restarts.Total - reset.TotalBaseline
+		if delta < 0 {
+			delta = 0
+		}
+		agents[i].Restarts.Last24h = delta
+	}
+}
+
+func appendDriftSignal(report *DriftReport, kind string, sev DriftSeverity, reason string) {
+	if report == nil {
+		return
+	}
+	report.Signals = append(report.Signals, DriftSignal{Kind: kind, Severity: sev, Reason: reason})
+	report.Count = len(report.Signals)
+	if driftSeverityRank[sev] > driftSeverityRank[report.WorstSeverity] {
+		report.WorstSeverity = sev
+	}
 }
 
 // pushVisibilityToSpoke best-effort notifies a hosted hive's own governor
@@ -11982,6 +12104,7 @@ const dashboardHTML = `<!DOCTYPE html>
        apart on a typo'd string literal. */
     var HIVE_FILTER_APP_MISSING = 'app-missing';
     var HIVE_FILTER_NO_TOKENS = 'no-tokens';
+    var HIVE_FILTER_RESTART_STORMS = 'restart-storms';
     var HIVE_FILTER_DEGRADED = 'degraded';
     var HIVE_FILTER_OK = 'ok';
 
@@ -12008,13 +12131,15 @@ const dashboardHTML = `<!DOCTYPE html>
          pool's designed state (mirrored here so dot and chip never disagree). */
       var appMissing = !isPlaceholderHive(h) && !!h.githubAppRequired && !h.githubAppPermIssue;
       var repoTargetBad = !isPlaceholderHive(h) && !!h.repoTargetMisconfigured;
-      var degraded = repoTargetBad || (!isPlaceholderHive(h) && !!h.githubAppRequired) || st === 'degraded' || st === 'critical';
+      var restartStorms = !!((h.fleetRollup || {}).restartStorms);
+      var degraded = restartStorms || repoTargetBad || (!isPlaceholderHive(h) && !!h.githubAppRequired) || st === 'degraded' || st === 'critical';
       /* An offline hive has no live reading at all, so it is not "OK" even if
          its last stored health snapshot said ok. */
       var ok = !degraded && st === 'ok' && !!h.online;
       return {
         appMissing: appMissing,
         noTokens: (Number(h.totalTokens24h) || 0) <= NO_TOKENS_THRESHOLD,
+        restartStorms: restartStorms,
         degraded: degraded,
         ok: ok
       };
@@ -12303,6 +12428,31 @@ const dashboardHTML = `<!DOCTYPE html>
         'color:#f85149;background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.35)">' +
         'inference auth</span>';
     }
+
+    function restartStormSummary(h) {
+      var agents = (h && h.agentVerdicts) || [];
+      var bad = agents.filter(function(a) { return a && a.restartProblem; });
+      if (!bad.length) return '';
+      var first = bad[0];
+      var title = bad.map(function(a) { return a.restartProblem; }).join('\n');
+      var count = ((first.restarts || {}).last_24h) || 0;
+      var label = 'agent restarts: ' + first.name + ' ×' + count + '/24h';
+      if (bad.length > 1) label = bad.length + ' restart storms';
+      var reset = roleAtLeast(h.role, 'owner')
+        ? ' <button type="button" class="reset-agent-restarts" data-hive-id="' + escAttr(h.id) + '" data-agent-name="' + escAttr(first.name) + '" style="margin-left:4px;padding:0 5px;border-radius:9999px;border:1px solid rgba(248,81,73,0.45);background:transparent;color:#f85149;font-size:0.6rem;cursor:pointer">reset</button>'
+        : '';
+      return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:6px;padding:0 6px;' +
+        'border-radius:9999px;font-size:0.62rem;font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
+        'color:#f85149;background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.35)">' +
+        esc(label) + reset + '</span>';
+    }
+    document.addEventListener('click', function(e) {
+      var btn = e.target && e.target.closest && e.target.closest('.reset-agent-restarts');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      resetAgentRestarts(btn.getAttribute('data-hive-id') || '', btn.getAttribute('data-agent-name') || '');
+    });
 
     /* ---- ClankeR, the contributor relay (hover panel) ------------------
        The relay is a first-class SUBSTITUTE for assigning a method/model:
@@ -12646,6 +12796,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'upgrading':       'Upgrading',
       'acmm-unset':      'ACMM level unset',
       'no-agents':       'No agents running',
+      'agent-restart-storm': 'Agent restart storms',
       'duplicate-spoke': 'Duplicate spoke instances',
       'status-flipping': 'Status flipping'
     };
@@ -13037,8 +13188,9 @@ const dashboardHTML = `<!DOCTYPE html>
        until the poll landed.
        v5: rows carry the fleet-divergence view (fleetRollup + agentVerdicts:
        expected/actual/able per agent); a v4 cache would omit the new per-agent
-       drill-down until the first poll landed. */
-    var HIVES_CACHE_VERSION = 5;
+       drill-down until the first poll landed.
+       v6: agent verdicts carry restart-storm telemetry and reset markers. */
+    var HIVES_CACHE_VERSION = 6;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -13118,6 +13270,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var HIVE_FILTER_CHIPS = [
       {key: HIVE_FILTER_APP_MISSING, label: 'GitHub App not installed', color: '#f85149'},
       {key: HIVE_FILTER_NO_TOKENS, label: 'No tokens used', color: '#6b7280'},
+      {key: HIVE_FILTER_RESTART_STORMS, label: 'Restart storms', color: '#f85149'},
       {key: HIVE_FILTER_DEGRADED, label: 'Degraded', color: '#f85149'},
       {key: HIVE_FILTER_OK, label: 'OK', color: '#3fb950'}
     ];
@@ -13800,6 +13953,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var byKey = {};
       byKey[HIVE_FILTER_APP_MISSING] = f.appMissing;
       byKey[HIVE_FILTER_NO_TOKENS] = f.noTokens;
+      byKey[HIVE_FILTER_RESTART_STORMS] = f.restartStorms;
       byKey[HIVE_FILTER_DEGRADED] = f.degraded;
       byKey[HIVE_FILTER_OK] = f.ok;
       for (var i = 0; i < active.length; i++) {
@@ -14638,12 +14792,14 @@ const dashboardHTML = `<!DOCTYPE html>
       var counts = {};
       counts[HIVE_FILTER_APP_MISSING] = 0;
       counts[HIVE_FILTER_NO_TOKENS] = 0;
+      counts[HIVE_FILTER_RESTART_STORMS] = 0;
       counts[HIVE_FILTER_DEGRADED] = 0;
       counts[HIVE_FILTER_OK] = 0;
       (assignedNoPlaceholders || []).forEach(function(h) {
         var f = hiveStatusFlags(h);
         if (f.appMissing) counts[HIVE_FILTER_APP_MISSING]++;
         if (f.noTokens) counts[HIVE_FILTER_NO_TOKENS]++;
+        if (f.restartStorms) counts[HIVE_FILTER_RESTART_STORMS]++;
         if (f.degraded) counts[HIVE_FILTER_DEGRADED]++;
         if (f.ok) counts[HIVE_FILTER_OK]++;
       });
@@ -17127,7 +17283,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return '<tr id="' + escAttr(hiveRowDomId(h.id)) + '"' + ((i % 2 === 1) ? ' class="hive-row-alt"' : '') + '>' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + ('<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = ghRepoURL(hiveForgeHost(h), rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; /* repoLink wraps the second line (the org/repo) in a link to the ACTUAL FORGE REPO (github.com / GHE host), NOT the spoke dashboard: the top line already opens the dashboard, so the repo path should take an operator to the code. rpHref is the same doubling-safe forge URL the GitHub icon uses (ghRepoURL(hiveForgeHost(h), rpOwner, rpName)); when it is empty (BYO/mis-parsed host) fall back to plain non-link text, never to the dashboard. */ var repoLink = function(text) { if (rpHref) { return '<a href="' + rpHref + '" target="_blank" rel="noopener" class="hive-sub-link" title="Open repository on ' + escAttr((hiveForgeHost(h) || 'github.com')) + '">' + esc(text) + '</a>'; } return '<span style="color:#6b7280;font-weight:400">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + heartbeatHeart(h) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Advisory finding-count pill rides beside the staleness pill and carries the "(top N)" marker when the spoke capped its digest. */ var advCountPill = h.online ? advisoryFindingsSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); var privatePill = privateURLSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + repoLink(repoName) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = ghRepoURL(hiveForgeHost(h), rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; /* repoLink wraps the second line (the org/repo) in a link to the ACTUAL FORGE REPO (github.com / GHE host), NOT the spoke dashboard: the top line already opens the dashboard, so the repo path should take an operator to the code. rpHref is the same doubling-safe forge URL the GitHub icon uses (ghRepoURL(hiveForgeHost(h), rpOwner, rpName)); when it is empty (BYO/mis-parsed host) fall back to plain non-link text, never to the dashboard. */ var repoLink = function(text) { if (rpHref) { return '<a href="' + rpHref + '" target="_blank" rel="noopener" class="hive-sub-link" title="Open repository on ' + escAttr((hiveForgeHost(h) || 'github.com')) + '">' + esc(text) + '</a>'; } return '<span style="color:#6b7280;font-weight:400">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + heartbeatHeart(h) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Advisory finding-count pill rides beside the staleness pill and carries the "(top N)" marker when the spoke capped its digest. */ var advCountPill = h.online ? advisoryFindingsSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); var privatePill = privateURLSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); var rsPill = restartStormSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + repoLink(repoName) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + rsPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + rsPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           /* No white-space:nowrap on the cell itself: the stacked lines each
@@ -17918,6 +18074,20 @@ const dashboardHTML = `<!DOCTYPE html>
         await hiveNotify('Forge App reset armed',
           'Hive: ' + hiveName + '\n' +
           'The spoke clears its installation on the next heartbeat (about 30 seconds), then shows the install prompt.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        await hiveNotify('Reset failed', String(e));
+      }
+    }
+
+    async function resetAgentRestarts(hiveId, agentName) {
+      var ok = await hiveConfirm('Reset restart counter for agent "' + agentName + '"?\n\nThe fleet page will count restarts from this point so you can tell whether the problem recurs.');
+      if (!ok) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/agents/' + encodeURIComponent(agentName) + '/restarts/reset', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { await hiveNotify('Reset failed', String(data.error || resp.status)); return; }
+        await hiveNotify('Restart counter reset', 'Agent: ' + agentName + '\nCounting restarts from now.');
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         await hiveNotify('Reset failed', String(e));

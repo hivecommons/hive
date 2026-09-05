@@ -1836,6 +1836,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// acknowledged here so a future reader sees every new field was
 				// considered by the sanitize pass.
 				payload.Agents[i].Backend = sanitizeHeartbeatField(payload.Agents[i].Backend)
+				payload.Agents[i].Restarts.Total = clampInt(payload.Agents[i].Restarts.Total, 0, 1_000_000)
+				payload.Agents[i].Restarts.Last24h = clampInt(payload.Agents[i].Restarts.Last24h, 0, 1_000_000)
+				payload.Agents[i].Restarts.LastRestartAt = sanitizeField(payload.Agents[i].Restarts.LastRestartAt)
+				payload.Agents[i].Restarts.LastReason = sanitizeProseField(payload.Agents[i].Restarts.LastReason)
+				payload.Agents[i].Restarts.PodRestarts = clampInt(payload.Agents[i].Restarts.PodRestarts, 0, 1_000_000)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -2803,6 +2808,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		if jb := s.journeyBannerFor(payload.HiveID, time.Now()); jb != nil {
 			resp.HubBanner = jb
 		}
+	}
+	if resets := pendingAgentRestartResetsForHeartbeat(payload.HiveID); len(resets) > 0 {
+		resp.ResetAgentRestarts = resets
 	}
 
 	w.Header().Set("Content-Type", "application/json")

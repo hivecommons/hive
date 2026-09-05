@@ -248,6 +248,8 @@ type AgentProcess struct {
 	ModelOverride     string
 	BackendOverride   string
 	RestartCount      int
+	RestartEvents     []RestartEvent
+	LastRestartReason string
 	OutputBuffer      *RingBuffer
 	lastPaneCapture   []string
 	paneMu            sync.RWMutex
@@ -376,6 +378,11 @@ type AgentProcess struct {
 	// so tests can assert the announcement actually happened without a tmux
 	// server.
 	lastLaunchFailureBanner string
+}
+
+type RestartEvent struct {
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason"`
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -3188,7 +3195,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 						"max_attempts", tokenRestartMaxAttempts,
 					)
 					go func() {
-						if err := m.Restart(ctx, agent.Name); err != nil {
+						if err := m.RestartWithReason(ctx, agent.Name, "login token refreshed"); err != nil {
 							m.logger.Warn("token-triggered restart failed",
 								"agent", agent.Name,
 								"error", err,
@@ -3221,7 +3228,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 					agent.lastTokenRestart = time.Now()
 					agent.LastError = "transient TLS/network error"
 					go func() {
-						if err := m.Restart(ctx, agent.Name); err != nil {
+						if err := m.RestartWithReason(ctx, agent.Name, "transient network error"); err != nil {
 							m.logger.Warn("tls-error-triggered restart failed",
 								"agent", agent.Name,
 								"error", err,
@@ -4628,7 +4635,7 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	var restarted []string
 	for _, name := range crashed {
 		m.logger.Info("restarting crashed agent", "name", name)
-		if err := m.Restart(ctx, name); err != nil {
+		if err := m.RestartWithReason(ctx, name, "crash"); err != nil {
 			m.logger.Error("failed to restart crashed agent", "name", name, "error", err)
 		} else {
 			m.mu.RLock()
@@ -6311,6 +6318,8 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		ModelOverride:             a.ModelOverride,
 		BackendOverride:           a.BackendOverride,
 		RestartCount:              a.RestartCount,
+		RestartEvents:             cloneRestartEvents(a.RestartEvents),
+		LastRestartReason:         a.LastRestartReason,
 		TurnLoss:                  cloneTurnLoss(a.TurnLoss),
 		KickHistory:               history,
 		LastKickMessage:           a.LastKickMessage,
@@ -6336,6 +6345,15 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		OutputBuffer:              a.OutputBuffer,
 		lastPaneCapture:           pane,
 	}
+}
+
+func cloneRestartEvents(in []RestartEvent) []RestartEvent {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]RestartEvent, len(in))
+	copy(out, in)
+	return out
 }
 
 // PaneLines returns the last n lines from the most recent tmux pane capture,
@@ -7595,7 +7613,7 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			}
 			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 			agent.forceRelaunch = true
-			if err := m.Restart(ctx, agent.Name); err != nil {
+			if err := m.RestartWithReason(ctx, agent.Name, "hung with no CLI prompt"); err != nil {
 				m.logger.Warn("diagnostic: restart failed", "agent", agent.Name, "error", err)
 			}
 			return
@@ -9770,7 +9788,7 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
-	agent.RestartCount++
+	m.recordRestartLocked(agent, "operator")
 	agent.forceRelaunch = true
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -10020,6 +10038,10 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 }
 
 func (m *Manager) Restart(ctx context.Context, name string) error {
+	return m.RestartWithReason(ctx, name, "operator")
+}
+
+func (m *Manager) RestartWithReason(ctx context.Context, name, reason string) error {
 	// Detach from the caller's cancellation. Restart is routinely invoked from
 	// goroutines whose OWN context is the per-launch agentCtx this function is
 	// about to cancel (pollTmuxOutputForAgent's token-detected and TLS-error
@@ -10084,9 +10106,9 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
-	agent.RestartCount++
+	m.recordRestartLocked(agent, reason)
 	agent.forceRelaunch = true
-	m.logger.Info("audit: agent restarting", "name", name, "restart_count", agent.RestartCount)
+	m.logger.Info("audit: agent restarting", "name", name, "reason", sanitizeRestartReason(reason), "restart_count", agent.RestartCount)
 
 	if err := m.ensureTmuxSession(agent); err != nil {
 		return err
@@ -10144,6 +10166,8 @@ func (m *Manager) ResetRestartCount(name string) error {
 	}
 
 	agent.RestartCount = 0
+	agent.RestartEvents = nil
+	agent.LastRestartReason = "operator"
 	return nil
 }
 
@@ -10153,6 +10177,72 @@ func (m *Manager) SeedRestartCount(name string, count int) {
 	if agent, ok := m.agents[name]; ok {
 		agent.RestartCount = count
 	}
+}
+
+func (m *Manager) SeedRestartTelemetry(name string, count int, events []RestartEvent, lastReason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if agent, ok := m.agents[name]; ok {
+		agent.RestartCount = count
+		agent.RestartEvents = pruneRestartEvents(events, time.Now())
+		agent.LastRestartReason = lastReason
+	}
+}
+
+func (m *Manager) RestartTelemetry(name string) (total, last24h int, lastRestartAt time.Time, lastReason string, ok bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent, ok := m.agents[name]
+	if !ok {
+		return 0, 0, time.Time{}, "", false
+	}
+	now := time.Now()
+	events := pruneRestartEvents(cloneRestartEvents(agent.RestartEvents), now)
+	if len(events) > 0 {
+		last := events[len(events)-1]
+		lastRestartAt = last.At
+		lastReason = last.Reason
+	}
+	if lastReason == "" {
+		lastReason = agent.LastRestartReason
+	}
+	return agent.RestartCount, len(events), lastRestartAt, lastReason, true
+}
+
+func (m *Manager) recordRestartLocked(agent *AgentProcess, reason string) {
+	if agent == nil {
+		return
+	}
+	now := time.Now()
+	agent.RestartCount++
+	agent.LastRestartReason = sanitizeRestartReason(reason)
+	agent.RestartEvents = append(pruneRestartEvents(agent.RestartEvents, now), RestartEvent{
+		At:     now,
+		Reason: agent.LastRestartReason,
+	})
+}
+
+func pruneRestartEvents(events []RestartEvent, now time.Time) []RestartEvent {
+	cutoff := now.Add(-24 * time.Hour)
+	out := events[:0]
+	for _, ev := range events {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+func sanitizeRestartReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "operator"
+	}
+	if len(reason) > 80 {
+		reason = reason[:80]
+	}
+	return reason
 }
 
 func (m *Manager) PinCLI(name, version string) error {

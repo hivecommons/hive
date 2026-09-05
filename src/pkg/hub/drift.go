@@ -108,9 +108,10 @@ const (
 	// (or with no usable stamp) that signal takes over, so a hive can never
 	// show as harmlessly "Upgrading" forever off a zero or stale timestamp
 	// (the same bound #2517 made the elapsed counter and orphan sweep honor).
-	DriftKindUpgrading = "upgrading"
-	DriftKindACMMUnset = "acmm-unset"
-	DriftKindNoAgents  = "no-agents"
+	DriftKindUpgrading         = "upgrading"
+	DriftKindACMMUnset         = "acmm-unset"
+	DriftKindNoAgents          = "no-agents"
+	DriftKindAgentRestartStorm = "agent-restart-storm"
 )
 
 // DriftSignal is one detected deviation. Reason is a complete, human-readable
