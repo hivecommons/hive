@@ -189,6 +189,7 @@ func TestReason(t *testing.T) {
 		want string
 	}{
 		{"dns", GatewayStatus{Name: "gw", ErrorClass: ClassDNS}, "inference gateway 'gw' unreachable (dns)"},
+		{"dns with host", GatewayStatus{Name: "vllm", Host: "hive-vllm-svc.hive-inference.svc.cluster.local", ErrorClass: ClassDNS}, "vllm endpoint hive-vllm-svc.hive-inference.svc.cluster.local not resolvable on this cluster — set inference.vllm.endpoint or disable"},
 		{"connect", GatewayStatus{Name: "gw", ErrorClass: ClassConnect}, "inference gateway 'gw' unreachable (connect)"},
 		{"auth with status", GatewayStatus{Name: "gw", ErrorClass: ClassAuth, HTTPStatus: 401}, "inference gateway 'gw' rejected key (401)"},
 		{"auth without status", GatewayStatus{Name: "gw", ErrorClass: ClassAuth}, "inference gateway 'gw' rejected key"},
@@ -256,4 +257,20 @@ func TestStoreConcurrentAccess(t *testing.T) {
 		s.Snapshot()
 	}
 	<-done
+}
+
+func TestStoreRecordEndpointErrorIncludesHost(t *testing.T) {
+	s := NewStore()
+	err := &url.Error{Op: "Post", URL: "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000/v1/chat/completions", Err: &net.DNSError{Name: "hive-vllm-svc.hive-inference.svc.cluster.local", Err: "no such host"}}
+	s.RecordEndpointError("vllm", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000", err, time.Date(2026, 9, 4, 23, 0, 0, 0, time.UTC))
+	snap := s.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("Snapshot len = %d, want 1", len(snap))
+	}
+	if snap[0].Endpoint != "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000" || snap[0].Host != "hive-vllm-svc.hive-inference.svc.cluster.local" {
+		t.Fatalf("gateway status missing endpoint/host: %+v", snap[0])
+	}
+	if got := Reason(snap[0]); got != "vllm endpoint hive-vllm-svc.hive-inference.svc.cluster.local not resolvable on this cluster — set inference.vllm.endpoint or disable" {
+		t.Fatalf("Reason = %q", got)
+	}
 }

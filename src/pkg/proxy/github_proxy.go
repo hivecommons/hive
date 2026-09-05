@@ -1717,7 +1717,7 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 		return
 	}
 	if p.gatewayHealth != nil {
-		p.gatewayHealth.RecordHTTPError(route.Backend, status, string(truncateBytes(body, 200)), time.Now())
+		p.gatewayHealth.RecordEndpointHTTPError(route.Backend, route.Endpoint, status, string(truncateBytes(body, 200)), time.Now())
 	}
 
 	// Inference-backend AUTH failure (a stale/invalid gateway key returning 401
@@ -1959,7 +1959,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		if err != nil {
 			p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
 			if p.gatewayHealth != nil {
-				p.gatewayHealth.RecordError(route.Backend, err, time.Now())
+				p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
 			}
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
 			return
@@ -2158,7 +2158,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	if err != nil {
 		p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
 		if p.gatewayHealth != nil {
-			p.gatewayHealth.RecordError(route.Backend, err, time.Now())
+			p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
 		}
 		p.writeHTTPError(conn, http.StatusBadGateway, "inference backend unreachable: "+err.Error())
 		return

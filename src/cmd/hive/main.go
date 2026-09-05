@@ -3390,11 +3390,13 @@ func main() {
 		// otherwise all pre-existing Copilot spend would vanish.
 		tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())
 
-		vllmEndpoints := parseEndpointList(envOrDefault("HIVE_VLLM_ENDPOINT", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000"))
+		vllmEndpoints := parseEndpointList(os.Getenv("HIVE_VLLM_ENDPOINT"))
 		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
 		inferenceEndpoints := map[string][]string{
-			"vllm":  vllmEndpoints,
 			"llm-d": llmdEndpoints,
+		}
+		if len(vllmEndpoints) > 0 {
+			inferenceEndpoints["vllm"] = vllmEndpoints
 		}
 		// litellm has no in-cluster default: register it only when an
 		// endpoint is configured (yaml or HIVE_LITELLM_ENDPOINT), so an
@@ -3546,6 +3548,12 @@ func main() {
 				}
 				// vllm/llm-d endpoints are unauthenticated with a public
 				// or in-cluster CA — no bearer key or custom CA bundle.
+				if len(endpoints) == 0 {
+					logger.Warn("inference backend selected but no endpoint configured",
+						"agent", agentName, "model", model, "backend", backend)
+					githubProxy.ClearInferenceRoute(agentName)
+					return
+				}
 				endpoint := proxy.FindEndpointForModel(endpoints, model, "", "")
 				if endpoint == "" {
 					logger.Warn("no endpoint serves model, using first endpoint",
@@ -9473,9 +9481,6 @@ func parseEndpointList(raw string) []string {
 		if p != "" {
 			out = append(out, p)
 		}
-	}
-	if len(out) == 0 {
-		return []string{raw}
 	}
 	return out
 }

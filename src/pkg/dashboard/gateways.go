@@ -728,7 +728,7 @@ var errGatewayEndpointPrivate = errors.New("endpoint resolves to a private, loop
 // this check is NOT in validateGatewayEndpoint. That helper also validates the
 // UPSERT path, where in-cluster gateways are a supported, documented
 // configuration — the bundled local litellm proxy is http://127.0.0.1:18445 and
-// vllm/llm-d default to *.svc.cluster.local (see HIVE_VLLM_ENDPOINT). Blanket
+// explicit vllm/llm-d endpoints may use *.svc.cluster.local (see HIVE_VLLM_ENDPOINT). Blanket
 // private-address denial there would break real deployments, which is why the
 // F6 fix explicitly rejected it as the remedy.
 //

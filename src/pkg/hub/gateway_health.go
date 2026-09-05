@@ -33,6 +33,8 @@ func sanitizeGatewayHealth(in []inferencehealth.GatewayStatus) []inferencehealth
 		}
 		out = append(out, inferencehealth.GatewayStatus{
 			Name:        name,
+			Endpoint:    sanitizeProseField(st.Endpoint),
+			Host:        sanitizeField(st.Host),
 			ErrorClass:  class,
 			HTTPStatus:  clampInt(st.HTTPStatus, 0, 599),
 			Detail:      sanitizeProseField(st.Detail),
