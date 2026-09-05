@@ -49,6 +49,7 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("loading agent overlays: %w", err)
 		}
+		overlays = cfg.RejectInvalidAgentOverlays(overlays)
 		cfg.MergeAgentOverrides(overlays)
 		// Re-apply defaults for overlay agents.
 		for name := range overlays {
@@ -150,8 +151,9 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 		return cfg, nil
 	}
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
-	cfg.MergeAgentOverrides(overlay.Agents)
-	for name := range overlay.Agents {
+	agents := cfg.RejectInvalidAgentOverlays(overlay.Agents)
+	cfg.MergeAgentOverrides(agents)
+	for name := range agents {
 		cfg.ApplyAgentDefaults(name)
 	}
 	if err := cfg.ExpandAgentReplicas(); err != nil {

@@ -26,6 +26,14 @@ export HIVE_PROXY_EGRESS_MARK="${HIVE_PROXY_EGRESS_MARK:-0x1112}"
 # "the container was not granted a capability it needs" — chosen over a
 # script-local number so it means the same thing to anyone who already knows
 # sysexits.h. See the FATAL branch below and src/docs/net-admin-requirement.md.
+#
+# The SAME code is reused (#6003) for the sibling preflight failure "the node's
+# kernel does not provide a netfilter extension the forced-egress ruleset needs"
+# (xt_owner / xt_REDIRECT). It is the same class of problem from the operator's
+# side: the container was granted everything the manifest can grant, and the
+# host still cannot supply what the egress gate requires, so the environment -
+# not the image or the config - has to change. Both cases exit 77 with a FATAL
+# line naming exactly what is missing.
 EXIT_NET_ADMIN_REQUIRED=77
 
 # ── Config backup/restore across container recreation ─────────────────
@@ -1456,6 +1464,11 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
     PROXY_ADVISORY_OK="${HIVE_PROXY_ADVISORY_OK:-false}"
     _iptables_ok=false
     _ipt_err_log="${HIVE_IPTABLES_ERR_LOG:-/var/run/hive/hive-ipt-err.log}"
+    # Set by the extension preflight below when a REQUIRED netfilter match or
+    # target is not loadable on this node. Read by the FATAL branch at the end
+    # of the gate so the operator gets ONE line naming the kernel module rather
+    # than exit 4 at whichever append happened to be first (#6003).
+    _ipt_missing_modules=""
 
     hive_iptables_error_text() {
       _hive_ipt_err_text="$(cat "$1" 2>/dev/null || true)"
@@ -1501,6 +1514,89 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
           $IPT -t nat -F HIVE_PROXY 2>/dev/null || true
         fi
       }
+
+      # HIVE-EGRESS-PREFLIGHT-BEGIN (extracted by test_entrypoint_xt_module_preflight.sh)
+      # ── Netfilter extension preflight (#6003) ─────────────────────────────
+      # The two rules the gate CANNOT do without are the :443 REDIRECT (the
+      # enforcement itself) and the packet-mark RETURN (the proxy's own
+      # self-exemption, the only one that works where xt_owner is absent).
+      # Both are kernel EXTENSIONS: iptables happily creates the chain and then
+      # fails the individual `-A` with "Extension <x> revision 0 not supported,
+      # missing kernel module?" / RULE_APPEND failed (No such file or directory)
+      # when the node has not loaded the matching xt_* module.
+      #
+      # Probe them in a THROWAWAY chain first, so the diagnosis happens before
+      # any part of the real ruleset exists. Two properties matter here:
+      #
+      #   1. The operator gets the module NAME. On 2026-09-04 one RHEL CoreOS
+      #      node out of two (fmaas-vllm-d-wv25b-worker-2-4ptps) had neither
+      #      xt_owner nor xt_REDIRECT loaded; 17 spokes crashlooped to 77
+      #      restarts, and the only clue was exit 4 from an arbitrary append.
+      #   2. Nothing half-built is ever installed. A spoke on the HEALTHY node
+      #      survived the same append failures with a partial HIVE_PROXY chain
+      #      and went MUTE instead of crashing - 104 proxy read timeouts, 34
+      #      heartbeat collect timeouts, zero successful collections, no
+      #      git_hash reported, so the hub never upgraded it and it ran a stale
+      #      image for hours while reporting healthy. A crashloop is visible; a
+      #      green-but-unenforced hive is not. Fail loudly, never fail open.
+      hive_iptables_probe_extension() {
+        # $1 = human label, $2 = xt module name, rest = rule spec fragment.
+        _hive_probe_label="$1"
+        _hive_probe_module="$2"
+        shift 2
+        if $IPT -t nat -A HIVE_PROXY_PREFLIGHT "$@" 2>"$_ipt_err_log"; then
+          unset _hive_probe_label _hive_probe_module
+          return 0
+        fi
+        echo "[entrypoint] ERROR: netfilter ${_hive_probe_label} unavailable on this node (kernel module ${_hive_probe_module}): $(hive_iptables_error_text "$_ipt_err_log")" >&2
+        _ipt_missing_modules="${_ipt_missing_modules}${_ipt_missing_modules:+, }${_hive_probe_module}"
+        unset _hive_probe_label _hive_probe_module
+        return 1
+      }
+
+      # The probe chain is created, used, then unconditionally torn down. It is
+      # never hooked into OUTPUT, so it can match no traffic even mid-probe.
+      $IPT -t nat -F HIVE_PROXY_PREFLIGHT 2>/dev/null || true
+      $IPT -t nat -X HIVE_PROXY_PREFLIGHT 2>/dev/null || true
+      if $IPT -w 10 -t nat -N HIVE_PROXY_PREFLIGHT 2>"$_ipt_err_log"; then
+        hive_iptables_probe_extension "packet-mark match" "xt_mark" \
+          -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN || true
+        hive_iptables_probe_extension "REDIRECT target" "xt_REDIRECT" \
+          -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT" || true
+        # xt_owner is OPTIONAL by design (OpenShift/OVN runs without it and the
+        # mark exemption covers the proxy there), so its absence is reported as
+        # context on the same operator-facing line but never blocks startup.
+        if ! $IPT -t nat -A HIVE_PROXY_PREFLIGHT -m owner --uid-owner 0 -j RETURN 2>/dev/null; then
+          echo "[entrypoint] WARN: netfilter owner match unavailable on this node (kernel module xt_owner); the packet-mark exemption will carry the proxy's own egress"
+        fi
+        $IPT -t nat -F HIVE_PROXY_PREFLIGHT 2>/dev/null || true
+        $IPT -t nat -X HIVE_PROXY_PREFLIGHT 2>/dev/null || true
+      else
+        # Could not even create the probe chain. That is not an extension
+        # problem - leave $_ipt_missing_modules empty and let the existing
+        # chain-creation retry/reporting path below diagnose it.
+        echo "[entrypoint] WARN: could not create preflight chain to probe netfilter extensions: $(hive_iptables_error_text "$_ipt_err_log")"
+      fi
+
+      if [ -n "$_ipt_missing_modules" ]; then
+        # Make sure nothing from an earlier boot of this container is left
+        # installed and looking enforcing, then refuse to start.
+        hive_flush_iptables_proxy_chain
+        $IPT -t nat -X HIVE_PROXY 2>/dev/null || true
+        if [ "$PROXY_ADVISORY_OK" = "true" ]; then
+          # Same explicit operator opt-in the rest of the gate honours: the
+          # deployment has already declared it accepts unenforced egress. Leave
+          # _iptables_ok=false so the ADVISORY-ONLY warning below still fires.
+          echo "[entrypoint] WARN: this node's kernel is missing netfilter module(s) required by the forced-egress gate: ${_ipt_missing_modules}. Continuing because HIVE_PROXY_ADVISORY_OK=true - agents can bypass the MITM proxy on this node."
+        else
+        echo "[entrypoint] FATAL: this node's kernel is missing netfilter module(s) required by the forced-egress gate: ${_ipt_missing_modules}." >&2
+        echo "[entrypoint] FATAL: without them the HIVE_PROXY chain would redirect nothing, so agents holding raw tokens could reach the network unproxied while the spoke reported healthy. Refusing to start." >&2
+        echo "[entrypoint] FATAL: load the module(s) on this node - the durable fix is a MachineConfig writing an /etc/modules-load.d/ drop-in (for example /etc/modules-load.d/hive-netfilter.conf containing xt_owner and xt_REDIRECT), so they survive a node rebuild. Until then, taint or label the node so hive pods are not scheduled onto it." >&2
+        echo "[entrypoint] FATAL: exiting ${EXIT_NET_ADMIN_REQUIRED} (EX_NOPERM) rather than 1 - see EXIT_NET_ADMIN_REQUIRED near the top of entrypoint.sh." >&2
+        exit "$EXIT_NET_ADMIN_REQUIRED"
+        fi
+      fi
+      # HIVE-EGRESS-PREFLIGHT-END
 
       # Self-exemption uses BOTH owner-UID and packet-mark RETURNs, because the
       # two platforms we run on each support a DIFFERENT one, and a single

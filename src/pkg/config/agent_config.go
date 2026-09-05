@@ -219,6 +219,9 @@ type AgentConfig struct {
 	// Connections declares external service integrations (MCP servers, APIs, knowledge sources).
 	Connections []ConnectionConfig `yaml:"connections,omitempty" json:"connections,omitempty"`
 
+	// sourceFile is the per-agent overlay file this entry was read from.
+	sourceFile string
+
 	// Skills names reusable "how to do X" skills to resolve out of the hive's
 	// skill registry (pkg/skillreg, loaded from the host-local skills directory)
 	// and inject into this agent's kick context. Names are resolved at kick
@@ -243,6 +246,15 @@ type AgentConfig struct {
 	enabledSet bool
 	// name is the YAML map key, set during config load
 	name string
+}
+
+// SourceFile returns the per-agent overlay file this entry was loaded from, or
+// "" when it came from the main config.
+func (a *AgentConfig) SourceFile() string {
+	if a == nil {
+		return ""
+	}
+	return a.sourceFile
 }
 
 // Name returns the human-readable YAML key for this agent.

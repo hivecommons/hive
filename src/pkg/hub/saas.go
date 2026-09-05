@@ -396,6 +396,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// owner-or-admin check, exactly like visibility/auto-upgrade above — the
 	// gate is the security boundary, not just the hidden UI affordance.
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/name", s.requireAuth(s.handleRenameHive))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/agents/{agent}/restart-counter/reset", s.requireAuth(s.handleResetAgentRestarts))
 	// Move a hive between forges (github.com <-> a GitHub Enterprise host).
 	// requireAuth plus an inner owner-or-admin check, exactly like
 	// switch-branch and auto-upgrade above.

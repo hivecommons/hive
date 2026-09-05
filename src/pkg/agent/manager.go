@@ -221,6 +221,8 @@ type AgentProcess struct {
 	ModelOverride     string
 	BackendOverride   string
 	RestartCount      int
+	RestartEvents     []RestartEvent
+	LastRestartReason string
 	OutputBuffer      *RingBuffer
 	lastPaneCapture   []string
 	paneMu            sync.RWMutex

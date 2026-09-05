@@ -395,7 +395,7 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
-	agent.RestartCount++
+	m.recordRestartLocked(agent, "operator")
 	agent.forceRelaunch = true
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -706,7 +706,7 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
-	agent.RestartCount++
+	m.recordRestartLocked(agent, "operator")
 	agent.forceRelaunch = true
 	m.logger.Info("audit: agent restarting", "name", name, "restart_count", agent.RestartCount)
 
@@ -766,6 +766,8 @@ func (m *Manager) ResetRestartCount(name string) error {
 	}
 
 	agent.RestartCount = 0
+	agent.RestartEvents = nil
+	agent.LastRestartReason = "operator"
 	return nil
 }
 

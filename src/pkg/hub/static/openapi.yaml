@@ -200,6 +200,41 @@ paths:
           schema:
             type: string
 
+  /api/saas/hives/{id}/agents/{agent}/restarts/reset:
+    post:
+      tags: [Hosted]
+      summary: Reset an agent restart counter
+      description: Owner/admin endpoint used by the fleet page to mark an agent restart counter reset and deliver a reset instruction on the next heartbeat.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reset marker recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  agent:
+                    type: string
+                  reset_at:
+                    type: string
+                  by:
+                    type: string
+
   /api/saas/hives/{id}/access:
     get:
       tags: [Access]
@@ -383,6 +418,38 @@ components:
         online:
           type: boolean
         gitHash:
+          type: string
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentSummary'
+
+    AgentSummary:
+      type: object
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+        restarts:
+          $ref: '#/components/schemas/AgentRestartTelemetry'
+
+    AgentRestartTelemetry:
+      type: object
+      properties:
+        total:
+          type: integer
+        last_24h:
+          type: integer
+        last_restart_at:
+          type: string
+        last_reason:
+          type: string
+        pod_restarts:
+          type: integer
+        reset_at:
+          type: string
+        reset_by:
           type: string
 
     LeaderboardEntry:

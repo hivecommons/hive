@@ -119,6 +119,10 @@ Key signals:
 - **Divergence (expects · running · able)** compares how many agents the governor
   expects, how many are running, and how many can actually work. A **PROBLEM**
   chip means the governor expects agents to be on but they are blocked.
+- Agent restart storms are also surfaced as problem chips when a reported agent
+  reaches `HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD` restarts in 24 hours
+  (default `5`). Owners/admins can click **reset** beside the chip to start
+  counting from the reset point while troubleshooting recurrence.
 - Capability chips show green/amber/red/gray for able/partial/blocked/unknown,
   with ticks for issue, PR, and merge capability.
 - Filters at the top let you narrow by **problems only**, **advisory output**,

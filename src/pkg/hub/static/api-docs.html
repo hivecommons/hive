@@ -286,6 +286,12 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
   https://hive.kubestellar.io/api/saas/hives/HIVE_ID/access</code></pre>
         </div>
 
+        <div class="card">
+          <strong>Reset an agent restart counter</strong>
+          <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
+  https://hive.kubestellar.io/api/saas/hives/HIVE_ID/agents/AGENT/restarts/reset</code></pre>
+        </div>
+
         <h2>Spoke Integration</h2>
         <p style="font-size:.95rem">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
         <div class="card">

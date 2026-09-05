@@ -331,6 +331,8 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		ModelOverride:             a.ModelOverride,
 		BackendOverride:           a.BackendOverride,
 		RestartCount:              a.RestartCount,
+		RestartEvents:             cloneRestartEvents(a.RestartEvents),
+		LastRestartReason:         a.LastRestartReason,
 		TurnLoss:                  cloneTurnLoss(a.TurnLoss),
 		KickHistory:               history,
 		LastKickMessage:           a.LastKickMessage,

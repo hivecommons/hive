@@ -134,14 +134,22 @@ assert_contains "$WORK/advisory.out" 'ADVISORY-ONLY'
 assert_contains "$CALLS" 'iptables-nft -t nat -F HIVE_PROXY'
 
 run_gate enforcing false mark
-if [[ "$(cat "$WORK/enforcing.code")" == 0 ]]; then
-  echo "FAIL: enforcing iptables failure unexpectedly exited 0"
+# Enforcing + an unusable extension is now caught by the netfilter preflight
+# (#6003 "fail loudly"), which runs BEFORE the real chain is built. It names
+# the kernel module and exits with the documented preflight code 77 instead of
+# reaching the generic "could not establish forced proxy egress" FATAL after a
+# partial build. The append-level judgement it replaced on this path is still
+# covered directly by the advisory case above and by
+# test_entrypoint_egress_ruleset.sh; the preflight itself is covered by
+# test_entrypoint_xt_module_preflight.sh.
+if [[ "$(cat "$WORK/enforcing.code")" != 77 ]]; then
+  echo "FAIL: enforcing iptables failure exited $(cat "$WORK/enforcing.code"), want 77"
   cat "$WORK/enforcing.out"
   exit 1
 fi
-assert_contains "$WORK/enforcing.out" 'iptables packet-mark exemption append failed (exit 4): fake iptables module missing'
-assert_contains "$WORK/enforcing.out" 'iptables ruleset incomplete; flushed HIVE_PROXY'
-assert_contains "$WORK/enforcing.out" 'FATAL: could not establish forced proxy egress'
+assert_contains "$WORK/enforcing.out" 'missing netfilter module(s) required by the forced-egress gate'
+assert_contains "$WORK/enforcing.out" 'xt_REDIRECT'
+assert_contains "$WORK/enforcing.out" 'FATAL'
 assert_contains "$CALLS" 'iptables-nft -t nat -F HIVE_PROXY'
 
 echo 'PASS: entrypoint iptables gate handles failed appends explicitly (#6003)'

@@ -96,7 +96,9 @@ shadowed by a shallower one:
 5. **Blocked agents** — all blocked agents share one cause when possible:
    "N agent(s) out of provider quota", "N agent(s) stuck at login —
    re-login needed", "N agent(s) down — restart needed", "N agent(s) idle
-   with work queued", or the generic "N agent(s) blocked".
+   with work queued", "agent restarts: NAME ×N/24h (reason)", or the generic
+   "N agent(s) blocked". Agent restart storms use the hub threshold
+   `HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD` (default `5`).
 6. **No agents running** (red) or **all agents paused** (amber — pausing is
    operator choice, not an outage, but queued work will not move until
    someone resumes them).
@@ -265,6 +267,7 @@ them is simply not judged on them.
 | "N agent(s) out of provider quota" | Agents hit per-account model quota | Wait for quota reset or change the account/model on the agent cards |
 | "N agent(s) down — restart needed" | Agent sessions failed or died | Restart the agents from the spoke dashboard |
 | "N agent(s) idle with work queued" | Sessions are alive but agents sat past the idle threshold with work available | Kick the agents or review their schedules — this is not a restart problem |
+| "agent restarts: NAME ×N/24h (reason)" | One agent has been relaunched at least the configured threshold within the recent window | Use the `/fleet` reset button next to the restart chip before troubleshooting; the hub records a reset marker and asks the spoke to zero its counter on the next heartbeat so recurrence is visible |
 | "no agents running" | Agents are expected on but none are running | Start/resume agents on the spoke dashboard |
 | "all agents paused — resume to produce output" (amber) | Every agent is operator-paused while work is queued | Resume agents when you want the queue to move — deliberate pause is respected, not faulted |
 | "repo Issues disabled — advisory/issues have nowhere to go" | The repo's Issues tab is off (common on forks) | Enable Issues in the repo's settings on your forge |

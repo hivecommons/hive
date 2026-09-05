@@ -5,7 +5,14 @@ import (
 	"strings"
 )
 
-func (c *Config) validate() error {
+func agentSourceLabel(name, sourceFile string) string {
+	if sourceFile == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (from %s)", name, sourceFile)
+}
+
+func (c *Config) Validate() error {
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
 	}
@@ -70,14 +77,15 @@ func (c *Config) validate() error {
 		// configured gateway name is valid too: naming a gateway as the backend
 		// routes that agent through it, matched case-insensitively to mirror
 		// ResolveGateway.
+		label := agentSourceLabel(name, agent.sourceFile)
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
-			return fmt.Errorf("agent %s: %w", name, err)
+			return fmt.Errorf("agent %s: %w", label, err)
 		}
 		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
-			return fmt.Errorf("agent %s: %w", name, err)
+			return fmt.Errorf("agent %s: %w", label, err)
 		}
 		if !ValidateCavemanMode(agent.CavemanMode) {
-			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)
+			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", label, agent.CavemanMode)
 		}
 		if !ValidateExplainMode(agent.ExplainMode) {
 			return fmt.Errorf("agent %s: invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", name, agent.ExplainMode, ExplainModeEnvVar)
@@ -180,3 +188,7 @@ func validateConnections(agentName string, conns []ConnectionConfig) error {
 
 // MarshalYAML persists only declared agents. Runtime-derived replicas are
 // re-created by ExpandAgentReplicas on the next load so they never collide with
+
+func (c *Config) validate() error {
+	return c.Validate()
+}
