@@ -278,23 +278,28 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange     time.Time
-	consentSeenAt      time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt    time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
-	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
-	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	LastPaneChange       time.Time
+	consentSeenAt        time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss   time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt      time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane    string    // stall watchdog: hash of the visible pane just after kick delivery
+	lastInferKickVisible string    // stall watchdog: visible pane text just after kick delivery
+	stallNudgeSent       bool      // stall watchdog: at most one nudge per kick
+	StallNudges          int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
 	// a nudge per tick. transientNudgesThisKick is the per-kick cap; both it and
 	// the cooldown reset on the next kick.
-	lastTransientNudge      time.Time
-	transientNudgesThisKick int
-	TransientNudges         int // total transient-API-error nudges sent (surfaced to the dashboard)
-	launchGen               int // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks      int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	lastTransientNudge          time.Time
+	transientNudgesThisKick     int
+	TransientNudges             int // total transient-API-error nudges sent (surfaced to the dashboard)
+	launchGen                   int // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks          int // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	ProviderErrorClass          string
+	ProviderErrorLine           string
+	ProviderErrorBackoffUntil   time.Time
+	providerErrorBackoffAttempt int
 	// kickLogPending is true while the current tmux session holds kick output
 	// that has not yet been archived to a per-kick log file (see
 	// kick_logs.go). Set after every kick delivery; cleared when the
@@ -322,6 +327,12 @@ type AgentProcess struct {
 	// save would restart agents whose problem the key does not fix.
 	// Set only on the missing-key branch, cleared on every launch attempt.
 	awaitingBobKey bool
+
+	StartFailureClass  string
+	StartFailureReason string
+	StartFailureCount  int
+	StartBlocked       bool
+	StartBackoffUntil  time.Time
 
 	// lastLaunchFailureBanner is the exact in-pane shell line typed by the most
 	// recent aborted launch (see announceLaunchFailureInPane), "" after a

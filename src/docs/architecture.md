@@ -37,7 +37,7 @@ flowchart LR
 
     github["GitHub<br/>(issues · PRs · Actions)"]
     models["Model backends<br/>(Anthropic · Copilot · vLLM/llm-d · LiteLLM)"]
-    hub["Hive Hub<br/>hive.kubestellar.io<br/>(registry · leaderboard)"]
+    hub["Hive Hub<br/>hive.hivecommons.dev<br/>(registry · leaderboard)"]
     notify["Notifications<br/>(ntfy · Slack · Discord)"]
 
     maintainer -->|HTTPS dashboard| hive
@@ -286,7 +286,7 @@ flowchart LR
 ## 8. Hub & spoke
 
 Every hive is a **spoke**; one hosted instance
-([hive.kubestellar.io](https://hive.kubestellar.io)) runs as the **hub**. Both
+([hive.hivecommons.dev](https://hive.hivecommons.dev)) runs as the **hub**. Both
 are the same image (`HIVE_MODE=hub` selects the role). Spokes push a heartbeat;
 the hub answers with callbacks — the control channel that works even for spokes
 the hub can't reach directly (firewalled clusters).
@@ -294,7 +294,7 @@ the hub can't reach directly (firewalled clusters).
 ```mermaid
 sequenceDiagram
     participant S as Spoke (a hive)
-    participant H as Hub (hive.kubestellar.io)
+    participant H as Hub (hive.hivecommons.dev)
     loop every 2 minutes
         S->>H: POST /api/heartbeat<br/>(id, org, repos, ACMM level,<br/>agent + governor summary, tokens, health)
         H-->>S: callbacks: upgrade-to-SHA ·<br/>GitHub-App config · banner ·<br/>visibility · switch-branch · authorized-users

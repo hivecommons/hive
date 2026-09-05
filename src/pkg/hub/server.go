@@ -25,6 +25,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/auth"
 	"github.com/hivecommons/hive/pkg/delegation"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/openrouter"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -156,6 +157,8 @@ type RegistryEntry struct {
 	// hive, also trips advisory staleness immediately with this cause. Self-
 	// clears when inference recovers. Never carries key material.
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
+	// GatewayHealth is the spoke-reported set of currently failing inference gateways.
+	GatewayHealth []inferencehealth.GatewayStatus `json:"gatewayHealth,omitempty"`
 	// ProviderLimitReason is the spoke-reported provider spending/quota refusal
 	// banner. It is separate from BudgetExhausted, which is hive-local governor
 	// budget; this means the upstream provider is refusing token purchases.
@@ -956,6 +959,16 @@ type HubServer struct {
 	// keep arriving every ~2 min; without this guard the attempts pile up
 	// goroutines all hanging against the same dead cluster.
 	vanityRepairInFlight sync.Map // hive ID → struct{}
+	// vanityMintTimes are the timestamps of vanity-host MINTS performed by the
+	// retroactive repair path within the current vanityMintWindow — the
+	// fleet-wide budget guarding the registered domain's shared ACME quota
+	// (#5923: an unbounded re-mint storm exhausted Let's Encrypt's
+	// 50-certs/168h cap in about an hour). Persisted to the SaaS data directory
+	// so a hub restart cannot forget the registered domain's still-live 168h
+	// ACME debt and reopen the storm. Guarded by vanityMintMu, never s.mu.
+	vanityMintTimes        []time.Time
+	vanityMintLedgerLoaded bool
+	vanityMintMu           sync.Mutex
 	// claimWorkInFlight tracks hive IDs whose claim-time cluster work
 	// (namespace identity stamp + vanity mint) is currently running in the
 	// background (kickClaimClusterWorkAsync), so assign/approve start at most
@@ -1740,6 +1753,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError:   sanitizeField(payload.InferenceAuthError),
+		GatewayHealth:        sanitizeGatewayHealth(payload.GatewayHealth),
 		ProviderLimitReason:  sanitizeProseField(payload.ProviderLimitReason),
 		ProviderLimitRebuffs: clampInt(payload.ProviderLimitRebuffs, 0, 1_000_000),
 		DashboardURL:         payload.DashboardURL,
@@ -2647,6 +2661,46 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		hbTarget = ""
 	}
 
+	// Chase-latest target for a spoke-managed hive, resolved through the tag
+	// its Deployment actually tracks (#5994). A spoke on :stable can only ever
+	// land on the digest :stable carries, so answering every beat with branch
+	// HEAD told 90 of 97 spokes to reach a commit the soak policy is
+	// deliberately withholding — and re-told them on the next beat, forever.
+	//
+	// resp.LatestSHA above is deliberately NOT changed: it answers "how far has
+	// this branch moved", which the dashboard's behind-count needs, and is a
+	// different question from "what can this spoke reach".
+	//
+	// Computed before the chain rather than inside it so the fall-through order
+	// is unchanged: a spoke-managed hive that needs no upgrade still yields to
+	// the armed kubectl-fallback target below, exactly as it did when this was
+	// a single inline condition.
+	spokeManagedTarget, spokeManagedChannel := "", ""
+	if spokeManaged && !spokeUpgradesPausedNow && payload.GitHash != "" {
+		trackedChannel := ""
+		if saasHive != nil {
+			trackedChannel = saasHive.TrackedChannel
+		}
+		reach := s.reachableUpgradeTarget(branch, payload.ImageRef, trackedChannel)
+		switch {
+		case !reach.Resolved:
+			// The spoke tracks a channel we could not resolve. Instruct nothing
+			// rather than guessing branch HEAD — see reachableUpgradeTarget.
+			s.logger.Warn("heartbeat: upgrade instruction withheld — the spoke's release channel did not resolve to a commit",
+				"hive_id", payload.HiveID, "channel", reach.Channel, "branch", branch,
+				"image_ref", payload.ImageRef)
+		case reach.SHA == "" || sameCommit(payload.GitHash, reach.SHA):
+			// Nothing verified to move to, or already there.
+		case reach.Channel != "" && commitAtOrAheadOfTarget(payload.GitHash, reach.SHA, s.logger):
+			// Ahead of the channel it tracks — instructing it would downgrade.
+			s.logger.Debug("heartbeat: no upgrade — spoke is at or ahead of its release channel",
+				"hive_id", payload.HiveID, "channel", reach.Channel,
+				"current", payload.GitHash, "channel_sha", reach.SHA)
+		default:
+			spokeManagedTarget, spokeManagedChannel = reach.SHA, reach.Channel
+		}
+	}
+
 	if spokeUpgradesPausedNow {
 		// Kill switch: no UpgradeTo of any flavour — spoke-managed chase-latest
 		// or the armed kubectl fallback. Heartbeat is otherwise answered
@@ -2656,12 +2710,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"hive_id", payload.HiveID,
 				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
 		}
-	} else if spokeManaged && latestSHA != "" && payload.GitHash != "" && !sameCommit(payload.GitHash, latestSHA) {
-		resp.UpgradeTo = latestSHA
+	} else if spokeManagedTarget != "" {
+		resp.UpgradeTo = spokeManagedTarget
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
-			"to", latestSHA,
+			"to", spokeManagedTarget,
+			"channel", spokeManagedChannel,
 		)
 	} else if hbTarget != "" && !sameCommit(payload.GitHash, hbTarget) {
 		resp.UpgradeTo = hbTarget
@@ -3756,14 +3811,15 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	// latest_shas is a legitimate state (hub image published, spoke image
 	// still building) rather than a contradiction.
 	resp := map[string]any{
-		"git_hash":        s.hubGitHash,
-		"git_branch":      s.hubGitBranch,
-		"latest_sha":      getLatestSHA(),
-		"latest_shas":     getLatestSHAs(),
-		"latest_hub_shas": getLatestHubSHAs(),
-		"head_shas":       getHeadSHAs(),
-		"image_statuses":  getImageStatuses(),
-		"upgrade_state":   s.hubUpgradeState(),
+		"git_hash":         s.hubGitHash,
+		"git_branch":       s.hubGitBranch,
+		"latest_sha":       getLatestSHA(),
+		"latest_shas":      getLatestSHAs(),
+		"latest_hub_shas":  getLatestHubSHAs(),
+		"head_shas":        getHeadSHAs(),
+		"image_statuses":   getImageStatuses(),
+		"image_build_urls": getImageBuildURLs(),
+		"upgrade_state":    s.hubUpgradeState(),
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
@@ -4070,12 +4126,14 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid hive URL", http.StatusInternalServerError)
 		return
 	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy := newContributeWSReverseProxy(target)
 	r.URL.Path = "/api/contribute/ws"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute WS", "hive", hive.ID, "target", target.String())
 	proxy.ServeHTTP(w, r)
 }
+
+var newContributeWSReverseProxy = httputil.NewSingleHostReverseProxy
 
 // privateURLDNSTimeout bounds DNS resolution inside the SSRF guard so a
 // slow or malicious DNS server cannot block the caller indefinitely.

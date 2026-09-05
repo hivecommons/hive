@@ -176,6 +176,12 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 		m.mu.Unlock()
 		return false, fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine
+		m.mu.Unlock()
+		return false, fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, class, line, remaining.Round(time.Second))
+	}
 
 	if !m.tmuxSessionExistsForAgent(agent) {
 		session := agent.tmuxSession
@@ -224,6 +230,12 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s cannot be kicked: %s", name, reason)
 	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine
+		m.mu.Unlock()
+		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, class, line, remaining.Round(time.Second))
+	}
 
 	// Detect a crashed CLI (bare shell) or a CLI stuck on a consent screen and
 	// restart before sending — identical to SendKick's recovery. A consent pane
@@ -268,6 +280,10 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 	agent, ok = m.agents[name]
 	if !ok {
 		return fmt.Errorf("agent %s disappeared while waiting for input prompt", name)
+	}
+	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
+		return fmt.Errorf("agent %s blocked: inference (%s): %s; next provider probe in %v",
+			name, agent.ProviderErrorClass, agent.ProviderErrorLine, remaining.Round(time.Second))
 	}
 	m.deliverKickLocked(agent, message, "send-kick")
 	return nil

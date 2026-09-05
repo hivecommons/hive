@@ -149,7 +149,7 @@ func TestPullOnlyClusterCountsAsUnreachableWithoutDialing(t *testing.T) {
 func TestPullOnlyClusterHealthUsesHeartbeat(t *testing.T) {
 	c := &ClusterConfig{ID: "a-ks-wec2", PullOnly: true, Domain: "wec2.example.cloud"}
 
-	_, err := buildSingleClusterHealth(c, 5, slog.Default())
+	_, err := buildSingleClusterHealth(c, 5, nil, slog.Default())
 	if err == nil {
 		t.Fatal("expected the pull-only sentinel, got nil")
 	}

@@ -12,6 +12,31 @@ entrypoint in `src/deploy/` remain the source of truth.
 > current v4 deployment assets, but v5 work is changing how the container owns
 > `/data` and how agents run under per-agent UIDs.
 
+### Hosted hub domain cutover
+
+The hosted Hive Hub canonical address moved from
+`https://hive.kubestellar.io` to `https://hive.hivecommons.dev` on
+2026-09-04. The old hostname is a legacy entry point and redirects during the
+cutover, but new bookmarks, docs, and spoke heartbeat configuration should use
+`https://hive.hivecommons.dev`.
+
+Operator actions:
+
+- For spokes that heartbeat to the hosted hub, set `hub.url` or
+  `HIVE_HUB_URL` to `https://hive.hivecommons.dev`.
+- For hub deployments serving the public hostname, set
+  `HIVE_HUB_PUBLIC_URL=https://hive.hivecommons.dev` so OAuth/OIDC callback
+  links, notification links, and hub SSO cookie scope use the new origin.
+- For hub-provisioned spoke ingress, set
+  `HIVE_HUB_SPOKE_DOMAIN=hive.hivecommons.dev` when the wildcard spoke domain
+  has moved too.
+- Contributor relays should use `wss://hive.hivecommons.dev/contribute` for
+  hosted-hub registrations.
+
+The current v4 compiled fallback for `hub.url`/`HIVE_HUB_PUBLIC_URL` still names
+the legacy hostname, so do not rely on leaving these values unset during the
+cutover.
+
 ### Before upgrading
 
 1. Read the target release notes and this file.

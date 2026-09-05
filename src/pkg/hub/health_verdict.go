@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 // Hive-health verdict: does this spoke have RECENT OUTPUT back to its work
@@ -117,6 +118,12 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 	// every level that is expected to produce anything (L2+). At L1 there is no
 	// output to enable, so a precondition gap is not a health fault. ---
 	if e.ACMMLevel > acmmInceptionMax {
+		if gw, ok := mostRecentGatewayFaultForAgents(e.GatewayHealth, e.Agents); ok {
+			v.State = HealthStateRed
+			v.cause = causeInferenceGateway
+			v.Reason = inferencehealth.Reason(gw)
+			return v
+		}
 		if app.Bucket == ghAppBucketBroken {
 			v.State = HealthStateRed
 			v.cause = causeAppBroken
@@ -254,9 +261,10 @@ func hiveHealthBase(e RegistryEntry, rollup agentFleetRollup, app GitHubAppHealt
 				return noWritersOnDuty(v, "advisory", roster)
 			}
 		}
-		// Reuse the existing advisory/issue-activity bucketing rather than the
-		// per-repo activity collector.
-		adv := advisoryIssueActivityFor(e, now)
+		// Reuse the same advisory-digest freshness bucketing that drives the
+		// fleet chip and stale-advisory pill rather than the per-repo activity
+		// collector.
+		adv := advisoryFreshnessFor(e, now)
 		v.LastOutputAt = adv.LastActivityAt
 		// A reported post error is a harder signal than any timestamp: the
 		// spoke PROVED the digest is wedged. Stale/unknown buckets must not

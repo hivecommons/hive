@@ -29,6 +29,12 @@ const (
 	imageStatusReady    = "ready"    // image tag verified on GHCR
 	imageStatusBuilding = "building" // docker workflow queued/in progress, or image not yet visible
 	imageStatusFailed   = "failed"   // docker workflow completed unsuccessfully
+	imageStatusStale    = "stale"    // building state exceeded its freshness window
+)
+
+const (
+	imageBuildStaleAfterEnv     = "HIVE_IMAGE_BUILD_STALE_AFTER"
+	defaultImageBuildStaleAfter = 30 * time.Minute
 )
 
 // branchHeadInfo tracks the branch HEAD commit, which may be ahead of the
@@ -43,6 +49,9 @@ type branchHeadInfo struct {
 	// while the same SHA keeps building; it is zeroed when the image finishes
 	// (ready/failed) or a new SHA takes over. Zero means "not building / unknown".
 	BuildStartedAt time.Time
+	// BuildURL is the GitHub Actions run URL for the docker workflow run that
+	// reported this non-ready image status, when GitHub exposed one.
+	BuildURL string
 }
 
 // githubAPIBase and ghcrBase are the GitHub/GHCR origins used by the SHA-poll
@@ -434,11 +443,18 @@ func getBranchHead(branch string) branchHeadInfo {
 // setBranchHead records the branch HEAD and its image build status, keeping
 // the previous commit message when the new fetch didn't include one.
 func setBranchHead(branch, sha, msg, status string) {
+	setBranchHeadDetails(branch, sha, msg, status, "")
+}
+
+func setBranchHeadDetails(branch, sha, msg, status, buildURL string) {
 	latestSHAMu.Lock()
 	defer latestSHAMu.Unlock()
 	prev := headSHAByBranch[branch]
 	if msg == "" && prev.SHA == sha {
 		msg = prev.Message
+	}
+	if buildURL == "" && prev.SHA == sha {
+		buildURL = prev.BuildURL
 	}
 	// Stamp the build-start time on the first poll that sees this SHA building,
 	// and carry it forward on every subsequent poll while the same SHA is still
@@ -453,7 +469,7 @@ func setBranchHead(branch, sha, msg, status string) {
 			buildStartedAt = time.Now() // newly observed building SHA
 		}
 	}
-	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status, BuildStartedAt: buildStartedAt}
+	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status, BuildStartedAt: buildStartedAt, BuildURL: buildURL}
 	if msg != "" {
 		commitMsgBySHA[sha] = msg
 	}
@@ -502,15 +518,49 @@ func getImageStatuses() map[string]string {
 	latestSHAMu.RLock()
 	defer latestSHAMu.RUnlock()
 	cp := make(map[string]string, len(latestSHAByBranch)+len(headSHAByBranch))
+	now := time.Now()
 	for k := range latestSHAByBranch {
 		cp[k] = imageStatusReady
 	}
 	for k, v := range headSHAByBranch {
 		if v.SHA != "" && v.ImageStatus != "" {
-			cp[k] = v.ImageStatus
+			cp[k] = buildStatusWithStaleness(v.ImageStatus, v.BuildStartedAt, now)
 		}
 	}
 	return cp
+}
+
+func getImageBuildURLs() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(headSHAByBranch))
+	now := time.Now()
+	for k, v := range headSHAByBranch {
+		status := buildStatusWithStaleness(v.ImageStatus, v.BuildStartedAt, now)
+		if v.SHA != "" && v.BuildURL != "" && status != "" && status != imageStatusReady {
+			cp[k] = v.BuildURL
+		}
+	}
+	return cp
+}
+
+func imageBuildStaleAfter() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(imageBuildStaleAfterEnv))
+	if raw == "" {
+		return defaultImageBuildStaleAfter
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return defaultImageBuildStaleAfter
+	}
+	return d
+}
+
+func buildStatusWithStaleness(status string, started, now time.Time) string {
+	if status == imageStatusBuilding && !started.IsZero() && now.Sub(started) > imageBuildStaleAfter() {
+		return imageStatusStale
+	}
+	return status
 }
 
 // getImageBuildStartTimes returns branch→unix-millis of when each currently
@@ -521,8 +571,9 @@ func getImageBuildStartTimes() map[string]int64 {
 	latestSHAMu.RLock()
 	defer latestSHAMu.RUnlock()
 	cp := make(map[string]int64, len(headSHAByBranch))
+	now := time.Now()
 	for k, v := range headSHAByBranch {
-		if v.SHA != "" && v.ImageStatus == imageStatusBuilding && !v.BuildStartedAt.IsZero() {
+		if v.SHA != "" && buildStatusWithStaleness(v.ImageStatus, v.BuildStartedAt, now) == imageStatusBuilding && !v.BuildStartedAt.IsZero() {
 			cp[k] = v.BuildStartedAt.UnixMilli()
 		}
 	}
@@ -846,7 +897,8 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 
 	// Image not on GHCR yet — ask the docker workflow whether the build for
 	// this head commit is still running or has failed.
-	status := fetchImageBuildStatus(client, branchResult.Commit.SHA, logger)
+	buildState := fetchImageBuildState(client, branchResult.Commit.SHA, logger)
+	status := buildState.Status
 	if status == "" {
 		// Actions API unavailable (rate-limited/network): keep the last-known
 		// status for this head; a brand-new head with no image is presumed
@@ -859,7 +911,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	if commitMsg == "" && headChanged {
 		commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
 	}
-	setBranchHead(branch, candidateSHA, commitMsg, status)
+	setBranchHeadDetails(branch, candidateSHA, commitMsg, status, buildState.RunURL)
 	logger.Info("SHA poll: container image not yet on GHCR", "branch", branch, "sha", candidateSHA, "image_status", status)
 }
 
@@ -873,43 +925,57 @@ const dockerWorkflowFile = "docker.yml"
 // unavailable so the caller can keep the last-known status instead of
 // flapping ready/building on transient errors.
 func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	return fetchImageBuildState(client, fullSHA, logger).Status
+}
+
+type imageBuildState struct {
+	Status string
+	RunURL string
+}
+
+func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logger) imageBuildState {
 	runsURL := fmt.Sprintf("%s/repos/hivecommons/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
 	req, _ := http.NewRequest("GET", runsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("SHA poll: workflow runs request failed", "sha", fullSHA, "error", err)
-		return ""
+		return imageBuildState{}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: workflow runs non-200", "sha", fullSHA, "status", resp.StatusCode)
-		return ""
+		return imageBuildState{}
 	}
 	var result struct {
 		WorkflowRuns []struct {
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
 		} `json:"workflow_runs"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		logger.Warn("SHA poll: workflow runs decode failed", "sha", fullSHA, "error", err)
-		return ""
+		return imageBuildState{}
 	}
 	if len(result.WorkflowRuns) == 0 {
 		// The push event may not have spawned the workflow run yet.
-		return imageStatusBuilding
+		return imageBuildState{Status: imageStatusBuilding}
 	}
 	run := result.WorkflowRuns[0]
+	state := imageBuildState{RunURL: run.HTMLURL}
 	if run.Status != "completed" {
-		return imageStatusBuilding // queued, in_progress, waiting, pending
+		state.Status = imageStatusBuilding // queued, in_progress, waiting, pending
+		return state
 	}
 	if run.Conclusion == "success" {
 		// Workflow finished but the manifest isn't visible on GHCR yet —
 		// treat as still publishing; the GHCR check flips it to ready.
-		return imageStatusBuilding
+		state.Status = imageStatusBuilding
+		return state
 	}
-	return imageStatusFailed // failure, cancelled, timed_out, startup_failure
+	state.Status = imageStatusFailed // failure, cancelled, timed_out, startup_failure
+	return state
 }
 
 // fetchCommitMessage fetches the first line of a commit message from the GitHub API.

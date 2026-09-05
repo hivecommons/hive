@@ -81,6 +81,15 @@ type Dependencies struct {
 	SkipReloadFunc        func()
 	ReInitFunc            func()
 	EnumerateFunc         func()
+	// RescanReposFunc re-enumerates every watched repository's open issues
+	// and pull requests against the forge, enriches PR CI status, applies the
+	// duplicate-PR claim guard and republishes the dashboard status snapshot
+	// — the read-only half of the governor eval cycle, with none of its side
+	// effects (no mode change, no agent kicks, no advisory posting). It backs
+	// the REPOSITORIES "Rescan" button, which must be safe to press at any
+	// time. Nil (the shape most tests construct) makes POST /api/repos/rescan
+	// answer 503 rather than pretending to have scanned.
+	RescanReposFunc func(ctx context.Context) (*ghpkg.ActionableResult, error)
 	AdvisoryResetFunc     func(newPrimaryRepo string)
 	ReinitGitHubFunc      func(appID, installationID int64, keyFile string) error
 	// ResolveAppKeyFileFunc resolves which App private key the process would

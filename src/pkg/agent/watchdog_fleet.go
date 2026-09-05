@@ -121,23 +121,31 @@ func (f WatchdogFleet) Observe(name string) (watchdog.Observation, error) {
 	// verdicts during boot. Copied by value: the field is a pointer the
 	// manager mutates on relaunch.
 	var startedAt time.Time
+	providerClass := ""
+	providerLine := ""
 	f.M.mu.RLock()
 	if agent.StartedAt != nil {
 		startedAt = *agent.StartedAt
 	}
+	if f.M.providerErrorBackoffRemainingLocked(agent, time.Now()) > 0 {
+		providerClass = agent.ProviderErrorClass
+		providerLine = agent.ProviderErrorLine
+	}
 	f.M.mu.RUnlock()
 
 	return watchdog.Observation{
-		Backend:          backend,
-		SessionExists:    sessionExists,
-		Pane:             pane,
-		HasCLIMarker:     paneHasCLIMarker(pane),
-		ShowsLoginPrompt: needsLogin || paneShowsLoginPrompt(strings.Split(pane, "\n")),
-		LastChange:       lastChange,
-		StartedAt:        startedAt,
-		AuthAvailable:    authAvailable,
-		AuthKnown:        authKnown,
-		CredentialProven: credentialProven,
+		Backend:            backend,
+		SessionExists:      sessionExists,
+		Pane:               pane,
+		HasCLIMarker:       paneHasCLIMarker(pane),
+		ShowsLoginPrompt:   needsLogin || paneShowsLoginPrompt(strings.Split(pane, "\n")),
+		LastChange:         lastChange,
+		StartedAt:          startedAt,
+		AuthAvailable:      authAvailable,
+		AuthKnown:          authKnown,
+		CredentialProven:   credentialProven,
+		ProviderErrorClass: providerClass,
+		ProviderErrorLine:  providerLine,
 	}, nil
 }
 

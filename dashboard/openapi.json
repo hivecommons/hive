@@ -17194,6 +17194,67 @@
         }
       }
     },
+    "/api/repos/rescan": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Rescan the monitored repositories for issue/PR changes",
+        "description": "Re-enumerates every monitored repository's open issues and pull requests against the forge and republishes the status snapshot, so the dashboard's REPOSITORIES cards reflect the current tickets without waiting out the governor's eval interval. Read-only with respect to the hive: it runs the enumeration half of the eval cycle only - no governor mode change, no agent kicks, no advisory posting. Server-debounced (30s): a call inside the window returns the previous scan's counts with status \"debounced\" and retry_after_s, and a call while a scan is running returns status \"in-progress\".",
+        "responses": {
+          "200": {
+            "description": "Scan result, or the previous scan's counts when debounced/in-progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "rescanned",
+                        "debounced",
+                        "in-progress"
+                      ]
+                    },
+                    "issues": {
+                      "type": "integer",
+                      "description": "Actionable open issues across all monitored repositories."
+                    },
+                    "prs": {
+                      "type": "integer",
+                      "description": "Open pull requests across all monitored repositories."
+                    },
+                    "hold": {
+                      "type": "integer",
+                      "description": "Items suppressed by a hold label."
+                    },
+                    "repos": {
+                      "type": "integer",
+                      "description": "Number of repositories scanned."
+                    },
+                    "scanned_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "retry_after_s": {
+                      "type": "integer",
+                      "description": "Seconds until another scan is allowed (debounced responses only)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Forge enumeration failed"
+          },
+          "503": {
+            "description": "Rescan is not wired on this deployment (no forge credentials)"
+          }
+        }
+      }
+    },
     "/api/role": {
       "get": {
         "tags": [

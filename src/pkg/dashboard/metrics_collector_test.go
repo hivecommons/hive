@@ -170,6 +170,43 @@ func TestMetricsCollector_CountACMM_FetchError(t *testing.T) {
 	}
 }
 
+func TestMetricsCollector_CountACMM_HiveCommonsUsesKubestellarDocs(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	var gotOwner string
+	pageContent := `
+const BADGE_PARTICIPANTS = new Set([
+  "ProjectA",
+]);
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repos/"), "/")
+		if len(parts) > 0 {
+			gotOwner = parts[0]
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"type":     "file",
+			"encoding": "base64",
+			"content":  encodeBase64ForTest(pageContent),
+		})
+	}))
+	defer srv.Close()
+
+	ghClient := ghpkg.NewClientForTest(srv.URL, "hivecommons", []string{"docs"}, logger)
+	mc := &MetricsCollector{
+		ghClient: ghClient,
+		org:      "hivecommons",
+		repo:     "hive",
+		logger:   logger,
+		metrics:  make(map[string]any),
+	}
+	if count := mc.countACMM(context.Background(), "hivecommons", "hive"); count != 1 {
+		t.Fatalf("countACMM = %d, want 1", count)
+	}
+	if gotOwner != "kubestellar" {
+		t.Fatalf("ACMM docs owner = %q, want kubestellar", gotOwner)
+	}
+}
+
 func TestMetricsCollector_CountAdopters_WithMock(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 

@@ -1455,6 +1455,29 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
     PROXY_PORT=18443
     PROXY_ADVISORY_OK="${HIVE_PROXY_ADVISORY_OK:-false}"
     _iptables_ok=false
+    _ipt_err_log="${HIVE_IPTABLES_ERR_LOG:-/var/run/hive/hive-ipt-err.log}"
+
+    hive_iptables_error_text() {
+      _hive_ipt_err_text="$(cat "$1" 2>/dev/null || true)"
+      [ -n "$_hive_ipt_err_text" ] || _hive_ipt_err_text="no stderr captured"
+      printf '%s' "$_hive_ipt_err_text"
+      unset _hive_ipt_err_text
+    }
+
+    hive_run_iptables_required() {
+      _hive_ipt_desc="$1"
+      _hive_ipt_err_file="$2"
+      shift 2
+      if "$@" 2>"$_hive_ipt_err_file"; then
+        unset _hive_ipt_desc _hive_ipt_err_file
+        return 0
+      else
+        _hive_ipt_rc=$?
+        echo "[entrypoint] ERROR: ${_hive_ipt_desc} failed (exit ${_hive_ipt_rc}): $(hive_iptables_error_text "$_hive_ipt_err_file")" >&2
+        unset _hive_ipt_desc _hive_ipt_err_file _hive_ipt_rc
+        return 1
+      fi
+    }
 
     # Select the iptables binary. Both OKE and OpenShift/RHEL9 hosts run the
     # kernel in nft mode, where the legacy `iptables` (xtables-legacy) backend
@@ -1469,6 +1492,16 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
     fi
 
     if [ -n "$IPT" ]; then
+      hive_flush_iptables_proxy_chain() {
+        # Remove any stale hook first, then flush the chain. A failed rebuild
+        # must leave no partial HIVE_PROXY ruleset that looks enforcing but
+        # redirects nothing.
+        while $IPT -t nat -D OUTPUT -j HIVE_PROXY 2>/dev/null; do :; done
+        if $IPT -t nat -nL HIVE_PROXY >/dev/null 2>&1; then
+          $IPT -t nat -F HIVE_PROXY 2>/dev/null || true
+        fi
+      }
+
       # Self-exemption uses BOTH owner-UID and packet-mark RETURNs, because the
       # two platforms we run on each support a DIFFERENT one, and a single
       # mechanism is not enough for both:
@@ -1509,30 +1542,50 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
         # A leftover chain from a prior partial attempt counts as created —
         # flush it so rule appends below start from a clean slate.
         if $IPT -t nat -nL HIVE_PROXY >/dev/null 2>&1; then
-          $IPT -t nat -F HIVE_PROXY 2>/dev/null || true
+          hive_flush_iptables_proxy_chain
           _ipt_chain_ok=true
           break
         fi
-        if $IPT -w 10 -t nat -N HIVE_PROXY 2>/tmp/hive-ipt-err.log; then
+        if $IPT -w 10 -t nat -N HIVE_PROXY 2>"$_ipt_err_log"; then
           _ipt_chain_ok=true
           break
         fi
-        echo "[entrypoint] WARN: iptables chain creation attempt ${_ipt_try}/5 failed: $(cat /tmp/hive-ipt-err.log 2>/dev/null) — retrying"
+        echo "[entrypoint] WARN: iptables chain creation attempt ${_ipt_try}/5 failed: $(hive_iptables_error_text "$_ipt_err_log") — retrying"
         sleep $(( _ipt_try * 2 + $$ % 3 ))
       done
+      # HIVE-EGRESS-RULESET-V4-BEGIN (extracted by test_entrypoint_egress_ruleset.sh)
       if [ "$_ipt_chain_ok" = "true" ]; then
         # OKE: owner-match exemption (reliable where xt_owner is present).
         # `|| true` keeps a failed append non-fatal on OpenShift (no xt_owner).
-        $IPT -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN || true
-        $IPT -t nat -A HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN || true
+        if $IPT -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN 2>"$_ipt_err_log"; then
+          :
+        else
+          echo "[entrypoint] WARN: optional iptables owner exemption for uid 0 failed: $(hive_iptables_error_text "$_ipt_err_log")"
+        fi
+        if $IPT -t nat -A HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN 2>"$_ipt_err_log"; then
+          :
+        else
+          echo "[entrypoint] WARN: optional iptables owner exemption for proxy uid ${PROXY_UID} failed: $(hive_iptables_error_text "$_ipt_err_log")"
+        fi
         # OpenShift/OVN: packet-mark exemption (works with no xt_owner).
-        $IPT -t nat -A HIVE_PROXY -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN
-        $IPT -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"
-        $IPT -t nat -A OUTPUT -j HIVE_PROXY
-        echo "[entrypoint] iptables ($IPT): outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
-        _iptables_ok=true
-        # Update uid-map to record iptables active
-        python3 -c "
+        _ipt_rules_ok=true
+        if ! hive_run_iptables_required "iptables packet-mark exemption append" "$_ipt_err_log" \
+          "$IPT" -t nat -A HIVE_PROXY -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN; then
+          _ipt_rules_ok=false
+        fi
+        if [ "$_ipt_rules_ok" = "true" ] && ! hive_run_iptables_required "iptables HTTPS REDIRECT append" "$_ipt_err_log" \
+          "$IPT" -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"; then
+          _ipt_rules_ok=false
+        fi
+        if [ "$_ipt_rules_ok" = "true" ] && ! hive_run_iptables_required "iptables OUTPUT hook append" "$_ipt_err_log" \
+          "$IPT" -t nat -A OUTPUT -j HIVE_PROXY; then
+          _ipt_rules_ok=false
+        fi
+        if [ "$_ipt_rules_ok" = "true" ]; then
+          echo "[entrypoint] iptables ($IPT): outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
+          _iptables_ok=true
+          # Update uid-map to record iptables active
+          python3 -c "
 import json
 with open('/var/run/hive/uid-map.json') as f:
     m = json.load(f)
@@ -1540,9 +1593,15 @@ m['iptables_active'] = True
 with open('/var/run/hive/uid-map.json', 'w') as f:
     json.dump(m, f, indent=2)
 " 2>/dev/null || true
+        else
+          hive_flush_iptables_proxy_chain
+          echo "[entrypoint] ERROR: iptables ruleset incomplete; flushed HIVE_PROXY and left IPv4 forced proxy egress disabled"
+        fi
+        unset _ipt_rules_ok
       else
-        echo "[entrypoint] ERROR: iptables chain creation failed after ${_ipt_try} attempts: $(cat /tmp/hive-ipt-err.log 2>/dev/null)"
+        echo "[entrypoint] ERROR: iptables chain creation failed after ${_ipt_try} attempts: $(hive_iptables_error_text "$_ipt_err_log")"
       fi
+      # HIVE-EGRESS-RULESET-V4-END
     else
       echo "[entrypoint] ERROR: iptables not found — cannot force proxy egress"
     fi
@@ -1628,6 +1687,14 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
         IP6T="ip6tables"
       fi
       if [ -n "$IP6T" ]; then
+        _ip6t_err_log="${HIVE_IP6TABLES_ERR_LOG:-/var/run/hive/hive-ip6t-err.log}"
+        hive_flush_ip6tables_proxy_chain() {
+          while $IP6T -D OUTPUT -j HIVE_PROXY6 2>/dev/null; do :; done
+          if $IP6T -nL HIVE_PROXY6 >/dev/null 2>&1; then
+            $IP6T -F HIVE_PROXY6 2>/dev/null || true
+          fi
+        }
+
         # Same jittered chain-creation retry as the IPv4 gate: one-shot
         # creation turns transient netlink/xtables contention into a
         # fail-closed crash-loop (see the 2026-08-13 note above).
@@ -1636,32 +1703,59 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
         while [ "$_ip6_try" -lt 5 ]; do
           _ip6_try=$((_ip6_try + 1))
           if $IP6T -nL HIVE_PROXY6 >/dev/null 2>&1; then
-            $IP6T -F HIVE_PROXY6 2>/dev/null || true
+            hive_flush_ip6tables_proxy_chain
             _ip6_chain_ok=true
             break
           fi
-          if $IP6T -w 10 -N HIVE_PROXY6 2>/tmp/hive-ip6t-err.log; then
+          if $IP6T -w 10 -N HIVE_PROXY6 2>"$_ip6t_err_log"; then
             _ip6_chain_ok=true
             break
           fi
-          echo "[entrypoint] WARN: ip6tables chain creation attempt ${_ip6_try}/5 failed: $(cat /tmp/hive-ip6t-err.log 2>/dev/null) — retrying"
+          echo "[entrypoint] WARN: ip6tables chain creation attempt ${_ip6_try}/5 failed: $(hive_iptables_error_text "$_ip6t_err_log") — retrying"
           sleep $(( _ip6_try * 2 + $$ % 3 ))
         done
+        # HIVE-EGRESS-RULESET-V6-BEGIN (extracted by test_entrypoint_egress_ruleset.sh)
         if [ "$_ip6_chain_ok" = "true" ]; then
           # Exemptions mirror the IPv4 chain exactly, in the same order, for
           # the same two-platform reasons (owner-UID where xt_owner exists,
           # packet mark where it does not). `|| true` on the owner lines keeps
           # their failure non-fatal on hosts without xt_owner.
-          $IP6T -A HIVE_PROXY6 -m owner --uid-owner 0 -j RETURN || true
-          $IP6T -A HIVE_PROXY6 -m owner --uid-owner "$PROXY_UID" -j RETURN || true
-          $IP6T -A HIVE_PROXY6 -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN
-          $IP6T -A HIVE_PROXY6 -p tcp --dport 443 -j REJECT --reject-with tcp-reset
-          $IP6T -A OUTPUT -j HIVE_PROXY6
-          echo "[entrypoint] ip6tables ($IP6T): outbound IPv6 :443 REJECTed (proxy has no IPv6 listener; proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
-          _ip6tables_ok=true
+          if $IP6T -A HIVE_PROXY6 -m owner --uid-owner 0 -j RETURN 2>"$_ip6t_err_log"; then
+            :
+          else
+            echo "[entrypoint] WARN: optional ip6tables owner exemption for uid 0 failed: $(hive_iptables_error_text "$_ip6t_err_log")"
+          fi
+          if $IP6T -A HIVE_PROXY6 -m owner --uid-owner "$PROXY_UID" -j RETURN 2>"$_ip6t_err_log"; then
+            :
+          else
+            echo "[entrypoint] WARN: optional ip6tables owner exemption for proxy uid ${PROXY_UID} failed: $(hive_iptables_error_text "$_ip6t_err_log")"
+          fi
+          _ip6_rules_ok=true
+          if ! hive_run_iptables_required "ip6tables packet-mark exemption append" "$_ip6t_err_log" \
+            "$IP6T" -A HIVE_PROXY6 -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN; then
+            _ip6_rules_ok=false
+          fi
+          if [ "$_ip6_rules_ok" = "true" ] && ! hive_run_iptables_required "ip6tables IPv6 HTTPS REJECT append" "$_ip6t_err_log" \
+            "$IP6T" -A HIVE_PROXY6 -p tcp --dport 443 -j REJECT --reject-with tcp-reset; then
+            _ip6_rules_ok=false
+          fi
+          if [ "$_ip6_rules_ok" = "true" ] && ! hive_run_iptables_required "ip6tables OUTPUT hook append" "$_ip6t_err_log" \
+            "$IP6T" -A OUTPUT -j HIVE_PROXY6; then
+            _ip6_rules_ok=false
+          fi
+          if [ "$_ip6_rules_ok" = "true" ]; then
+            echo "[entrypoint] ip6tables ($IP6T): outbound IPv6 :443 REJECTed (proxy has no IPv6 listener; proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
+            _ip6tables_ok=true
+          else
+            hive_flush_ip6tables_proxy_chain
+            echo "[entrypoint] ERROR: ip6tables ruleset incomplete; flushed HIVE_PROXY6 and left IPv6 egress gate disabled"
+          fi
+          unset _ip6_rules_ok
         else
-          echo "[entrypoint] ERROR: ip6tables chain creation failed after ${_ip6_try} attempts: $(cat /tmp/hive-ip6t-err.log 2>/dev/null)"
+          echo "[entrypoint] ERROR: ip6tables chain creation failed after ${_ip6_try} attempts: $(hive_iptables_error_text "$_ip6t_err_log")"
         fi
+        unset _ip6t_err_log
+        # HIVE-EGRESS-RULESET-V6-END
       else
         echo "[entrypoint] ERROR: ip6tables not found — IPv6 egress cannot be gated"
       fi

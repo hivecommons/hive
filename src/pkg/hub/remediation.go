@@ -43,9 +43,10 @@ const (
 	// all (#5699). Each verdict already named its condition precisely; none
 	// named a fix, so eleven non-green spokes rendered a WHY chip with nothing
 	// under it. These are verdicts the sweep OBSERVED, not hypothetical ones.
-	causeAgentsDown    = "agents-down"
-	causeAllPaused     = "all-paused"
-	causeProviderQuota = "provider-quota"
+	causeAgentsDown       = "agents-down"
+	causeAllPaused        = "all-paused"
+	causeProviderQuota    = "provider-quota"
+	causeInferenceGateway = "inference-gateway"
 )
 
 // errorStreakRedThreshold is how many consecutive failed model calls turn a
@@ -223,6 +224,12 @@ func attachRemediation(v *HealthVerdict, e RegistryEntry) {
 		v.Remediation = &Remediation{
 			Action:  "Resume agents, or mark the hive idle if it is mothballed",
 			Surface: "spoke dashboard",
+			Link:    link(""),
+		}
+	case causeInferenceGateway:
+		v.Remediation = &Remediation{
+			Action:  "Fix or retest the failing gateway (Settings → Model Gateways)",
+			Surface: "spoke dashboard settings",
 			Link:    link(""),
 		}
 	case causeProviderQuota:

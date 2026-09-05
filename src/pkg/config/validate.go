@@ -73,6 +73,9 @@ func (c *Config) validate() error {
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
 			return fmt.Errorf("agent %s: %w", name, err)
 		}
+		if err := c.Governor.ValidateLaunchCmdBackend(agent.Backend, agent.LaunchCmd); err != nil {
+			return fmt.Errorf("agent %s: %w", name, err)
+		}
 		if !ValidateCavemanMode(agent.CavemanMode) {
 			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)
 		}

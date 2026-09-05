@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -81,17 +82,29 @@ type Server struct {
 	// startup-grace window before the first heartbeat has to have succeeded.
 	startedAt time.Time
 
-	agentPipelines map[string]map[string]bool
-	agentHooks     map[string]map[string][]any
-	pipelineMu     sync.RWMutex
-	hooksMu        sync.RWMutex
-	knowledgeMu    sync.Mutex
-	levelMu        sync.Mutex
-	restartMu      sync.Mutex // serializes concurrent agent restart operations
+	agentPipelines    map[string]map[string]bool
+	agentHooks        map[string]map[string][]any
+	pipelineMu        sync.RWMutex
+	hooksMu           sync.RWMutex
+	knowledgeMu       sync.Mutex
+	levelMu           sync.Mutex
+	restartMu         sync.Mutex // serializes concurrent agent restart operations
+	gatewayHealthOnce sync.Once
+	gatewayHealth     *serverGatewayHealthStore
 
 	acmmEvalMu       sync.RWMutex
 	acmmEvalCache    *ACMMEvaluation
 	acmmEvalCachedAt time.Time
+
+	// Operator-initiated repository rescan (POST /api/repos/rescan). The
+	// mutex guards all three: repoRescanInFlight collapses concurrent
+	// presses onto one GitHub sweep, repoRescanAt is the debounce clock, and
+	// repoRescanLast is the counts a debounced/in-flight caller is answered
+	// with so the UI never has to render an empty result.
+	repoRescanMu       sync.Mutex
+	repoRescanInFlight bool
+	repoRescanAt       time.Time
+	repoRescanLast     ReposRescanResult
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.
@@ -112,6 +125,15 @@ type Server struct {
 	// handleSnapshotPage can be exercised without a Node toolchain on the
 	// test host.
 	buildSnapshotFn func(s *Server, outputFile, mode string)
+
+	// captureFullLogFn, if non-nil, replaces AgentMgr.CaptureFullLog for
+	// handleAgentFullLog tests so handler success paths can be exercised without
+	// a live tmux pane.
+	captureFullLogFn func(name string) (string, error)
+
+	kickBrainstormSendKickFn func(name, msg string) error
+	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
+	kickBrainstormDoneFn     func()
 
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()

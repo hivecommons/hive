@@ -195,6 +195,26 @@ type ClusterConfig struct {
 	RequiresSCC    bool   `json:"requires_scc" yaml:"requires_scc"`
 	SCCName        string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
 	HasGPU         bool   `json:"has_gpu" yaml:"has_gpu"`
+
+	// WildcardTLSSecret names the wildcard certificate this cluster's
+	// ingress-nginx controller already serves as its --default-ssl-certificate,
+	// in "<namespace>/<secret>" form (e.g. "hive-hub/hive-wildcard-tls"). When
+	// set, provisioned spoke Ingresses OMIT their per-host tls: block and the
+	// cert-manager issuer annotation for every host the wildcard covers, so one
+	// certificate serves the cluster instead of one per hive (#5977).
+	//
+	// This is an operator ASSERTION about cluster state, not something the hub
+	// verifies, and setting it wrongly is not a soft failure: with no
+	// --default-ssl-certificate actually configured, ingress-nginx serves its
+	// built-in SELF-SIGNED certificate and every spoke dashboard on the cluster
+	// fails TLS validation at once. Set it only after BOTH prerequisites hold —
+	// the wildcard secret exists on the cluster, and the controller's
+	// --default-ssl-certificate names it. Empty (the default) keeps the
+	// historical per-host behaviour, which always works.
+	//
+	// See src/docs/spoke-wildcard-tls.md and wildcard_tls.go.
+	WildcardTLSSecret string `json:"wildcard_tls_secret,omitempty" yaml:"wildcard_tls_secret,omitempty"`
+
 	// MaxHives caps how many hosted hives (SaaS records, assigned or pooled)
 	// may exist on this cluster. 0 = unlimited. This is the HARD per-cluster
 	// gate: the bin-packed capacity estimate (hiveSlotsForNode) is advisory
@@ -433,6 +453,27 @@ func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 				"--certificate-authority", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
 				"--token", readSAToken(),
 			)
+		} else {
+			// InCluster is a CLAIM, not a fact, and this is the branch where the
+			// claim is demonstrably false: a real hub pod ALWAYS has both
+			// KUBERNETES_SERVICE_HOST and _PORT injected by the kubelet, so
+			// their absence is positive evidence this process is not in a pod.
+			//
+			// Without this arm we appended NO connection flag at all, and
+			// kubectl then resolves against its AMBIENT configuration —
+			// $KUBECONFIG or ~/.kube/config — i.e. whatever cluster the machine
+			// happens to be pointed at. That is issue #5768: hub tests that
+			// reach a provisioning entry point ran a REAL `kubectl apply` of a
+			// Namespace + Deployment named from the test's own fixture org
+			// against a developer/agent machine's current-context cluster,
+			// leaking 76 hive-hosted-hosted-{apporg,myorg,acme}-* namespaces
+			// onto a live CI cluster. The hub kept no record of them because
+			// saveSaaSHive had been redirected to the test's t.TempDir().
+			//
+			// Aim at the sentinel instead, exactly as the unreachable branch
+			// above does, so a false InCluster claim fails loudly rather than
+			// mutating an unrelated cluster.
+			fullArgs = append(fullArgs, "--kubeconfig", unreachableKubeconfigSentinel)
 		}
 	}
 	fullArgs = append(fullArgs, args...)
@@ -805,6 +846,26 @@ type SaaSHive struct {
 	// unclaimed placeholders; a zero/absent stamp makes the sweep skip the hive
 	// rather than reset it on an unknowable age.
 	AssignedAt string `json:"assigned_at,omitempty"`
+	// LastVanityRepairAt is when a vanity-host repair last SUCCEEDED for this
+	// hive — a mint (repairVanityURLForHive / mintClaimVanityURL) or a
+	// drift-adopt (reconcileStaleVanityURL). kickVanityURLRepairAsync skips the
+	// repair entirely while this is fresher than vanityRepairSuccessCooldown.
+	//
+	// It exists because the in-flight guard only prevents CONCURRENT attempts,
+	// not repeated ones: with ~100 spokes beating every ~2 minutes nothing
+	// bounded how often a hive could successfully re-mint, and a condition
+	// making many hives look stale at once (a cluster domain change, an
+	// ingress rewrite) turned into a fleet-wide re-mint storm that exhausted
+	// the Let's Encrypt 50-certs/168h cap for the registered domain in about
+	// an hour (#5923). A legitimately stale host is not urgent; once a repair
+	// has succeeded, the next look can wait out the cooldown. Zero/absent on
+	// records from before this field existed, which simply means "no cooldown".
+	LastVanityRepairAt time.Time `json:"last_vanity_repair_at,omitempty"`
+	// LastVanityRepairFailureAt records the last cluster/budget failure from the
+	// heartbeat repair path so repeated heartbeats back off instead of hammering
+	// kubectl or logging the same exhausted-budget warning every two minutes.
+	LastVanityRepairFailureAt time.Time `json:"last_vanity_repair_failure_at,omitempty"`
+	LastVanityRepairFailure   string    `json:"last_vanity_repair_failure,omitempty"`
 }
 
 type CreateHiveRequest struct {
@@ -1333,14 +1394,29 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	// nothing serves while the working route sat unused. Adopting the existing
 	// route's host first makes this repair converge instead of oscillate.
 	vanityHost := s.existingVanityHost(hiveID, cluster)
+	newVanityHost := false
 	if vanityHost == "" {
 		vanityHost = generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
+		newVanityHost = true
+	}
+	// A brand-new host means a brand-new certificate against the registered
+	// domain's shared ACME quota, so actual mints are metered fleet-wide. The
+	// budget deliberately does NOT gate adopting an EXISTING route's host
+	// (above) or the reconcile path — neither issues a certificate.
+	if newVanityHost && !s.acquireVanityMintSlot() {
+		s.logger.Warn("vanity url repair: fleet-wide mint budget exhausted — skipping mint to protect the ACME rate limit; "+
+			"repair will retry after the failure backoff once budget returns",
+			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID,
+			"budget", vanityMintBudget(), "window", vanityMintWindow().String())
+		s.recordVanityRepairFailure(hiveID, "fleet-wide vanity mint budget exhausted")
+		return false
 	}
 	// Make it servable BEFORE adopting it; on failure leave VanityURL empty so
 	// every read path keeps falling back to the working placeholder host.
 	if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
 		s.logger.Info("vanity url repair: host is not servable yet, keeping the placeholder host",
 			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
+		s.recordVanityRepairFailure(hiveID, err.Error())
 		return false
 	}
 	// Re-load before writing. makeVanityHostServable (and existingVanityHost
@@ -1357,13 +1433,17 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 		return false // another path minted one while we were blocked — keep it
 	}
 	h.VanityURL = "https://" + vanityHost
+	h.LastVanityRepairAt = time.Now()
+	h.LastVanityRepairFailureAt = time.Time{}
+	h.LastVanityRepairFailure = ""
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("vanity url repair: failed to save hive", "hive", hiveID, "error", err)
 		return false
 	}
 	s.logger.Info("vanity url repair: minted a vanity host for a hive claimed before the vanity feature",
 		"hive", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
-		"cluster", cluster.ID, "vanity_url", h.VanityURL)
+		"cluster", cluster.ID, "vanity_url", h.VanityURL,
+		"mint_budget_remaining", s.vanityMintRemaining())
 	return true
 }
 
@@ -1415,6 +1495,7 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 		// Could not read the cluster, or there is no vanity route to compare
 		// against. Absence of evidence is not evidence of drift — keep what we
 		// have, since it is the only link the dashboard can offer.
+		s.recordVanityRepairFailure(hiveID, "could not read existing vanity route")
 		return false
 	}
 	liveURL := "https://" + liveHost
@@ -1433,6 +1514,9 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 		return false
 	}
 	h.VanityURL = liveURL
+	h.LastVanityRepairAt = time.Now()
+	h.LastVanityRepairFailureAt = time.Time{}
+	h.LastVanityRepairFailure = ""
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("vanity url reconcile: failed to save hive", "hive", hiveID, "error", err)
 		return false
@@ -1441,6 +1525,30 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 		"hive", hiveID, "stored", stored, "live", liveURL, "cluster", cluster.ID)
 	return true
 }
+
+const (
+	// Env overrides for the #5923 vanity repair guardrails. Defaults are named
+	// constants so operators get safe behavior out of the box, while emergency
+	// production tuning does not require a rebuild.
+	vanityRepairSuccessCooldownEnv = "HIVE_VANITY_REPAIR_SUCCESS_COOLDOWN"
+	vanityRepairFailureBackoffEnv  = "HIVE_VANITY_REPAIR_FAILURE_BACKOFF"
+	vanityMintBudgetEnv            = "HIVE_VANITY_MINT_BUDGET"
+	vanityMintWindowEnv            = "HIVE_VANITY_MINT_WINDOW"
+
+	// vanityRepairSuccessCooldownDefault is how long after a SUCCESSFUL vanity
+	// repair (mint or drift-adopt) the heartbeat kick skips further repair
+	// attempts for that hive. 24h: a legitimately stale host is not urgent.
+	vanityRepairSuccessCooldownDefault = 24 * time.Hour
+	// vanityRepairFailureBackoffDefault is how long after a FAILED repair the
+	// heartbeat kick waits before trying again, preventing tight loops against
+	// unreachable clusters or an exhausted mint budget.
+	vanityRepairFailureBackoffDefault = time.Hour
+	// Fleet-wide budget for vanity-host MINTS from the repair path, sized well
+	// under Let's Encrypt's 50 certificates / registered domain / 168h limit so
+	// the remainder stays reserved for genuine claim-time provisioning (#5923).
+	vanityMintBudgetDefault = 20
+	vanityMintWindowDefault = 168 * time.Hour
+)
 
 // kickVanityURLRepairAsync runs repairVanityURLForHive in the background, at
 // most one attempt per hive at a time, registered with provisionWG so tests can
@@ -1471,6 +1579,19 @@ func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
 	// domain) still keep every truly-inapplicable hive off the goroutine path.
 	if h == nil || h.Status == statusAvailable ||
 		h.Org == "" || h.PrimaryRepo == "" {
+		return
+	}
+	// Cooldown on SUCCESSFUL repairs. The in-flight guard below only prevents
+	// concurrent attempts; nothing bounded repeated successful ones, and each
+	// new vanity host is a new certificate against the registered domain's
+	// shared ACME quota — a fleet-wide "everything looks stale" condition
+	// exhausted the 50-certs/168h cap in about an hour (#5923). A repair that
+	// just succeeded has nothing urgent left to do; skip the goroutine (and its
+	// per-beat kubectl read) until the cooldown lapses.
+	if !h.LastVanityRepairAt.IsZero() && time.Since(h.LastVanityRepairAt) < vanityRepairSuccessCooldown() {
+		return
+	}
+	if !h.LastVanityRepairFailureAt.IsZero() && time.Since(h.LastVanityRepairFailureAt) < vanityRepairFailureBackoff() {
 		return
 	}
 	if cluster := s.clusterForHive(h); cluster == nil || cluster.Domain == "" {
@@ -1591,6 +1712,13 @@ func (s *HubServer) mintClaimVanityURL(hiveID string) {
 		return // another path minted one while we were in kubectl — keep it
 	}
 	h.VanityURL = "https://" + vanityHost
+	// Stamp the cooldown too: a just-minted host needs no heartbeat-kicked
+	// reconcile (and its per-beat kubectl read) for the cooldown window.
+	// Claim-time mints are deliberately NOT charged against the fleet mint
+	// budget — genuine provisioning keeps the reserved remainder of the quota.
+	h.LastVanityRepairAt = time.Now()
+	h.LastVanityRepairFailureAt = time.Time{}
+	h.LastVanityRepairFailure = ""
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("claim vanity mint: failed to save hive", "hive", hiveID, "error", err)
 	}
@@ -1813,9 +1941,14 @@ func removeHiveRecord(id string, logger *slog.Logger) {
 }
 
 func listSaaSHives() []SaaSHive {
+	hives, _ := listSaaSHivesWithReadStatus()
+	return hives
+}
+
+func listSaaSHivesWithReadStatus() ([]SaaSHive, bool) {
 	entries, err := os.ReadDir(saasHivesDir)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var hives []SaaSHive
 	for _, e := range entries {
@@ -1827,7 +1960,7 @@ func listSaaSHives() []SaaSHive {
 			hives = append(hives, *h)
 		}
 	}
-	return hives
+	return hives, true
 }
 
 func countUserHives(username string) int {
@@ -2338,6 +2471,13 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"IngressClass": cluster.IngressClass,
 		"Domain":       cluster.Domain,
 		"InCluster":    cluster.InCluster,
+		// #5977: when the cluster's controller already serves a wildcard covering
+		// this host, the spoke's Ingresses omit their tls: block and issuer
+		// annotation so the wildcard is what serves them — instead of minting a
+		// per-hive certificate against a 50/week ACME cap. Decided per HOST, not
+		// per cluster: a host outside the wildcard's single-label scope keeps its
+		// own certificate on a cluster where every other host does not.
+		"UseWildcardTLS": cluster.servesHostFromWildcard(dashboardHost),
 	}
 
 	// For NFS storage: auto-create OCI File System + NFS export.
@@ -2401,6 +2541,17 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		return fmt.Errorf("close manifest: %w", err)
 	}
 
+	// Record whether the hosted namespace already exists BEFORE the apply gets
+	// a chance to create it. The manifest's first object is the Namespace —
+	// every other object in the file is namespaced into it — so an apply that
+	// fails partway leaves that namespace behind with nothing owning it, which
+	// is one of the two ways a cluster accumulates leaked hive-hosted-*
+	// namespaces (#5768). This snapshot is what lets the rollback below tell
+	// "we just created this" from "this was already here", and it is only
+	// meaningful taken BEFORE the apply.
+	hostedNS := hostedNamespaceForHive(h)
+	nsBeforeApply := hostedNamespaceExistedBeforeApply(cluster, hostedNS)
+
 	cmd := kubectlForCluster(cluster, "apply", "-f", manifestPath)
 	out, err := cmd.CombinedOutput()
 
@@ -2411,6 +2562,12 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 
 	if err != nil {
 		logger.Warn("kubectl apply failed", "hive", h.ID, "cluster", cluster.ID, "output", string(out), "error", err)
+		// Tear down the namespace this failed apply created — and only that
+		// case. See provision_namespace_rollback.go for why a pre-existing or
+		// undeterminable namespace is deliberately left alone. Best-effort: the
+		// error returned to the caller stays the ORIGINAL provisioning failure,
+		// never a cleanup failure layered over it.
+		rollbackProvisionNamespace(cluster, hostedNS, nsBeforeApply, logger)
 		return fmt.Errorf("provisioning failed — check hub logs for details")
 	}
 
@@ -3231,7 +3388,9 @@ metadata:
   name: hive
   namespace: {{.Namespace}}
   annotations:
+{{- if not .UseWildcardTLS}}
     cert-manager.io/cluster-issuer: {{.CertIssuer}}
+{{- end}}
     nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
     nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
     nginx.ingress.kubernetes.io/default-backend: hive-error-pages
@@ -3250,18 +3409,22 @@ spec:
             name: hive
             port:
               number: {{.DashboardPort}}
+{{- if not .UseWildcardTLS}}
   tls:
   - hosts:
     - {{.DashboardHost}}
     secretName: hive-tls
+{{- end}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: hive-api
   namespace: {{.Namespace}}
+{{- if not .UseWildcardTLS}}
   annotations:
     cert-manager.io/cluster-issuer: {{.CertIssuer}}
+{{- end}}
 spec:
   ingressClassName: {{.IngressClass}}
   rules:
@@ -3275,10 +3438,12 @@ spec:
             name: hive
             port:
               number: {{.DashboardPort}}
+{{- if not .UseWildcardTLS}}
   tls:
   - hosts:
     - {{.DashboardHost}}
     secretName: hive-tls
+{{- end}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -3286,7 +3451,9 @@ metadata:
   name: hive-contribute
   namespace: {{.Namespace}}
   annotations:
+{{- if not .UseWildcardTLS}}
     cert-manager.io/cluster-issuer: {{.CertIssuer}}
+{{- end}}
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
@@ -3302,10 +3469,12 @@ spec:
             name: hive
             port:
               number: {{.DashboardPort}}
+{{- if not .UseWildcardTLS}}
   tls:
   - hosts:
     - {{.DashboardHost}}
     secretName: hive-tls
+{{- end}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -3313,7 +3482,9 @@ metadata:
   name: hive-terminal
   namespace: {{.Namespace}}
   annotations:
+{{- if not .UseWildcardTLS}}
     cert-manager.io/cluster-issuer: {{.CertIssuer}}
+{{- end}}
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     # SECURITY (CWE-862, finding C3): the terminal opens a live shell inside a
@@ -3339,10 +3510,12 @@ spec:
             name: hive
             port:
               number: {{.TerminalPort}}
+{{- if not .UseWildcardTLS}}
   tls:
   - hosts:
     - {{.DashboardHost}}
     secretName: hive-tls
+{{- end}}
 {{- end}}
 {{- if .IsOpenShiftRoute}}
 ---

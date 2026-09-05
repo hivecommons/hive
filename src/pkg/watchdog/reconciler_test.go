@@ -797,6 +797,45 @@ func TestProducingRequiresQueuedWork(t *testing.T) {
 	})
 }
 
+func TestReadinessProviderErrorSurfacesBlockedInferenceLine(t *testing.T) {
+	clock := newFakeClock()
+	fleet := newFakeFleet("a1")
+	fleet.setQueued(3)
+	errLine := `API Error: 502 {"type":"error","error":{"type":"api_error","message":"inference backend unreachable"}}`
+	fleet.setObs("a1", Observation{
+		Backend:            "vllm",
+		SessionExists:      true,
+		Pane:               "❯",
+		HasCLIMarker:       true,
+		ProviderErrorClass: "api_error",
+		ProviderErrorLine:  errLine,
+	})
+	fleet.mu.Lock()
+	fleet.production["a1"] = clock.Now().Add(-time.Hour)
+	fleet.mu.Unlock()
+	alerter := newFakeAlerter()
+	r := newTestReconciler(t, Settings{Mode: ModeObserve, ProbeInterval: time.Millisecond, NoProductionFor: time.Minute}, fleet, alerter, clock)
+
+	r.Tick(context.Background())
+
+	cond, ok := FindCondition(fleet.conds["a1"], ConditionProducing)
+	if !ok {
+		t.Fatal("Producing condition missing")
+	}
+	if cond.Status != ConditionFalse || cond.Reason != "ProviderInferenceError" {
+		t.Fatalf("Producing condition = %+v, want ProviderInferenceError false", cond)
+	}
+	if !strings.Contains(cond.Message, "blocked: inference (api_error)") || !strings.Contains(cond.Message, errLine) {
+		t.Fatalf("condition message %q does not surface provider error", cond.Message)
+	}
+	alerter.mu.Lock()
+	alert := alerter.alerts[producingAlertID("a1")]
+	alerter.mu.Unlock()
+	if !strings.Contains(alert, "alive but not producing") || !strings.Contains(alert, errLine) {
+		t.Fatalf("alert %q does not surface provider error", alert)
+	}
+}
+
 // TestReconcileDoesNotSelfDeadlock is the regression guard for the observe-mode
 // self-deadlock: planRestartLocked runs with r.mu held, and a helper inside it
 // reached back for a locked settings snapshot, so the goroutine blocked forever

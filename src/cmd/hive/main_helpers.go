@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2112,12 +2113,32 @@ func writeUpgradeMarker(path string, m upgradeMarker, logger *slog.Logger) {
 // recordUpgradeError annotates the existing marker with the cause of the failed
 // attempt so the NEXT boot can log why the previous one did not land — without
 // it the reason dies with the process and the failure is invisible.
+// upgradeFailureSummary renders what the hub shows an operator. An empty
+// LastError must never render as a dangling "attempts: " - a colon promising a
+// reason and delivering none is worse than saying the reason was not captured,
+// because it reads as truncation and sends the reader looking for the rest.
+func upgradeFailureSummary(attempts int, lastError string) string {
+	if strings.TrimSpace(lastError) == "" {
+		return fmt.Sprintf("self-upgrade failed after %d attempts (no error recorded; the image never changed - check that the deployment tracks a tag carrying the target SHA)", attempts)
+	}
+	return fmt.Sprintf("self-upgrade failed after %d attempts: %s", attempts, lastError)
+}
+
 func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if upgradeErr == nil {
 		return
 	}
-	m := parseUpgradeMarker(data)
+	var m upgradeMarker
+	data, err := os.ReadFile(path)
+	switch {
+	case os.IsNotExist(err):
+		return
+	case err != nil:
+		logger.Warn("upgrade marker unreadable; recording the error against a fresh marker",
+			"path", path, "error", err)
+	default:
+		m = parseUpgradeMarker(data)
+	}
 	m.LastError = upgradeErr.Error()
 	writeUpgradeMarker(path, m, logger)
 }
@@ -4193,6 +4214,7 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 				Color: parseColorInt(agent.Color),
 			}
 		}
+		sort.Slice(lanes, func(i, j int) bool { return lanes[i].Name < lanes[j].Name })
 		for _, alias := range agent.Aliases {
 			discordAliases[alias] = name
 		}

@@ -3242,7 +3242,7 @@
   <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
+    <h2 class="section-header-toggle" data-action="toggleSection" data-arg0="repos-section"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <span id="repos-needs-human" class="repos-needs-human-count" title="Open PRs labeled needs-human: automated fix attempts exhausted — operator review required"></span> <button class="btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan the monitored repositories for issue/PR changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)" style="font-size:0.62em;vertical-align:middle;margin-left:8px;font-weight:400">🔄 Rescan</button> <button class="config-gear" data-action="gh1" data-stop="1" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
@@ -3261,21 +3261,31 @@
   </div>
 
   <div id="acmm-eval-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-eval-section"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level" style="vertical-align:middle;margin-left:8px;font-weight:400">Change level ▾</button></h2>
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="acmm-eval-section"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="btn" data-action="openACMMDialog" data-stop="1" title="Click to change maturity level" style="vertical-align:middle;margin-left:8px;font-weight:400">Change level ▾</button> <button class="btn" id="acmm-refresh-btn" data-action="acmmForceRefresh" data-stop="1" title="Re-run the criteria evaluation now instead of waiting out the hourly cache (server-debounced)" style="vertical-align:middle;margin-left:4px;font-weight:400">🔄 Re-evaluate</button></h2>
     <div class="section-body">
       <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
         <div class="kb-stat-grid" id="acmm-eval-stats">
-          <div class="kb-stat" data-action="acmmShowCodebaseDialog" style="cursor:pointer"><div class="val" id="acmm-codebase-level">--</div><div class="lbl">Codebase Readiness</div></div>
-          <div class="kb-stat" data-action="acmmShowOpsDialog" style="cursor:pointer"><div class="val" id="acmm-ops-level">--</div><div class="lbl">Operational Autonomy <span style="font-weight:400;color:var(--muted)">(hive)</span></div></div>
-          <div class="kb-stat" data-action="acmmShowOverallDialog" style="cursor:pointer"><div class="val" id="acmm-overall-level">--</div><div class="lbl">Overall ACMM</div></div>
-          <div class="kb-stat" data-action="acmmShowAllCriteriaDialog" style="cursor:pointer"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl">Criteria Passed</div></div>
+          <div class="kb-stat" data-action="acmmShowCodebaseDialog" style="cursor:pointer"><div class="val" id="acmm-codebase-level">--</div><div class="lbl" id="acmm-lbl-codebase">Codebase Readiness</div></div>
+          <div class="kb-stat" data-action="acmmShowOpsDialog" style="cursor:pointer"><div class="val" id="acmm-ops-level">--</div><div class="lbl" id="acmm-lbl-ops">Operational Autonomy</div></div>
+          <div class="kb-stat" data-action="acmmShowOverallDialog" style="cursor:pointer"><div class="val" id="acmm-overall-level">--</div><div class="lbl" id="acmm-lbl-overall">Overall ACMM</div></div>
+          <div class="kb-stat" data-action="acmmShowAllCriteriaDialog" style="cursor:pointer"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl" id="acmm-lbl-criteria">Criteria Passed</div></div>
         </div>
+        <!-- #5822: the selector carried BOTH display:none and display:flex in one
+             style attribute. The later declaration wins, so it rendered visible —
+             holding only the "All (aggregate)" chip — until the first evaluation
+             response let acmmRenderCard hide it. Only display:none belongs here;
+             the flex layout arrives with the display:flex the renderer sets when
+             there is actually something to select. -->
         <div id="acmm-repo-selector" style="display:none;margin-top:8px;font-size:0.75rem;align-items:center;gap:6px;flex-wrap:wrap">
           <span class="muted">Repo:</span>
           <button data-action="gh2" id="acmm-repo-btn-all" class="repo-chip-btn" style="font-weight:600">All (aggregate)</button>
         </div>
-        <div id="acmm-eval-scope" style="display:none;margin-top:8px;font-size:0.72rem;color:var(--muted)"></div>
-        <div id="acmm-repo-summary" style="display:none;margin-top:10px;font-size:0.75rem"></div>
+        <!-- #5822: the aggregate is a UNION across repos, and the panel used to
+             say so nowhere — only the Codebase Readiness dialog mentioned it, in
+             passing. An operator reading L3 reasonably assumes every watched repo
+             is at L3. -->
+        <div id="acmm-scope-note" style="display:none;margin-top:8px;font-size:0.7rem;color:var(--muted)"></div>
+        <div id="acmm-repo-table" style="display:none;margin-top:10px"></div>
         <div id="acmm-level-bars" style="margin-top:12px"></div>
         <div id="acmm-eval-meta" style="margin-top:10px;font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between">
           <span id="acmm-eval-source"></span>
@@ -7741,6 +7751,48 @@
           </div>${pillsHtml}
         </div>`;
       }).join(''));
+    }
+
+    // Operator-initiated repository rescan. The REPOSITORIES cards repaint
+    // from the governor's eval cycle, whose cadence stretches to minutes on a
+    // quiet hive — so an operator who has just closed an issue or opened a PR
+    // is stuck looking at stale pills with no way to ask for a fresh read.
+    // This button asks for one.
+    //
+    // Modelled on the ACMM Re-evaluate button next door: the server enforces
+    // its own debounce, so holding this down cannot spend the GitHub API
+    // budget, and a debounced reply means "already this fresh" — it is
+    // reported as such, never as a failure. The scan is read-only: it
+    // re-enumerates issues and PRs and does NOT kick any agent.
+    async function reposForceRescan() {
+      const btn = document.getElementById('repos-rescan-btn');
+      if (btn && btn.disabled) return;
+      const prev = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = '\u23f3 Scanning...'; }
+      try {
+        const r = await fetch('/api/repos/rescan', { method: 'POST', headers: _inceptionAuthHeaders() });
+        let d = {};
+        try { d = await r.json(); } catch { d = {}; }
+        if (!r.ok) {
+          showToast('Repository rescan failed: ' + (d.error || ('HTTP ' + r.status)), 'error');
+          return;
+        }
+        // The server republishes the status snapshot as part of the scan, so
+        // re-fetch it here rather than waiting for the next poll to repaint.
+        await refreshStatus();
+        if (d.status === 'debounced') {
+          showToast('Repositories are already up to date - next scan in ' + (d.retry_after_s || 0) + 's', 'info');
+        } else if (d.status === 'in-progress') {
+          showToast('A repository scan is already running', 'info');
+        } else {
+          const n = d.repos || 0;
+          showToast('Scanned ' + n + ' repositor' + (n === 1 ? 'y' : 'ies') + ' - ' + (d.issues || 0) + ' issues, ' + (d.prs || 0) + ' PRs', 'success');
+        }
+      } catch (e) {
+        showToast('Repository rescan failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+      }
     }
 
     // Contributors-style empty-state card, reused by sections that would
@@ -15849,6 +15901,27 @@ function burnAreaChart() {
       const targetRepo = _acmmSelectedRepo || (repos.length === 1 ? repos[0].repo : null);
 
       let created = 0, failed = 0, skipped = 0;
+      // #5873: every failure used to collapse into a bare `failed++` while the
+      // server's response body — which carries the actual GitHub error, e.g.
+      // "410 Issues has been disabled in this repository" — was discarded
+      // unread. The summary then appended fixed template text about the acmm +
+      // ai-fix-requested labels, which reads as a diagnosis and sent operators
+      // chasing labels that were never the problem. Collect the real reason
+      // per failing repo:criterion instead, deduped, exactly as the
+      // single-issue path already shows it.
+      const failures = new Map(); // reason -> [repo:criterion, ...]
+      const recordFailure = async (where, r) => {
+        failed++;
+        let reason;
+        if (r instanceof Response) {
+          try { reason = (await r.text()).trim(); } catch { /* body unreadable */ }
+          reason = reason || ('HTTP ' + r.status + ' ' + r.statusText);
+        } else {
+          reason = 'network error: ' + (r && r.message ? r.message : r);
+        }
+        if (!failures.has(reason)) failures.set(reason, []);
+        failures.get(reason).push(where);
+      };
       acmmShowDialog('Creating Issues...', '<p id="acmm-batch-progress" class="text-base">0/' + criteria.length + ' created...</p>');
 
       for (const c of criteria) {
@@ -15863,8 +15936,8 @@ function burnAreaChart() {
             if (r.ok) {
               acmmRememberIssue(issueKey, await r.json());
               created++;
-            } else { failed++; }
-          } catch { failed++; }
+            } else { await recordFailure(issueKey, r); }
+          } catch (e) { await recordFailure(targetRepo + ':' + c.id, e); }
         } else {
           for (const rr of repos) {
             const issueKey = rr.repo + ':' + c.id;
@@ -15879,16 +15952,25 @@ function burnAreaChart() {
                 if (r.ok) {
                   acmmRememberIssue(issueKey, await r.json());
                   created++;
-                } else { failed++; }
-              } catch { failed++; }
+                } else { await recordFailure(issueKey, r); }
+              } catch (e) { await recordFailure(issueKey, e); }
             }
           }
         }
         const prog = document.getElementById('acmm-batch-progress');
         if (prog) prog.textContent = created + '/' + criteria.length + ' created' + (failed > 0 ? ' (' + failed + ' failed)' : '') + (skipped > 0 ? ' (' + skipped + ' skipped)' : '') + '...';
       }
+      // The label note is a description of what a SUCCESSFUL create did, not a
+      // diagnosis — show it only when something was actually created (#5873).
       const labelNote = acmmEffectiveTracker() === 'linear' ? ' in Linear.' : ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.';
-      acmmShowDialog('Issues Created', '<p class="text-base">' + created + ' issue(s) created' + (failed > 0 ? ', ' + failed + ' failed' : '') + (skipped > 0 ? ', ' + skipped + ' already existed' : '') + labelNote + '</p>');
+      let html = '<p class="text-base">' + created + ' issue(s) created' + (skipped > 0 ? ', ' + skipped + ' already existed' : '') + (created > 0 ? labelNote : '.') + '</p>';
+      if (failed > 0) {
+        html += '<p class="text-base" style="margin-top:8px">' + failed + ' failed:</p>';
+        for (const [reason, wheres] of failures) {
+          html += '<p class="error-note" style="margin-top:6px">' + escapeHtml(reason) + '<br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(wheres.join(', ')) + '</span></p>';
+        }
+      }
+      acmmShowDialog(failed > 0 ? 'Issues Created (' + failed + ' failed)' : 'Issues Created', html);
     }
 
     function acmmShowLevelDialog(level, repoName) {
@@ -16128,43 +16210,188 @@ function burnAreaChart() {
       acmmRenderCard();
     }
 
+    // #5822. Everything below answers one question the panel could not answer:
+    // WHICH repo is lagging, and by how much.
+    //
+    // The aggregate the card headlines is a UNION — evaluateAllRepos marks a
+    // criterion passed if ANY repo has it (api_acmm_eval.go). That is a
+    // defensible number for "what has this hive demonstrated anywhere" and the
+    // wrong one for "is my fleet ready": a repo meeting none of the 43 criteria
+    // does not move the headline at all, so it is invisible. The per-repo data
+    // to say otherwise was already in the payload; nothing here fetches
+    // anything new.
+
+    // acmmFirstFailingLevel returns the lowest level a repo has not passed —
+    // the one it is BLOCKED at. Levels must pass in order, so the first failure
+    // is the whole story; reporting the count of failures instead would rank a
+    // repo stuck at L2 below one that merely has gaps at L5.
+    function acmmFirstFailingLevel(rr) {
+      for (const lvl of (rr.levels || [])) {
+        if (!lvl.passed) return lvl;
+      }
+      return null;
+    }
+
+    // acmmRepoGapRows ranks repos worst-first.
+    //
+    // The primary key is the GAP (unmet criteria), not the percentage: with a
+    // fixed criteria set the two agree, and the raw count is what an operator
+    // acts on ("14 things to fix" is a work estimate; "67%" is not). Ties break
+    // on the lower level first, then on name — a stable order matters because
+    // this table is read repeatedly and a shuffling list reads as churn that is
+    // not there.
+    function acmmRepoGapRows(repos) {
+      const rows = (repos || []).map(rr => {
+        const total = rr.criteria_total || 0;
+        const passed = rr.criteria_passed || 0;
+        return {
+          repo: rr.repo,
+          level: rr.codebase_level || 0,
+          passed: passed,
+          total: total,
+          gap: Math.max(0, total - passed),
+          pct: total > 0 ? Math.round(passed / total * 100) : 0,
+          blocked: acmmFirstFailingLevel(rr)
+        };
+      });
+      rows.sort((a, b) => (b.gap - a.gap) || (a.level - b.level) || a.repo.localeCompare(b.repo));
+      return rows;
+    }
+
+    // acmmRenderRepoTable draws the ranking. It renders only for a multi-repo
+    // hive: with one repo the table would restate the tiles directly above it.
+    function acmmRenderRepoTable(repos) {
+      const el = document.getElementById('acmm-repo-table');
+      if (!el) return;
+      if (!repos || repos.length < 2) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+        return;
+      }
+      const rows = acmmRepoGapRows(repos);
+      // Only call something "weakest" when the repos actually differ. On a
+      // fleet where every repo is level, singling one out would invent a
+      // problem — the same reason the union number needed qualifying.
+      const spread = rows.length > 1 && rows[0].gap > rows[rows.length - 1].gap;
+
+      let html = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:4px">Per-repo readiness — weakest first</div>' +
+        '<div style="border:1px solid var(--border);border-radius:6px;overflow:hidden">';
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const selected = _acmmSelectedRepo === r.repo;
+        const color = r.pct >= 70 ? 'var(--green)' : (r.pct > 40 ? 'var(--yellow)' : 'var(--red)');
+        const blockedText = r.blocked
+          ? 'blocked at L' + r.blocked.level + ' ' + escapeHtml(r.blocked.name)
+          : 'all levels passed';
+        // Selection is carried by the left accent and the weight, NOT by the
+        // background: the hover handlers (gh25/gh26) own the background, and a
+        // selected row would lose its highlight the moment the pointer left it.
+        html += '<div data-action="acmmSelectRepo" data-arg0="' + escapeHtml(r.repo) + '" data-arg-types="s" ' +
+          'style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:5px 8px;font-size:0.75rem;' +
+          'border-left:3px solid ' + (selected ? 'var(--accent)' : 'transparent') + ';' +
+          (i > 0 ? 'border-top:1px solid var(--border);' : '') + '" ' +
+          'data-mouseover-action="gh25" data-mouseout-action="gh26">' +
+          '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:' + (selected ? '600' : '400') + '">' +
+          escapeHtml(r.repo) +
+          (spread && i === 0 ? '<span title="Largest gap of any watched repo" style="margin-left:6px;padding:1px 6px;border-radius:999px;font-size:0.62rem;font-weight:600;background:color-mix(in srgb, var(--red) 16%, transparent);color:var(--red)">weakest</span>' : '') +
+          '</span>' +
+          '<span style="width:34px;text-align:right;font-weight:600">L' + r.level + '</span>' +
+          '<span style="width:74px;text-align:right;color:' + color + ';font-weight:600">' + r.passed + '/' + r.total + '</span>' +
+          '<span style="flex:0 0 auto;min-width:150px;text-align:right;color:var(--muted)">' + blockedText + '</span>' +
+          '</div>';
+      }
+      html += '</div>';
+      el.innerHTML = html;
+      el.style.display = 'block';
+    }
+
     function acmmRenderCard() {
       const d = _acmmEvalData;
       if (!d) return;
-      const active = acmmGetActiveData();
+
+      // #5822: the active view is resolved HERE, before the tiles are written.
+      // It used to be computed further down and consumed only by the level
+      // bars, so clicking a repo chip moved the bars while the four tiles above
+      // them kept reporting hive-wide numbers — two halves of one card
+      // disagreeing, with nothing to say which of them followed the click.
+      const active = acmmGetActiveData() || d;
+      const repos = d.repo_results || [];
+      const multiRepo = repos.length > 1;
+      const scoped = !!_acmmSelectedRepo;
 
       const fmtLevel = (lvl) => {
         const name = ACMM_LEVEL_NAMES[lvl] || ('L'+lvl);
         return '<span class="stat-num">L' + lvl + '</span><br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(name) + '</span>';
       };
-      const activeCodebaseLevel = Number.isFinite(active.codebase_level) ? active.codebase_level : d.codebase_level;
-      const activeCriteriaPassed = Number.isFinite(active.criteria_passed) ? active.criteria_passed : d.criteria_passed;
-      const activeCriteriaTotal = Number.isFinite(active.criteria_total) ? active.criteria_total : d.criteria_total;
-      const activeOverallLevel = Math.min(activeCodebaseLevel, d.operational_level);
+      // A RepoEvaluation and the aggregate carry the same field names, but a
+      // repo missing a field must fall back to the aggregate rather than render
+      // "undefined" or silently read as zero.
+      const pick = (v, fallback) => (typeof v === 'number' ? v : fallback);
+      const codebaseLevel = pick(active.codebase_level, d.codebase_level);
 
-      setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(activeCodebaseLevel));
+      // Overall is min(codebase, operational). The server computes it against
+      // the UNION codebase level, so with a repo selected it must be recomputed
+      // — otherwise the Overall tile silently keeps the fleet-wide reading
+      // while the tile beside it shows the repo's. Unscoped, the server's value
+      // stands, so the panel never disagrees with the payload it was given.
+      const overallLevel = scoped ? Math.min(codebaseLevel, d.operational_level) : d.overall_level;
+
+      setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(codebaseLevel));
       setIfChanged(document.getElementById('acmm-ops-level'), fmtLevel(d.operational_level));
-      setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(activeOverallLevel));
+      setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(overallLevel));
       setIfChanged(document.getElementById('acmm-criteria-ratio'),
-        '<span class="stat-num">' + activeCriteriaPassed + '/' + activeCriteriaTotal + '</span>');
+        '<span class="stat-num">' + pick(active.criteria_passed, d.criteria_passed) + '/' + pick(active.criteria_total, d.criteria_total) + '</span>');
+
+      // Scope tags. Operational Autonomy is genuinely hive-wide — it measures
+      // the hive's own operating behaviour, not a repository — so it does NOT
+      // follow the selector. That makes the card's scope mixed, which is fine
+      // as long as it is stated: an unlabelled tile that ignores the click is
+      // indistinguishable from one that failed to follow it.
+      const scopeTag = (txt, title) => '<span title="' + escapeHtml(title) + '" style="display:inline-block;margin-left:4px;padding:0 5px;border-radius:999px;font-size:0.6rem;font-weight:600;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">' + escapeHtml(txt) + '</span>';
+      const repoTag = scoped
+        ? scopeTag(_acmmSelectedRepo, 'Showing only ' + _acmmSelectedRepo)
+        : (multiRepo ? scopeTag('all repos', 'Union across all ' + repos.length + ' watched repos: a criterion counts as passed if ANY repo has it') : '');
+      const setLbl = (id, text, tag) => {
+        const el = document.getElementById(id);
+        if (el) setIfChanged(el, escapeHtml(text) + (tag || ''));
+      };
+      setLbl('acmm-lbl-codebase', 'Codebase Readiness', repoTag);
+      setLbl('acmm-lbl-criteria', 'Criteria Passed', repoTag);
+      setLbl('acmm-lbl-overall', 'Overall ACMM', repoTag);
+      setLbl('acmm-lbl-ops', 'Operational Autonomy',
+        scoped ? scopeTag('hive-wide', 'Operational autonomy measures the hive, not a repository — it does not change with the repo selection') : '');
+
+      // Say what the aggregate IS, in the panel and not only in a dialog.
+      const noteEl = document.getElementById('acmm-scope-note');
+      if (noteEl) {
+        if (multiRepo && !scoped) {
+          setIfChanged(noteEl, 'Aggregate across ' + repos.length + ' repos: a criterion counts as passed if <em>any</em> repo has it, so a repo meeting none of them does not lower these numbers. Pick a repo above, or read the table below.');
+          noteEl.style.display = 'block';
+        } else {
+          noteEl.style.display = 'none';
+        }
+      }
 
       // Repo selector
       const selectorEl = document.getElementById('acmm-repo-selector');
-      const repos = d.repo_results || [];
-      const hasMultiRepo = repos.length > 1;
-      if (selectorEl && hasMultiRepo) {
+      if (selectorEl && multiRepo) {
         selectorEl.style.display = 'flex';
         const allBtn = document.getElementById('acmm-repo-btn-all');
         if (allBtn) allBtn.style.fontWeight = _acmmSelectedRepo ? '400' : '600';
         const existing = selectorEl.querySelectorAll('.acmm-repo-btn-repo');
         existing.forEach(b => b.remove());
-        for (const rr of repos) {
-          const btn = document.createElement('button');
-          btn.className = 'acmm-repo-btn-repo repo-chip-btn';
-          btn.setAttribute('data-acmm-repo', rr.repo);
-          btn.onclick = () => acmmSelectRepo(rr.repo);
-          const ratio = rr.criteria_total ? ' ' + rr.criteria_passed + '/' + rr.criteria_total : '';
-          btn.textContent = rr.repo + ' (L' + rr.codebase_level + ratio + ')';
+        for (const rr of d.repo_results) {
+          let btn = selectorEl.querySelector('[data-acmm-repo="' + rr.repo + '"]');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.className = 'acmm-repo-btn-repo repo-chip-btn';
+            btn.setAttribute('data-acmm-repo', rr.repo);
+            btn.onclick = () => acmmSelectRepo(rr.repo);
+            selectorEl.appendChild(btn);
+          }
+          // The chip carries the ratio as well as the level (#5822): "lacking,
+          // and by how much" was previously N clicks away for N repos.
+          btn.textContent = rr.repo + ' (L' + rr.codebase_level + ' · ' + rr.criteria_passed + '/' + rr.criteria_total + ')';
           btn.style.fontWeight = _acmmSelectedRepo === rr.repo ? '600' : '400';
           selectorEl.appendChild(btn);
         }
@@ -16172,59 +16399,9 @@ function burnAreaChart() {
         selectorEl.style.display = 'none';
       }
 
-      const scopeEl = document.getElementById('acmm-eval-scope');
-      if (scopeEl) {
-        if (_acmmSelectedRepo) {
-          scopeEl.style.display = 'block';
-          scopeEl.textContent = 'Showing codebase, overall, criteria, and bars for ' + _acmmSelectedRepo + '. Operational autonomy is hive-wide.';
-        } else if (hasMultiRepo) {
-          scopeEl.style.display = 'block';
-          scopeEl.textContent = 'Showing all repos as a union aggregate: a criterion passes if any watched repo has it. Operational autonomy is hive-wide.';
-        } else {
-          scopeEl.style.display = 'none';
-        }
-      }
+      acmmRenderRepoTable(repos);
 
-      const summaryEl = document.getElementById('acmm-repo-summary');
-      if (summaryEl) {
-        if (hasMultiRepo) {
-          const sortedRepos = repos.slice().sort((a, b) => {
-            const aMissing = (a.criteria_total || 0) - (a.criteria_passed || 0);
-            const bMissing = (b.criteria_total || 0) - (b.criteria_passed || 0);
-            if (a.codebase_level !== b.codebase_level) return a.codebase_level - b.codebase_level;
-            if (aMissing !== bMissing) return bMissing - aMissing;
-            return String(a.repo).localeCompare(String(b.repo));
-          });
-          const blockedAt = (rr) => {
-            if (Number.isFinite(rr.blocked_at_level)) return rr.blocked_at_level;
-            const fail = (rr.levels || []).find(lvl => !lvl.passed);
-            return fail ? fail.level : -1;
-          };
-          const blockedLabel = (rr) => {
-            const level = blockedAt(rr);
-            return level >= 0 ? 'L' + level : 'none';
-          };
-          const weakest = sortedRepos[0];
-          let html = '';
-          if (weakest) {
-            html += '<div style="margin-bottom:6px;color:var(--muted)">Lagging repo: <strong style="color:var(--text)">' + escapeHtml(weakest.repo) + '</strong> — L' + weakest.codebase_level + ', ' + weakest.criteria_passed + '/' + weakest.criteria_total + ', blocked at ' + blockedLabel(weakest) + '.</div>';
-          }
-          html += '<div style="border:1px solid var(--border);border-radius:6px;overflow:hidden">' +
-            '<div style="display:grid;grid-template-columns:minmax(120px,1fr) 58px 78px 78px;gap:8px;padding:5px 8px;background:var(--bg);color:var(--muted);font-weight:600">' +
-            '<span>Repo</span><span>Level</span><span>Passed</span><span>Blocked</span></div>';
-          for (const rr of sortedRepos) {
-            html += '<div data-action="acmmSelectRepo" data-arg0="' + escapeHtml(rr.repo) + '" data-arg-types="s" style="display:grid;grid-template-columns:minmax(120px,1fr) 58px 78px 78px;gap:8px;padding:5px 8px;border-top:1px solid var(--border);cursor:pointer;background:' + (_acmmSelectedRepo === rr.repo ? 'color-mix(in srgb, var(--blue) 10%, transparent)' : 'transparent') + '">' +
-              '<span>' + escapeHtml(rr.repo) + '</span><span>L' + rr.codebase_level + '</span><span>' + rr.criteria_passed + '/' + rr.criteria_total + '</span><span>' + blockedLabel(rr) + '</span></div>';
-          }
-          html += '</div>';
-          summaryEl.innerHTML = html;
-          summaryEl.style.display = 'block';
-        } else {
-          summaryEl.style.display = 'none';
-        }
-      }
-
-      // Per-level bars from active data
+      // Per-level bars from the same active view the tiles above now use.
       const levels = active.levels || active.Levels || d.levels || [];
       const barsEl = document.getElementById('acmm-level-bars');
       if (barsEl) {
@@ -16243,7 +16420,13 @@ function burnAreaChart() {
 
       const tsEl = document.getElementById('acmm-eval-timestamp');
       if (tsEl) {
-        let tsText = d.last_evaluated_at ? 'Evaluated: ' + new Date(d.last_evaluated_at).toLocaleString() : '';
+        // #5877: relative age, so it is legible that the numbers above may be
+        // an hour-old cache. Absolute timestamp stays in the tooltip.
+        let tsText = '';
+        if (d.last_evaluated_at) {
+          tsText = 'Evaluated ' + acmmRelativeAge(d.last_evaluated_at);
+          tsEl.title = new Date(d.last_evaluated_at).toLocaleString();
+        }
         if (d.repo_results && d.repo_results.length > 1) tsText += ' | ' + d.repo_results.length + ' repos';
         tsEl.textContent = tsText;
       }
@@ -16259,9 +16442,35 @@ function burnAreaChart() {
       }
     }
 
-    async function fetchACMMEvaluation() {
+    function acmmRelativeAge(iso) {
+      const ms = Date.now() - new Date(iso).getTime();
+      if (!Number.isFinite(ms) || ms < 0) return 'just now';
+      const mins = Math.floor(ms / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'm ago';
+      return Math.floor(hrs / 24) + 'd ago';
+    }
+
+    // #5877: operator-initiated re-evaluation. The server enforces its own
+    // debounce (a refresh within a minute of the last evaluation returns the
+    // cached result), so this button cannot spend the API budget.
+    async function acmmForceRefresh() {
+      const btn = document.getElementById('acmm-refresh-btn');
+      if (btn && btn.disabled) return;
+      const prev = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-evaluating...'; }
       try {
-        const r = await fetch('/api/acmm/evaluation');
+        await fetchACMMEvaluation(true);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+      }
+    }
+
+    async function fetchACMMEvaluation(force) {
+      try {
+        const r = await fetch(force ? '/api/acmm/evaluation?refresh=1' : '/api/acmm/evaluation');
         if (!r.ok) return;
         _acmmEvalData = await r.json();
         acmmRenderCard();
@@ -17129,7 +17338,12 @@ function burnAreaChart() {
       // path/ref from whichever URL it receives, so keep the raw form here and
       // let the server round-trip it back in _importBody.
       var keepLinked = !!(document.getElementById('import-keep-linked') || {}).checked;
+      // Org migration: rewrite blob->raw for BOTH the new (hivecommons) org and
+      // the legacy (kubestellar) one, so pre-transfer links pasted from old
+      // docs/bookmarks still import; raw.githubusercontent follows the repo
+      // transfer for the old spelling.
       url = url.replace('github.com/hivecommons/hive/blob/', 'raw.githubusercontent.com/hivecommons/hive/');
+      url = url.replace('github.com/kubestellar/hive/blob/', 'raw.githubusercontent.com/kubestellar/hive/');
       try {
         var resp = await fetch('/api/agents/import', {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({source:'url',url:url,preview:true,keepLinked:keepLinked})});
         var d = await resp.json();
@@ -17736,6 +17950,7 @@ function burnAreaChart() {
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
     // preset add-form. null when the tab was opened normally.
@@ -18173,6 +18388,8 @@ function burnAreaChart() {
         const keyLine = gw.hasKey
           ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''} · Using key: ${esc(gw.keyName || '(unnamed)')}`
           : 'no key';
+        const persistedProbe = _gatewayProbeResults[gw.name] || (gw.health ? { ok: false, error: gatewayHealthText(gw.health) } : null);
+        const testDisplay = persistedProbe ? 'block' : 'none';
         return `
         <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -18187,7 +18404,7 @@ function burnAreaChart() {
             <div>Endpoint: ${esc(gw.endpoint || '—')}</div>
             <div>Default model: ${esc(gw.default_model || '—')} · ${keyLine}</div>
           </div>
-          <div id="gateway-test-result-${esc(gw.name)}" style="display:none;font-size:0.74rem;margin-top:6px;white-space:pre-wrap"></div>
+          <div id="gateway-test-result-${esc(gw.name)}" style="display:${testDisplay};font-size:0.74rem;margin-top:6px;white-space:pre-wrap">${persistedProbe ? gatewayProbeHTML(persistedProbe) : ''}</div>
         </div>`;
       }).join('');
     }
@@ -18201,24 +18418,36 @@ function burnAreaChart() {
         });
         const data = await res.json().catch(() => ({}));
         const probe = data.probe || (res.ok ? null : { ok: false, error: data.error || ('HTTP ' + res.status) });
+        _gatewayProbeResults[name] = probe;
         showGatewayProbe(el, probe);
       } catch (e) {
-        showGatewayProbe(el, { ok: false, error: e.message });
+        _gatewayProbeResults[name] = { ok: false, error: e.message };
+        showGatewayProbe(el, _gatewayProbeResults[name]);
       }
+    }
+
+    function gatewayHealthText(health) {
+      if (!health) return 'unknown error';
+      if (health.error_class === 'auth' && health.http_status) return `gateway rejected the configured key (HTTP ${health.http_status})`;
+      if (health.error_class === 'dns' || health.error_class === 'connect') return `gateway unreachable (${health.error_class})`;
+      if (health.error_class === '5xx') return 'gateway returned 5xx';
+      if (health.error_class === 'budget') return 'gateway budget/rate limited (HTTP 429)';
+      return health.detail || 'gateway failing';
+    }
+
+    function gatewayProbeHTML(probe) {
+      if (probe && probe.ok) {
+        const n = probe.model_count || 0;
+        return `<span style="color:var(--green)">OK — ${n} model${n === 1 ? '' : 's'} available</span>`;
+      }
+      return `<span style="color:var(--red)">Connection failed: ${esc((probe && probe.error) || 'unknown error')}</span>`;
     }
 
     // showGatewayProbe formats a {ok, model_count} / {ok:false, error} probe.
     function showGatewayProbe(el, probe) {
       if (!el) return;
       el.style.display = 'block';
-      if (probe && probe.ok) {
-        const n = probe.model_count || 0;
-        el.style.color = 'var(--green)';
-        el.textContent = `OK — ${n} model${n === 1 ? '' : 's'} available`;
-      } else {
-        el.style.color = 'var(--red)';
-        el.textContent = 'Connection failed: ' + ((probe && probe.error) || 'unknown error');
-      }
+      el.innerHTML = gatewayProbeHTML(probe);
     }
 
     // refreshMethodModelsAfterGatewaySave re-runs live model discovery for the
@@ -18247,6 +18476,7 @@ function burnAreaChart() {
         if (cached && cached.fallback) {
           // Discovery still is not working (bad key/region/project): say so
           // rather than letting unverified aliases masquerade as discovered.
+          _gatewayProbeResults[method] = { ok: false, error: 'model discovery did not return a live list — check the key and try Test.' };
           showToast(`${method} gateway saved, but model discovery did not return a live list — check the key and try Test.`, 'error');
           continue;
         }
@@ -18554,7 +18784,10 @@ function burnAreaChart() {
           return;
         }
         // Surface the server's live save-time probe inline.
-        if (data.probe && resultEl) showGatewayProbe(resultEl, data.probe);
+        if (data.probe) {
+          _gatewayProbeResults[payload.name] = data.probe;
+          if (resultEl) showGatewayProbe(resultEl, data.probe);
+        }
         showToast('Gateway "' + payload.name + '" saved', 'success');
         closeGatewayForm();
         loadGateways();

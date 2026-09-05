@@ -1,0 +1,6 @@
+# HOLD: apply after ~2026-09-10 when LE quota has headroom (#5925)
+# JSON Patch for cert-manager Certificate hive-hub/hive-wildcard-tls.
+# Review the live dnsNames first and apply only if dibs.hivecommons.dev is absent.
+- op: add
+  path: /spec/dnsNames/-
+  value: dibs.hivecommons.dev

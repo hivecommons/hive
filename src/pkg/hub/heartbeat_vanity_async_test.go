@@ -119,6 +119,7 @@ func TestHeartbeatDeliversClaimWhileVanityRepairBlocked(t *testing.T) {
 func TestVanityRepairKickDedupesInFlightAttempts(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
+	t.Setenv(vanityRepairFailureBackoffEnv, "1ms")
 	s, entered, release := newBlockedVanityHub(t)
 
 	const id = "hosted-available-vllmd-15"

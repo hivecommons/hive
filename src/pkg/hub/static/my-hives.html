@@ -612,7 +612,7 @@ function advisoryActivityHTML(a) {
   var bucket = a.bucket || "unknown";
   var rel = a.lastActivityAt ? relTime(a.lastActivityAt) : "n/a";
   var label = bucket === "unknown" ? "advisories n/a" : "advisories " + bucket + " · " + rel;
-  return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory/issue activity: last issue or PR touched ' + esc(rel) + '">' +
+  return '<span class="advisory-activity ' + esc(bucket) + '" title="advisory digest freshness: last digest update ' + esc(rel) + '">' +
     '<span class="light"></span><span class="rel">' + esc(label) + '</span></span>';
 }
 function budgetHealthHTML(b) {

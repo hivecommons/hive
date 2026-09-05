@@ -3,6 +3,7 @@ package dashboard
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -543,6 +544,9 @@ func (s *Server) kickBrainstorm() {
 	}
 
 	go func() {
+		if s.kickBrainstormDoneFn != nil {
+			defer s.kickBrainstormDoneFn()
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("panic in kickBrainstorm — recovered", "panic", r)
@@ -555,13 +559,12 @@ func (s *Server) kickBrainstorm() {
 		// reset CLI context, then the inception prompt. No restart needed.
 		// This avoids the shell initialization race that causes the
 		// alternating responsive/unresponsive pattern.
-		const clearToKickDelay = 1 * time.Second // wait for /clear to take effect before sending kick
-		clearErr := s.deps.AgentMgr.SendKick("brainstorm", "/clear")
+		clearErr := s.sendBrainstormKick("brainstorm", "/clear")
 		if clearErr == nil {
-			time.Sleep(clearToKickDelay)
-			if err := s.deps.AgentMgr.SendKick("brainstorm", msg); err != nil {
+			time.Sleep(kickBrainstormClearDelay)
+			if err := s.sendBrainstormKick("brainstorm", msg); err != nil {
 				s.logger.Warn("SendKick after /clear failed, trying RestartWithBootstrap", "error", err)
-				if err2 := s.deps.AgentMgr.RestartWithBootstrap(s.deps.Ctx, "brainstorm", msg); err2 != nil {
+				if err2 := s.restartBrainstormWithBootstrap(s.deps.Ctx, "brainstorm", msg); err2 != nil {
 					s.logger.Warn("failed to restart brainstorm for inception", "error", err2)
 				}
 			} else {
@@ -570,7 +573,7 @@ func (s *Server) kickBrainstorm() {
 		} else {
 			// No running session — use RestartWithBootstrap
 			s.logger.Debug("no running session, using RestartWithBootstrap", "error", clearErr)
-			if err := s.deps.AgentMgr.RestartWithBootstrap(s.deps.Ctx, "brainstorm", msg); err != nil {
+			if err := s.restartBrainstormWithBootstrap(s.deps.Ctx, "brainstorm", msg); err != nil {
 				s.logger.Warn("failed to restart brainstorm for inception", "error", err)
 			}
 		}
@@ -579,6 +582,22 @@ func (s *Server) kickBrainstorm() {
 			s.deps.Governor.RecordKick("brainstorm")
 		}
 	}()
+}
+
+var kickBrainstormClearDelay = time.Second
+
+func (s *Server) sendBrainstormKick(name, msg string) error {
+	if s.kickBrainstormSendKickFn != nil {
+		return s.kickBrainstormSendKickFn(name, msg)
+	}
+	return s.deps.AgentMgr.SendKick(name, msg)
+}
+
+func (s *Server) restartBrainstormWithBootstrap(ctx context.Context, name, prompt string) error {
+	if s.kickBrainstormRestartFn != nil {
+		return s.kickBrainstormRestartFn(ctx, name, prompt)
+	}
+	return s.deps.AgentMgr.RestartWithBootstrap(ctx, name, prompt)
 }
 
 // sendKickBrainstorm sends an inception-specific prompt to the RUNNING

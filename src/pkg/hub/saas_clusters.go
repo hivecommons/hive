@@ -268,6 +268,10 @@ type PerClusterHealth struct {
 	// weeks precisely because nothing distinguished "none" from "nobody
 	// checked". See orphaned_pod_visibility.go.
 	StuckPods *StuckPodReport `json:"stuck_pods,omitempty"`
+	// LeakedNamespaces reports hive-hosted-* namespaces the cluster holds that
+	// this hub has no hive record for. Nil means unknown; non-nil with Total 0
+	// means the hub checked and found none.
+	LeakedNamespaces *LeakedNamespaceReport `json:"leaked_namespaces,omitempty"`
 }
 
 type ClusterHealthResponse struct {
@@ -336,7 +340,8 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		hiveIDsByCluster[clusterID][hiveID] = true
 		allHiveIDs[hiveID] = true
 	}
-	for _, sh := range listSaaSHives() {
+	saasHives, saasHivesReadable := listSaaSHivesWithReadStatus()
+	for _, sh := range saasHives {
 		addHive(clusterIDForSaaSHive(sh), sh.ID)
 	}
 	s.mu.RLock()
@@ -354,6 +359,12 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		hiveCounts[cid] = len(ids)
 	}
 	totalHiveCount := len(allHiveIDs)
+	var knownHostedNamespaces map[string]struct{}
+	if saasHivesReadable {
+		knownHostedNamespaces = hostedNamespacesForHiveIDs(allHiveIDs)
+	} else if s.logger != nil {
+		s.logger.Warn("leaked-namespace detection disabled: SaaS hive directory could not be read")
+	}
 
 	// Query all clusters in parallel.
 	type clusterResult struct {
@@ -369,7 +380,7 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		ch := make(chan clusterResult, 1)
 		results[c.ID] = clusterQuery{cluster: c, ch: ch}
 		go func(cluster ClusterConfig) {
-			health, err := buildSingleClusterHealth(&cluster, hiveCounts[cluster.ID], s.logger)
+			health, err := buildSingleClusterHealth(&cluster, hiveCounts[cluster.ID], knownHostedNamespaces, s.logger)
 			ch <- clusterResult{health: health, err: err}
 		}(c)
 	}
@@ -524,7 +535,7 @@ func clusterHealthQueryTimeoutFor(cluster *ClusterConfig) time.Duration {
 var errClusterPullOnly = errors.New("cluster is pull-only: not reachable from the hub")
 
 // buildSingleClusterHealth queries a single cluster for node health data.
-func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slog.Logger) (PerClusterHealth, error) {
+func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, knownHostedNamespaces map[string]struct{}, logger *slog.Logger) (PerClusterHealth, error) {
 	if cluster.PullOnly {
 		// Node-level health comes from kubectl, which cannot run here. This is
 		// not a new failure mode: the caller already falls back to the health
@@ -830,6 +841,14 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 				"cluster", cluster.ID,
 				"stuck_pods", stuck.Total,
 				"namespaces_affected", stuck.NamespacesAffected)
+		}
+	}
+	if leaked := collectLeakedHostedNamespaces(ctx, cluster, timeout, knownHostedNamespaces, time.Now(), logger); leaked != nil {
+		result.LeakedNamespaces = leaked
+		if leaked.Total > 0 && logger != nil {
+			logger.Warn("cluster holds hive-hosted namespaces with no hive record — leaked provisioning namespaces, nothing will reclaim them",
+				"cluster", cluster.ID,
+				"leaked_namespaces", leaked.Total)
 		}
 	}
 

@@ -95,6 +95,11 @@ type Digest struct {
 	// worse than a long one.
 	Capped        bool `json:"capped,omitempty"`
 	OverflowCount int  `json:"overflow_count,omitempty"`
+	// ResolvedOverflowCount is how many recently-resolved findings fell outside
+	// the render cap. Same contract as OverflowCount above: RecentlyResolved
+	// holds what is RENDERED and this carries the part the reader cannot see,
+	// which the renderer announces rather than dropping silently.
+	ResolvedOverflowCount int `json:"resolved_overflow_count,omitempty"`
 	// AnalyzedSnapshot, when set, pins the digest to a single repo commit: the
 	// latest commit of the target repo as of when this post cycle started. It is
 	// cited in the rendered comment and used by VerifyFindingPaths to detect
@@ -225,6 +230,13 @@ func isAdvisoryBeadType(t beads.BeadType) bool {
 }
 
 const recentlyResolvedWindow = 48 * time.Hour
+
+// maxRecentlyResolved is the absolute ceiling on the "Recently Resolved"
+// section, applied even when an owner has lifted the finding cap with
+// show_all. It keeps the comment inside GitHub's 65,536-character limit: past
+// that, truncateDigest cuts from the BOTTOM, which is where this section and
+// the analyzed-commit footer under it live.
+const maxRecentlyResolved = 100
 
 // maxFindingsPerAgentType is the most findings one agent may render under one
 // finding-type within a single severity section of the digest; the newest are
@@ -366,6 +378,29 @@ func collapseNearDuplicates(findings []Finding) []Finding {
 	return kept
 }
 
+// evidenceUnverified reports whether nothing has re-checked this finding's
+// evidence at the commit the digest is stamped with. It is exactly the set of
+// conditions the renderer already captions as not-current, kept in one place so
+// the ranking and the caption can never disagree:
+//
+//   - PathStale — the cited file does not exist at the analyzed commit (#3704).
+//   - ProvenanceStale — the evidence was computed at some OTHER commit and
+//     nothing re-ran it here (#5130).
+//   - CachedReplays with no provenance — the finding's only "confirmations"
+//     were byte-identical replays of cached text (#5236).
+//
+// None of the three proves the finding is FIXED, only that it is unconfirmed
+// here, so applyTopN demotes on it rather than dropping.
+func (f Finding) evidenceUnverified() bool {
+	if f.PathStale {
+		return true
+	}
+	if f.ProvenanceStale && f.ProvenanceSHA != "" {
+		return true
+	}
+	return f.CachedReplays > 0 && f.ProvenanceSHA == ""
+}
+
 // severityRank orders severities so the most serious wins a merge. Unknown and
 // empty severities rank lowest, so they can never displace a real one.
 func severityRank(sev string) int {
@@ -421,29 +456,59 @@ func (o DigestOptions) effectiveCap() int {
 	return o.MaxFindings
 }
 
+// resolvedRenderCap returns how many recently-resolved findings to render.
+//
+// One dial bounds both halves of the digest. Resolved entries are a changelog,
+// not work: a reader opens the digest to learn what still needs doing, and
+// there is no length at which a hundred healed findings serve that better than
+// the open ones do. Left outside MaxFindings they crowd it out — in the live
+// #2364 digest of 2026-09-03, 10 open findings (under a "286 more exist" note)
+// rendered in 4,937 characters while 100 resolved ones took 22,138, so 82% of
+// the comment was already-fixed work and everything anyone could act on was
+// the short part above it.
+//
+// maxRecentlyResolved still bounds the show_all case, where effectiveCap is 0:
+// an owner asking to see every finding is not asking for an unbounded
+// changelog, and the comment-size ceiling holds either way.
+func (o DigestOptions) resolvedRenderCap() int {
+	c := o.effectiveCap()
+	if c <= 0 || c > maxRecentlyResolved {
+		return maxRecentlyResolved
+	}
+	return c
+}
+
 // applyTopN keeps only the highest-priority findings across ALL agents and
 // reports how many it dropped.
 //
 // The ranking is global rather than per-agent on purpose: a repo owner cares
 // which findings matter most, not which agent produced them, and a per-agent
 // quota would let a chatty agent's low-severity items displace another agent's
-// critical one. Ordering is severity first, then — when verify is supplied —
-// findings whose file still exists, then most-recent-first: the newest report of
+// critical one. Ordering is severity first, then findings whose evidence is
+// confirmed at the analyzed commit, then most-recent-first: the newest report of
 // an equally severe problem is the one still happening.
 //
-// verify, when non-nil, reports whether a finding's file path still exists at
-// the analyzed snapshot. A finding whose path is gone is one the renderer must
-// caption "may be outdated" (#3704), so it does not hold a top-N slot ahead of
-// a live finding of the SAME severity — it is set aside and used only to
-// backfill slots no fresh finding of that severity claims. This is the same
-// principle as capping AFTER collapseNearDuplicates: a scarce top-N is spent on
-// distinct, current problems or it is not worth reading. Freshness deliberately
-// does not cross severity bands (see the loop below).
+// A finding the renderer would caption as not-current does not hold a top-N slot
+// ahead of a confirmed finding of the SAME severity: it is set aside and used
+// only to backfill slots no confirmed finding of that severity claims. This is
+// the same principle as capping AFTER collapseNearDuplicates — a scarce top-N is
+// spent on distinct, current problems or it is not worth reading. Freshness
+// deliberately does not cross severity bands (see the loop below).
 //
-// Verification is on-demand and ordered: the ranked list is walked from the top
-// and verify is called only until cap findings are in hand, at most once per
-// distinct path. Ranking the full set therefore costs about as many lookups as
-// verifying the survivors alone did, not one per finding.
+// The demotion covers every unverified-evidence signal, not just a missing file
+// (evidenceUnverified). A finding republished from cached text, or from evidence
+// computed at another commit, is as unconfirmed at the analyzed commit as one
+// whose path is gone — the renderer says so on all three — so none of them may
+// displace a finding that WAS confirmed here. The other two signals are already
+// resolved on the findings by the time ranking runs, so only the path check
+// needs verify.
+//
+// verify, when non-nil, reports whether a finding's file path still exists at
+// the analyzed snapshot. Verification is on-demand and ordered: the ranked list
+// is walked from the top and verify is called only until cap findings are in
+// hand, at most once per distinct path. Ranking the full set therefore costs
+// about as many lookups as verifying the survivors alone did, not one per
+// finding.
 func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) bool) (map[string][]Finding, int) {
 	if cap <= 0 {
 		return byAgent, 0
@@ -472,55 +537,51 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 	})
 
 	overflow := len(all) - cap
+	checked := make(map[string]bool)
+	markPathStale := func(f *Finding) {
+		if verify == nil || !isFilePathRef(f.File) {
+			return
+		}
+		path := splitFilePathRef(f.File)
+		ok, seen := checked[path]
+		if !seen {
+			ok = verify(path)
+			checked[path] = ok
+		}
+		f.PathStale = !ok
+	}
+	// Walk severity band by severity band, highest first. Freshness only breaks
+	// ties WITHIN a band: an unverified finding is one nothing re-checked here,
+	// not one shown to be gone, so an unverified critical must still outrank a
+	// confirmed low — demoting across bands would let a cosmetic nit displace a
+	// security finding whose file was merely renamed.
 	var kept []Finding
-	if verify == nil {
-		kept = all[:cap]
-	} else {
-		checked := make(map[string]bool)
-		markStale := func(f *Finding) {
-			if !isFilePathRef(f.File) {
-				return
-			}
-			path := splitFilePathRef(f.File)
-			ok, seen := checked[path]
-			if !seen {
-				ok = verify(path)
-				checked[path] = ok
-			}
-			f.PathStale = !ok
+	for i := 0; i < len(all) && len(kept) < cap; {
+		rank := severityRank(all[i].Severity)
+		j := i
+		for j < len(all) && severityRank(all[j].Severity) == rank {
+			j++
 		}
-		// Walk severity band by severity band, highest first. Freshness only
-		// breaks ties WITHIN a band: PathStale means the cited path moved, not
-		// that the problem is gone, so a stale critical must still outrank a
-		// live low — demoting across bands would let a cosmetic nit displace a
-		// security finding whose file was merely renamed.
-		for i := 0; i < len(all) && len(kept) < cap; {
-			rank := severityRank(all[i].Severity)
-			j := i
-			for j < len(all) && severityRank(all[j].Severity) == rank {
-				j++
+		// Unverified findings in this band are set aside rather than dropped so
+		// they can backfill slots no confirmed finding of equal severity claims
+		// — rendering 6 findings under a cap of 10 would hide work for no
+		// reason.
+		var unverified []Finding
+		for _, f := range all[i:j] {
+			if len(kept) == cap {
+				break
 			}
-			// Stale findings in this band are set aside rather than dropped so
-			// they can backfill slots no fresh finding of equal severity claims
-			// — rendering 6 findings under a cap of 10 would hide work for no
-			// reason.
-			var stale []Finding
-			for _, f := range all[i:j] {
-				if len(kept) == cap {
-					break
-				}
-				markStale(&f)
-				if f.PathStale {
-					stale = append(stale, f)
-					continue
-				}
-				kept = append(kept, f)
+			markPathStale(&f)
+			if f.evidenceUnverified() {
+				unverified = append(unverified, f)
+				continue
 			}
-			for k := 0; len(kept) < cap && k < len(stale); k++ {
-				kept = append(kept, stale[k])
-			}
-			i = j
+			kept = append(kept, f)
 		}
+		for k := 0; len(kept) < cap && k < len(unverified); k++ {
+			kept = append(kept, unverified[k])
+		}
+		i = j
 	}
 
 	capped := make(map[string][]Finding, len(byAgent))
@@ -537,7 +598,8 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 //
 // opts.MaxFindings (unless opts.ShowAll) caps the result to the most severe,
 // most recent findings; the remainder is counted in OverflowCount rather than
-// dropped silently.
+// dropped silently. It bounds the RecentlyResolved changelog too — see
+// resolvedRenderCap — with its remainder in ResolvedOverflowCount.
 func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts DigestOptions) *Digest {
 	byAgent := make(map[string][]Finding)
 	var resolved []ResolvedFinding
@@ -607,6 +669,16 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 		byAgent[agent] = collapseNearDuplicates(fs)
 		total += len(byAgent[agent])
 	}
+	// Resolve provenance staleness BEFORE the cap, for the same reason the cap
+	// consults opts.VerifyPath: a finding whose evidence was computed at another
+	// commit, or republished from cached text, is one the renderer captions as
+	// not re-verified, and it must not take a slot from a finding that WAS
+	// confirmed at the analyzed commit (#2364). Unlike path verification this
+	// costs no lookups — it reads the finding's own metadata and prose — so
+	// running it over the full set before ranking is free.
+	if opts.Snapshot != nil {
+		markStaleProvenanceIn(byAgent, opts.Snapshot.SHA)
+	}
 	// Cap AFTER collapsing: a top-10 built from uncollapsed restatements would
 	// spend its ten slots on one recurring problem. For the same reason the cap
 	// is staleness-aware (opts.VerifyPath) — a finding whose file no longer
@@ -618,19 +690,21 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	sort.Slice(resolved, func(i, j int) bool {
 		return resolved[i].ClosedAt.After(resolved[j].ClosedAt)
 	})
-	const maxRecentlyResolved = 100
-	if len(resolved) > maxRecentlyResolved {
-		resolved = resolved[:maxRecentlyResolved]
+	resolvedOverflow := 0
+	if rc := opts.resolvedRenderCap(); len(resolved) > rc {
+		resolvedOverflow = len(resolved) - rc
+		resolved = resolved[:rc]
 	}
 	d := &Digest{
-		GeneratedAt:      time.Now(),
-		Mode:             mode,
-		ByAgent:          byAgent,
-		TotalCount:       total,
-		RecentlyResolved: resolved,
-		Capped:           overflow > 0,
-		OverflowCount:    overflow,
-		AnalyzedSnapshot: opts.Snapshot,
+		GeneratedAt:           time.Now(),
+		Mode:                  mode,
+		ByAgent:               byAgent,
+		TotalCount:            total,
+		RecentlyResolved:      resolved,
+		Capped:                overflow > 0,
+		OverflowCount:         overflow,
+		ResolvedOverflowCount: resolvedOverflow,
+		AnalyzedSnapshot:      opts.Snapshot,
 	}
 	// When the cap was not reached, applyTopN returned early and never verified
 	// anything, so the surviving findings still need their paths checked before
@@ -638,12 +712,6 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	if opts.VerifyPath != nil && overflow == 0 {
 		VerifyFindingPaths(d, opts.VerifyPath)
 	}
-	// Path existence is not freshness. A finding can cite a file that still
-	// exists and yet have been computed several commits ago, against evidence
-	// the analyzed commit no longer reproduces — the #5130 findings were
-	// exactly that shape, and VerifyFindingPaths waved both of them through.
-	// Run after the cap so only rendered findings are examined.
-	MarkStaleProvenance(d)
 	return d
 }
 
@@ -1073,6 +1141,14 @@ func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo strin
 	for _, r := range d.RecentlyResolved {
 		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
 		fmt.Fprintf(b, "- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2"))
+	}
+	// The collapsed remainder is named, never merely absent: a changelog that
+	// quietly stops at the cap reads as "this is everything that healed".
+	if d.ResolvedOverflowCount > 0 {
+		// The window is read from the constant, not written as "48h": the two
+		// drifting apart would misstate the period the count covers.
+		fmt.Fprintf(b, "- _…plus %d more resolved in the last %dh, collapsed so the open findings above stay readable_\n",
+			d.ResolvedOverflowCount, int(recentlyResolvedWindow.Hours()))
 	}
 	b.WriteString("\n")
 }

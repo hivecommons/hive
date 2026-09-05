@@ -17,7 +17,7 @@ does not register or scan repositories itself.
 
 ```bash
 export HIVE_DASHBOARD_TOKEN="$(unset GITHUB_TOKEN && gh auth token)"
-hivectl --server https://hive.kubestellar.io enroll OWNER/REPO
+hivectl --server https://hive.hivecommons.dev enroll OWNER/REPO
 ```
 
 Optional:

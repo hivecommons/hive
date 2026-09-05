@@ -247,6 +247,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/packs/{level}/apply", s.handlePackApply)
 	s.mux.HandleFunc("PUT /api/packs/level", s.handlePackSetLevel)
 
+	// Operator-initiated refresh of the REPOSITORIES cards: re-enumerate
+	// every watched repo's open issues/PRs now instead of waiting out the
+	// governor's eval interval. Read-only — see handleReposRescan.
+	s.mux.HandleFunc("POST /api/repos/rescan", s.handleReposRescan)
+
 	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
 	s.mux.HandleFunc("POST /api/acmm/issue", s.handleACMMCreateIssue)
 	s.mux.HandleFunc("GET /api/acmm-recommendation", s.handleACMMRecommendation)
@@ -1184,11 +1189,13 @@ func buildSnapshotProd(s *Server, outputFile, mode string) {
 	dashURL := fmt.Sprintf("http://localhost:%d", s.port)
 	htmlSource := "/opt/hive/proxy/public/index.html"
 	builderScript := "/opt/hive/dashboard/build-snapshot.mjs"
-	cmd := exec.Command("node", builderScript,
+	args := []string{
+		builderScript,
 		"--mode", mode,
 		"--base-path", "/snapshot",
 		"--html", htmlSource,
-		dashURL, outputFile)
+		dashURL, outputFile,
+	}
 	// The builder fetches /api/status (and siblings) from localhost. Those
 	// endpoints require auth, so without a token the builder gets 401 and
 	// bakes an empty snapshot (blank Governor/Tokens/Cost/Repos/Beads/Agents
@@ -1196,13 +1203,18 @@ func buildSnapshotProd(s *Server, outputFile, mode string) {
 	// builder authenticates via the trusted X-Hive-Internal header path. The
 	// token is used ONLY as a request header for the localhost fetch; the
 	// builder never writes it into the snapshot HTML output.
-	cmd.Env = snapshotBuilderEnv(os.Environ(), s.authToken)
-	out, err := cmd.CombinedOutput()
+	out, err := runSnapshotBuilder(args, snapshotBuilderEnv(os.Environ(), s.authToken))
 	if err != nil {
 		s.logger.Warn("snapshot build failed", "error", err, "output", string(out))
 	} else {
 		s.logger.Info("snapshot built", "file", outputFile)
 	}
+}
+
+var runSnapshotBuilder = func(args []string, env []string) ([]byte, error) {
+	cmd := exec.Command("node", args...)
+	cmd.Env = env
+	return cmd.CombinedOutput()
 }
 
 // snapshotBuilderEnv returns the environment for the Node snapshot builder.
@@ -2156,9 +2168,10 @@ func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
 // --- Token access audit log ---
 
 const (
-	tokenAccessLogPath    = "/var/run/hive-metrics/token-access.jsonl"
 	tokenAccessMaxEntries = 100
 )
+
+var tokenAccessLogPath = "/var/run/hive-metrics/token-access.jsonl"
 
 func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
 	// SECURITY (#3936, CWE-284): the token-access log records every gh CLI
@@ -3706,6 +3719,16 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 				agentCfg.DefinitionSource = ds
 			}
 		}
+	}
+
+	// Refuse to persist a backend/launch_cmd contradiction (#5921): saved
+	// silently, it produces an agent launched as one CLI but health-checked
+	// and diagnosed as another, relaunched as "hung" forever. Checked here —
+	// after every field edit above — so a save changing either half (or both)
+	// is judged on the final combination.
+	if err := s.deps.Config.Governor.ValidateLaunchCmdBackend(agentCfg.Backend, agentCfg.LaunchCmd); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	prevAgents := make(map[string]config.AgentConfig, len(s.deps.Config.Agents))

@@ -1834,7 +1834,13 @@ func TestLoadClustersDefault(t *testing.T) {
 // ============================================================
 
 func TestKubectlForCluster(t *testing.T) {
-	// In-cluster
+	// In-cluster. The ServiceAccount environment must be SET for this case:
+	// "in-cluster does not use --kubeconfig" is only true of a real hub pod,
+	// where the kubelet injects both vars. Asserting it with them unset is what
+	// encoded the #5768 ambient-config escape as expected behaviour — see
+	// kubectl_ambient_escape_test.go for the guarded no-env case.
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "443")
 	inCluster := &ClusterConfig{InCluster: true}
 	cmd := kubectlForCluster(inCluster, "get", "pods")
 	args := cmd.Args

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -472,7 +473,7 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, name string, now time.T
 	r.mu.Unlock()
 
 	r.reconcileAuth(ctx, name, obs, cls, now, authCache)
-	r.reconcileReadiness(name, now)
+	r.reconcileReadiness(name, obs, now)
 
 	if act != nil {
 		act()
@@ -755,13 +756,20 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 // evidence. A readiness failure alone NEVER pauses or restarts (design
 // decision on RFC open question 3): it publishes Producing=False and a
 // warning alert, degrading the agent's standing rather than its life.
-func (r *Reconciler) reconcileReadiness(name string, now time.Time) {
+func (r *Reconciler) reconcileReadiness(name string, obs Observation, now time.Time) {
 	settings := r.snapshotSettings()
 	last, ok := r.fleet.LastProduction(name)
 	status := ConditionUnknown
 	reason := "NoEvidence"
 	message := "no production evidence source is readable for this agent"
-	if ok {
+	if obs.ProviderErrorClass != "" {
+		status = ConditionFalse
+		reason = "ProviderInferenceError"
+		message = fmt.Sprintf("blocked: inference (%s)", obs.ProviderErrorClass)
+		if line := strings.TrimSpace(obs.ProviderErrorLine); line != "" {
+			message += ": " + line
+		}
+	} else if ok {
 		age := now.Sub(last)
 		switch {
 		case age < settings.NoProductionFor:

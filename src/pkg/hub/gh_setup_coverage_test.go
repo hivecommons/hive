@@ -117,3 +117,30 @@ func TestGitHubSetupRouterNoMatchAndChooser(t *testing.T) {
 		t.Fatalf("chooser callback code=%d body=%q", rec.Code, body)
 	}
 }
+
+// TestLookupGitHubInstallationAccountWithoutKey covers the real (non-hook)
+// resolution path's fail-closed branch: a hub holding no usable key for the
+// public GitHub App must return an error rather than attempt an App API call,
+// and the setup router must degrade to the generic "Install received" page
+// instead of 500ing the GitHub callback.
+func TestLookupGitHubInstallationAccountWithoutKey(t *testing.T) {
+	s := &HubServer{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	_, err := s.lookupGitHubInstallationAccount(context.Background(), 42)
+	if err == nil || !strings.Contains(err.Error(), "public GitHub App key is not available") {
+		t.Fatalf("lookupGitHubInstallationAccount without key: err = %v, want missing-key error", err)
+	}
+
+	// Same server, no clusters at all: the map is empty, not nil-panicking.
+	s.clusters = map[string]ClusterConfig{}
+	if _, err := s.lookupGitHubInstallationAccount(context.Background(), 42); err == nil {
+		t.Fatal("expected missing-key error with an empty cluster map")
+	}
+
+	// The router must swallow the lookup failure and render the friendly page.
+	rec := httptest.NewRecorder()
+	s.handleGitHubAppSetupRouter(rec, httptest.NewRequest(http.MethodGet, "/gh-setup?installation_id=42&setup_action=install", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Install received") {
+		t.Fatalf("router with failing lookup: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}

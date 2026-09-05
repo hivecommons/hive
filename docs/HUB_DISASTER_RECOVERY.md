@@ -353,7 +353,7 @@ Manual, and unavoidable:
 - If the **GitHub App** was recreated, every org owner must re-approve the
   installation. Its private keys are in `restore/hub/saas/app-keys/` and
   `restore/spokes/*/gh-app-key*.pem` — reuse them if the App survived.
-- Re-point DNS / ingress for `hive.kubestellar.io`.
+- Re-point DNS / ingress for `hive.hivecommons.dev`.
 
 ### Step 7 — Verify
 
