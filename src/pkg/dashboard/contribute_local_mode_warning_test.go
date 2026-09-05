@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -93,7 +94,7 @@ eval "set -- $(claude_family_local_perm_flag_shell)"
 printf '%s\0' "$@"
 `)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "HIVE_WORKSPACE_DIR=") || strings.HasPrefix(entry, "HIVE_CLAUDE_DANGEROUSLY_") {
+		if strings.HasPrefix(entry, "HIVE_WORKSPACE_DIR=") || strings.HasPrefix(entry, "HIVE_AGENT_CACHE_DIR=") || strings.HasPrefix(entry, "HIVE_CLAUDE_DANGEROUSLY_") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, entry)
@@ -105,6 +106,16 @@ printf '%s\0' "$@"
 	}
 	parts := strings.Split(string(out), "\x00")
 	return parts[:len(parts)-1]
+}
+
+func argValues(args []string, key string) []string {
+	var vals []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == key {
+			vals = append(vals, args[i+1])
+		}
+	}
+	return vals
 }
 
 func argValue(args []string, key string) (string, bool) {
@@ -194,5 +205,80 @@ func TestContainerModeRemainsTheDefault(t *testing.T) {
 	src := justfileSource(t)
 	if !strings.Contains(src, `contribute-hive backend="" mode="docker":`) {
 		t.Error("contribute-hive no longer defaults to container mode; the #4918 warning's advice is stale")
+	}
+}
+
+// #6100: every compiled toolchain writes to a cache under $HOME by default --
+// GOCACHE at ~/.cache/go-build, ccache, $TMPDIR -- and all of them sit outside
+// the workspace. So `go build`, `go test` and `go vet` failed on a hive
+// contributor task, in hive's own Go repo, with an error naming a cache file
+// rather than a sandbox boundary. Eight local-mode sessions over five days each
+// rediscovered it and invented its own GOCACHE redirect.
+//
+// The launcher now creates one cache root and points the toolchains at it; the
+// sandbox has to actually grant it, or the redirect lands somewhere still
+// read-only and nothing improves.
+func TestClaudeLocalSandboxGrantsTheBuildCacheRoot(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "agent build cache")
+	args := claudeLocalSandboxArgs(t, "HIVE_AGENT_CACHE_DIR="+cache)
+
+	settings, ok := argValue(args, "--settings")
+	if !ok {
+		t.Fatalf("no --settings in argv: %q", args)
+	}
+	var parsed struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+		Sandbox struct {
+			Filesystem struct {
+				AllowWrite []string `json:"allowWrite"`
+			} `json:"filesystem"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+		t.Fatalf("parse --settings: %v (%s)", err, settings)
+	}
+
+	if !slices.Contains(parsed.Sandbox.Filesystem.AllowWrite, cache) {
+		t.Errorf("the build-cache root is not a sandbox write root: %v", parsed.Sandbox.Filesystem.AllowWrite)
+	}
+
+	// Narrow on purpose. Bash is what compilers run under, so allowWrite is the
+	// grant that matters; an agent has no reason to Edit a build cache, and
+	// adding it as a working directory would put megabytes of object files in
+	// the agent's view of the tree. If either of these starts holding, the grant
+	// widened without anyone deciding to.
+	for _, rule := range parsed.Permissions.Allow {
+		if strings.Contains(rule, cache) {
+			t.Errorf("the build-cache root leaked into permissions.allow: %q", rule)
+		}
+	}
+	if slices.Contains(argValues(args, "--add-dir"), cache) {
+		t.Error("the build-cache root was added as a working directory; it is a write root only")
+	}
+}
+
+// The discriminating counterpart, and the compatibility promise: every caller
+// that does not set the variable -- which is every non-local path -- keeps the
+// workspace as its only write root.
+func TestClaudeLocalSandboxWithoutCacheRootIsWorkspaceOnly(t *testing.T) {
+	args := claudeLocalSandboxArgs(t)
+	settings, ok := argValue(args, "--settings")
+	if !ok {
+		t.Fatalf("no --settings in argv: %q", args)
+	}
+	var parsed struct {
+		Sandbox struct {
+			Filesystem struct {
+				AllowWrite []string `json:"allowWrite"`
+			} `json:"filesystem"`
+		} `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+		t.Fatalf("parse --settings: %v (%s)", err, settings)
+	}
+	if len(parsed.Sandbox.Filesystem.AllowWrite) != 1 {
+		t.Errorf("allowWrite = %v with no cache root set; want the workspace alone", parsed.Sandbox.Filesystem.AllowWrite)
 	}
 }

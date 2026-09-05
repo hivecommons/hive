@@ -1008,6 +1008,13 @@ contribute-hive backend="" mode="docker": check-version
       fi
 
       # Get CLI binary and permission flags from backends.conf
+      #
+      # HIVE_AGENT_CACHE_DIR is exported BEFORE the permission flags resolve:
+      # claude_family_local_perm_flag_shell grants it as a sandbox write root
+      # (#6100), so it has to be in the environment when that function runs.
+      # What it is for is with the toolchain exports below.
+      export HIVE_AGENT_CACHE_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/hive/agent-build"
+      mkdir -p "$HIVE_AGENT_CACHE_DIR"
       source "${SCRIPT_DIR}/../config/backends.conf" 2>/dev/null || true
       CMD=$(backend_binary "$BACKEND" 2>/dev/null || echo "$BACKEND")
       # _shell variant: this flag string is pasted into a tmux send-keys shell
@@ -1131,7 +1138,24 @@ contribute-hive backend="" mode="docker": check-version
       # costs nothing and keeps the default blast radius off the user's home.
       export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
       mkdir -p "$HIVE_AGENT_CWD"
-      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }$CMD${PERM_FLAG:+ $PERM_FLAG}"
+      # Point every compiled toolchain at the granted cache root (#6100), so a
+      # sandboxed agent never reaches a default under $HOME. Prefixed onto the
+      # launch line as VAR=value assignments, the same shape LITELLM_ENV
+      # already uses -- rather than relying on `export` reaching the pane,
+      # because the agent is started through `tmux send-keys` and a tmux server
+      # that is already running does not necessarily carry this shell's
+      # environment into a new session.
+      #
+      # TMPDIR and GOTMPDIR are here for the same reason as the caches: on an
+      # image-based host /tmp is a small tmpfs and /var/tmp is read-only to the
+      # sandbox, so a build's scratch data has nowhere else to go.
+      mkdir -p "$HIVE_AGENT_CACHE_DIR"/{go-build,go-mod,ccache,tmp}
+      BUILD_CACHE_ENV="GOCACHE=$(printf %q "$HIVE_AGENT_CACHE_DIR/go-build")"
+      BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOMODCACHE=$(printf %q "$HIVE_AGENT_CACHE_DIR/go-mod")"
+      BUILD_CACHE_ENV="$BUILD_CACHE_ENV GOTMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
+      BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
+      BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
+      export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}"
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
       tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter
