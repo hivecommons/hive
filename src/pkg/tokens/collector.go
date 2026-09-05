@@ -173,6 +173,17 @@ type AggregateSummary struct {
 	SessionCount     int                          `json:"session_count"`
 }
 
+// Diagnostics is the collector's non-secret explanation channel for consumers
+// that need to distinguish "zero tokens because nothing used a model" from
+// "zero tokens because metering itself is unhealthy".
+type Diagnostics struct {
+	LastScanError        string `json:"last_scan_error,omitempty"`
+	LastClaudeScanError  string `json:"last_claude_scan_error,omitempty"`
+	LastCopilotScanError string `json:"last_copilot_scan_error,omitempty"`
+	LastBobScanError     string `json:"last_bob_scan_error,omitempty"`
+	LiveCaptureEnabled   bool   `json:"live_capture_enabled,omitempty"`
+}
+
 const (
 	defaultScanInterval = 30 * time.Second
 )
@@ -194,6 +205,7 @@ type Collector struct {
 	mu                        sync.RWMutex
 	latest                    *AggregateSummary
 	errorStreaks              map[string]int
+	diagnostics               Diagnostics
 	scanInterval              time.Duration
 	prevSessionCount          int
 	prevTotalTokens           int64
@@ -261,6 +273,7 @@ func (c *Collector) SetBobSessionsDir(dir string) {
 func (c *Collector) SetCopilotLiveCapture(sinceUnixMs int64) {
 	c.mu.Lock()
 	c.copilotLiveCaptureSinceMs = sinceUnixMs
+	c.diagnostics.LiveCaptureEnabled = sinceUnixMs > 0
 	c.mu.Unlock()
 }
 
@@ -295,13 +308,18 @@ func (c *Collector) scan() {
 	agg, err := CollectFromDir(c.sessionsDir, c.detector)
 	if err != nil {
 		c.logger.Warn("token scan failed", "error", err)
+		c.mu.Lock()
+		c.diagnostics.LastScanError = err.Error()
+		c.mu.Unlock()
 		return
 	}
+	diag := Diagnostics{LiveCaptureEnabled: c.copilotLiveCaptureSince() > 0}
 
 	if c.claudeSessionsDir != "" {
 		claudeAgg, err := ScanClaudeSessionsWithPathDetection(c.claudeSessionsDir)
 		if err != nil {
 			c.logger.Warn("claude session scan failed", "error", err)
+			diag.LastClaudeScanError = err.Error()
 		} else if claudeAgg != nil && claudeAgg.SessionCount > 0 {
 			MergeAggregates(agg, claudeAgg)
 		}
@@ -311,6 +329,7 @@ func (c *Collector) scan() {
 		copilotAgg, err := ScanCopilotSessions(c.copilotSessionsDir, c.copilotLiveCaptureSince())
 		if err != nil {
 			c.logger.Warn("copilot session scan failed", "error", err)
+			diag.LastCopilotScanError = err.Error()
 		} else if copilotAgg != nil && copilotAgg.SessionCount > 0 {
 			MergeAggregates(agg, copilotAgg)
 		}
@@ -320,6 +339,7 @@ func (c *Collector) scan() {
 		bobAgg, err := ScanBobSessionsWithLogger(c.bobSessionsDir, c.logger)
 		if err != nil {
 			c.logger.Warn("bob session scan failed", "error", err)
+			diag.LastBobScanError = err.Error()
 		} else if bobAgg != nil && bobAgg.SessionCount > 0 {
 			MergeAggregates(agg, bobAgg)
 		}
@@ -364,9 +384,16 @@ func (c *Collector) scan() {
 
 	c.mu.Lock()
 	c.latest = agg
+	c.diagnostics = diag
 	c.mu.Unlock()
 
 	c.saveSnapshot(agg)
+}
+
+func (c *Collector) Diagnostics() Diagnostics {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.diagnostics
 }
 
 func (c *Collector) Summary() *AggregateSummary {

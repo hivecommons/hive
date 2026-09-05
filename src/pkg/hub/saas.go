@@ -12124,6 +12124,7 @@ const dashboardHTML = `<!DOCTYPE html>
       h = h || {};
       var hp = h.health || {};
       var st = hp.status || 'unknown';
+      var tokenReason = tokenHealthReason(h);
       /* githubAppRequired means the spoke wants the App but it is not usable:
          with a perm issue it is installed-but-insufficient, without one it is
          not installed at all. healthBadge() forces "degraded" in both cases —
@@ -12140,9 +12141,27 @@ const dashboardHTML = `<!DOCTYPE html>
         appMissing: appMissing,
         noTokens: (Number(h.totalTokens24h) || 0) <= NO_TOKENS_THRESHOLD,
         restartStorms: restartStorms,
+        noTokensReason: tokenReason,
         degraded: degraded,
         ok: ok
       };
+    }
+
+    function tokenHealthReason(h) {
+      var checks = (((h || {}).health || {}).checks || []);
+      for (var i = 0; i < checks.length; i++) {
+        var ck = checks[i] || {};
+        if (ck.name === 'tokens' && ck.detail) return String(ck.detail);
+      }
+      return '';
+    }
+
+    function tokenUsageTitle(h) {
+      var reason = tokenHealthReason(h);
+      if ((Number((h || {}).totalTokens24h) || 0) <= NO_TOKENS_THRESHOLD && reason) {
+        return 'No tokens used: ' + reason;
+      }
+      return 'Cumulative tokens consumed, as of the last heartbeat';
     }
 
     // uptimeCell renders process uptime for the Uptime column.
@@ -17322,7 +17341,7 @@ const dashboardHTML = `<!DOCTYPE html>
             '</div>' +
           '</td>' +
           '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; if (a.paused) label += ' — ' + agentPauseProvenance(a); return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
-          '<td title="Cumulative tokens consumed, as of the last heartbeat" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
+          '<td title="' + escAttr(tokenUsageTitle(h)) + '" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
           '<td>' + modeCell + '</td>' +
           /* ACTIVITY: Issues, PRs and Contributors — three mini-stats that were
              three columns — stacked densely into ONE cell. Every number and both
