@@ -35,7 +35,7 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_TTYD_PORT` | No | `7681` | Web terminal port used by the entrypoint and terminal proxy. |
 | `HIVE_TTYD_CREDENTIAL` | No | `hive:<HIVE_DASHBOARD_TOKEN>` when a token is set, else none | ttyd basic-auth credential (`user:pass`) the entrypoint starts the web terminal with. Also read by `hivectl tui`'s remote attach ([#5644](https://github.com/hivecommons/hive/issues/5644)), which must present the same credential through the terminal proxy and derives the same default from `HIVE_DASHBOARD_TOKEN` — set it on the client only if the deployment overrode it on the server. |
 | `HIVE_METRICS_ENABLED` | No | disabled | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. Requires `HIVE_METRICS_TOKEN` — enabled-but-tokenless returns 403 ([#3804](https://github.com/hivecommons/hive/pull/3804)). |
-| `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token for `/metrics` (`Authorization: Bearer <token>`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; the cost/agent series are never served without it. |
+| `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token read by `pkg/dashboard/metrics_prometheus.go` for `/metrics` (`Authorization: Bearer ...`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; enabled-but-tokenless fails closed and the cost/agent series are never served without it. |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
 | `HIVE_CONTRIBUTORS_DIR` | No | hub default | Contributor registry directory override. |
@@ -46,7 +46,7 @@ This reference is compiled by hand from the Go source under `src/`, the deployme
 | `HIVE_CONVERGENCE_MODE` | No | `convergence.mode` in `hive.yaml`, else `off` | Process-level override of the convergence mode (`off`, `shadow`, `enforce`) so an operator can flip shadow mode without editing `hive.yaml`. Any unrecognised value — a typo, or a mode this build does not know — resolves to `off`. |
 | `HIVE_WATCHDOG_PAUSE` | No | unset (not paused) | Fleet-wide watchdog kill switch (`1`, `true`, `yes`, `on`). Read at every config resolve, so it takes effect without a restart. It can only ever REDUCE authority: it never turns a watchdog on and never promotes observe to heal. |
 | `HIVE_DELEGATION_CHAIN_ENABLED` | No | disabled | Enables delegation chain minting (`1`, `true`, `yes`, `on` — same spelling as `HIVE_METRICS_ENABLED`). Read on each call rather than cached, so disabling it on a misbehaving spoke does not require a pod roll. |
-| `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` | Opt-in to knowledge Git sources whose host resolves to a private/internal address (self-hosted GitLab and similar). Off by default as SSRF protection. |
+| `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` | Exact `true` opt-in read by `pkg/knowledge/gitsource.go` to allow knowledge Git sources whose host resolves to a private/internal address (self-hosted GitLab and similar). Off by default as SSRF protection. |
 | `HIVE_SHARED_AGENT_HOME` | No | per-agent HOME | Escape hatch (`1`) restoring the legacy shared-HOME layout for agents. |
 | `HIVE_WORKSPACE_CLEANUP_ENABLED` | No | enabled | Set `0` to opt out of automatic agent workspace cleanup. |
 | `HIVE_WORKSPACE_CLEANUP_INTERVAL` | No | `1h` | How often the workspace cleanup sweep runs (Go duration, e.g. `30m`). Unset, unparseable, or non-positive values fall back to the default. |
@@ -160,8 +160,8 @@ new value at the same time.
 | `HIVE_EXPLAIN_MODE` | No | `off` | **Fallback** for the hive-wide default agent explain mode (`off`, `brief`, `full`) — see [agent-configuration.md](agent-configuration.md#explain-mode-debugging-agent-behaviour). `governor.explain_mode` in `hive.yaml` (Settings → Governor → General in the dashboard) takes precedence; this variable applies only when that is unset. Either way it applies only to agents that leave `explain_mode` unset; an agent with an explicit value, including `off`, keeps it. Hive also injects the *resolved* mode into every agent process under this same name. An unrecognized value resolves to `off`. |
 | `BD_DIR` | No | current directory | `bd` beads CLI data directory. |
 | `BD_DASHBOARD_URL` | No | none | Dashboard URL used by `bd kb` integration. |
-| `OPENAI_API_KEY` | No | none | OpenAI-compatible API key consulted by backend/model resolution. |
-| `CODEX_API_KEY` | No | none | API key consulted for the Codex CLI backend. |
+| `OPENAI_API_KEY` | No | none | OpenAI-compatible API key consulted by agent credential probing (`pkg/agent/authprobe.go`) for Codex API-key mode, including `CODEX_HOME/auth.json` entries written under the same key. |
+| `CODEX_API_KEY` | No | none | API key read by `pkg/agent/authprobe.go` for the Codex CLI backend; either this or `OPENAI_API_KEY` makes Codex API-key mode count as configured. |
 | `HIVE_AGENT_TOKEN_REFRESH_INTERVAL` | No | `40m` | Go duration overriding the per-agent token refresh interval. Invalid or non-positive values fall back to the default. |
 | `HIVE_CREDENTIAL_WATCHDOG_INTERVAL` | No | `5m` | Go duration overriding how often the credential watchdog verifies each in-use backend credential file. `0` does NOT disable the watchdog — disabling is intentionally not offered. |
 | `HIVE_PROVIDER_ERROR_BACKOFF_BASE` | No | `2m` | Go duration for the first inference-provider error backoff before another kick is allowed. Invalid or non-positive values fall back to the default. |
