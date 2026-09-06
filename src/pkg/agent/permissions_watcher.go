@@ -9,11 +9,19 @@ import (
 	"time"
 )
 
-// Permission watcher constants — no magic numbers.
-const (
-	// PermissionFixInterval is how often the watcher scans for wrong ownership.
-	PermissionFixInterval = 10 * time.Second
-)
+// PermissionFixInterval is how often the watcher scans for wrong ownership.
+//
+// A var (not a const) as a TEST SEAM, matching the DevUID/NodeGID convention:
+// the suite shortens it so StartPermissionsWatcher's tick loop can be observed
+// in milliseconds instead of 10-second waits. Production value is unchanged.
+var PermissionFixInterval = 10 * time.Second
+
+// permissionsWatcherStop, when non-nil, ends StartPermissionsWatcher's loop
+// once closed. Nil in production — the watcher deliberately runs for the life
+// of the process (a nil channel blocks forever in select). A test seam only,
+// so a suite can start the watcher against a sandboxed tree and then stop the
+// goroutine before restoring the package-level path seams it was scanning.
+var permissionsWatcherStop chan struct{}
 
 // DevUID and NodeGID are package variables (not constants) so the test suite
 // can point the permission fixer at fixture trees owned by the test user
@@ -288,8 +296,16 @@ func StartPermissionsWatcher(logger *slog.Logger) {
 	ticker := time.NewTicker(PermissionFixInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		fixPermissions(logger)
+	// Capture the stop seam once: nil in production (blocks forever), a real
+	// channel only when a test needs to reclaim the goroutine.
+	stop := permissionsWatcherStop
+	for {
+		select {
+		case <-ticker.C:
+			fixPermissions(logger)
+		case <-stop:
+			return
+		}
 	}
 }
 
