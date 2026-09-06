@@ -358,17 +358,20 @@ var bobStaticModels = []string{bobAutoModel}
 // models — Claude ids are rejected with a ChatGPT account ("model is not
 // supported when using Codex with a ChatGPT account"), so codex must never
 // fall through to the copilot list. The catalog is baked into the CLI binary
-// (per-CLI-version, not per-account); this snapshot matches codex 0.146.0:
-// visible ids in picker order (sol is the default), then the hidden ids —
+// (per-CLI-version, not per-account); this snapshot matches codex 0.153.4:
+// visible ids in picker order (astra is the default), then the hidden ids —
 // hidden entries are still valid --model values (see orderCodexServedModels).
 // Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
+	"gpt-6-astra",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
 	"gpt-5.2",
-	// Hidden in the 0.146.0 picker but still valid --model values.
+	// Hidden in the 0.153.4 picker but still valid --model values.
+	"gpt-daybreak-blue-latest",
+	"gpt-daybreak-red-latest",
 	"gpt-5.4",
 	"gpt-5.4-mini",
 	"codex-auto-review",

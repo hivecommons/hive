@@ -77,7 +77,7 @@ ARG KILO_CLI_VERSION=7.5.6
 # Same ARG name and value as src/Dockerfile so bin/test_backend_smoke.sh can
 # assert the two pins agree — this line was previously an inline hardcode that
 # could (and did) drift from the main image's CODEX_VERSION unnoticed.
-ARG CODEX_VERSION=0.146.0
+ARG CODEX_VERSION=0.153.4
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @github/copilot@${COPILOT_VERSION} \
