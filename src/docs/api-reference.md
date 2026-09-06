@@ -2,7 +2,7 @@
 
 Pragmatic v1 endpoint index compiled by hand from route registrations in `src/pkg/dashboard/*.go` and `src/pkg/hub/*.go` (tests excluded). There is no generator; update this page in the same change that adds or renames a route. It lists method, path, coarse auth level, and one-line purpose. Request/response schemas are intentionally not hand-written here; see the handler source for exact payloads and validation.
 
-Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard token/session auth, and the `/api/v1` GitHub-token wrapper) or from hub route wrappers such as `requireAuth`. Hub rows marked handler-specific have no dashboard middleware; check the named handler for bearer secrets, admin checks, or public behavior.
+Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard token/session auth, and the `/api/v1` GitHub-token wrapper) or from hub route wrappers such as `requireAuth` and `requireAdmin`. Hub rows marked handler-specific have no dashboard middleware; check the named handler for bearer secrets, admin checks, or public behavior.
 
 ## Health, status, events
 
@@ -433,6 +433,9 @@ always resolved server-side from the validated token.
 |---|---|---|---|---|
 | `GET` | `/api/saas/my-hives` | Hub auth | My Hives | `pkg/hub/saas.go:306` |
 | `GET` | `/api/saas/usage` | Hub auth | Usage | `pkg/hub/saas.go:310` |
+| `GET` | `/api/saas/me/country` | Hub auth | Get Current User Country | `pkg/hub/saas.go:570` |
+| `PUT` | `/api/saas/me/country` | Hub auth | Update Current User Country | `pkg/hub/saas.go:571` |
+| `POST` | `/api/saas/lite/enroll` | Hub auth | Enroll Repository in Lite Mode | `pkg/hub/saas.go:572` |
 | `POST` | `/api/saas/hives` | Hub auth | Create Hive | `pkg/hub/saas.go:311` |
 | `GET` | `/api/saas/hives/{id}/status` | Hub auth | Hive Status | `pkg/hub/saas.go:312` |
 | `GET` | `/api/saas/hives/{id}/open` | Hub handler-specific | Open Hive | `pkg/hub/saas.go:317` |
@@ -444,12 +447,18 @@ always resolved server-side from the validated token.
 | `PUT` | `/api/saas/hives/{id}/name` | Hub auth | Rename Hive | `pkg/hub/saas.go:326` |
 | `POST` | `/api/saas/hives/{id}/forge` | Hub auth | Switch Forge | `pkg/hub/saas.go:330` |
 | `POST` | `/api/saas/hives/{id}/reset-app` | Hub auth | Reset App | `pkg/hub/saas.go:331` |
+| `PUT` | `/api/saas/hives/{id}/secondary-app` | Hub auth | Set Secondary GitHub App | `pkg/hub/saas.go:597` |
 | `POST` | `/api/saas/hives/{id}/restart-spoke` | Hub auth | Restart Spoke | `pkg/hub/saas.go:332` |
+| `POST` | `/api/saas/hives/{id}/agents/{agent}/restarts/reset` | Hub auth | Reset Agent Restart Counter | `pkg/hub/saas.go:599` |
 | `GET` | `/api/saas/hive-config/{hiveID}` | Hub auth | Proxy Hive Config | `pkg/hub/saas.go:333` |
 | `GET` | `/api/saas/latest-sha` | Hub handler-specific | Latest SHA | `pkg/hub/saas.go:334` |
 | `POST` | `/api/saas/hub/upgrade` | Hub handler-specific | Hub Self Upgrade | `pkg/hub/saas.go:335` |
 | `PUT` | `/api/saas/hub/auto-upgrade` | Hub handler-specific | Hub Auto Upgrade | `pkg/hub/saas.go:336` |
+| `GET` | `/api/saas/upgrade-pause` | Hub admin | Get Fleet Upgrade Pause State | `pkg/hub/saas.go:606` |
+| `POST` | `/api/saas/upgrade-pause` | Hub admin | Set Fleet Upgrade Pause State | `pkg/hub/saas.go:607` |
 | `GET` | `/api/saas/auth-check` | Hub handler-specific | Saa SAuth Check | `pkg/hub/saas.go:337` |
+| `GET` | `/api/saas/whoami` | Hub handler-specific | Resolve Sibling Product Session | `pkg/hub/saas.go:614` |
+| `GET` | `/api/saas/dibs/repos` | Hub handler-specific | List Public Dibs Repository Registry | `pkg/hub/saas.go:618` |
 | `POST` | `/api/saas/user-token` | Hub auth | User Token | `pkg/hub/saas.go:338` |
 | `GET` | `/api/saas/hives/{id}/access` | Hub auth | Access List | `pkg/hub/saas.go:339` |
 | `GET` | `/api/saas/grantable-users` | Hub auth | Grantable Users | `pkg/hub/saas.go:340` |
@@ -458,6 +467,7 @@ always resolved server-side from the validated token.
 | `POST` | `/api/saas/hives/{id}/request-access` | Hub auth | Request Access | `pkg/hub/saas.go:343` |
 | `GET` | `/api/saas/hives/{id}/requests` | Hub auth | Get Requests | `pkg/hub/saas.go:344` |
 | `GET` | `/api/saas/hives/{id}/timeline` | Hub auth | Hive Timeline | `pkg/hub/saas.go:345` |
+| `GET` | `/api/saas/hives/{id}/access-log` | Hub auth | Hive Access Audit Log | `pkg/hub/saas.go:627` |
 | `POST` | `/api/saas/hives/{id}/requests/{username}/approve` | Hub auth | Approve Request | `pkg/hub/saas.go:346` |
 | `POST` | `/api/saas/hives/{id}/requests/{username}/deny` | Hub auth | Deny Request | `pkg/hub/saas.go:347` |
 | `PUT` | `/api/saas/hives/{id}/approve-access/{username}` | Hub auth | Approve Access | `pkg/hub/saas.go:348` |
@@ -467,7 +477,13 @@ always resolved server-side from the validated token.
 | `PUT` | `/api/saas/approve-provision/{username}` | Hub handler-specific | Approve Provision | `pkg/hub/saas.go:359` |
 | `DELETE` | `/api/saas/deny-provision/{username}` | Hub handler-specific | Deny Provision | `pkg/hub/saas.go:360` |
 | `GET` | `/api/saas/admin/available-placeholders` | Hub handler-specific | Available Placeholders | `pkg/hub/saas.go:361` |
+| `GET` | `/api/saas/admin/scale-settings` | Hub admin | Get Fleet Scale Settings | `pkg/hub/saas.go:644` |
+| `POST` | `/api/saas/admin/scale-settings` | Hub admin | Update Fleet Scale Settings | `pkg/hub/saas.go:645` |
 | `GET` | `/api/saas/admin/users` | Hub handler-specific | Admin Users | `pkg/hub/saas.go:362` |
+| `GET` | `/api/saas/admin/user-countries` | Hub admin | Aggregate User Countries | `pkg/hub/saas.go:651` |
+| `GET` | `/api/saas/admin/auth-rollout` | Hub admin | Report Authentication Rollout Readiness | `pkg/hub/saas.go:653` |
+| `GET` | `/api/saas/admin/key-generations` | Hub admin | List Master Key Generations | `pkg/hub/saas.go:659` |
+| `POST` | `/api/saas/admin/rotate-master-key` | Hub admin | Rotate Fleet Master Key | `pkg/hub/saas.go:660` |
 | `PUT` | `/api/saas/admin/users/{username}` | Hub handler-specific | Admin Update User | `pkg/hub/saas.go:363` |
 | `DELETE` | `/api/saas/admin/users/{username}` | Hub handler-specific | Admin Delete User | `pkg/hub/saas.go:364` |
 | `POST` | `/api/saas/admin/impersonate/exit` | Hub handler-specific | Impersonate Exit | `pkg/hub/saas.go:370` |
@@ -476,6 +492,7 @@ always resolved server-side from the validated token.
 | `POST` | `/api/saas/hives/{id}/assign` | Hub auth | Assign Hive | `pkg/hub/saas.go:373` |
 | `POST` | `/api/saas/hives/{id}/reset-assignment` | Hub handler-specific | Reset Assignment | `pkg/hub/saas.go:377` |
 | `GET` | `/api/saas/cluster-health` | Hub handler-specific | Cluster Health | `pkg/hub/saas.go:379` |
+| `GET` | `/api/saas/admin/advisory-diagnostics` | Hub admin | Advisory Staleness Diagnostics | `pkg/hub/saas.go:686` |
 | `POST` | `/api/saas/admin/alert-ack` | Hub handler-specific | Alert Ack | `pkg/hub/saas.go:382` |
 | `GET` | `/api/saas/admin/cluster-app-keys` | Hub handler-specific | Get Cluster App Keys | `pkg/hub/saas.go:386` |
 | `PUT` | `/api/saas/admin/cluster-app-keys/{clusterID}` | Hub handler-specific | Put Cluster App Key | `pkg/hub/saas.go:387` |
@@ -504,7 +521,9 @@ always resolved server-side from the validated token.
 | `GET` | `/openrouter/callback` | Hub handler-specific | Hub Open Router Callback | `pkg/hub/openrouter.go:53` |
 | `GET` | `/dashboard` | Hub handler-specific | Dashboard | `pkg/hub/saas.go:304` |
 | `GET` | `/access-denied` | Hub handler-specific | Access Denied | `pkg/hub/saas.go:305` |
+| `GET` | `/api/hub/image-pulls` | Hub auth | Release Image Pull Metrics | `pkg/hub/saas.go:556` |
 | `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:383` |
+| `GET` | `/api/reach` | Hub admin | PR Deployment Reach | `pkg/hub/saas.go:681` |
 | `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1100` |
 | `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1101` |
 | `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1102` |
