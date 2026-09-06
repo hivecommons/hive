@@ -253,9 +253,13 @@ workspace:
    transparently (30-minute grace window; the old refresh token is kept when
    the response omits a new one).
 7. **Agent writes**: from an ISSUES_ONLY+ agent session, confirm
-   `LINEAR_ACCESS_TOKEN` is set (and absent in an advisory session), that an
-   `issueCreate` lands authored by the Hive app user, and that an `issueDelete`
-   is refused by the proxy with a 403 naming the operation.
+   `LINEAR_ACCESS_TOKEN` is set (and absent in an advisory session), that
+   `LINEAR_API_KEY`, `LINEAR_CLIENT_SECRET` and `LINEAR_WEBHOOK_SECRET` are
+   **absent** even though the hive process holds them (a fresh pane must not
+   inherit them from the tmux server's global environment), that an
+   `issueCreate` lands authored by the Hive app user — an issue created by a
+   *person* means the agent found the work-source key — and that an
+   `issueDelete` is refused by the proxy with a 403 naming the operation.
 8. **PR auto-link**: open a PR on a branch named `<agent>/team-123-slug` with
    `Fixes TEAM-123` in the body and confirm Linear attaches it and moves the
    issue to In Progress, then Done on merge.

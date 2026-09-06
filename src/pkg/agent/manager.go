@@ -884,6 +884,70 @@ func (m *Manager) linearEnvPairs(agent *AgentProcess) []agentEnvPair {
 	return nil
 }
 
+// inheritedCredentialEnvVars are credentials the HIVE PROCESS legitimately
+// holds in its own environment — the work-source key it expands from
+// ${LINEAR_API_KEY} in hive.yaml, the Linear agent OAuth app's client id,
+// client secret, and webhook signing secret, the full-privilege App
+// installation token the entrypoint exports — and that a tmux server started
+// by this process therefore inherits into its GLOBAL environment. tmux copies
+// the global environment into every pane it forks, so without an explicit
+// removal each of these lands in every agent's shell, and in every tool shell
+// the agent's CLI spawns.
+//
+// Observed live (2026-09-05, per-UID hive with the Linear agent integration
+// connected): the quality agent's tmux server had LINEAR_API_KEY,
+// LINEAR_CLIENT_SECRET and LINEAR_WEBHOOK_SECRET in its global environment
+// beside the sanctioned LINEAR_ACCESS_TOKEN in the session environment. The
+// agent used LINEAR_API_KEY — the operator's PERSONAL key — for its
+// issueCreate, so every issue it filed was created by the operator rather
+// than by the Hive app user, and the OAuth grant the operator had connected
+// for exactly that purpose went unused.
+//
+// The creation-time strip that was meant to prevent this used
+// `set-environment -u`, which only deletes the SESSION entry: the global
+// value shows straight through to the next pane (verified against tmux
+// 3.5a: -u → inherited value visible; -r → absent; -r then set → the set
+// value). These are removed with -r, which records a removal that hides the
+// global value from every process forked afterwards; the sanctioned
+// per-agent pair set afterwards overrides the removal for the one variable
+// the agent is meant to have.
+var inheritedCredentialEnvVars = []string{
+	"HIVE_GITHUB_TOKEN",
+	linearAPIKeyEnvVar,
+	linearAccessTokenEnvVar,
+	"LINEAR_CLIENT_ID",
+	"LINEAR_CLIENT_SECRET",
+	"LINEAR_WEBHOOK_SECRET",
+}
+
+// applySessionEnv populates a freshly created session's environment: it
+// REMOVES every inherited credential first (inheritedCredentialEnvVars for all
+// agents; GH_TOKEN/GITHUB_TOKEN for agents that cannot push), then sets the
+// sanctioned per-agent pairs from agentEnvPairs, which re-add exactly the
+// credentials this agent's tier may hold. The removal must come first: a
+// `set-environment -r` after a set would discard the value just set.
+//
+// This updates the SESSION environment only; the hive process env is
+// untouched, and the pane shell that new-session already forked predates all
+// of it — ensureTmuxSession respawns that pane afterwards so the CLI it
+// launches inherits the populated set.
+func (m *Manager) applySessionEnv(agent *AgentProcess) {
+	for _, k := range inheritedCredentialEnvVars {
+		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", k).Run()
+	}
+	// gh/git tokens: push-capable agents receive their per-agent SCOPED token
+	// as GITHUB_TOKEN from agentEnvPairs below; everyone else must see no
+	// GitHub token at all, including one inherited from the hive process.
+	if !m.agentMode(agent).CanPush() {
+		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", "GH_TOKEN").Run()
+		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", "GITHUB_TOKEN").Run()
+	}
+	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
+	for _, p := range m.agentEnvPairs(agent) {
+		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, p.Key, p.Value).Run()
+	}
+}
+
 // linearRefreshTmuxArgs returns the tmux invocations the refresh tick applies
 // to one agent's session for the Linear credential: set-environment pushes of
 // the current credential for ISSUES_ONLY+ agents, or explicit unsets ("-u") of
@@ -893,14 +957,21 @@ func (m *Manager) linearEnvPairs(agent *AgentProcess) []agentEnvPair {
 // below ISSUES_ONLY keeps its session, and tmux forks a fresh CLI per turn, so
 // without them every post-downgrade turn would inherit the last pushed value
 // indefinitely — LINEAR_API_KEY never expires. They are unconditional on prior
-// state (set-environment -u is idempotent) so a downgrade is closed on the
+// state (set-environment -r is idempotent) so a downgrade is closed on the
 // first tick regardless of which variable, if any, was pushed before.
+//
+// -r, not -u: -u only deletes the SESSION entry, and when the variable also
+// sits in the server's GLOBAL environment (inherited from the hive process —
+// LINEAR_API_KEY is exactly such a variable) the global value shows through
+// to the next pane. -r records a removal that hides the global value from
+// every process the server forks afterwards; a later plain set overrides it,
+// so the ISSUES_ONLY+ push above is unaffected. See applySessionEnv.
 // Callers must skip agents with no tmux session.
 func (m *Manager) linearRefreshTmuxArgs(a *AgentProcess) [][]string {
 	if !m.agentMode(a).CanCreateIssues() {
 		return [][]string{
-			{"set-environment", "-t", a.tmuxSession, "-u", linearAccessTokenEnvVar},
-			{"set-environment", "-t", a.tmuxSession, "-u", linearAPIKeyEnvVar},
+			{"set-environment", "-t", a.tmuxSession, "-r", linearAccessTokenEnvVar},
+			{"set-environment", "-t", a.tmuxSession, "-r", linearAPIKeyEnvVar},
 		}
 	}
 	var out [][]string
@@ -2229,35 +2300,10 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		m.setupInteractiveHome(agent, launchBackend)
 	}
 
-	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
-	for _, p := range m.agentEnvPairs(agent) {
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, p.Key, p.Value).Run()
-	}
-	// Strip the shared FULL installation token (HIVE_GITHUB_TOKEN) from EVERY
-	// agent session (audit H3 follow-up, CWE-522). The hive process env carries
-	// HIVE_GITHUB_TOKEN (exported by entrypoint.sh from the full-token cache, and
-	// legitimately read by the hive itself as a config fallback), and a tmux
-	// server started by this process inherits that env — so without this strip it
-	// would leak into every pane the server forks, handing agents the full-
-	// privilege installation token. Agents must use ONLY their per-agent SCOPED
-	// token (gh-token-<agent>.cache via HIVE_AGENT_TOKEN_CACHE + the gh wrapper),
-	// so unset the full-token env in the session for all agents regardless of
-	// push capability. This does not touch the hive process env.
-	_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "HIVE_GITHUB_TOKEN").Run()
-	// Strip gh/git tokens from advisory agent sessions.
-	if !m.agentMode(agent).CanPush() {
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GH_TOKEN").Run()
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GITHUB_TOKEN").Run()
-	}
-	// Same for the Linear credential below the ISSUES_ONLY floor: the hive
-	// process env may carry LINEAR_API_KEY (the work-source key, referenced
-	// from hive.yaml as ${LINEAR_API_KEY}) and a tmux server started by this
-	// process inherits it, so an advisory agent would otherwise be handed a
-	// write-capable key the proxy gate would have to catch on every call.
-	if !m.agentMode(agent).CanCreateIssues() {
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", linearAccessTokenEnvVar).Run()
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", linearAPIKeyEnvVar).Run()
-	}
+	// Session environment: first REMOVE every credential the tmux server
+	// inherited from the hive process, then set the sanctioned per-agent pairs.
+	// Order and flag both matter — see applySessionEnv.
+	m.applySessionEnv(agent)
 
 	// Every set-environment above updated the SESSION environment, which tmux
 	// only copies into processes it forks AFTERWARDS. `new-session -d` already

@@ -91,7 +91,9 @@ func TestLinearCredential_RefreshTickStripsAfterDowngrade(t *testing.T) {
 	for _, cmd := range m.linearRefreshTmuxArgs(a) {
 		unset := false
 		for i, tok := range cmd {
-			if tok == "-u" && i+1 < len(cmd) {
+			// -r, not -u: only a removal hides a value the tmux server
+			// inherited globally from the hive process (see applySessionEnv).
+			if tok == "-r" && i+1 < len(cmd) {
 				unset = true
 				if _, ok := stripped[cmd[i+1]]; ok {
 					stripped[cmd[i+1]] = true
