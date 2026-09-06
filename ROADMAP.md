@@ -30,9 +30,12 @@ v4 is the default branch and the supported stable line.
   (see [SECURITY.md](SECURITY.md)).
 - Structural or protocol-level changes do not land here directly; they go
   through the v5 RFC process first, keeping v4 low-risk to track.
-- Support window: v4 remains supported through v5 development; an explicit
-  EOL relative to the first stable v5 release will be announced before
-  v5 GA.
+- Support window: v4 remains supported through v5 development. The v4 EOL
+  announcement is **blocked on completion of the
+  [v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)**
+  (live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016)):
+  no EOL date is announced before that checklist is closed, and any EOL is
+  stated relative to the first stable v5 release.
 
 ## v5 — Next Generation
 
@@ -91,7 +94,9 @@ issues. Accepted workstreams:
   [#5784](https://github.com/hivecommons/hive/pull/5784)).
 
 A documented migration path from v4 hubs and spokes, with dual-version
-operation during the transition, is part of the v5 GA bar.
+operation during the transition, is part of the
+[v5 GA readiness bar](https://github.com/hivecommons/hive/blob/v5/src/docs/v5-ga.md)
+(live tracker: [#6016](https://github.com/hivecommons/hive/issues/6016)).
 
 ## Hosted Hive Hub
 
