@@ -82,6 +82,11 @@ agents:
                                  #   bob | aider, or an inference backend:
                                  #   vllm | llm-d | litellm | watsonx | named gateway
     model: claude-sonnet-4-6     # model id for that method
+    reasoning_effort: high       # reasoning effort, for methods that have one:
+                                 #   codex (minimal|low|medium|high|xhigh, passed
+                                 #   as -c model_reasoning_effort) and agy
+                                 #   (low|medium|high, passed as --effort).
+                                 #   Omit for the method's own default.
     cli_pinned: true             # pin the CLI so nothing auto-switches it
     launch_cmd: "/usr/bin/copilot --allow-all --model claude-sonnet-4-6"
                                  # explicit launch command (optional — hive builds

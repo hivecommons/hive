@@ -52,6 +52,7 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"agent config stats", http.MethodPut, "/api/config/agent/scanner/stats", srv.handleAgentConfigStats},
 		{"agent config tools", http.MethodPut, "/api/config/agent/scanner/tools", srv.handleAgentConfigTools},
 		{"agent delete", http.MethodDelete, "/api/agents/scanner", srv.handleAgentDelete},
+		{"agent effort set", http.MethodPost, "/api/effort/scanner/high", srv.handleEffortSet},
 		{"agent login code", http.MethodPost, "/api/agents/scanner/login-code", srv.handleAgentLoginCode},
 		{"agent prompt save", http.MethodPut, "/api/config/agent/scanner/prompt", srv.handleAgentPromptSave},
 		{"backup download", http.MethodPost, "/api/backup", srv.handleBackupDownload},

@@ -3197,6 +3197,65 @@
         }
       }
     },
+    "/api/effort/{agent}/{effort}": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Set an agent's reasoning effort",
+        "description": "Sets and persists the agent's reasoning effort for backends that expose one (codex: minimal|low|medium|high|xhigh, passed as -c model_reasoning_effort; agy: low|medium|high, passed as --effort), then restarts the agent's session so the change takes effect — the effort only exists on the launch command line. The path value \"default\" clears the field back to the backend's own default. Rejects a value the agent's effective backend does not accept, and any value for a backend with no effort control.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name"
+          },
+          {
+            "name": "effort",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Reasoning effort, or \"default\" to clear"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reasoning effort set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "effort_set"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "reasoning_effort": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Effort not accepted by the agent's effective backend, or backend has no effort control"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        }
+      }
+    },
     "/api/pause/{agent}": {
       "post": {
         "tags": [
