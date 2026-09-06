@@ -176,6 +176,8 @@ new value at the same time.
 | `HIVE_CREDENTIAL_WATCHDOG_INTERVAL` | No | `5m` | Go duration overriding how often the credential watchdog verifies each in-use backend credential file. `0` does NOT disable the watchdog — disabling is intentionally not offered. |
 | `HIVE_PROVIDER_ERROR_BACKOFF_BASE` | No | `2m` | Go duration for the first inference-provider error backoff before another kick is allowed. Invalid or non-positive values fall back to the default. |
 | `HIVE_PROVIDER_ERROR_BACKOFF_MAX` | No | `30m` | Go duration cap for exponential inference-provider error backoff. Invalid or non-positive values fall back to the default. |
+| `HIVE_START_FAILURE_BLOCK_THRESHOLD` | No | `3` | Consecutive identical start failures (positive integer) before an agent is blocked from automatic relaunch (`pkg/agent/start_failure.go`). Backoff is applied from the first failure regardless; invalid values fall back to the default. |
+| `HIVE_START_FAILURE_BACKOFF_LADDER` | No | `1m,5m,15m,30m` | Comma-separated positive Go durations pacing the **automatic** relaunch loop after start failures, indexed by consecutive-failure count and capped at the last entry. Any invalid entry discards the whole override. Explicit relaunches (a saved key, the dashboard restart button) clear the backoff outright. |
 | `HIVE_COPILOT_SESSION_REFRESH_INTERVAL` | No | `10m` | Go duration overriding the Copilot session refresh interval. |
 | `HIVE_COPILOT_SESSION_REFRESH_START_DELAY` | No | `30s` | Go duration overriding the delay before the first Copilot session refresh. |
 | `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE` | No | unset | Bypasses the Claude host-state isolation guard. As the name says, unsafe outside local development. |
@@ -234,6 +236,11 @@ Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONL
 | `HIVE_UPGRADE_WAVE_SIZE` | No | saved scale setting, else built-in default | Number of spokes upgraded per wave. |
 | `HIVE_UPGRADE_DEBOUNCE_SECONDS` | No | built-in default | Debounce window before an upgrade wave starts. |
 | `HIVE_UPGRADE_MAX_HOLD_SECONDS` | No | built-in default | Maximum time an upgrade may be held before proceeding. |
+| `HIVE_VANITY_REPAIR_SUCCESS_COOLDOWN` | No | `24h` | Go duration a hive is skipped by the heartbeat-kick vanity-URL repair after a **successful** repair (mint or drift-adopt). One of the [#5923](https://github.com/hivecommons/hive/issues/5923) guardrails (`pkg/hub/saas_provision.go`); the env overrides exist for emergency production tuning without a rebuild. Invalid or non-positive values fall back to the default. |
+| `HIVE_VANITY_REPAIR_FAILURE_BACKOFF` | No | `1h` | Go duration the same repair path waits after a **failed** attempt before retrying a hive, preventing tight loops against unreachable clusters or an exhausted mint budget. |
+| `HIVE_VANITY_MINT_BUDGET` | No | `20` | Fleet-wide cap (positive integer) on vanity-host certificate **mints** from the repair path per window — sized well under Let's Encrypt's 50 certificates / registered domain / 168h limit so the remainder stays reserved for claim-time provisioning. |
+| `HIVE_VANITY_MINT_WINDOW` | No | `168h` | Go duration of the rolling window `HIVE_VANITY_MINT_BUDGET` is counted over. |
+| `HIVE_IMAGE_BUILD_STALE_AFTER` | No | `90m` | Go duration a branch HEAD may stay non-ready (docker workflow queued/building, image not yet on GHCR) before the hub reports its `latest_sha_image_status` as `stale` on the dashboard (`pkg/hub/saas.go`). |
 | `HIVE_ADVISORY_ISSUE_AGING_AFTER` | No | `45m` | Age (Go duration) after which a hive's advisory digest is bucketed `aging` in hub fleet-row freshness reporting (`pkg/hub/advisory_issue_activity.go`). Must be set **below** `HIVE_ADVISORY_ISSUE_STALE_AFTER`: if stale ≤ aging, **both** thresholds silently revert to their defaults. |
 | `HIVE_ADVISORY_ISSUE_STALE_AFTER` | No | `1h30m` | Age (Go duration) after which the same advisory-digest freshness struct is bucketed `stale` and drives the advisory-stale verdict. Same pairing rule as above: a value ≤ the aging threshold makes both revert to defaults. |
 | `HIVE_HUB_PUBLIC_URL` | No | none (chain continues) | First variable in the hub public-origin chain used to build notification deep links and to match the hub domain suffix. Precedence: `HIVE_HUB_PUBLIC_URL` → `HIVE_PUBLIC_URL` → `HIVE_HUB_BASE_URL` → `HIVE_DASHBOARD_URL` → `HIVE_HUB_URL`, then the compiled-in canonical public origin (links) or the default cluster domain (suffix match). |
@@ -258,6 +265,8 @@ only when neither is configured.
 | `HIVE_SSO_PUBLIC_KEY` | No | none | Ed25519 **public** key a spoke verifies hub-minted SSO handoff tokens with. Holding only the public key, a spoke can verify but cannot mint. |
 | `HIVE_SSO_PUBLIC_KEY_PREV` | No | none | Previous SSO public key, accepted during rotation so a spoke bridges a hub key change. |
 | `HIVE_SSO_KEY` | No | none | Legacy symmetric SSO key, still read for one release so spokes on a pre-cutover Deployment keep working. |
+| `HIVE_SESSION_PUBLIC_KEY` | No | none | Ed25519 **public** key (exactly 64 hex characters) the spoke's Node proxy (`src/proxy/server.js`) verifies hub-minted session cookies with. Set at provisioning and kept converged by the hub's per-hive env reconcile sweep (`pkg/hub/perhive_env_reconcile.go`) — do not hand-edit it on hosted spokes. |
+| `HIVE_SESSION_PUBLIC_KEY_PREV` | No | none | Previous-generation session public key, also accepted by the proxy so terminal sessions keep verifying while a hub key rotation's reconcile sweep walks the fleet (`pkg/hub/hub_pubkey_generations.go`). A deliberately separate variable — a `<hex>,<hex>` list in the primary would be silently truncated by Node and rejected by the Go verifier. Unset on an un-rotated fleet. |
 
 ### Hub login providers
 
