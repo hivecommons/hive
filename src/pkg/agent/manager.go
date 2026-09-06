@@ -2325,11 +2325,6 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	return nil
 }
 
-func (m *Manager) tmuxSessionExists(session string) bool {
-	cmd := m.tmuxRawCmd("has-session", "-t", session)
-	return cmd.Run() == nil
-}
-
 // tmuxSessionExists probes for a live tmux session. It is a function variable
 // solely as a TEST SEAM: production never assigns it, and the default below is
 // the real probe.
@@ -2442,12 +2437,6 @@ func paneHasCLIMarker(output string) bool {
 		}
 	}
 	return false
-}
-
-// tmuxPaneHasCLI reports whether a CLI is running in the pane by inspecting
-// the visible pane content for known CLI UI markers.
-func (m *Manager) tmuxPaneHasCLI(session string) bool {
-	return paneHasCLIMarker(m.captureTmuxPane(session))
 }
 
 // tmuxPaneHasCLIForAgent checks for CLI markers using the agent's tmux socket.
@@ -3625,33 +3614,6 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 	}
 }
 
-// watchForTrustPrompt monitors a tmux session for Copilot's "Confirm folder trust"
-// prompt and auto-selects "Yes, and remember for future sessions" (option 2).
-func (m *Manager) watchForTrustPrompt(session string, ctx context.Context) {
-	deadline := time.After(trustMaxWait)
-	ticker := time.NewTicker(trustPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-deadline:
-			return
-		case <-ticker.C:
-			output := m.captureTmuxPane(session)
-			if strings.Contains(output, "Confirm folder trust") || strings.Contains(output, "Do you trust the files") {
-				time.Sleep(paneCaptureSleep)
-				_ = m.tmuxRawCmd("send-keys", "-t", session, "2").Run()
-				time.Sleep(enterDelay)
-				_ = m.tmuxRawCmd("send-keys", "-t", session, "Enter").Run()
-				m.logger.Info("auto-answered folder trust prompt", "session", session)
-				time.Sleep(trustCooldown)
-			}
-		}
-	}
-}
-
 // acmmLevelNames maps ACMM level numbers to human-readable names. Kept in
 // sync with the canonical pack definitions in src/pkg/config/packs/level-*.yaml.
 var acmmLevelNames = map[int]string{
@@ -3848,55 +3810,6 @@ var outputSignalPatterns = map[string]string{
 	"test:":        "test_activity",
 	"FAIL":         "test_failure",
 	"coverage":     "coverage_report",
-}
-
-func (m *Manager) pollTmuxOutput(name, session string, buf *RingBuffer, ctx context.Context) {
-	const pollInterval = 3 * time.Second
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	var prevLines []string
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			output := m.captureTmuxPane(session)
-			if output == "" {
-				continue
-			}
-			var filtered []string
-			for _, line := range strings.Split(output, "\n") {
-				trimmed := strings.TrimRight(line, " \t")
-				if trimmed != "" {
-					filtered = append(filtered, trimmed)
-				}
-			}
-			if len(filtered) == 0 {
-				continue
-			}
-			if prevLines == nil {
-				// First capture after (re)start — seed prevLines so subsequent
-				// diffs work. Only write to the buffer if it's empty (fresh
-				// start); skip if it already has content (restart) to avoid
-				// duplicating the scrollback.
-				if buf.Count() == 0 {
-					for _, l := range filtered {
-						buf.Write(l)
-					}
-				}
-				prevLines = filtered
-				continue
-			}
-			newLines := diffNewLines(prevLines, filtered)
-			for _, l := range newLines {
-				buf.Write(l)
-				m.logOutputSignals(name, l)
-				m.checkBlockedThrash(name, l)
-			}
-			prevLines = filtered
-		}
-	}
 }
 
 // logOutputSignals checks a line of agent output for meaningful patterns
@@ -4116,25 +4029,6 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, piContextMarker)
 }
 
-// waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
-// or the timeout expires. Returns true if the CLI became ready.
-func (m *Manager) waitForCLIReady(session string) bool {
-	deadline := time.After(cliReadyTimeout)
-	ticker := time.NewTicker(cliReadyPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-deadline:
-			return false
-		case <-ticker.C:
-			if m.tmuxPaneHasCLI(session) {
-				return true
-			}
-		}
-	}
-}
-
 // waitForCLIReadyForAgent polls the agent's tmux pane (using its socket)
 // until the CLI shows its ready prompt or the timeout expires.
 func (m *Manager) waitForCLIReadyForAgent(agent *AgentProcess) bool {
@@ -4209,43 +4103,6 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 			}
 		}
 	}
-}
-
-// waitForInputPrompt polls until the CLI shows its input prompt (❯),
-// indicating it is ready to accept a kick. This is stricter than
-// waitForCLIReady which matches any CLI marker (including trust prompts).
-func (m *Manager) waitForInputPrompt(session string) bool {
-	deadline := time.After(inputPromptTimeout)
-	ticker := time.NewTicker(inputPromptPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-deadline:
-			return false
-		case <-ticker.C:
-			output := m.captureTmuxPane(session)
-			if paneShowsInputPrompt(output) {
-				return true
-			}
-		}
-	}
-}
-
-func (m *Manager) captureTmuxPane(session string) string {
-	cmd := m.tmuxRawCmd("capture-pane", "-t", session, "-p",
-		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
-}
-
-func (m *Manager) tmuxRawCmd(args ...string) *exec.Cmd {
-	base := m.tmuxBaseArgs(&AgentProcess{})
-	tmuxArgs := append(base[1:], args...)
-	return exec.Command(base[0], tmuxArgs...)
 }
 
 // captureTmuxPaneForAgent captures pane content using the agent's tmux socket.
