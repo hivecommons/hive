@@ -924,6 +924,27 @@ test('muse headless argv uses `muse exec` with the prompt as a trailing position
   } finally { teardown(relay); }
 });
 
+test('muse headless argv carries --reasoning-effort exactly once', () => {
+  // The effort is assembled in two places (buildLaunchCommand for the
+  // interactive path, buildHeadlessArgv for the one-shot path). A stray
+  // duplicate would reach muse as a repeated flag, and muse rejects repeats
+  // ("--approval-mode may only be provided once" is the same family of error),
+  // so a task would die at argv parsing rather than run.
+  const relay = loadRelay({
+    backend: 'muse', mode: 'headless', reasoningEffort: 'high',
+    backendPerm: '--approval-mode never --user-input-auto-resolve',
+  });
+  try {
+    const a = relay.buildHeadlessArgv('do the thing');
+    const n = a.args.filter(x => x === '--reasoning-effort').length;
+    assert.equal(n, 1, `--reasoning-effort must appear exactly once: ${JSON.stringify(a.args)}`);
+    assert.equal(a.args[a.args.indexOf('--reasoning-effort') + 1], 'high');
+    // and it must still land AFTER the sub-command, like every other muse flag
+    assert.ok(a.args.indexOf('exec') < a.args.indexOf('--reasoning-effort'),
+      `flags must follow the sub-command: ${JSON.stringify(a.args)}`);
+  } finally { teardown(relay); }
+});
+
 test('muse effort applies without a model and drops values muse would reject', () => {
   // Unlike agy, muse takes --reasoning-effort with or without --model. But it
   // exits 2 on an unrecognised value, so an unknown token must be dropped
