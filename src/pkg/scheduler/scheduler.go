@@ -1235,12 +1235,9 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 var ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
-func (s *Scheduler) buildMergeEligibleList() string {
-	return s.buildMergeEligibleListFor(nil)
-}
-
-// buildMergeEligibleListFor is buildMergeEligibleList narrowed to the repos the
-// predicate accepts (#6204). A nil predicate keeps everything.
+// buildMergeEligibleListFor renders the merge-eligible section of a kick,
+// narrowed to the repos the predicate accepts (#6204). A nil predicate keeps
+// everything, which is what an unscoped agent gets.
 func (s *Scheduler) buildMergeEligibleListFor(keep func(repo string) bool) string {
 	data, err := os.ReadFile(mergeEligiblePath)
 	if err != nil {
@@ -1282,11 +1279,7 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool) string
 	return b.String()
 }
 
-func (s *Scheduler) buildCIFailingList() string {
-	return s.buildCIFailingListFor(nil)
-}
-
-// buildCIFailingListFor is buildCIFailingList narrowed to the repos the
+// buildCIFailingListFor renders the CI-failing list narrowed to the repos the
 // predicate accepts (#6204). A nil predicate keeps everything.
 func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	data, err := os.ReadFile(ciFailingPath)
