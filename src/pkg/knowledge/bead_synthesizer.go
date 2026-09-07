@@ -324,8 +324,7 @@ func ClassifyBead(b *beads.Bead) (FactType, float64) {
 	return factType, confidence
 }
 
-// classifyByKeywords scans text for knowledge signal keywords, mirroring
-// the approach in curator.go's classifyComment.
+// classifyByKeywords scans text for knowledge signal keywords.
 func classifyByKeywords(text string) (FactType, float64) {
 	if text == "" {
 		return "", 0

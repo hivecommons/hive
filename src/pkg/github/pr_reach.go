@@ -170,7 +170,7 @@ func (c *Client) ListMergedPRFiles(ctx context.Context, owner, repo string, numb
 
 // RecentMergedPRs lists up to limit PRs merged into base, newest merge first,
 // cached for RecentMergedPRsTTL. It walks closed PRs sorted by update
-// recency (the fetchMergedPRs pattern in pkg/knowledge) and keeps only real
+// recency and keeps only real
 // merges into the requested base branch.
 func (c *Client) RecentMergedPRs(ctx context.Context, owner, repo, base string, limit int) ([]MergedPR, error) {
 	if c == nil {
