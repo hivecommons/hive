@@ -123,7 +123,6 @@ notifications:
 
 dashboard:
   port: 3002
-  snapshot_dir: /data/snapshots
   title: Knuckle Hive
 
 data:
