@@ -155,6 +155,13 @@ GOOSECFG
       ln -sf "$agent_md" "${HOME}/AGENTS.md"
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
+    muse)
+      # Muse Code reads AGENTS.md (its settings panel names "Agents.md", and
+      # AGENTS.md dominates the binary's own instruction-file strings). Keep
+      # the CLAUDE.md compatibility link too, matching codex/opencode/kilo.
+      ln -sf "$agent_md" "${HOME}/AGENTS.md"
+      ln -sf "$agent_md" "${HOME}/CLAUDE.md"
+      ;;
     *)
       ln -sf "$agent_md" "${HOME}/CLAUDE.md"
       ;;
@@ -374,6 +381,20 @@ detect_cli() {
     kilo)
       # Credentials are environment-only; never mount a whole Kilo home.
       if kilo --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
+      ;;
+    muse)
+      # `muse --version` answers 0 with NO credential at all, so probing the
+      # binary alone would report OK for a CLI that exits 1 on the first real
+      # task. Check the credential muse itself documents: META_API_KEY (which
+      # muse says "always takes priority over the account login") or the
+      # auth.json `muse login` / `muse auth set` writes.
+      if ! muse --version &>/dev/null; then
+        echo "NOT_AUTHED"
+      elif [[ -n "${META_API_KEY:-}" || -s "${HOME}/.config/muse/auth.json" ]]; then
+        echo "OK"
+      else
+        echo "NOT_AUTHED"
+      fi
       ;;
     *)
       echo "UNKNOWN"

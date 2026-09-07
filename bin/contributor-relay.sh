@@ -772,9 +772,17 @@ function setPiInvocationState(state) {
 //
 // Returns '' when nothing is in effect; auth_response omits the field entirely
 // in that case rather than sending an empty string.
+// Muse Code's own accepted effort values (`--reasoning-effort
+// none|minimal|low|medium|high|xhigh|max|ultra`, default high). muse exits 2
+// on anything else, so an unrecognised contributor value is dropped rather
+// than turned into a launch that cannot start.
+const MUSE_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
 function effectiveReasoningEffort() {
   // agy is the only backend whose effort is conditional on a model being passed.
   if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
+  // muse applies effort with or without a model, but only for values it takes.
+  if (BACKEND === 'muse') return MUSE_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : '';
   return REASONING_EFFORT || '';
 }
 
@@ -984,7 +992,13 @@ function buildLaunchCommand() {
   // Paired with modelFlag, never on its own: agy without --model needs no
   // --effort, and passing one alone would be a flag agy has no model to apply.
   const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${effectiveReasoningEffort()}` : '';
-  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag].filter(Boolean).join(' ');
+  // muse takes effort on its own, independent of --model (unlike agy), and
+  // validates the value itself. Only values muse actually accepts are passed,
+  // so effectiveReasoningEffort() never advertises an effort muse rejected.
+  const museEffortFlag = BACKEND === 'muse' && effectiveReasoningEffort()
+    ? `--reasoning-effort ${effectiveReasoningEffort()}`
+    : '';
+  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag, museEffortFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
 
@@ -1054,6 +1068,23 @@ const HEADLESS_BACKENDS = {
   opencode: { flag: 'run' },
   // Kilo is OpenCode-derived but uses distinct credentials and config.
   kilo: { flag: 'run' },
+  // muse exec "<prompt>" — Muse Code's documented non-interactive
+  // sub-command ("Run one prompt non-interactively (headless)"). Verified
+  // against Muse Code 1.0.3 (1.0.3-R2198.1): a completed run exits 0, a run
+  // with no usable credential exits 1 ("missing meta credentials: run `muse
+  // login` or set META_API_KEY..."), and a bad flag/value exits 2 — the
+  // exit-code contract runHeadlessTask() relies on. muse DOES have an
+  // interactive TUI, but hive has no interactive-tmux wiring for it (it
+  // deliberately does not join the getCLIState()/classifyTmuxPane() backend
+  // lists below), so headless is the only launch mode hive gives it.
+  //
+  // flagsAfterCommand: muse is a SUB-COMMAND-FIRST CLI. Its options are parsed
+  // by `muse exec` itself, not by the `muse` root, so the usual
+  // "<perm flags> <one-shot token> <prompt>" order silently breaks: `muse
+  // --approval-mode never exec "<prompt>"` prints the root help, exits 0, and
+  // never runs the task — a no-op that would look like a passing run. Verified
+  // against 1.0.3: flags must follow `exec`.
+  muse: { flag: 'exec', flagsAfterCommand: true },
 };
 
 // headlessSupportsBackend reports whether the configured backend has a known
@@ -1083,7 +1114,15 @@ function buildHeadlessArgv(prompt) {
   // tokens for backends needing a sub-command plus a flag (goose). Normalize
   // to an array so both shapes spread the same way ahead of the prompt.
   const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
-  const args = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...oneShotArgs, prompt];
+  const museEffortArgs = BACKEND === 'muse' && effectiveReasoningEffort()
+    ? ['--reasoning-effort', effectiveReasoningEffort()]
+    : [];
+  const flagArgs = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...museEffortArgs];
+  // Sub-command-first CLIs parse their options on the sub-command, not the
+  // root binary, so the one-shot token has to lead (see flagsAfterCommand).
+  const args = spec.flagsAfterCommand
+    ? [...oneShotArgs, ...flagArgs, prompt]
+    : [...flagArgs, ...oneShotArgs, prompt];
   return { bin: cmd, args };
 }
 
