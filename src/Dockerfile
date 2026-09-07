@@ -309,6 +309,41 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     rm -f /tmp/agy.tar.gz /tmp/antigravity && \
     agy --version
 
+# --- Layer 8.3: Muse Code CLI (backend: muse) ---
+# Meta distributes a self-contained executable, not an npm package. The public
+# installer (`https://dev.meta.ai/install.sh`) drops a *launcher* that resolves
+# the current release at runtime and verifies a checksum only when the server
+# volunteers one — that pins nothing, so it is deliberately NOT used here.
+# Instead, fetch the exact per-arch artifact and SHA-256 from the release
+# manifest, the same posture as the agy layer above:
+#   https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_VERSION}&file=manifest.json
+#
+# SIZE: this is a ~250-265 MB static binary per arch — by far the largest CLI
+# layer in this image. That cost is deliberate and worth stating: muse is the
+# only backend besides Claude Code that brings its own OS sandbox
+# (bubblewrap/seccomp on Linux), so it is the one fallback rung that does not
+# trade confinement for availability.
+#
+# Auth is NOT baked in: muse needs META_API_KEY in the environment, or a
+# credential at $HOME/.config/muse/auth.json seeded by an operator
+# (`muse login` / `muse auth set --api-key-stdin`). The image supplies only the
+# binary, exactly as the agy layer does for Google OAuth.
+ARG MUSE_VERSION=1.0.3-R2198.1
+ARG MUSE_SHA256_AMD64=75a68f98c437dfd17d264730c5bc72d57e5f1e18d10472a9f53261ffcc091352
+ARG MUSE_SHA256_ARM64=4ffcf55f5eb0668643f30c5febd90d188b9a2da65858918444d31f6046940120
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64|x86_64) MUSE_FILE=muse-x86-linux; MUSE_SHA256="$MUSE_SHA256_AMD64" ;; \
+      arm64|aarch64) MUSE_FILE=muse-aarch64-linux; MUSE_SHA256="$MUSE_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for muse: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+      -o /tmp/muse "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_VERSION}&file=${MUSE_FILE}" && \
+    echo "${MUSE_SHA256}  /tmp/muse" | sha256sum -c - && \
+    install -m 0755 /tmp/muse /usr/local/bin/muse && \
+    rm -f /tmp/muse && \
+    muse --version
+
 # --- Layer 8.5: pi CLI (@earendil-works/pi-coding-agent — backend: pi) ---
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as

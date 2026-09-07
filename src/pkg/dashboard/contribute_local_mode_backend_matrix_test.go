@@ -23,6 +23,11 @@ import (
 //     as a floor, matching the claude host-state deny-list precedent — and
 //     the local-mode banner must never call this "confined", only
 //     "denylisted", because it is not a filesystem boundary.
+//   - muse: has its own OS-enforced sandbox (bubblewrap/seccomp on Linux,
+//     seatbelt on macOS), ON by default. Local mode narrows it — workspace
+//     root, network posture, no foreign personal context — and turns off the
+//     approval prompt with --approval-mode never, NOT --yolo (which muse
+//     documents as disabling approval and sandboxing together).
 //   - goose, agy, bob, pi, aider, kilo: verified against each CLI's own current
 //     docs to have no sandbox, no filesystem allowlist, and no deny
 //     mechanism at all. Local mode for these MUST refuse to launch without
@@ -56,7 +61,7 @@ func runBackendsConfFunc(t *testing.T, fn string, args []string, extraEnv ...str
 			"HIVE_OPENCODE_DANGEROUSLY_", "HIVE_GOOSE_DANGEROUSLY_",
 			"HIVE_AGY_DANGEROUSLY_", "HIVE_BOB_DANGEROUSLY_",
 			"HIVE_PI_DANGEROUSLY_", "HIVE_AIDER_DANGEROUSLY_",
-			"HIVE_KILO_DANGEROUSLY_",
+			"HIVE_KILO_DANGEROUSLY_", "HIVE_MUSE_DANGEROUSLY_",
 		} {
 			if strings.HasPrefix(entry, prefix) {
 				skip = true
@@ -108,6 +113,7 @@ var localBackendPostures = map[string]localConfinementPosture{
 	"litellm":  postureSandboxed,
 	"opencode": postureDenylisted,
 	"kilo":     postureRefusalGated,
+	"muse":     postureSandboxed,
 }
 
 func shellKnownLocalBackends(t *testing.T) []string {
@@ -300,6 +306,98 @@ func writeFakeCopilot(t *testing.T, dir, helpOutput string) {
 	script := "#!/usr/bin/env bash\nif [[ \"$1\" == \"--help\" ]]; then cat <<'EOF'\n" + helpOutput + "EOF\nexit 0\nfi\nexit 0\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// ── muse: its own OS-enforced sandbox, narrowed further ────────────────
+
+func TestMuseLocalModeKeepsItsOwnSandbox(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runBackendsConfFunc(t, "muse_local_perm_flag_shell", nil,
+		"HIVE_WORKSPACE_DIR="+workspace)
+	if code != 0 {
+		t.Fatalf("muse local sandbox wiring failed: %q", out)
+	}
+	// --yolo is muse's "disable approval AND sandboxing" flag. Local mode must
+	// never reach for it: that is the exact "sounds unattended, is actually
+	// unconfined" mistake #4918 exists to prevent.
+	if strings.Contains(out, "--yolo") || strings.Contains(out, "--disable-sandbox") {
+		t.Fatalf("muse local argv disables its own sandbox: %q", out)
+	}
+	for _, want := range []string{
+		"--approval-mode never",
+		"--user-input-auto-resolve",
+		"--sandbox-network proxy-only",
+		"--no-foreign-personal-context",
+		"--workspace",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("muse local argv missing %q: %q", want, out)
+		}
+	}
+}
+
+// TestMuseLocalModeRequiresAWorkspace pins that muse's local sandbox refuses
+// rather than silently launching with no workspace root to confine writes to,
+// the same contract claude_family_local_perm_flag_shell holds.
+func TestMuseLocalModeRequiresAWorkspace(t *testing.T) {
+	out, code := runBackendsConfFunc(t, "muse_local_perm_flag_shell", nil, "HIVE_WORKSPACE_DIR=")
+	if code == 0 {
+		t.Fatalf("muse local mode launched with no workspace root: %q", out)
+	}
+	if !strings.Contains(out, "HIVE_WORKSPACE_DIR") {
+		t.Errorf("muse refusal does not name the missing variable: %q", out)
+	}
+}
+
+// TestMuseWorkspaceSurvivesShellRequoting guards the whitespace trap already
+// documented for Codex's --add-dir: this argv is re-parsed by the tmux
+// send-keys consumer, so a workspace path containing a space must come back as
+// ONE argv word, not three.
+func TestMuseWorkspaceSurvivesShellRequoting(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "work space")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runBackendsConfFunc(t, "muse_local_perm_flag_shell", nil,
+		"HIVE_WORKSPACE_DIR="+workspace)
+	if code != 0 {
+		t.Fatalf("muse local sandbox wiring failed: %q", out)
+	}
+	script := filepath.Join(t.TempDir(), "unquote.sh")
+	body := "out='" + strings.ReplaceAll(out, "'", `'\''`) + "'\neval \"set -- $out\"\nprintf '%s\\0' \"$@\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := exec.Command("bash", script).Output()
+	if err != nil {
+		t.Fatalf("re-quoting muse argv: %v", err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+	var got string
+	for i, a := range args {
+		if a == "--workspace" && i+1 < len(args) {
+			got = args[i+1]
+		}
+	}
+	if got != workspace {
+		t.Fatalf("--workspace did not survive re-quoting: got %q, want %q", got, workspace)
+	}
+}
+
+// TestMuseExplicitBypassDropsTheSandboxFlags proves the escape hatch is real
+// and is the ONLY way to get the unnarrowed posture.
+func TestMuseExplicitBypassDropsTheSandboxFlags(t *testing.T) {
+	out, code := runBackendsConfFunc(t, "muse_local_perm_flag_shell", nil,
+		"HIVE_MUSE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1")
+	if code != 0 {
+		t.Fatalf("explicit muse bypass should not fail: %q", out)
+	}
+	if strings.Contains(out, "--workspace") || strings.Contains(out, "--no-foreign-personal-context") {
+		t.Fatalf("bypass still emitted the local narrowing flags: %q", out)
 	}
 }
 

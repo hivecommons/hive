@@ -906,6 +906,49 @@ test('agy effort honors AGENT_REASONING_EFFORT but rejects values agy cannot tak
   } finally { teardown(bogus); }
 });
 
+test('muse headless argv uses `muse exec` with the prompt as a trailing positional', () => {
+  const relay = loadRelay({
+    backend: 'muse', mode: 'headless',
+    backendPerm: '--approval-mode never --user-input-auto-resolve',
+  });
+  try {
+    const a = relay.buildHeadlessArgv('fix the flaky test');
+    assert.equal(a.bin, 'muse');
+    assert.equal(a.args[0], 'exec', `muse headless must dispatch through exec: ${JSON.stringify(a.args)}`);
+    assert.equal(a.args[a.args.length - 1], 'fix the flaky test',
+      `prompt must be the final, distinct argv element: ${JSON.stringify(a.args)}`);
+    // --yolo is muse's disable-approval-AND-sandbox flag; the unattended
+    // posture must never reach for it (#4918).
+    assert.ok(!a.args.includes('--yolo'), `muse headless must not disable its own sandbox: ${JSON.stringify(a.args)}`);
+    assert.ok(a.args.includes('--approval-mode'), `muse headless lost its approval policy: ${JSON.stringify(a.args)}`);
+  } finally { teardown(relay); }
+});
+
+test('muse effort applies without a model and drops values muse would reject', () => {
+  // Unlike agy, muse takes --reasoning-effort with or without --model. But it
+  // exits 2 on an unrecognised value, so an unknown token must be dropped
+  // rather than turned into a launch that cannot start.
+  const noModel = loadRelay({ backend: 'muse', reasoningEffort: 'xhigh' });
+  try {
+    assert.match(noModel.buildLaunchCommand(), /--reasoning-effort xhigh/);
+  } finally { teardown(noModel); }
+
+  const bogus = loadRelay({ backend: 'muse', reasoningEffort: 'sorta-hard' });
+  try {
+    const cmd = bogus.buildLaunchCommand();
+    assert.ok(!/--reasoning-effort/.test(cmd), `unknown muse effort must be dropped, got: ${cmd}`);
+  } finally { teardown(bogus); }
+});
+
+test('muse reports only the effort it actually applied', () => {
+  // The effort travels twice — onto the argv and up to the hub — so a value
+  // muse rejected must not be advertised as in effect.
+  const bogus = loadRelay({ backend: 'muse', reasoningEffort: 'sorta-hard' });
+  try {
+    assert.equal(bogus.effectiveReasoningEffort(), '');
+  } finally { teardown(bogus); }
+});
+
 test('agy headless argv carries the same --model/--effort pairing', () => {
   const relay = loadRelay({ backend: 'agy', mode: 'headless', model: 'gemini-3.6-flash-high' });
   try {

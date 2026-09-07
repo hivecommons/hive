@@ -232,6 +232,7 @@ By L3, agents are writing code and running commands on your behalf — so it's w
 | `codex` | Yes — its own `workspace-write` sandbox |
 | `copilot` | Yes — Copilot CLI's own `--sandbox`, checked at launch |
 | `opencode` | Partial — a command deny-list only, **not** a filesystem sandbox |
+| `muse` | Yes — muse's own OS sandbox (bubblewrap/seccomp on Linux, seatbelt on macOS), narrowed further by hive |
 | `goose`, `agy`, `bob`, `pi`, `aider` | No — these backends have no confinement mechanism at all. Local mode **refuses to launch** for them unless you explicitly set that backend's own `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1` |
 
 If you see one of those `_DANGEROUSLY_RUN_UNCONFINED` variables mentioned in setup instructions, it means exactly what it says: that backend has no sandbox, and setting the variable is you accepting that the agent runs with full access to your machine. Prefer container mode (drop `local` from the command) or a confined/denylisted backend if you're running hive on a machine you care about.

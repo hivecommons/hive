@@ -212,8 +212,26 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
+      muse)
+        if command -v muse &>/dev/null; then
+          echo "Muse Code CLI detected ($(muse --version 2>&1 | head -1))"
+          echo "  Headless only: muse exec \"<prompt>\" --approval-mode never --user-input-auto-resolve"
+          echo "  Model:  export AGENT_MODEL=muse-spark-1.3-contributor  (see https://api.meta.ai/v1/models)"
+          echo "  Effort: export AGENT_REASONING_EFFORT=none|minimal|low|medium|high|xhigh|max|ultra"
+          echo "  Auth:   export META_API_KEY=..., or run 'muse login' / 'muse auth set --api-key-stdin'"
+          echo "          (credential stored at ~/.config/muse/auth.json; META_API_KEY takes priority)"
+          echo "  muse keeps its OWN OS sandbox on (bubblewrap/seccomp on Linux, seatbelt on macOS);"
+          echo "  local mode narrows it further rather than refusing to launch."
+          if [[ -z "${META_API_KEY:-}" && ! -s "${HOME}/.config/muse/auth.json" ]]; then
+            echo "  WARNING: no META_API_KEY and no ~/.config/muse/auth.json — muse will exit 1 at task time."
+          fi
+        else
+          echo "ERROR: muse CLI not found. Install: curl -fsSL https://dev.meta.ai/install.sh | bash"
+          exit 1
+        fi
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse"
         exit 1
         ;;
     esac
@@ -1038,6 +1056,15 @@ contribute-hive backend="" mode="docker": check-version
         opencode)
           PERM_FLAG=$(opencode_local_perm_flag_shell)
           ;;
+        muse)
+          # muse has a real OS sandbox of its own (bubblewrap/seccomp on
+          # Linux, seatbelt on macOS), ON by default — so local mode wires
+          # that boundary rather than refusing to launch. See
+          # muse_local_perm_flag_shell in backends.conf.
+          if ! PERM_FLAG=$(muse_local_perm_flag_shell); then
+            exit 1
+          fi
+          ;;
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
@@ -1477,7 +1504,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID; do
+        for name in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY; do
           add_provider_env "$name"
         done
       fi
