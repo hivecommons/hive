@@ -24,14 +24,19 @@ logs so one bad catalog entry does not prevent Hive from loading.
 
 Resolve requested skills by preferring the curated registry over inline
 `AGENTS.md` snippets, while falling back to repo-local skills the registry does
-not know about. Version resolution supports latest, exact versions, wildcard,
-caret-major, and greater-than-or-equal constraints, and `InjectionText` renders a
-single Markdown block for the kick path.
+not know about. `InjectionText` renders a single Markdown block for the kick
+path.
 
 Define the BYO-agent contract as `AgentSpec`: name, backend, model, operating
-mode, and default skills ([agent spec](../../pkg/skillreg/agentspec.go)). YAML
-agent specs are strict: malformed YAML, missing name/backend/model, or unknown
-modes fail before an agent can launch silently.
+mode, and default skills. YAML agent specs are strict: malformed YAML, missing
+name/backend/model, or unknown modes fail before an agent can launch silently.
+
+> **Amendment (2026-09):** the `AgentSpec` BYO-agent contract and the
+> constraint-based `Resolve`, `List`, and `Search` registry lookups shipped
+> with no production caller and were removed as dead code. The registry keeps
+> the wired surface only: `Load`, `Add`, `Get` (highest version wins),
+> `ResolveRequested`, and `InjectionText`. Reintroduce the SDK contract
+> alongside an actual BYO-agent launcher if that work resumes.
 
 ## Consequences
 
