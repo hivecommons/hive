@@ -300,6 +300,18 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// Per-repo agent scope (#6204). Issue creation is not hard-denied at the
+	// proxy the way PR-create and merge are, so the proxy DOES gate a direct
+	// `gh issue create` — but a request fulfilled here is performed by the
+	// hive, whose traffic is exempt from the forced-egress redirect. Gating
+	// both paths is what makes the scope a scope rather than a suggestion, and
+	// issue noise on repos that never wanted the agent is the specific cost
+	// #6204 is about.
+	if !c.AgentServesRepo(req.Agent, req.Repo) {
+		c.denyIssueRequest(path, req, AgentRepoScopeReason(req.Agent, req.Repo), nowFn)
+		return
+	}
+
 	meta := c.attributionMeta(req.Agent)
 	body := req.Body
 	if c.attributionTrailerOn() {

@@ -24,6 +24,16 @@ type agentListEntry struct {
 	Managed     bool   `json:"managed"`
 	Backend     string `json:"backend"`
 	Model       string `json:"model"`
+	// Repos is the agent's repository scope (#6204) as declared, and
+	// WatchedRepos is that scope intersected with project.repos. Both are
+	// absent for an unscoped agent — which is every agent on a hive that does
+	// not use the feature — so the payload is unchanged there.
+	//
+	// They are reported separately on purpose: an entry that is declared but
+	// not watched is exactly the misconfiguration worth seeing, and collapsing
+	// them would hide it.
+	Repos        []string `json:"repos,omitempty"`
+	WatchedRepos []string `json:"watchedRepos,omitempty"`
 }
 
 func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +43,7 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 		if displayName == "" {
 			displayName = name
 		}
-		agents = append(agents, agentListEntry{
+		entry := agentListEntry{
 			Name:        name,
 			ID:          cfg.ID,
 			DisplayName: displayName,
@@ -41,7 +51,12 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 			Managed:     cfg.Managed,
 			Backend:     cfg.Backend,
 			Model:       cfg.Model,
-		})
+		}
+		if scope := s.deps.Config.AgentRepoScope(name); len(scope) > 0 {
+			entry.Repos = scope
+			entry.WatchedRepos = s.deps.Config.ReposForAgent(name)
+		}
+		agents = append(agents, entry)
 	}
 	jsonResponse(w, agents)
 }

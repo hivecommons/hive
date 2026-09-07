@@ -48,6 +48,12 @@ func (w *spokeWire) wireSpokeProxyReadyAndLaunch() {
 		// answered with a 403 here. The predicate reads live config, so pausing
 		// a repo in the dashboard takes effect on the next request.
 		w.githubProxy.SetRepoPausedFunc(w.cfg.IsRepoPaused)
+		// Per-repo custom agents (#6204). This is the deterministic refusal the
+		// feature rests on: whatever an agent believes, a write to a repo it is
+		// not scoped to is answered with a 403 here. The predicate reads live
+		// config, so re-scoping an agent in the dashboard takes effect on the
+		// next request.
+		w.githubProxy.SetAgentRepoScopeFunc(w.cfg.AgentServesRepo)
 		// #1861: the proxy resolves an identified agent to its hub-held scoped
 		// token via the package-level registry WriteAgentToken feeds (NOT via
 		// the w.appAuth instance, which is replaced on key rotation — a closure

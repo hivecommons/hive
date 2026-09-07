@@ -211,7 +211,30 @@ type AgentConfig struct {
 	// roll (#5706 — same clobber family as #5632; cadences grew the equivalent
 	// marker in #5668). Empty means "no operator claim": pack-created agents
 	// keep the sweep's pause/resume reconciliation unchanged.
-	PauseOwner      string `yaml:"pause_owner" json:"pause_owner,omitempty"`
+	PauseOwner string `yaml:"pause_owner" json:"pause_owner,omitempty"`
+
+	// Repos scopes this agent to the repositories it serves (#6204). Empty —
+	// the zero value, and every agent in every config written before this
+	// field — means the whole hive, so an existing roster is unchanged.
+	//
+	// It is the missing half of Hive's per-repo story: AGENTS.md and
+	// repo-local skills already vary what an agent KNOWS per repo, but the
+	// roster itself was a function of the hive, so a specialist added for one
+	// repository woke on cadence and hunted for its concern in all the others.
+	//
+	// Entries are spelled as project.repos spells them — a bare name
+	// ("console") or an explicit cross-org reference ("laredo/cuga-agent") —
+	// and matched org-qualified and case-folded. See agent_repos.go; the
+	// predicate every enforcement point asks is Config.AgentServesRepo.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// ReposOwner records WHO set Repos, with the same FieldOwner* vocabulary
+	// as ModelOwner/BackendOwner/PauseOwner. No pack ships a repo scope today,
+	// so nothing reconciles it away today; the marker exists so that one which
+	// someday does cannot widen an operator's specialist back to the whole
+	// hive on the next restart — the #5632/#5706 clobber family this field
+	// would otherwise join.
+	ReposOwner string `yaml:"repos_owner,omitempty" json:"repos_owner,omitempty"`
+
 	StaleTimeout    int    `yaml:"stale_timeout" json:"stale_timeout,omitempty"`
 	RestartStrategy string `yaml:"restart_strategy" json:"restart_strategy,omitempty"`
 	LaunchCmd       string `yaml:"launch_cmd" json:"launch_cmd,omitempty"`

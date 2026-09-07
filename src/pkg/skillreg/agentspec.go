@@ -19,6 +19,13 @@ const (
 	DefaultMode = ModeSuggest
 )
 
+// AgentSpec is the BYO-agent contract. Any type providing these accessors can be
+// registered as a custom agent. Accessors (not fields) keep the contract stable
+// while allowing alternate backing implementations.
+//
+// Repo scope (#6204) is deliberately NOT here. It is the optional RepoScoped
+// interface in agentrepos.go, asked for through SpecRepos, so that adding it
+// did not invalidate a single existing implementation of this interface.
 type AgentSpec interface {
 	AgentName() string
 	Backend() string
@@ -47,6 +54,12 @@ type SpecData struct {
 	Prompt        string     `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 	Tools         *SpecTools `yaml:"tools,omitempty" json:"tools,omitempty"`
 	Skills        []string   `yaml:"skills,omitempty" json:"skills,omitempty"`
+	// RepoScope names the repositories this agent serves (#6204). Optional:
+	// absent or empty means every repo, which is what every spec written
+	// before this field meant and still means. Read it through Repos() /
+	// SpecRepos rather than directly — see agentrepos.go for why the scope is
+	// an optional interface instead of a new AgentSpec method.
+	RepoScope []string `yaml:"repos,omitempty" json:"repos,omitempty"`
 }
 
 var _ AgentSpec = (*SpecData)(nil)
@@ -98,6 +111,18 @@ func ParseAgentSpec(data []byte) (*SpecData, error) {
 	}
 	if err := validateSpecTools(spec.Tools); err != nil {
 		return nil, err
+	}
+	// Repo scope is optional, but a `repos:` key that survives normalization
+	// empty is not a scope — it is a typo that would silently widen the agent
+	// to the whole hive, which is the opposite of what writing the key meant.
+	// Reject it here, with the rest of the contract, rather than launching an
+	// agent whose declared scope does nothing.
+	if len(spec.RepoScope) > 0 {
+		normalized := NormalizeSpecRepos(spec.RepoScope)
+		if normalized == nil {
+			return nil, fmt.Errorf("skillreg: agent spec declares repos but names none")
+		}
+		spec.RepoScope = normalized
 	}
 	return &spec, nil
 }

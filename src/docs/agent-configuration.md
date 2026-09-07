@@ -148,6 +148,13 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     include_repos: true          # append the project repo list to each kick (default true).
                                  #   Prompt text only — it authorizes repos, it does
                                  #   NOT clone, mount, or provision anything on disk.
+    repos: [console]             # WHICH repos this agent serves. Omit (the default) for
+                                 #   the whole hive. Naming repos makes the agent a
+                                 #   specialist: it is only handed work on these, its
+                                 #   $HIVE_REPO/$HIVE_REPOS follow, and writes elsewhere
+                                 #   are REFUSED by the proxy and the hive-open-pr /
+                                 #   hive-merge / hive-open-issue relays — not merely
+                                 #   discouraged. See docs/per-repo-agents.md.
     on_demand: false             # true = never kicked by the governor timer;
                                  #   only triggered explicitly (e.g. inception)
     clear_on_kick: true          # default true; false keeps session context across kicks

@@ -64,7 +64,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/config/variables/{name}` | Dashboard auth/session | Variable Upsert | `pkg/dashboard/api.go:45` |
 | `DELETE` | `/api/config/variables/{name}` | Dashboard auth/session | Variable Delete | `pkg/dashboard/api.go:46` |
 | `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:105` |
-| `PUT` | `/api/config/agent/{name}/general` | Dashboard auth/session | Agent Config General | `pkg/dashboard/api.go:106` |
+| `PUT` | `/api/config/agent/{name}/general` | Dashboard auth/session | Agent Config General. Accepts `repos`: the agent's repository scope ([per-repo agents](per-repo-agents.md)). `[]` clears it and returns the agent to hive-wide; an operator edit stamps `repos_owner: operator` so a pack apply cannot widen it | `pkg/dashboard/api.go:106` |
 | `PUT` | `/api/config/agent/{name}/cadences` | Dashboard auth/session | Agent Config Cadences | `pkg/dashboard/api.go:107` |
 | `PUT` | `/api/config/agent/{name}/models` | Dashboard auth/session | Agent Config Models | `pkg/dashboard/api.go:108` |
 | `PUT` | `/api/config/agent/{name}/pipeline` | Dashboard auth/session | Agent Config Pipeline | `pkg/dashboard/api.go:109` |
@@ -157,7 +157,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `POST` | `/api/unpin/{agent}/{dimension}` | Dashboard auth/session | Unpin | `pkg/dashboard/api.go:77` |
 | `POST` | `/api/restart/{agent}` | Dashboard auth/session | Restart | `pkg/dashboard/api.go:78` |
 | `GET` | `/api/model-advisor` | Dashboard auth/session | Model Advisor | `pkg/dashboard/api.go:88` |
-| `GET` | `/api/agents` | Dashboard auth/session | Agents List | `pkg/dashboard/api.go:160` |
+| `GET` | `/api/agents` | Dashboard auth/session | Agents List. A repo-scoped agent ([per-repo agents](per-repo-agents.md)) also carries `repos` (what it declares) and `watchedRepos` (that scope intersected with `project.repos`); both are absent for an unscoped agent | `pkg/dashboard/api.go:160` |
 | `POST` | `/api/agents` | Dashboard auth/session | Agent Create | `pkg/dashboard/api.go:161` |
 | `POST` | `/api/agents/import` | Dashboard auth/session | Agent Import | `pkg/dashboard/api.go:162` |
 | `DELETE` | `/api/agents/{name}` | Dashboard auth/session | Agent Delete | `pkg/dashboard/api.go:163` |

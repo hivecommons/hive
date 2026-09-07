@@ -127,6 +127,18 @@ func (w *spokeWire) wireSpokeConfigAndSignals() {
 	for _, warning := range config.PausedRepoWarnings(w.cfg) {
 		w.logger.Warn("per-repo pause config", "issue", warning)
 	}
+	// Per-repo custom agents (#6204). Name the scoped agents at boot: which
+	// agents exist is now a per-repo answer, and an operator debugging "why did
+	// nothing happen on that repo" needs the roster composition in the same log
+	// they already read. A scope that matches nothing is a warning, not fatal —
+	// see AgentRepoScopeWarnings.
+	for _, name := range w.cfg.RepoScopedAgents() {
+		w.logger.Info("agent is repo-scoped — it serves only these repos",
+			"agent", name, "declared", w.cfg.AgentRepoScope(name), "watched", w.cfg.ReposForAgent(name))
+	}
+	for _, warning := range config.AgentRepoScopeWarnings(w.cfg) {
+		w.logger.Warn("per-repo agent scope", "issue", warning)
+	}
 	startupRepoTargetIssue := config.ValidateRepoTargets(w.cfg)
 	if startupRepoTargetIssue != nil {
 		w.logger.Warn("repo target misconfigured — owner action required",

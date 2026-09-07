@@ -172,6 +172,16 @@ type GitHubProxy struct {
 	// changes, and a run-state the operator relies on must not be advisory.
 	pausedMu   sync.RWMutex
 	repoPaused func(repo string) bool
+	// agentServesRepo reports whether an agent is scoped to a repo (#6204).
+	// Guarded because the dashboard can re-scope an agent while request
+	// goroutines are reading it.
+	//
+	// Enforcement lives HERE rather than in an agent prompt on purpose: an
+	// out-of-scope agent must be REFUSED, not merely asked not to go. A
+	// prompt-level scope has already been observed to fail when an agent's
+	// model changes.
+	scopeMu         sync.RWMutex
+	agentServesRepo func(agent, repo string) bool
 
 	// proxyAdvisoryOK mirrors entrypoint.sh's HIVE_PROXY_ADVISORY_OK — the SAME
 	// explicit, operator-set escape hatch that already governs whether a failed
@@ -461,6 +471,24 @@ func (p *GitHubProxy) repoPauseRefusal(method, path string) (string, bool) {
 	paused := p.repoPaused
 	p.pausedMu.RUnlock()
 	return RepoPauseRefusal(paused, method, path)
+}
+
+// SetAgentRepoScopeFunc installs the per-repo agent-scope predicate (#6204).
+// The hive passes config's AgentServesRepo, so re-scoping an agent in the
+// dashboard is enforced on the very next request without a restart. Passing nil
+// clears it, which is the unscoped behaviour every hive had before.
+func (p *GitHubProxy) SetAgentRepoScopeFunc(fn func(agent, repo string) bool) {
+	p.scopeMu.Lock()
+	p.agentServesRepo = fn
+	p.scopeMu.Unlock()
+}
+
+// agentRepoScopeRefusal is AgentRepoScopeRefusal against the current predicate.
+func (p *GitHubProxy) agentRepoScopeRefusal(agentName, method, path string) (string, bool) {
+	p.scopeMu.RLock()
+	serves := p.agentServesRepo
+	p.scopeMu.RUnlock()
+	return AgentRepoScopeRefusal(serves, agentName, method, path)
 }
 
 // ListenAddr returns the proxy listen address.
@@ -1081,28 +1109,36 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		blocked := false
 		blockReason := ""
 
-		// Per-repo pause (#6203) is checked BEFORE the mode chain, and outside
-		// it, for two reasons. It is a run-state, not an autonomy tier: it must
-		// refuse the write whatever mode the agent holds and whichever branch
-		// below would otherwise have allowed it. And it carries its own reason,
-		// so the agent is told the repo is deliberately quiet instead of
-		// reading a mode error and going hunting for a permissions bug that
-		// does not exist.
+		// Per-repo pause (#6203) and per-repo agent scope (#6204) are both
+		// checked BEFORE the mode chain, and outside it, for the same two
+		// reasons. Neither is an autonomy tier — a pause is a run-state, a
+		// scope is roster membership — so each must refuse the write whatever
+		// mode the agent holds and whichever branch below would otherwise have
+		// allowed it. And each carries its own reason, so the agent is told the
+		// repo is deliberately quiet, or that it is not defined for this repo,
+		// instead of reading a mode error and going hunting for a permissions
+		// bug that does not exist.
 		//
 		// The hive's own control-plane traffic (App-token mint, heartbeat) is
-		// exempt, exactly as it is from the ACMM rules below: pause governs
-		// AGENT activity, and stopping the hive from minting a token would take
-		// the whole spoke down to quiet one repo.
+		// exempt from both, exactly as it is from the ACMM rules below:
+		// stopping the hive from minting a token would take the whole spoke
+		// down rather than quiet one repo or narrow one agent.
+		//
+		// Pause is checked first, so a repo the operator has frozen is refused
+		// as paused even when the agent is also out of scope for it.
 		if agentName != internalCallerName {
 			if reason, paused := p.repoPauseRefusal(req.Method, req.URL.Path); paused {
+				blocked = true
+				blockReason = reason
+			} else if reason, refused := p.agentRepoScopeRefusal(agentName, req.Method, req.URL.Path); refused {
 				blocked = true
 				blockReason = reason
 			}
 		}
 
 		if blocked {
-			// Already refused by the repo pause above — the mode chain cannot
-			// un-block it, so skip it entirely.
+			// Already refused by the pause or agent-scope check above — the
+			// mode chain cannot un-block it, so skip it entirely.
 		} else if isLinear && agentName == internalCallerName {
 			// The hive's OWN Linear traffic — the read path #4178 shipped
 			// (backlog enumeration in pkg/worksource/linear.go) and, later,

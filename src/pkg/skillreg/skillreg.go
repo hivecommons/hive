@@ -41,6 +41,14 @@
 // shared catalog override ad-hoc inline snippets while still honoring repo-local
 // skills the catalog has never heard of.
 //
+// # Repo scope
+//
+// A spec may say which repositories it serves (#6204) — the `repos:` key, read
+// through SpecRepos. That is deliberately an optional extension (RepoScoped)
+// and not a sixth AgentSpec method: adding one would break every third-party
+// implementation at compile time. A spec with no scope is hive-wide, exactly as
+// every spec written before the field was.
+//
 // # Concurrency
 //
 // Registry is safe for concurrent use by multiple goroutines.

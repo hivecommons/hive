@@ -262,6 +262,17 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// Per-repo agent scope (#6204), on the same footing as the PR relay and for
+	// the same reason: `PUT /pulls/{n}/merge` is hard-denied at the proxy for
+	// every mode, so this watcher is the only agent-reachable merge path and
+	// the only place a scope can stop one. Checked before the optional
+	// branch-update so an out-of-scope repo receives no write at all, not even
+	// the head-branch push that "update branch" performs.
+	if !c.AgentServesRepo(req.Agent, req.Repo) {
+		c.denyMergeRequest(path, req, AgentRepoScopeReason(req.Agent, req.Repo), nowFn)
+		return
+	}
+
 	if err := c.verifyMergeRequestBaseProtected(ctx, req.Repo, req.Number); err != nil {
 		c.denyMergeRequest(path, req, err.Error(), nowFn)
 		return

@@ -387,6 +387,18 @@ type ProjectContext struct {
 	// Nil means nothing is paused, which is every hive that does not use the
 	// feature and every test that constructs a ProjectContext literal.
 	RepoPaused func(repo string) bool
+	// AgentRepos returns the repositories one agent serves (#6204), and
+	// AgentPrimaryRepo the repo its prompts should treat as "the" repo. Both
+	// are live functions rather than a snapshot map because ProjectContext is
+	// built once at boot while a scope is edited mid-run — a specialist
+	// re-scoped in the dashboard must reach the next agent launch without a
+	// hive restart.
+	//
+	// Nil means no scoping: every agent gets Repos and PrimaryRepo, which is
+	// what every hive did before this field and what every test that builds a
+	// ProjectContext literal still gets.
+	AgentRepos       func(agent string) []string
+	AgentPrimaryRepo func(agent string) string
 }
 
 // ActiveRepos is Repos minus the operator-paused entries: the repos an agent
@@ -398,17 +410,62 @@ type ProjectContext struct {
 // froze the first one would be a far larger surprise than the pause itself.
 // A paused primary simply stops appearing in the work scope.
 func (p ProjectContext) ActiveRepos() []string {
-	if p.RepoPaused == nil {
+	return p.unpaused(p.Repos)
+}
+
+// ReposFor returns the repositories the named agent serves, falling back to the
+// hive-wide list when the agent is unscoped or no scope function is wired.
+func (p ProjectContext) ReposFor(agent string) []string {
+	if p.AgentRepos == nil {
 		return p.Repos
 	}
-	out := make([]string, 0, len(p.Repos))
-	for _, r := range p.Repos {
+	if repos := p.AgentRepos(agent); repos != nil {
+		return repos
+	}
+	return p.Repos
+}
+
+// ActiveReposFor is ReposFor minus the operator-paused entries: the repos the
+// named agent should actually be handed work on.
+//
+// The two narrowings compose rather than override. A scope says which repos an
+// agent is FOR (#6204); a pause says which repos are open for work at all
+// (#6203). An agent scoped to a repo the operator has since paused is handed
+// nothing for it, and unpausing restores it without touching the scope.
+func (p ProjectContext) ActiveReposFor(agent string) []string {
+	return p.unpaused(p.ReposFor(agent))
+}
+
+// unpaused drops the operator-paused entries from repos, preserving order.
+func (p ProjectContext) unpaused(repos []string) []string {
+	if p.RepoPaused == nil {
+		return repos
+	}
+	out := make([]string, 0, len(repos))
+	for _, r := range repos {
 		if p.RepoPaused(r) {
 			continue
 		}
 		out = append(out, r)
 	}
 	return out
+}
+
+// PrimaryRepoFor returns the repo the named agent's prompts should treat as
+// "the" repo — what $HIVE_REPO names.
+//
+// Unlike PrimaryRepo() this is per-agent, and it has to be: the shipped
+// templates say `gh issue create --repo "$HIVE_REPO"`, so handing a specialist
+// scoped away from the hive primary the hive primary would aim every example it
+// has at a repository the proxy then refuses. An unscoped agent is unaffected.
+// Like PrimaryRepo it does not filter paused repos — see ActiveRepos.
+func (p ProjectContext) PrimaryRepoFor(agent string) string {
+	if p.AgentPrimaryRepo != nil {
+		if repo := strings.TrimPrefix(strings.TrimSpace(p.AgentPrimaryRepo(agent)), p.Org+"/"); repo != "" {
+			return repo
+		}
+	}
+	return p.PrimaryRepo()
 }
 
 func (p ProjectContext) PrimaryRepo() string {

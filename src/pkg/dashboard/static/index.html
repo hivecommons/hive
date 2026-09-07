@@ -19782,6 +19782,11 @@ function burnAreaChart() {
           </select>
         </div>
         <div class="config-field">
+          <label>Repos <span class="config-info">i<span class="config-tooltip">Which repositories this agent serves. Leave EMPTY for the whole hive — that is the default and what every agent did before this setting existed. Naming repos here makes the agent a specialist: it is only handed work on these repos, its kick lists only these repos, and writes to any other repo are refused by the proxy and by the hive-open-pr/hive-merge/hive-open-issue relays. Use it for an agent that is only relevant to one repo — a schema-migration reviewer, an image-build auditor — so it stops costing inference and filing noise on the repos that never wanted it. Comma-separated; a bare name ("console") or an owner/name reference ("laredo/cuga-agent").</span></span></label>
+          <input type="text" id="cfg-agent-repos" value="${esc((g.repos || []).join(', '))}" placeholder="(empty = every repo in the hive)" data-change-action="gh39repos">
+          <div style="font-size:0.7rem;color:var(--muted);margin-top:4px">${(g.repos && g.repos.length) ? `🎯 scoped to ${g.repos.length} repo(s)` : 'hive-wide — serves every repo'}${(g.projectRepos && g.projectRepos.length) ? ` · this hive watches: ${esc(g.projectRepos.join(', '))}` : ''}</div>
+        </div>
+        <div class="config-field">
           <label>Lane Keywords <span class="config-info">i<span class="config-tooltip">Comma-separated keywords for issue classification routing. Issues matching these keywords are routed to this agent.</span></span></label>
           <input type="text" id="cfg-agent-lane-kw" value="${esc((g.laneKeywords || []).join(', '))}" placeholder="e.g. bug, triage, security" data-change-action="gh36">
         </div>
@@ -23174,6 +23179,7 @@ function burnAreaChart() {
           stale_timeout: generalData.staleTimeout || 0,
           clear_on_kick: generalData.clearOnKick !== false,
           include_repos: generalData.includeRepos !== false,
+          repos: generalData.repos || [], // #6204: empty = every repo
           lane_keywords: generalData.laneKeywords || [],
           detect_keywords: generalData.detectKeywords || [],
           aliases: generalData.aliases || [],
@@ -25153,6 +25159,10 @@ function burnAreaChart() {
       gh33: function (event, A) { markDirty('general','sortOrder',parseInt(this.value,10)); },
       gh34: function (event, A) { markDirty('general','replicas',Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)));this.value=Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)); },
       gh35: function (event, A) { markDirty('general','staleTimeout',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value)); },
+      // Repo scope (#6204). An empty field is meaningful — it CLEARS the scope
+      // and returns the agent to hive-wide — so it marks dirty with [] rather
+      // than skipping, which is why it cannot just reuse gh36.
+      gh39repos: function (event, A) { markDirty('general','repos',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh36: function (event, A) { markDirty('general','laneKeywords',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh37: function (event, A) { markDirty('general','detectKeywords',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh38: function (event, A) { markDirty('general','aliases',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },

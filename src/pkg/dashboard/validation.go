@@ -103,6 +103,25 @@ func containsHTMLTags(s string) bool {
 	return htmlTagPattern.MatchString(s)
 }
 
+// agentRepoRefPattern matches a repos-scope entry: a bare repository name, or
+// an explicit "owner/name" cross-org reference. Deliberately the same shape
+// project.repos accepts, so an operator can copy an entry across verbatim.
+var agentRepoRefPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
+
+// validateAgentRepoRef rejects a scope entry that cannot name a repository —
+// a URL, a path, an owner/name/extra triple. Catching it here means the
+// operator sees it on the request that caused it rather than as an agent that
+// silently has nowhere to work.
+func validateAgentRepoRef(s string) error {
+	if len(s) > 200 {
+		return fmt.Errorf("repos entry %q is too long", s)
+	}
+	if !agentRepoRefPattern.MatchString(s) {
+		return fmt.Errorf("repos entry %q must be a repository name (\"console\") or an owner/name reference (\"laredo/cuga-agent\")", s)
+	}
+	return nil
+}
+
 // ---------- agent config validation ----------
 
 // validateAgentGeneralInput validates all fields in an agent general config
@@ -159,6 +178,34 @@ func validateAgentGeneralInput(body map[string]interface{}) error {
 			if !kickTemplatePattern.MatchString(s) {
 				return fmt.Errorf("kickTemplate must match pattern: alphanumeric/underscore/dot/hyphen ending in .md")
 			}
+		}
+	}
+	// repos: the agent's repository scope (#6204). An empty list is meaningful
+	// (it clears the scope, returning the agent to hive-wide); a list of blanks
+	// is not — it would read as "scoped" while matching nothing, quietly
+	// leaving the agent with no repos to work.
+	if v, ok := body["repos"]; ok {
+		arr, ok := v.([]interface{})
+		if !ok {
+			return fmt.Errorf("repos must be an array of repository names")
+		}
+		named := 0
+		for _, item := range arr {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("repos entries must be strings")
+			}
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			if err := validateAgentRepoRef(s); err != nil {
+				return err
+			}
+			named++
+		}
+		if len(arr) > 0 && named == 0 {
+			return fmt.Errorf("repos was given but names no repository — send [] to clear the scope instead")
 		}
 	}
 	if v, ok := body["beadRole"]; ok {

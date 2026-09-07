@@ -3084,6 +3084,11 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"definitionSource": agentCfg.DefinitionSource,
 			"mode":             agentCfg.Mode,
 			"includeRepos":     includeRepos,
+			// The agent's repository scope (#6204), plus the hive's own repo
+			// list so the dialog can offer real choices instead of a free-text
+			// field the operator has to spell from memory.
+			"repos":            agentCfg.Repos,
+			"projectRepos":     s.deps.Config.Project.Repos,
 			"laneKeywords":     agentCfg.LaneKeywords,
 			"detectKeywords":   agentCfg.DetectKeywords,
 			"aliases":          agentCfg.Aliases,
@@ -3691,6 +3696,27 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["includeRepos"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.IncludeRepos = &b
+		}
+	}
+	// repos: the agent's repository scope (#6204). An operator edit claims
+	// ownership of the field, the same contract model/backend/pause carry — no
+	// pack ships a repo scope today, but a field a human chose must not be
+	// reconcilable by one that someday does (#5632/#5706).
+	if v, ok := body["repos"]; ok {
+		if arr, ok := v.([]interface{}); ok {
+			repos := make([]string, 0, len(arr))
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					if s = strings.TrimSpace(sanitizeString(s)); s != "" {
+						repos = append(repos, s)
+					}
+				}
+			}
+			if len(repos) == 0 {
+				repos = nil
+			}
+			agentCfg.Repos = repos
+			agentCfg.ReposOwner = config.FieldOwnerOperator
 		}
 	}
 	if v, ok := body["laneKeywords"]; ok {

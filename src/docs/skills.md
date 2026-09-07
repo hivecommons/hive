@@ -177,6 +177,28 @@ the full example.
 | `LoadAgentSpec(path)` | loads a BYO-agent YAML file or spec directory |
 | `Registry.ResolveRequested(cfg, names)` | resolves names, preferring registry skills over an `AGENTS.md` inline fallback |
 | `InjectionText(skills)` | renders resolved skills as the Markdown block injected into a kick |
+| `SpecRepos` / `SpecServesRepo` | read a spec's repo scope; an unscoped spec serves every repo |
+
+## Repo scope on a spec
+
+A spec may name the repositories it serves:
+
+```yaml
+name: schema-reviewer
+backend: claude-code
+model: opus
+repos: [console]
+skills: [sql-migrations]
+```
+
+`AgentSpec` itself is **unchanged**. The scope is a separate optional interface
+(`RepoScoped`), read through `SpecRepos`, because adding a sixth method to a
+published Go interface breaks every existing third-party implementation at
+compile time. A spec that does not implement it is hive-wide — which is what
+every spec written before the key meant, and still means.
+
+See [per-repo agents](per-repo-agents.md) for what a scope narrows and what
+enforces it.
 
 ## Related
 

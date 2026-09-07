@@ -96,16 +96,20 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 
 	w.projectCtx = agent.ProjectContext{
 		Org: w.cfg.Project.Org,
-		// Repos is the full watched set; RepoPaused narrows it to the work
-		// scope at read time (#6203), so a pause taken mid-run reaches the next
-		// agent's $HIVE_REPOS without rebuilding this context.
-		Repos:           w.cfg.Project.Repos,
-		RepoPaused:      w.cfg.IsRepoPaused,
-		PrimaryRepoName: w.cfg.Project.PrimaryRepo,
-		ACMMLevel:       w.acmmLevel,
-		PRsAllowed:      w.cfg.Project.PRsAllowed(),
-		PolicyDir:       w.policyDir,
-		AppAuthoredPRs:  w.cfg.GitHub.AppAuthoredPRsEnabled(),
+		// Repos stays the full watched set; the functions below narrow it at
+		// read time — RepoPaused to the repos open for work (#6203), AgentRepos
+		// and AgentPrimaryRepo to the ones a given agent serves (#6204) — so a
+		// pause taken or a scope edited mid-run reaches the next agent launch
+		// without rebuilding this context.
+		Repos:            w.cfg.Project.Repos,
+		RepoPaused:       w.cfg.IsRepoPaused,
+		AgentRepos:       w.cfg.ReposForAgent,
+		AgentPrimaryRepo: w.cfg.PrimaryRepoForAgent,
+		PrimaryRepoName:  w.cfg.Project.PrimaryRepo,
+		ACMMLevel:        w.acmmLevel,
+		PRsAllowed:       w.cfg.Project.PRsAllowed(),
+		PolicyDir:        w.policyDir,
+		AppAuthoredPRs:   w.cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	if w.cfg.GitHub.IsGHE() {
 		w.projectCtx.GHHost = w.cfg.GitHub.HostLabel()

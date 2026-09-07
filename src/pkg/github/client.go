@@ -44,8 +44,14 @@ type Client struct {
 	// enumeration goroutine is deciding what work exists. Nil (the zero value,
 	// and what every test constructs) means nothing is paused, so the client
 	// behaves exactly as it did before.
-	repoPaused   func(repo string) bool
-	exemptLabels []string
+	repoPaused func(repo string) bool
+	// agentServesRepo reports whether an agent is scoped to a repo (#6204).
+	// Guarded by reposMu because the dashboard can re-scope an agent while a
+	// relay goroutine is deciding whether to fulfil a request. Nil (the zero
+	// value, and what every test constructs) means no scoping, so the client
+	// behaves exactly as it did before.
+	agentServesRepo func(agent, repo string) bool
+	exemptLabels    []string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,

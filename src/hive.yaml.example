@@ -83,6 +83,13 @@ agents:
     kick_template: scanner-CLAUDE.md      # Prompt template filename (or omit for convention)
     include_repos: true                   # Append repos section to kicks (prompt text only —
                                           #   authorizes repos, does not clone them)
+    # repos: [repo-one]                   # WHICH repos this agent serves. Omit (the default)
+                                          #   for the whole hive. Naming repos makes the agent
+                                          #   a specialist: handed work only on these, its
+                                          #   $HIVE_REPO/$HIVE_REPOS follow, and writes to any
+                                          #   other repo are REFUSED by the proxy and the
+                                          #   hive-open-pr / hive-merge / hive-open-issue
+                                          #   relays. See src/docs/per-repo-agents.md.
     bead_role: worker                     # "supervisor" or "worker"
     # stats_display:                      # Custom stats for sidebar (omit for defaults)
     #   - key: actionable

@@ -353,7 +353,8 @@ func (w *spokeWire) handleHubGitHubAppConfig(ghCfg *hub.HeartbeatGitHubAppConfig
 			newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(w.cfg.Governor.Labels.AutoMerge))
 		}
 		newClient.SetIssueFilter(w.cfg.Project.IssueFilter)
-		newClient.SetRepoPausedFunc(w.cfg.IsRepoPaused) // #6203: a client rebuild must not un-pause repos
+		newClient.SetRepoPausedFunc(w.cfg.IsRepoPaused)        // #6203: a client rebuild must not un-pause repos
+		newClient.SetAgentRepoScopeFunc(w.cfg.AgentServesRepo) // #6204: a client rebuild must not un-scope agents
 		syncAutoMergePolicyToGitHubClient(w.cfg, newClient)
 
 		w.ghClient = newClient

@@ -44,12 +44,12 @@ var prRequestPollInterval = 10 * time.Second
 // set it only to target a non-default branch on purpose
 // (kubestellar/hive#4928).
 type PRRequest struct {
-	Repo   string `json:"repo"`
-	Head   string `json:"head"`
-	Base   string `json:"base,omitempty"`
-	Title  string `json:"title"`
-	Body   string `json:"body,omitempty"`
-	Agent  string `json:"agent,omitempty"`
+	Repo  string `json:"repo"`
+	Head  string `json:"head"`
+	Base  string `json:"base,omitempty"`
+	Title string `json:"title"`
+	Body  string `json:"body,omitempty"`
+	Agent string `json:"agent,omitempty"`
 	// IssueN declares the originating issue(s) this PR is for (hive-open-pr
 	// --issues). When set, the watcher verifies the body actually references
 	// each one (Closes #N / Refs #N) and rejects the request otherwise — a
@@ -277,6 +277,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// anyway — and so a paused repo spends no API quota on validation.
 	if c.RepoIsPaused(req.Repo) {
 		c.rejectPRRequest(path, req, "repo-pause", RepoPausedReason(req.Repo), nowFn)
+		return
+	}
+
+	// Per-repo agent scope (#6204). Checked here before any GitHub call, because
+	// this relay is the ONLY way an agent can open a PR: the proxy hard-denies
+	// direct POST /pulls for every mode, and the hive's own fulfilment does not
+	// traverse the proxy. Without this gate a specialist could open PRs on
+	// repositories it was never defined for.
+	if !c.AgentServesRepo(req.Agent, req.Repo) {
+		c.rejectPRRequest(path, req, "repo-scope", AgentRepoScopeReason(req.Agent, req.Repo), nowFn)
 		return
 	}
 

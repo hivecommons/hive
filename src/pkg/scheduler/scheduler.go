@@ -267,6 +267,22 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	}
 	now := time.Now().Local()
 
+	// Per-repo agent scope (#6204): everything below describes ONE agent's
+	// world, so narrow that world to the repos this agent serves before any of
+	// it is computed. Cadence stays hive-wide — a scoped agent still wakes on
+	// its schedule — but it wakes to its own repos' work instead of a backlog
+	// it has to read through and discard. That task filtering is the cheap half
+	// of the cost problem: an agent shown a schema-migration issue in a repo
+	// with no database will look at it.
+	//
+	// A nil scope (every agent on every hive that does not use the feature)
+	// skips all of this, and the values below are byte-identical to before.
+	if s.cfg.AgentRepoScope(agentName) != nil {
+		keep := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
+		actionable = github.FilterActionableForRepos(actionable, keep)
+		issues = filterIssuesForRepos(issues, keep)
+	}
+
 	var agentIssuesForList []github.Issue
 	if baseName == "scanner" {
 		agentIssuesForList = issues
@@ -281,11 +297,15 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		return "", true
 	}
 
-	// ActiveRepos, not Project.Repos: ${PROJECT_REPOS_LIST} is what a template
-	// tells an agent to work through, and a paused repo is not work (#6203).
-	reposList := strings.Join(s.cfg.ActiveRepos(), ", ")
-	primaryRepo := s.cfg.Project.PrimaryRepo
-	fullPrimaryRepo := fmt.Sprintf("%s/%s", s.cfg.Project.Org, primaryRepo)
+	// Both narrowings apply (#6203/#6204). ${PROJECT_REPOS_LIST} is what a
+	// template tells an agent to work through: a repo it does not serve is not
+	// its work, and a paused repo is not work at all. ${PROJECT_PRIMARY_REPO}
+	// is the repo its examples target, so a specialist scoped away from the
+	// hive primary must not be handed the hive primary in either.
+	agentActiveRepos, _ := s.activeReposForAgent(agentName)
+	reposList := strings.Join(agentActiveRepos, ", ")
+	primaryRepo := s.cfg.PrimaryRepoForAgent(agentName)
+	fullPrimaryRepo := config.QualifyRepo(s.cfg.Project.Org, primaryRepo)
 
 	agentList, agentRoles := s.buildAgentListAndRoles()
 
@@ -331,8 +351,12 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 
 	inceptionIdea, inceptionPhase, inceptionMode, inceptionAnswers, inceptionSlug, inceptionRepoURL := s.inceptionVars()
 
-	mergeEligibleList := s.buildMergeEligibleList()
-	ciFailingList := s.buildCIFailingList()
+	// The merge-eligible and CI-failing lists are read from hive-wide metrics
+	// files, so they need the same narrowing: a scoped agent asked to fix red CI
+	// must not be handed a red PR on a repo it cannot push to (#6204).
+	repoInScope := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
+	mergeEligibleList := s.buildMergeEligibleListFor(repoInScope)
+	ciFailingList := s.buildCIFailingListFor(repoInScope)
 
 	// The built-in per-kick variables. Each value is already computed above, so
 	// the thunks just return it — but wrapping them as resolve.RuntimeContext
@@ -353,7 +377,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"SLA_VIOLATIONS":        lit(fmt.Sprintf("%d", actionable.Issues.SLAViolations)),
 		"ISSUE_LIST":            lit(issueList),
 		"PR_LIST":               lit(prList),
-		"AUTHORIZED_REPOS":      lit(s.buildReposSection()),
+		"AUTHORIZED_REPOS":      lit(s.buildReposSectionFor(agentName)),
 		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
@@ -507,7 +531,6 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	s.resetClassifierBudget()
 	classifiedIssues := classify.ClassifyAll(actionable.Issues.Items)
 	s.recordClassified(classifiedIssues)
-	reposSection := s.buildReposSection()
 
 	var messages []KickMessage
 	for _, agentName := range agentsDue {
@@ -522,7 +545,10 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 				includeRepos = false
 			}
 			if includeRepos {
-				msg += "\n" + reposSection
+				// Built per agent, not once for the fleet: a repo-scoped agent
+				// must be told its own AUTHORIZED REPOS, or the one section
+				// every agent sees would name repos it cannot write to (#6204).
+				msg += "\n" + s.buildReposSectionFor(agentName)
 			}
 			msg = s.addCanaryPreamble(agentName, msg)
 			messages = append(messages, KickMessage{
@@ -609,30 +635,73 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 	return s.BuildAgentMessage(agentName, classified, actionable)
 }
 
-func (s *Scheduler) buildReposSection() string {
+// filterIssuesForRepos keeps only the issues in repos the predicate accepts.
+func filterIssuesForRepos(issues []github.Issue, keep func(repo string) bool) []github.Issue {
+	if keep == nil {
+		return issues
+	}
+	out := make([]github.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if keep(issue.Repo) {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+// buildReposSection is buildReposSectionFor with no agent: the hive-wide list.
+func (s *Scheduler) buildReposSection() string { return s.buildReposSectionFor("") }
+
+// buildReposSectionFor renders the AUTHORIZED REPOS block for one agent.
+//
+// For an unscoped agent — every agent on a hive that does not use per-repo
+// custom agents (#6204) — this is the hive's repo list, unchanged. For a scoped
+// agent it is that agent's repos, and the section says out loud that the hive
+// watches more: an agent that has filed issues in a repo for weeks and suddenly
+// does not see it would otherwise read the shorter list as scope loss and file
+// a finding about it.
+// activeReposForAgent splits the repos the named agent serves (#6204) into the
+// ones it may act on this session and the ones the operator has paused (#6203).
+// The two narrowings compose rather than override: a scope says which repos an
+// agent is FOR, a pause says which repos are open for work at all, and what
+// reaches a kick is the intersection.
+func (s *Scheduler) activeReposForAgent(agentName string) (active, paused []string) {
+	repos := s.cfg.ReposForAgent(agentName)
+	active = make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if s.cfg.IsRepoPaused(repo) {
+			paused = append(paused, repo)
+			continue
+		}
+		active = append(active, repo)
+	}
+	return active, paused
+}
+
+func (s *Scheduler) buildReposSectionFor(agentName string) string {
 	var b strings.Builder
 	host := s.cfg.GitHub.ResolvedBaseURL() // always a full URL; github.com or the GHE instance
 	org := s.cfg.Project.Org
-	// A paused repo is still a repo this hive watches — it keeps its dashboard
-	// card and its ACMM eval — but it is NOT work, so it is absent from the
-	// authorized list and named separately below (#6203). Naming it rather than
-	// silently omitting it matters: an agent that has filed issues in that repo
-	// for weeks would otherwise read the shorter list as scope loss and file a
-	// finding about it.
-	active := s.cfg.ActiveRepos()
-	paused := s.cfg.PausedRepoNames()
+	scoped := s.cfg.AgentRepoScope(agentName) != nil
+	active, paused := s.activeReposForAgent(agentName)
+	agentRepos := s.cfg.ReposForAgent(agentName)
 	b.WriteString(fmt.Sprintf("AUTHORIZED REPOS (all on %s — you may ONLY interact with these):\n", host))
 	for _, repo := range active {
-		full := repo
-		if !strings.Contains(repo, "/") {
-			full = org + "/" + repo
-		}
+		full := config.QualifyRepo(org, repo)
 		// Print the fully-qualified URL so the host is unambiguous in the prompt —
 		// a github.ibm.com repo must never be mistaken for a github.com one.
 		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
 	if len(active) == 0 {
-		b.WriteString("  (none — every repo this hive watches is currently paused)\n")
+		if scoped {
+			b.WriteString("  (none — this agent is scoped to repos this hive does not watch, or every repo it serves is currently paused; tell the operator)\n")
+		} else {
+			b.WriteString("  (none — every repo this hive watches is currently paused)\n")
+		}
+	}
+	if scoped {
+		b.WriteString(fmt.Sprintf("🎯 THIS AGENT IS REPO-SCOPED: the hive manages %d repo(s); you are defined for the %d listed above and only those. Other repos in this hive belong to other agents — writes to them are refused deterministically by the proxy and by the hive-open-pr/hive-merge/hive-open-issue relays, so retrying cannot succeed. This is how the operator composed the roster, NOT scope loss and NOT an outage: do not work them, do not route around it, and do not file an issue about it.\n",
+			len(s.cfg.Project.Repos), len(agentRepos)))
 	}
 	if len(paused) > 0 {
 		pausedFull := make([]string, 0, len(paused))
@@ -662,11 +731,12 @@ func (s *Scheduler) buildReposSection() string {
 	// the primary across every session). The kick is the one place every
 	// agent/template combination sees, so the instruction lives here.
 	if len(active) > 1 {
-		// Rotate over the ACTIVE repos, and never name a paused repo as the one
-		// to fall back on: telling an agent "all of them are in scope, not just
-		// the primary" while the primary is frozen is a contradiction it will
-		// try to resolve by writing there.
-		primary := s.cfg.Project.PrimaryRepo
+		// Rotate over the repos this agent both serves and may act on, and never
+		// name one it cannot write to as the fallback: telling an agent "all of
+		// them are in scope, not just the primary" while pointing it at a repo
+		// that is paused or outside its scope is a contradiction it will try to
+		// resolve by writing there (#6203/#6204).
+		primary := s.cfg.PrimaryRepoForAgent(agentName)
 		if primary == "" || s.cfg.IsRepoPaused(primary) {
 			primary = active[0]
 		}
@@ -1166,14 +1236,24 @@ var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 var ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 func (s *Scheduler) buildMergeEligibleList() string {
+	return s.buildMergeEligibleListFor(nil)
+}
+
+// buildMergeEligibleListFor is buildMergeEligibleList narrowed to the repos the
+// predicate accepts (#6204). A nil predicate keeps everything.
+func (s *Scheduler) buildMergeEligibleListFor(keep func(repo string) bool) string {
 	data, err := os.ReadFile(mergeEligiblePath)
 	if err != nil {
 		return "(none)\n"
 	}
-	return formatMergeEligibleData(data)
+	return formatMergeEligibleDataFor(data, keep)
 }
 
 func formatMergeEligibleData(data []byte) string {
+	return formatMergeEligibleDataFor(data, nil)
+}
+
+func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool) string {
 	var payload struct {
 		Items []struct {
 			Number int    `json:"number"`
@@ -1187,16 +1267,28 @@ func formatMergeEligibleData(data []byte) string {
 	}
 	var b strings.Builder
 	for _, pr := range payload.Items {
+		if keep != nil && !keep(pr.Repo) {
+			continue
+		}
 		queued := ""
 		if pr.Queued {
 			queued = " [queued for auto-merge]"
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, queued, pr.Title))
 	}
+	if b.Len() == 0 {
+		return "(none)\n"
+	}
 	return b.String()
 }
 
 func (s *Scheduler) buildCIFailingList() string {
+	return s.buildCIFailingListFor(nil)
+}
+
+// buildCIFailingListFor is buildCIFailingList narrowed to the repos the
+// predicate accepts (#6204). A nil predicate keeps everything.
+func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	data, err := os.ReadFile(ciFailingPath)
 	if err != nil {
 		return "(none)\n"
@@ -1215,7 +1307,13 @@ func (s *Scheduler) buildCIFailingList() string {
 	}
 	var b strings.Builder
 	for _, pr := range payload.Items {
+		if keep != nil && !keep(pr.Repo) {
+			continue
+		}
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s) — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, pr.Title))
+	}
+	if b.Len() == 0 {
+		return "(none)\n"
 	}
 	return b.String()
 }

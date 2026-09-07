@@ -281,10 +281,11 @@ var repoPathPrefix = regexp.MustCompile(`^/repos/([^/]+/[^/]+)`)
 var gitPathPrefix = regexp.MustCompile(`^/([^/]+/[^/]+)\.git/`)
 
 // gitUploadPackPath matches the git FETCH endpoint. It is a POST that reads —
-// the same exception the mode rule table makes for it — so pause, which refuses
-// writes only, must not catch it. Without this carve-out `git clone` and
-// `git fetch` against a paused repo fail, and "reads still work" stops being
-// true in the one place agents notice first.
+// the same exception the mode rule table makes for it a few lines up — so the
+// write-only gates below, pause (#6203) and agent repo scope (#6204), must not
+// catch it. Without this carve-out `git clone` and `git fetch` against a paused
+// or out-of-scope repo fail, and "reads still work" stops being true in the one
+// place agents notice first.
 var gitUploadPackPath = regexp.MustCompile(`\.git/git-upload-pack$`)
 
 var writeMethods = map[string]bool{
@@ -337,6 +338,48 @@ func RepoPauseRefusal(isPaused func(repo string) bool, method, path string) (str
 		return "", false
 	}
 	return "repository " + repo + " is PAUSED by the operator — this hive is deliberately quiet on it (release freeze, incident, staged onboarding or budget triage). Reads still work; every write is refused until an operator resumes the repo. Do NOT retry, do NOT route around this with another CLI, `hive-open-pr`/`hive-merge` or the GitHub MCP, and do NOT file an issue about it: this is an operator decision, not an outage. Work one of the other authorized repos instead.", true
+}
+
+// AgentRepoScopeRefusal reports whether this request writes to a repository the
+// agent is not scoped to (#6204), and returns the agent-facing directive for the
+// 403 body.
+//
+// This is the deterministic half of per-repo custom agents. Kick assembly
+// already stops offering an out-of-scope repo as work, but a prompt-level scope
+// is not a scope: the agent still exists, still has a token, and a model change
+// or a stray instruction is all it takes for it to act somewhere it was never
+// meant to. Hive's own design rule — if a human would give the same answer every
+// time, it belongs in infrastructure, not a prompt — puts the answer here.
+//
+// Three deliberate properties:
+//
+//   - WRITES ONLY, matching RepoFilterAllowed directly below, which has always
+//     gated the "repo not in hive config" case on writes alone. Scope says which
+//     repos an agent is FOR, not which repos it may look at: a reviewer scoped
+//     to the Go service may legitimately read the Rust CLI to understand a
+//     shared protocol, and blocking that would break `git clone` and every
+//     cross-repo lookup for no safety gain. git-upload-pack (fetch) counts as a
+//     read despite being a POST.
+//   - Independent of ACMM mode. Scope is roster membership, not autonomy: a
+//     MERGE-mode agent is refused on a repo it does not serve exactly as firmly
+//     as an ADVISORY one, which is why this is not another row in the mode table.
+//   - Same repo extraction as RepoFilterAllowed, and the same blind spot: a path
+//     with no repo in it (notably POST /graphql, whose target repo is in the
+//     body) is not matched. GraphQL writes stay gated by mode; closing that seam
+//     is a separate change and is called out in the docs rather than half-done.
+//
+// serves is a live predicate rather than a snapshot so a scope edited in the
+// dashboard is in force on the very next request, with nothing to re-wire. Nil,
+// or an empty agent name, means no scoping — the state of every existing hive.
+func AgentRepoScopeRefusal(serves func(agent, repo string) bool, agent, method, path string) (string, bool) {
+	if serves == nil || agent == "" || !writeMethods[method] || gitUploadPackPath.MatchString(path) {
+		return "", false
+	}
+	repo := ExtractRepo(path)
+	if repo == "" || serves(agent, repo) {
+		return "", false
+	}
+	return "agent " + agent + " is NOT scoped to " + repo + " — this hive defines it for a named set of repositories and " + repo + " is not one of them. Reads still work; every write is refused. Do NOT retry, do NOT route around this with another CLI, `hive-open-pr`/`hive-merge` or the GitHub MCP, and do NOT file an issue about it: this is how the operator composed the roster, not an outage. Work the repos your kick listed as yours.", true
 }
 
 func RepoFilterAllowed(allowedRepos map[string]bool, method, path string) bool {

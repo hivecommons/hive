@@ -211,15 +211,24 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// never touched. Export the primary repo and the full project repo list so
 	// templates and agents can target every configured repo.
 	if m.project.Org != "" && len(m.project.Repos) != 0 {
-		primary := m.project.PrimaryRepo()
-		if primary == "" {
-			primary = m.project.Repos[0]
+		// Both variables are per-agent now (#6204). A repo-scoped agent must
+		// not be handed a $HIVE_REPO it may not write to — every shipped
+		// template example passes it straight to `gh ... --repo "$HIVE_REPO"` —
+		// and $HIVE_REPOS is the list templates iterate as "everything in
+		// scope". For an unscoped agent both resolve exactly as before.
+		scoped := m.project.ReposFor(agent.Name)
+		primary := m.project.PrimaryRepoFor(agent.Name)
+		if primary == "" && len(scoped) > 0 {
+			primary = scoped[0]
 		}
-		vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
-		// HIVE_REPOS is the work scope templates iterate, so paused repos are
-		// omitted (#6203). HIVE_REPO above is identity, not scope, and keeps
-		// naming the primary repo even while it is paused — see ActiveRepos.
-		active := m.project.ActiveRepos()
+		if primary != "" {
+			vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
+		}
+		// HIVE_REPOS is the work scope templates iterate: the agent's own repos
+		// (#6204) minus any the operator has paused (#6203). HIVE_REPO above is
+		// identity, not scope, and keeps naming the agent's primary repo even
+		// while it is paused — see ActiveReposFor.
+		active := m.project.ActiveReposFor(agent.Name)
 		full := make([]string, len(active))
 		for i, r := range active {
 			full[i] = m.project.Org + "/" + r
