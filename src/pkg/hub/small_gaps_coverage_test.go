@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"time"
 )
 
@@ -102,31 +104,31 @@ func TestVerifySSOTokenBranches(t *testing.T) {
 	}
 
 	// Wrong key -> bad signature.
-	if _, _, err := VerifySSOToken(otherPub, tok, "hiveA", now); err == nil {
+	if _, _, err := spoke.VerifySSOToken(otherPub, tok, "hiveA", now); err == nil {
 		t.Error("expected bad signature with the wrong public key")
 	}
 	// Empty key -> no verification key error.
-	if _, _, err := VerifySSOToken("", tok, "hiveA", now); err == nil {
+	if _, _, err := spoke.VerifySSOToken("", tok, "hiveA", now); err == nil {
 		t.Error("expected error with empty public key")
 	}
 	// Malformed token.
-	if _, _, err := VerifySSOToken(pub, "no-dot", "hiveA", now); err == nil {
+	if _, _, err := spoke.VerifySSOToken(pub, "no-dot", "hiveA", now); err == nil {
 		t.Error("expected malformed token error")
 	}
 	// Wrong hive.
-	if _, _, err := VerifySSOToken(pub, tok, "hiveB", now); err == nil {
+	if _, _, err := spoke.VerifySSOToken(pub, tok, "hiveB", now); err == nil {
 		t.Error("expected wrong-hive error")
 	}
 	// Expired.
-	if _, _, err := VerifySSOToken(pub, tok, "hiveA", now.Add(10*time.Minute)); err == nil {
+	if _, _, err := spoke.VerifySSOToken(pub, tok, "hiveA", now.Add(10*time.Minute)); err == nil {
 		t.Error("expected expired error")
 	}
 	// Not yet valid.
-	if _, _, err := VerifySSOToken(pub, tok, "hiveA", now.Add(-10*time.Minute)); err == nil {
+	if _, _, err := spoke.VerifySSOToken(pub, tok, "hiveA", now.Add(-10*time.Minute)); err == nil {
 		t.Error("expected not-yet-valid error")
 	}
 	// Valid round trip.
-	u, role, err := VerifySSOToken(pub, tok, "hiveA", now)
+	u, role, err := spoke.VerifySSOToken(pub, tok, "hiveA", now)
 	if err != nil || u != "alice" || role != "owner" {
 		t.Errorf("valid verify failed: u=%q role=%q err=%v", u, role, err)
 	}

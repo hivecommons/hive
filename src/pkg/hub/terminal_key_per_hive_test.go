@@ -2,6 +2,8 @@ package hub
 
 import (
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"time"
 )
 
@@ -106,21 +108,21 @@ func TestCrossHiveAssertionForgeryFails(t *testing.T) {
 
 	// The forger mints for the VICTIM hive — the hiveID claim alone was never
 	// the protection, since an attacker just writes the victim's ID.
-	forged := MintTerminalAssertion(attackerKey, "mallory-not-registered", "owner", "victim-hive", now)
+	forged := spoke.MintTerminalAssertion(attackerKey, "mallory-not-registered", "owner", "victim-hive", now)
 	if forged == "" {
 		t.Fatal("mint returned empty; test setup is wrong")
 	}
 
 	// The victim spoke verifies with ITS OWN key.
-	if _, _, err := VerifyTerminalAssertion(victimKey, forged, "victim-hive", now); err == nil {
+	if _, _, err := spoke.VerifyTerminalAssertion(victimKey, forged, "victim-hive", now); err == nil {
 		t.Fatal("N3: an assertion forged with ANOTHER hive's key verified on the victim hive — " +
 			"a hostile tenant can open a shell as any user on any hive")
 	}
 
 	// Control: the victim's own key still mints assertions that verify, so the
 	// fix does not break legitimate terminal access.
-	legit := MintTerminalAssertion(victimKey, "alice", "owner", "victim-hive", now)
-	user, role, err := VerifyTerminalAssertion(victimKey, legit, "victim-hive", now)
+	legit := spoke.MintTerminalAssertion(victimKey, "alice", "owner", "victim-hive", now)
+	user, role, err := spoke.VerifyTerminalAssertion(victimKey, legit, "victim-hive", now)
 	if err != nil || user != "alice" || role != "owner" {
 		t.Fatalf("legitimate assertion failed to verify: user=%q role=%q err=%v", user, role, err)
 	}
@@ -157,8 +159,8 @@ func TestFleetSharedKeyWouldHaveForged(t *testing.T) {
 	now := time.Now()
 	shared := deriveDomainKey(n3TestMaster, infoSessionKey) // what both spokes used to hold
 
-	forged := MintTerminalAssertion(shared, "mallory", "owner", "victim-hive", now)
-	if _, _, err := VerifyTerminalAssertion(shared, forged, "victim-hive", now); err != nil {
+	forged := spoke.MintTerminalAssertion(shared, "mallory", "owner", "victim-hive", now)
+	if _, _, err := spoke.VerifyTerminalAssertion(shared, forged, "victim-hive", now); err != nil {
 		t.Skip("shared-key forgery no longer reproduces; mint/verify shape changed")
 	}
 	t.Log("confirmed: under a fleet-shared key, an assertion minted anywhere verifies " +

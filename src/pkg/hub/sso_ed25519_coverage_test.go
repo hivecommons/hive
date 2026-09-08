@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"time"
 )
 
@@ -38,7 +40,7 @@ func TestEd25519SSOKeysAndToken(t *testing.T) {
 	if !ed25519.Verify(ed25519.PublicKey(pubBytes), []byte(parts[0]), sig) {
 		t.Fatal("ed25519 token signature does not verify with derived public key")
 	}
-	if _, _, err := VerifySSOToken(deriveDomainKey(master, infoSSOKey), tok, "hosted-hive", now); err == nil {
+	if _, _, err := spoke.VerifySSOToken(deriveDomainKey(master, infoSSOKey), tok, "hosted-hive", now); err == nil {
 		t.Fatal("legacy HMAC verifier must not accept an Ed25519 token")
 	}
 }

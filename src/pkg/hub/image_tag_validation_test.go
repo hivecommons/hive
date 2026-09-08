@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 func TestValidateImageTagRefusesMalformed(t *testing.T) {
@@ -177,7 +179,7 @@ func TestSwitchImageSelfRefusesBogusTag(t *testing.T) {
 		"ghcr.io/hivecommons/hive:",
 		"",
 	} {
-		err := SwitchImageSelf(slog.Default(), image)
+		err := spoke.SwitchImageSelf(slog.Default(), image)
 		if err == nil {
 			t.Errorf("SwitchImageSelf(%q) = nil, want refusal", image)
 			continue

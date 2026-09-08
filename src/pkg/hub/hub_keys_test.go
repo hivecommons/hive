@@ -2,6 +2,8 @@ package hub
 
 import (
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"time"
 )
 
@@ -61,7 +63,7 @@ func TestSpokeHeartbeatKeyCannotForgeOtherDomains(t *testing.T) {
 	//    asymmetric: the spoke holds only the public key and no signing seed at all,
 	//    so this also stands in for "spoke has no private material to sign with".)
 	forgedSSO := MintSSOToken(spokeHeartbeatKey, "victim-owner", "owner", "hive-x", now)
-	if _, _, err := VerifySSOToken(ssoPubKey, forgedSSO, "hive-x", now); err == nil {
+	if _, _, err := spoke.VerifySSOToken(ssoPubKey, forgedSSO, "hive-x", now); err == nil {
 		t.Error("spoke heartbeat key forged a valid SSO handoff token")
 	}
 

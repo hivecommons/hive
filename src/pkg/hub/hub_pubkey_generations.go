@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // SSO / SESSION Ed25519 PUBLIC KEY plurality — follow-on PR #6 of the
@@ -362,7 +364,7 @@ func VerifySSOTokenAcrossKeys(keys []string, token, expectedHiveID string, now t
 	matchedIndex := -1
 	var matchedUser, matchedRole string
 	for i, k := range valid {
-		u, r, verr := VerifySSOToken(k, token, expectedHiveID, now)
+		u, r, verr := spoke.VerifySSOToken(k, token, expectedHiveID, now)
 		// Recorded unconditionally, and the loop deliberately continues. See the
 		// TIMING note above: an early return here would make the spoke's
 		// convergence state observable as latency.
