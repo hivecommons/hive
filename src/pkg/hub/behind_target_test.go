@@ -14,7 +14,7 @@ func TestBehindTargetForBranchSpokeUsesBranchTip(t *testing.T) {
 	calls := stubChannelRevisions(t, map[string]string{"stable": "77ba848"})
 	s := &HubServer{logger: targetingLogger()}
 
-	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:v4-latest"})
+	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:v4-latest"}, "")
 	if got.SHA != "526ef71" || got.Channel {
 		t.Errorf("behindTargetFor = %+v, want branch tip 526ef71, not a channel", got)
 	}
@@ -39,7 +39,7 @@ func TestBehindTargetForStableSpokeUsesChannelCommit(t *testing.T) {
 		t.Fatalf("channel prime = %q", sha)
 	}
 
-	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:stable", TrackedChannel: "stable"})
+	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:stable"}, "stable")
 	if got.SHA != "df9b867" || !got.Channel {
 		t.Errorf("behindTargetFor = %+v, want the channel's commit df9b867 (branch tip is 87b2b02)", got)
 	}
@@ -55,7 +55,7 @@ func TestBehindTargetForStableSpokeIsCacheOnly(t *testing.T) {
 	calls := stubChannelRevisions(t, map[string]string{"stable": "df9b867"})
 	s := &HubServer{logger: targetingLogger()}
 
-	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:stable"})
+	got := s.behindTargetFor(&RegistryEntry{GitBranch: "v4", ImageRef: "ghcr.io/hivecommons/hive:stable"}, "")
 	if got.SHA != "" {
 		t.Errorf("SHA = %q, want empty — branch tip must never stand in for an unresolved channel", got.SHA)
 	}
@@ -69,7 +69,7 @@ func TestBehindTargetForStableSpokeIsCacheOnly(t *testing.T) {
 
 func TestBehindTargetForNilEntry(t *testing.T) {
 	s := &HubServer{logger: targetingLogger()}
-	if got := s.behindTargetFor(nil); got.SHA != "" || got.Ref != "" {
+	if got := s.behindTargetFor(nil, ""); got.SHA != "" || got.Ref != "" {
 		t.Errorf("nil entry must resolve to nothing, got %+v", got)
 	}
 }

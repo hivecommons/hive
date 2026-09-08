@@ -32,12 +32,16 @@ const behindTargetSuffixBranch = " tip"
 // the auto-upgrade tick (channelRevisionSHA), so a registry round-trip here
 // would only ever duplicate one that just happened or block a page render on
 // GHCR. An empty SHA means "not resolved yet"; the caller renders no count.
-func (s *HubServer) behindTargetFor(e *RegistryEntry) behindTarget {
+//
+// trackedChannel is the hub-owned channel intent (MyHiveEntry.TrackedChannel,
+// from the SaaS record) — the fallback spokeReleaseChannel uses for spokes too
+// old to report an image ref. The registry entry itself carries no channel.
+func (s *HubServer) behindTargetFor(e *RegistryEntry, trackedChannel string) behindTarget {
 	if e == nil {
 		return behindTarget{}
 	}
 	branch := s.upgradeBranchOrDefault(e.GitBranch)
-	channel := spokeReleaseChannel(e.ImageRef, e.TrackedChannel)
+	channel := spokeReleaseChannel(e.ImageRef, trackedChannel)
 	if channel == "" {
 		return behindTarget{SHA: getLatestSHAForBranch(branch), Ref: branch + behindTargetSuffixBranch}
 	}

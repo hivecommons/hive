@@ -3810,7 +3810,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// the same resolution the auto-upgrade engine uses — not the branch
 		// tip. A :stable spoke at the channel's commit is 0 behind here even
 		// when CommitsBehindStableV4 says 128.
-		if bt := s.behindTargetFor(&result[i].RegistryEntry); bt.SHA != "" {
+		if bt := s.behindTargetFor(&result[i].RegistryEntry, result[i].TrackedChannel); bt.SHA != "" {
 			result[i].BehindTargetRef = bt.Ref
 			result[i].BehindTargetSHA = bt.SHA
 			if count, known := commitsBehindTarget(result[i].GitHash, bt.SHA, s.logger); known {
