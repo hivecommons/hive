@@ -24,6 +24,8 @@ Publishing is monotonic by workflow run number. Every successful multi-arch buil
 
 Short-SHA tags are retained as a bounded rollback/debug window, not forever. The scheduled GHCR pruning workflow deletes only old package versions whose complete tag set is one or more 7-hex short-SHA tags, after 90 days. Versions still carrying any moving tag (`v4-latest`, `latest`, `stable`, `candidate`, `edge`, or future channel names) are never deleted by that cleanup.
 
+Pinning a hive back to one of those short-SHA builds for all three images, and verifying by digest that the pin landed on the running spoke, is the [digest-verifiable rollback](release-rollback.md) runbook. Switching channels (below) is not a rollback: a channel is a moving tag, and the switch is judged complete when the heartbeat reports a matching *tag*, not a matching digest.
+
 ## Switching a hive to a channel
 
 From the hub dashboard's **My Hives** list, click the blue version pill on a hive row. The menu lists branches first, then a **Channels** section with the three channels (most stable first). Only the hive's **owner** can switch.
