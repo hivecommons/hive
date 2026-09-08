@@ -1,1 +1,0 @@
-- The pinned OpenAI Codex CLI in both contributor images was bumped from 0.146.0 to 0.153.4, which adds the new `gpt-6-astra` model (now the picker default) alongside the existing GPT‑5.x line; the dashboard's static codex model list and its `static/index.html` mirror were refreshed to match the new catalog ([#6162](https://github.com/hivecommons/hive/pull/6162)).

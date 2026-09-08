@@ -13511,14 +13511,60 @@ const dashboardHTML = `<!DOCTYPE html>
         delete _switchStartedAt[h.id];
         return;
       }
-      if (st.isSwitching) return;
+      if (st.isSwitching) {
+        /* A CHANNEL switch can never complete by the branch test above: a
+           channel image heartbeats its baked-in branch ("v4"), so
+           targetBranch ("candidate") !== branchName holds forever and the
+           row read "Switching to candidate — taking longer than expected"
+           until a reload, 20 minutes after the pod was Ready (#6301). The
+           hub clears its side on exactly one signal — the spoke's reported
+           image tag equals the switch tag (server.go) — so use the same one
+           here. Only the client-side sentinel is expired; a hub-armed
+           channel target (h.upgradeTarget) still reads as switching, because
+           the hub has not yet seen the new tag and will clear it itself. */
+        if (!h.upgradeTarget && !h.upgrading && st.targetBranch &&
+            imageTagJS(h.imageRef) === st.targetBranch) {
+          delete _upgradingHives[h.id];
+          delete _switchStartedAt[h.id];
+        }
+        return;
+      }
       /* The hive has moved off the SHA it carried when Upgrade was clicked, so
          the click has landed and the sentinel has done its job. */
       var sentinel = _upgradingHives[h.id];
       if (sentinel && (h.gitHash || '') !== sentinel) {
         delete _upgradingHives[h.id];
         delete _switchStartedAt[h.id];
+        return;
       }
+      /* The click landed as a NO-OP: the hub accepted the upgrade, found the
+         hive already at everything its tag can deliver, and cleared its
+         latch ("clearing upgrade latch — floating-tag hive is at latest").
+         The SHA will never change, so the rule above can never fire and the
+         row spun until reload. The hub reports that outcome as: not
+         upgrading, no armed target, and the hive AT its reachable target.
+         Judged only when a target is known — never on a guess. */
+      if (sentinel && !h.upgrading && !h.upgradeTarget) {
+        var reach = h.behindTargetSHA || _latestSHAs[branchName] || '';
+        if (reach && sameShaJS(h.gitHash || '', reach)) {
+          delete _upgradingHives[h.id];
+          delete _switchStartedAt[h.id];
+        }
+      }
+    }
+
+    /* imageTagJS returns the tag of an image reference ("candidate" for
+       ghcr.io/hivecommons/hive:candidate), '' for a digest pin, an untagged
+       ref, or no ref. Mirrors imageTagOf on the hub: only the part after the
+       LAST colon is a tag, and only when no slash follows it (host:5000/repo
+       is a registry port, not a tag). */
+    function imageTagJS(ref) {
+      if (!ref || typeof ref !== 'string' || ref.indexOf('@') !== -1) return '';
+      var idx = ref.lastIndexOf(':');
+      if (idx < 0) return '';
+      var tag = ref.slice(idx + 1);
+      if (tag.indexOf('/') !== -1) return '';
+      return tag;
     }
 
     /* normalizeUpgradeStates applies the above across the fleet. Called at the

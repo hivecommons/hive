@@ -70,8 +70,13 @@ type MergeResponse struct {
 	Number   int    `json:"number,omitempty"`
 	SHA      string `json:"sha,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
-	Error    string `json:"error,omitempty"`
-	At       string `json:"at"`
+	// CIWaits counts consecutive ticks the request has been parked on a
+	// pending CI verdict (#6173). Unlike Attempts it is not a failure count:
+	// it resets to zero once CI reports, and only mergeRequestMaxCIWaits
+	// consecutive waits turn into a failed attempt.
+	CIWaits int    `json:"ci_waits,omitempty"`
+	Error   string `json:"error,omitempty"`
+	At      string `json:"at"`
 }
 
 // MergeRequestAuthorizer decides whether a merge request may proceed. Like
@@ -258,59 +263,93 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// Track attempts across ticks by reading the prior result (if any).
 	attempts := priorMergeAttempts(path) + 1
 
-	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
-	resp := MergeResponse{Number: req.Number, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339)}
+	// POSITIVE CI confirmation before any merge is attempted (#6173). The
+	// hive used to delegate this entirely to branch protection, which means
+	// an unprotected base branch had no gate at all: a red PR, or one whose
+	// workflows all died at startup with zero jobs and therefore zero check
+	// runs, merged on request. Absent is not passing. A pending verdict parks
+	// the request without consuming an attempt; red and unverified verdicts
+	// are failed attempts that go through the same retry / exhaust /
+	// re-engage path a GitHub-side refusal does.
+	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA)
 	if err != nil {
-		resp.OK = false
-		resp.Error = err.Error()
-		c.writeMergeResult(path, resp)
-		if attempts >= mergeRequestMaxAttempts {
-			// Terminal: a PR that still won't merge after N tries is blocked by
-			// something a retry can't fix. Fix #2: classify WHY. If the blocker
-			// is a FAILED REQUIRED CHECK, do not just abandon it — re-engage the
-			// fix loop (surface it into CI_FAILING via the hook) so an agent is
-			// dispatched to fix the red check and push a new commit. Only a
-			// genuinely-unfixable blocker (true conflict / permission) keeps the
-			// quarantine-and-forget path. The hook's own cap prevents an infinite
-			// re-engagement loop on a permanently-red PR.
-			if c.mergeReEngage != nil && isRequiredCheckMergeBlocker(err.Error()) {
-				reEngaged := c.mergeReEngage(req.Repo, req.Number)
-				// Quarantine the MERGE request either way (the merge cannot
-				// succeed until the check goes green), but record that the fix
-				// loop owns the PR now rather than that it was abandoned.
-				_ = os.Rename(path, path+".exhausted")
-				if reEngaged {
-					c.logger.Info("merge-request watcher: merge blocked by failing required check — re-engaged fix loop",
-						slog.String("repo", req.Repo), slog.Int("number", req.Number),
-						slog.Int("attempts", attempts), slog.String("error", err.Error()))
-				} else {
-					c.logger.Warn("merge-request watcher: merge blocked by failing required check — re-engagement cap reached, escalation path owns it",
-						slog.String("repo", req.Repo), slog.Int("number", req.Number),
-						slog.Int("attempts", attempts), slog.String("error", err.Error()))
-				}
-				return
-			}
-			// Unfixable blocker (true conflict / permission) — quarantine so it
-			// stops burning API budget; the result file records why, and the
-			// next kick can re-request if state changes.
-			_ = os.Rename(path, path+".exhausted")
-			c.logger.Warn("merge-request watcher: merge failed, giving up after max attempts",
-				slog.String("repo", req.Repo), slog.Int("number", req.Number),
-				slog.Int("attempts", attempts), slog.String("error", err.Error()))
-			return
-		}
-		c.logger.Info("merge-request watcher: merge failed, will retry",
-			slog.String("repo", req.Repo), slog.Int("number", req.Number),
-			slog.Int("attempts", attempts), slog.String("error", err.Error()))
+		c.logCIVerdict(req, verdict, err.Error())
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
 		return
 	}
-	resp.OK = true
-	resp.SHA = res.SHA
+	c.logCIVerdict(req, verdict, why)
+	switch verdict {
+	case mergeCIGreen:
+	case mergeCIPending:
+		waits := priorMergeCIWaits(path) + 1
+		if waits < mergeRequestMaxCIWaits {
+			c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts - 1, CIWaits: waits, Error: why, At: nowFn().UTC().Format(time.RFC3339)})
+			return
+		}
+		c.recordMergeFailure(path, req, attempts, fmt.Sprintf("%s (still pending after %d ticks)", why, waits), nowFn)
+		return
+	default:
+		c.recordMergeFailure(path, req, attempts, why, nowFn)
+		return
+	}
+
+	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
+	if err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	}
+	resp := MergeResponse{Number: req.Number, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339), OK: true, SHA: res.SHA}
 	c.writeMergeResult(path, resp)
 	_ = os.Remove(path)
 	c.logger.Info("merge-request watcher: PR merged by App bot",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", res.SHA), slog.String("agent", req.Agent))
+}
+
+// recordMergeFailure writes the failed attempt's result and applies the retry
+// / exhaust policy. It serves both a GitHub-side merge refusal and the
+// watcher's own pre-merge CI gate (#6173), so a red-CI refusal is classified
+// and re-engaged exactly like a branch-protection refusal would be.
+func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: errMsg, At: nowFn().UTC().Format(time.RFC3339)})
+	if attempts >= mergeRequestMaxAttempts {
+		// Terminal: a PR that still won't merge after N tries is blocked by
+		// something a retry can't fix. Fix #2: classify WHY. If the blocker
+		// is a FAILED REQUIRED CHECK, do not just abandon it — re-engage the
+		// fix loop (surface it into CI_FAILING via the hook) so an agent is
+		// dispatched to fix the red check and push a new commit. Only a
+		// genuinely-unfixable blocker (true conflict / permission) keeps the
+		// quarantine-and-forget path. The hook's own cap prevents an infinite
+		// re-engagement loop on a permanently-red PR.
+		if c.mergeReEngage != nil && isRequiredCheckMergeBlocker(errMsg) {
+			reEngaged := c.mergeReEngage(req.Repo, req.Number)
+			// Quarantine the MERGE request either way (the merge cannot
+			// succeed until the check goes green), but record that the fix
+			// loop owns the PR now rather than that it was abandoned.
+			_ = os.Rename(path, path+".exhausted")
+			if reEngaged {
+				c.logger.Info("merge-request watcher: merge blocked by failing required check — re-engaged fix loop",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number),
+					slog.Int("attempts", attempts), slog.String("error", errMsg))
+			} else {
+				c.logger.Warn("merge-request watcher: merge blocked by failing required check — re-engagement cap reached, escalation path owns it",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number),
+					slog.Int("attempts", attempts), slog.String("error", errMsg))
+			}
+			return
+		}
+		// Unfixable blocker (true conflict / permission / no CI at all) —
+		// quarantine so it stops burning API budget; the result file records
+		// why, and the next kick can re-request if state changes.
+		_ = os.Rename(path, path+".exhausted")
+		c.logger.Warn("merge-request watcher: merge failed, giving up after max attempts",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.Int("attempts", attempts), slog.String("error", errMsg))
+		return
+	}
+	c.logger.Info("merge-request watcher: merge failed, will retry",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.Int("attempts", attempts), slog.String("error", errMsg))
 }
 
 func (c *Client) denyMergeRequest(path string, req MergeRequest, reason string, nowFn func() time.Time) {
@@ -335,6 +374,22 @@ func priorMergeAttempts(reqPath string) int {
 		return 0
 	}
 	return prev.Attempts
+}
+
+// priorMergeCIWaits reads the consecutive pending-CI wait count from the
+// previously-written result file, so mergeRequestMaxCIWaits accrues across
+// ticks. Returns 0 when no prior result exists or it can't be read.
+func priorMergeCIWaits(reqPath string) int {
+	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
+	b, err := os.ReadFile(out)
+	if err != nil {
+		return 0
+	}
+	var prev MergeResponse
+	if json.Unmarshal(b, &prev) != nil {
+		return 0
+	}
+	return prev.CIWaits
 }
 
 func (c *Client) writeMergeResult(reqPath string, resp MergeResponse) {

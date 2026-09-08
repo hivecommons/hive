@@ -2744,13 +2744,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.installCavemanForAgent(agent, backend)
 	}
 
+	effort := agent.Config.ReasoningEffort
 	if agent.Config.Tools != nil {
-		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference)
+		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference, effort)
 		if agent.Config.Tools != nil && agent.Config.Mode != "" {
 			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
 		}
 	} else {
-		launchCmd = backendLaunchCmd(binary, model, backend, isInference)
+		launchCmd = backendLaunchCmd(binary, model, backend, isInference, effort)
 	}
 
 	if mcpFlags := connectionMCPFlags(agent.Config.Connections, backend); mcpFlags != "" {
@@ -6716,12 +6717,12 @@ var (
 
 const (
 	sharedConfigDesiredMode = 0o660
-	// agyDefaultEffort is the reasoning effort passed alongside agy's --model.
-	// agy requires --effort whenever --model is given and otherwise ignores the
-	// model entirely; "low" is the effort agy defaults to on its own, so this
-	// makes the configured model take effect without changing behaviour. Hive
-	// has no per-agent reasoning-effort setting yet — when it grows one, this
-	// is the constant it should replace.
+	// agyDefaultEffort is the reasoning effort passed alongside agy's --model
+	// when the agent has no usable reasoning_effort configured (see
+	// agyLaunchEffort). agy requires --effort whenever --model is given and
+	// otherwise ignores the model entirely; "low" is the effort agy defaults
+	// to on its own, so this makes the configured model take effect without
+	// changing behaviour.
 	agyDefaultEffort = "low"
 
 	tokenRestartCooldownSec = 60 // minimum seconds between token-triggered restarts per agent
@@ -9105,11 +9106,12 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort s
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
-	return backend, model, ResolveReasoningEffort(backend, model), true
+	return backend, model, ResolveReasoningEffort(backend, model, agent.Config.ReasoningEffort), true
 }
 
 // ResolveReasoningEffort reports the reasoning effort the hive actually launches
-// a given backend/model pair with. Exported because the attribution trail is
+// a given backend/model pair with, given the agent's configured reasoning_effort.
+// Exported because the attribution trail is
 // resolved in TWO places — Manager.InvocationMetadata above for a running agent,
 // and cmd/hive's fallback that reads straight from config when the Manager does
 // not know the agent — and both must give the same answer.
@@ -9119,13 +9121,23 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort s
 // effort agy was no longer being launched with. An attribution trail that
 // misreports is worse than one that says nothing.
 //
-// agy is the only backend with a rule: it REQUIRES --effort whenever --model is
-// given (without it agy ignores the model outright), and it is given no --effort
-// at all when no model is set. Every other backend takes its effort from its own
-// config, which the hive does not resolve here, so the honest answer is "".
-func ResolveReasoningEffort(backend, model string) string {
-	if backend == "agy" && model != "" {
-		return agyDefaultEffort
+// The rules mirror the launch path exactly:
+//   - agy REQUIRES --effort whenever --model is given, so with a model it runs
+//     at agyLaunchEffort(configured) and with no model at no effort at all.
+//   - codex is launched with `-c model_reasoning_effort` only when an effort
+//     is configured; unset means codex's own default, which the hive does not
+//     resolve, so the honest answer is the configured value verbatim.
+//   - every other backend takes its effort from its own config, which the
+//     hive does not resolve here, so the honest answer is "".
+func ResolveReasoningEffort(backend, model, configured string) string {
+	switch backend {
+	case "agy":
+		if model != "" {
+			return agyLaunchEffort(configured)
+		}
+		return ""
+	case codexBackend:
+		return configured
 	}
 	return ""
 }
@@ -10635,7 +10647,9 @@ func (m *Manager) TmuxSession(name string) string {
 }
 
 // toolRulesToLaunchCmd builds a backend-specific CLI command from ToolsConfig.
-func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool) string {
+// effort is the configured per-agent reasoning effort; only backends with an
+// effort control consume it (see codexEffortFlag / agyLaunchEffort).
+func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool, effort string) string {
 	denies := tools.DenyPatterns()
 
 	switch backend {
@@ -10676,6 +10690,15 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 			cmd += fmt.Sprintf(" --deny-tool='%s'", copilotPattern)
 		}
 		return cmd
+	case codexBackend:
+		// Codex has no deny-tool flag, so ToolsConfig cannot be expressed
+		// here (same shape as bob above); model and reasoning effort still
+		// apply, matching backendLaunchCmd.
+		cmd := binary
+		if model != "" {
+			cmd = fmt.Sprintf("%s --model %s", binary, model)
+		}
+		return cmd + codexEffortFlag(effort)
 	default:
 		cmd := binary
 		if model != "" {
@@ -10690,7 +10713,9 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 // toolRulesToLaunchCmd and is deliberately pure — no Manager, no tmux, no
 // process — so the flag contract each backend depends on can be asserted
 // directly in tests instead of by polling a live pane for typed output.
-func backendLaunchCmd(binary, model, backend string, isInference bool) string {
+// effort is the configured per-agent reasoning effort; only backends with an
+// effort control consume it (see codexEffortFlag / agyLaunchEffort).
+func backendLaunchCmd(binary, model, backend string, isInference bool, effort string) string {
 	var launchCmd string
 	switch backend {
 	case "claude":
@@ -10745,12 +10770,12 @@ func backendLaunchCmd(binary, model, backend string, isInference bool) string {
 		// --effort is REQUIRED whenever --model is given. Without it agy
 		// warns "--model <m> requires --effort (available: low, medium,
 		// high)" and silently ignores the model, so the configured model
-		// would never actually take effect. "low" matches the effort agy
-		// itself falls back to, keeping behaviour unchanged while making
-		// the model selection real.
+		// would never actually take effect. The configured reasoning effort
+		// is used when agy accepts it, else agyDefaultEffort — "low", the
+		// effort agy itself falls back to (see agyLaunchEffort).
 		launchCmd = fmt.Sprintf("%s --dangerously-skip-permissions", binary)
 		if model != "" {
-			launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyDefaultEffort)
+			launchCmd = fmt.Sprintf("%s --model %s --effort %s", launchCmd, model, agyLaunchEffort(effort))
 		}
 	case "pi":
 		// pi takes the model as a CLI flag, not a subcommand. Without
@@ -10764,10 +10789,51 @@ func backendLaunchCmd(binary, model, backend string, isInference bool) string {
 		}
 	case bobBackend:
 		launchCmd = bobLaunchCmd(binary)
+	case codexBackend:
+		// Codex takes the model as a CLI flag like the others. Without this
+		// case codex fell to the bare-binary default below, so a dashboard
+		// model choice was silently dropped on this launch path (the codex
+		// dropdown existed, the selection never reached the CLI). The
+		// reasoning effort rides alongside as a config key — codex has no
+		// dedicated flag for it — and is valid with OR without --model
+		// (effort alone runs codex's default model at that effort, the same
+		// contract as AGENT_REASONING_EFFORT on the relay path).
+		launchCmd = binary
+		if model != "" {
+			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+		}
+		launchCmd += codexEffortFlag(effort)
 	default:
 		launchCmd = binary
 	}
 	return launchCmd
+}
+
+// codexEffortFlag renders the codex reasoning-effort config-key argument for
+// a configured effort, or "" when unset. The `-c model_reasoning_effort="<v>"`
+// spelling (a Codex CONFIG KEY, not a flag) is the one the scripted launch
+// paths already use — bin/agent-launch.sh and the contributor relay — and the
+// three spellings must not drift apart.
+func codexEffortFlag(effort string) string {
+	if effort == "" {
+		return ""
+	}
+	return fmt.Sprintf(" -c model_reasoning_effort=%q", effort)
+}
+
+// agyLaunchEffort returns the --effort agy is launched with: the configured
+// reasoning effort when it is one agy accepts (low/medium/high), else
+// agyDefaultEffort. The rejection mirrors the contributor relay's rule — agy
+// refuses efforts from codex's wider vocabulary (e.g. xhigh), and launching
+// with one would make agy ignore the model outright, the exact failure
+// --effort exists to prevent.
+func agyLaunchEffort(effort string) string {
+	for _, v := range config.ReasoningEffortsByBackend["agy"] {
+		if v == effort {
+			return effort
+		}
+	}
+	return agyDefaultEffort
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.

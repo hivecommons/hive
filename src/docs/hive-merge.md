@@ -49,6 +49,33 @@ before the merge is attempted.
 enforces branch protection (required checks like build-gate). A PR whose
 required checks aren't green fails here, and the result file records why.
 
+**The hive verifies CI itself, and absent is not passing.** Branch protection
+is not the only gate: before any merge is attempted the watcher requires
+*positive* CI confirmation on the pinned head SHA (#6173). On a base branch
+with no protection rules GitHub refuses nothing, so previously a red PR, or
+one whose workflows all died at startup with zero jobs (and therefore zero
+check runs and an empty status rollup), merged on request. The watcher now
+computes its own verdict:
+
+- **green** - at least one commit status or check run exists on the SHA, every
+  gating one has succeeded (`neutral`/`skipped` count as success, the
+  non-required ignore list still applies), every config-declared required
+  check has reported, and no workflow run on the SHA failed without producing
+  a job. The merge proceeds.
+- **pending** - a gating check is still queued/in progress, a required check
+  has not been created yet, or a workflow run is in flight without a job. The
+  request is parked (`ci_waits` in the result file, no attempt consumed) and
+  re-evaluated next tick, for up to `mergeRequestMaxCIWaits` ticks.
+- **red** - a gating check failed, or a workflow run concluded failure with
+  zero jobs. Refused; counts as a failed attempt and, at the retry limit, is
+  classified and re-engaged into the fix loop like a branch-protection
+  refusal.
+- **unverified** - zero statuses, zero check runs, zero workflow runs. GitHub
+  has no verdict, so neither does the hive. Refused; quarantined at the retry
+  limit with the reason in the result file.
+
+An API error while gathering that evidence is a failed attempt, never a pass.
+
 ## Usage
 
 ```sh

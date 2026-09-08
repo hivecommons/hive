@@ -202,7 +202,7 @@ func denyTools(patterns ...string) *config.ToolsConfig {
 
 func TestToolRulesToLaunchCmd_Claude(t *testing.T) {
 	tools := denyTools("mcp__github__merge_pull_request")
-	cmd := toolRulesToLaunchCmd("claude", "opus", "claude", tools, false)
+	cmd := toolRulesToLaunchCmd("claude", "opus", "claude", tools, false, "")
 	if !containsBoot(cmd, "--model opus") || !containsBoot(cmd, "--dangerously-skip-permissions") {
 		t.Errorf("claude cmd missing flags: %q", cmd)
 	}
@@ -213,7 +213,7 @@ func TestToolRulesToLaunchCmd_Claude(t *testing.T) {
 
 func TestToolRulesToLaunchCmd_ClaudeInference(t *testing.T) {
 	tools := &config.ToolsConfig{}
-	cmd := toolRulesToLaunchCmd("claude", "m", "claude", tools, true)
+	cmd := toolRulesToLaunchCmd("claude", "m", "claude", tools, true, "")
 	if !containsBoot(cmd, "--bare") || !containsBoot(cmd, claudeInferenceSettingsPath) {
 		t.Errorf("inference claude cmd should have --bare --settings: %q", cmd)
 	}
@@ -226,7 +226,7 @@ func TestToolRulesToLaunchCmd_Copilot(t *testing.T) {
 	// the logged-in user. (This test previously asserted the OPPOSITE — that the
 	// flag was present — which was the bug: it let agents author as the user.)
 	tools := denyTools("mcp__something__else")
-	cmd := toolRulesToLaunchCmd("copilot", "auto", "copilot", tools, false)
+	cmd := toolRulesToLaunchCmd("copilot", "auto", "copilot", tools, false, "")
 	if containsBoot(cmd, "--enable-all-github-mcp-tools") {
 		t.Errorf("copilot must NOT enable all github mcp tools (read-only default): %q", cmd)
 	}
@@ -237,7 +237,7 @@ func TestToolRulesToLaunchCmd_Copilot(t *testing.T) {
 
 func TestToolRulesToLaunchCmd_CopilotGithubDeny(t *testing.T) {
 	tools := denyTools("mcp__github__create_pull_request")
-	cmd := toolRulesToLaunchCmd("copilot", "auto", "copilot", tools, false)
+	cmd := toolRulesToLaunchCmd("copilot", "auto", "copilot", tools, false, "")
 	if containsBoot(cmd, "--enable-all-github-mcp-tools") {
 		t.Errorf("copilot with github deny should NOT enable all github tools: %q", cmd)
 	}
@@ -253,7 +253,7 @@ func TestToolRulesToLaunchCmd_CopilotGithubDeny(t *testing.T) {
 
 func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 	tools := &config.ToolsConfig{}
-	cmd := toolRulesToLaunchCmd("gemini", "flash", "gemini", tools, false)
+	cmd := toolRulesToLaunchCmd("gemini", "flash", "gemini", tools, false, "")
 	if cmd != "gemini --model flash" {
 		t.Errorf("default backend cmd: %q", cmd)
 	}
@@ -262,7 +262,7 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 	// fall-through: a bare `bob` has no --accept-license (hard-errors), no
 	// auth flag, and no --approval-mode (stalls on the first tool call). bob
 	// now has its own branch, so use a backend that really is unknown.
-	cmd = toolRulesToLaunchCmd("mystery", "", "mystery", tools, false)
+	cmd = toolRulesToLaunchCmd("mystery", "", "mystery", tools, false, "")
 	if cmd != "mystery" {
 		t.Errorf("default backend with empty model: %q", cmd)
 	}
@@ -536,9 +536,9 @@ func TestToolRulesToLaunchCmd_BobNeverGetsModel(t *testing.T) {
 
 	// The command bob gets must not vary with the configured model at all, so
 	// every iteration is compared against the first one rather than a literal.
-	want := toolRulesToLaunchCmd("bob", models[0], bobBackend, tools, false)
+	want := toolRulesToLaunchCmd("bob", models[0], bobBackend, tools, false, "")
 	for _, model := range models {
-		cmd := toolRulesToLaunchCmd("bob", model, bobBackend, tools, false)
+		cmd := toolRulesToLaunchCmd("bob", model, bobBackend, tools, false, "")
 		if strings.Contains(cmd, "--model") {
 			t.Errorf("bob launch cmd with model %q must not contain --model: %q", model, cmd)
 		}
@@ -557,7 +557,7 @@ func TestToolRulesToLaunchCmd_BobNeverGetsModel(t *testing.T) {
 func TestToolRulesToLaunchCmd_OtherBackendsStillGetModel(t *testing.T) {
 	tools := &config.ToolsConfig{}
 	for _, backend := range []string{"gemini", "goose", "codex"} {
-		cmd := toolRulesToLaunchCmd(backend, "some-model", backend, tools, false)
+		cmd := toolRulesToLaunchCmd(backend, "some-model", backend, tools, false, "")
 		if !strings.Contains(cmd, "--model some-model") {
 			t.Errorf("%s must still receive --model: %q", backend, cmd)
 		}
