@@ -2809,7 +2809,15 @@ func main() {
 	// reaches agents on their next launch / hourly token refresh. Values are
 	// never logged. Wired before RegisterAPI so the resolver is in place
 	// before any agent launches.
-	agentMgr.SetLinearCredentialResolver(func() agent.LinearCredential {
+	//
+	// The same resolver is handed to the egress proxy below
+	// (githubProxy.SetLinearCredentialResolver), which attaches the CURRENT
+	// credential to every ISSUES_ONLY+ agent request to api.linear.app — the
+	// rotated OAuth token never reaches a running CLI through the session
+	// environment (a process keeps the environment it was forked with), so the
+	// proxy, not the environment, is what keeps agent Linear writes
+	// authenticated across rotations.
+	linearCredentialResolver := func() agent.LinearCredential {
 		if tok := dashSrv.LinearAgentAccessToken(); tok != "" {
 			return agent.LinearCredential{AccessToken: tok}
 		}
@@ -2817,7 +2825,8 @@ func main() {
 			return agent.LinearCredential{APIKey: strings.TrimSpace(cfg.Governor.WorkSource.Linear.APIKey)}
 		}
 		return agent.LinearCredential{}
-	})
+	}
+	agentMgr.SetLinearCredentialResolver(linearCredentialResolver)
 
 	// In-flight ledger + session PR link (Linear GitHub-parity follow-ups):
 	// the scheduler withholds work a Linear session is already working, and
@@ -3529,6 +3538,9 @@ func main() {
 		// agents (litellm/vllm/llm-d) never write a scannable session file and
 		// their consumption reads as zero.
 		githubProxy.SetTokenSink(tokens.NewInferenceSink(cfg.Data.MetricsDir, logger))
+		// Live Linear credential for agent requests — see the resolver's
+		// definition above and proxy.injectLinearCredential.
+		githubProxy.SetLinearCredentialResolver(linearCredentialResolver)
 
 		// With the sink active, the proxy also MITMs the Copilot completion host
 		// (api.githubcopilot.com) to record Copilot token usage live per
