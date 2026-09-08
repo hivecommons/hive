@@ -27,6 +27,16 @@ if [[ $1 == buildx && $2 == imagetools && $3 == inspect ]]; then
   case "${MOCK_INSPECT_MODE:-legacy}" in
     missing) echo "ERROR: $ref: not found" >&2; exit 1 ;;
     failure) echo 'dial tcp: registry unavailable' >&2; exit 1 ;;
+    transient-then-success)
+      count_file="${MOCK_CAPTURE}.inspect-fails"
+      count=$(cat "$count_file" 2>/dev/null || echo 0)
+      if (( count < 2 )); then
+        echo $((count + 1)) >"$count_file"
+        echo 'failed to do request: read tcp 10.1.0.225:35154->185.199.109.154:443: read: connection reset by peer' >&2
+        exit 1
+      fi
+      echo '{"config":{"Labels":{}}}'
+      ;;
     legacy) echo '{"config":{"Labels":{}}}' ;;
     sha-missing-moving-newer)
       if [[ $ref == *':abcdef1' ]]; then echo 'manifest unknown' >&2; exit 1; fi
@@ -50,12 +60,14 @@ chmod +x "$tmp/bin/docker"
 run_case() {
   local mode=$1 run=$2 capture=$3
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
+    PUBLISH_INSPECT_RETRY_DELAY=0 \
     "$publisher" ghcr.io/hivecommons/hive "$tmp/digests" v4 abcdef123456 "$run" v4 false
 }
 
 run_custom_case() {
   local mode=$1 run=$2 capture=$3 branch=$4 include_latest=$5
   PATH="$tmp/bin:$PATH" MOCK_INSPECT_MODE=$mode MOCK_CAPTURE="$capture" \
+    PUBLISH_INSPECT_RETRY_DELAY=0 \
     "$publisher" ghcr.io/hivecommons/hive-hub "$tmp/digests" "$branch" abcdef123456 "$run" v4 "$include_latest"
 }
 
@@ -93,6 +105,14 @@ grep -q 'hive:v4-latest' "$capture"
 
 if run_case failure 100 "$tmp/create-failure"; then
   echo "registry inspection failure did not fail closed" >&2
+  exit 1
+fi
+
+capture="$tmp/create-transient"
+run_case transient-then-success 100 "$capture"
+grep -q 'hive:v4-latest' "$capture"
+if [[ $(cat "$capture.inspect-fails") != 2 ]]; then
+  echo "transient inspect failures were not retried" >&2
   exit 1
 fi
 

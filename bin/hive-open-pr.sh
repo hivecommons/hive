@@ -14,7 +14,18 @@
 #
 # Usage (drop-in for the common gh pr create shape):
 #   hive-open-pr --repo <owner/repo> --head <branch> [--base <branch>] \
-#                --title "<title>" --body "<body>"
+#                --title "<title>" --body "<body>" [--issues <N[,N...]>]
+#   # --body-file <path> (or -F <path>, or --body-file -) is accepted exactly as
+#   # gh accepts it and reads the body from a file / stdin. The gh short flags
+#   # -R/-H/-B/-t/-b are accepted too. An EMPTY body is refused loudly: every
+#   # policy requires a real PR body, and a silently-lost one ships a PR whose
+#   # only content is the attribution footer (the exact bug this guard pins —
+#   # `--body-file` used to be dropped by this parser, so the whole body the
+#   # agent wrote never reached the request).
+#   # --issues declares the originating issue number(s) this PR is for. The
+#   # hive verifies the body actually references each one (Closes #N / Refs #N)
+#   # and refuses the request otherwise — pass it whenever the run started from
+#   # an issue, so a mangled body cannot open a PR that orphans its issue.
 #   # --head defaults to the current git branch. --base is OPTIONAL and should
 #   # normally be omitted: an omitted base is left empty in the request so the
 #   # hive resolves the TARGET REPOSITORY's default branch when it opens the PR.
@@ -32,24 +43,71 @@ set -euo pipefail
 
 REQ_DIR="/var/run/hive-metrics/pr-requests"
 
-REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""
+REPO=""; HEAD=""; BASE=""; TITLE=""; BODY=""; BODY_FILE=""; ISSUES=""
+BODY_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)  REPO="$2"; shift 2;;
-    --head)  HEAD="$2"; shift 2;;
-    --base)  BASE="$2"; shift 2;;
-    --title) TITLE="$2"; shift 2;;
-    --body)  BODY="$2"; shift 2;;
+    --repo|-R)  REPO="$2"; shift 2;;
+    --head|-H)  HEAD="$2"; shift 2;;
+    --base|-B)  BASE="$2"; shift 2;;
+    --title|-t) TITLE="$2"; shift 2;;
+    --body|-b)  BODY="$2"; BODY_SET=1; shift 2;;
+    --body-file|-F) BODY_FILE="$2"; shift 2;;
+    --issues|--issue) ISSUES="$ISSUES,$2"; shift 2;;
     --repo=*)  REPO="${1#*=}"; shift;;
     --head=*)  HEAD="${1#*=}"; shift;;
     --base=*)  BASE="${1#*=}"; shift;;
     --title=*) TITLE="${1#*=}"; shift;;
-    --body=*)  BODY="${1#*=}"; shift;;
-    # Tolerate flags gh accepts but we don't need; ignore their value if present.
+    --body=*)  BODY="${1#*=}"; BODY_SET=1; shift;;
+    --body-file=*) BODY_FILE="${1#*=}"; shift;;
+    --issues=*|--issue=*) ISSUES="$ISSUES,${1#*=}"; shift;;
+    # Tolerate value-less flags gh accepts but we don't need.
     --draft|--fill|--web|--no-maintainer-edit) shift;;
+    # `--label hold` is in every hold-gated policy template, so it arrives on
+    # essentially every agent PR. The label IS applied -- server-side, by the
+    # watcher's F6 block -- so warning about it is not merely noise: to an
+    # agent reading its own transcript mid-run, "ignoring unrecognized flag
+    # --label" reads as "your PR will not be held", which is the opposite of
+    # what happens. Accept it quietly, and drop its value like any other
+    # two-argument flag.
+    --label|-l) shift 2;;
+    --label=*) shift;;
+    # An unrecognized flag is DROPPED, and if it takes a value the value is
+    # dropped by the `*)` arm below. That silence is how `--body-file` losing
+    # the entire PR body went unnoticed — so at least say what is ignored.
+    -*) echo "hive-open-pr: WARN: ignoring unrecognized flag $1 (and its value, if it takes one)" >&2; shift;;
     *) shift;;
   esac
 done
+
+# Read the body from a file / stdin, exactly as gh does. A missing or unreadable
+# file is a hard error, never a silent empty body.
+if [ -n "$BODY_FILE" ]; then
+  if [ "$BODY_SET" = 1 ]; then
+    echo "hive-open-pr: --body and --body-file are mutually exclusive (gh refuses this too)" >&2
+    exit 2
+  fi
+  if [ "$BODY_FILE" = "-" ]; then
+    BODY="$(cat)"
+  elif [ -r "$BODY_FILE" ]; then
+    BODY="$(cat -- "$BODY_FILE")"
+  else
+    echo "hive-open-pr: --body-file $BODY_FILE does not exist or is not readable" >&2
+    exit 2
+  fi
+fi
+
+# Refuse an empty body LOUDLY. Every agent policy requires a real PR body; an
+# empty one here means the body was lost on the way in (wrong flag, empty file,
+# unset variable), and submitting it would open a PR whose only content is the
+# attribution footer. The floor is deliberately just "non-blank": legitimate
+# minimal bodies like "Closes #12" must still pass.
+if [ -z "${BODY//[$' \t\r\n']/}" ]; then
+  echo "hive-open-pr: REFUSING to request a PR with an empty body." >&2
+  echo "hive-open-pr: pass the body with --body \"<text>\" or --body-file <path>; the file must be non-empty." >&2
+  echo "hive-open-pr: no request was written — the PR was NOT opened. Fix the body and re-run." >&2
+  exit 2
+fi
 
 # Default head to the current branch if not given.
 if [ -z "$HEAD" ]; then
@@ -80,20 +138,65 @@ fi
 
 mkdir -p "$REQ_DIR" 2>/dev/null || true
 
+# Normalize --issues into a bare comma-separated list of numbers ("#222", " 222 "
+# and repeated flags all collapse). Non-numeric tokens are refused loudly: a
+# malformed issue declaration must not silently become "no verification".
+ISSUE_LIST=""
+if [ -n "$ISSUES" ]; then
+  for tok in $(printf '%s' "$ISSUES" | tr ',' ' '); do
+    tok="${tok###}"
+    [ -z "$tok" ] && continue
+    case "$tok" in
+      *[!0-9]*) echo "hive-open-pr: --issues expects issue numbers, got '$tok'" >&2; exit 2;;
+    esac
+    ISSUE_LIST="$ISSUE_LIST,$tok"
+  done
+  ISSUE_LIST="${ISSUE_LIST#,}"
+fi
+
 # Write the request as valid JSON. Use python for correct escaping of title/body.
 REQ_FILE="$REQ_DIR/${AGENT}-$(date +%s%N).json"
 if command -v python3 >/dev/null 2>&1; then
-  python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" <<'PY'
+  python3 - "$REQ_FILE" "$REPO" "$HEAD" "$BASE" "$TITLE" "$BODY" "$AGENT" "$ISSUE_LIST" <<'PY'
 import json, sys
-path, repo, head, base, title, body, agent = sys.argv[1:8]
-json.dump({"repo":repo,"head":head,"base":base,"title":title,"body":body,"agent":agent},
-          open(path,"w"))
+path, repo, head, base, title, body, agent, issues = sys.argv[1:9]
+req = {"repo":repo,"head":head,"base":base,"title":title,"body":body,"agent":agent}
+if issues:
+    req["issues"] = [int(n) for n in issues.split(",")]
+json.dump(req, open(path,"w"))
 PY
 else
-  # Minimal fallback escaper (no python): escape backslash and double-quote.
-  esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-  printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"}\n' \
-    "$(esc "$REPO")" "$(esc "$HEAD")" "$(esc "$BASE")" "$(esc "$TITLE")" "$(esc "$BODY")" "$(esc "$AGENT")" \
+  # Fallback escaper (no python3). Escaping only backslash and double-quote is
+  # not enough for the case this script exists to get right: `--body-file`
+  # bodies are multi-line, and a literal newline inside a JSON string is
+  # invalid JSON, so on a python3-less host the fix for lost bodies produced a
+  # request the watcher could only quarantine. It failed safe -- loudly, and
+  # without opening a bodyless PR -- but it did not work.
+  #
+  # Newline, carriage return and tab are what a PR body actually contains. The
+  # remaining C0 controls would still be invalid, so they are refused rather
+  # than emitted: a hand-rolled escaper that quietly writes broken JSON is the
+  # shape of the bug this PR is closing.
+  esc() {
+    printf '%s' "$1" | awk '
+      BEGIN { RS = "^$"; ORS = "" }
+      {
+        if (match($0, /[\001-\010\013\014\016-\037]/)) {
+          print "hive-open-pr: cannot encode a control character without python3" > "/dev/stderr"
+          exit 3
+        }
+        gsub(/\\/, "\\\\")
+        gsub(/"/,  "\\\"")
+        gsub(/\n/, "\\n")
+        gsub(/\r/, "\\r")
+        gsub(/\t/, "\\t")
+        print
+      }'
+  }
+  ISSUES_JSON=""
+  [ -n "$ISSUE_LIST" ] && ISSUES_JSON=",\"issues\":[$ISSUE_LIST]"
+  printf '{"repo":"%s","head":"%s","base":"%s","title":"%s","body":"%s","agent":"%s"%s}\n' \
+    "$(esc "$REPO")" "$(esc "$HEAD")" "$(esc "$BASE")" "$(esc "$TITLE")" "$(esc "$BODY")" "$(esc "$AGENT")" "$ISSUES_JSON" \
     > "$REQ_FILE"
 fi
 

@@ -144,7 +144,7 @@ func TestPRRequestWatcher_DedupesExistingPR(t *testing.T) {
 	prRequestDirForTest = dir
 	defer func() { prRequestDirForTest = old }()
 
-	_, _ = WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/dup", Title: "dup"})
+	_, _ = WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/dup", Title: "dup", Body: "duplicate change"})
 	c.ProcessPRRequestsOnce(context.Background())
 
 	if created != 0 {
@@ -258,7 +258,7 @@ func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
 			prRequestDirForTest = dir
 			defer func() { prRequestDirForTest = old }()
 
-			_, _ = WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/hold", Title: "gated PR", Agent: tc.agent})
+			_, _ = WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/hold", Title: "gated PR", Body: "a gated change", Agent: tc.agent})
 			c.ProcessPRRequestsOnce(context.Background())
 
 			if created != 1 {
@@ -319,7 +319,7 @@ func TestPRRequestWatcher_RetriesRequiredHoldLabelFailure(t *testing.T) {
 	prRequestDirForTest = dir
 	defer func() { prRequestDirForTest = old }()
 	reqPath, err := WritePRRequest(dir, PRRequest{
-		Repo: "o/r", Head: "scanner/hold", Title: "gated PR", Agent: "scanner",
+		Repo: "o/r", Head: "scanner/hold", Title: "gated PR", Body: "a gated change", Agent: "scanner",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestPRRequestWatcher_RetriesWithBackoff(t *testing.T) {
 	prRequestDirForTest = dir
 	defer func() { prRequestDirForTest = old }()
 
-	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/fix-1", Title: "[scanner] fix", Agent: "scanner"})
+	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/fix-1", Title: "[scanner] fix", Body: "fixes the thing", Agent: "scanner"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestPRRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
 	prRequestDirForTest = dir
 	defer func() { prRequestDirForTest = old }()
 
-	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/never-lands", Title: "[scanner] never", Agent: "scanner"})
+	reqPath, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/never-lands", Title: "[scanner] never", Body: "never lands", Agent: "scanner"})
 	if err != nil {
 		t.Fatal(err)
 	}

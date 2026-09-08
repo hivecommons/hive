@@ -552,7 +552,7 @@ func TestPRRequestWatcher_ReportsDuplicateTreeAndConsumesRequest(t *testing.T) {
 	t.Cleanup(func() { prRequestDirForTest = "" })
 
 	reqPath, err := WritePRRequest(dir, PRRequest{
-		Repo: "o/r", Head: "copy-forward", Base: "main", Title: "copy forward", Agent: "scanner",
+		Repo: "o/r", Head: "copy-forward", Base: "main", Title: "copy forward", Body: "copies the change forward", Agent: "scanner",
 	})
 	if err != nil {
 		t.Fatalf("WritePRRequest: %v", err)

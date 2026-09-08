@@ -56,12 +56,40 @@ if [[ $branch == "$release_branch" && -n $channels ]]; then
   done
 fi
 
+# Registry reads occasionally fail on transient network errors (e.g. GHCR blob
+# "connection reset by peer", run 33949672991). Retry those a bounded number of
+# times; a definitive "manifest unknown" answer is never retried.
+inspect_retry_attempts=${PUBLISH_INSPECT_RETRY_ATTEMPTS:-3}
+inspect_retry_delay=${PUBLISH_INSPECT_RETRY_DELAY:-5}
+inspect_ok=
+inspect_output=
+missing_manifest_pattern='manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$'
+run_inspect() {
+  local attempt
+  for ((attempt = 1; attempt <= inspect_retry_attempts; attempt++)); do
+    if inspect_output=$(docker buildx imagetools inspect "$@" 2>&1); then
+      inspect_ok=true
+      return 0
+    fi
+    inspect_ok=false
+    if grep -Eqi "$missing_manifest_pattern" <<<"$inspect_output"; then
+      return 0
+    fi
+    if (( attempt < inspect_retry_attempts )); then
+      echo "::warning::transient inspect failure (attempt $attempt/$inspect_retry_attempts) for ${*: -1}; retrying in ${inspect_retry_delay}s" >&2
+      sleep "$inspect_retry_delay"
+    fi
+  done
+  return 0
+}
+
 inspect_status=
 inspect_generation=
 read_generation() {
   local ref=$1 inspect value
-  if inspect=$(docker buildx imagetools inspect \
-      --format '{{json (index .Image "linux/amd64")}}' "$ref" 2>&1); then
+  run_inspect --format '{{json (index .Image "linux/amd64")}}' "$ref"
+  inspect=$inspect_output
+  if [[ $inspect_ok == true ]]; then
     value=$(jq -r --arg label "$run_label" '.config.Labels[$label] // "0"' <<<"$inspect")
     if [[ ! $value =~ ^[0-9]+$ ]]; then
       echo "::error::tag $ref has invalid $run_label label: $value" >&2
@@ -69,7 +97,7 @@ read_generation() {
     fi
     inspect_status=found
     inspect_generation=$value
-  elif grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$inspect"; then
+  elif grep -Eqi "$missing_manifest_pattern" <<<"$inspect"; then
     inspect_status=missing
     inspect_generation=0
   else
@@ -124,8 +152,9 @@ docker buildx imagetools create "${tag_args[@]}" "${source_args[@]}"
 assert_linux_platforms() {
   local ref=$1 platform inspect
   for platform in linux/amd64 linux/arm64; do
-    if ! inspect=$(docker buildx imagetools inspect \
-        --format "{{json (index .Image \"$platform\")}}" "$ref" 2>&1); then
+    run_inspect --format "{{json (index .Image \"$platform\")}}" "$ref"
+    inspect=$inspect_output
+    if [[ $inspect_ok != true ]]; then
       echo "::error::could not inspect $ref after publishing; refusing to leave an unverified moving tag" >&2
       echo "$inspect" >&2
       exit 1

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -93,8 +95,14 @@ func TestHandleReposRescan_ReportsFreshCounts(t *testing.T) {
 }
 
 func TestReposRescanRouteRequiresDashboardAuth(t *testing.T) {
+	// RegisterAPI builds a ContributeWSHub, which loads the contribute-ws
+	// ledgers from their package-level /data paths and logs what it loaded.
+	// Redirect the ledgers to a TempDir (hermetic on a live hive host, where
+	// /data/contributors/*.json exist) and pass a real logger — with ledger
+	// files present, a nil logger panics inside loadCompletedTasks.
+	redirectContributeWSDisk(t, t.TempDir())
 	var calls int32
-	s := NewServerWithAuth(0, "secret-token", nil)
+	s := NewServerWithAuth(0, "secret-token", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.RegisterAPI(&Dependencies{
 		Config: &config.Config{Project: config.ProjectConfig{Repos: []string{"a"}}},
 		RescanReposFunc: func(context.Context) (*ghpkg.ActionableResult, error) {

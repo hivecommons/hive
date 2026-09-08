@@ -251,7 +251,11 @@ func TestProxyHTTPUpstreamReadError(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
+	returned := make(chan struct{})
+	go func() {
+		p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
+		close(returned)
+	}()
 
 	go func() {
 		fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
@@ -268,6 +272,15 @@ func TestProxyHTTPUpstreamReadError(t *testing.T) {
 	// proxyHTTP should return when upstream closes
 	time.Sleep(200 * time.Millisecond)
 	clientConn.Close()
+
+	// Join the handler before the test exits: a leaked proxyHTTP goroutine
+	// reads responseBodyStallTimeout, racing with the next test's
+	// shortenBodyStall write (v4 CI race, issue #6110).
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxyHTTP did not return after upstream close")
+	}
 }
 
 // ---------- proxyHTTP: response write error ----------
@@ -278,7 +291,11 @@ func TestProxyHTTPResponseWriteError(t *testing.T) {
 	clientConn, proxyClient := net.Pipe()
 	upstreamConn, proxyUpstream := net.Pipe()
 
-	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
+	returned := make(chan struct{})
+	go func() {
+		p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
+		close(returned)
+	}()
 
 	go func() {
 		fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
@@ -298,7 +315,15 @@ func TestProxyHTTPResponseWriteError(t *testing.T) {
 		upstreamConn.Close()
 	}()
 
-	time.Sleep(500 * time.Millisecond)
+	// Join the handler before the test exits: the leaked proxyHTTP goroutine
+	// read responseBodyStallTimeout (github_proxy.go stall bound) while the
+	// next test's shortenBodyStall wrote it — the data race that failed v4 CI
+	// run 33979236903 (issue #6110).
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxyHTTP did not return after client close and upstream close")
+	}
 }
 
 // ---------- forwardToInference: flusher path ----------

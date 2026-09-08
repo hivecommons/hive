@@ -5951,6 +5951,24 @@ function ccOnActivity(e){
   }
 }
 
+// ── A reported stream gap (#6218) ──────────────────────────────────────────────
+// The server tells us when it discarded events for this connection because our
+// channel was full. It is not an error and the stream stays open — what it means
+// is that this page is now missing something, so the cheap repair is to re-read
+// the reliable endpoints at once rather than wait out the 6s poll.
+//
+// This page already polled as a hedge, so the gap only makes it prompt. The
+// clients this signal actually rescues are the headless ones that trusted the
+// stream and had no way to learn they were behind.
+function ccOnGap(ev){
+  var n=(ev&&ev.dropped)||0;
+  console.warn('contribute SSE: missed '+n+' event(s) (stream at seq '+((ev&&ev.seq)||'?')+'); resyncing');
+  try{ccPollActivity();}catch(e){}
+  try{fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
+    if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
+  }).catch(function(){});}catch(e){}
+}
+
 // ── SSE lifecycle with graceful fallback ───────────────────────────────────────
 function ccHydrate(payload){
   if(payload.queue){ccQueue=payload.queue.slice();ccRenderQueue();}
@@ -6000,6 +6018,7 @@ function ccStart(){
       try{var ev=JSON.parse(m.data);}catch(err){return;}
       if(ev.type==='hello')ccHydrate(ev);
       else if(ev.type==='activity'&&ev.activity)ccOnActivity(ev.activity);
+      else if(ev.type==='gap')ccOnGap(ev);
     };
     ccEs.onerror=function(){
       // Stream dropped. Show polling state, start the queue fallback, and let the

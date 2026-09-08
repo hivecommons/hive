@@ -6756,6 +6756,25 @@ func runEvalCycle(
 						}
 						return exists
 					}
+					// #6080: a finding computed at an OLDER commit that names its
+					// own remediation ("Filed issue #208, hold-gated PR #209") can
+					// be settled without re-running its evidence -- ask whether that
+					// work closed. Scoped to the analyzed repo, consulted only for
+					// provenance-stale findings, and every failure keeps the finding
+					// open (the digest retires one only when EVERY reference it
+					// names is closed).
+					digestOpts.ResolveRef = func(refOwner, refRepo string, number int) (advisory.RefState, bool) {
+						closedAt, closed, rerr := ghClient.IssueClosedAt(ctx, refOwner, refRepo, number)
+						if rerr != nil {
+							// Inconclusive (network, rate limit): "cannot tell", so
+							// the finding stays open. Never treat a failed lookup as
+							// evidence that a finding healed.
+							logger.Warn("advisory: issue state lookup failed",
+								"ref", fmt.Sprintf("%s/%s#%d", refOwner, refRepo, number), "error", rerr)
+							return advisory.RefState{}, false
+						}
+						return advisory.RefState{Closed: closed, ClosedAt: closedAt}, true
+					}
 					logger.Info("advisory digest pinned to commit", "repo", primaryRepo, "branch", branch, "sha", sha)
 				} else if serr != nil {
 					logger.Warn("advisory: could not resolve latest commit for snapshot", "repo", primaryRepo, "branch", branch, "error", serr)
@@ -8683,9 +8702,20 @@ func recordIntentAlignmentAdvisory(stores map[string]*beads.Store, repo string, 
 		return
 	}
 	title := fmt.Sprintf("Intent alignment drift in %s#%d", repo, number)
-	ref := fmt.Sprintf("gh-%s#%d", repo, number)
+	// "<owner>/<repo>#<n>", NOT "gh-<owner>/<repo>#<n>". The old form fused the
+	// source prefix into the org when the digest built its URL, so every one of
+	// these rendered a link to a github.com/gh-<owner> that does not exist
+	// (#6080). The renderer strips the prefix defensively for beads already
+	// written this way; this stops writing new ones.
+	ref := fmt.Sprintf("%s#%d", repo, number)
+	// Beads created before that change carry the prefixed form. Matching both
+	// keeps this idempotent across the change: without it the first run after
+	// upgrading would fail to recognise the existing bead and open a duplicate.
+	legacyRef := "gh-" + ref
 	for _, b := range store.List(beads.ListFilter{}) {
-		if b.Type == beads.TypeAdvisory && b.Title == title && b.ExternalRef == ref && b.Status != beads.StatusClosed && b.Status != beads.StatusDone {
+		if b.Type == beads.TypeAdvisory && b.Title == title &&
+			(b.ExternalRef == ref || b.ExternalRef == legacyRef) &&
+			b.Status != beads.StatusClosed && b.Status != beads.StatusDone {
 			return
 		}
 	}

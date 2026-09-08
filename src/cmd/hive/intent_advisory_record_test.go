@@ -45,8 +45,13 @@ func TestRecordIntentAlignmentAdvisoryCreatesAndDedupes(t *testing.T) {
 	if b.Type != beads.TypeAdvisory {
 		t.Errorf("bead type = %q, want %q", b.Type, beads.TypeAdvisory)
 	}
-	if b.ExternalRef != "gh-hivecommons/hive#42" {
-		t.Errorf("external ref = %q, want %q", b.ExternalRef, "gh-hivecommons/hive#42")
+	// "<owner>/<repo>#<n>", NOT the old "gh-<owner>/<repo>#<n>". The digest
+	// split the ref on its first "/" to build a link, so the "gh-" prefix
+	// became part of the OWNER and every one of these rendered a link to
+	// github.com/gh-<owner>, which is not an org (#6080). This expectation
+	// was pinning the malformed form.
+	if b.ExternalRef != "hivecommons/hive#42" {
+		t.Errorf("external ref = %q, want %q", b.ExternalRef, "hivecommons/hive#42")
 	}
 	if !strings.Contains(b.Notes, "diff exceeds linked issue scope") ||
 		!strings.Contains(b.Notes, "unrelated-files") {
@@ -88,4 +93,23 @@ func TestRecordIntentAlignmentAdvisoryStoreFallback(t *testing.T) {
 	// No usable store anywhere: must be a quiet no-op, not a panic.
 	recordIntentAlignmentAdvisory(map[string]*beads.Store{"x": nil}, "hivecommons/hive", 9, misalignedVerdict(), restoreTestLogger())
 	recordIntentAlignmentAdvisory(nil, "hivecommons/hive", 10, misalignedVerdict(), restoreTestLogger())
+}
+
+// A bead written BEFORE the #6080 ref change carries the prefixed form. The
+// dedup has to recognise it, or the first eval tick after upgrading would fail
+// to see the existing advisory and open a duplicate for the same drift -- one
+// per tick, forever.
+func TestRecordIntentAlignmentAdvisoryDedupesLegacyPrefixedRef(t *testing.T) {
+	store := newAdvisoryTestStore(t)
+	if _, err := store.Create("Intent alignment drift in hivecommons/hive#42",
+		beads.TypeAdvisory, beads.PriorityHigh, "intent", "gh-hivecommons/hive#42"); err != nil {
+		t.Fatalf("seeding legacy bead: %v", err)
+	}
+
+	recordIntentAlignmentAdvisory(map[string]*beads.Store{"intent": store},
+		"hivecommons/hive", 42, misalignedVerdict(), restoreTestLogger())
+
+	if got := len(store.List(beads.ListFilter{})); got != 1 {
+		t.Errorf("got %d beads, want 1 -- the pre-existing advisory carries the legacy gh- ref and must still suppress a duplicate", got)
+	}
 }

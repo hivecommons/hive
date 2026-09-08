@@ -234,7 +234,7 @@ func TestStartPRRequestWatcher_DispatchesQueuedRequest(t *testing.T) {
 	done := c.StartPRRequestWatcher(ctx, func(string, int) error { return nil }, nil, nil)
 	drainAfter(t, cancel, done)
 
-	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "f", Base: "main", Title: "t", Agent: "a"}); err != nil {
+	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "f", Base: "main", Title: "t", Body: "a change", Agent: "a"}); err != nil {
 		t.Fatal(err)
 	}
 	if !waitFor(t, 5*time.Second, func() bool { return created.Load() > 0 }) {
@@ -256,7 +256,7 @@ func TestStartPRRequestWatcher_StopsOnContextCancel(t *testing.T) {
 	cancel()
 	<-done
 
-	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "g", Base: "main", Title: "t", Agent: "a"}); err != nil {
+	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "g", Base: "main", Title: "t", Body: "a change", Agent: "a"}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond)

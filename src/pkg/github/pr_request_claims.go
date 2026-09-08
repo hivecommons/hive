@@ -43,6 +43,59 @@ var titleArtifactRules = []titleArtifactRule{
 
 var uncheckedTaskItemRE = regexp.MustCompile(`(?m)^\s*[-*+]\s*\[\s\]`)
 
+// validatePRRequestBody runs the cheap, local body checks — no API calls — so
+// they sit before any gate that spends GitHub quota. Both rejections are
+// permanent (retrying the same file cannot fix them) and both exist because of
+// the same observed failure: hive-open-pr silently dropped `--body-file`, so
+// PRs went out whose entire body was the attribution footer, and the
+// "Closes #N" line the agent had written never reached GitHub (the issue then
+// stayed open after the fix merged).
+//
+//  1. An empty (or whitespace-only) body is refused outright. Every shipped
+//     policy requires a real body; an empty one here means the body was lost
+//     between the agent and the request. There is deliberately no larger size
+//     floor: "Closes #12" is a legitimate minimal body under
+//     scanner-automerge, so anything above "non-blank" would reject real work.
+//  2. When the request declares originating issues (req.IssueN, set by
+//     hive-open-pr --issues), the title+body must reference each one — as a
+//     closing keyword ("Closes #N") or an explicit non-closing reference
+//     ("Refs #N"). A body that arrives without the reference it was supposed
+//     to carry is the same lost-content failure in partial form.
+//
+// Returns "" when the request passes, else the policy reason for rejection.
+func (c *Client) validatePRRequestBody(req PRRequest) string {
+	if strings.TrimSpace(req.Body) == "" {
+		return "PR body is empty — refusing to open a body-less PR. The body was " +
+			"probably lost on the way in (hive-open-pr accepts --body and --body-file); " +
+			"re-run hive-open-pr with the full body"
+	}
+	if len(req.IssueN) == 0 {
+		return ""
+	}
+	owner, repo := c.prRequestRepo(req.Repo)
+	defaultRepo := owner + "/" + repo
+	text := req.Title + "\n" + req.Body
+	referenced := make(map[int]bool)
+	for _, ref := range append(ParseClaimedIssues(text, defaultRepo), ParseReferencedIssues(text, defaultRepo)...) {
+		if strings.EqualFold(ref.Repo, defaultRepo) {
+			referenced[ref.Issue] = true
+		}
+	}
+	var missing []string
+	for _, n := range req.IssueN {
+		if !referenced[n] {
+			missing = append(missing, "#"+strconv.Itoa(n))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Sprintf("request declares originating issue(s) %s but the PR body never references them — "+
+			"the body must carry a \"Closes %s\" line (or \"Refs %s\" with a stated reason part of the issue stays open). "+
+			"A missing line usually means the body was truncated or replaced; re-run hive-open-pr with the full body",
+			strings.Join(missing, ", "), missing[0], missing[0])
+	}
+	return ""
+}
+
 // validatePRRequestClaims checks objective artifact claims against the compare
 // file list and downgrades unsafe closing references on structurally incomplete
 // issues. It returns the title/body to send to GitHub.

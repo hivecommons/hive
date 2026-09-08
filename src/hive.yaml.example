@@ -489,7 +489,6 @@ notifications:
 # Set auth_token to require Bearer auth on /api/* endpoints (except /api/health).
 dashboard:
   port: 3001
-  snapshot_dir: /data/snapshots
   # Exact HTTPS origins allowed to embed /snapshot; empty denies all framing.
   # snapshot_frame_ancestors:
   #   - https://status.example.com
