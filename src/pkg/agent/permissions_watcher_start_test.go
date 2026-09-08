@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,12 +21,16 @@ const watcherPollTimeout = 5 * time.Second
 const watcherTestInterval = 20 * time.Millisecond
 
 // startWatcherSandbox repoints every path seam the watcher scans at a temp
-// tree, shortens the tick interval, installs a stop channel, and restores all
-// of it on cleanup. It returns the sandbox root and the stop channel. The
-// stop channel is closed (and the goroutine given a moment to exit) BEFORE
-// the seams are restored, so a still-ticking watcher can never touch the
-// production paths or another test's sandbox (#4737-class hazard).
-func startWatcherSandbox(t *testing.T) (root string, stop chan struct{}) {
+// tree and restores all of it on cleanup. It returns the sandbox root and a
+// startWatcher func that launches runPermissionsWatcher against the sandbox
+// with the shortened tick interval and returns a stop func. Each stop func is
+// registered with t.Cleanup, and t.Cleanup runs LIFO, so every watcher
+// goroutine is cancelled AND joined before the seam-restoring cleanup below
+// runs: a still-ticking watcher can never read WatchedHomeDirs/GooseLogsDir
+// while cleanup writes them (the data race the first cut of this test had),
+// nor touch the production paths or another test's sandbox (#4737-class
+// hazard). No sleeps stand in for synchronization anywhere here.
+func startWatcherSandbox(t *testing.T) (root string, startWatcher func() (stop func())) {
 	t.Helper()
 	root = t.TempDir()
 
@@ -33,8 +39,6 @@ func startWatcherSandbox(t *testing.T) (root string, stop chan struct{}) {
 	origRepoParent := SharedRepoParent
 	origModeGlob := ModeFileGlob
 	origCapsGlob := CapsFileGlob
-	origInterval := PermissionFixInterval
-	origStop := permissionsWatcherStop
 	origUID, origGID := DevUID, NodeGID
 
 	WatchedHomeDirs = []string{filepath.Join(root, "home", ".claude")}
@@ -42,35 +46,44 @@ func startWatcherSandbox(t *testing.T) (root string, stop chan struct{}) {
 	SharedRepoParent = filepath.Join(root, "home")
 	ModeFileGlob = filepath.Join(root, ".hive-mode-*")
 	CapsFileGlob = filepath.Join(root, ".hive-caps-*")
-	PermissionFixInterval = watcherTestInterval
 	// Chown to our own identity so ensureWatchedDirs succeeds unprivileged.
 	DevUID, NodeGID = os.Getuid(), os.Getgid()
-
-	stop = make(chan struct{})
-	permissionsWatcherStop = stop
 	resetPermWarnDedupe()
 
+	// Registered FIRST so it runs LAST: every watcher started through
+	// startWatcher has already been joined by its own cleanup by now.
 	t.Cleanup(func() {
-		// Stop the goroutine first; only then restore the seams it reads.
-		select {
-		case <-stop:
-			// already closed by the test body
-		default:
-			close(stop)
-		}
-		// One shortened interval is ample for the select to observe the close.
-		time.Sleep(2 * watcherTestInterval)
 		WatchedHomeDirs = origWatched
 		GooseLogsDir = origGoose
 		SharedRepoParent = origRepoParent
 		ModeFileGlob = origModeGlob
 		CapsFileGlob = origCapsGlob
-		PermissionFixInterval = origInterval
-		permissionsWatcherStop = origStop
 		DevUID, NodeGID = origUID, origGID
 		resetPermWarnDedupe()
 	})
-	return root, stop
+
+	startWatcher = func() (stop func()) {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			runPermissionsWatcher(ctx, quietLogger(), watcherTestInterval)
+		}()
+		var once sync.Once
+		stop = func() {
+			once.Do(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(watcherPollTimeout):
+					t.Fatal("runPermissionsWatcher did not return after context cancel")
+				}
+			})
+		}
+		t.Cleanup(stop)
+		return stop
+	}
+	return root, startWatcher
 }
 
 // waitFor polls cond until it holds or watcherPollTimeout elapses.
@@ -93,9 +106,9 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // observable unprivileged: a 0600 mode file must come back world-readable so
 // per-agent UIDs can read their GitHub mode, #3679/#3881/#3882).
 func TestStartPermissionsWatcherCreatesDirsAndTicksRepairs(t *testing.T) {
-	root, _ := startWatcherSandbox(t)
+	root, startWatcher := startWatcherSandbox(t)
 
-	go StartPermissionsWatcher(quietLogger())
+	startWatcher()
 
 	// Startup duty: watched dirs (including GooseLogsDir — goose panics
 	// without it) exist without waiting for any tick.
@@ -116,34 +129,28 @@ func TestStartPermissionsWatcherCreatesDirsAndTicksRepairs(t *testing.T) {
 	})
 }
 
-// TestStartPermissionsWatcherStopSeamEndsLoop pins the test seam's contract:
-// closing permissionsWatcherStop makes the goroutine return, after which no
+// TestStartPermissionsWatcherStopSeamEndsLoop pins the seam's contract:
+// cancelling the context makes runPermissionsWatcher return (the stop func
+// joins the goroutine and fails the test if it does not), after which no
 // further ticks repair anything — a mode file broken after the stop stays
 // broken. Without this guarantee every test that starts the watcher would
 // leak a ticker mutating whatever the package-level seams point at next.
 func TestStartPermissionsWatcherStopSeamEndsLoop(t *testing.T) {
-	root, stop := startWatcherSandbox(t)
+	root, startWatcher := startWatcherSandbox(t)
 
-	done := make(chan struct{})
-	go func() {
-		StartPermissionsWatcher(quietLogger())
-		close(done)
-	}()
+	stop := startWatcher()
 
-	// Let it start (dirs appear), then stop it.
+	// Let it start (dirs appear), then stop it. stop() returns only once
+	// the goroutine has exited, or fails the test after watcherPollTimeout.
 	waitFor(t, "watcher startup", func() bool {
 		_, err := os.Stat(WatchedHomeDirs[0])
 		return err == nil
 	})
-	close(stop)
+	stop()
 
-	select {
-	case <-done:
-	case <-time.After(watcherPollTimeout):
-		t.Fatal("StartPermissionsWatcher did not return after stop channel closed")
-	}
-
-	// A file broken after the loop returned must never be repaired.
+	// A file broken after the loop returned must never be repaired. The
+	// goroutine is already joined, so this wait is only there to give a
+	// hypothetical leaked ticker every chance to show itself.
 	path := mkModeFile(t, root, "after-stop", modeFileStartMode)
 	time.Sleep(5 * watcherTestInterval)
 	if got := statMode(t, path); got != modeFileStartMode {
