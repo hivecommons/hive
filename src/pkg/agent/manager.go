@@ -9415,6 +9415,22 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		// source of truth so the auth probe and this export can never diverge.
 		vars = append(vars, agentEnvPair{"HOME", AgentHome(agent.Name, agent.UID, backend), false})
 
+		// Per-agent XDG data/state roots (#6238), beneath the per-agent HOME.
+		// Every backend CLI keeps its session transcripts, run locks and
+		// caches under $XDG_DATA_HOME / $XDG_STATE_HOME; with the legacy
+		// shared /data/home/.local those were one contended tree owned by
+		// whichever agent wrote first. Exported explicitly (not left to the
+		// spec default under $HOME) so the answer cannot depend on how each
+		// CLI resolves XDG, and only when HOME itself is per-agent — the
+		// HIVE_SHARED_AGENT_HOME=1 escape hatch keeps the legacy layout whole.
+		// XDG_CONFIG_HOME is deliberately NOT set: ~/.config stays the shared
+		// credential/config bridge (gh hosts.yml, goose config.yaml). See
+		// setupAgentXDGDirs, which pre-creates these as the agent's own dirs.
+		if xdgHome, ok := perAgentXDGHome(agent.Name, agent.UID, backend); ok {
+			vars = append(vars, agentEnvPair{"XDG_DATA_HOME", agentXDGDataHome(xdgHome), false})
+			vars = append(vars, agentEnvPair{"XDG_STATE_HOME", agentXDGStateHome(xdgHome), false})
+		}
+
 		// Under the per-agent-UID layout the global npm prefix is owned by the
 		// image's build user, so the Claude Code CLI's self-updater fails on
 		// every launch with "✘ Auto-update failed: no write permission to npm

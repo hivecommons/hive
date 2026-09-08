@@ -75,17 +75,96 @@ func sharedAgentHomeForced() bool {
 //     settings.json. One login authenticates the fleet.
 //   - .copilot / .config / .codex / .bob / .gemini — per-tool auth+config the
 //     fleet shared safely before this change (none are rewritten wholesale by
-//     rename the way .claude.json is).
-//   - .cache / .local — tool caches; per-agent copies would cold-start every
-//     cache on every new agent for no isolation benefit.
+//     rename the way .claude.json is). .config is also $XDG_CONFIG_HOME: gh's
+//     hosts.yml and goose's config.yaml (provider keys) live there, so it
+//     stays shared on purpose — it is credential/config state, not session
+//     state.
+//   - .cache — tool caches; per-agent copies would cold-start every cache on
+//     every new agent for no isolation benefit.
 //
 // DELIBERATELY NOT BRIDGED: .claude.json (the contended session file — the
 // whole point), .bash_history (same rename contention, zero sharing value),
 // .npm (per-agent npm caches avoid the cross-UID EACCES collisions the shared
-// cache suffered — see installCavemanForAgent).
+// cache suffered — see installCavemanForAgent), and .local (#6238 — the
+// $XDG_DATA_HOME / $XDG_STATE_HOME root; see setupAgentXDGDirs for why it is
+// a REAL per-agent directory with one narrow bridge inside it).
 var interactiveHomeBridgeDirs = []string{
 	".claude", ".copilot", ".config", ".codex", ".bob", ".gemini",
-	".cache", ".local",
+	".cache",
+}
+
+// Per-agent XDG data/state (#6238).
+//
+// THE DEFECT: .local used to be bridged like .cache, so every agent's
+// $HOME/.local/share and $HOME/.local/state resolved to the ONE shared
+// /data/home/.local. Each backend CLI treats those as its private state root
+// (session transcripts, run locks, sqlite, plugin caches), and whichever agent
+// UID created a subtree first owned it. The only thing keeping the others
+// working was the permissive mode the Dockerfile umask wrappers force — a
+// per-CLI allowlist that fails closed for every new backend (muse crash-looped
+// hundreds of times before it was added), and that CLIs which check their
+// state root's permissions (muse's session registry) refuse to trust.
+//
+// THE FIX: .local is a real, agent-owned directory inside the per-agent home,
+// and the launch environment exports XDG_DATA_HOME / XDG_STATE_HOME beneath
+// it explicitly, following the CODEX_HOME precedent (setupCodexHome). Sharing
+// is then explicit and narrow: only the entries in xdgDataSharedBridges are
+// symlinked back to the shared tree, exactly the way ~/.claude bridges the
+// shared OAuth token, because they hold a credential one login must propagate
+// to the whole fleet. Nothing is migrated: an existing agent's legacy .local
+// symlink is replaced by an empty real directory, and its CLIs start fresh
+// per-agent state on the next session while the shared tree stays where it
+// was for anything still pointing at it.
+
+// xdgDataHomeRel / xdgStateHomeRel are the XDG Base Directory defaults
+// relative to $HOME. They are exported EXPLICITLY (not left to the spec
+// default) so a CLI that resolves XDG_* before HOME, or a wrapper that
+// re-homes the process, still lands in the per-agent tree.
+const (
+	xdgLocalDirName = ".local"
+	xdgDataHomeRel  = ".local/share"
+	xdgStateHomeRel = ".local/state"
+)
+
+// xdgDataSharedBridges are the children of the per-agent $XDG_DATA_HOME that
+// are symlinked back to the shared /data/home/.local/share. This is the
+// credential allowlist the issue asks for — sharing stays deliberate and
+// named, never the default:
+//
+//   - opencode — `opencode auth login` writes its credential to
+//     $XDG_DATA_HOME/opencode/auth.json; one login must reach every agent,
+//     the same contract as ~/.claude/.credentials.json.
+var xdgDataSharedBridges = []string{"opencode"}
+
+// gooseLogsStateRel is the rolling log directory goose creates under
+// $XDG_STATE_HOME on startup. Goose panics when it is missing (the permissions
+// watcher pre-creates the shared copy for the same reason — GooseLogsDir), so
+// the per-agent one is pre-created at provisioning time too.
+const gooseLogsStateRel = "goose/logs/cli"
+
+// agentXDGDataHome returns the per-agent $XDG_DATA_HOME for a given HOME.
+func agentXDGDataHome(home string) string {
+	return filepath.Join(home, xdgDataHomeRel)
+}
+
+// agentXDGStateHome returns the per-agent $XDG_STATE_HOME for a given HOME.
+func agentXDGStateHome(home string) string {
+	return filepath.Join(home, xdgStateHomeRel)
+}
+
+// perAgentXDGHome reports whether the agent's HOME is per-agent, i.e. whether
+// XDG_DATA_HOME / XDG_STATE_HOME should be exported beneath it. Under the
+// legacy shared HOME (no UID, or HIVE_SHARED_AGENT_HOME=1) nothing is exported
+// and the CLIs keep resolving the spec defaults under /data/home.
+func perAgentXDGHome(agentName string, uid int, backend string) (string, bool) {
+	if uid <= 0 {
+		return "", false
+	}
+	home := AgentHome(agentName, uid, backend)
+	if home == "" || home == sharedAgentHome {
+		return "", false
+	}
+	return home, true
 }
 
 // interactiveHomeBridgeFiles are shared regular files bridged the same way.
@@ -151,6 +230,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	}
 
 	m.bridgeInteractiveHome(agent.Name, home)
+	m.setupAgentXDGDirs(agent.Name, home, agent.UID)
 	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
@@ -166,31 +246,103 @@ func (m *Manager) bridgeInteractiveHome(agentName, home string) {
 	names = append(names, interactiveHomeBridgeDirs...)
 	names = append(names, interactiveHomeBridgeFiles...)
 	for _, name := range names {
-		link := filepath.Join(home, name)
-		target := filepath.Join(sharedAgentHome, name)
-		info, err := os.Lstat(link)
-		switch {
-		case err == nil && info.Mode()&os.ModeSymlink != 0:
-			if existing, rerr := os.Readlink(link); rerr == nil && existing == target {
-				continue
-			}
-			if rerr := os.Remove(link); rerr != nil {
-				m.logger.Warn("failed to replace stale home bridge",
-					"agent", agentName, "link", link, "error", rerr)
-				continue
-			}
-		case err == nil:
-			// Real file/dir: refuse to clobber.
-			continue
-		case !os.IsNotExist(err):
-			m.logger.Warn("failed to inspect home bridge",
-				"agent", agentName, "link", link, "error", err)
-			continue
+		m.bridgeHomeEntry(agentName, filepath.Join(home, name), filepath.Join(sharedAgentHome, name))
+	}
+}
+
+// bridgeHomeEntry creates one symlink bridge from link to target with the
+// bridgeInteractiveHome semantics: an existing correct link is left alone, a
+// link pointing elsewhere is replaced, and a real file or directory is never
+// clobbered.
+func (m *Manager) bridgeHomeEntry(agentName, link, target string) {
+	info, err := os.Lstat(link)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		if existing, rerr := os.Readlink(link); rerr == nil && existing == target {
+			return
 		}
-		if err := os.Symlink(target, link); err != nil && !os.IsExist(err) {
-			m.logger.Warn("failed to create home bridge",
-				"agent", agentName, "link", link, "error", err)
+		if rerr := os.Remove(link); rerr != nil {
+			m.logger.Warn("failed to replace stale home bridge",
+				"agent", agentName, "link", link, "error", rerr)
+			return
 		}
+	case err == nil:
+		// Real file/dir: refuse to clobber.
+		return
+	case !os.IsNotExist(err):
+		m.logger.Warn("failed to inspect home bridge",
+			"agent", agentName, "link", link, "error", err)
+		return
+	}
+	if err := os.Symlink(target, link); err != nil && !os.IsExist(err) {
+		m.logger.Warn("failed to create home bridge",
+			"agent", agentName, "link", link, "error", err)
+	}
+}
+
+// setupAgentXDGDirs makes $HOME/.local a real per-agent directory holding the
+// agent's XDG_DATA_HOME and XDG_STATE_HOME (#6238), retiring the legacy
+// symlink bridge to the shared /data/home/.local when one is found, then
+// re-bridges only the named shared entries (xdgDataSharedBridges) back into
+// the shared tree. Every step is best-effort and idempotent, like the rest of
+// provisioning: a real .local that already exists is kept as is (it may hold
+// live per-agent state), and only a SYMLINK is replaced — nothing under the
+// shared tree is moved or deleted.
+func (m *Manager) setupAgentXDGDirs(agentName, home string, uid int) {
+	local := filepath.Join(home, xdgLocalDirName)
+	if info, err := os.Lstat(local); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		// Legacy bridge from before the per-agent layout. Removing the link
+		// touches nothing it pointed at.
+		if rerr := os.Remove(local); rerr != nil {
+			m.logger.Warn("failed to retire legacy shared .local bridge; XDG state stays shared for this agent",
+				"agent", agentName, "link", local, "error", rerr)
+			return
+		}
+		m.logger.Info("retired legacy shared .local bridge in favour of per-agent XDG dirs",
+			"agent", agentName, "home", home)
+	}
+	dirs := []string{
+		local,
+		agentXDGDataHome(home),
+		agentXDGStateHome(home),
+		filepath.Join(agentXDGStateHome(home), gooseLogsStateRel),
+	}
+	for _, dir := range dirs {
+		if err := mkdirAllNoFollow(sharedAgentHome, dir, interactiveHomeDirMode); err != nil {
+			m.logger.Warn("failed to create per-agent XDG dir",
+				"agent", agentName, "dir", dir, "error", err)
+			return
+		}
+		m.ownAgentDir(agentName, dir, uid)
+	}
+	for _, name := range xdgDataSharedBridges {
+		m.bridgeHomeEntry(agentName,
+			filepath.Join(agentXDGDataHome(home), name),
+			filepath.Join(agentXDGDataHome(sharedAgentHome), name))
+	}
+}
+
+// ownAgentDir gives one freshly created per-agent directory to the agent UID
+// at interactiveHomeDirMode, with the same unprivileged fallback as
+// tightenInteractiveHome: when chown is unavailable, fall back to
+// interactiveHomeSharedDirMode so the agent can still write there. mkdir
+// already applied the mode subject to umask, so it is re-applied explicitly.
+func (m *Manager) ownAgentDir(agentName, dir string, uid int) {
+	if uid <= 0 {
+		return
+	}
+	if err := os.Chown(dir, uid, -1); err != nil {
+		m.logger.Debug("per-agent dir left world-writable (chown unavailable)",
+			"agent", agentName, "dir", dir, "error", err)
+		if cerr := os.Chmod(dir, interactiveHomeSharedDirMode); cerr != nil {
+			m.logger.Warn("failed to restore per-agent dir mode",
+				"agent", agentName, "dir", dir, "error", cerr)
+		}
+		return
+	}
+	if err := os.Chmod(dir, interactiveHomeDirMode); err != nil {
+		m.logger.Warn("failed to tighten per-agent dir mode",
+			"agent", agentName, "dir", dir, "error", err)
 	}
 }
 
