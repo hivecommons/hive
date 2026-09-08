@@ -1,0 +1,1 @@
+- Deleted the dead legacy kick-cadence pipeline (`computeNextKick`, `lookupCadence`, `lookupCadenceForMode`) from `src/pkg/dashboard/status_builder.go` along with the tests that only pinned it; the live status path no longer used any of them. No behavior change ([#6185](https://github.com/hivecommons/hive/pull/6185)).
