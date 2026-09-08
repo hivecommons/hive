@@ -354,10 +354,40 @@ Only issues that pass **all** of these filters are offered to contributors:
 |---|---|---|
 | **Repos for Contribute** | `disabled_repos` | Per-repo toggle. A monitored repo serves work unless it is listed in `disabled_repos`; newly added repos default to **on**. |
 | **Label filter** | `contribute_labels_mode` + `contribute_deny_labels` | Set `contribute_labels_mode` to `deny` (default) so listed labels exclude an issue (e.g. `hold`, `wontfix`, `duplicate`), or to `allow` so an issue must carry one of the listed labels to queue (e.g. `good-first-issue`, `help-wanted`). |
-| **Deny Titles** | `contribute_deny_titles` | Title patterns to exclude. Supports `*`-wildcards (`*dashboard*`, `epic:*`) and slash-delimited regex (`/renovate/`, always case-insensitive). |
-| **Deny Authors** | `contribute_deny_authors` | Issues opened by these authors are excluded (e.g. `dependabot*`, `renovate[bot]`). Same wildcard/regex syntax as Deny Titles. |
+| **Title filter** | `contribute_titles_mode` + `contribute_deny_titles` | Title patterns. With `contribute_titles_mode` set to `deny` (default) a matching title excludes the issue; set it to `allow` so only issues whose title matches one of the patterns queue. Supports `*`-wildcards (`*dashboard*`, `epic:*`) and slash-delimited regex (`/renovate/`, always case-insensitive). |
+| **Author filter** | `contribute_authors_mode` + `contribute_deny_authors` | Author patterns (e.g. `dependabot*`, `renovate[bot]`). Same `deny` (default) / `allow` mode semantics as the title filter, and the same wildcard/regex syntax. |
+| **Skip Assigned to Others** | `contribute_skip_assigned_to_others` | When on, an issue already assigned to someone other than the requesting contributor is skipped. Unassigned issues, and issues assigned to the contributor themselves, stay eligible. Default off, so issues are offered regardless of assignment. |
 
 The legacy `contribute_allow_labels` field is retained only for one-time migration into `contribute_deny_labels` + `contribute_labels_mode`; configure the label filter through those two keys.
+
+The list keys keep their `deny_*` names in every mode for backward compatibility with existing on-disk config; the `*_mode` key decides whether the list is a denylist or an allowlist. An empty list in `allow` mode is treated as "filter off" rather than "nothing passes", so a half-configured filter never silently empties the queue.
+
+### Cooldown
+
+After a contributor completes an issue, the hub keeps that issue out of the queue for a while so the same work is not handed straight back out:
+
+| Control | Config key | Behavior |
+|---|---|---|
+| **Cooldown** | `contribute_cooldown_enabled` | Toggles the post-completion cooldown. Absent (older config) or `true` means enabled; an explicit `false` disables it, so no completed issue is ever excluded for cooldown. Failure quarantine is separate and stays on either way. |
+| **Cooldown Hours** | `contribute_cooldown_hours` | Length of the with-PR completion cooldown in hours. `0` or unset means the default of `168` (one week); any positive value is clamped to `1`-`8760`. The short no-PR cooldown is fixed and not tuned here. |
+
+### Queue hold and priority
+
+The **Operations** tab lets an operator reorder and park individual issues in the ready-work queue. Both controls persist on the hub configuration alongside the filters above, but they are edited only through two authenticated endpoints (owner or read-write role; a read-only or anonymous caller gets `403`):
+
+| Endpoint | Config key | Behavior |
+|---|---|---|
+| `PUT /api/contribute/queue/order` | `contribute_queue_order` | Body `{"order":["owner/repo#number", ...]}`. Listed issues are offered first, in exactly this order; everything else follows in the default order. This only reorders offer priority: a listed issue that fails admission, cooldown, disabled-repo, or in-flight checks is still excluded, and a stale key is skipped. |
+| `POST /api/contribute/queue/hold` | `contribute_queue_hold` + `contribute_queue_hold_reasons` | Body `{"key":"owner/repo#number","held":true,"reason":"optional note"}`. A held issue is never offered until it is resumed (`"held":false`), unlike cooldown, which clears itself. Held rows stay visible on the Operations tab, greyed with an "on hold" badge; the optional reason is shown in the badge tooltip and pruned automatically when the hold is lifted. |
+| `POST /api/contribute/queue/hold/clear` | `contribute_queue_hold` | Resumes every held issue in one call. Same role gate and persistence as the single-issue endpoint. |
+
+### Explicit acceptance
+
+| Control | Config key | Behavior |
+|---|---|---|
+| **Require Explicit Accept** | `contribute_require_explicit_accept` | Chooses who accepts a task before the scoped GitHub credential is delivered (kubestellar/hive#2537). Absent or `false` (default) auto-accepts any task that already passed admission, so an unattended fleet keeps running. `true` withholds the credential until the relay sends `task_accepted`; a task that is declined, times out, or is lost to a reconnect never receives one. |
+
+Delegated agent roles (`contribute_delegatable_roles`) are covered in [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
 
 ### Which models are acceptable
 
@@ -376,7 +406,7 @@ Each trust tier can be toggled on/off and given its own rate limits (`0` = unlim
 
 ### Filter timing
 
-- **Queue-time vs. connect-time.** Repo, label, title, and author filters apply when the queue is next built, so tightening them affects the *next* queue build. The Model Filter applies at connect time, so tightening it affects the *next* connection, not agents already mid-task.
+- **Queue-time vs. connect-time.** Repo, label, title, author, and assignment filters, cooldown, and the hold/priority sets apply when the queue is next built, so tightening them affects the *next* queue build. The Model Filter applies at connect time, so tightening it affects the *next* connection, not agents already mid-task.
 - **Suspending vs. revoking.** Suspension idles everyone and is instant to undo; revocation is per-contributor and blocks reconnection.
 
 ## Kubernetes contributor workload
