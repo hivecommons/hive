@@ -16,8 +16,8 @@ func covH2Logger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// TestCovH2_StatsConfigLoaders covers loadStatsConfig / LoadStatsConfigWithCfg
-// / resolveStatsSources with the file-absent (default) path plus config fallback.
+// TestCovH2_StatsConfigLoaders covers loadStatsConfig / resolveStatsSources
+// with the file-absent (default) path plus config fallback.
 func TestCovH2_StatsConfigLoaders(t *testing.T) {
 	// No /data/agents/<name>/stats.json in the sandbox → default config path.
 	if got := loadStatsConfig("scanner"); len(got) == 0 {
@@ -26,11 +26,6 @@ func TestCovH2_StatsConfigLoaders(t *testing.T) {
 
 	deps := testDeps(t)
 	cfg := deps.Config
-
-	// LoadStatsConfigWithCfg with no disk file and no StatsDisplay → default config.
-	if got := LoadStatsConfigWithCfg("scanner", cfg); len(got) == 0 {
-		t.Fatalf("LoadStatsConfigWithCfg(scanner) should return defaults")
-	}
 
 	// resolveStatsSources: a resolver-backed stat gets a value only if it resolves;
 	// a dashboard-native stat passes through untouched.

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -290,21 +289,6 @@ func TestBuildRepos_NilActionable(t *testing.T) {
 	}
 	if repos[0].Issues != 0 {
 		t.Errorf("issues = %d", repos[0].Issues)
-	}
-}
-
-func TestBuildBeads(t *testing.T) {
-	// nil stores
-	fb := buildBeads(nil)
-	if fb.Workers != 0 || fb.Supervisor != 0 {
-		t.Error("expected zero beads for nil stores")
-	}
-
-	// with stores
-	stores := map[string]*beads.Store{}
-	fb = buildBeads(stores)
-	if fb.Workers != 0 {
-		t.Errorf("workers = %d", fb.Workers)
 	}
 }
 
@@ -634,13 +618,6 @@ func TestBuildBudget_NoBudget(t *testing.T) {
 	}
 }
 
-func TestBuildBeads_EmptyStores(t *testing.T) {
-	fb := buildBeads(map[string]*beads.Store{})
-	if fb.Workers != 0 || fb.Supervisor != 0 {
-		t.Errorf("beads = %+v", fb)
-	}
-}
-
 func TestBuildHealth_WithCachedHealth(t *testing.T) {
 	// Seed cached health and then call with nil client; the shared hook
 	// restores the pre-test cache state in t.Cleanup (#5570).
@@ -737,30 +714,6 @@ func TestBuildRepos_WithActionable(t *testing.T) {
 	}
 	if repos[0].PRs != 3 {
 		t.Errorf("prs = %d, want 3", repos[0].PRs)
-	}
-}
-
-func TestBuildBeads_WithData(t *testing.T) {
-	dir := t.TempDir()
-	s1, err := beads.NewStore(dir + "/supervisor")
-	if err != nil {
-		t.Fatalf("creating store: %v", err)
-	}
-	s2, err := beads.NewStore(dir + "/worker")
-	if err != nil {
-		t.Fatalf("creating store: %v", err)
-	}
-	stores := map[string]*beads.Store{
-		"supervisor": s1,
-		"worker":     s2,
-	}
-	fb := buildBeads(stores)
-	// Empty stores, count should be 0 for both
-	if fb.Supervisor != 0 {
-		t.Errorf("supervisor = %d", fb.Supervisor)
-	}
-	if fb.Workers != 0 {
-		t.Errorf("workers = %d", fb.Workers)
 	}
 }
 

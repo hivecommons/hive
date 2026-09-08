@@ -1819,13 +1819,6 @@ func TestBuildTokens_NilReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildBeads_Empty(t *testing.T) {
-	fb := buildBeads(nil)
-	if fb.Supervisor != 0 || fb.Workers != 0 {
-		t.Errorf("beads = %+v", fb)
-	}
-}
-
 func TestBuildHealth_NilClientReturnsDefault(t *testing.T) {
 	health := buildHealth(nil, nil)
 	if health == nil {

@@ -807,45 +807,6 @@ func resolveStatsSources(stats []any, cfg *config.Config) []any {
 	return stats
 }
 
-// LoadStatsConfigWithCfg reads stats from disk, then falls back to config StatsDisplay field.
-func LoadStatsConfigWithCfg(name string, cfg *config.Config) []any {
-	statsFile := fmt.Sprintf("/data/agents/%s/stats.json", name)
-	data, err := os.ReadFile(statsFile)
-	if err == nil {
-		var wrapper struct {
-			Stats []any `json:"stats"`
-		}
-		if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Stats) > 0 {
-			return wrapper.Stats
-		}
-		var stats []any
-		if json.Unmarshal(data, &stats) == nil && len(stats) > 0 {
-			return stats
-		}
-	}
-	if agentCfg, ok := cfg.Agents[name]; ok && len(agentCfg.StatsDisplay) > 0 {
-		result := make([]any, 0, len(agentCfg.StatsDisplay))
-		for _, s := range agentCfg.StatsDisplay {
-			entry := map[string]any{
-				"key": s.Key, "label": s.Label,
-				"source": s.Source, "field": s.Field, "style": s.Style,
-			}
-			if s.TrendField != "" {
-				entry["trendField"] = s.TrendField
-			}
-			if s.Target > 0 {
-				entry["target"] = s.Target
-			}
-			if s.Desc != "" {
-				entry["desc"] = s.Desc
-			}
-			result = append(result, entry)
-		}
-		return result
-	}
-	return defaultStatsConfig(name)
-}
-
 func defaultStatsConfig(name string) []any {
 	defaults := map[string][]any{
 		"scanner": {
@@ -1294,19 +1255,6 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 	}
 
 	return repos
-}
-
-func buildBeads(stores map[string]*beads.Store) FrontendBeads {
-	fb := FrontendBeads{}
-	for name, store := range stores {
-		count := store.Count()
-		if name == "supervisor" {
-			fb.Supervisor = count
-		} else {
-			fb.Workers += count
-		}
-	}
-	return fb
 }
 
 // BuildPlanning computes the governor PLANNING metric block from bead metadata
