@@ -7959,65 +7959,6 @@ func (s *Server) LeaderboardForHub() []LeaderboardEntry {
 	return entries
 }
 
-// trustTierColor maps trust tiers to CSS colour values for badges.
-func trustTierColor(tier string) string {
-	switch tier {
-	case "newcomer":
-		return "#8b949e"
-	case "contributor":
-		return "#3fb950"
-	case "trusted":
-		return "#d29922"
-	case "merger":
-		return "#f778ba"
-	case "advisor":
-		return "#a371f7"
-	case "revoked":
-		return "#f85149"
-	default:
-		return "#8b949e"
-	}
-}
-
-// trustTierBadgeCSS returns Tailwind-style bg/text/border CSS classes for a tier.
-func trustTierBadgeCSS(tier string) (bg, text, border string) {
-	switch tier {
-	case "newcomer":
-		return "rgba(107,114,128,0.2)", "#9ca3af", "rgba(107,114,128,0.3)"
-	case "contributor":
-		return "rgba(59,130,246,0.2)", "#60a5fa", "rgba(59,130,246,0.3)"
-	case "trusted":
-		return "rgba(34,197,94,0.2)", "#4ade80", "rgba(34,197,94,0.3)"
-	case "merger":
-		return "rgba(247,120,186,0.2)", "#f778ba", "rgba(247,120,186,0.3)"
-	case "advisor":
-		return "rgba(168,85,247,0.2)", "#c084fc", "rgba(168,85,247,0.3)"
-	case agentTierLabel:
-		return "rgba(147,51,234,0.2)", "#a78bfa", "rgba(147,51,234,0.3)"
-	case "revoked":
-		return "rgba(239,68,68,0.2)", "#f87171", "rgba(239,68,68,0.3)"
-	default:
-		return "rgba(107,114,128,0.2)", "#9ca3af", "rgba(107,114,128,0.3)"
-	}
-}
-
-// rankDisplay returns the medal emoji for top 3, or "#N" for others.
-func rankDisplay(rank int) string {
-	const goldMedal = "\U0001F947"   // gold medal emoji
-	const silverMedal = "\U0001F948" // silver medal emoji
-	const bronzeMedal = "\U0001F949" // bronze medal emoji
-	switch rank {
-	case 1:
-		return fmt.Sprintf(`<span class="medal" title="1st place">%s</span>`, goldMedal)
-	case 2:
-		return fmt.Sprintf(`<span class="medal" title="2nd place">%s</span>`, silverMedal)
-	case 3:
-		return fmt.Sprintf(`<span class="medal" title="3rd place">%s</span>`, bronzeMedal)
-	default:
-		return fmt.Sprintf(`<span class="rank-num">#%d</span>`, rank)
-	}
-}
-
 const (
 	ghPRExternalRefPrefix    = "gh-"
 	agentTierLabel           = "agent"

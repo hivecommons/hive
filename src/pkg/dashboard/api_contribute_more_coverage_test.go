@@ -89,27 +89,6 @@ func TestCovK2_ContributeLandingAndGet(t *testing.T) {
 	}
 }
 
-func TestCovK2_TrustTierBadgeCSS(t *testing.T) {
-	for _, tier := range []string{"newcomer", "contributor", "trusted", "merger", "advisor", "revoked", agentTierLabel, "unknown"} {
-		bg, text, border := trustTierBadgeCSS(tier)
-		if bg == "" || text == "" || border == "" {
-			t.Fatalf("trustTierBadgeCSS(%q) returned empty component", tier)
-		}
-	}
-	// trustTierColor also has a per-tier switch.
-	for _, tier := range []string{"newcomer", "contributor", "trusted", "merger", "advisor", "revoked", "other"} {
-		if trustTierColor(tier) == "" {
-			t.Fatalf("trustTierColor(%q) empty", tier)
-		}
-	}
-	// rankDisplay medal + numeric branches.
-	for _, r := range []int{1, 2, 3, 4} {
-		if rankDisplay(r) == "" {
-			t.Fatalf("rankDisplay(%d) empty", r)
-		}
-	}
-}
-
 func TestCovK2_ValidateGitHubToken(t *testing.T) {
 	// Empty token → "".
 	if got := validateGitHubToken("", ""); got != "" {
