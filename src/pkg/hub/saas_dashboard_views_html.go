@@ -3021,6 +3021,11 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
            the heartbeat is the only channel, and a restart sheds the stale
            instance while costing the healthy one a single rolling restart. */
         if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
+        /* Digest pin (#6290): the sanctioned rollback. Owner-only and
+           hosted-only, matching the endpoint's own guard. One of the two
+           items shows depending on the run-state, never both. */
+        if (isHosted && h.role === 'owner' && !h.digestPin) menuItems.push('<div onclick="pinHiveDigest(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '" title="Hold this hive at one immutable image digest (rollback). Channel tracking and auto-upgrade stop until it is unpinned.">Pin to digest\u2026</div>');
+        if (isHosted && h.role === 'owner' && h.digestPin) menuItems.push('<div onclick="unpinHiveDigest(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + ';color:#d29922">Unpin digest</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
@@ -3058,8 +3063,12 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
              below the branches, because picking a channel is a different KIND
              of choice (track a promotion policy vs. track a git branch) and
              mixing them into one flat list hides that. */
+          /* A digest-pinned hive has no picker: the switch endpoint refuses
+             with 409 while the pin holds, and offering the menu would invite
+             the exact click it refuses. The PINNED pill beside the version
+             carries the provenance and the unpin action instead. */
           var canSwitchBranch = isHosted && h.role === 'owner' &&
-            (_trackedBranches.length > 1 || _releaseChannels.length > 0) && !h.upgrading;
+            (_trackedBranches.length > 1 || _releaseChannels.length > 0) && !h.upgrading && !h.digestPin;
           var branchOptions = '';
           if (canSwitchBranch) {
             for (var bi = 0; bi < _trackedBranches.length; bi++) {
@@ -3108,6 +3117,30 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
           var branch = canSwitchBranch
             ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(versionLabel(versionSel)) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
             : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(versionLabel(versionSel)) + '</span>';
+          /* PINNED pill (#6290), the image-side twin of the repo PAUSED pill:
+             a run-state with provenance, rendered from the hub-owned record
+             (SaaSHive.DigestPin) so it survives heartbeats and hub restarts.
+             The hover carries who/when/why and the full digest; the label
+             prefers the short SHA the operator pinned by. "landed" compares
+             the spoke's REPORTED image against the pin, because the pill must
+             not claim a rollback the pod has not yet pulled. Owners click it
+             to lift the pin; everyone else just reads it. */
+          if (h.digestPin && h.digestPin.digest) {
+            var dp = h.digestPin;
+            var pinLabel = dp.source_sha ? dp.source_sha : dp.digest.replace(/^sha256:/, '').slice(0, 12);
+            var reportedDigest = (h.imageRef || '').indexOf('@') >= 0 ? (h.imageRef || '').split('@').pop() : '';
+            var pinLanded = reportedDigest === dp.digest;
+            var pinTitle = 'Pinned to ' + dp.digest + (dp.by ? ' by ' + dp.by : '') + (dp.at ? ' at ' + dp.at : '') +
+              (dp.reason ? '\n' + dp.reason : '') +
+              (pinLanded ? '\nThe spoke reports running this digest.' : '\nWaiting for the spoke to report this digest.') +
+              '\nChannel tracking and auto-upgrade are held until the pin is lifted.' +
+              (h.role === 'owner' ? '\nClick to unpin.' : '');
+            var pinStyle = 'display:inline-block;margin-left:4px;padding:1px 6px;border-radius:9999px;font-size:0.6rem;font-weight:600;letter-spacing:0.04em;white-space:nowrap;background:rgba(210,153,34,0.16);color:var(--yellow);border:1px solid rgba(210,153,34,0.45)' +
+              (h.role === 'owner' ? ';cursor:pointer' : '');
+            branch += '<span style="' + pinStyle + '" title="' + escAttr(pinTitle) + '"' +
+              (h.role === 'owner' ? ' onclick="event.stopPropagation();unpinHiveDigest(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')"' : '') +
+              '>PINNED ' + esc(pinLabel) + (pinLanded ? '' : ' \u23F3') + '</span>';
+          }
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
@@ -3746,6 +3779,46 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
         if (!resp.ok) { hiveToast(data.error || 'Failed', 'error'); loadHives(); return; }
         hiveToast(id + ' auto-upgrade ' + (enabled ? 'enabled' : 'disabled'), 'success');
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadHives(); }
+    }
+
+    /* Digest pin / unpin (#6290). The prompt takes either a short git SHA
+       (the value the Version column shows) or a full sha256 digest; the hub
+       resolves a SHA to the manifest digest itself. The reason is recorded
+       on the pin and the timeline so a PINNED pill days later explains
+       itself. */
+    async function pinHiveDigest(id, name) {
+      var target = window.prompt('Pin ' + name + ' to which build?\nEnter a short git SHA (e.g. abc1234) or a sha256: digest.\n\nChannel tracking and auto-upgrade stop until the pin is lifted.');
+      if (target === null) return;
+      target = target.trim();
+      if (!target) { hiveToast('A SHA or digest is required', 'error'); return; }
+      var reason = window.prompt('Reason for pinning ' + name + ' (recorded on the hive):', 'rollback');
+      if (reason === null) return;
+      var body = target.indexOf('sha256:') === 0 || target.length === 64 ? {digest: target, reason: reason.trim()} : {sha: target, reason: reason.trim()};
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/pin-digest', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Pin failed', 'error'); return; }
+        hiveToast(name + ' pinned to ' + (data.pin && data.pin.digest ? data.pin.digest.slice(0, 19) : target), 'success');
+        loadHives();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+    async function unpinHiveDigest(id, name) {
+      if (!window.confirm('Unpin ' + name + '?\n\nThe hive returns to its channel or branch tag and resumes upgrades.')) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/unpin-digest', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Unpin failed', 'error'); return; }
+        hiveToast(name + ' unpinned' + (data.restore_tag ? ', returning to ' + data.restore_tag : ''), 'success');
+        loadHives();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
     var _hubUpgrading = false;

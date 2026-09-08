@@ -720,6 +720,15 @@ type SaaSHive struct {
 	// reporting the code branch actually running.
 	TrackedChannel string `json:"tracked_channel,omitempty"`
 
+	// DigestPin holds the hive's spoke image at one immutable manifest digest,
+	// with who/when/why (#6290). A RUN-STATE, not a selection: TrackedChannel
+	// is left untouched by a pin so lifting it resumes the channel the
+	// operator had. While set, the heartbeat handler skips the tracked-channel
+	// re-arm and withholds every image directive, triggerAutoUpgrades never
+	// arms the hive, and the upgrade / switch endpoints refuse with 409. Written
+	// only by handlePinDigest / handleUnpinDigest (digest_pin.go).
+	DigestPin *DigestPin `json:"digest_pin,omitempty"`
+
 	// Forge names the forge FAMILY this hive is recorded as running against:
 	// "" / "github" / "github-enterprise" (the GitHub App path), or "gitlab" /
 	// "gitea". Empty means GitHub, preserving every existing hive. GitLab/Gitea

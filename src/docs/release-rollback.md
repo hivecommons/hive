@@ -79,25 +79,34 @@ A `404 manifest unknown` on any of the three means the tag was never
 published for that image, or has aged past the retention window. Choose a
 different commit; do not fall back to a tag.
 
-## Step 2: stop the automation that would undo the pin
+## Step 2: understand what would undo the pin, and what holds it
 
 The hub has several paths that write images onto a spoke's Deployment on
 their own, and one of them is specifically designed to fight drift:
 
-- **Auto-upgrade** arms a rolling upgrade for hives riding a moving tag. A
-  digest pin is immutable, so the hub classifies it as "pinned" and skips it
-  for upgrade and drift purposes. This path does not undo a pin, but it will
-  re-roll a hive you have *not* yet pinned.
+- **Auto-upgrade** arms a rolling upgrade for hives riding a moving tag.
 - **Channel re-arm** ([#3771](https://github.com/hivecommons/hive/pull/3771)):
   a hive with a persisted `tracked_channel` is re-armed back onto that
   channel on every heartbeat whose reported image tag differs from the
-  channel. A digest pin has no tag, so a channel-tracking hive that you pin
-  by hand **is dragged back to the channel on its next beat**. This is the
-  self-healing that makes channels durable, and it is exactly what a rollback
-  needs stopped.
+  channel. A digest pin has no tag, so a channel-tracking hive whose
+  Deployment is patched **by hand** is dragged back to the channel on its
+  next beat. This is the self-healing that makes channels durable, and it is
+  exactly what a rollback needs stopped.
 
-The re-arm honours only one guard: the admin **upgrade pause**. Set it before
-touching any hosted spoke:
+A pin taken through the hub (step 3) is a **run-state on the hive record**,
+recorded with who, when, the digest and your reason, and every one of those
+paths honours it: the channel re-arm skips a pinned hive, auto-upgrade never
+arms it, any switch or upgrade armed before the pin is withheld from the
+heartbeat, and the manual Upgrade, branch/channel switch and bulk
+equivalents return `409` naming the pin. `tracked_channel` is left exactly
+as it was, so lifting the pin (step 5) resumes the selection the hive had
+before the incident. The pin survives hub restarts and hub self-upgrades.
+Nothing lifts it except an explicit unpin by an owner.
+
+The admin **upgrade pause** is therefore no longer a prerequisite for
+rolling back one hive. It remains the right tool when the incident is
+fleet-wide and you want *every* image change stopped while you decide what
+to pin:
 
 ```text
 POST /api/saas/upgrade-pause
@@ -105,18 +114,10 @@ POST /api/saas/upgrade-pause
 ```
 
 and, if you are rolling back the hub itself, `{"target": "hub", "paused":
-true}` as well. While the switch is on, manual Upgrade and branch/channel
-switches return `409` naming who paused and when, the auto-upgrade poller is
-suppressed, and the channel re-arm stands down. The same switch is in the hub
-dashboard's admin controls. Record the pause on the hive's timeline (the hub
-does this itself when the switch flips).
-
-If you cannot pause fleet-wide, switch the affected hive from its channel to
-a plain branch first (the version pill, or `POST
-/api/saas/hives/{id}/switch-branch {"branch": "v4"}`): that clears
-`tracked_channel`, at the cost of one extra pod roll onto `<branch>-latest`
-before you pin. Then turn that hive's auto-upgrade off in **My Hives**
-(`PUT /api/saas/hives/{id}/auto-upgrade`).
+true}` as well. Pinning is allowed while the pause is on (a rollback is the
+operator steering by hand while the train is stopped); unpinning is refused
+with `409` until the pause is lifted, because it puts the hive back on the
+train.
 
 Self-managed deployments have their own movers: Watchtower in the Compose
 file, `podman auto-update` on a Quadlet host, or a GitOps controller
@@ -132,9 +133,32 @@ target: it is immutable on the registry, but it can be pruned after 90 days,
 and a tag cannot be verified from inside the cluster without another registry
 round-trip.
 
-**Hosted spoke** (`hive`), from a kube-context that reaches the spoke's
-cluster. The hub's own upgrade path writes the same object with the same
-`*=` form, so this is not a bypass of anything:
+**Hosted spoke** (`hive`), through the hub. This is the sanctioned path: it
+needs hub owner (or admin) rights and no cluster `kubectl` access, it writes
+the same `deployment/hive` object with the same `*=` form the hub's upgrade
+path uses, and it records the pin on the hive:
+
+```text
+POST /api/saas/hives/{id}/pin-digest
+{"digest": "sha256:<hive-digest>", "reason": "rollback: 3f2a1c9 broke the proxy"}
+```
+
+You may give `{"sha": "<7-hex-sha>"}` instead of `digest`; the hub resolves
+the short-SHA tag to its manifest-list digest on GHCR and records both. The
+response carries the pin (`by`, `at`, `digest`, `source_sha`, `reason`) and
+the exact image reference written. The same action is **Pin to digest** in
+the row menu on **My Hives**.
+
+The hub refuses, and records nothing, when the digest is malformed, when no
+spoke image is published under it (pruned, or never built), when the hive is
+on a cluster the hub cannot reach over `kubectl` (a digest cannot ride the
+heartbeat fallback, which carries a bare tag), or when the `kubectl set
+image` itself fails. A `200` therefore means the Deployment holds the
+digest. Re-pinning the same digest is a no-op that keeps the original
+provenance.
+
+On a cluster the hub cannot reach, the direct patch remains available, from
+a kube-context that reaches the spoke's cluster:
 
 ```bash
 HIVE=<hive-id>
@@ -142,6 +166,10 @@ kubectl -n "hive-hosted-$HIVE" set image deployment/hive \
   "*=ghcr.io/hivecommons/hive@sha256:<hive-digest>"
 kubectl -n "hive-hosted-$HIVE" rollout status deployment/hive
 ```
+
+but the hub then has no record of it and its channel re-arm will undo it on
+the next heartbeat, so pair it with the fleet-wide upgrade pause from step 2
+and leave the pause on for as long as the rollback must hold.
 
 **Hub** (`hive-hub`). The container is named `hub`, not `hive-hub`; a `set
 image` that names the wrong container no-ops silently:
@@ -239,6 +267,11 @@ Repeat both checks for `deployment/hive-hub` in `hive-hub` and for
 Then confirm from the hub's side, which sees the spoke only through its
 heartbeat:
 
+- `GET /api/saas/hives/{id}/digest-pin` returns the pin with its provenance,
+  the `reported_image` from the last heartbeat, and `landed: true` once that
+  reported image carries the pinned digest. Until then the **PINNED** pill on
+  **My Hives** shows an hourglass; the pill's hover carries who pinned it,
+  when, why, and the full digest.
 - **My Hives** shows the hive's commit; it must be the short SHA you rolled
   back to. The spoke embeds its git hash at build time and reports it as
   `git_hash`, so this is a second, independent witness that the pod runs the
@@ -272,10 +305,25 @@ A digest-pinned hive is deliberately outside the upgrade train: the hub
 reports it as pinned, never auto-upgrades it, and never counts it as behind.
 That is the correct state for as long as the rollback needs to hold.
 
-To rejoin a moving tag later, use the version pill (or
-`POST /api/saas/hives/{id}/switch-branch` with a branch or channel name),
-which writes `ghcr.io/hivecommons/hive:<tag>` over the pin, then clear the
-upgrade pause. Switching is considered complete when the heartbeat's reported
-tag matches the target; since you are leaving a digest for a tag, that is the
-right check for *that* operation. It is not a check you can use in the other
-direction, which is why this page exists.
+To rejoin a moving tag later, lift the pin:
+
+```text
+POST /api/saas/hives/{id}/unpin-digest
+{"reason": "fix shipped in 7c1d2e0"}
+```
+
+or click the **PINNED** pill (owners) or **Unpin digest** in the row menu.
+Unpin clears the run-state, records the lift on the timeline, and writes the
+hive's tracked channel back onto the Deployment; a plain-branch hive returns
+to the moving tag it was running when pinned. On a cluster the hub cannot
+patch, the tag is armed for the spoke's next heartbeat instead (the response
+says `"via": "heartbeat"`), and for a channel hive the durable re-arm, no
+longer skipped, converges it too. Unpin is refused with `409` while the
+admin spoke-upgrade pause is on; clear the pause first. The version pill and
+`switch-branch` are unavailable while the pin holds, by design: a pin that a
+routine switch could overwrite is not a pin.
+
+Switching is considered complete when the heartbeat's reported tag matches
+the target; since you are leaving a digest for a tag, that is the right check
+for *that* operation. It is not a check you can use in the other direction,
+which is why this page exists.

@@ -452,7 +452,9 @@ const dashboardHTMLModalScripts = `    function orfStartPolling(hiveId) {
       github_app_changed:{ label: 'GitHub App', color: '#f59e0b' },
       access:            { label: 'Access',     color: '#60a5fa' },
       ownership:         { label: 'Ownership',  color: '#60a5fa' },
-      admin:             { label: 'Admin',      color: '#8b949e' }
+      admin:             { label: 'Admin',      color: '#8b949e' },
+      digest_pinned:     { label: 'Pinned',     color: '#d29922' },
+      digest_unpinned:   { label: 'Unpinned',   color: '#3fb950' }
     };
 
     /* Relative time, coarse on purpose: "what happened to this hive" is

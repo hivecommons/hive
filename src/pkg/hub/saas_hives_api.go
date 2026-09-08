@@ -38,6 +38,10 @@ type MyHiveEntry struct {
 	// current selection (rendered via versionLabel as "stable (v4)") while
 	// gitBranch keeps driving everything about the code actually running.
 	TrackedChannel string `json:"trackedChannel,omitempty"`
+	// DigestPin is the hive's digest pin with provenance, overlaid from the
+	// hub-owned record like TrackedChannel. The dashboard renders it as the
+	// PINNED pill and hides the branch picker while it is set (#6290).
+	DigestPin *DigestPin `json:"digestPin,omitempty"`
 	// AutoUpgradeMode is always sent NORMALIZED (never empty when autoUpgrade is
 	// on) so the dashboard can render the effective mode without re-deriving the
 	// legacy empty-means-instant rule in JavaScript.
@@ -330,6 +334,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// forgotten. Read-time overlay also means the pill flips to the channel
 		// on the very next poll after the switch, without waiting for a beat.
 		entry.TrackedChannel = sh.TrackedChannel
+		entry.DigestPin = sh.DigestPin
 		// Overlay the hosted namespace at read time too, so a placeholder or a
 		// hive whose live registry entry predates the field still shows
 		// "hive-hosted-<id>" in My Hives. Derived from the SaaSHive record, same

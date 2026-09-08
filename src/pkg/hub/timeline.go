@@ -76,6 +76,8 @@ const (
 	TimelineOwnership        = "ownership"
 	TimelineAdmin            = "admin"
 	TimelineRenamed          = "renamed"
+	TimelineDigestPinned     = "digest_pinned"
+	TimelineDigestUnpinned   = "digest_unpinned"
 )
 
 // timelineDir is the directory holding one JSON file per hive. It follows the

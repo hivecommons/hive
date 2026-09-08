@@ -2626,6 +2626,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// runs (a spoke that already landed somewhere must not stay latched), and
 	// armed targets are left in place so resuming delivers them again.
 	spokePauseSw, spokeUpgradesPausedNow := s.spokeUpgradesPaused()
+	// Digest pin (digest_pin.go, #6267): a pinned hive is held at an immutable
+	// digest by an operator's explicit decision, independent of the admin
+	// pause. Every image directive below - the tracked-channel re-arm, an
+	// armed SwitchToTag, an UpgradeTo of either flavour - is withheld while it
+	// holds. The pin is lifted only by handleUnpinDigest, never by a beat.
+	digestPinnedNow := saasHive.DigestPinned()
 
 	// Pending branch switch (image-tag change) delivered via heartbeat for
 	// clusters the hub can't kubectl-reach. Takes precedence over a plain
@@ -2648,7 +2654,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// The pause guard leads: a re-arm IS a delivery decision (the very next
 	// branch would put the tag on the wire), and the aggressive self-healing
 	// here is exactly what an admin reaching for the kill switch needs stopped.
-	if !spokeUpgradesPausedNow && switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
+	// The pin guard sits beside the pause guard for the same reason: a
+	// digest-pinned Deployment reports no tag at all, so without it every
+	// beat of a rolled-back channel hive read as drift and was "healed" back
+	// onto the channel head - the rollback silently reverting (#6267).
+	if digestPinnedNow && switchTag == "" && isReleaseChannel(saasHive.TrackedChannel) && payload.ImageRef != "" {
+		s.logger.Debug("heartbeat: tracked-channel re-arm skipped - hive is pinned to a digest",
+			"hive_id", payload.HiveID, "channel", saasHive.TrackedChannel,
+			"pinned_digest", saasHive.DigestPin.Digest, "pinned_by", saasHive.DigestPin.By,
+			"reported_image", payload.ImageRef)
+	}
+	if !spokeUpgradesPausedNow && !digestPinnedNow && switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
 		!payload.Upgrading && payload.ImageRef != "" &&
 		imageTagOf(sanitizeImageRef(payload.ImageRef)) != saasHive.TrackedChannel {
 		switchTag = saasHive.TrackedChannel
@@ -2686,6 +2702,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			s.logger.Debug("heartbeat: switch instruction withheld — spoke upgrades are paused",
 				"hive_id", payload.HiveID, "tag", switchTag,
 				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+		} else if digestPinnedNow {
+			// A switch armed before the pin would overwrite the digest.
+			s.logger.Debug("heartbeat: switch instruction withheld - hive is pinned to a digest",
+				"hive_id", payload.HiveID, "tag", switchTag,
+				"pinned_digest", saasHive.DigestPin.Digest, "pinned_by", saasHive.DigestPin.By)
 		} else {
 			resp.SwitchToTag = switchTag
 			s.logger.Info("heartbeat: instructing spoke to switch branch image",
@@ -2724,7 +2745,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// the armed kubectl-fallback target below, exactly as it did when this was
 	// a single inline condition.
 	spokeManagedTarget, spokeManagedChannel := "", ""
-	if spokeManaged && !spokeUpgradesPausedNow && payload.GitHash != "" {
+	if spokeManaged && !spokeUpgradesPausedNow && !digestPinnedNow && payload.GitHash != "" {
 		trackedChannel := ""
 		if saasHive != nil {
 			trackedChannel = saasHive.TrackedChannel
@@ -2757,6 +2778,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			s.logger.Debug("heartbeat: upgrade instruction withheld — spoke upgrades are paused",
 				"hive_id", payload.HiveID,
 				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+		}
+	} else if digestPinnedNow {
+		// A pinned Deployment must not be told to re-pull: the spoke's
+		// self-upgrade rolls the pod onto whatever the image resolves to, and
+		// an armed hub-managed target would re-tag it off the digest.
+		if hbTarget != "" || spokeManaged {
+			s.logger.Debug("heartbeat: upgrade instruction withheld - hive is pinned to a digest",
+				"hive_id", payload.HiveID,
+				"pinned_digest", saasHive.DigestPin.Digest, "pinned_by", saasHive.DigestPin.By)
 		}
 	} else if spokeManagedTarget != "" {
 		resp.UpgradeTo = spokeManagedTarget

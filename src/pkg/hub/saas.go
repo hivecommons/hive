@@ -390,6 +390,12 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuthOrSpokeUpgrade(s.handleUpgradeHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
+	// Digest pin: rollback as a first-class run-state (#6290). Owner-only inside
+	// the handlers, like switch-branch; the re-arm and every upgrade path
+	// honour the pin until unpin lifts it.
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/pin-digest", s.requireAuth(s.handlePinDigest))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/unpin-digest", s.requireAuth(s.handleUnpinDigest))
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/digest-pin", s.requireAuth(s.handleGetDigestPin))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
 	// Rename a hive's display name (its ProjectName). requireAuth plus an inner

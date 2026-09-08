@@ -413,6 +413,12 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
 		return
 	}
+	// Digest pin: an upgrade would re-tag the Deployment off the pinned
+	// digest. Refused with the pin's provenance; lift it first (#6290).
+	if h.DigestPinned() {
+		writeDigestPinRefusal(w, h)
+		return
+	}
 	// Admin kill switch: refuse loudly rather than arm anything — a request
 	// accepted here would either restart the pod now or sit silently in
 	// heartbeatUpgrade, both of which the pause exists to prevent.
@@ -560,6 +566,12 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
+		return
+	}
+	// Digest pin: a branch/channel switch writes a moving tag over the pinned
+	// digest. Refused with the pin's provenance; unpin first (#6290).
+	if h.DigestPinned() {
+		writeDigestPinRefusal(w, h)
 		return
 	}
 	// Admin kill switch: a branch/channel switch while spoke upgrades are
@@ -1179,6 +1191,15 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// Everything below STARTS a new upgrade, which only auto-upgrade hives
 		// opt into. The recovery above must stay ahead of this gate — see #2476.
 		if !h.AutoUpgrade {
+			continue
+		}
+		// Digest pin (#6290): a pinned hive is deliberately outside the upgrade
+		// train. Arming it would put UpgradeTo on the wire and the spoke would
+		// roll off the digest an operator chose. Skipped silently at Debug: the
+		// dashboard's PINNED pill already says why this hive is not moving.
+		if h.DigestPinned() {
+			s.logger.Debug("auto-upgrade skipped - hive is pinned to a digest",
+				"hive_id", h.ID, "digest", h.DigestPin.Digest, "pinned_by", h.DigestPin.By)
 			continue
 		}
 		// Claim-in-flight latch (#95). A placeholder that has just been ASSIGNED

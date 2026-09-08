@@ -504,7 +504,18 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 	// difference between reporting a real pin and telling an operator eleven
 	// healthy rolling hives can never be upgraded. A genuine pin (SHA tag,
 	// release tag, or digest) still fires, and still fires critical.
-	if imageRefIsPinned(h.ImageRef) {
+	if h.DigestPin != nil && h.DigestPin.Digest != "" {
+		// A hub-recorded pin is an operator's deliberate rollback, not a hive
+		// that quietly fell off the train: report it at info with its
+		// provenance so the row still says "outside the upgrade train" without
+		// paging anyone about a decision they made on purpose (#6290).
+		who := h.DigestPin.By
+		if who == "" {
+			who = "an operator"
+		}
+		add(DriftKindPinnedImage, DriftInfo,
+			fmt.Sprintf("Image pinned to %s by %s - outside the upgrade train until unpinned", h.DigestPin.Digest, who))
+	} else if imageRefIsPinned(h.ImageRef) {
 		label := imageTagOf(h.ImageRef)
 		if label == "" {
 			label = h.ImageRef

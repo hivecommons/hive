@@ -282,6 +282,12 @@ func (s *HubServer) applyBulkAction(action, branch, id, username string) BulkHiv
 	if h == nil {
 		return BulkHiveResult{HiveID: id, Ok: false, Error: reason}
 	}
+	// Digest pin (#6290): the image-changing actions get the same per-hive
+	// refusal the single-hive handlers give, so one pinned hive in a batch
+	// fails alone with its provenance while the rest proceed.
+	if h.DigestPinned() && (action == bulkActionUpgrade || action == bulkActionSwitchBranch) {
+		return BulkHiveResult{HiveID: id, Ok: false, Error: digestPinRefusal(h)}
+	}
 	switch action {
 	case bulkActionRestart, bulkActionUpgrade:
 		return s.bulkRestartOrUpgrade(h, id, username, action)
