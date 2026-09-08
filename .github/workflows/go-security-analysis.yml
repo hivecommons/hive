@@ -79,7 +79,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       # Installed by version rather than via a marketplace action so the tool
@@ -99,7 +99,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       # Version floor is load-bearing: gosec v2.21.4 pins golang.org/x/tools
@@ -139,7 +139,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -206,7 +206,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - name: Regenerate NOTICE from the current module graph
