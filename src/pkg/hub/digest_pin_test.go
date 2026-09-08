@@ -36,10 +36,10 @@ type deploymentModel struct {
 	logFile   string
 }
 
-// installRecordingKubectl puts a fake kubectl on PATH that appends its argv
+// installDigestPinKubectl puts a fake kubectl on PATH that appends its argv
 // to logFile and, on `set image`, writes the "*=<image>" value to imageFile.
 // The initial Deployment image is seeded so "unchanged" is a real assertion.
-func installRecordingKubectl(t *testing.T, initialImage string) deploymentModel {
+func installDigestPinKubectl(t *testing.T, initialImage string) deploymentModel {
 	t.Helper()
 	dir := t.TempDir()
 	m := deploymentModel{
@@ -168,7 +168,7 @@ func TestPinDigestSetsDeploymentImage(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	s := newPinHub()
 	seedPinHive(t, s, false)
 
@@ -232,7 +232,7 @@ func TestPinDigestBySHAResolvesDigest(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	oldResolve := resolveSpokeDigest
 	resolveSpokeDigest = func(tag string, _ *slog.Logger) (string, error) {
 		if tag != "3f2a1c9" {
@@ -273,7 +273,7 @@ func TestPinDigestNonOwnerRefused(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	s := newPinHub()
 	seedPinHive(t, s, false)
 
@@ -333,7 +333,7 @@ func TestHeartbeatReArmLeavesPinnedHiveAlone(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	s := newPinHub()
 	seedPinHive(t, s, true)
 	resetSHACaches(t)
@@ -418,7 +418,7 @@ func TestUnpinResumesTracking(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	s := newPinHub()
 	seedPinHive(t, s, false)
 
@@ -486,7 +486,7 @@ func TestImageChangesRefusedWhilePinned(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	s := newPinHub()
 	seedPinHive(t, s, false)
 	if rec := postPin(t, s, testPinOwner, `{"digest":"`+testPinDigest+`","reason":"rollback"}`); rec.Code != http.StatusOK {
@@ -527,7 +527,7 @@ func TestUnpinRefusedWhileSpokeUpgradesPaused(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubSpokeImageExists(t)
-	model := installRecordingKubectl(t, "ghcr.io/hivecommons/hive:stable")
+	model := installDigestPinKubectl(t, "ghcr.io/hivecommons/hive:stable")
 	s := newPinHub()
 	seedPinHive(t, s, false)
 	if _, err := s.setUpgradePause(upgradePauseTargetSpokes, true, "admin"); err != nil {
