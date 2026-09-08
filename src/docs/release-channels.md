@@ -65,8 +65,21 @@ A spoke running a channel image shows the channel in its own dashboard version b
 ## Known limitations
 
 - **Bulk actions cannot set a channel.** The bulk *Switch branch* action validates against real branches only and rejects channel names (`unknown branch`); it also never writes the tracked channel. Switching to a channel is per-hive.
-- **A manual Upgrade on a channel-tracking hive transiently arms a branch-SHA target.** The upgrade handler targets the tracked *branch*'s latest SHA; the heartbeat re-arm drags the hive back to the channel tag on the next non-upgrading beat. Expect a short window where the pill says `stable (v4)` while an upgrade converges on a SHA.
-- **"Behind" / drift comparison keys on the branch, not the channel digest.** A channel-tracking hive's up-to-date math still compares against its underlying branch head.
+- **A manual Upgrade on a channel-tracking hive transiently arms a branch-SHA target.** The manual upgrade handler still targets the tracked *branch*'s latest SHA (`getLatestSHAForBranch`, `pkg/hub/saas.go`); the heartbeat re-arm drags the hive back to the channel tag on the next non-upgrading beat. Expect a short window where the pill says `stable (v4)` while an upgrade converges on a SHA. This is now the exception — automatic targeting resolves through the channel tag (see below).
+
+## Channel-aware upgrade targeting
+
+Automatic upgrade targeting resolves **through the tag the spoke's Deployment tracks**, not around it ([#5994](https://github.com/hivecommons/hive/issues/5994), landed in [#6005](https://github.com/hivecommons/hive/pull/6005), `pkg/hub/channel_targeting.go`).
+
+The stable soak policy made this necessary: per-merge publishes move only `candidate`, while `stable` advances later by digest. A spoke's Deployment tracks one image tag, and rolling the pod re-pulls that tag — nothing the hub instructs can make a restart land on a digest the tag does not carry. A hub that targets branch HEAD is therefore asking a `:stable` spoke to reach a digest its own tag is deliberately withholding; before the fix this looped 41 spokes into permanent `UPGRADE FAILED` (hub instructs a SHA, spoke rolls, re-pulls `:stable`, reports the SHA it started on, hub re-sends the identical instruction).
+
+How targets are now resolved (`reachableUpgradeTarget`, used by the auto-upgrade sweep and the heartbeat spoke-managed path):
+
+- **Which channel a spoke is on:** the spoke's *reported image ref* leads, because it is what the kubelet will pull; the hub-side `tracked_channel` record is intent, and the two disagree exactly while a channel switch is still on the wire. `tracked_channel` remains the fallback only for spokes too old to report an image ref. Branch tags and SHA pins resolve to branch targeting, exactly as before.
+- **Channel → commit:** the hub walks GHCR from the channel tag to the image index, picks the `linux/amd64` platform manifest (buildx attaches `unknown/unknown` provenance descriptors to the same index, so position is not enough), and reads the `org.opencontainers.image.revision` OCI label from the config blob — the only commit identity that survives a retag. Answers are cached for 5 minutes (`channelDigestTTL`); when a refresh fails, the last good answer is served for up to 4× that (`channelRevisionStaleGrace`, 20 minutes) since a channel moves at most hourly, then resolution is treated as failed.
+- **Unresolved channel = hold, loudly.** If the channel does not resolve to a commit, the hub instructs *nothing* for that spoke and logs a WARN — falling back to branch HEAD would be exactly the bug. Grep the hub log for `auto-upgrade held — the spoke's release channel did not resolve to a commit` (sweep) or `heartbeat: upgrade instruction withheld — the spoke's release channel did not resolve to a commit` (heartbeat path). The next cycle retries.
+- **Downgrade guard.** A channel is a moving pointer, not a monotonic branch, so a spoke can legitimately sit *ahead* of the channel it tracks (rolled while the channel was further along, or switched from `candidate` moments ago). Such spokes are skipped rather than instructed to downgrade (`no upgrade — spoke is at or ahead of its release channel`).
+- **"Up to date" is judged through the tag too.** The stale-latch recovery clears a floating-tag hive's upgrade latch once it runs the newest build *its tag can deliver* (`clearing upgrade latch — floating-tag hive is at latest`). Judging a `:stable` spoke against branch HEAD instead kept it latched for the whole soak window — the failure mode measured above.
 
 ## Grouping hives by upgrade state
 
