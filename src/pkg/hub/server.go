@@ -2713,6 +2713,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.SwitchToTag = switchTag
 			s.mu.Lock()
+			// Lazily initialised: test fixtures (and any HubServer built
+			// outside NewHubServer) leave this map nil.
+			if s.heartbeatSwitchSent == nil {
+				s.heartbeatSwitchSent = make(map[string]switchSend)
+			}
 			s.heartbeatSwitchSent[payload.HiveID] = switchSend{Tag: switchTag, At: time.Now()}
 			s.mu.Unlock()
 			s.logger.Info("heartbeat: instructing spoke to switch branch image",

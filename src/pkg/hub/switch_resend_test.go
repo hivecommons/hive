@@ -9,6 +9,7 @@ import (
 
 func TestSwitchRecentlySent(t *testing.T) {
 	s := newHeartbeatHub()
+	s.heartbeatSwitchSent = make(map[string]switchSend)
 	now := time.Now()
 
 	if _, recent := s.switchRecentlySent("h1", "candidate", now); recent {
@@ -96,7 +97,7 @@ func TestHandleHeartbeatNewSwitchTagGoesOutImmediately(t *testing.T) {
 	s := newHeartbeatHub()
 	s.registry.Hives = []RegistryEntry{{ID: "h1"}}
 	s.heartbeatSwitchTag["h1"] = "candidate"
-	s.heartbeatSwitchSent["h1"] = switchSend{Tag: "candidate", At: time.Now()}
+	s.heartbeatSwitchSent = map[string]switchSend{"h1": {Tag: "candidate", At: time.Now()}}
 
 	s.mu.Lock()
 	s.heartbeatSwitchTag["h1"] = "stable"
