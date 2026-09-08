@@ -866,26 +866,10 @@ const trendHistoryMinIntervalMs = 300_000
 
 const sseRetryMs = 3000
 
+// NewServer constructs a dashboard server with no auth token. It is
+// equivalent to NewServerWithAuth(port, "", logger).
 func NewServer(port int, logger *slog.Logger) *Server {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	s := &Server{
-		port:             port,
-		sseClients:       make(map[chan []byte]struct{}),
-		logger:           logger,
-		mux:              http.NewServeMux(),
-		agentPipelines:   make(map[string]map[string]bool),
-		agentHooks:       make(map[string]map[string][]any),
-		audit:            newAuditLog(),
-		promptHistory:    newPromptHistory(),
-		userSessions:     make(map[string]*userSession),
-		terminalHandoffs: make(map[string]terminalHandoff),
-		cliModels:        newCLIModelCache(),
-		startedAt:        time.Now(),
-	}
-	s.registerCoreRoutes()
-	return s
+	return NewServerWithAuth(port, "", logger)
 }
 
 func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server {
