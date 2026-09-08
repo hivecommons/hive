@@ -57,7 +57,6 @@ agents:
     enabled: true
 dashboard:
   port: 4000
-  snapshot_dir: /tmp/snaps
 `
 	path := writeTempConfig(t, yaml)
 	cfg, err := Load(path)

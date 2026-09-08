@@ -3740,7 +3740,6 @@ type TierRate struct {
 
 type DashboardConfig struct {
 	Port               int    `yaml:"port"`
-	SnapshotDir        string `yaml:"snapshot_dir"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to

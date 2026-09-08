@@ -243,7 +243,6 @@ notifications:
 
 dashboard:
   port: 3001
-  snapshot_dir: /data/snapshots
   auth_token: \${HIVE_DASHBOARD_TOKEN}
 
 data:
