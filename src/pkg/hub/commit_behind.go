@@ -61,8 +61,21 @@ var fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (count
 	return result.AheadBy, true, nil
 }
 
+// commitsBehindStableV4 counts how far base sits behind the v4 BRANCH tip.
+// That is the right number for a spoke on a branch tag and the wrong one for a
+// spoke on a release channel — see commitsBehindTarget and behindTargetFor.
+// Kept for the tooltip's secondary "and the channel itself is N behind the
+// tip" note.
 func commitsBehindStableV4(base string, logger *slog.Logger) (int, bool) {
-	head := getLatestSHAForBranch(stableReleaseBranch)
+	return commitsBehindTarget(base, getLatestSHAForBranch(stableReleaseBranch), logger)
+}
+
+// commitsBehindTarget counts how far base sits behind head, resolving through
+// the GitHub compare API in the background and caching by (base, head). The
+// first call for a pair reports unknown and dispatches the compare; a later
+// call returns the cached answer. A base that already IS head short-circuits
+// to 0 with no dispatch.
+func commitsBehindTarget(base, head string, logger *slog.Logger) (int, bool) {
 	if sameCommit(base, head) {
 		return 0, true
 	}

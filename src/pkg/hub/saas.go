@@ -3309,6 +3309,18 @@ type MyHiveEntry struct {
 	// so there is nothing to compute on read the way AdvisoryStale is computed.
 	CommitsBehindStableV4 *int `json:"commitsBehindStableV4,omitempty"`
 
+	// CommitsBehindTarget is how far this hive sits behind what its OWN tag
+	// can deliver (behindTargetFor): branch HEAD for a branch tag, the
+	// channel's current commit for :stable. This is the number the "behind"
+	// badge, the queued pill and the channel-lag verdict use, so a stable
+	// spoke that is current on its channel reads as current even while the
+	// branch has moved on. CommitsBehindStableV4 above stays the branch-tip
+	// distance for the tooltip. BehindTargetRef/SHA name the target so the UI
+	// can say WHAT the count is relative to.
+	CommitsBehindTarget *int   `json:"commitsBehindTarget,omitempty"`
+	BehindTargetRef     string `json:"behindTargetRef,omitempty"`
+	BehindTargetSHA     string `json:"behindTargetSHA,omitempty"`
+
 	// InactiveAgents is how many of this hive's agents are RUNNING but not
 	// doing any work — session gone, sitting on a login prompt, or producing
 	// nothing while work is queued. Computed on read by
@@ -3794,6 +3806,17 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if count, known := commitsBehindStableV4(result[i].GitHash, s.logger); known {
 			result[i].CommitsBehindStableV4 = &count
 		}
+		// Measure "behind" against the target this spoke can actually reach —
+		// the same resolution the auto-upgrade engine uses — not the branch
+		// tip. A :stable spoke at the channel's commit is 0 behind here even
+		// when CommitsBehindStableV4 says 128.
+		if bt := s.behindTargetFor(&result[i].RegistryEntry); bt.SHA != "" {
+			result[i].BehindTargetRef = bt.Ref
+			result[i].BehindTargetSHA = bt.SHA
+			if count, known := commitsBehindTarget(result[i].GitHash, bt.SHA, s.logger); known {
+				result[i].CommitsBehindTarget = &count
+			}
+		}
 
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
@@ -3888,7 +3911,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			// info lives on MyHiveEntry (TrackedChannel is hub-owned, the
 			// behind-count was computed just above), so this row of the
 			// signature table is applied here rather than in hiveHealthFor.
-			applyChannelLag(&verdict, result[i].TrackedChannel, result[i].CommitsBehindStableV4, result[i].Upgrading)
+			applyChannelLag(&verdict, result[i].TrackedChannel, result[i].CommitsBehindTarget, result[i].Upgrading)
 			// The App-broken hint's install URL is cluster-scoped (a GHE
 			// cluster must never be handed a github.com link), so resolve it
 			// from this hive's cluster config — the same single URL builder
@@ -13124,6 +13147,9 @@ const dashboardHTML = `<!DOCTYPE html>
     var _currentUser = '';
     var _latestSHA = '';
     var _stableV4SHA = '';
+    /* Name of the branch _stableV4SHA is the tip of; the server's
+       stable_v4_sha is that branch's HEAD, not the :stable channel. */
+    var STABLE_BRANCH_LABEL = 'v4';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
     var _latestImageStatus = {};
@@ -13448,7 +13474,11 @@ const dashboardHTML = `<!DOCTYPE html>
         branchName = h.gitBranch || 'v2';
       }
       if (branchLatest === undefined || branchLatest === null) {
-        branchLatest = _latestSHAs[branchName] || _latestSHA || '';
+        /* The hub resolves what THIS spoke's tag can deliver
+           (behindTargetSHA): the channel's commit for :stable, branch HEAD
+           for a branch tag. Prefer it, so a stable spoke is judged against
+           stable and not against a HEAD it cannot reach. */
+        branchLatest = h.behindTargetSHA || _latestSHAs[branchName] || _latestSHA || '';
       }
       /* A branch switch is an upgrade in flight even though h.upgrading may
          still be false — the spoke keeps reporting the OLD branch until the new
@@ -17038,7 +17068,14 @@ const dashboardHTML = `<!DOCTYPE html>
              keeps driving everything about the code actually running
              (latest/behind, drift, upgrade state). */
           var versionSel = h.trackedChannel || branchName;
-          var branchLatest = _latestSHAs[branchName] || _latestSHA;
+          /* "Latest" for this row is what its OWN tag can deliver, resolved by
+             the hub (behindTargetSHA) — the channel's commit for a :stable
+             spoke, branch HEAD for a branch tag. Every current/behind/queued
+             decision below reads this, so a stable spoke sitting at stable's
+             commit is current even while the branch has moved 100 commits on;
+             measuring it against HEAD is what produced "128 behind · Queued"
+             on a fleet the upgrade engine (correctly) refused to move. */
+          var branchLatest = h.behindTargetSHA || _latestSHAs[branchName] || _latestSHA;
           var _trackedBranches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
           if (_trackedBranches.length === 0) _trackedBranches = ['v2'];
           /* A release channel is as valid an upgrade target as a branch — the
@@ -17178,8 +17215,8 @@ const dashboardHTML = `<!DOCTYPE html>
                attribute. jsArg supplies its own quotes for the handler args. */
             upgradeIcon = '<span title="' + escAttr(queuedTitle) + '" style="' + UPGRADE_STATE_BADGE_STYLE + '">' + esc(queuedLabel) + '</span>' +
               '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
-              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
-              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
               ' title="' + escAttr('Upgrade to ' + branchLatest + ' now instead of waiting for auto-upgrade' + buildingHint) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade now</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
             /* Manual path (auto-upgrade OFF): a real primary-ish button, not
@@ -17189,8 +17226,8 @@ const dashboardHTML = `<!DOCTYPE html>
                the thing to click. */
             var latestShort = branchLatest ? String(branchLatest).substring(0, 7) : 'latest';
             upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
-              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
-              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
               ' onmouseover="this.style.background=\'' + UPGRADE_BTN_HOVER_BG + '\'" onmouseout="this.style.background=\'' + UPGRADE_BTN_BG + '\'"' +
               ' title="' + escAttr('Current: ' + sha + ' → Latest: ' + branchLatest + buildingHint) + '" style="' + UPGRADE_BTN_STYLE + '">↑ Upgrade available → ' + esc(latestShort) + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted) {
@@ -17256,12 +17293,29 @@ const dashboardHTML = `<!DOCTYPE html>
           /* The drift dot rides on the SHA line, right of the current/behind
              glyph: "what commit is this hive on, and does it match the fleet" is
              one thought. It sets no extra line, so a drifting hive is no taller. */
-          var behindKnown = h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null;
+          /* The count is relative to the row's reachable target
+             (commitsBehindTarget / behindTargetRef), never bare branch HEAD:
+             a :stable spoke shows how far it lags STABLE. The branch-tip
+             distance (commitsBehindStableV4) rides in the tooltip so the
+             operator still sees how stale the channel itself is. Older hubs
+             send only the branch-tip fields; fall back to them. */
+          var behindRef = h.behindTargetRef || (STABLE_BRANCH_LABEL + ' tip');
+          var behindSHA = h.behindTargetSHA || _stableV4SHA || '';
+          var behindCount = (h.commitsBehindTarget !== undefined && h.commitsBehindTarget !== null)
+            ? h.commitsBehindTarget
+            : (h.behindTargetRef ? null : h.commitsBehindStableV4);
+          var behindKnown = behindCount !== undefined && behindCount !== null;
+          var tipNote = '';
+          if (h.behindTargetRef && h.behindTargetRef !== STABLE_BRANCH_LABEL + ' tip' &&
+              h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null && h.commitsBehindStableV4 > 0) {
+            tipNote = '; ' + h.commitsBehindStableV4 + ' behind ' + STABLE_BRANCH_LABEL + ' tip ' + (_stableV4SHA || '') +
+              ' — reachable only once ' + h.behindTargetRef + ' is promoted';
+          }
           var behindBadge = '';
-          if (behindKnown && h.commitsBehindStableV4 > 0) {
-            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:0.6rem;background:rgba(210,153,34,0.14);color:var(--yellow);border:1px solid rgba(210,153,34,0.35);white-space:nowrap" title="' + escAttr(h.commitsBehindStableV4 + ' commits behind stable v4 tip ' + (_stableV4SHA || '')) + '">' + esc(h.commitsBehindStableV4) + ' behind</span>';
-          } else if (!behindKnown && _stableV4SHA && sha && !sameShaJS(sha, _stableV4SHA)) {
-            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:0.6rem;background:rgba(210,153,34,0.10);color:var(--yellow);border:1px solid rgba(210,153,34,0.25);white-space:nowrap" title="' + escAttr('Could not compare this commit with stable v4 tip ' + _stableV4SHA) + '">? behind</span>';
+          if (behindKnown && behindCount > 0) {
+            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:0.6rem;background:rgba(210,153,34,0.14);color:var(--yellow);border:1px solid rgba(210,153,34,0.35);white-space:nowrap" title="' + escAttr(behindCount + ' commits behind ' + behindRef + ' ' + behindSHA + tipNote) + '">' + esc(behindCount) + ' behind</span>';
+          } else if (!behindKnown && behindSHA && sha && !sameShaJS(sha, behindSHA)) {
+            behindBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:999px;font-size:0.6rem;background:rgba(210,153,34,0.10);color:var(--yellow);border:1px solid rgba(210,153,34,0.25);white-space:nowrap" title="' + escAttr('Could not compare this commit with ' + behindRef + ' ' + behindSHA) + '">? behind</span>';
           }
           var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status + behindBadge + (driftDot ? ' ' + driftDot : '');
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
@@ -18119,9 +18173,11 @@ const dashboardHTML = `<!DOCTYPE html>
       return { isSwitching: isSwitching, targetBranch: targetBranch, switchSentinelStale: switchSentinelStale };
     }
 
-    async function upgradeHive(id, currentSHA, branch) {
+    async function upgradeHive(id, currentSHA, branch, targetSHA) {
       var fromSHA = currentSHA ? currentSHA.substring(0, 7) : '?';
-      var branchLatest = (branch && _latestSHAs[branch]) || _latestSHA;
+      /* targetSHA is the row's reachable target (behindTargetSHA); only fall
+         back to branch HEAD when the caller did not resolve one. */
+      var branchLatest = targetSHA || (branch && _latestSHAs[branch]) || _latestSHA;
       var toSHA = branchLatest ? branchLatest.substring(0, 7) : 'latest';
       if (!await hiveConfirm('Upgrade ' + id + '?<br><br><span style="font-family:monospace;font-size:0.85rem;color:var(--muted)">' + fromSHA + '</span> → <span style="font-family:monospace;font-size:0.85rem;color:var(--green)">' + toSHA + '</span>', true)) return;
       var btn = document.getElementById('upgrade-' + id);

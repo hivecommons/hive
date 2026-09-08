@@ -263,6 +263,18 @@ func upgradeFixtures() []upgFixture {
 			why:           "a genuine rollout must keep its spinner",
 		},
 		{
+			// The 50-spoke case. A :stable spoke sits at exactly the commit
+			// :stable carries (the hub resolves that as behindTargetSHA) while
+			// the branch tip has moved on. Judged against its OWN target it is
+			// current: not upgrading, not queued — even with auto-upgrade on.
+			name:          "stable spoke current on its channel while the branch tip moved on",
+			hive:          `{id:'h8',gitBranch:'v4',gitHash:'ccccccc',upgrading:false,autoUpgrade:true,trackedChannel:'stable',behindTargetSHA:'ccccccc'}`,
+			latestSHAs:    latest,
+			wantUpgrading: false,
+			wantState:     "",
+			why:           "the hub already refuses to move it; the row and pill must not say otherwise",
+		},
+		{
 			name:          "latest unresolved",
 			hive:          `{id:'h7',gitBranch:'v4',gitHash:'bbbbbbb',upgrading:true,upgradeTarget:'aaaaaaa'}`,
 			latestSHAs:    `{}`,
@@ -302,7 +314,9 @@ func TestUpgradingPredicateCases(t *testing.T) {
 			}
 			runUpgradeJS(t, f.jsSetup()+
 				"normalizeUpgradeState(h);\n"+
-				"result = {u: hiveIsUpgradingNow(h, h.gitBranch, _latestSHAs[h.gitBranch] || ''), s: hiveUpgradeState(h), g: _upgradingHives[h.id] === undefined};",
+				// The row resolves latest through the hub's reachable target
+				// first (behindTargetSHA), then the branch tip — mirror that.
+				"result = {u: hiveIsUpgradingNow(h, h.gitBranch, h.behindTargetSHA || _latestSHAs[h.gitBranch] || ''), s: hiveUpgradeState(h), g: _upgradingHives[h.id] === undefined};",
 				&got)
 			if got.Upgrading != f.wantUpgrading {
 				t.Errorf("hiveIsUpgradingNow = %v, want %v — %s", got.Upgrading, f.wantUpgrading, f.why)
