@@ -86,17 +86,41 @@ func startWatcherSandbox(t *testing.T) (root string, startWatcher func() (stop f
 	return root, startWatcher
 }
 
-// waitFor polls cond until it holds or watcherPollTimeout elapses.
+// waitFor polls cond on a short ticker until it holds or watcherPollTimeout
+// elapses (bounded polling, not a fixed sleep: the sleep ratchet in
+// internal/testutil forbids new time.Sleep calls in tests).
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(watcherPollTimeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
+	deadline := time.After(watcherPollTimeout)
+	tick := time.NewTicker(watcherTestInterval / 2)
+	defer tick.Stop()
+	for !cond() {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s", what)
+		case <-tick.C:
 		}
-		time.Sleep(watcherTestInterval / 2)
 	}
-	t.Fatalf("timed out waiting for %s", what)
+}
+
+// assertStays polls cond on a short ticker for the given window and fails as
+// soon as it stops holding; it is the negative counterpart of waitFor, used
+// to prove a stopped watcher never touches a file again.
+func assertStays(t *testing.T, what string, window time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.After(window)
+	tick := time.NewTicker(watcherTestInterval / 2)
+	defer tick.Stop()
+	for {
+		if !cond() {
+			t.Fatalf("%s stopped holding within %v", what, window)
+		}
+		select {
+		case <-deadline:
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 // TestStartPermissionsWatcherCreatesDirsAndTicksRepairs pins the watcher's
@@ -152,10 +176,9 @@ func TestStartPermissionsWatcherStopSeamEndsLoop(t *testing.T) {
 	// goroutine is already joined, so this wait is only there to give a
 	// hypothetical leaked ticker every chance to show itself.
 	path := mkModeFile(t, root, "after-stop", modeFileStartMode)
-	time.Sleep(5 * watcherTestInterval)
-	if got := statMode(t, path); got != modeFileStartMode {
-		t.Errorf("mode file changed to %v after watcher stopped; want %v untouched", got, modeFileStartMode)
-	}
+	assertStays(t, "mode file untouched after watcher stopped", 5*watcherTestInterval, func() bool {
+		return statMode(t, path) == modeFileStartMode
+	})
 }
 
 // TestEnsureWatchedDirsMkdirFailureWarnsAndContinues covers the mkdir failure
