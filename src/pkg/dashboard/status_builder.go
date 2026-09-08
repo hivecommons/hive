@@ -960,22 +960,6 @@ func formatHumanTime(t time.Time) string {
 	return local.Format("1/2 3:04 PM MST")
 }
 
-func computeNextKick(lastKick *time.Time, cadence string) string {
-	if cadence == "" || cadence == cadenceOff || cadence == cadencePause || cadence == cadenceOnDemand {
-		return ""
-	}
-	base := time.Now()
-	if lastKick != nil {
-		base = *lastKick
-	}
-	d := parseCadenceDuration(cadence)
-	if d == 0 {
-		return ""
-	}
-	next := base.Add(d)
-	return formatHumanTime(next)
-}
-
 func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
 	if cadence == "" || cadence.IsPaused() {
 		return ""
@@ -1020,14 +1004,6 @@ func formatCadenceDuration(seconds int64) string {
 		return fmt.Sprintf("%dm", seconds/secondsPerMinute)
 	}
 	return fmt.Sprintf("%ds", seconds)
-}
-
-func lookupCadence(agentName string, cfg *config.Config) string {
-	return lookupCadenceForMode(agentName, "idle", cfg)
-}
-
-func lookupCadenceForMode(agentName, modeName string, cfg *config.Config) string {
-	return cadenceDisplay(lookupCadenceValueForMode(agentName, modeName, cfg))
 }
 
 func lookupCadenceValue(agentName string, cfg *config.Config) config.Cadence {
