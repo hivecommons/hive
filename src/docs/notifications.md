@@ -8,6 +8,8 @@ Hive can send operator notifications through three outbound channels configured 
 
 The notifier is implemented in `src/pkg/notify/notify.go` and is constructed from `config.NotificationsConfig` in `src/pkg/config/config.go`. The same notification is sent to every configured channel.
 
+Every notification title is prefixed with the sending hive's ID as `[<hive-id>] <title>` (`Notifier.SetHiveID` in `src/pkg/notify/notify.go`). Filters or routing rules that match on title — an ntfy topic shared by several hives, for example — should account for the prefix.
+
 ## Configuration
 
 ```yaml
@@ -61,6 +63,12 @@ The Hive Go process sends notifications for these events:
 | Actionable issues exceed the SLA threshold; up to three `SLA 2x breach` notifications are sent per refresh cycle for issues older than 60 minutes. | high | dashboard refresh loop in `src/cmd/hive/main.go` |
 | A running agent pane matches a configured login-required pattern; Hive pauses that agent and sends the backend-specific login instruction. | high | `scanForLoginRequired` in `src/cmd/hive/main.go` |
 | Trajectory review detects divergence and either pauses the agent or flags the divergence. | high | `src/pkg/dashboard/trajectory_sink.go` and `src/pkg/trajectory/lane.go` |
+| The inference provider starts rebuffing kicks with spending-limit errors; sent once per crossing of the latch, not per cycle (`Provider spending limit reached`). | high | provider-budget kick gate in `src/cmd/hive/main.go` |
+| A probe kick succeeds after a spending-limit clip and agent kicks resume (`Provider spending limit lifted`). | default | provider-budget recovery path in `src/cmd/hive/main.go` |
+| A PR stays red after exhausting its automated fix-attempt budget and is escalated to a human (`Fix loop escalated`). | high | fix-loop escalation in `src/cmd/hive/main.go` |
+| The planning stall-replan lane re-kicks the architect on a stalled plan (`Plan replan`) or hits the replan cap (`Plan replan-cap`). | high | `src/pkg/planning/replan.go` via `src/pkg/dashboard/replan_sink.go` |
+
+Operator-defined [hooks](hooks.md) with the `notify` action send through the same fanout: title, message, and priority come from the hook definition (`src/pkg/hooks/action.go`), so any transition a hook can observe can also page these channels.
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
 
