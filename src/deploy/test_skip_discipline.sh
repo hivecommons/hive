@@ -49,7 +49,9 @@ lib_case() {
     ' _ "$HERE" 2>&1
   )"
   rc=$?
-  if [ "$rc" = "$want_rc" ] && printf '%s' "$out" | grep -q "$want_str"; then
+  # herestring, not a pipe: grep -q closing the pipe early would EPIPE printf
+  # and, under pipefail, turn a successful match into a spurious FAIL (#5969)
+  if [ "$rc" = "$want_rc" ] && grep -q -- "$want_str" <<<"$out"; then
     hive_test_pass "$label"
   else
     hive_test_fail "$label" "want rc=$want_rc containing '$want_str'; got rc=$rc: $(printf '%s' "$out" | tr '\n' '|')"

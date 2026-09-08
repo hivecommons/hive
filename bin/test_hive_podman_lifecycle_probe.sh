@@ -324,7 +324,9 @@ reset_env; export FAKE_ALLOW_MUTATION=yes FAKE_GATEWAY_START_FAILS=yes
 case_expect "a gateway that cannot be restored is a finding, not silence" 78 "could NOT be restored" exercise
 reset_env; export FAKE_ALLOW_MUTATION=yes FAKE_GATEWAY_START_FAILS=yes
 out="$(run_probe exercise)"
-if printf '%s' "$out" | grep -qF 'no findings'; then
+# herestring, not a pipe: grep -q closing the pipe early would EPIPE printf
+# and, under pipefail, make this polarity-inverted check FALSELY PASS (#5969)
+if grep -qF 'no findings' <<<"$out"; then
   FAIL=$((FAIL + 1)); printf 'FAIL "no findings" printed over a stack the probe broke\n'
   printf '%s\n' "$out" | sed 's/^/       | /'
 else
