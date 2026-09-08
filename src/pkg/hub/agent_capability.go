@@ -18,7 +18,13 @@ const (
 	DefaultAgentRestartProblemThreshold = 5
 )
 
-func agentRestartProblemThreshold() int {
+// AgentRestartProblemThreshold is the restart-storm bar: an agent that has
+// restarted at least this many times in the rolling 24h window is a problem,
+// not a quiet agent. Exported so the spoke's own status builder
+// (pkg/dashboard) can escalate a crash-looping agent with the SAME threshold
+// the hub's fleet verdict applies — otherwise the local card and the fleet
+// view could disagree about the same agent (#6237).
+func AgentRestartProblemThreshold() int {
 	if raw := strings.TrimSpace(os.Getenv(EnvAgentRestartProblemThreshold)); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			return n
@@ -443,7 +449,7 @@ func deriveAgentVerdict(a AgentSummary, blockers hiveBlockers, queuedWork int, n
 }
 
 func agentRestartStorm(a AgentSummary) bool {
-	return a.Restarts.Last24h >= agentRestartProblemThreshold()
+	return a.Restarts.Last24h >= AgentRestartProblemThreshold()
 }
 
 func agentRestartProblemReason(a AgentSummary) string {

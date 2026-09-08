@@ -23253,6 +23253,15 @@ function burnAreaChart() {
     // GitHub Device Flow Auth
     let ghPollTimer = null;
     let ghPollIntervalMs = 6000;
+    // The opaque per-flow secret /api/gh-user-auth/start mints. #5748 made it
+    // MANDATORY on every poll — a poll that cannot prove it started the flow is
+    // refused 400 and never gets the session cookie — but this page was missed
+    // in that change and kept polling with an empty body, so the overlay spun on
+    // "Waiting for authorization..." forever while GitHub reported the device
+    // activated (#6216). Keep it here for the same reason the standalone login
+    // page threads it through poll(): it is the only thing that identifies this
+    // browser as the one that asked.
+    let ghFlowID = '';
     const GH_AUTH_CHECK_INTERVAL_MS = 300000;
     const GH_AUTH_SUCCESS_DISMISS_MS = 1500;
 
@@ -23486,6 +23495,7 @@ function burnAreaChart() {
           }
           return;
         }
+        ghFlowID = data.flow_id || '';
         document.getElementById('gh-device-code').textContent = data.user_code;
         document.getElementById('gh-verify-link').href = data.verification_uri;
         document.getElementById('gh-poll-status').textContent = 'Waiting for authorization...';
@@ -23499,9 +23509,27 @@ function burnAreaChart() {
       }
     }
 
+    // Paint a terminal failure into the overlay and stop polling. Shared by the
+    // server's own {"status":"error"} and by the unrecognized-response branch
+    // below, so both look the same to the operator.
+    function failGHAuth(msg) {
+      if (ghPollTimer) { clearInterval(ghPollTimer); ghPollTimer = null; }
+      ghFlowID = '';
+      const status = document.getElementById('gh-poll-status');
+      status.textContent = 'Error: ' + (msg || 'unknown');
+      status.style.color = 'var(--red)';
+    }
+
     async function pollGHAuth() {
       try {
-        const resp = await fetch('/api/gh-user-auth/poll', { method: 'POST' });
+        // flow_id proves this poll belongs to the flow WE started; without it
+        // the server refuses every poll with 400 and the login can never
+        // complete (#6216). Same contract as the standalone login page.
+        const resp = await fetch('/api/gh-user-auth/poll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flow_id: ghFlowID }),
+        });
         const data = await resp.json();
         if (data.status === 'complete') {
           clearInterval(ghPollTimer);
@@ -23512,6 +23540,7 @@ function burnAreaChart() {
           status.style.fontWeight = '700';
           document.getElementById('gh-device-code').textContent = data.username;
           document.getElementById('gh-device-code').style.color = 'var(--green)';
+          ghFlowID = '';
           setTimeout(() => {
             document.getElementById('gh-auth-modal-overlay').style.display = 'none';
             document.getElementById('gh-device-code').style.color = '';
@@ -23524,10 +23553,18 @@ function burnAreaChart() {
           ghPollIntervalMs += SLOWDOWN_BACKOFF_MS;
           ghPollTimer = setInterval(pollGHAuth, ghPollIntervalMs);
         } else if (data.status === 'error') {
-          clearInterval(ghPollTimer);
-          ghPollTimer = null;
-          document.getElementById('gh-poll-status').textContent = 'Error: ' + (data.error || 'unknown');
-          document.getElementById('gh-poll-status').style.color = 'var(--red)';
+          failGHAuth(data.error);
+        } else if (data.status === 'pending') {
+          // The expected steady state while the operator is still at
+          // github.com/login/device — keep the timer running.
+        } else if (!resp.ok || data.error) {
+          // Any other shape is terminal: an HTTP error body carries {"ok":false,
+          // "error":"..."} and no `status` at all, so it matched none of the
+          // branches above and the loop just fired again. That is exactly how
+          // #6216 presented — an eternal spinner and no message, from #5748
+          // through v4.18.1. Surface it, so the next protocol change shows up
+          // as a visible error rather than a silent hang.
+          failGHAuth(data.error || ('login failed (HTTP ' + resp.status + ')'));
         }
       } catch (e) {
         // network hiccup — keep polling
@@ -23536,6 +23573,9 @@ function burnAreaChart() {
 
     function cancelGHLogin() {
       if (ghPollTimer) { clearInterval(ghPollTimer); ghPollTimer = null; }
+      // Drop the abandoned flow's secret rather than carrying it into whatever
+      // the operator does next.
+      ghFlowID = '';
       document.getElementById('gh-auth-modal-overlay').style.display = 'none';
     }
 

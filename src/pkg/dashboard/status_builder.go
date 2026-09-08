@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/hub"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/skillreg"
@@ -489,6 +490,30 @@ func buildSkills() FrontendSkills {
 	return FrontendSkills{Available: true, Loaded: loaded, Dir: dir}
 }
 
+// restartsLast24h counts the agent's restarts inside the rolling 24h window
+// and returns the most recent restart reason seen in that window (falling back
+// to LastRestartReason). Same window the manager's RestartTelemetry reports to
+// the hub heartbeat — buildAgents works from process snapshots, so it counts
+// the cloned RestartEvents directly (#6237).
+func restartsLast24h(proc *agent.AgentProcess, now time.Time) (int, string) {
+	cutoff := now.Add(-24 * time.Hour)
+	count := 0
+	reason := ""
+	for _, ev := range proc.RestartEvents {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		count++
+		if strings.TrimSpace(ev.Reason) != "" {
+			reason = strings.TrimSpace(ev.Reason)
+		}
+	}
+	if reason == "" {
+		reason = strings.TrimSpace(proc.LastRestartReason)
+	}
+	return count, reason
+}
+
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
 	currentMode := strings.ToLower(string(govState.Mode))
 
@@ -680,6 +705,25 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
 			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
 				a.StatusEvidence += ": " + line
+			}
+		}
+		// #6237: an agent whose CLI dies on every launch reported exactly the
+		// same state=running / busy=working as one doing real work — on a live
+		// spoke that hid a total seven-agent outage (restart_count 918) for
+		// hours. The watchdog kept restarting it correctly; nothing escalated
+		// the permanently-failing loop into a visible fault. Escalate a restart
+		// storm through the same StructuredStatus channel as the other launch
+		// faults, using the SAME rolling-24h threshold the hub's fleet verdict
+		// applies (hub.AgentRestartProblemThreshold, overridable via
+		// HIVE_HUB_AGENT_RESTART_PROBLEM_THRESHOLD) so the local card and the
+		// fleet view can never disagree about the same agent. Written before
+		// the StartBlocked block on purpose: a spoke that has STOPPED
+		// relaunching carries the more specific reason, so it wins.
+		if n, reason := restartsLast24h(proc, time.Now()); n >= hub.AgentRestartProblemThreshold() {
+			a.StructuredStatus = "BLOCKED"
+			a.StatusEvidence = fmt.Sprintf("blocked: crash-looping (%d restarts in 24h)", n)
+			if reason != "" {
+				a.StatusEvidence += ": " + reason
 			}
 		}
 		// #5958: the card said "restart needed" for an agent that had failed to

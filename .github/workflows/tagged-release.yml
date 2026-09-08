@@ -725,6 +725,30 @@ jobs:
             if [ "$merged" != true ]; then
               gh pr close "$pr_number" >/dev/null 2>&1 || true
             fi
+            # #6084: opening the PR above fires every pull_request-triggered
+            # workflow in the repo against the scratch branch (~8 runs), and
+            # they are still queued when this trap runs seconds later. Once
+            # the head ref is deleted those runs can never start; GitHub
+            # leaves them to zombie out as `conclusion: failure` with zero
+            # jobs after 10-45 minutes - pure noise that pollutes
+            # `gh run list --status failure` and masks real regressions.
+            # Cancel whatever is still queued/in_progress on the scratch
+            # branch BEFORE deleting it, so those runs conclude `cancelled`
+            # (accurate) instead of `failure`. Best-effort: nothing here may
+            # fail the release, and the query is scoped by `branch=` to the
+            # ephemeral release-gate/v<VERSION> ref this workflow owns, so
+            # no other run can be touched.
+            for run_status in queued in_progress; do
+              gh api --paginate \
+                "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${scratch}&status=${run_status}&per_page=100" \
+                --jq '.workflow_runs[].id' 2>/dev/null \
+              | while IFS= read -r run_id; do
+                  [ -n "$run_id" ] || continue
+                  gh api --method POST \
+                    "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
+                    >/dev/null 2>&1 || true
+                done || true
+            done
             git push origin --delete "refs/heads/${scratch}" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT

@@ -53,11 +53,20 @@ func TestSweep_GreenResetsAndAbsencePrunes(t *testing.T) {
 	if n := s.Attempts("org/repo", 7); n != 0 {
 		t.Fatalf("green must reset, got %d attempts", n)
 	}
-	// Red again, then vanishes from the open set (merged/closed): pruned.
+	// Red again, then vanishes from the open set. One missing pass is NOT
+	// enough to prune — a per-repo listing hiccup must not erase history —
+	// but once it has been gone for PruneAfter it is (merged/closed).
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	s.SetClock(func() time.Time { return now })
 	s.Sweep([]Observation{obs("org/repo", 7, "sha4", true)}, 3)
 	s.Sweep([]Observation{obs("org/repo", 8, "shaX", true)}, 3)
+	if n := s.Attempts("org/repo", 7); n != 1 {
+		t.Fatalf("PR missing from one pass must keep its history, got %d attempts", n)
+	}
+	now = now.Add(PruneAfter)
+	s.Sweep([]Observation{obs("org/repo", 8, "shaX", true)}, 3)
 	if n := s.Attempts("org/repo", 7); n != 0 {
-		t.Fatalf("absent PR must be pruned, got %d attempts", n)
+		t.Fatalf("PR absent for PruneAfter must be pruned, got %d attempts", n)
 	}
 
 	// Persistence across Load.
@@ -80,7 +89,7 @@ func TestExcerpt_ReturnsStoredEvidenceOrEmpty(t *testing.T) {
 }
 
 func TestCommentBody_LeadsWithEvidence(t *testing.T) {
-	body := CommentBody(3, []string{"Coverage Suite", "build-gate"}, "ReferenceError: seedMission is not defined")
+	body := CommentBody(3, []string{"Coverage Suite", "build-gate"}, "ReferenceError: seedMission is not defined", false)
 	for _, want := range []string{"3 distinct fix attempts", "Coverage Suite", "seedMission is not defined", NeedsHumanLabel} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("comment body missing %q:\n%s", want, body)
@@ -278,5 +287,163 @@ func TestSweep_MachineryAmnestyReleasesOldGenerationEscalations(t *testing.T) {
 	}
 	if s.TryReEngage("org/repo", 9, "c") {
 		t.Fatal("cap must hold at the current generation — amnesty is one-shot")
+	}
+}
+
+// A pending pass (checks running, or the check-run fetch failed — which
+// EnrichCIStatus also reports as "pending") is no information: it must leave
+// the attempt history AND the Escalated marker untouched. Before this, every
+// non-red pass was read as green and wiped the entry, so a single transient
+// API error re-armed the escalation and the hub re-posted the comment on the
+// next red pass (tuna-os/corral#268: fifteen identical comments in 32h).
+func TestSweep_PendingLeavesHistoryAndEscalationIntact(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+	pending := func(n int, sha string) Observation {
+		return Observation{Repo: "org/repo", Number: n, HeadSHA: sha, Pending: true}
+	}
+
+	s.Sweep([]Observation{obs("org/repo", 7, "sha1", true)}, 3)
+	s.Sweep([]Observation{obs("org/repo", 7, "sha2", true)}, 3)
+	r := s.Sweep([]Observation{pending(7, "sha2")}, 3)
+	if n := s.Attempts("org/repo", 7); n != 2 {
+		t.Fatalf("pending pass must not touch attempts, got %d", n)
+	}
+	if got := r[Key("org/repo", 7)]; got.Attempts != 2 || got.NewlyEscala {
+		t.Fatalf("pending pass result: got %+v", got)
+	}
+	r = s.Sweep([]Observation{obs("org/repo", 7, "sha3", true)}, 3)
+	if got := r[Key("org/repo", 7)]; got.Attempts != 3 || !got.NewlyEscala {
+		t.Fatalf("attempt 3 after a pending pass must escalate: got %+v", got)
+	}
+	s.MarkEscalated("org/repo", 7)
+
+	// Escalated, then a pending pass, then red again: still escalated, and
+	// never newly so.
+	r = s.Sweep([]Observation{pending(7, "sha3")}, 3)
+	if got := r[Key("org/repo", 7)]; !got.Escalated || got.NewlyEscala {
+		t.Fatalf("pending pass must report the escalated state: got %+v", got)
+	}
+	r = s.Sweep([]Observation{obs("org/repo", 7, "sha3", true)}, 3)
+	if got := r[Key("org/repo", 7)]; !got.Escalated || got.NewlyEscala {
+		t.Fatalf("red after pending must not re-escalate: got %+v", got)
+	}
+	// A pending pass with no ledger entry creates nothing.
+	s.Sweep([]Observation{pending(99, "zzz")}, 3)
+	if n := s.Attempts("org/repo", 99); n != 0 {
+		t.Fatalf("pending pass must not create an entry, got %d attempts", n)
+	}
+}
+
+// The forge label is authoritative. A PR that already wears needs-human is
+// escalated no matter what the ledger says — a wiped ledger (unwritable
+// /data, restart without a PVC) can never cause a second comment.
+func TestSweep_LabelPresentMeansEscalatedEvenWithEmptyLedger(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+	labeled := Observation{Repo: "org/repo", Number: 7, HeadSHA: "sha1", Red: true, Labeled: true}
+
+	r := s.Sweep([]Observation{labeled}, 3)
+	got := r[Key("org/repo", 7)]
+	if !got.Escalated || got.NewlyEscala || got.NeedsLabel {
+		t.Fatalf("labeled PR must read as escalated, never newly: got %+v", got)
+	}
+	// Re-engagement is capped out for it too: the exhausted path must not
+	// produce a fresh escalation on a labeled PR either.
+	for i := 0; i < MaxReEngagements+1; i++ {
+		s.TryReEngage("org/repo", 7, "sha1")
+	}
+	r = s.Sweep([]Observation{labeled}, 3)
+	if got := r[Key("org/repo", 7)]; !got.Escalated || got.NewlyEscala {
+		t.Fatalf("labeled PR must stay quietly escalated: got %+v", got)
+	}
+	// Reload from disk (simulating a restart): still escalated via the label.
+	s2 := Load(filepath.Join(t.TempDir(), "fresh.json"))
+	r = s2.Sweep([]Observation{labeled}, 3)
+	if got := r[Key("org/repo", 7)]; !got.Escalated || got.NewlyEscala {
+		t.Fatalf("fresh ledger + label must not re-escalate: got %+v", got)
+	}
+}
+
+// Removing the label is the documented way to hand a PR back to the
+// automated lane. Once the label was CONFIRMED applied, its absence must
+// un-park the PR: fresh distinct-SHA count, fresh re-engagement budget, and
+// a later crossing escalates again (with a new comment).
+func TestSweep_LabelRemovedByHumanUnparksPR(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+	for _, sha := range []string{"a", "b", "c"} {
+		s.Sweep([]Observation{obs("org/repo", 7, sha, true)}, 3)
+	}
+	s.MarkEscalated("org/repo", 7)
+	s.MarkLabelApplied("org/repo", 7)
+
+	// Within the grace window an absent label is a stale listing, not an
+	// un-park: nothing changes.
+	r := s.Sweep([]Observation{obs("org/repo", 7, "c", true)}, 3)
+	if got := r[Key("org/repo", 7)]; !got.Escalated || got.Attempts != 3 {
+		t.Fatalf("absence inside LabelUnparkGrace must be ignored: got %+v", got)
+	}
+
+	// Human removes the label (after the grace); PR still red on the same head.
+	now := time.Now().UTC().Add(LabelUnparkGrace + time.Minute)
+	s.SetClock(func() time.Time { return now })
+	r = s.Sweep([]Observation{obs("org/repo", 7, "c", true)}, 3)
+	got := r[Key("org/repo", 7)]
+	if got.Escalated || got.NewlyEscala {
+		t.Fatalf("label removal must un-park without re-escalating: got %+v", got)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("un-parked PR must restart its distinct-SHA count, got %d", got.Attempts)
+	}
+	if n := s.ReEngagements("org/repo", 7); n != 0 {
+		t.Fatalf("un-parked PR must get a fresh re-engagement budget, got %d", n)
+	}
+	// Two more failed attempts cross the threshold again.
+	s.Sweep([]Observation{obs("org/repo", 7, "d", true)}, 3)
+	r = s.Sweep([]Observation{obs("org/repo", 7, "e", true)}, 3)
+	if got := r[Key("org/repo", 7)]; !got.NewlyEscala {
+		t.Fatalf("un-parked PR must be escalatable again: got %+v", got)
+	}
+}
+
+// A label that was never confirmed (AddLabels failed at escalation time) is
+// NOT a human un-park: the sweep must retry the label, not re-comment and not
+// reset the budget.
+func TestSweep_UnconfirmedLabelIsRetriedNotTreatedAsUnpark(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+	for _, sha := range []string{"a", "b", "c"} {
+		s.Sweep([]Observation{obs("org/repo", 7, sha, true)}, 3)
+	}
+	s.MarkEscalated("org/repo", 7) // comment landed, label call failed
+
+	r := s.Sweep([]Observation{obs("org/repo", 7, "c", true)}, 3)
+	got := r[Key("org/repo", 7)]
+	if !got.Escalated || got.NewlyEscala || !got.NeedsLabel {
+		t.Fatalf("unconfirmed label must be retried, never re-escalated: got %+v", got)
+	}
+	if got.Attempts != 3 {
+		t.Fatalf("history must be intact, got %d attempts", got.Attempts)
+	}
+	s.MarkLabelApplied("org/repo", 7)
+	r = s.Sweep([]Observation{Observation{Repo: "org/repo", Number: 7, HeadSHA: "c", Red: true, Labeled: true}}, 3)
+	if got := r[Key("org/repo", 7)]; got.NeedsLabel || !got.Escalated {
+		t.Fatalf("confirmed label must clear NeedsLabel: got %+v", got)
+	}
+}
+
+func TestCommentBody_ExhaustedWording(t *testing.T) {
+	body := CommentBody(1, []string{"test"}, "boom", true)
+	if !strings.Contains(body, "no new commit pushed") || !strings.Contains(body, "1 distinct red head seen") {
+		t.Fatalf("exhausted wording missing: %s", body)
+	}
+	if strings.Contains(body, "1 distinct fix attempts") {
+		t.Fatalf("exhausted body must not claim distinct fix attempts: %s", body)
+	}
+}
+
+func TestHasNeedsHumanLabel(t *testing.T) {
+	if !HasNeedsHumanLabel([]string{"bug", "Needs-Human"}) {
+		t.Fatal("case-insensitive match expected")
+	}
+	if HasNeedsHumanLabel([]string{"hold", "needs-review"}) {
+		t.Fatal("unexpected match")
 	}
 }

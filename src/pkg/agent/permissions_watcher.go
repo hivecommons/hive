@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -274,9 +275,24 @@ func warnDeduped(logger *slog.Logger, op, msg, path string, err error) {
 // It never blocks or panics. Call it once at startup:
 //
 //	go agent.StartPermissionsWatcher(logger)
+//
+// The watcher deliberately runs for the life of the process: this wrapper
+// hands runPermissionsWatcher a background context that is never cancelled
+// and the production PermissionFixInterval.
 func StartPermissionsWatcher(logger *slog.Logger) {
+	runPermissionsWatcher(context.Background(), logger, PermissionFixInterval)
+}
+
+// runPermissionsWatcher is the loop behind StartPermissionsWatcher with its
+// lifetime and tick interval passed in as parameters instead of read from
+// package state. It returns once ctx is done, so a test can start the loop
+// against a sandboxed tree, cancel it, and join the goroutine BEFORE it
+// restores the package-level path seams (WatchedHomeDirs, GooseLogsDir, ...)
+// the loop was scanning. Keeping the seam per-call rather than a package-level
+// stop channel or mutable interval is what makes that hand-off race-free.
+func runPermissionsWatcher(ctx context.Context, logger *slog.Logger, interval time.Duration) {
 	logger.Info("permissions watcher started",
-		"interval", PermissionFixInterval,
+		"interval", interval,
 		"watched_dirs", WatchedHomeDirs,
 		"target_uid", DevUID,
 		"target_gid", NodeGID,
@@ -285,11 +301,16 @@ func StartPermissionsWatcher(logger *slog.Logger) {
 	// Ensure watched directories exist with correct ownership on first run.
 	ensureWatchedDirs(logger)
 
-	ticker := time.NewTicker(PermissionFixInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		fixPermissions(logger)
+	for {
+		select {
+		case <-ticker.C:
+			fixPermissions(logger)
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

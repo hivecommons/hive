@@ -22,17 +22,24 @@ func TestHivePRObservationsExcludesHumanAuthors(t *testing.T) {
 	actionable := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{
 		{Repo: "hive", Number: 1, Author: "hive-bee", HeadSHA: "aaa"},
 		{Repo: "hive", Number: 2, Author: "human-dev", HeadSHA: "bbb"},
-		{Repo: "hive", Number: 3, Author: "dependabot[bot]", HeadSHA: "ccc"},
+		{Repo: "hive", Number: 3, Author: "copilot-swe-agent[bot]", HeadSHA: "ccc"},
+		{Repo: "hive", Number: 4, Author: "dependabot[bot]", HeadSHA: "ddd"},
+		{Repo: "hive", Number: 5, Author: "renovate[bot]", HeadSHA: "eee"},
 	}}}
 
 	obs := hivePRObservations(cfg, actionable)
 
 	if len(obs) != 2 {
-		t.Fatalf("got %d observations, want 2 (agent + bot only)", len(obs))
+		t.Fatalf("got %d observations, want 2 (agent + non-dependency bot only): %+v", len(obs), obs)
 	}
 	for _, o := range obs {
-		if o.Number == 2 {
+		switch o.Number {
+		case 2:
 			t.Errorf("human-authored PR #2 leaked into escalation observations: %+v", o)
+		case 4, 5:
+			// Dependency bots carry the [bot] suffix but are not hive agents:
+			// a red Renovate/Dependabot bump is not a fix loop to break.
+			t.Errorf("dependency-bot PR #%d leaked into escalation observations: %+v", o.Number, o)
 		}
 	}
 }

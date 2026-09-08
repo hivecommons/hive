@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -265,6 +266,132 @@ func TestRunEscalationSweepLabelFailureIsNonFatal(t *testing.T) {
 	sweep("sha-3")
 	if len(fake.comments) != 1 {
 		t.Fatalf("comments = %d, want no repeat after a label-only failure", len(fake.comments))
+	}
+
+	// Once the forge accepts labels again the sweep retries the LABEL only —
+	// never the comment — and stops once it is confirmed on the PR.
+	fake.failLabels = false
+	sweep("sha-3")
+	if len(fake.labels) != 1 || fake.labels[0] != escalation.NeedsHumanLabel {
+		t.Fatalf("labels = %v, want the label retried once the forge recovers", fake.labels)
+	}
+	if len(fake.comments) != 1 {
+		t.Fatalf("comments = %d, want the label retry to post no comment", len(fake.comments))
+	}
+	labeled := redPR("widgets", 4, "hive-agent", "sha-3")
+	labeled.Labels = []string{escalation.NeedsHumanLabel}
+	runEscalationSweep(context.Background(), cfg, client, actionableWith(labeled), nil, nil, logger)
+	if len(fake.labels) != 1 {
+		t.Fatalf("labels = %v, want no further label calls once confirmed", fake.labels)
+	}
+}
+
+// The forge label is the record of escalation: a PR that already wears
+// needs-human is hands-off and NEVER gets a second comment, even when the
+// ledger has no memory of it (a wiped or unwritable /data). This is the
+// tuna-os incident: corral#268 collected fifteen identical escalation
+// comments in 32 hours.
+func TestRunEscalationSweepLabeledPRIsEscalatedWithoutSideEffects(t *testing.T) {
+	newTestEscalationStore(t) // empty ledger
+	client, fake := newEscalationSweepClient(t)
+	cfg := escalationTestConfig()
+	logger := discardLogger()
+
+	labeled := redPR("widgets", 5, "hive-agent", "sha-1")
+	labeled.Labels = []string{"needs-human"}
+	key := escalation.Key("acme/widgets", 5)
+	for i := 0; i < 3; i++ {
+		got := runEscalationSweep(context.Background(), cfg, client, actionableWith(labeled), nil, nil, logger)
+		if !got[key] {
+			t.Fatalf("pass %d: escalated = %v, want %q true from the label alone", i+1, got, key)
+		}
+	}
+	if len(fake.paths) != 0 {
+		t.Fatalf("a labeled PR must not trigger any API call, saw %v", fake.paths)
+	}
+}
+
+// A pass that cannot conclude CI (checks re-running, or the check-run fetch
+// failed — both surface as CIStatus "pending") must neither forget an
+// escalation nor count as a fix attempt.
+func TestRunEscalationSweepPendingPassKeepsEscalation(t *testing.T) {
+	newTestEscalationStore(t)
+	client, fake := newEscalationSweepClient(t)
+	cfg := escalationTestConfig()
+	logger := discardLogger()
+
+	sweep := func(pr github.PullRequest) map[string]bool {
+		return runEscalationSweep(context.Background(), cfg, client, actionableWith(pr), nil, nil, logger)
+	}
+	for _, sha := range []string{"a", "b", "c"} {
+		sweep(redPR("widgets", 6, "hive-agent", sha))
+	}
+	key := escalation.Key("acme/widgets", 6)
+	if len(fake.comments) != 1 {
+		t.Fatalf("comments = %d, want the escalation comment", len(fake.comments))
+	}
+
+	pending := redPR("widgets", 6, "hive-agent", "c")
+	pending.CIStatus = "pending"
+	pending.FailingChecks = nil
+	pending.Labels = []string{escalation.NeedsHumanLabel}
+	if got := sweep(pending); !got[key] {
+		t.Fatalf("escalated = %v, want %q to survive a pending pass", got, key)
+	}
+	// Red again on the same head, label still on: quiet.
+	red := redPR("widgets", 6, "hive-agent", "c")
+	red.Labels = []string{escalation.NeedsHumanLabel}
+	if got := sweep(red); !got[key] {
+		t.Fatalf("escalated = %v, want %q still true", got, key)
+	}
+	if len(fake.comments) != 1 {
+		t.Fatalf("comments = %d, want no second escalation comment", len(fake.comments))
+	}
+}
+
+// Dependency bots carry the "[bot]" suffix but are not hive agents: their red
+// PRs are not fix loops and must never be escalated.
+func TestRunEscalationSweepIgnoresDependencyBots(t *testing.T) {
+	newTestEscalationStore(t)
+	client, fake := newEscalationSweepClient(t)
+	cfg := escalationTestConfig()
+	logger := discardLogger()
+
+	for _, author := range []string{"renovate[bot]", "dependabot[bot]", "mergeraptor[bot]"} {
+		for _, sha := range []string{"1", "2", "3", "4"} {
+			got := runEscalationSweep(context.Background(), cfg, client,
+				actionableWith(redPR("widgets", 9, author, author+sha)), nil, nil, logger)
+			if len(got) != 0 {
+				t.Fatalf("%s: escalated = %v, want empty", author, got)
+			}
+		}
+	}
+	if len(fake.paths) != 0 {
+		t.Fatalf("dependency-bot PRs must not touch the API, saw %v", fake.paths)
+	}
+}
+
+// Budget exhaustion on a never-moving head words the comment for what it is.
+func TestRunEscalationSweepExhaustedWording(t *testing.T) {
+	store, clock := newTestEscalationStore(t)
+	client, fake := newEscalationSweepClient(t)
+	cfg := escalationTestConfig()
+	logger := discardLogger()
+
+	pr := redPR("widgets", 10, "hive-agent", "frozen")
+	runEscalationSweep(context.Background(), cfg, client, actionableWith(pr), nil, nil, logger)
+	*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
+	for i := 0; i < escalation.MaxReEngagements; i++ {
+		if !store.TryReEngage("acme/widgets", 10, "frozen") {
+			t.Fatalf("re-engage %d should be allowed", i+1)
+		}
+	}
+	got := runEscalationSweep(context.Background(), cfg, client, actionableWith(pr), nil, nil, logger)
+	if !got[escalation.Key("acme/widgets", 10)] {
+		t.Fatalf("escalated = %v, want exhausted PR escalated", got)
+	}
+	if len(fake.comments) != 1 || !strings.Contains(fake.comments[0], "no new commit pushed") {
+		t.Fatalf("comments = %q, want exhausted wording", fake.comments)
 	}
 }
 

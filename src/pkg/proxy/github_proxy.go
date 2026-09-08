@@ -215,6 +215,69 @@ type GitHubProxy struct {
 	canaryFailClosed bool
 	canaryRegistry   *ioscan.CanaryRegistry
 	canaryLeakFunc   func(ioscan.CanaryLeak)
+
+	// linearCredential resolves the hive's CURRENT Linear write credential
+	// for injection into agent requests to api.linear.app — see
+	// injectLinearCredential. nil (the default) leaves agent requests
+	// carrying whatever credential the agent supplied.
+	linearCredential func() agent.LinearCredential
+}
+
+// SetLinearCredentialResolver installs the resolver injectLinearCredential
+// reads on every agent request to api.linear.app. main.go wires the same
+// closure the agent manager uses to push LINEAR_ACCESS_TOKEN / LINEAR_API_KEY
+// into sessions, so the proxy and the session env can never name different
+// credentials. Values are never logged. nil disables injection.
+func (p *GitHubProxy) SetLinearCredentialResolver(fn func() agent.LinearCredential) {
+	p.linearCredential = fn
+}
+
+// injectLinearCredential replaces the Authorization header of an agent's
+// api.linear.app request with the hive's CURRENT Linear credential, for
+// agents at the ISSUES_ONLY floor and above (the tier the session-env push in
+// agent.Manager.linearEnvPairs uses). It reports whether a credential was
+// applied.
+//
+// WHY THE PROXY, NOT THE ENVIRONMENT. The connected Linear app's OAuth access
+// token rotates (Linear issues it with a ~24h expiry and hive refreshes it
+// in the background), and hive already re-pushes the fresh value into each
+// agent's tmux session environment on the hourly refresh tick. But a tmux
+// session environment only reaches processes forked AFTER the push: the
+// agent's CLI, forked at its last launch, keeps the token it was born with,
+// and every tool shell it spawns inherits that copy. Observed live
+// (2026-09-06/07): a quality agent whose session environment held the fresh
+// token — verified valid through this very proxy as that agent's UID — got
+// `401 AUTHENTICATION_ERROR` on every Linear call from inside its pane for
+// two days, because its process still carried the pre-rotation token. Its
+// earlier kicks had silently fallen back to the operator's personal
+// LINEAR_API_KEY, so every issue it filed showed the operator as creator.
+//
+// The proxy terminates every agent request to api.linear.app anyway (this is
+// where enforceLinear gates mutations by tier), so attaching the live
+// credential HERE makes the copy in the agent's environment irrelevant —
+// stale, absent, or a placeholder all work — exactly as the inference
+// translator attaches the real gateway key server-side. The agent still
+// receives a credential in its environment (for SDKs that refuse to send a
+// request without one), but Linear only ever sees the proxy's.
+//
+// Below the floor the request is left untouched: an ADVISORY agent's Linear
+// reads have always been ungated and unauthenticated-by-hive, and injecting
+// a write-capable credential there would widen what the tier can do.
+func (p *GitHubProxy) injectLinearCredential(req *http.Request, agentName string, mode agent.AgentMode) bool {
+	if p.linearCredential == nil || !mode.CanCreateIssues() {
+		return false
+	}
+	cred := p.linearCredential()
+	switch {
+	case cred.AccessToken != "":
+		req.Header.Set("Authorization", "Bearer "+cred.AccessToken)
+	case cred.APIKey != "":
+		req.Header.Set("Authorization", cred.APIKey)
+	default:
+		return false
+	}
+	p.logger.Debug("linear: attached the hive's current credential to an agent request", "agent", agentName, "mode", mode.String())
+	return true
 }
 
 // dialCopilotUpstream connects to the real Copilot host over TLS (or the test
@@ -1028,6 +1091,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			continue
 		}
 
+		// Linear: the request passed the tier gate; make sure it reaches
+		// Linear with the hive's CURRENT credential rather than whatever
+		// (possibly rotated-out) copy the agent's process still holds.
+		if isLinear && agentName != internalCallerName {
+			p.injectLinearCredential(req, agentName, mode)
+		}
 		// Git smart HTTP uses chunked streaming that http.ReadResponse
 		// can't handle reliably. After the ACMM check passes, forward
 		// the request and switch to raw bidirectional streaming.

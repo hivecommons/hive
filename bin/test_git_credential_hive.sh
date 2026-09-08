@@ -30,6 +30,25 @@ echo "ghs_stubtoken" >"$TOKEN_CACHE"
 # never shadow the HIVE_AGENT_MODE env var the harness sets.
 TEST_AGENT="cred-harness-$$"
 
+# The unique name alone is not enough on a live per-UID hive: the helper
+# derives AGENT from /var/run/hive/uid-map.json whenever it runs as a
+# per-agent UID (>= 2001) — deliberately ignoring HIVE_AGENT, which an agent
+# could spoof. Run there, the harness's own UID resolved to the REAL agent
+# name, and the helper read that agent's live /tmp/.hive-mode-<agent> instead
+# of the mode each case sets — so the mode-notice assertions passed or failed
+# with the host's deployment state, not the code. Stub `id -u` to report a
+# sub-2001 UID so the helper takes the HIVE_AGENT/HIVE_AGENT_MODE path the
+# harness controls; every other `id` invocation passes through.
+STUB_BIN="${WORK}/bin"
+mkdir -p "$STUB_BIN"
+REAL_ID="$(command -v id)"
+cat >"$STUB_BIN/id" <<EOF
+#!/bin/sh
+if [ "\${1:-}" = "-u" ] && [ \$# -eq 1 ]; then echo 1000; exit 0; fi
+exec "$REAL_ID" "\$@"
+EOF
+chmod +x "$STUB_BIN/id"
+
 # run_helper <mode> <acmm> <token_file> <stdin> -- <helper args...>
 # Echoes "exit=<code>\n<combined stdout+stderr>" for the assertions below.
 run_helper() {
@@ -38,6 +57,7 @@ run_helper() {
   local out rc
   out="$(
     printf '%b' "$stdin" | \
+    PATH="${STUB_BIN}:${PATH}" \
     HIVE_AGENT="$TEST_AGENT" \
     HIVE_AGENT_MODE="$mode" \
     HIVE_ACMM_LEVEL="$acmm" \
@@ -103,6 +123,25 @@ if [[ "$PUSHCAP_OUT" == *"READ-ONLY"* ]]; then
 else
   PASS=$((PASS + 1))
   echo "PASS: push-capable mode has no read-only notice text"
+fi
+
+# ── the audit-log append must never leak into the agent's transcript ──
+# The helper appends one line to /var/run/hive-metrics/token-access.jsonl on
+# every `get`. On a per-UID hive that directory is 0755 dev:node by design
+# (#4044) and the file is not pre-created, so the append's REDIRECTION fails.
+# `>> f 2>/dev/null` only mutes the printf — the shell reports a failed
+# redirection on its own stderr — so every clone/fetch/push showed
+# "git-credential-hive.sh: line N: .../token-access.jsonl: Permission denied"
+# in the agent's pane. The harness has no /var/run/hive-metrics either, so the
+# same redirection fails here and this assertion reproduces the leak exactly.
+LEAK_OUT="$(run_helper CONTRIBUTOR 4 "$TOKEN_CACHE" "$GET_STDIN" -- get | tail -n +2)"
+if [[ "$LEAK_OUT" == *"token-access.jsonl"* ]] || [[ "$LEAK_OUT" == *"Permission denied"* ]] || [[ "$LEAK_OUT" == *"No such file"* ]]; then
+  FAIL=$((FAIL + 1))
+  echo "FAIL: audit-log append failure leaked into helper output"
+  echo "  got: $LEAK_OUT"
+else
+  PASS=$((PASS + 1))
+  echo "PASS: audit-log append failure is silent (no token-access.jsonl noise)"
 fi
 
 # ── refusals that MUST stay fail-closed (audit H3) ──

@@ -2809,7 +2809,15 @@ func main() {
 	// reaches agents on their next launch / hourly token refresh. Values are
 	// never logged. Wired before RegisterAPI so the resolver is in place
 	// before any agent launches.
-	agentMgr.SetLinearCredentialResolver(func() agent.LinearCredential {
+	//
+	// The same resolver is handed to the egress proxy below
+	// (githubProxy.SetLinearCredentialResolver), which attaches the CURRENT
+	// credential to every ISSUES_ONLY+ agent request to api.linear.app — the
+	// rotated OAuth token never reaches a running CLI through the session
+	// environment (a process keeps the environment it was forked with), so the
+	// proxy, not the environment, is what keeps agent Linear writes
+	// authenticated across rotations.
+	linearCredentialResolver := func() agent.LinearCredential {
 		if tok := dashSrv.LinearAgentAccessToken(); tok != "" {
 			return agent.LinearCredential{AccessToken: tok}
 		}
@@ -2817,7 +2825,8 @@ func main() {
 			return agent.LinearCredential{APIKey: strings.TrimSpace(cfg.Governor.WorkSource.Linear.APIKey)}
 		}
 		return agent.LinearCredential{}
-	})
+	}
+	agentMgr.SetLinearCredentialResolver(linearCredentialResolver)
 
 	// In-flight ledger + session PR link (Linear GitHub-parity follow-ups):
 	// the scheduler withholds work a Linear session is already working, and
@@ -3529,6 +3538,9 @@ func main() {
 		// agents (litellm/vllm/llm-d) never write a scannable session file and
 		// their consumption reads as zero.
 		githubProxy.SetTokenSink(tokens.NewInferenceSink(cfg.Data.MetricsDir, logger))
+		// Live Linear credential for agent requests — see the resolver's
+		// definition above and proxy.injectLinearCredential.
+		githubProxy.SetLinearCredentialResolver(linearCredentialResolver)
 
 		// With the sink active, the proxy also MITMs the Copilot completion host
 		// (api.githubcopilot.com) to record Copilot token usage live per
@@ -7874,29 +7886,69 @@ func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult)
 	if actionable == nil {
 		return nil
 	}
-	fullRepo := func(repo string) string {
-		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
-			return cfg.Project.Org + "/" + repo
-		}
-		return repo
-	}
-	isAgentAuthor := func(author string) bool {
-		return author == cfg.Project.AIAuthor || strings.HasSuffix(author, "[bot]")
-	}
 	var obs []escalation.Observation
 	for _, pr := range actionable.PRs.Items {
-		if !isAgentAuthor(pr.Author) {
+		if !isHiveAgentAuthor(cfg, pr.Author) {
 			continue
 		}
-		obs = append(obs, escalation.Observation{
-			Repo:    fullRepo(pr.Repo),
-			Number:  pr.Number,
-			HeadSHA: pr.HeadSHA,
-			Red:     pr.HasFailingRequiredCheck(),
-			Excerpt: pr.CIFailureExcerpt,
-		})
+		obs = append(obs, escalationObservation(cfg, pr))
 	}
 	return obs
+}
+
+// escalationObservation projects one enumerated PR into the fix-loop ledger's
+// view of it. Red means a required check concluded failure. Pending means this
+// pass could not conclude CI at all — checks still running, no check runs, or
+// (per EnrichCIStatus) the check-run fetch errored — which the ledger must
+// treat as "no information", never as "went green". Labeled mirrors the forge's
+// needs-human label so the ledger and the label can never disagree about
+// whether a PR has already been handed to a human.
+func escalationObservation(cfg *config.Config, pr github.PullRequest) escalation.Observation {
+	repo := pr.Repo
+	if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
+		repo = cfg.Project.Org + "/" + repo
+	}
+	red := pr.HasFailingRequiredCheck()
+	return escalation.Observation{
+		Repo:    repo,
+		Number:  pr.Number,
+		HeadSHA: pr.HeadSHA,
+		Red:     red,
+		Pending: !red && pr.CIStatus != "success",
+		Labeled: escalation.HasNeedsHumanLabel(pr.Labels),
+		Excerpt: pr.CIFailureExcerpt,
+	}
+}
+
+// dependencyBots are forge bots whose PRs are dependency bumps, not hive fix
+// attempts. They carry the "[bot]" suffix that otherwise marks a PR as
+// agent-authored, but nothing in the hive opened them and no hive agent is
+// iterating on them, so a red one is not a fix loop to break: escalating it
+// only pages a human with "1 distinct fix attempts" about a crate bump that
+// renovate will rebase on its own. Mirrors the hub's default contribute
+// deny-authors list (config: hub.contribute_deny_authors).
+var dependencyBots = map[string]bool{
+	"renovate[bot]":    true,
+	"dependabot[bot]":  true,
+	"mergeraptor[bot]": true,
+}
+
+// isHiveAgentAuthor reports whether a PR author is one of OUR agents — the
+// configured ai_author, the App bot identity agents author as, or another
+// bot account — excluding the dependency bots above. Shared by every fix-loop
+// path (staleness clock, reaper, escalation sweep) so they classify PRs
+// identically.
+func isHiveAgentAuthor(cfg *config.Config, author string) bool {
+	if author == "" {
+		return false
+	}
+	if author == cfg.Project.AIAuthor {
+		return true
+	}
+	if eff := cfg.EffectiveAIAuthor(); eff != "" && author == eff {
+		return true
+	}
+	return strings.HasSuffix(author, "[bot]") && !dependencyBots[author]
 }
 
 // recordRedStaleness updates the shared staleness clock (first-seen-red per red
@@ -8020,32 +8072,16 @@ func runEscalationSweep(
 	}
 	getEscalationStore()
 
-	fullRepo := func(repo string) string {
-		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
-			return cfg.Project.Org + "/" + repo
-		}
-		return repo
-	}
-	isAgentAuthor := func(author string) bool {
-		return author == cfg.Project.AIAuthor || strings.HasSuffix(author, "[bot]")
-	}
-
 	var obs []escalation.Observation
 	type prMeta struct{ checks []string }
 	meta := map[string]prMeta{}
 	for _, pr := range actionable.PRs.Items {
-		if !isAgentAuthor(pr.Author) {
+		if !isHiveAgentAuthor(cfg, pr.Author) {
 			continue
 		}
-		repo := fullRepo(pr.Repo)
-		obs = append(obs, escalation.Observation{
-			Repo:    repo,
-			Number:  pr.Number,
-			HeadSHA: pr.HeadSHA,
-			Red:     pr.CIStatus == "failure",
-			Excerpt: pr.CIFailureExcerpt,
-		})
-		meta[escalation.Key(repo, pr.Number)] = prMeta{checks: pr.FailingChecks}
+		o := escalationObservation(cfg, pr)
+		obs = append(obs, o)
+		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: pr.FailingChecks}
 	}
 	results := escalationStore.Sweep(obs, cfg.Escalation.EffectiveThreshold())
 
@@ -8058,6 +8094,16 @@ func runEscalationSweep(
 		if r.Escalated {
 			escalated[key] = true
 		}
+		if r.NeedsLabel && !o.Labeled {
+			// Escalated on an earlier pass but the label never landed (the
+			// AddLabels call failed). Retry the LABEL ONLY — the evidence
+			// comment already reached the human and must not be repeated.
+			if err := writer.AddLabels(ctx, o.Repo, o.Number, []string{escalation.NeedsHumanLabel}); err != nil {
+				logger.Warn("escalation label retry failed", "repo", o.Repo, "pr", o.Number, "error", err)
+			} else {
+				escalationStore.MarkLabelApplied(o.Repo, o.Number)
+			}
+		}
 		if !r.NewlyEscala {
 			continue
 		}
@@ -8066,7 +8112,7 @@ func runEscalationSweep(
 		if excerpt == "" {
 			excerpt = escalationStore.Excerpt(o.Repo, o.Number)
 		}
-		body := escalation.CommentBody(r.Attempts, meta[key].checks, excerpt)
+		body := escalation.CommentBody(r.Attempts, meta[key].checks, excerpt, r.Exhausted)
 		if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, body); err != nil {
 			// Retry next pass rather than marking escalated with no comment:
 			// the whole point is that the evidence reaches a human.
@@ -8074,10 +8120,14 @@ func runEscalationSweep(
 				"repo", o.Repo, "pr", o.Number, "error", err)
 			continue
 		}
-		if err := writer.AddLabels(ctx, o.Repo, o.Number, []string{escalation.NeedsHumanLabel}); err != nil {
-			logger.Warn("escalation label failed", "repo", o.Repo, "pr", o.Number, "error", err)
-		}
+		// Mark escalated BEFORE the label call: once the comment is on the
+		// PR, nothing may post it again, whatever happens to the label.
 		escalationStore.MarkEscalated(o.Repo, o.Number)
+		if err := writer.AddLabels(ctx, o.Repo, o.Number, []string{escalation.NeedsHumanLabel}); err != nil {
+			logger.Warn("escalation label failed; will retry next pass", "repo", o.Repo, "pr", o.Number, "error", err)
+		} else {
+			escalationStore.MarkLabelApplied(o.Repo, o.Number)
+		}
 		// The escalation IS the real "blocked" lifecycle signal (#5656): a PR
 		// out of automated fix attempts, handed to a human. Record it on the
 		// item's journey so the panel's Blocked counter reflects reality, not

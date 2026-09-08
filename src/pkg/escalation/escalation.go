@@ -73,6 +73,19 @@ type Entry struct {
 	// Escalated is set once the escalation actions (comment + label) have
 	// fired, so they never repeat for the same PR.
 	Escalated bool `json:"escalated"`
+	// LabelApplied records that the needs-human label was confirmed on the
+	// forge (either we added it successfully or we observed it present). It
+	// is what lets a LATER absence of the label be read as "a human removed
+	// it — return the PR to the automated lane" rather than "our AddLabels
+	// call failed last pass — retry it". Without this distinction a label
+	// failure would un-park and re-escalate (re-comment) the PR every pass.
+	LabelApplied bool `json:"label_applied,omitempty"`
+	// LabelAppliedAt is when LabelApplied was set. An absence of the label
+	// observed within LabelUnparkGrace of it is ignored rather than read as
+	// a human un-park: the enumeration that feeds a pass can lag the label
+	// write by a tick, and a stale listing must not bounce the PR out of and
+	// back into escalation.
+	LabelAppliedAt time.Time `json:"label_applied_at,omitempty"`
 	// LastExcerpt is the most recent CI failure excerpt, kept so the
 	// escalation comment can include evidence even if the final enumeration
 	// pass failed to fetch annotations.
@@ -134,6 +147,24 @@ type Observation struct {
 	Number  int
 	HeadSHA string
 	Red     bool // CI status is failure
+	// Pending is set when this pass could NOT conclude CI state for the PR:
+	// checks still running, no check runs yet, or the check-run fetch itself
+	// failed (EnrichCIStatus maps an API error to "pending" too). A pending
+	// observation is not evidence that the loop converged, so Sweep leaves
+	// the entry exactly as it was — it neither counts an attempt nor forgets
+	// the history. Before this flag existed every non-red pass was read as
+	// green and wiped the entry, INCLUDING its Escalated marker, so one
+	// transient API error was enough to make the hub re-post the "Fix loop
+	// escalated" comment on the next red pass (tuna-os/corral#268 collected
+	// fifteen identical escalation comments in 32 hours that way).
+	Pending bool
+	// Labeled reports that the forge already shows the needs-human label on
+	// the PR. The label is the durable, human-visible record of escalation;
+	// the ledger is a cache of it. Sweep treats a labeled PR as escalated no
+	// matter what the ledger says (never re-comment), and treats a ledger
+	// entry whose confirmed label has since disappeared as un-parked by a
+	// human (fresh budget, back to the automated lane).
+	Labeled bool
 	Excerpt string
 }
 
@@ -142,7 +173,30 @@ type Result struct {
 	Attempts    int
 	Escalated   bool // escalation actions already fired (now or previously)
 	NewlyEscala bool // this pass crossed the threshold — fire actions now
+	// Exhausted is set when the escalation was (or is being) triggered by the
+	// re-engagement budget running out on an UNCHANGED red head SHA rather than
+	// by the distinct-SHA threshold. The evidence comment words the two cases
+	// differently: "N distinct fix attempts" is misleading when N is 1.
+	Exhausted bool
+	// NeedsLabel is set for a PR the ledger already escalated whose needs-human
+	// label is not confirmed on the forge and was not observed this pass — the
+	// AddLabels call failed at escalation time. The caller should retry ONLY
+	// the label (never the comment) and then call MarkLabelApplied.
+	NeedsLabel bool
 }
+
+// PruneAfter is how long a ledger entry survives after its PR stops
+// appearing in the enumerated open set before it is dropped. Merged and
+// closed PRs age out; a PR that merely fell out of ONE pass (a per-repo
+// listing error, pagination hiccup) keeps its history — and, crucially, its
+// Escalated marker — instead of being re-counted from zero and re-escalated
+// with a fresh comment when it reappears.
+const PruneAfter = 24 * time.Hour
+
+// LabelUnparkGrace is how long after the needs-human label was confirmed a
+// pass must be before the label's ABSENCE is trusted as a deliberate removal
+// by a human (see Entry.LabelAppliedAt).
+const LabelUnparkGrace = 5 * time.Minute
 
 // Sweep folds a full enumeration pass into the ledger: increments attempt
 // counts for red PRs with unseen head SHAs, clears entries for PRs that went
@@ -161,13 +215,72 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 	for _, o := range obs {
 		key := Key(o.Repo, o.Number)
 		seen[key] = true
+		e := s.entries[key]
+
+		// The forge label is authoritative in both directions.
+		//
+		// Label present: the PR IS escalated, whatever the ledger says. This
+		// is what makes escalation idempotent across ledger loss (a wiped or
+		// unwritable /data, a pruned entry, an amnesty pass): the comment can
+		// never be posted twice onto a PR that already wears the label.
+		if o.Labeled {
+			if e == nil {
+				e = &Entry{Machinery: MachineryVersion}
+				s.entries[key] = e
+			}
+			e.Escalated = true
+			if !e.LabelApplied {
+				e.LabelApplied = true
+				e.LabelAppliedAt = s.now()
+			}
+			e.Machinery = MachineryVersion
+			if o.Red && o.HeadSHA != "" && !containsSHA(e.RedSHAs, o.HeadSHA) {
+				e.RedSHAs = appendSHA(e.RedSHAs, o.HeadSHA)
+			}
+			if o.Excerpt != "" {
+				e.LastExcerpt = o.Excerpt
+			}
+			e.UpdatedAt = s.now()
+			results[key] = Result{Attempts: len(e.RedSHAs), Escalated: true}
+			continue
+		}
+		// Label absent but the ledger says we escalated AND confirmed the
+		// label: a human took the label off to return the PR to the automated
+		// lane ("Remove the needs-human label after addressing the root
+		// cause"). Honour that — fresh budget, fresh distinct-SHA count —
+		// instead of leaving the ledger's Escalated flag to keep the PR
+		// hands-off forever, which is what happened before.
+		if e != nil && e.Escalated && e.LabelApplied && s.now().Sub(e.LabelAppliedAt) >= LabelUnparkGrace {
+			e.Escalated = false
+			e.LabelApplied = false
+			e.LabelAppliedAt = time.Time{}
+			e.RedSHAs = nil
+			e.ReEngagements = 0
+			e.UpdatedAt = s.now()
+		}
+
+		if o.Pending {
+			// Inconclusive pass: keep the entry exactly as it is. It is
+			// neither a converged loop (which would clear history) nor a new
+			// failed attempt. Report the current state so callers keep
+			// treating an already-escalated PR as hands-off.
+			if e != nil {
+				e.UpdatedAt = s.now()
+				results[key] = Result{
+					Attempts:   len(e.RedSHAs),
+					Escalated:  e.Escalated,
+					Exhausted:  e.ReEngagements >= MaxReEngagements,
+					NeedsLabel: e.Escalated && !e.LabelApplied,
+				}
+			}
+			continue
+		}
 		if !o.Red {
 			// Green: the loop converged — forget the history entirely so a
 			// future regression on the same PR starts a fresh count.
 			delete(s.entries, key)
 			continue
 		}
-		e := s.entries[key]
 		if e == nil {
 			e = &Entry{Machinery: MachineryVersion}
 			s.entries[key] = e
@@ -176,18 +289,18 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		// burned under an older fix-dispatch generation are wiped once, and
 		// the distinct-SHA ledger restarts, so the CURRENT machinery gets its
 		// own budget before a human is paged again. Without the RedSHAs reset
-		// the very next sweep would re-escalate on the old ledger.
+		// the very next sweep would re-escalate on the old ledger. (A PR that
+		// still wears the label was handled above and stays parked: the
+		// forge, not the ledger, is the record of escalation.)
 		if e.Machinery < MachineryVersion {
 			e.Machinery = MachineryVersion
 			e.ReEngagements = 0
 			e.Escalated = false
+			e.LabelApplied = false
 			e.RedSHAs = nil
 		}
 		if o.HeadSHA != "" && !containsSHA(e.RedSHAs, o.HeadSHA) {
-			e.RedSHAs = append(e.RedSHAs, o.HeadSHA)
-			if len(e.RedSHAs) > maxTrackedSHAs {
-				e.RedSHAs = e.RedSHAs[len(e.RedSHAs)-maxTrackedSHAs:]
-			}
+			e.RedSHAs = appendSHA(e.RedSHAs, o.HeadSHA)
 		}
 		// Maintain the zero-API staleness clock: a change of red head SHA means
 		// the branch moved (a fix was pushed, still red) — reset the first-seen
@@ -216,16 +329,31 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			Attempts:    len(e.RedSHAs),
 			Escalated:   e.Escalated,
 			NewlyEscala: !e.Escalated && (len(e.RedSHAs) >= threshold || exhausted),
+			Exhausted:   exhausted && len(e.RedSHAs) < threshold,
+			NeedsLabel:  e.Escalated && !e.LabelApplied,
 		}
 	}
-	// Prune PRs that left the open set (merged or closed).
-	for key := range s.entries {
-		if !seen[key] {
+	// Prune PRs that left the open set (merged or closed) — but only once
+	// they have been gone for PruneAfter, so one pass that failed to list a
+	// repo does not erase the ledger for every PR in it.
+	now := s.now()
+	for key, e := range s.entries {
+		if !seen[key] && now.Sub(e.UpdatedAt) >= PruneAfter {
 			delete(s.entries, key)
 		}
 	}
 	s.saveLocked()
 	return results
+}
+
+// appendSHA appends sha to the distinct red-SHA history, bounded to
+// maxTrackedSHAs (oldest dropped first).
+func appendSHA(shas []string, sha string) []string {
+	shas = append(shas, sha)
+	if len(shas) > maxTrackedSHAs {
+		shas = shas[len(shas)-maxTrackedSHAs:]
+	}
+	return shas
 }
 
 // MarkEscalated records that escalation side effects fired for the PR, so they
@@ -235,7 +363,22 @@ func (s *Store) MarkEscalated(repo string, number int) {
 	defer s.mu.Unlock()
 	if e := s.entries[Key(repo, number)]; e != nil {
 		e.Escalated = true
-		e.UpdatedAt = time.Now().UTC()
+		e.UpdatedAt = s.now()
+	}
+	s.saveLocked()
+}
+
+// MarkLabelApplied records that the needs-human label is confirmed present
+// on the forge for the PR. Call it after a successful AddLabels. From then on
+// a pass that observes the label ABSENT is read as a deliberate human
+// un-park (see Sweep), not as a failed label call to retry.
+func (s *Store) MarkLabelApplied(repo string, number int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.entries[Key(repo, number)]; e != nil {
+		e.LabelApplied = true
+		e.LabelAppliedAt = s.now()
+		e.UpdatedAt = s.now()
 	}
 	s.saveLocked()
 }
@@ -290,6 +433,13 @@ func (s *Store) ObserveRed(obs []Observation) {
 	now := s.now()
 	for _, o := range obs {
 		key := Key(o.Repo, o.Number)
+		if o.Pending {
+			// Inconclusive pass (checks running, or the check fetch failed):
+			// neither red nor green, so the staleness clock keeps whatever
+			// it had. Clearing it here would let a single API error make a
+			// stuck PR look freshly red again on the next pass.
+			continue
+		}
 		if !o.Red {
 			// Green now: drop the staleness/re-engagement record so a future
 			// regression starts a fresh clock. (Attempt history is managed by
@@ -306,7 +456,7 @@ func (s *Store) ObserveRed(obs []Observation) {
 		}
 		e := s.entries[key]
 		if e == nil {
-			e = &Entry{}
+			e = &Entry{Machinery: MachineryVersion}
 			s.entries[key] = e
 		}
 		if o.HeadSHA != e.CurRedSHA {
@@ -354,7 +504,7 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 	key := Key(repo, number)
 	e := s.entries[key]
 	if e == nil {
-		e = &Entry{}
+		e = &Entry{Machinery: MachineryVersion}
 		s.entries[key] = e
 	}
 	// If the tracked SHA differs from the observed head, sync to the observed
@@ -372,6 +522,8 @@ func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
 		e.Machinery = MachineryVersion
 		e.ReEngagements = 0
 		e.Escalated = false
+		e.LabelApplied = false
+		e.LabelAppliedAt = time.Time{}
 		e.RedSHAs = nil
 	}
 	if e.ReEngagements >= MaxReEngagements {
@@ -421,10 +573,18 @@ func containsSHA(shas []string, sha string) bool {
 // CommentBody renders the escalation comment posted on the PR. It leads with
 // the raw CI evidence — the whole point is that a human (or the next agent
 // pass) sees the actual error, not just "CI failed".
-func CommentBody(attempts int, failingChecks []string, excerpt string) string {
+//
+// exhausted selects the wording for the second trigger: the re-engagement
+// budget ran out on a head SHA that never moved (no fix was ever pushed), as
+// opposed to the distinct-SHA threshold ("N fix attempts, still red").
+func CommentBody(attempts int, failingChecks []string, excerpt string, exhausted bool) string {
 	var b strings.Builder
 	b.WriteString("## 🛑 Fix loop escalated — human attention needed\n\n")
-	fmt.Fprintf(&b, "This PR has failed CI on **%d distinct fix attempts** (new commits, still red). ", attempts)
+	if exhausted {
+		fmt.Fprintf(&b, "This PR has stayed red on the same commit through **%d automated fix re-dispatches** with no new commit pushed (%d distinct red head%s seen). ", MaxReEngagements, attempts, plural(attempts))
+	} else {
+		fmt.Fprintf(&b, "This PR has failed CI on **%d distinct fix attempts** (new commits, still red). ", attempts)
+	}
 	b.WriteString("The hive has stopped dispatching further automated fixes for it.\n\n")
 	if len(failingChecks) > 0 {
 		sorted := append([]string(nil), failingChecks...)
@@ -440,6 +600,24 @@ func CommentBody(attempts int, failingChecks []string, excerpt string) string {
 	return b.String()
 }
 
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // NeedsHumanLabel is the label applied to escalated PRs. Kick builders exclude
 // items carrying it from fix dispatch.
 const NeedsHumanLabel = "needs-human"
+
+// HasNeedsHumanLabel reports whether labels (as enumerated from the forge)
+// contains NeedsHumanLabel. Case-insensitive: GitHub label matching is.
+func HasNeedsHumanLabel(labels []string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(l, NeedsHumanLabel) {
+			return true
+		}
+	}
+	return false
+}
