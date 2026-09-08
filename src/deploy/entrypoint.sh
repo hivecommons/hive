@@ -325,12 +325,29 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 #   3. else the legacy "kubestellar-hive <hive-bot@kubestellar.io>" pair, so a
 #      hive that never opted in behaves exactly as before.
 #
-# The email is "<login>@users.noreply.github.com": that is the address GitHub
-# attributes to a bot login, so the commit shows the App's avatar and links to
-# it, and it satisfies rulesets that require attributed changes. (Measured: a
-# commit authored "onboard-ai-hive-bot[bot] <onboard-ai-hive-bot[bot]@users.
-# noreply.github.com>" resolves to author_login onboard-ai-hive-bot[bot]; the
-# legacy pair resolves to nothing.)
+# The email depends on the SHAPE of the login (#6251, #6254):
+#
+#   - A plain login (project.ai_author naming a user) gets
+#     "<login>@users.noreply.github.com", the address GitHub attributes to
+#     that account. It is a syntactically valid address, so DCO accepts it.
+#   - An App bot login ("<slug>[bot]") gets "<slug>@HIVE_GIT_BOT_EMAIL_DOMAIN"
+#     (default hive.kubestellar.io) — the bracket-free form. GitHub's own
+#     address for a bot is "<slug>[bot]@users.noreply.github.com", and that is
+#     exactly what MUST NOT be written here: probot-dco validates the sign-off
+#     email's syntax before it compares it to the author, and "[" "]" in the
+#     local-part fail that check, so every commit authored with the bracketed
+#     address is DCO-red forever — a matching Signed-off-by cannot fix it, a
+#     second human sign-off cannot fix it, and there is no .github/dco.yml to
+#     exempt it (measured on hivecommons/hive#6164: "hive-quality[bot]@users.
+#     noreply.github.com is not a valid email address"). The App still owns the
+#     PR (hive-open-pr) and the push (the credential helper); only the commit
+#     author/sign-off address has to be a real one. This is the same shape the
+#     agents' PRs that pass DCO already carry (quality@hive.kubestellar.io,
+#     sec-check@hive.kubestellar.io), and it is the SAME address git commit -s
+#     writes into the Signed-off-by trailer, so author and sign-off match.
+#
+# HIVE_GIT_BOT_EMAIL_DOMAIN is accepted only as [A-Za-z0-9.-] (it is written
+# to a gitconfig line unquoted); anything else falls back to the default.
 #
 # WHY THIS EXISTS. /etc/gitconfig used to hardcode the public kubestellar-hive
 # identity for every agent on every hive. A self-hosted hive with its own App
@@ -373,7 +390,19 @@ if re.fullmatch(r'[A-Za-z0-9._-]+(\\[bot\\])?', login):
 " "$_hgbi_cfg" 2>/dev/null || true)"
   fi
   if [ -n "$_hgbi_login" ]; then
-    printf '%s\t%s@users.noreply.github.com\n' "$_hgbi_login" "$_hgbi_login"
+    case "$_hgbi_login" in
+      *'[bot]')
+        _hgbi_domain="${HIVE_GIT_BOT_EMAIL_DOMAIN:-hive.kubestellar.io}"
+        if [ -z "$_hgbi_domain" ] \
+           || [ "$(printf '%s' "$_hgbi_domain" | tr -cd 'A-Za-z0-9.-')" != "$_hgbi_domain" ]; then
+          _hgbi_domain="hive.kubestellar.io"
+        fi
+        printf '%s\t%s@%s\n' "$_hgbi_login" "${_hgbi_login%\[bot\]}" "$_hgbi_domain"
+        ;;
+      *)
+        printf '%s\t%s@users.noreply.github.com\n' "$_hgbi_login" "$_hgbi_login"
+        ;;
+    esac
   else
     printf 'kubestellar-hive\thive-bot@kubestellar.io\n'
   fi

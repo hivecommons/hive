@@ -184,17 +184,39 @@ if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' 2>/dev/null; t
     else
       fail "identity: $1" "got '${got_name:-<unset>}' <${got_email:-<unset>}>, want '$3' <$4>"
     fi
+    # #6251: whatever the case, the address git commit -s will write into
+    # Signed-off-by must be one probot-dco's validator accepts. The bracketed
+    # "<slug>[bot]@users.noreply.github.com" is the exact form it rejects as
+    # "not a valid email address", so any "[" is a hard failure here, and the
+    # whole address must be syntactically valid (local@domain.tld).
+    case "$got_email" in
+      *'['*|*']'*)
+        fail "identity: $1 yields a DCO-valid address" \
+             "'$got_email' carries a bracket; probot-dco rejects it as malformed (#6251)"
+        ;;
+      *)
+        if printf '%s' "$got_email" | grep -Eq '^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$'; then
+          pass "identity: $1 yields a DCO-valid address"
+        else
+          fail "identity: $1 yields a DCO-valid address" \
+               "'${got_email:-<unset>}' is not a syntactically valid email address"
+        fi
+        ;;
+    esac
   }
 
   identity_case "project.ai_author wins" \
     $'project:\n  ai_author: onboard-ai-hive-bot[bot]\ngithub:\n  app_slug: other-app\n  app_id: 1\n  installation_id: 2' \
-    "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot[bot]@users.noreply.github.com"
+    "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot@hive.kubestellar.io"
+  identity_case "project.ai_author naming a user keeps the attributable noreply address" \
+    $'project:\n  ai_author: some-maintainer' \
+    "some-maintainer" "some-maintainer@users.noreply.github.com"
   identity_case "usable App derives <slug>[bot]" \
     $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647\n  installation_id: 157135368' \
-    "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot[bot]@users.noreply.github.com"
+    "onboard-ai-hive-bot[bot]" "onboard-ai-hive-bot@hive.kubestellar.io"
   identity_case "usable App without a slug is the public App bot" \
     $'github:\n  app_id: 4744647\n  installation_id: 157135368' \
-    "kubestellar-hive[bot]" "kubestellar-hive[bot]@users.noreply.github.com"
+    "kubestellar-hive[bot]" "kubestellar-hive@hive.kubestellar.io"
   identity_case "App configured but not installed keeps the legacy pair" \
     $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647' \
     "kubestellar-hive" "hive-bot@kubestellar.io"
@@ -204,6 +226,25 @@ if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' 2>/dev/null; t
   identity_case "app_authored_prs: false opts out" \
     $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647\n  installation_id: 5\n  app_authored_prs: false' \
     "kubestellar-hive" "hive-bot@kubestellar.io"
+  # The bot address domain is operator-configurable, but it lands in the
+  # gitconfig unquoted, so only a plain hostname is honoured.
+  domain_case() {
+    # $1 = case name, $2 = HIVE_GIT_BOT_EMAIL_DOMAIN value, $3 = want user.email
+    local cfg="$TMP/domain-$RANDOM.yaml" got
+    printf '%s\n' $'github:\n  app_slug: onboard-ai-hive-bot\n  app_id: 4744647\n  installation_id: 157135368' > "$cfg"
+    got="$(HIVE_CONFIG="$cfg" HIVE_GIT_BOT_EMAIL_DOMAIN="$2" bash -c ". '$TMP/funcs.sh'; hive_git_bot_identity" 2>/dev/null)"
+    got="${got#*$'\t'}"
+    if [ "$got" = "$3" ]; then
+      pass "identity domain: $1 → <$3>"
+    else
+      fail "identity domain: $1" "got <${got:-<unset>}>, want <$3>"
+    fi
+  }
+  domain_case "HIVE_GIT_BOT_EMAIL_DOMAIN overrides the bot address domain" \
+    "bots.example.org" "onboard-ai-hive-bot@bots.example.org"
+  domain_case "an unsafe HIVE_GIT_BOT_EMAIL_DOMAIN falls back to the default" \
+    $'evil.example\n[core]\n\tsshCommand = evil' "onboard-ai-hive-bot@hive.kubestellar.io"
+
   # A login that could break out of the [user] section must never reach the
   # file: every git invocation in the container reads this config.
   identity_case "unsafe ai_author falls back rather than being written" \
