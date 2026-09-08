@@ -172,7 +172,6 @@ the full example.
 | `Registry.Load(dir, logger)` | reads `*.md` from a directory, returns the count loaded |
 | `Registry.Add(skill)` | adds one skill |
 | `Registry.Get(name)` | looks up the newest loaded version for a name |
-| `Registry.Resolve(name, constraint)` | looks up a version by exact, wildcard, caret, or `>=` constraint |
 | `Registry.List()` | lists loaded skills for catalog UX |
 | `Registry.Search(term)` | searches names, descriptions, and tags |
 | `LoadAgentSpec(path)` | loads a BYO-agent YAML file or spec directory |

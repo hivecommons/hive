@@ -235,38 +235,6 @@ func TestGet_HighestVersion(t *testing.T) {
 	}
 }
 
-func TestResolveConstraintHitAndMiss(t *testing.T) {
-	r := NewRegistry()
-	_ = r.Add(Skill{Name: "a", Version: "1.0.0"})
-	_ = r.Add(Skill{Name: "a", Version: "1.5.0"})
-	_ = r.Add(Skill{Name: "a", Version: "2.1.0"})
-
-	cases := []struct {
-		name       string
-		constraint string
-		wantVer    string
-		wantOK     bool
-	}{
-		{"empty", "", "2.1.0", true},
-		{"wildcard", "*", "2.1.0", true},
-		{"exact hit", "1.5.0", "1.5.0", true},
-		{"exact miss", "9.9.9", "", false},
-		{"caret", "^1.0.0", "1.5.0", true},
-		{"gte", ">=1.5.0", "2.1.0", true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := r.Resolve("a", tc.constraint)
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
-			}
-			if ok && got.Version != tc.wantVer {
-				t.Errorf("version = %q, want %q", got.Version, tc.wantVer)
-			}
-		})
-	}
-}
-
 func TestListAndSearch(t *testing.T) {
 	r := NewRegistry()
 	_ = r.Add(Skill{Name: "go-testing", Version: "1.0.0", Description: "old", Tags: []string{"go"}})

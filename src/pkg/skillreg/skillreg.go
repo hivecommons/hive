@@ -277,56 +277,6 @@ func (r *Registry) Get(name string) (Skill, bool) {
 	return r.highestLocked(name)
 }
 
-// Resolve selects the skill named name whose version satisfies constraint. An
-// empty constraint or "*" selects the highest version. A "^X.Y.Z" constraint
-// selects the highest version sharing X's major component. A ">=X.Y.Z"
-// constraint selects the highest version at or above X.Y.Z. Any other
-// constraint is treated as an exact version match.
-func (r *Registry) Resolve(name, constraint string) (Skill, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	constraint = strings.TrimSpace(constraint)
-	if constraint == "" || constraint == "*" {
-		return r.highestLocked(name)
-	}
-
-	versions := r.byName[name]
-	if len(versions) == 0 {
-		return Skill{}, false
-	}
-
-	var best Skill
-	found := false
-	for _, s := range versions {
-		if !satisfies(s.Version, constraint) {
-			continue
-		}
-		if !found || compareVersions(s.Version, best.Version) > 0 {
-			best = s
-			found = true
-		}
-	}
-	return best, found
-}
-
-func satisfies(version, constraint string) bool {
-	switch {
-	case strings.HasPrefix(constraint, "^"):
-		want := strings.TrimSpace(strings.TrimPrefix(constraint, "^"))
-		return sameMajor(version, want) && compareVersions(version, want) >= 0
-	case strings.HasPrefix(constraint, ">="):
-		want := strings.TrimSpace(strings.TrimPrefix(constraint, ">="))
-		return compareVersions(version, want) >= 0
-	default:
-		return compareVersions(version, constraint) == 0
-	}
-}
-
-func sameMajor(a, b string) bool {
-	return versionParts(a)[0] == versionParts(b)[0]
-}
-
 // List returns every skill (all versions) sorted by name then descending
 // version, so the newest version of each name comes first.
 func (r *Registry) List() []Skill {

@@ -273,12 +273,12 @@ Hive is a Go binary with structured packages under `src/pkg/`. The knowledge sys
 src/pkg/knowledge/
   client.go          — llm-wiki MCP HTTP client (query, search, ingest, lint, spaces)
   primer.go          — Selective fact retrieval by file paths, keywords, work type
-  curator.go         — Extract facts from merged PRs, ingest into wiki
+  bead_synthesizer.go — Synthesize facts from beads (replaced curator.go's merged-PR mining, #5786)
   promote.go         — Promote facts between layers (project→org, etc.)
   types.go           — Fact, Layer, WikiConfig, ConfidenceScore, Precedence types
   client_test.go
   primer_test.go
-  curator_test.go
+  bead_synthesizer_test.go
   promote_test.go
 ```
 
@@ -373,11 +373,10 @@ knowledge:
    - Merges results with precedence (personal > project > org > community)
    - Filters to top N facts by priority order
 
-4. **`src/pkg/knowledge/curator.go`** — Knowledge extraction
-   - `Extract(prs []PullRequest) []Fact`
-   - `Ingest(facts []Fact, targetLayer Layer)`
-   - Parses PR diffs, review comments, CI failures
-   - Calls llm-wiki `wiki_ingest` to add facts
+4. **`src/pkg/knowledge/bead_synthesizer.go`** — Knowledge extraction
+   - Synthesizes facts from beads and ingests them via llm-wiki `wiki_ingest`
+   - The original `curator.go` merged-PR comment-mining pipeline was never
+     wired to a production caller and was removed in #5786
 
 5. **`src/pkg/config/`** — Add `Knowledge` field to config struct, parse from `hive.yaml`
 
