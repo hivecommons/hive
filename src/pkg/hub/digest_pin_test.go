@@ -132,6 +132,20 @@ func postPin(t *testing.T, s *HubServer, user, body string) *httptest.ResponseRe
 	return rec
 }
 
+// postPinHeartbeat posts a beat for the pin hive with the per-hive bearer the
+// handler requires whenever the hub carries a secret. newPinHub sets hubSecret
+// (the owner-session cookie needs it), so unlike newHeartbeatHub's unauthenticated
+// beats this fixture must present the credential a real spoke would.
+func postPinHeartbeat(t *testing.T, s *HubServer, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", heartbeatBearer(testHubSecret, testPinHiveID))
+	rec := httptest.NewRecorder()
+	s.handleHeartbeat(rec, req)
+	return rec
+}
+
 func postUnpin(t *testing.T, s *HubServer, user, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -364,7 +378,7 @@ func TestHeartbeatReArmLeavesPinnedHiveAlone(t *testing.T) {
 		"image_ref":"` + pinnedImage + `",
 		"git_branch":"v4","git_hash":"1111111","upgrading":false
 	}`
-	rec := postHeartbeat(t, s, beat)
+	rec := postPinHeartbeat(t, s, beat)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("heartbeat status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -405,7 +419,7 @@ func TestHeartbeatReArmLeavesPinnedHiveAlone(t *testing.T) {
 	if err := saveSaaSHive(h); err != nil {
 		t.Fatal(err)
 	}
-	rec = postHeartbeat(t, s, beat)
+	rec = postPinHeartbeat(t, s, beat)
 	if !strings.Contains(rec.Body.String(), `"switch_to_tag":"stable"`) {
 		t.Errorf("positive control: unpinned hive was NOT re-armed, got %s", rec.Body.String())
 	}
@@ -441,7 +455,7 @@ func TestUnpinResumesTracking(t *testing.T) {
 
 	// The spoke has not rolled yet and still reports the digest: with the pin
 	// gone, the durable re-arm heals it onto the channel.
-	rec = postHeartbeat(t, s, `{
+	rec = postPinHeartbeat(t, s, `{
 		"hive_id":"`+testPinHiveID+`","primary_repo":"r",
 		"image_ref":"ghcr.io/hivecommons/hive@`+testPinDigest+`",
 		"git_branch":"v4","git_hash":"1111111","upgrading":false

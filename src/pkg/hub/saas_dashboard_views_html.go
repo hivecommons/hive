@@ -3787,11 +3787,11 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
        on the pin and the timeline so a PINNED pill days later explains
        itself. */
     async function pinHiveDigest(id, name) {
-      var target = window.prompt('Pin ' + name + ' to which build?\nEnter a short git SHA (e.g. abc1234) or a sha256: digest.\n\nChannel tracking and auto-upgrade stop until the pin is lifted.');
+      /* hivePrompt resolves to the trimmed value, or null on cancel/Escape. */
+      var target = await hivePrompt('Pin ' + name + ' to which build? Enter a short git SHA (e.g. abc1234) or a sha256: digest. Channel tracking and auto-upgrade stop until the pin is lifted.', '', {ok: 'Next'});
       if (target === null) return;
-      target = target.trim();
       if (!target) { hiveToast('A SHA or digest is required', 'error'); return; }
-      var reason = window.prompt('Reason for pinning ' + name + ' (recorded on the hive):', 'rollback');
+      var reason = await hivePrompt('Reason for pinning ' + name + ' (recorded on the hive)', 'rollback', {ok: 'Pin'});
       if (reason === null) return;
       var body = target.indexOf('sha256:') === 0 || target.length === 64 ? {digest: target, reason: reason.trim()} : {sha: target, reason: reason.trim()};
       try {
@@ -3807,7 +3807,7 @@ const dashboardHTMLViewScripts = `    var _expandedPendingRows = new Set();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
     async function unpinHiveDigest(id, name) {
-      if (!window.confirm('Unpin ' + name + '?\n\nThe hive returns to its channel or branch tag and resumes upgrades.')) return;
+      if (!await hiveConfirm('Unpin ' + name + '? The hive returns to its channel or branch tag and resumes upgrades.')) return;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/unpin-digest', {
           method: 'POST',
