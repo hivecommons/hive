@@ -512,6 +512,7 @@ type FrontendAgent struct {
 	AuthKnown        bool   `json:"authKnown"`
 	CLI              string `json:"cli"`
 	Model            string `json:"model"`
+	ReasoningEffort  string `json:"reasoningEffort,omitempty"`
 	Cadence          string `json:"cadence"`
 	Doing            string `json:"doing"`
 	PinnedCli        bool   `json:"pinnedCli"`

@@ -4583,6 +4583,7 @@
             <option value="" disabled${a.model ? '' : ' selected'}>model ▾</option>
             ${modelOptionsHtml(a.cli, a.model)}
           </select>
+          ${effortSelectHtml(a)}
         </div>
         <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name)}
@@ -6744,6 +6745,7 @@
               <option value="" disabled${a.model ? '' : ' selected'}>model ▾</option>
               ${modelOptionsHtml(a.cli, a.model)}
             </select>
+            ${effortSelectHtml(a)}
           </div>
           </div>
         </div>`;
@@ -8279,6 +8281,29 @@
     const AUTO_MODEL_SENTINELS = { copilot: ['auto'], bob: ['auto'] };
     function isAutoModelSentinel(backend, model) {
       return (AUTO_MODEL_SENTINELS[backend] || []).includes(model);
+    }
+    // Backends with a reasoning-effort control and the values each accepts.
+    // Mirrors config.ReasoningEffortsByBackend server-side: codex is launched
+    // with -c model_reasoning_effort="<v>", agy with --effort <v>. Backends
+    // absent here have no effort flag, so they get no dropdown at all.
+    const BACKEND_REASONING_EFFORTS = {
+      codex: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+      agy: ['low', 'medium', 'high'],
+    };
+    // effortSelectHtml renders the reasoning-effort dropdown beside the model
+    // dropdown, only for backends that have an effort control. "default"
+    // clears the stored effort back to the backend's own default (the server
+    // treats the path value "default" as clear — a path segment cannot be
+    // empty).
+    function effortSelectHtml(a) {
+      const efforts = BACKEND_REASONING_EFFORTS[a.cli] || [];
+      if (!efforts.length) return '';
+      const cur = a.reasoningEffort || '';
+      return `<select class="btn backend-select" data-change-action="switchEffort" data-agent="${esc(a.name)}" title="Set this agent's reasoning effort (restarts the session). 'default' uses the backend's own default effort.">
+            <option value="" disabled selected>${cur ? esc(cur) : 'effort'} ▾</option>
+            <option value="default"${cur ? '' : ' disabled'}>default</option>
+            ${efforts.map(e => `<option value="${e}"${e === cur ? ' disabled' : ''}>${e}</option>`).join('')}
+          </select>`;
     }
     // Backends whose model list is a single fixed option, so there is nothing
     // for a user to choose and nothing meaningful to store per agent.
@@ -14764,6 +14789,7 @@ function burnAreaChart() {
       switch (action) {
         case 'switchCli': switchCli(agent, el.value); el.selectedIndex = 0; break;
         case 'switchModel': switchModel(agent, el.value); el.selectedIndex = 0; break;
+        case 'switchEffort': switchEffort(agent, el.value); el.selectedIndex = 0; break;
         default: hiveDispatchAction('change-action', e); break;
       }
     });
@@ -15495,6 +15521,25 @@ function burnAreaChart() {
       ocRenderAgentDetail();
       const lastData = window._lastStatus || {};
       renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
+    // switchEffort mirrors switchModel for the reasoning-effort dropdown:
+    // persist via POST /api/effort (which restarts the session — the effort
+    // only exists on the launch command line), update the local copy, and
+    // confirm against the server. "default" clears the stored effort.
+    async function switchEffort(agent, effort) {
+      if (!effort) return;
+      const toast = showToast(`Switching ${agent} reasoning effort → ${effort} (restarting session)...`, 'info', true);
+      const res = await fetch(`/api/effort/${agent}/${encodeURIComponent(effort)}`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.ok) { dismissToast(toast, `Effort switch failed: ${data.error || 'unknown'}`, 'error'); return; }
+      dismissToast(toast, `${agent} reasoning effort → ${effort} (session restarted)`, 'success');
+      if (window._lastAgents) {
+        const a = window._lastAgents.find(x => x.name === agent);
+        if (a) { a.reasoningEffort = effort === 'default' ? '' : effort; renderAgents(window._lastAgents); }
+      }
+      ocRenderAgentDetail();
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 

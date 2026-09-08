@@ -92,6 +92,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/kick/{agent}/status", s.handleKickStatus)
 	s.mux.HandleFunc("POST /api/switch/{agent}/{backend}", s.handleSwitch)
 	s.mux.HandleFunc("POST /api/model/{agent}/{model}", s.handleModelSet)
+	s.mux.HandleFunc("POST /api/effort/{agent}/{effort}", s.handleEffortSet)
 	s.mux.HandleFunc("POST /api/pause/{agent}", s.handlePause)
 	s.mux.HandleFunc("POST /api/resume/{agent}", s.handleResume)
 	s.mux.HandleFunc("GET /api/agent-state/{agent}", s.handleAgentState)
@@ -1824,6 +1825,69 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "model_set", "agent": name, "model": model})
+}
+
+// handleEffortSet sets an agent's reasoning effort from the grid dropdown and
+// restarts the session so it takes effect — the effort exists only on the
+// launch command line (codex -c model_reasoning_effort, agy --effort), so a
+// running CLI never picks it up in place. The {effort} path value "default"
+// clears the field back to the backend's own default: a path segment cannot
+// be empty, and empty IS the meaningful cleared value.
+func (s *Server) handleEffortSet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	name := s.resolveAgentParam(r.PathValue("agent"))
+	effort := sanitizeString(r.PathValue("effort"))
+	if effort == "default" {
+		effort = ""
+	}
+
+	agentCfg, ok := s.deps.Config.Agents[name]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	// Validate against the backend the agent actually launches with —
+	// including a runtime backend override — for the same reason
+	// handleModelSet validates the model: silently accepting an unusable
+	// value and falling back at launch makes the choice appear to "revert".
+	backend := agentCfg.Backend
+	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && proc.BackendOverride != "" {
+		backend = proc.BackendOverride
+	}
+	if err := config.ValidateReasoningEffort(backend, effort); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	agentCfg.ReasoningEffort = effort
+	s.deps.Config.Agents[name] = agentCfg
+
+	// Sync into the agent process and persist, mirroring handleAgentConfigModels.
+	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after effort update", "agent", name, "error", err)
+	}
+	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
+			s.logger.Error("failed to persist agent overlay after effort update", "agent", name, "error", err)
+		}
+	}
+
+	s.deps.Logger.Info("audit: reasoning effort set", "agent", name, "effort", effort, "trigger", "dashboard-api")
+	s.auditFromRequest(r, "set_reasoning_effort", auditDetail("reasoning_effort", effort), name)
+
+	// Restart the agent session so the new effort takes effect immediately.
+	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+		s.deps.Logger.Warn("restart after effort switch failed", "agent", name, "error", err)
+	}
+
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "effort_set", "agent": name, "reasoning_effort": effort})
 }
 
 // pauseStateLabel names the authoritative pause-dimension state reported by
@@ -3869,6 +3933,11 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Backend string `json:"backend"`
 		Model   string `json:"model"`
+		// A pointer so "clear the effort" (explicit "") and "leave it
+		// unchanged" (field absent) stay distinguishable — Backend/Model
+		// above treat "" as unchanged, but empty is a meaningful effort
+		// value (the backend's own default).
+		ReasoningEffort *string `json:"reasoning_effort"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -3900,6 +3969,18 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 	}
+	if body.ReasoningEffort != nil {
+		effort := sanitizeString(*body.ReasoningEffort)
+		// Same set-time rejection rationale as ValidateBackend above: an
+		// unsupported effort persisted happily would surface hours later as
+		// a broken launch command. Validated against the backend the agent
+		// will actually launch with, including one set in this same request.
+		if err := config.ValidateReasoningEffort(agentCfg.Backend, effort); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agentCfg.ReasoningEffort = effort
+	}
 	s.deps.Config.Agents[name] = agentCfg
 
 	// Sync updated backend/model into the agent process so status builders
@@ -3916,7 +3997,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
 		}
 	}
-	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model), name)
+	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }

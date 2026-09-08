@@ -548,3 +548,5 @@ always resolved server-side from the validated token.
 | `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1558` |
 | `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1575` |
 | `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1580` |
+| `GET` | `/api/hub/delegation-keys` | Public | Delegation-chain verification material (Ed25519 public keys + generation numbers, JWKS-equivalent); deliberately unauthenticated so a tenant or their auditor can verify a chain without a hive credential - see [delegation chain](delegation-chain.md) | `pkg/hub/server.go:1544` |
+| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1581` |

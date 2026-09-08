@@ -799,16 +799,57 @@ var ValidCavemanModes = map[string]bool{
 // ValidateCavemanMode reports whether v is an accepted caveman_mode value.
 func ValidateCavemanMode(v string) bool { return ValidCavemanModes[v] }
 
+// ReasoningEffortsByBackend lists the reasoning-effort values each CLI
+// backend accepts, for the backends that expose an effort control at all:
+// codex takes `-c model_reasoning_effort="<v>"` and agy takes `--effort <v>`.
+// Backends absent here have no effort flag; a configured effort is ignored
+// for them rather than breaking their launch command.
+var ReasoningEffortsByBackend = map[string][]string{
+	"codex": {"minimal", "low", "medium", "high", "xhigh"},
+	"agy":   {"low", "medium", "high"},
+}
+
+// ValidateReasoningEffort reports whether effort is settable for backend:
+// empty is always valid (the backend's own default), otherwise the backend
+// must have an effort control and the value must be one it accepts. Rejecting
+// at set time keeps the failure at the dashboard, not hours later on the kick
+// path — the same rationale as ValidateBackend.
+func ValidateReasoningEffort(backend, effort string) error {
+	if effort == "" {
+		return nil
+	}
+	accepted, ok := ReasoningEffortsByBackend[backend]
+	if !ok {
+		return fmt.Errorf("backend %s has no reasoning-effort control", backend)
+	}
+	for _, v := range accepted {
+		if v == effort {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid reasoning effort %q for backend %s (accepted: %s)",
+		effort, backend, strings.Join(accepted, ", "))
+}
+
 type AgentConfig struct {
-	ID           string `yaml:"id" json:"id,omitempty"`
-	Backend      string `yaml:"backend" json:"backend,omitempty"`
-	Model        string `yaml:"model" json:"model,omitempty"`
-	BeadsDir     string `yaml:"beads_dir" json:"beads_dir,omitempty"`
-	Enabled      bool   `yaml:"enabled" json:"enabled,omitempty"`
-	Replicas     int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	ReplicaOf    string `yaml:"-" json:"replicaOf,omitempty"`
-	ReplicaIndex int    `yaml:"-" json:"replicaIndex,omitempty"`
-	ReplicaCount int    `yaml:"-" json:"replicaCount,omitempty"`
+	ID      string `yaml:"id" json:"id,omitempty"`
+	Backend string `yaml:"backend" json:"backend,omitempty"`
+	Model   string `yaml:"model" json:"model,omitempty"`
+	// ReasoningEffort pins the reasoning effort the agent's CLI is launched
+	// with, for backends that expose one (see ReasoningEffortsByBackend):
+	// codex is passed `-c model_reasoning_effort="<v>"`, agy `--effort <v>`.
+	// Empty means the backend's own default. Backends with no effort control
+	// ignore it. The scripted launch paths (bin/agent-launch.sh, the
+	// contributor relay) already honor the same choice via
+	// AGENT_REASONING_EFFORT; this field is the in-config analogue for
+	// manager-launched agents.
+	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	BeadsDir        string `yaml:"beads_dir" json:"beads_dir,omitempty"`
+	Enabled         bool   `yaml:"enabled" json:"enabled,omitempty"`
+	Replicas        int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	ReplicaOf       string `yaml:"-" json:"replicaOf,omitempty"`
+	ReplicaIndex    int    `yaml:"-" json:"replicaIndex,omitempty"`
+	ReplicaCount    int    `yaml:"-" json:"replicaCount,omitempty"`
 	// Paused persists an operator pause across restarts/upgrades. Without
 	// this, every pod restart rebuilt agents un-paused (Go zero value), so
 	// an operator pause was silently undone on the next upgrade.

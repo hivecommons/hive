@@ -29,11 +29,11 @@ import (
 // with no ToolsConfig: normalize the configured model for the backend, then
 // hand it to backendLaunchCmd. Keeping the normalization step means the test
 // still covers the model plumbing, not just the fmt.Sprintf.
-func agyLaunchCmd(t *testing.T, model string) string {
+func agyLaunchCmd(t *testing.T, model, effort string) string {
 	t.Helper()
 	const backend = "agy"
 	isInference := IsInferenceBackend(backend)
-	return backendLaunchCmd("agy", normalizeModelNameForBackend(model, backend, isInference), backend, isInference)
+	return backendLaunchCmd("agy", normalizeModelNameForBackend(model, backend, isInference), backend, isInference, effort)
 }
 
 // TestStart_AgyLaunchCommandLine asserts the command line agy is launched with
@@ -41,7 +41,7 @@ func agyLaunchCmd(t *testing.T, model string) string {
 func TestStart_AgyLaunchCommandLine(t *testing.T) {
 	// "gemini-pro" survives normalizeModelName unchanged (no trailing digit
 	// segment), so the assertion below sees the configured model verbatim.
-	cmd := agyLaunchCmd(t, "gemini-pro")
+	cmd := agyLaunchCmd(t, "gemini-pro", "")
 
 	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Errorf("agy launched without --dangerously-skip-permissions — it will block on a per-tool approval prompt no one answers; cmd: %q", cmd)
@@ -56,12 +56,25 @@ func TestStart_AgyLaunchCommandLine(t *testing.T) {
 // model configured, agy still gets the bypass flag, and it must NOT be given a
 // bare --model/--effort pair built from an empty model.
 func TestAgyLaunchCommandLine_NoModel(t *testing.T) {
-	cmd := agyLaunchCmd(t, "")
+	cmd := agyLaunchCmd(t, "", "")
 
 	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Errorf("agy must get --dangerously-skip-permissions even with no model configured; cmd: %q", cmd)
 	}
 	if strings.Contains(cmd, "--model") || strings.Contains(cmd, "--effort") {
 		t.Errorf("agy with no configured model must not be passed --model/--effort; cmd: %q", cmd)
+	}
+}
+
+// TestAgyLaunchCommandLine_ConfiguredEffort pins the per-agent
+// reasoning_effort plumbing: an effort agy accepts replaces agyDefaultEffort,
+// and one agy rejects (codex's wider vocabulary) falls back to the default
+// rather than making agy ignore the model outright.
+func TestAgyLaunchCommandLine_ConfiguredEffort(t *testing.T) {
+	if cmd := agyLaunchCmd(t, "gemini-pro", "high"); !strings.Contains(cmd, "--model gemini-pro --effort high") {
+		t.Errorf("configured effort 'high' must reach agy's --effort; cmd: %q", cmd)
+	}
+	if cmd := agyLaunchCmd(t, "gemini-pro", "xhigh"); !strings.Contains(cmd, "--model gemini-pro --effort "+agyDefaultEffort) {
+		t.Errorf("effort agy rejects must fall back to --effort %s; cmd: %q", agyDefaultEffort, cmd)
 	}
 }

@@ -384,7 +384,7 @@ func TestNormalizeModelNameSkipsBob(t *testing.T) {
 // switch entirely and would otherwise fall to the default branch.
 func TestToolRulesToLaunchCmdBobHasNoModel(t *testing.T) {
 	tools := &config.ToolsConfig{}
-	got := toolRulesToLaunchCmd("bob", "claude-sonnet-4.6", bobBackend, tools, false)
+	got := toolRulesToLaunchCmd("bob", "claude-sonnet-4.6", bobBackend, tools, false, "")
 	if strings.Contains(got, "--model") {
 		t.Errorf("toolRulesToLaunchCmd(bob) = %q must not contain --model", got)
 	}
@@ -394,7 +394,7 @@ func TestToolRulesToLaunchCmdBobHasNoModel(t *testing.T) {
 		}
 	}
 	// Non-bob backends must still receive their model.
-	if c := toolRulesToLaunchCmd("copilot", "gpt-5", "copilot", tools, false); !strings.Contains(c, "--model gpt-5") {
+	if c := toolRulesToLaunchCmd("copilot", "gpt-5", "copilot", tools, false, ""); !strings.Contains(c, "--model gpt-5") {
 		t.Errorf("toolRulesToLaunchCmd(copilot) = %q, want it to contain --model gpt-5", c)
 	}
 }

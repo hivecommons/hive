@@ -1851,7 +1851,7 @@ func main() {
 					// Same resolver the Manager uses, not a second copy of the
 					// rule: a hardcoded default here would drift silently the
 					// moment agy's default effort changed.
-					effort = agent.ResolveReasoningEffort(backend, model)
+					effort = agent.ResolveReasoningEffort(backend, model, ac.ReasoningEffort)
 				}
 			}
 			tool, toolVersion := github.ResolveToolVersion(backend)

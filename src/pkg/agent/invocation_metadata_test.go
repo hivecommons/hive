@@ -95,23 +95,35 @@ func TestInvocationMetadataUnknownAgent(t *testing.T) {
 // bodies would have kept reporting an effort agy was no longer launched with.
 func TestResolveReasoningEffort(t *testing.T) {
 	cases := []struct {
-		backend, model, want string
+		backend, model, configured, want string
 	}{
-		// agy REQUIRES --effort whenever --model is given.
-		{"agy", "gemini-3.7-flash", agyDefaultEffort},
+		// agy REQUIRES --effort whenever --model is given; with no configured
+		// effort it launches at agyDefaultEffort.
+		{"agy", "gemini-3.7-flash", "", agyDefaultEffort},
+		// A configured effort agy accepts is the one agy is launched with.
+		{"agy", "gemini-3.7-flash", "high", "high"},
+		// An effort agy rejects (codex vocabulary) falls back to the default —
+		// reporting it would advertise an effort agy never applied.
+		{"agy", "gemini-3.7-flash", "xhigh", agyDefaultEffort},
 		// No model means agy is given no --effort at all, so claiming one
 		// would advertise an effort agy never applied.
-		{"agy", "", ""},
+		{"agy", "", "", ""},
+		{"agy", "", "high", ""},
+		// codex is launched with -c model_reasoning_effort only when an effort
+		// is configured; the configured value is the launch-time truth.
+		{"codex", "gpt-5.6-terra", "", ""},
+		{"codex", "gpt-5.6-terra", "xhigh", "xhigh"},
+		{"codex", "", "high", "high"},
 		// Every other backend takes effort from its own config, which the hive
 		// does not resolve — "" is the honest answer, and an omitted field.
-		{"codex", "gpt-5.6-terra", ""},
-		{"claude", "claude-sonnet-5", ""},
-		{"bob", "", ""},
-		{"", "", ""},
+		{"claude", "claude-sonnet-5", "", ""},
+		{"claude", "claude-sonnet-5", "high", ""},
+		{"bob", "", "", ""},
+		{"", "", "", ""},
 	}
 	for _, c := range cases {
-		if got := ResolveReasoningEffort(c.backend, c.model); got != c.want {
-			t.Errorf("ResolveReasoningEffort(%q, %q) = %q, want %q", c.backend, c.model, got, c.want)
+		if got := ResolveReasoningEffort(c.backend, c.model, c.configured); got != c.want {
+			t.Errorf("ResolveReasoningEffort(%q, %q, %q) = %q, want %q", c.backend, c.model, c.configured, got, c.want)
 		}
 	}
 
