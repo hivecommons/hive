@@ -242,12 +242,8 @@ func (s *Scheduler) loadNamedTemplate(templateName string) string {
 	return ""
 }
 
-// substituteTemplate replaces ${VAR} placeholders in a prompt template.
-func (s *Scheduler) substituteTemplate(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue) string {
-	msg, _ := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
-	return msg
-}
-
+// substituteTemplateWithPolicy replaces ${VAR} placeholders in a prompt
+// template, reporting whether any substituted value tripped fail-closed policy.
 func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue) (string, bool) {
 	return s.substituteTemplateWithVars(template, actionable, agentName, issues, nil)
 }
@@ -392,11 +388,6 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	return s.registry().Expand(context.Background(), template, resolve.ScopeTemplate, rt), false
 }
 
-func (s *Scheduler) formatIssueList(issues []github.Issue) string {
-	out, _ := s.formatIssueListWithPolicy(issues)
-	return out
-}
-
 // issueFilterNotice renders the operator's project.issue_filter as prompt text,
 // or "" when no filter is configured. The filter is ENFORCED upstream at
 // enumeration (github.Client.fetchIssues) — filtered issues never reach any
@@ -451,11 +442,6 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		shown++
 	}
 	return b.String(), failClosed
-}
-
-func (s *Scheduler) formatPRList(actionable *github.ActionableResult) string {
-	out, _ := s.formatPRListWithPolicy(actionable)
-	return out
 }
 
 func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) (string, bool) {

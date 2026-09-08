@@ -10,12 +10,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// formatIssueList
+// formatIssueListWithPolicy
 // ---------------------------------------------------------------------------
 
 func TestFormatIssueList_Empty(t *testing.T) {
 	s := newScheduler()
-	result := s.formatIssueList(nil)
+	result, _ := s.formatIssueListWithPolicy(nil)
 	if result != "(none)" {
 		t.Errorf("got %q, want (none)", result)
 	}
@@ -26,7 +26,7 @@ func TestFormatIssueList_SingleIssue(t *testing.T) {
 	issues := []github.Issue{
 		{Repo: "repo1", Number: 42, Title: "fix bug", AgeMinutes: 15, Labels: []string{"kind/bug"}},
 	}
-	result := s.formatIssueList(issues)
+	result, _ := s.formatIssueListWithPolicy(issues)
 	if !strings.Contains(result, "15m") {
 		t.Errorf("expected age in output: %s", result)
 	}
@@ -44,7 +44,7 @@ func TestFormatIssueList_TruncatesTitle(t *testing.T) {
 	issues := []github.Issue{
 		{Repo: "repo1", Number: 1, Title: longTitle, AgeMinutes: 5, Labels: []string{"test"}},
 	}
-	result := s.formatIssueList(issues)
+	result, _ := s.formatIssueListWithPolicy(issues)
 	// The truncated title should be exactly 60 chars
 	if strings.Contains(result, longTitle) {
 		t.Error("expected title to be truncated")
@@ -58,7 +58,7 @@ func TestFormatIssueList_MaxIssues(t *testing.T) {
 	for i := range issues {
 		issues[i] = github.Issue{Repo: "r", Number: i + 1, Title: "issue", Labels: []string{}}
 	}
-	result := s.formatIssueList(issues)
+	result, _ := s.formatIssueListWithPolicy(issues)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) > maxIssuesPerKick {
 		t.Errorf("expected at most %d lines, got %d", maxIssuesPerKick, len(lines))
@@ -66,13 +66,13 @@ func TestFormatIssueList_MaxIssues(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// formatPRList
+// formatPRListWithPolicy
 // ---------------------------------------------------------------------------
 
 func TestFormatPRList_Empty(t *testing.T) {
 	s := newScheduler()
 	actionable := &github.ActionableResult{}
-	result := s.formatPRList(actionable)
+	result, _ := s.formatPRListWithPolicy(actionable)
 	if result != "(none)" {
 		t.Errorf("got %q, want (none)", result)
 	}
@@ -88,7 +88,7 @@ func TestFormatPRList_SinglePR(t *testing.T) {
 			},
 		},
 	}
-	result := s.formatPRList(actionable)
+	result, _ := s.formatPRListWithPolicy(actionable)
 	if !strings.Contains(result, "repo1#99") {
 		t.Errorf("expected repo#number in output: %s", result)
 	}
@@ -108,7 +108,7 @@ func TestFormatPRList_TruncatesTitle(t *testing.T) {
 			},
 		},
 	}
-	result := s.formatPRList(actionable)
+	result, _ := s.formatPRListWithPolicy(actionable)
 	if strings.Contains(result, longTitle) {
 		t.Error("expected title to be truncated at 70 chars")
 	}
@@ -122,7 +122,7 @@ func TestFormatMergeEligibleDataShowsQueuedMarker(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// substituteTemplate
+// substituteTemplateWithPolicy
 // ---------------------------------------------------------------------------
 
 func TestSubstituteTemplate_BasicVars(t *testing.T) {
@@ -144,7 +144,7 @@ func TestSubstituteTemplate_BasicVars(t *testing.T) {
 	}
 
 	template := "Agent: ${AGENT_NAME}, Issues: ${QUEUE_ISSUES}, PRs: ${QUEUE_PRS}, Hold: ${QUEUE_HOLD}, SLA: ${SLA_VIOLATIONS}"
-	result := s.substituteTemplate(template, actionable, "scanner", nil)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "scanner", nil)
 
 	if !strings.Contains(result, "Agent: scanner") {
 		t.Errorf("expected agent name substitution: %s", result)
@@ -177,7 +177,7 @@ func TestSubstituteTemplate_ProjectVars(t *testing.T) {
 
 	actionable := &github.ActionableResult{}
 	template := "Org: ${PROJECT_ORG}, Name: ${PROJECT_NAME}, Repo: ${PROJECT_PRIMARY_REPO}, Author: ${PROJECT_AI_AUTHOR}, Repos: ${PROJECT_REPOS_LIST}"
-	result := s.substituteTemplate(template, actionable, "test", nil)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "test", nil)
 
 	if !strings.Contains(result, "Org: testorg") {
 		t.Errorf("expected org: %s", result)
@@ -216,7 +216,7 @@ func TestSubstituteTemplate_IssueAndPRLists(t *testing.T) {
 	}
 
 	template := "Issues:\n${ISSUE_LIST}\nPRs:\n${PR_LIST}"
-	result := s.substituteTemplate(template, actionable, "scanner", issues)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "scanner", issues)
 
 	if !strings.Contains(result, "r#1") {
 		t.Errorf("expected issue in output: %s", result)
@@ -238,7 +238,7 @@ func TestSubstituteTemplate_SpecialRepoVars(t *testing.T) {
 
 	actionable := &github.ActionableResult{}
 	template := "Homebrew: ${PROJECT_HOMEBREW_REPO}, Hive: ${HIVE_REPO}"
-	result := s.substituteTemplate(template, actionable, "test", nil)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "test", nil)
 
 	if !strings.Contains(result, "Homebrew: myorg/homebrew-tap") {
 		t.Errorf("expected homebrew repo: %s", result)
@@ -259,7 +259,7 @@ func TestSubstituteTemplate_AuthAndRepos(t *testing.T) {
 
 	actionable := &github.ActionableResult{}
 	template := "${GH_AUTH}${AUTHORIZED_REPOS}"
-	result := s.substituteTemplate(template, actionable, "test", nil)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "test", nil)
 
 	if !strings.Contains(result, "GH_TOKEN") {
 		t.Errorf("expected GH auth instructions: %s", result)
@@ -280,7 +280,7 @@ func TestSubstituteTemplate_TimestampPresent(t *testing.T) {
 
 	actionable := &github.ActionableResult{}
 	template := "Time: ${TIMESTAMP}"
-	result := s.substituteTemplate(template, actionable, "test", nil)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "test", nil)
 
 	// Should contain the timestamp, not the placeholder
 	if strings.Contains(result, "${TIMESTAMP}") {
@@ -537,7 +537,7 @@ func TestSubstituteTemplate_AgentListVars(t *testing.T) {
 
 	actionable := &github.ActionableResult{}
 	template := "Agents: ${AGENT_LIST}, Enabled: ${ENABLED_AGENTS}, Roles:\n${AGENT_ROLES}"
-	result := s.substituteTemplate(template, actionable, "test", nil)
+	result, _ := s.substituteTemplateWithPolicy(template, actionable, "test", nil)
 
 	if !strings.Contains(result, "scanner") {
 		t.Errorf("expected scanner in agent list: %s", result)

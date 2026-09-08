@@ -232,7 +232,7 @@ func TestSubstituteTemplate_KnowledgeCarriesSkills(t *testing.T) {
 	writeSkill(t, dir, "commits.md", body)
 
 	s := schedulerWithSkills("scanner", []string{"commits"})
-	out := s.substituteTemplate("BEGIN ${KNOWLEDGE} END", nil, "scanner", nil)
+	out, _ := s.substituteTemplateWithPolicy("BEGIN ${KNOWLEDGE} END", nil, "scanner", nil)
 	if !strings.Contains(out, body) {
 		t.Errorf("expanded kick %q does not contain the injected skill body %q", out, body)
 	}
@@ -264,7 +264,7 @@ func TestSubstituteTemplate_KnowledgeCarriesRepoSkillFallback(t *testing.T) {
 	cfg.Project.CheckoutsDir = checkouts
 	s := New(cfg, slog.Default())
 
-	out := s.substituteTemplate("BEGIN ${KNOWLEDGE} END", nil, "scanner", nil)
+	out, _ := s.substituteTemplateWithPolicy("BEGIN ${KNOWLEDGE} END", nil, "scanner", nil)
 	if !strings.Contains(out, body) {
 		t.Errorf("expanded kick %q does not contain repo-local fallback body %q", out, body)
 	}

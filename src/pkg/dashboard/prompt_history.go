@@ -51,7 +51,7 @@ const (
 	//                                in pkg/policies/defaults; largest is
 	//                                scanner-automerge.md at 10.5 KiB)
 	//   issue list         up to 12.7 KiB (maxIssuesPerKick=100 issues x ~127 B
-	//                                per formatIssueList line: age, repo,
+	//                                per formatIssueListWithPolicy line: age, repo,
 	//                                number, labels, 60-rune title)
 	//   PR list            ~3.5 KiB at 30 open PRs x ~120 B per line
 	//   knowledge section  ~3.0 KiB (knowledge_max_facts default 25)
