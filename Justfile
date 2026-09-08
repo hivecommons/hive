@@ -216,7 +216,8 @@ contribute-check-backend backend="claude":
         if command -v muse &>/dev/null; then
           echo "Muse Code CLI detected ($(muse --version 2>&1 | head -1))"
           echo "  Headless only: muse exec \"<prompt>\" --approval-mode never --user-input-auto-resolve"
-          echo "  Model:  export AGENT_MODEL=muse-spark-1.3-contributor  (see https://api.meta.ai/v1/models)"
+          echo "  Model:  export AGENT_MODEL=<id from GET https://api.meta.ai/v1/models>"
+          echo "          Query it from the machine that runs muse — the catalog is caller-dependent."
           echo "  Effort: export AGENT_REASONING_EFFORT=none|minimal|low|medium|high|xhigh|max|ultra"
           echo "  Auth:   export META_API_KEY=..., or run 'muse login' / 'muse auth set --api-key-stdin'"
           echo "          (credential stored at ~/.config/muse/auth.json; META_API_KEY takes priority)"
