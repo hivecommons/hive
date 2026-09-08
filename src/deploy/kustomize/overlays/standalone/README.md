@@ -62,12 +62,19 @@ token).
   - *Runtime FATAL* — the pod starts but crash-loops with
     `FATAL: refusing to start ... capability model would be advisory-only` and
     **exit code 77** (EX_NOPERM) when the container's bounding set lacks
-    `CAP_NET_ADMIN` (any other cause of that FATAL exits 1). **Remedy** if you
-    cannot grant the capability: start anyway in **advisory-only** mode by
-    uncommenting the `- path: patch-advisory-mode.yaml` line in
+    `CAP_NET_ADMIN`. **Remedy** if you cannot grant the capability: start
+    anyway in **advisory-only** mode by uncommenting the `- path: patch-advisory-mode.yaml` line in
     `kustomization.yaml` (sets `HIVE_PROXY_ADVISORY_OK=true`). **Trade-off:**
     forced proxy egress becomes advisory — best-effort, not enforced — so an
     agent could bypass the proxy. Only do this if you accept that.
+  - *Same exit 77, different cause* - since #6003 the entrypoint also exits 77
+    when the node's kernel is missing a netfilter module the gate needs
+    (`xt_mark` or `xt_REDIRECT`); the FATAL reads `this node's kernel is
+    missing netfilter module(s) ...` and names the module. Neither remedy above
+    helps: the capability is already granted. **Remedy:** load the modules on
+    the node (on OpenShift/RHCOS, a MachineConfig writing an
+    `/etc/modules-load.d/` drop-in) and taint or label the node until then.
+    Any other cause of the FATAL exits 1.
 
 Not sure which case you're in? Run the checks in
 `src/docs/manual-provisioning.md` ("Does your cluster grant NET_ADMIN?"), and

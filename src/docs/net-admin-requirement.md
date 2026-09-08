@@ -139,6 +139,64 @@ nothing: it went mute for hours — proxy read timeouts, failed heartbeat
 collections, no `git_hash` reported, so the hub never upgraded it — while
 reporting healthy. A crashloop is visible; a green-but-unenforced hive is not.
 
+### Which exit 77 do I have? (the check order since #6003)
+
+The two causes exit through different branches of `src/deploy/entrypoint.sh`,
+in this order, so the log tells them apart without guesswork:
+
+1. **Binary selection.** `iptables-nft` is preferred, plain `iptables` is the
+   fallback. Neither present: the gate is skipped, `_iptables_ok` stays false,
+   and the generic FATAL at the end exits `1` (or `77` if the bounding set
+   also lacks `CAP_NET_ADMIN`, since that absence explains the failure by
+   itself).
+2. **Netfilter extension preflight** (added by #6003, before any part of the
+   real ruleset exists). The throwaway `HIVE_PROXY_PREFLIGHT` chain is
+   created, `xt_mark` and `xt_REDIRECT` are probed as required and `xt_owner`
+   as optional, and the chain is torn down again.
+   - A required module is missing: any stale `HIVE_PROXY` chain from an
+     earlier boot of the same container is flushed and deleted, the
+     `FATAL:` lines above are printed (module names, why it is fatal, the
+     `/etc/modules-load.d/` fix, and `exiting 77`), and the entrypoint exits
+     `77` **right there**. It never reaches the chain-creation retries and
+     never prints `Grant NET_ADMIN`. With `HIVE_PROXY_ADVISORY_OK=true` the
+     same condition is one `WARN:` line instead, and startup continues into
+     the advisory-only path.
+   - The preflight chain itself cannot be created (this is what a missing
+     `CAP_NET_ADMIN` looks like: `Permission denied (you must be root)`):
+     one `WARN: could not create preflight chain to probe netfilter
+     extensions` line, no module verdict, and the entrypoint falls through
+     to step 3 to diagnose it.
+3. **Real chain and ruleset.** `HIVE_PROXY` is created with up to five
+   jittered retries, the owner-UID exemptions are appended best-effort, and
+   the packet-mark exemption, the `:443` `REDIRECT`, and the `OUTPUT` hook are
+   appended as required rules (a failure here logs the iptables stderr and
+   flushes the partial chain).
+4. **The fail-closed decision.** If the IPv4 redirect or the IPv6 gate did
+   not establish and `HIVE_PROXY_ADVISORY_OK` is not `true`, the entrypoint
+   prints `could not establish forced proxy egress` and `refusing to start.
+   Grant NET_ADMIN + install iptables/ip6tables, ...`. Then, if the bounding
+   set lacks `CAP_NET_ADMIN`, it adds `CAP_NET_ADMIN is not in the
+   container's capability bounding set` and exits `77`;
+   otherwise it exits `1`.
+
+So the signatures are:
+
+| You see | Cause | Exit | Fix |
+|---|---|---|---|
+| `FATAL: this node's kernel is missing netfilter module(s) required by the forced-egress gate: ...` (no `Grant NET_ADMIN` line, no chain-creation retries) | required `xt_*` module not loaded on the node | 77 | load the modules on the node ([above](#kernel-netfilter-modules-the-second-exit-77-cause)); granting the capability changes nothing |
+| `WARN: could not create preflight chain ...`, five `chain creation attempt n/5 failed` lines, then `Grant NET_ADMIN ...` and `CAP_NET_ADMIN is not in the container's capability bounding set` | bounding set lacks `CAP_NET_ADMIN` | 77 | grant the capability ([below](#how-to-get-the-full-gate)) |
+| `Grant NET_ADMIN ...` with **no** bounding-set line | capability present, something else broke (no `iptables` binary, persistent netfilter lock contention, a required append failing for a non-module reason) | 1 | read the logged iptables stderr |
+
+Both exit-77 causes are covered by tests that run from the checkout with no
+cluster: `src/deploy/test_entrypoint_xt_module_preflight.sh` asserts that a
+missing `xt_REDIRECT` or `xt_mark` exits exactly 77, names the module, leaves
+no `HIVE_PROXY` chain behind, and that `HIVE_PROXY_ADVISORY_OK=true` turns it
+into a warning; the Podman rootful and rootless CI lanes
+(`probe_podman_rootful_netadmin.sh`, `probe_podman_rootless_netadmin.sh`)
+assert the capability cause end to end against a real container, and the
+same `--cap-add NET_ADMIN` case installing the `REDIRECT` rule shows those
+runners have the modules.
+
 ## How to get the full gate
 
 ### Docker / Podman (rootful)
