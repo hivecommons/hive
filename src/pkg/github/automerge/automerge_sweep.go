@@ -37,6 +37,9 @@ type Options struct {
 	RequiredChecks   map[string]bool
 	ApprovalDesk     hgithub.ApprovalDeskHook
 	MutationBoundary effects.Boundary
+	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
+	// (#6258). nil installs no policy; see IntentGate for the semantics.
+	IntentGate *IntentGate
 }
 
 // Engine owns the automerge sweep policy state.
@@ -53,6 +56,9 @@ type Engine struct {
 
 	approvalDesk hgithub.ApprovalDeskHook
 	mutation     effects.Boundary
+
+	intentGateMu sync.RWMutex
+	intentGate   *IntentGate
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -69,6 +75,7 @@ func New(transport Transport, opts Options) *Engine {
 		requiredChecks: opts.RequiredChecks,
 		approvalDesk:   opts.ApprovalDesk,
 		mutation:       opts.MutationBoundary,
+		intentGate:     opts.IntentGate,
 	}
 	if e.mutation == nil {
 		if provider, ok := transport.(interface{ MutationBoundary() effects.Boundary }); ok {
@@ -409,7 +416,9 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 // entirely rather than needing one.
 //
 // Every OTHER safety property is identical to the human queue: mergeability
-// (mergeableFromState), green required checks (commitGreen), and a head-SHA
+// (mergeableFromState), green required checks (commitGreen), the intent tier
+// gate (selfMergeIntentGate, #6258 — the same refusal predicate
+// writeMergeEligible applies before a PR can be queued), and a head-SHA
 // re-check immediately before the merge call so a push landing between
 // enumeration and merge can never be squashed unreviewed — mirrored below via
 // re-fetching the PR right before calling Merge and comparing SHAs, the same
@@ -664,6 +673,20 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
+	}
+
+	// Intent tier gate (#6258). The human merge lane never lets a PR reach
+	// trySweepQueuedPR at a tier intent enforcement refuses (writeMergeEligible
+	// drops it first); this path lists the App's PRs independently, so it
+	// must ask the same question itself — via intent.EvaluateForAppSelfMerge,
+	// the tier gate written for this path — or every green App PR merges
+	// regardless of tier. Consulted after commitGreen so the extra files
+	// fetch is only spent on PRs that are otherwise mergeable, and before the
+	// approval desk so the desk still only sees requests policy permits.
+	if intentReason, err := c.selfMergeIntentGate(ctx, displayRepo, owner, repo, pr, author, selfLabels); err != nil {
+		return AutoMergeSweepEvent{}, intentReason, err
+	} else if intentReason != "" {
+		return AutoMergeSweepEvent{}, intentReason, nil
 	}
 
 	// Approval desk (RFC #4000). Consulted AFTER the sweep's own eligibility

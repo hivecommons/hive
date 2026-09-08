@@ -356,6 +356,12 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 			autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(w.approvalDesk, w.approvalInbox, w.cfg, w.logger)
 		}
 		autoMergeOpts.MutationBoundary = w.mutationBoundary
+		// Intent tier gate (#6258): the human lane only queues PRs that
+		// survive writeMergeEligible's intent check, but this sweep lists
+		// the App's PRs on its own, so it carries the same policy (same
+		// config, same bead evidence, same BlocksMerge predicate) and asks
+		// intent.EvaluateForAppSelfMerge before every self-merge.
+		autoMergeOpts.IntentGate = selfMergeIntentGate(w.cfg, w.beadStores)
 		automerge.StartSelfAuthoredAutoMergeSweep(w.ctx, w.ghClient, w.cfg.AutoMerge.MaxMerges, w.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(w.cfg.ACMMLevel), w.cfg.ACMMLevel, autoMergeOpts)
 	}
 
