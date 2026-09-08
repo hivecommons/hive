@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -127,6 +128,45 @@ func sseFrames(t *testing.T, body string) []sseEvent {
 	return out
 }
 
+// stallingRecorder is a syncRecorder whose next Write can be parked on demand.
+// TestSSEHandlerEmitsGapFrameAfterDrops needs the SSE writer goroutine held
+// mid-frame while the test fills the subscriber channel; a recorder that never
+// blocks lets the writer drain the channel concurrently, which turns "fill it,
+// then broadcast" into a race the shuffle lane loses.
+type stallingRecorder struct {
+	*syncRecorder
+	gateMu  sync.Mutex
+	parked  chan struct{} // closed by Write once it has parked
+	release chan struct{} // closed by the test to let the parked Write proceed
+}
+
+func newStallingRecorder() *stallingRecorder {
+	return &stallingRecorder{syncRecorder: newSyncRecorder()}
+}
+
+// stallNextWrite arms a one-shot gate: the next Write parks until release is
+// called. parked is closed the moment the writer is stuck inside Write.
+func (r *stallingRecorder) stallNextWrite() (parked <-chan struct{}, release func()) {
+	r.gateMu.Lock()
+	defer r.gateMu.Unlock()
+	p, rel := make(chan struct{}), make(chan struct{})
+	r.parked, r.release = p, rel
+	var once sync.Once
+	return p, func() { once.Do(func() { close(rel) }) }
+}
+
+func (r *stallingRecorder) Write(b []byte) (int, error) {
+	r.gateMu.Lock()
+	p, rel := r.parked, r.release
+	r.parked, r.release = nil, nil
+	r.gateMu.Unlock()
+	if p != nil {
+		close(p)
+		<-rel
+	}
+	return r.syncRecorder.Write(b)
+}
+
 // The end-to-end shape of the fix: a connected client whose channel overflows is
 // told, over the SAME still-open connection, that it missed events — and the
 // gap frame arrives BEFORE the next activity frame, so the client learns it is
@@ -140,7 +180,7 @@ func TestSSEHandlerEmitsGapFrameAfterDrops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/api/contribute/events", nil).WithContext(ctx)
-	rec := newSyncRecorder()
+	rec := newStallingRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -148,6 +188,7 @@ func TestSSEHandlerEmitsGapFrameAfterDrops(t *testing.T) {
 		close(done)
 	}()
 	waitFor(t, func() bool { return hub.sse.count() == 1 }, "subscriber to register")
+	waitFor(t, func() bool { return strings.Contains(rec.BodyString(), `"hello"`) }, "the hello frame to be written")
 
 	// Reach into the one registered subscriber and starve it: fill its channel so
 	// the next broadcasts have nowhere to go. This is the state a slow browser or
@@ -161,19 +202,36 @@ func TestSSEHandlerEmitsGapFrameAfterDrops(t *testing.T) {
 	if sub == nil {
 		t.Fatal("no subscriber registered")
 	}
+	// Park the writer goroutine mid-frame first. It drains sub.events into the
+	// recorder as fast as we can fill it, so without this the broadcasts below
+	// land in freed slots and are delivered instead of dropped — the shuffle lane
+	// caught exactly that as a timeout on the `dropped == 2` wait. With the
+	// writer stuck inside Write, the channel stays full for as long as we need.
+	filler := sseEvent{Type: "activity", Activity: &ActivityEntry{Username: "filler"}}
+	parked, release := rec.stallNextWrite()
+	sub.events <- filler
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the writer never picked up the filler event")
+	}
 	for len(sub.events) < cap(sub.events) {
-		sub.events <- sseEvent{Type: "activity", Activity: &ActivityEntry{Username: "filler"}}
+		sub.events <- filler
 	}
 
-	// Two events the client will never see.
+	// Two events the client will never see. broadcast is synchronous, so both
+	// drops are recorded by the time addActivity returns.
 	hub.addActivity("lost-one", "picked up", "contributor", "claude", "sonnet", "", "acme/repo#1")
 	hub.addActivity("lost-two", "picked up", "contributor", "claude", "sonnet", "", "acme/repo#2")
-	waitFor(t, func() bool { return sub.dropped.Load() == 2 }, "both events to be recorded as dropped")
+	if got := sub.dropped.Load(); got != 2 {
+		t.Fatalf("dropped = %d after two broadcasts into a full channel, want 2", got)
+	}
 
-	// Drain one queued event so the writer wakes and reports the gap. (The
-	// heartbeat would do it too, but this test is not waiting 25 seconds for it —
-	// TestSSEGapIsReportedOnTheHeartbeatPath covers that branch directly.)
-	<-sub.events
+	// Let the parked frame through. The writer then pops the next queued event
+	// and runs flushGap before writing it, so the gap arrives on the event path.
+	// (The heartbeat would report it too, but this test is not waiting 25 seconds
+	// for it — TestSSEGapIsReportedOnTheHeartbeatPath covers that branch.)
+	release()
 
 	waitFor(t, func() bool { return strings.Contains(rec.BodyString(), `"gap"`) }, "a gap frame to be written")
 
