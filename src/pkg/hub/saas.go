@@ -3876,7 +3876,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			if rollup.RestartStorms > 0 {
 				appendDriftSignal(&result[i].Drift, DriftKindAgentRestartStorm, DriftCritical,
 					fmt.Sprintf("%d agent(s) restarted at least %d times in the last 24h",
-						rollup.RestartStorms, agentRestartProblemThreshold()))
+						rollup.RestartStorms, AgentRestartProblemThreshold()))
 			}
 			result[i].AgentRosterMismatch = computeAgentRosterMismatch(result[i].ACMMLevel, result[i].Agents)
 
