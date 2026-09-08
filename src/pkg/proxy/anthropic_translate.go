@@ -2,11 +2,9 @@ package proxy
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -532,104 +530,6 @@ func mapFinishReason(reason string) string {
 	default:
 		return "end_turn"
 	}
-}
-
-// forwardToInference sends an Anthropic Messages API request to a vLLM/llm-d
-// endpoint, translating the request and response formats. It writes the
-// translated response directly to the provided http.ResponseWriter.
-func forwardToInference(clientReq *http.Request, clientBody []byte, w http.ResponseWriter, route *InferenceRoute, agentName string) error {
-	openaiBody, err := translateAnthropicToOpenAI(clientBody, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
-	if err != nil {
-		return fmt.Errorf("translate request: %w", err)
-	}
-
-	upstreamURL := openAIChatCompletionsURL(route.Endpoint)
-	upstreamReq, err := http.NewRequestWithContext(
-		clientReq.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
-	if err != nil {
-		return fmt.Errorf("create upstream request: %w", err)
-	}
-
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	applyInferenceAuth(upstreamReq, route)
-
-	client, err := inferenceHTTPClient(route)
-	if err != nil {
-		return fmt.Errorf("inference client setup: %w", err)
-	}
-	resp, err := client.Do(upstreamReq)
-	if err != nil {
-		return fmt.Errorf("upstream request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(resp.Body)
-		anthropicErr := map[string]interface{}{
-			"type": "error",
-			"error": map[string]interface{}{
-				"type":    "api_error",
-				"message": fmt.Sprintf("inference backend returned %d: %s", resp.StatusCode, string(errBody)),
-			},
-		}
-		errJSON, _ := json.Marshal(anthropicErr)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		_, writeErr := w.Write(errJSON)
-		return writeErr
-	}
-
-	isStreaming := resp.Header.Get("Content-Type") == "text/event-stream" ||
-		strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
-
-	if isStreaming {
-		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.WriteHeader(http.StatusOK)
-
-		if f, ok := w.(http.Flusher); ok {
-			flushWriter := &flushResponseWriter{w: w, f: f}
-			_, _, err := translateOpenAISSEToAnthropic(resp.Body, flushWriter, route.Model)
-			return err
-		}
-		_, _, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
-		return err
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read upstream response: %w", err)
-	}
-
-	translated, err := translateOpenAIResponseToAnthropic(body, route.Model)
-	if err != nil {
-		return fmt.Errorf("translate response: %w", err)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, err = w.Write(translated)
-	return err
-}
-
-func openAIChatCompletionsURL(endpoint string) string {
-	base := strings.TrimRight(endpoint, "/")
-	if strings.HasSuffix(base, "/v1") {
-		return base + "/chat/completions"
-	}
-	return base + "/v1/chat/completions"
-}
-
-type flushResponseWriter struct {
-	w io.Writer
-	f http.Flusher
-}
-
-func (fw *flushResponseWriter) Write(p []byte) (int, error) {
-	n, err := fw.w.Write(p)
-	fw.f.Flush()
-	return n, err
 }
 
 // --- Request/response types ---

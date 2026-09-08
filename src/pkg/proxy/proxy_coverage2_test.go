@@ -588,64 +588,6 @@ func TestJSONEscape(t *testing.T) {
 	}
 }
 
-// ---------- forwardToInference error branches ----------
-
-// forwardToInference surfaces an upstream non-2xx as an Anthropic api_error
-// envelope with the same status code.
-func TestForwardToInference_UpstreamError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `team not allowed`, http.StatusForbidden)
-	}))
-	defer srv.Close()
-
-	route := &InferenceRoute{Backend: "litellm", Endpoint: srv.URL, Model: "m"}
-	body := `{"model":"claude","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	if err := forwardToInference(req, []byte(body), w, route, "agent"); err != nil {
-		t.Fatal(err)
-	}
-	if w.Result().StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", w.Result().StatusCode)
-	}
-	if !strings.Contains(w.Body.String(), "inference backend returned 403") {
-		t.Fatalf("body = %q", w.Body.String())
-	}
-}
-
-// forwardToInference returns an error when the upstream endpoint is unreachable.
-func TestForwardToInference_Unreachable(t *testing.T) {
-	route := &InferenceRoute{Backend: "vllm", Endpoint: "http://127.0.0.1:1", Model: "m"}
-	body := `{"model":"claude","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	if err := forwardToInference(req, []byte(body), w, route, "agent"); err == nil {
-		t.Fatal("expected error for unreachable upstream")
-	}
-}
-
-// forwardToInference returns an error when the request body cannot be translated.
-func TestForwardToInference_BadRequestBody(t *testing.T) {
-	route := &InferenceRoute{Backend: "vllm", Endpoint: "http://127.0.0.1:1", Model: "m"}
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader("x"))
-	w := httptest.NewRecorder()
-	if err := forwardToInference(req, []byte(`not json`), w, route, "agent"); err == nil {
-		t.Fatal("expected translate error for malformed body")
-	}
-}
-
-// forwardToInference with a bad CA bundle fails at client setup.
-func TestForwardToInference_BadCABundle(t *testing.T) {
-	route := &InferenceRoute{Backend: "litellm", Endpoint: "https://example.invalid", Model: "m", CABundle: "/nonexistent/ca.pem"}
-	body := `{"model":"claude","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	if err := forwardToInference(req, []byte(body), w, route, "agent"); err == nil {
-		t.Fatal("expected client-setup error for bad CA bundle")
-	}
-}
-
 // ---------- StartInferenceTranslator (over the real fixed-port listener) ----------
 
 // TestStartInferenceTranslator_HandlerBranches drives the translator HTTP

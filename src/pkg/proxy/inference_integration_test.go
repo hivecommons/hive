@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -62,117 +61,6 @@ func startMockVLLM(t *testing.T) *httptest.Server {
 			"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5},
 		})
 	}))
-}
-
-func TestForwardToInference_NonStreaming(t *testing.T) {
-	mock := startMockVLLM(t)
-	defer mock.Close()
-
-	anthropicBody := `{
-		"model": "claude-opus-4-6",
-		"max_tokens": 1024,
-		"system": "You are a test assistant.",
-		"messages": [{"role": "user", "content": "Say hello"}],
-		"stream": false
-	}`
-
-	route := &InferenceRoute{
-		Backend:  "vllm",
-		Endpoint: mock.URL,
-		Model:    "test-model",
-	}
-
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(anthropicBody))
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte(anthropicBody), w, route, "test-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-
-	var ar anthropicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
-		t.Fatal(err)
-	}
-
-	if ar.Type != "message" {
-		t.Errorf("type = %q, want message", ar.Type)
-	}
-	if ar.Role != "assistant" {
-		t.Errorf("role = %q, want assistant", ar.Role)
-	}
-	if len(ar.Content) == 0 {
-		t.Fatal("no content blocks")
-	}
-	if !strings.Contains(ar.Content[0].Text, "test-model") {
-		t.Errorf("response text = %q, expected to contain 'test-model'", ar.Content[0].Text)
-	}
-	if ar.StopReason != "end_turn" {
-		t.Errorf("stop_reason = %q, want end_turn", ar.StopReason)
-	}
-	if ar.Usage == nil {
-		t.Fatal("usage is nil")
-	}
-	if ar.Usage.InputTokens != 10 {
-		t.Errorf("input_tokens = %d, want 10", ar.Usage.InputTokens)
-	}
-}
-
-func TestForwardToInference_Streaming(t *testing.T) {
-	mock := startMockVLLM(t)
-	defer mock.Close()
-
-	anthropicBody := `{
-		"model": "claude-opus-4-6",
-		"max_tokens": 1024,
-		"messages": [{"role": "user", "content": "Hello"}],
-		"stream": true
-	}`
-
-	route := &InferenceRoute{
-		Backend:  "vllm",
-		Endpoint: mock.URL,
-		Model:    "test-model",
-	}
-
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(anthropicBody))
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte(anthropicBody), w, route, "test-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	body := w.Body.String()
-
-	expectedEvents := []string{
-		"event: message_start",
-		"event: content_block_start",
-		"event: content_block_delta",
-		"event: content_block_stop",
-		"event: message_delta",
-		"event: message_stop",
-	}
-	for _, evt := range expectedEvents {
-		if !strings.Contains(body, evt) {
-			t.Errorf("missing event: %s", evt)
-		}
-	}
-
-	if !strings.Contains(body, "Hello") {
-		t.Error("missing 'Hello' in SSE output")
-	}
-	if !strings.Contains(body, "vLLM!") {
-		t.Error("missing 'vLLM!' in SSE output")
-	}
-	if !strings.Contains(body, `"end_turn"`) {
-		t.Error("missing end_turn stop reason")
-	}
 }
 
 func TestInferenceRouter(t *testing.T) {

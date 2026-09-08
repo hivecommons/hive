@@ -301,50 +301,6 @@ func TestProxyHTTPResponseWriteError(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 }
 
-// ---------- forwardToInference: flusher path ----------
-
-func TestForwardToInferenceStreamingWithFlusher(t *testing.T) {
-	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		f := w.(http.Flusher)
-		data, _ := json.Marshal(map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{"delta": map[string]string{"content": "flushed"}, "finish_reason": nil},
-			},
-		})
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		f.Flush()
-		data2, _ := json.Marshal(map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{"delta": map[string]string{}, "finish_reason": "stop"},
-			},
-		})
-		fmt.Fprintf(w, "data: %s\n\n", data2)
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		f.Flush()
-	}))
-	defer mock.Close()
-
-	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test"}
-	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"stream":true}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte(body), w, route, "test-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	output := w.Body.String()
-	if !strings.Contains(output, "message_start") {
-		t.Error("missing message_start")
-	}
-	if !strings.Contains(output, "flushed") {
-		t.Error("missing 'flushed' content")
-	}
-}
-
 // ---------- Start: test that it listens (then close immediately) ----------
 
 func TestStartListens(t *testing.T) {

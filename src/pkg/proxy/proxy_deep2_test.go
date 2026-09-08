@@ -610,31 +610,6 @@ func TestHandleInferenceRequestStreamingWithUsage(t *testing.T) {
 	}
 }
 
-// ---------- forwardToInference: non-200 success status ----------
-
-func TestForwardToInferenceNon2xx(t *testing.T) {
-	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("service unavailable"))
-	}))
-	defer mock.Close()
-
-	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test"}
-	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte(body), w, route, "test-agent")
-	_ = err
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", w.Code)
-	}
-	respBody := w.Body.String()
-	if !strings.Contains(respBody, "inference backend returned 503") {
-		t.Errorf("expected error message, got %q", respBody)
-	}
-}
-
 // ---------- proxyHTTP: upstream write error ----------
 
 func TestProxyHTTPUpstreamWriteError(t *testing.T) {

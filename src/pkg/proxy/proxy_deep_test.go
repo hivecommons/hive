@@ -572,56 +572,6 @@ func TestTranslateOpenAIResponseInvalidJSON(t *testing.T) {
 	}
 }
 
-// ---------- forwardToInference: error responses ----------
-
-func TestForwardToInferenceUpstreamError(t *testing.T) {
-	// Mock server that returns 500
-	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
-	}))
-	defer mock.Close()
-
-	route := &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test"}
-	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte(body), w, route, "test-agent")
-	// The function writes the error response to w and returns writeErr
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", w.Code)
-	}
-	respBody := w.Body.String()
-	if !strings.Contains(respBody, "inference backend returned 500") {
-		t.Errorf("body should contain error message, got %q", respBody)
-	}
-	_ = err
-}
-
-func TestForwardToInferenceTranslateError(t *testing.T) {
-	route := &InferenceRoute{Backend: "vllm", Endpoint: "http://localhost:1", Model: "test"}
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte("not json"), w, route, "test-agent")
-	if err == nil {
-		t.Error("expected error for invalid body")
-	}
-}
-
-func TestForwardToInferenceUnreachable(t *testing.T) {
-	route := &InferenceRoute{Backend: "vllm", Endpoint: "http://127.0.0.1:1", Model: "test"}
-	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	err := forwardToInference(req, []byte(body), w, route, "test-agent")
-	if err == nil {
-		t.Error("expected error for unreachable backend")
-	}
-}
-
 // ---------- writeHTTPError ----------
 
 func TestWriteHTTPError(t *testing.T) {
@@ -928,24 +878,6 @@ func TestRepoFilterAllowedDELETE(t *testing.T) {
 	// PUT to allowed repo
 	if !RepoFilterAllowed(allowed, "PUT", "/repos/org/console/pulls/1/merge") {
 		t.Error("PUT to allowed repo should pass")
-	}
-}
-
-// ---------- flushResponseWriter ----------
-
-func TestFlushResponseWriter(t *testing.T) {
-	rec := httptest.NewRecorder()
-	fw := &flushResponseWriter{w: rec, f: rec}
-
-	n, err := fw.Write([]byte("hello"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 5 {
-		t.Errorf("wrote %d bytes, want 5", n)
-	}
-	if rec.Body.String() != "hello" {
-		t.Errorf("body = %q, want 'hello'", rec.Body.String())
 	}
 }
 
