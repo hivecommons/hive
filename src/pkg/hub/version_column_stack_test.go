@@ -163,7 +163,7 @@ func TestUpgradeAffordanceStaysOperable(t *testing.T) {
 	body := funcBody(t, "var buildRow = function(")
 	for _, want := range []string{
 		`role="button" tabindex="0"`,
-		"onclick=\"upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')\"",
+		"onclick=\"upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')\"",
 		"event.key===\\'Enter\\'",
 	} {
 		if !strings.Contains(body, want) {
