@@ -213,7 +213,7 @@ func TestInferenceModelsUsesWatsonxIAMBearer(t *testing.T) {
 	}}
 	srv.registerGatewayEndpoints()
 
-	models := srv.fetchInferenceModelsForBackend("watsonx", []string{gateway.URL})
+	models, _ := srv.fetchInferenceModelsForBackendDetailed("watsonx", []string{gateway.URL})
 	if len(models) != 1 || models[0] != "ibm/granite-4-h-small" {
 		t.Fatalf("models = %v, want the granite id discovered via the IAM bearer", models)
 	}
@@ -252,7 +252,7 @@ func TestInferenceModelsNonWatsonxUsesRawKeyPath(t *testing.T) {
 	}
 	srv.registerGatewayEndpoints()
 
-	models := srv.fetchInferenceModelsForBackend("litellm", []string{gateway.URL})
+	models, _ := srv.fetchInferenceModelsForBackendDetailed("litellm", []string{gateway.URL})
 	if len(models) != 1 || models[0] != "gpt-4o" {
 		t.Fatalf("models = %v, want the discovered litellm model", models)
 	}
@@ -322,7 +322,7 @@ func TestInferenceModelsWatsonxMintFailureReturnsNoModels(t *testing.T) {
 		APIKeyFile: keyFile,
 		ProjectID:  "proj-42",
 	}}
-	if models := srv.fetchInferenceModelsForBackend("watsonx", []string{"https://us-south.ml.cloud.ibm.com/ml/gateway"}); len(models) != 0 {
+	if models, _ := srv.fetchInferenceModelsForBackendDetailed("watsonx", []string{"https://us-south.ml.cloud.ibm.com/ml/gateway"}); len(models) != 0 {
 		t.Fatalf("models = %v, want none when the IAM mint fails", models)
 	}
 }

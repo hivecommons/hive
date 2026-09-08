@@ -501,16 +501,6 @@ func (s *Server) refreshAndPersistSeq() uint64 {
 	return floor
 }
 
-func (s *Server) refreshAndPersistSync() {
-	s.noteStatusMutation()
-	if s.deps != nil && s.deps.RefreshFunc != nil {
-		s.deps.RefreshFunc()
-	}
-	if s.deps != nil && s.deps.PersistFunc != nil {
-		s.deps.PersistFunc()
-	}
-}
-
 // saveConfig persists the in-memory config to disk, skipping the next
 // watcher reload to prevent the watcher from overwriting concurrent
 // in-memory mutations with a stale file read.
@@ -7224,28 +7214,23 @@ func intersectEntitled(discovered, entitled []string) []string {
 	return out
 }
 
-// fetchInferenceModelsForBackend discovers a backend's models, honouring the
-// AUTH SCHEME of the gateway that backend resolves to. The plain path sends the
-// resolved key as a raw bearer, which is correct for litellm/vllm/llm-d — but a
-// watsonx gateway needs an IAM-minted bearer plus the X-IBM-Project-ID header,
-// so sending the raw IBM Cloud key returns 401 and the dropdown silently fell
-// back to unrelated static aliases. Reuses the same gatewayProbeAuth +
-// fetchModelsWithHeaders pair the Model Gateways tab's discover/test paths use,
-// so the agent's model dropdown and the gateway form agree on what is available.
-// Falls back to the legacy raw-key path whenever no gateway resolves for this
-// name (env-configured vllm/llm-d endpoints), keeping existing behaviour.
-func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []string) []string {
-	models, _ := s.fetchInferenceModelsForBackendDetailed(backend, endpoints)
-	return models
-}
-
-// fetchInferenceModelsForBackendDetailed additionally reports whether EVERY
-// endpoint answered, so a caller can tell a complete census from a partial one
-// (#4438). It matters most here: this is the discovery the dashboard's model
-// auto-heal reads, and auto-heal does not merely toast — it rewrites the
-// agent's configured model and relaunches its session. A gateway that drops
-// out of a multi-endpoint sweep must never be able to spend an agent's
-// selection that way.
+// fetchInferenceModelsForBackendDetailed discovers a backend's models,
+// honouring the AUTH SCHEME of the gateway that backend resolves to. The plain
+// path sends the resolved key as a raw bearer, which is correct for
+// litellm/vllm/llm-d — but a watsonx gateway needs an IAM-minted bearer plus
+// the X-IBM-Project-ID header, so sending the raw IBM Cloud key returns 401 and
+// the dropdown silently fell back to unrelated static aliases. Reuses the same
+// gatewayProbeAuth + fetchModelsWithHeaders pair the Model Gateways tab's
+// discover/test paths use, so the agent's model dropdown and the gateway form
+// agree on what is available. Falls back to the legacy raw-key path whenever no
+// gateway resolves for this name (env-configured vllm/llm-d endpoints).
+//
+// The second result reports whether EVERY endpoint answered, so a caller can
+// tell a complete census from a partial one (#4438). It matters most here: this
+// is the discovery the dashboard's model auto-heal reads, and auto-heal does
+// not merely toast — it rewrites the agent's configured model and relaunches
+// its session. A gateway that drops out of a multi-endpoint sweep must never be
+// able to spend an agent's selection that way.
 func (s *Server) fetchInferenceModelsForBackendDetailed(backend string, endpoints []string) ([]string, bool) {
 	gw := s.resolveGatewayForBackend(backend)
 	if gw == nil || !gatewayKindNeedsProbeAuth(gw.Kind) {
@@ -7419,16 +7404,11 @@ func (s *Server) queryInferenceModelsDetailed(backend string) ([]string, bool) {
 
 const inferenceModelQueryTimeout = 5 * time.Second
 
-// fetchModelsFromEndpoints queries /v1/models on each endpoint and returns
-// a deduplicated, combined list of all model IDs found. apiKey is optional
-// (litellm requires bearer auth; vllm/llm-d do not).
-func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
-	models, _ := fetchModelsFromEndpointsDetailed(endpoints, apiKey)
-	return models
-}
-
-// fetchModelsFromEndpointsDetailed additionally reports whether EVERY endpoint
-// answered. A PARTIAL sweep — one gateway of several timing out or answering
+// fetchModelsFromEndpointsDetailed queries /v1/models on each endpoint and
+// returns a deduplicated, combined list of all model IDs found. apiKey is
+// optional (litellm requires bearer auth; vllm/llm-d do not).
+//
+// The second result reports whether EVERY endpoint answered. A PARTIAL sweep — one gateway of several timing out or answering
 // 403 while its siblings reply — still returns a non-empty list, and a caller
 // that diffs model sets must not read the survivors as "the unreachable
 // endpoint's models were removed" (#4438: a partial sweep wallpapered the
@@ -9233,21 +9213,6 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		token = os.Getenv("HIVE_DASHBOARD_TOKEN")
 	}
 	okResponse(w, map[string]string{"configured": strconv.FormatBool(token != "")})
-}
-
-// maskToken replaces all but the last 4 characters with bullet characters.
-func maskToken(token string) string {
-	const visibleSuffix = 4
-	if len(token) <= visibleSuffix {
-		return token
-	}
-	masked := make([]byte, 0, len(token))
-	hideLen := len(token) - visibleSuffix
-	for i := 0; i < hideLen; i++ {
-		masked = append(masked, "•"...)
-	}
-	masked = append(masked, token[hideLen:]...)
-	return string(masked)
 }
 
 func (s *Server) handleBeadsReset(w http.ResponseWriter, r *http.Request) {

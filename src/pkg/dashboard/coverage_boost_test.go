@@ -20,30 +20,6 @@ import (
 
 // --- Pure function tests ---
 
-func TestMaskToken(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"", ""},
-		{"abc", "abc"},     // <= 4 chars, returned as-is
-		{"abcd", "abcd"},   // exactly 4 chars
-		{"abcde", "•bcde"}, // 5 chars, 1 hidden
-		{"ghp_1234567890", "••••••••••7890"}, // typical token
-	}
-	for _, tt := range tests {
-		got := maskToken(tt.input)
-		// Verify last 4 chars preserved when len > 4
-		if len(tt.input) > 4 {
-			if !strings.HasSuffix(got, tt.input[len(tt.input)-4:]) {
-				t.Errorf("maskToken(%q) = %q, should end with %q", tt.input, got, tt.input[len(tt.input)-4:])
-			}
-		} else if got != tt.input {
-			t.Errorf("maskToken(%q) = %q, want %q", tt.input, got, tt.input)
-		}
-	}
-}
-
 func TestRedactTokensInLine(t *testing.T) {
 	tests := []struct {
 		input       string
@@ -285,21 +261,6 @@ func TestHandleRole_WithSessionCookie(t *testing.T) {
 	}
 	if result["role"] != "read" {
 		t.Errorf("role = %q, want read", result["role"])
-	}
-}
-
-func TestRefreshAndPersistSync(t *testing.T) {
-	refreshCalled := false
-	persistCalled := false
-	srv := newFullServer(t)
-	srv.deps.RefreshFunc = func() { refreshCalled = true }
-	srv.deps.PersistFunc = func() { persistCalled = true }
-	srv.refreshAndPersistSync()
-	if !refreshCalled {
-		t.Error("refresh not called")
-	}
-	if !persistCalled {
-		t.Error("persist not called")
 	}
 }
 
@@ -944,7 +905,10 @@ func TestFetchModelsFromEndpoints_Deduplicates(t *testing.T) {
 	}))
 	defer mockSrv.Close()
 
-	models := fetchModelsFromEndpoints([]string{mockSrv.URL, mockSrv.URL}, "")
+	models, complete := fetchModelsFromEndpointsDetailed([]string{mockSrv.URL, mockSrv.URL}, "")
+	if !complete {
+		t.Errorf("complete = false, want true when every endpoint answered")
+	}
 	if len(models) != 1 {
 		t.Errorf("expected 1 deduplicated model, got %d", len(models))
 	}
