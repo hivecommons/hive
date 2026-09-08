@@ -82,7 +82,7 @@ func reviewRejectedServer(t *testing.T, agents ...string) (*Server, *toolapprove
 
 // doOwnerPostAs posts as a verified owner with an explicit operator identity,
 // so the emitted actor can be asserted rather than defaulting to "local".
-func doOwnerPostAs(s *Server, operator, path string, body any) *httptest.ResponseRecorder {
+func doOwnerPostBodyAs(s *Server, operator, path string, body any) *httptest.ResponseRecorder {
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(b)))
 	req.Header.Set("Content-Type", "application/json")
@@ -104,7 +104,7 @@ func TestApprovalDenyEmitsReviewRejectedOnce(t *testing.T) {
 	}
 	id := inbox.List()[0].ID
 
-	rec := doOwnerPostAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
+	rec := doOwnerPostBodyAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
 		map[string]any{"id": id, "approved": false, "rationale": reviewRejectedTestRationale})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deny = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
@@ -151,7 +151,7 @@ func TestApprovalDenyEmitsReviewRejectedOnce(t *testing.T) {
 	}
 
 	// Replay: the journal answers 409 and the emitter must stay silent.
-	rec = doOwnerPostAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
+	rec = doOwnerPostBodyAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
 		map[string]any{"id": id, "approved": false, "rationale": reviewRejectedTestRationale})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("replayed deny = %d, want 409", rec.Code)
@@ -167,7 +167,7 @@ func TestApprovalApproveDoesNotEmitReviewRejected(t *testing.T) {
 	s, inbox, capture := reviewRejectedServer(t, "scanner")
 	id := inbox.List()[0].ID
 
-	rec := doOwnerPostAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
+	rec := doOwnerPostBodyAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
 		map[string]any{"id": id, "approved": true})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("approve = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
@@ -187,7 +187,7 @@ func TestApprovalBulkDenyEmitsOncePerDeniedItem(t *testing.T) {
 	for _, p := range inbox.List() {
 		ids = append(ids, p.ID)
 	}
-	rec := doOwnerPostAs(s, reviewRejectedTestOperator, "/api/approvals/bulk",
+	rec := doOwnerPostBodyAs(s, reviewRejectedTestOperator, "/api/approvals/bulk",
 		map[string]any{"ids": ids, "approved": false, "rationale": reviewRejectedTestRationale})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("bulk deny = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
@@ -224,7 +224,7 @@ func TestApprovalDenyUnknownAgentFallsBackToConfig(t *testing.T) {
 	s.deps.Config.Agents["reviewer"] = config.AgentConfig{Backend: "copilot", Model: "claude-opus-4-6"}
 	id := inbox.List()[0].ID
 
-	rec := doOwnerPostAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
+	rec := doOwnerPostBodyAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
 		map[string]any{"id": id, "approved": false})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deny = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
@@ -245,7 +245,7 @@ func TestApprovalDenyWithoutHookSeamIsSilent(t *testing.T) {
 	s.deps.HookFire = nil
 	id := inbox.List()[0].ID
 
-	rec := doOwnerPostAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
+	rec := doOwnerPostBodyAs(s, reviewRejectedTestOperator, "/api/approvals/resolve",
 		map[string]any{"id": id, "approved": false})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deny = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
