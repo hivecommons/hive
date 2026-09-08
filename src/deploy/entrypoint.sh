@@ -798,6 +798,29 @@ if [ "$(id -u)" = "0" ]; then
   # group-writable mode would let any agent swap that file and spoof the
   # identity the gate validates against. Re-asserted on every boot.
   chmod 755 /var/run/hive-metrics/agent-tokens 2>/dev/null || true
+  # The token-access audit log (GET /api/token-access) is NOT agent-writable
+  # (#6287). v4 pre-created it dev:node 0664 so the per-UID wrappers could
+  # append to it directly, which handed every agent (all in group node) the
+  # power to truncate or forge the trail of its own token use. The wrappers
+  # now drop one event file each into the spool below and the Go process
+  # (running as dev) ingests them into the log, attributing each event to
+  # the uid that owns the spool file. The log is therefore dev-owned 0600:
+  # no group bit at all, because group node IS the agents. Re-asserted on
+  # every boot so a 0664 file left by an older image is tightened, not
+  # trusted. The Go side (PrepareTokenAccessAudit) creates the spool with
+  # drop-box perms and re-tightens the log on every ingest pass; this is the
+  # root-phase belt to that braces, so the mode holds even if the file is
+  # somehow not dev-owned. NEVER give this file a group or other bit.
+  touch /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  chown dev:node /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  chmod 600 /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  # Drop-box for the wrappers' events: dev-owned, group node can create and
+  # rename its own files but cannot list (0730), setgid so dropped files
+  # inherit group node (readable by dev), sticky so only a file's owner or
+  # dev can unlink it. Mirrors pkg/github's requestDirMode drop-box.
+  mkdir -p /var/run/hive-metrics/token-access-events 2>/dev/null || true
+  chown dev:node /var/run/hive-metrics/token-access-events 2>/dev/null || true
+  chmod 3730 /var/run/hive-metrics/token-access-events 2>/dev/null || true
 
   # Fix permissions on bind-mounted secret files (host may own them as
   # a different UID with mode 600, making them unreadable by dev/UID 1001)

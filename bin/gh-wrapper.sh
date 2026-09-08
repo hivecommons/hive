@@ -74,7 +74,16 @@ fi
 
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
 # Contributors keep their personal token — they fork+PR with their own identity.
-TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
+# Token-access audit events (#6287). The durable log the dashboard serves
+# (GET /api/token-access) is owned by the hive UID, mode 0600, and NO agent
+# can open it: this wrapper runs as the agent UID, and an
+# audit log the audited party can write is not an audit log. Events are
+# dropped here as one file each and the hive ingests them, attributing each
+# to the uid that OWNS the file rather than the uid the event claims. This
+# path deliberately has no environment override (an override would let an
+# agent redirect its own audit events into the void); it must match
+# TokenAccessSpoolDir in pkg/github/token_access_audit.go.
+TOKEN_ACCESS_SPOOL="/var/run/hive-metrics/token-access-events"
 if ! _contributor_mode; then
   # Per-agent scoped token (Phase 4) — 0640 dev:hive-<agent>, least-privilege,
   # readable ONLY by the owning agent's private group. This is the ONLY token an
@@ -112,14 +121,21 @@ if ! _contributor_mode; then
     echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
     exit 1
   fi
-  # The group wraps the append so a failed REDIRECTION is silenced too: `>> f
-  # 2>/dev/null` only mutes the printf, and when the log's directory is not
-  # writable by the agent UID the shell's own "Permission denied" line leaked
-  # into stderr on EVERY gh call, priming agents to read later denials as
-  # permission errors (#4043).
-  { printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HIVE_AGENT:-unknown}" "$(id -u)" "$*" \
-    >> "$TOKEN_ACCESS_LOG"; } 2>/dev/null || true
+  # Write-then-rename so the ingester never sees a half-written event. The
+  # subshell pins umask 027: the spool is setgid to the hive's group, so
+  # 0640 is exactly "the hive can read it, nobody else"; without the pin an
+  # agent umask of 077 would hand the hive an event it cannot open. The group
+  # wraps everything so a failed REDIRECTION is silenced too: `> f 2>/dev/null`
+  # only mutes the printf, and when the spool is not writable by the agent
+  # UID the shell's own "Permission denied" line leaked into stderr on EVERY
+  # gh call, priming agents to read later denials as permission errors
+  # (#4043).
+  {
+    _evt="${TOKEN_ACCESS_SPOOL}/$(date -u +%s%N)-$$-${RANDOM}.json"
+    ( umask 027 && printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HIVE_AGENT:-unknown}" "$(id -u)" "$*" \
+      > "${_evt}.tmp" ) && mv -f "${_evt}.tmp" "$_evt"
+  } 2>/dev/null || true
 fi
 
 # Contributor mode — extra restrictions for remote contributor agents

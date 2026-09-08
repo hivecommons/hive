@@ -132,6 +132,14 @@ jobs:
       - name: Entrypoint UID-isolation migration (#5525)
         run: bash deploy/test_entrypoint_uid_isolation.sh
 
+      # #6287: the token-access audit log (GET /api/token-access) was
+      # dev:node 0664 while every agent UID is in group node, so the audited
+      # agents could truncate or forge their own trail. Pins the invariant on
+      # the shipped entrypoint and wrappers: the log is dev-owned 0600, the
+      # wrappers write only to the drop-box spool, and no chmod loosens it.
+      - name: Entrypoint token-access audit log not agent-writable (#6287)
+        run: bash deploy/test_entrypoint_token_access_audit.sh
+
       # #5370: the arm64 lane probed the PUBLISHED image, so on a PR it
       # validated code already on v4 rather than the change proposed — a PR
       # fixing a startup bug stayed red, one introducing a startup bug went

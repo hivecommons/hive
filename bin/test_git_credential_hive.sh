@@ -148,6 +148,85 @@ else
   echo "PASS: store op does not leak the token"
 fi
 
+# #6287: the helper must never write the durable audit log itself. It drops
+# one event file per `get` into the hive-ingested spool (write-then-rename,
+# 0640 so only the hive's group can read it) and the log path does not appear
+# in the helper at all. Production deliberately has no environment override
+# for the spool path, so redirect the constant in a temporary copy, the same
+# way gh-wrapper.test.sh redirects CONTRIBUTOR_MODE_MARKER.
+SPOOL="${WORK}/token-access-events"
+AUDIT_LOG="${WORK}/token-access.jsonl"
+mkdir -p "$SPOOL"
+HELPER_COPY="${WORK}/git-credential-hive-spool.sh"
+sed "s|TOKEN_ACCESS_SPOOL=\"/var/run/hive-metrics/token-access-events\"|TOKEN_ACCESS_SPOOL=\"${SPOOL}\"|" "$HELPER" >"$HELPER_COPY"
+if ! grep -q "TOKEN_ACCESS_SPOOL=\"${SPOOL}\"" "$HELPER_COPY"; then
+  FAIL=$((FAIL + 1))
+  echo "FAIL: could not redirect TOKEN_ACCESS_SPOOL in the test copy (helper constant changed?)"
+else
+  SPOOL_OUT="$(
+    printf '%b' "$GET_STDIN" | \
+    HIVE_AGENT="$TEST_AGENT" HIVE_AGENT_MODE=ADVISORY HIVE_ACMM_LEVEL=2 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    bash "$HELPER_COPY" get 2>&1
+  )"
+  EVENTS=("$SPOOL"/*.json)
+  if [[ "$SPOOL_OUT" == *"password=ghs_stubtoken"* ]] && [ -f "${EVENTS[0]:-}" ] && [ "${#EVENTS[@]}" -eq 1 ]; then
+    PASS=$((PASS + 1))
+    echo "PASS: get drops exactly one event into the spool"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: get did not drop exactly one spool event (found: ${EVENTS[*]:-none}); output: $SPOOL_OUT"
+  fi
+  if [ -f "${EVENTS[0]:-}" ] && grep -q '"op":"git-credential"' "${EVENTS[0]}" \
+     && grep -q "\"agent\":\"${TEST_AGENT}\"" "${EVENTS[0]}" \
+     && grep -q '"host":"github.com"' "${EVENTS[0]}"; then
+    PASS=$((PASS + 1))
+    echo "PASS: spool event records op, agent and host"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: spool event content is wrong: $(cat "${EVENTS[0]:-/dev/null}" 2>/dev/null)"
+  fi
+  if ! compgen -G "${SPOOL}/*.tmp" >/dev/null; then
+    PASS=$((PASS + 1))
+    echo "PASS: no half-written .tmp event left behind"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: a .tmp event was left in the spool"
+  fi
+  EVENT_MODE="$(stat -c '%a' "${EVENTS[0]:-/dev/null}" 2>/dev/null || stat -f '%OLp' "${EVENTS[0]:-/dev/null}" 2>/dev/null || echo '?')"
+  if [ "$EVENT_MODE" = "640" ]; then
+    PASS=$((PASS + 1))
+    echo "PASS: spool event is 0640 regardless of the caller's umask"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: spool event mode is ${EVENT_MODE}, want 640"
+  fi
+  if [ ! -e "$AUDIT_LOG" ] && ! grep -q "token-access.jsonl" "$HELPER"; then
+    PASS=$((PASS + 1))
+    echo "PASS: helper never opens the durable audit log (only the hive writes it)"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: helper touched or references the durable audit log path"
+  fi
+  # An unwritable spool must not break the credential flow: the audit relay
+  # fails silent, the credential still flows (#4043 stderr-hygiene contract).
+  chmod 500 "$SPOOL"
+  RO_OUT="$(
+    printf '%b' "$GET_STDIN" | \
+    HIVE_AGENT="$TEST_AGENT" HIVE_AGENT_MODE=ADVISORY HIVE_ACMM_LEVEL=2 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    bash "$HELPER_COPY" get 2>&1
+  )"
+  chmod 700 "$SPOOL"
+  if [[ "$RO_OUT" == *"password=ghs_stubtoken"* ]] && [[ "$RO_OUT" != *"Permission denied"* ]]; then
+    PASS=$((PASS + 1))
+    echo "PASS: unwritable spool neither blocks the credential nor leaks EACCES to stderr"
+  else
+    FAIL=$((FAIL + 1))
+    echo "FAIL: unwritable spool changed helper behaviour: $RO_OUT"
+  fi
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1

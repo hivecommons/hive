@@ -231,6 +231,12 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 	// installation ID, /gh-setup persists it, auto-discovery finds it later), so
 	// this gap silently disarms agent writes on a hive that looks healthy.
 	github.PrepareRequestDirs(w.logger)
+	// Token-access audit ingest (#6287): the per-UID wrappers record every gh
+	// call and credential lookup as an event file, and this loop folds them
+	// into the hive-owned 0600 audit log that GET /api/token-access serves.
+	// Unconditional, like the request dirs: agents touch tokens whether or
+	// not the App is usable, and the trail must never depend on App state.
+	github.StartTokenAccessAuditWatcher(w.ctx, w.logger)
 
 	if w.ghClient != nil && w.cfg.GitHub.HasUsableApp() {
 		// Attribution resolver: effective backend/model from the manager

@@ -2182,6 +2182,11 @@ const (
 	tokenAccessMaxEntries = 100
 )
 
+// tokenAccessLogPath is github.TokenAccessLogPath. The file is written ONLY
+// by the hive process (pkg/github's token-access ingester) and is hive-owned
+// 0600: the agents whose gh calls it records cannot append to, truncate, or
+// read it (#6287). The wrappers drop per-call events into a spool the hive
+// ingests, attributing each to the uid that owns the event file.
 var tokenAccessLogPath = "/var/run/hive-metrics/token-access.jsonl"
 
 func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
@@ -2190,7 +2195,8 @@ func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
 	// --body ...). Without a role gate any authenticated user — including
 	// read-only contributors — could enumerate the hive's full GitHub operation
 	// history. Gate at owner-role, consistent with handleConfigDownload and
-	// handleSelfUpgrade which protect equivalent operator-only data.
+	// handleSelfUpgrade which protect equivalent operator-only data. The
+	// write side is protected too: see tokenAccessLogPath.
 	if !requireOwnerRole(w, r) {
 		return
 	}
