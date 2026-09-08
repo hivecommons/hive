@@ -100,6 +100,7 @@ func upgradeHarness(t *testing.T) string {
 		// empty list is the correct default — the switch branch is not taken.
 		"var _releaseChannels = [];",
 		jsFunc(t, "sameShaJS"),
+		jsFunc(t, "imageTagJS"),
 		jsFunc(t, "hiveSwitchState"),
 		jsFunc(t, "hiveIsUpgradingNow"),
 		jsFunc(t, "normalizeUpgradeState"),
@@ -137,6 +138,12 @@ type upgFixture struct {
 	latestSHAs string
 	// sentinel, when non-empty, seeds _upgradingHives[id].
 	sentinel string
+	// releaseChannels, when non-empty, seeds _releaseChannels (JS array
+	// literal) — a channel switch's completion is judged against it.
+	releaseChannels string
+	// wantSentinelGone asserts the sentinel was expired by
+	// normalizeUpgradeState; only meaningful with a sentinel set.
+	wantSentinelGone bool
 	// wantUpgrading is the expected answer from the SHARED predicate, which is
 	// simultaneously the pill's classification and the row's badge.
 	wantUpgrading bool
@@ -202,6 +209,60 @@ func upgradeFixtures() []upgFixture {
 			why:           "the row spins on the click before the hub latches",
 		},
 		{
+			// #6301. Six hives switched to :candidate; pods Ready on the
+			// candidate image; hub cleared its side ("spoke branch switch
+			// complete") and reports no target. The row still said
+			// "Switching to candidate — taking longer than expected" 20
+			// minutes later, because a channel image heartbeats branch v4
+			// and the switch test is targetBranch !== branchName.
+			name:             "channel switch sentinel expires once the reported image tag matches",
+			hive:             `{id:'h9',gitBranch:'v4',gitHash:'ccccccc',upgrading:false,imageRef:'ghcr.io/hivecommons/hive:candidate',trackedChannel:'candidate'}`,
+			latestSHAs:       latest,
+			sentinel:         "switch:candidate",
+			releaseChannels:  `['stable','candidate']`,
+			wantUpgrading:    false,
+			wantState:        "",
+			wantSentinelGone: true,
+			why:              "the hub judged completion by the reported image tag; the row must agree",
+		},
+		{
+			// POSITIVE CONTROL for the above: the old pod still reports the
+			// old tag, so the switch is genuinely in flight.
+			name:            "channel switch sentinel holds while the old image tag is still reported",
+			hive:            `{id:'h10',gitBranch:'v4',gitHash:'ccccccc',upgrading:false,imageRef:'ghcr.io/hivecommons/hive:stable',trackedChannel:'candidate'}`,
+			latestSHAs:      latest,
+			sentinel:        "switch:candidate",
+			releaseChannels: `['stable','candidate']`,
+			wantUpgrading:   true,
+			wantState:       "upgrading",
+			why:             "the new pod is not up yet; the row must keep spinning",
+		},
+		{
+			// Same family: "Upgrade now" on a hive already at everything its
+			// tag delivers. The hub accepted, found nothing to do, cleared its
+			// latch a minute later; the SHA never changed, so the sentinel
+			// never expired and the row spun until reload.
+			name:             "no-op upgrade sentinel expires when the hub reports the hive at its target",
+			hive:             `{id:'h11',gitBranch:'v4',gitHash:'ccccccc',upgrading:false,behindTargetSHA:'ccccccc'}`,
+			latestSHAs:       latest,
+			sentinel:         "ccccccc",
+			wantUpgrading:    false,
+			wantState:        "",
+			wantSentinelGone: true,
+			why:              "the hub cleared the upgrade as a no-op; nothing will ever change the SHA",
+		},
+		{
+			// POSITIVE CONTROL: same click, but the hub has latched — the
+			// upgrade is real and in flight.
+			name:          "upgrade sentinel holds while the hub reports upgrading",
+			hive:          `{id:'h12',gitBranch:'v4',gitHash:'ccccccc',upgrading:true,upgradeTarget:'aaaaaaa',behindTargetSHA:'aaaaaaa'}`,
+			latestSHAs:    latest,
+			sentinel:      "ccccccc",
+			wantUpgrading: true,
+			wantState:     "upgrading",
+			why:           "a genuine rollout must keep its spinner",
+		},
+		{
 			name:          "latest unresolved",
 			hive:          `{id:'h7',gitBranch:'v4',gitHash:'bbbbbbb',upgrading:true,upgradeTarget:'aaaaaaa'}`,
 			latestSHAs:    `{}`,
@@ -215,6 +276,9 @@ func upgradeFixtures() []upgFixture {
 // jsSetup renders the per-fixture globals.
 func (f upgFixture) jsSetup() string {
 	s := "_latestSHAs = " + f.latestSHAs + ";\nvar h = " + f.hive + ";\n"
+	if f.releaseChannels != "" {
+		s += "_releaseChannels = " + f.releaseChannels + ";\n"
+	}
 	if f.sentinel != "" {
 		s += "_upgradingHives[h.id] = " + jsStr(f.sentinel) + ";\n"
 	}
@@ -232,18 +296,25 @@ func TestUpgradingPredicateCases(t *testing.T) {
 	for _, f := range upgradeFixtures() {
 		t.Run(f.name, func(t *testing.T) {
 			var got struct {
-				Upgrading bool   `json:"u"`
-				State     string `json:"s"`
+				Upgrading    bool   `json:"u"`
+				State        string `json:"s"`
+				SentinelGone bool   `json:"g"`
 			}
 			runUpgradeJS(t, f.jsSetup()+
 				"normalizeUpgradeState(h);\n"+
-				"result = {u: hiveIsUpgradingNow(h, h.gitBranch, _latestSHAs[h.gitBranch] || ''), s: hiveUpgradeState(h)};",
+				"result = {u: hiveIsUpgradingNow(h, h.gitBranch, _latestSHAs[h.gitBranch] || ''), s: hiveUpgradeState(h), g: _upgradingHives[h.id] === undefined};",
 				&got)
 			if got.Upgrading != f.wantUpgrading {
 				t.Errorf("hiveIsUpgradingNow = %v, want %v — %s", got.Upgrading, f.wantUpgrading, f.why)
 			}
 			if got.State != f.wantState {
 				t.Errorf("hiveUpgradeState = %q, want %q — %s", got.State, f.wantState, f.why)
+			}
+			if f.sentinel != "" && f.wantSentinelGone && !got.SentinelGone {
+				t.Errorf("sentinel %q still set after normalizeUpgradeState — %s", f.sentinel, f.why)
+			}
+			if f.sentinel != "" && !f.wantSentinelGone && f.wantUpgrading && got.SentinelGone {
+				t.Errorf("sentinel %q expired while the upgrade is still in flight — %s", f.sentinel, f.why)
 			}
 		})
 	}
