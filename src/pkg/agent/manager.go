@@ -4952,11 +4952,15 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// (#4296). Must be the first thing this function does.
 	m.rotateKickLogOnKickLocked(agent)
 
-	// Clear stale input before kick (Ctrl+C then Ctrl+U).
-	// Goose 1.37 exits on ^C — skip clear for goose backend.
-	if agent.Config.Backend != "goose" && agent.BackendOverride != "goose" {
-		m.tmuxSendKeysForAgent(agent, "C-c")
-		time.Sleep(staleCheckDelay)
+	// The caller has already waited for input readiness. Codex can exit on
+	// Ctrl+C at that prompt, leaving the subsequent task to be executed by
+	// bash. Clear its input with Ctrl+U alone. Goose skips clearing entirely.
+	backend := effectiveBackend(agent)
+	if backend != "goose" {
+		if backend != codexBackend {
+			m.tmuxSendKeysForAgent(agent, "C-c")
+			time.Sleep(staleCheckDelay)
+		}
 		m.tmuxSendKeysForAgent(agent, "C-u")
 		time.Sleep(staleCheckDelay)
 	}

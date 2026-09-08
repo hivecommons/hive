@@ -1,0 +1,1 @@
+- Codex agents no longer receive Ctrl+C before each kick, which could exit the CLI and send the quality policy and task into Bash as shell commands. Input clearing now uses Ctrl+U for Codex, including runtime backend overrides.
