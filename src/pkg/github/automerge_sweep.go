@@ -826,78 +826,16 @@ func parseHiveQueueReview(body string) string {
 // shipped conservative behavior is preserved rather than degrading to
 // "always green".
 func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
+	// The walk itself lives in EvaluateCommitCI (commit_ci.go) so the
+	// merge-request watcher's positive-confirmation gate (#6173) evaluates a
+	// SHA with the identical rules; only the required-set precedence is
+	// sweep-specific.
 	required, requiredKnown := c.requiredStatusCheckContexts(ctx, owner, repo, branch)
-
-	statusOpts := &gh.ListOptions{PerPage: 100}
-	for {
-		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
-		if err != nil {
-			return false, "status-check", err
-		}
-		for _, s := range status.Statuses {
-			ctxName := s.GetContext()
-			if requiredKnown {
-				// Required-checks-only gating: skip anything not on the
-				// branch's actual required list, no matter its state.
-				if !required[ctxName] {
-					continue
-				}
-			} else if isMetaCheck(ctxName) {
-				// Fail-closed fallback path (required set unavailable).
-				continue
-			}
-			switch s.GetState() {
-			case "success":
-			case "pending":
-				return false, "status-pending", nil
-			default: // "failure", "error"
-				if !requiredKnown && isIgnorableCICheck(ctxName) {
-					continue
-				}
-				return false, "status-" + s.GetState(), nil
-			}
-		}
-		if resp.NextPage == 0 {
-			break
-		}
-		statusOpts.Page = resp.NextPage
+	st, err := EvaluateCommitCI(ctx, c.client, owner, repo, sha, required, requiredKnown)
+	if err != nil {
+		return false, st.Reason, err
 	}
-
-	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	for {
-		checkRuns, resp, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, opts)
-		if err != nil {
-			return false, "check-runs", err
-		}
-		for _, cr := range checkRuns.CheckRuns {
-			name := cr.GetName()
-			if requiredKnown {
-				if !required[name] {
-					continue
-				}
-			} else if isMetaCheck(name) {
-				continue
-			}
-			if cr.GetStatus() != "completed" {
-				if !requiredKnown && isIgnorableCICheck(name) {
-					continue
-				}
-				return false, "check-pending", nil
-			}
-			switch cr.GetConclusion() {
-			case "success", "neutral", "skipped":
-			default:
-				if !requiredKnown && isIgnorableCICheck(name) {
-					continue
-				}
-				return false, "check-" + cr.GetConclusion(), nil
-			}
-		}
-		if resp.NextPage == 0 {
-			return true, "", nil
-		}
-		opts.Page = resp.NextPage
-	}
+	return st.Green, st.Reason, nil
 }
 
 // requiredStatusCheckContexts returns the set of status-check contexts /
@@ -924,41 +862,8 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 //     allowlist rather than treating "we don't know the required set" as
 //     "nothing is required" — see commitGreen's fail-closed comment.
 func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
-	if set, ok := c.configRequiredChecks(); ok {
-		return set, true
-	}
-	if strings.TrimSpace(branch) == "" {
-		return nil, false
-	}
-	rsc, _, err := c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
-	if err != nil {
-		// gh.ErrBranchNotProtected means "this branch legitimately requires
-		// nothing" — that IS a known, empty required set, not a failure to
-		// determine it, so requiredKnown is true with an empty map (every
-		// check is then non-required and ignorable).
-		if errors.Is(err, gh.ErrBranchNotProtected) {
-			return map[string]bool{}, true
-		}
-		return nil, false
-	}
-	if rsc == nil {
-		return map[string]bool{}, true
-	}
-	required := make(map[string]bool)
-	if rsc.Contexts != nil {
-		for _, name := range *rsc.Contexts {
-			required[name] = true
-		}
-	}
-	if rsc.Checks != nil {
-		for _, check := range *rsc.Checks {
-			if check == nil {
-				continue
-			}
-			required[check.Context] = true
-		}
-	}
-	return required, true
+	set, ok := c.configRequiredChecks()
+	return RequiredStatusCheckContexts(ctx, c.client, owner, repo, branch, set, ok)
 }
 
 func hasLabel(labels []string, want string) bool {

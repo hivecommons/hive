@@ -20,7 +20,14 @@ import (
 // merges counts successful PUT /merge calls.
 func newMergeMockServer(t *testing.T, failWith int, merges *int) *httptest.Server {
 	t.Helper()
+	// The watcher requires positive CI confirmation before PUT /merge
+	// (#6173); serve a green head so these tests exercise the paths they
+	// were written for. merge_ci_gate_test.go covers the gate itself.
+	green := greenFixture()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if green.serveCI(w, r) {
+			return
+		}
 		switch {
 		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge"):
 			if failWith != 0 {
@@ -311,7 +318,11 @@ func TestIsRequiredCheckMergeBlocker(t *testing.T) {
 // requiredCheckMergeServer always fails PUT /merge with a required-check message.
 func requiredCheckMergeServer(t *testing.T, attempts *atomic.Int32) *httptest.Server {
 	t.Helper()
+	green := greenFixture()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if green.serveCI(w, r) {
+			return
+		}
 		if r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge") {
 			attempts.Add(1)
 			w.Header().Set("Content-Type", "application/json")

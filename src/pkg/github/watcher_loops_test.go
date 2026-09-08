@@ -48,9 +48,23 @@ func countingServer(t *testing.T, hits *atomic.Int64, match func(*http.Request) 
 }
 
 func mergeServer(t *testing.T, hits *atomic.Int64) *httptest.Server {
-	return countingServer(t, hits, func(r *http.Request) bool {
-		return r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge")
-	}, `{"sha":"deadbeef","merged":true,"message":"merged"}`)
+	t.Helper()
+	// The watcher requires positive CI confirmation before PUT /merge
+	// (#6173): serve a green head for every PR so the loop under test
+	// reaches the merge call. merge_ci_gate_test.go covers the gate itself.
+	green := greenFixture()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if green.serveCI(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge") {
+			hits.Add(1)
+			_, _ = io.WriteString(w, `{"sha":"deadbeef","merged":true,"message":"merged"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `[]`)
+	}))
 }
 
 func prServer(t *testing.T, hits *atomic.Int64) *httptest.Server {
