@@ -789,19 +789,6 @@ func scopeThemeAncestorSelector(selector, scopeRoot string) (string, bool) {
 	return "", false
 }
 
-func sanitizeCSSURLToken(token string) string {
-	matches := cssURLRE.FindStringSubmatch(token)
-	if len(matches) < 3 {
-		return ""
-	}
-	raw := strings.TrimSpace(matches[2])
-	raw = strings.Trim(raw, `"'`)
-	if !isAllowedCSSURL(raw, false) {
-		return `url("")`
-	}
-	return "url(" + raw + ")"
-}
-
 func sanitizeCSSURLsInDeclaration(decl string, report *customStyleSanitizeReport, opts sanitizeCSSOptions) string {
 	return cssURLRE.ReplaceAllStringFunc(decl, func(token string) string {
 		matches := cssURLRE.FindStringSubmatch(token)
@@ -894,23 +881,6 @@ func (s *Server) handleLeaderboardStyle(w http.ResponseWriter, r *http.Request) 
 	s.handleStyle(w, r)
 }
 
-// Back-compatible leaderboard name kept for the PR #2834 tests and callers.
-type leaderboardCustomStyleSource = customStyleSource
-
-func validateLeaderboardCustomStyleSource(src string) (leaderboardCustomStyleSource, error) {
-	return validateCustomStyleSource(src)
-}
-
-func leaderboardCustomStyleCacheKey(src leaderboardCustomStyleSource) string {
+func leaderboardCustomStyleCacheKey(src customStyleSource) string {
 	return customStyleSourceKey(src)
-}
-
-func getLeaderboardCustomStyle(ctx context.Context, rawSrc string) ([]byte, leaderboardCustomStyleSource, error) {
-	css, src, _, err := getCustomStyle(ctx, rawSrc, customStyleScopeLeaderboard)
-	return css, src, err
-}
-
-func sanitizeLeaderboardCustomStyle(css []byte) ([]byte, error) {
-	out, _, err := sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
-	return out, err
 }

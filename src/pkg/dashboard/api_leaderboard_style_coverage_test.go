@@ -1,7 +1,7 @@
 package dashboard
 
 // Coverage tests for the CSS sanitizer's low-coverage internal helpers:
-// sanitizeCSSURLToken, scopeRootEscapesWithSiblingCombinator,
+// sanitizeCSSURLTokenWithDataOption, scopeRootEscapesWithSiblingCombinator,
 // findDeclarationColon, sanitizeCustomAtRule, and fontFaceSrcAllowed.
 // These exercise edge cases (quoted strings, bracket/paren nesting,
 // escaped identifiers, unterminated blocks) that the higher-level
@@ -31,9 +31,9 @@ func TestSanitizeCSSURLToken_Standalone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeCSSURLToken(tt.token)
+			got := sanitizeCSSURLTokenWithDataOption(tt.token, false)
 			if got != tt.want {
-				t.Errorf("sanitizeCSSURLToken(%q) = %q, want %q", tt.token, got, tt.want)
+				t.Errorf("sanitizeCSSURLTokenWithDataOption(%q, false) = %q, want %q", tt.token, got, tt.want)
 			}
 		})
 	}

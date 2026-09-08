@@ -3,7 +3,7 @@ package dashboard
 import "testing"
 
 // ============================================================
-// sanitizeCSSURLToken — url() rewriting for XSS/data-exfil prevention
+// sanitizeCSSURLTokenWithDataOption — url() rewriting for XSS/data-exfil prevention
 // ============================================================
 
 func TestSanitizeCSSURLToken_DataImageAllowed(t *testing.T) {
@@ -18,9 +18,9 @@ func TestSanitizeCSSURLToken_DataImageAllowed(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sanitizeCSSURLToken(tc.input)
+			got := sanitizeCSSURLTokenWithDataOption(tc.input, false)
 			if got != tc.want {
-				t.Errorf("sanitizeCSSURLToken(%q) = %q, want %q", tc.input, got, tc.want)
+				t.Errorf("sanitizeCSSURLTokenWithDataOption(%q, false) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}
@@ -39,9 +39,9 @@ func TestSanitizeCSSURLToken_BlocksExternalURLs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sanitizeCSSURLToken(tc.input)
+			got := sanitizeCSSURLTokenWithDataOption(tc.input, false)
 			if got != `url("")` {
-				t.Errorf("sanitizeCSSURLToken(%q) = %q, want url(\"\")", tc.input, got)
+				t.Errorf("sanitizeCSSURLTokenWithDataOption(%q, false) = %q, want url(\"\")", tc.input, got)
 			}
 		})
 	}
@@ -59,16 +59,16 @@ func TestSanitizeCSSURLToken_RelativePathsPreserved(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sanitizeCSSURLToken(tc.input)
+			got := sanitizeCSSURLTokenWithDataOption(tc.input, false)
 			if got != tc.want {
-				t.Errorf("sanitizeCSSURLToken(%q) = %q, want %q", tc.input, got, tc.want)
+				t.Errorf("sanitizeCSSURLTokenWithDataOption(%q, false) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}
 }
 
 func TestSanitizeCSSURLToken_MalformedInput(t *testing.T) {
-	got := sanitizeCSSURLToken("not-a-url-token")
+	got := sanitizeCSSURLTokenWithDataOption("not-a-url-token", false)
 	if got != "" {
 		t.Errorf("expected empty for malformed input, got %q", got)
 	}

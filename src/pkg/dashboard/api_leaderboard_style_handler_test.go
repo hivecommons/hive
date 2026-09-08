@@ -352,10 +352,10 @@ func newTestStyleServer(t *testing.T) *Server {
 	return s
 }
 
-// --- backward-compat wrappers ---
+// --- scoped style API (leaderboard scope) ---
 
-func TestValidateLeaderboardCustomStyleSource_Compat(t *testing.T) {
-	src, err := validateLeaderboardCustomStyleSource("acme/theme/style.css")
+func TestValidateCustomStyleSource_Leaderboard(t *testing.T) {
+	src, err := validateCustomStyleSource("acme/theme/style.css")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestLeaderboardCustomStyleCacheKey(t *testing.T) {
 	}
 }
 
-func TestGetLeaderboardCustomStyle(t *testing.T) {
+func TestGetCustomStyle_LeaderboardScope(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css")
 		w.Write([]byte(".lb { margin: 0; }"))
@@ -385,7 +385,7 @@ func TestGetLeaderboardCustomStyle(t *testing.T) {
 	customStyleCache = map[string]customStyleCacheEntry{}
 	customStyleCacheMu.Unlock()
 
-	css, src, err := getLeaderboardCustomStyle(context.Background(), "acme/theme/style.css")
+	css, src, _, err := getCustomStyle(context.Background(), "acme/theme/style.css", customStyleScopeLeaderboard)
 	if err != nil {
 		t.Fatal(err)
 	}

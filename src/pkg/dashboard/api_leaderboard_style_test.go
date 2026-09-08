@@ -64,9 +64,9 @@ func TestValidateLeaderboardCustomStyleSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := validateLeaderboardCustomStyleSource(tt.src)
+			_, err := validateCustomStyleSource(tt.src)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateLeaderboardCustomStyleSource(%q) error = %v, wantErr %v", tt.src, err, tt.wantErr)
+				t.Fatalf("validateCustomStyleSource(%q) error = %v, wantErr %v", tt.src, err, tt.wantErr)
 			}
 		})
 	}
@@ -95,7 +95,7 @@ body{display:none}
 .moz{-moz-binding:url(/x.xml)}
 .behavior{behavior:url(/x.htc)}
 `)
-	got, err := sanitizeLeaderboardCustomStyle(css)
+	got, _, err := sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ body{display:none}
 	if strings.Contains(out, "footer") {
 		t.Fatalf("sanitized CSS allowed a selector outside the leaderboard scope:\n%s", out)
 	}
-	if _, err := sanitizeLeaderboardCustomStyle([]byte(strings.Repeat("a", customStyleMaxBytes+1))); err == nil {
+	if _, _, err := sanitizeCustomStyle([]byte(strings.Repeat("a", customStyleMaxBytes+1)), customStyleAllowedScopes[customStyleScopeLeaderboard]); err == nil {
 		t.Fatal("oversized CSS did not fail")
 	}
 }
