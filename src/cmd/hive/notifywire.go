@@ -329,6 +329,10 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		// intact (SetRequiredChecks(nil) is a safe no-op).
 		if set, ok := w.cfg.AutoMerge.RequiredCheckSet(); ok {
 			autoMergeOpts.RequiredChecks = set
+			// The merge-request watcher's pre-merge CI gate (#6173) names the
+			// required checks that have not reported yet, so it needs the same
+			// declared set the sweep gates on.
+			w.ghClient.SetRequiredChecks(set)
 		}
 
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs

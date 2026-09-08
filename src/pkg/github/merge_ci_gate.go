@@ -110,9 +110,11 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
 	}
 
-	st, err := c.commitCIState(ctx, owner, name, baseBranch, sha)
+	cfgSet, cfgKnown := c.configRequiredChecks()
+	required, requiredKnown := RequiredStatusCheckContexts(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
+	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, required, requiredKnown)
 	if err != nil {
-		return mergeCIUnverified, "ci gate: " + st.reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.reason, owner, name, shortSHA(sha), err)
+		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)
 	}
 
 	// Workflow runs are the evidence that survives a zero-job failure. A run
@@ -129,18 +131,18 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	switch {
 	case len(opaqueFailed) > 0:
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaqueFailed, ", ")), nil
-	case !st.green && !strings.HasSuffix(st.reason, "-pending"):
-		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.reason), nil
-	case !st.green:
-		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.reason), nil
-	case len(st.missingRequired) > 0:
-		return mergeCIPending, fmt.Sprintf("ci gate: required check(s) not yet reported on %s: %s", shortSHA(sha), strings.Join(st.missingRequired, ", ")), nil
+	case !st.Green && !strings.HasSuffix(st.Reason, "-pending"):
+		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
+	case !st.Green:
+		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil
+	case len(st.MissingRequired) > 0:
+		return mergeCIPending, fmt.Sprintf("ci gate: required check(s) not yet reported on %s: %s", shortSHA(sha), strings.Join(st.MissingRequired, ", ")), nil
 	case len(opaquePending) > 0:
 		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaquePending, ", ")), nil
-	case st.evidence == 0:
+	case st.Evidence == 0:
 		return mergeCIUnverified, fmt.Sprintf("ci gate: no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
 	}
-	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.evidence, shortSHA(sha)), nil
+	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil
 }
 
 // opaqueWorkflowRuns lists the workflow runs for sha and returns the names of

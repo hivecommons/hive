@@ -57,6 +57,10 @@ type Client struct {
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
 	autoMergeLabel   string
+	// requiredChecks is the config-declared auto_merge.required_checks set the
+	// merge-request watcher's CI gate consults (#6173); see SetRequiredChecks.
+	requiredChecksMu sync.RWMutex
+	requiredChecks   map[string]bool
 	logger           *slog.Logger
 	appAuth          *AppAuth // nil for token-authenticated clients
 	canariesEnabled  bool
