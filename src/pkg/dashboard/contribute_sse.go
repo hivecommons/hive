@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -58,10 +59,27 @@ const readyQueueDefaultLimit = 150
 // initial hydration payload (queue + replay) from subsequent single activity
 // events so the client can render each without guessing.
 type sseEvent struct {
-	Type     string           `json:"type"`               // "activity" | "hello"
+	Type     string           `json:"type"`               // "activity" | "hello" | "gap"
 	Activity *ActivityEntry   `json:"activity,omitempty"` // set when Type=="activity"
 	Replay   []ActivityEntry  `json:"replay,omitempty"`   // set when Type=="hello"
 	Queue    []ReadyQueueItem `json:"queue,omitempty"`    // set when Type=="hello"
+	// Seq is the stream position (#6218). It is a monotonic counter over every
+	// event broadcast, assigned once at fan-out so all subscribers see the SAME
+	// number for the same event. On "activity" it is that event's position; on
+	// "hello" it is the position the stream had when this subscriber registered,
+	// so the first activity it receives should be Seq+1; on "gap" it is the
+	// position reached so far.
+	//
+	// A client that tracks it detects loss on its own: a jump from 41 to 45
+	// means three events never arrived. That is the primitive the "gap" frame
+	// below cannot give precisely — see the ordering note in flushGap.
+	//
+	// omitempty, so a stream that has broadcast nothing yet (Seq 0) serialises
+	// exactly as it did before this field existed.
+	Seq uint64 `json:"seq,omitempty"`
+	// Dropped is how many events were discarded for THIS subscriber because its
+	// channel was full. Set only on Type=="gap".
+	Dropped uint64 `json:"dropped,omitempty"`
 	// Withheld and AdmissionCoverage are the #4246 convergence admission
 	// diagnostics, set on the "hello" frame ONLY when the convergence toggle is
 	// in shadow mode (default off → both absent, payload unchanged). They come
@@ -132,6 +150,20 @@ func (it ReadyQueueItem) identityKey() string {
 // it. Guarded by the hub's sseMu.
 type sseSubscriber struct {
 	events chan sseEvent
+	// startSeq is the stream position when this subscriber registered, captured
+	// under the registry lock so it cannot straddle a concurrent broadcast. The
+	// hello frame reports it, which is what lets a client tell an event it
+	// missed from one that simply had not happened yet.
+	//
+	// It is read at registration and never written again, so the handler reads
+	// it without the lock.
+	startSeq uint64
+	// dropped counts events discarded for this subscriber because its channel
+	// was full. Atomic because broadcast increments it under the REGISTRY lock
+	// while the HTTP writer drains it holding nothing — and the writer must
+	// never take that lock, since the whole point of the non-blocking send is
+	// that a slow client cannot reach the hub's event path (#6218).
+	dropped atomic.Uint64
 }
 
 // sseRegistry holds the live SSE subscribers. It is a small struct on the hub so
@@ -139,6 +171,9 @@ type sseSubscriber struct {
 type sseRegistry struct {
 	mu   sync.Mutex
 	subs map[*sseSubscriber]struct{}
+	// seq is the monotonic stream position, incremented once per broadcast so a
+	// single event carries one number for every subscriber. Guarded by mu.
+	seq uint64
 }
 
 func newSSERegistry() *sseRegistry {
@@ -150,9 +185,20 @@ func newSSERegistry() *sseRegistry {
 func (r *sseRegistry) subscribe() *sseSubscriber {
 	sub := &sseSubscriber{events: make(chan sseEvent, sseSubscriberBuffer)}
 	r.mu.Lock()
+	// Under the same lock as the registration, so the recorded position and the
+	// set of events this subscriber will receive cannot disagree: every event
+	// numbered above startSeq is one it was registered for.
+	sub.startSeq = r.seq
 	r.subs[sub] = struct{}{}
 	r.mu.Unlock()
 	return sub
+}
+
+// currentSeq returns the stream position reached so far.
+func (r *sseRegistry) currentSeq() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.seq
 }
 
 // unsubscribe removes a subscriber and closes its channel. Idempotent: a second
@@ -171,15 +217,32 @@ func (r *sseRegistry) unsubscribe(sub *sseSubscriber) {
 // subscriber whose buffer is full is skipped (its browser will reconnect and
 // replay) — the broadcast must never block the caller, which is the hub's event
 // path. This is the leak-safe, back-pressure-free contract the spec requires.
+//
+// Dropping rather than blocking stays exactly as it was: a slow observer must
+// not stall worker assignment. What changed in #6218 is that the drop is no
+// longer INVISIBLE. Each event carries a monotonic Seq, and a discarded one
+// bumps that subscriber's dropped counter, which the HTTP writer turns into a
+// "gap" frame. Before, a long-lived client could not tell "nothing happened"
+// from "I missed events", so an unattended monitor rendered stale data as
+// current until some unrelated reconnect repaired it.
 func (r *sseRegistry) broadcast(ev sseEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Numbered here, once, so every subscriber sees the same position for the
+	// same event — a per-subscriber counter would make the numbers unusable for
+	// comparing two clients or for reasoning about the stream as a whole.
+	r.seq++
+	ev.Seq = r.seq
 	for sub := range r.subs {
 		select {
 		case sub.events <- ev:
 		default:
 			// Subscriber is behind; drop this event for it rather than block the
-			// hub. The client's ring-buffer replay on reconnect recovers state.
+			// hub. Record the loss so the writer can tell the client about it —
+			// the client's ring-buffer replay on reconnect is still what
+			// RECOVERS the state, but it only gets a chance to if it knows it
+			// needs to.
+			sub.dropped.Add(1)
 		}
 	}
 }
@@ -581,6 +644,11 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 		Type:   "hello",
 		Replay: replay,
 		Queue:  snap.queue,
+		// The position this subscriber started at (#6218). The first "activity"
+		// frame it receives should be Seq+1; anything higher means events were
+		// lost between hydration and delivery, which a client can see without
+		// waiting for a "gap" frame.
+		Seq: sub.startSeq,
 	}
 	if diag {
 		hello.Withheld = snap.withheld
@@ -598,6 +666,41 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 	ticker := time.NewTicker(sseHeartbeatInterval)
 	defer ticker.Stop()
 
+	// flushGap emits a "gap" frame when this subscriber has had events discarded
+	// for a full channel (#6218), and reports whether writing succeeded.
+	//
+	// It runs on BOTH loop branches, and which one fires is worth being precise
+	// about. In practice it is the EVENT branch: a drop can only happen when the
+	// channel is full, so there are ~32 queued events behind it and this check
+	// runs before each of those pops. The heartbeat branch is the guarantee, not
+	// the usual path — it is what makes "reported" unconditional rather than
+	// contingent on another event ever arriving for this subscriber, which is
+	// the property the report asks for (a client that goes quiet must still
+	// learn it is behind, instead of reading heartbeats as health forever).
+	//
+	// Swap-to-zero, so a gap is reported exactly once and a drop that lands
+	// between the read and the write is carried into the next frame rather than
+	// lost.
+	//
+	// Ordering, stated honestly: the frame says "you are missing events", not
+	// "the events after this one are the ones you missed". A full channel means
+	// the DISCARDED event was newer than the ~32 still queued, so this fires
+	// while the client is still draining good ones. That is deliberate — telling
+	// a client early that it is behind is strictly better than telling it late —
+	// and it is exactly why every event carries Seq: the sequence numbers locate
+	// the discontinuity precisely, while this frame is the prompt to go looking.
+	flushGap := func() bool {
+		n := sub.dropped.Swap(0)
+		if n == 0 {
+			return true
+		}
+		return writeSSE(w, sseEvent{
+			Type:    "gap",
+			Dropped: n,
+			Seq:     s.contributeHub.sse.currentSeq(),
+		})
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -606,11 +709,17 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 			if !open {
 				return // registry closed our channel (server shutdown / forced drop)
 			}
+			if !flushGap() {
+				return
+			}
 			if !writeSSE(w, ev) {
 				return
 			}
 			flusher.Flush()
 		case <-ticker.C:
+			if !flushGap() {
+				return
+			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}
@@ -622,7 +731,13 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 // sseHeartbeatInterval is how often an idle stream emits an SSE comment ping. It is
 // short enough to keep proxies/load-balancers from closing an idle connection and
 // to detect a dead client promptly, without meaningful overhead.
-const sseHeartbeatInterval = 25 * time.Second
+//
+// A var rather than a const solely so tests can shorten it (the same seam
+// CACertPath uses in pkg/proxy); production never reassigns it. The heartbeat
+// branch is where a gap gets reported on a stream that has gone quiet — the
+// exact case #6218 describes — so leaving it reachable only by a 25-second wait
+// would mean leaving it untested.
+var sseHeartbeatInterval = 25 * time.Second
 
 // writeSSE marshals one event and writes it as a single SSE "data:" frame. Returns
 // false on a write/marshal error so the caller can tear down the subscriber.

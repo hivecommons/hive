@@ -72,7 +72,7 @@ func TestPRRequestWatcher_StartWiresAuthzAndHold(t *testing.T) {
 	// The stored hooks must drive processing: the request is authorized by the
 	// authorizer passed to Start and the PR gets the hold label because the
 	// hold hook passed to Start returned true.
-	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "b", Title: "t", Agent: "quality"}); err != nil {
+	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "b", Title: "t", Body: "a change", Agent: "quality"}); err != nil {
 		t.Fatal(err)
 	}
 	c.ProcessPRRequestsOnce(context.Background())

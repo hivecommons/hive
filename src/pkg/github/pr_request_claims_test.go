@@ -102,7 +102,7 @@ func TestPRRequestWatcher_QuarantinesArtifactClaimMismatch(t *testing.T) {
 	prRequestDirForTest = dir
 	defer func() { prRequestDirForTest = old }()
 	reqPath, err := WritePRRequest(dir, PRRequest{
-		Repo: "o/r", Base: "main", Head: "agent/change", Title: "ci: add upstream sync workflow", Agent: "scanner",
+		Repo: "o/r", Base: "main", Head: "agent/change", Title: "ci: add upstream sync workflow", Body: "adds the workflow", Agent: "scanner",
 	})
 	if err != nil {
 		t.Fatal(err)

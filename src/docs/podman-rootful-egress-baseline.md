@@ -22,6 +22,17 @@ default    CapBnd=00000000800405fb   NET_ADMIN=no
 
 Bit 12 (`0x1000`) is `CAP_NET_ADMIN` — the same bit the entrypoint tests.
 
+Since #6003, exit 77 is no longer the capability case alone: the entrypoint
+first probes the kernel's `xt_mark` / `xt_REDIRECT` netfilter modules in a
+throwaway chain and exits 77 with a FATAL naming the module when one is
+missing. The rootful CI lane (`rootful startup, exit-77, and egress gate`)
+runs `probe_podman_rootful_netadmin.sh`, which asserts status 77 plus the
+`exiting 77` line for the default case, so what it exercises is the capability
+cause; the `--cap-add NET_ADMIN` case installing the `REDIRECT` rule is what
+shows the runner has the modules. The module cause is covered by
+`src/deploy/test_entrypoint_xt_module_preflight.sh`. See
+[net-admin-requirement.md](net-admin-requirement.md#which-exit-77-do-i-have-the-check-order-since-6003).
+
 This makes the rootless result in
 [podman-rootless-startup-spike.md](podman-rootless-startup-spike.md)
 comparable: rootless matched rootful on all three cases, so rootless is not

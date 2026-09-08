@@ -35,7 +35,7 @@ This table is the ground truth for `just contribute-hive <backend> local` — th
 
 | Backend | Mechanism | What it actually bounds | Escape hatch (unconfined opt-in) |
 |---|---|---|---|
-| `claude` / `litellm` | Claude Code's native OS sandbox (`--settings` sandbox JSON; Seatbelt on macOS, bubblewrap on Linux) | Filesystem writes confined to the agent cwd and `HIVE_WORKSPACE_DIR`; `failIfUnavailable: true`, no unsandboxed fallback | `HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1` |
+| `claude` / `litellm` | Claude Code's native OS sandbox (`--settings` sandbox JSON; Seatbelt on macOS, bubblewrap on Linux) | Filesystem writes confined to the agent cwd, `HIVE_WORKSPACE_DIR`, and the hive-created build-cache root `HIVE_AGENT_CACHE_DIR` (#6100); `failIfUnavailable: true`, no unsandboxed fallback | `HIVE_CLAUDE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1` |
 | `codex` | Codex's own `--sandbox workspace-write` | Filesystem writes confined to the workspace root(s) codex is given | `HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1` |
 | `copilot` | Copilot CLI's own `--sandbox` flag (MXC: Seatbelt on macOS, bubblewrap on Linux, ProcessContainer on Windows Insiders) | Filesystem/network/process access of the commands and tools Copilot runs, restricted by the OS-level backend; `--add-dir` grants the exact workspace | `HIVE_COPILOT_DANGEROUSLY_BYPASS_SANDBOX=1`, or automatic fallback with a loud warning if the installed CLI predates `--sandbox` (copilot-cli < 1.0.60) |
 | `opencode` | opencode's own `permission.bash` deny rules (inline via `OPENCODE_PERMISSION`), denying the same host-state command family the claude deny-list covers | **Not a filesystem boundary.** A command-name floor only — anything not on the list, or reached another way, is unconstrained. Deny rules are documented to hold even under `--auto`. | `HIVE_OPENCODE_DANGEROUSLY_ALLOW_HOST_STATE=1` |
@@ -44,6 +44,21 @@ This table is the ground truth for `just contribute-hive <backend> local` — th
 | `bob` | **None.** No sandbox, approval mode, or path-restriction mechanism documented anywhere in Bob Shell's own docs. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_BOB_DANGEROUSLY_RUN_UNCONFINED=1` |
 | `pi` | **None.** `@earendil-works/pi-coding-agent` ships with no sandbox by default; directory confinement exists only via a third-party extension (`pi-permission-modes`) hive does not install or depend on. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED=1` |
 | `aider` | **None.** No Docker/OS isolation option of any kind. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED=1` |
+
+**The build-cache root, and why it is a grant rather than a hole (#6100).** Every
+compiled toolchain writes to a cache under `$HOME` by default — `GOCACHE` at
+`~/.cache/go-build`, `ccache`, `$TMPDIR` — and all of those sit outside the
+workspace. So `go build`, `go test` and `go vet` failed on a hive contributor
+task, in hive's own Go repo, with an error naming a cache file rather than a
+sandbox boundary; eight local-mode sessions over five days each rediscovered it
+and invented its own `GOCACHE` redirect. The launcher now creates
+`${XDG_CACHE_HOME:-~/.cache}/hive/agent-build`, exports `GOCACHE`, `GOMODCACHE`,
+`GOTMPDIR`, `TMPDIR` and `CCACHE_DIR` into it, and the sandbox grants it as a
+write root. That is strictly narrower than widening the sandbox: one directory
+hive owns, rather than `$HOME`. It is a **write root only** — deliberately not in
+`permissions.allow` and not an `--add-dir`, because Bash is what compilers run
+under, an agent has no reason to `Edit` a build cache, and adding it as a working
+directory would put megabytes of object files in the agent's view of the tree.
 
 The five backends with no mechanism (goose, agy, bob, pi, aider) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all five.
 

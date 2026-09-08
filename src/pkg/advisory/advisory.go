@@ -446,6 +446,16 @@ type DigestOptions struct {
 	// file-path refs, only for findings the ranking actually reaches, and at
 	// most once per distinct path. nil disables verification entirely.
 	VerifyPath func(path string) bool
+	// ResolveRef reports whether a GitHub issue or pull request has closed.
+	//
+	// When set, BuildDigestFromBeads uses it to retire findings that were
+	// computed at some OTHER commit and name only GitHub work that has since
+	// closed -- the #6080 case, where a finding sat in the counted open HIGH
+	// list at the exact commit that fixed it. It is consulted only for
+	// provenance-stale findings, and only for references those findings name
+	// themselves. nil disables the check, leaving the pre-#6080 behaviour
+	// exactly: stale findings are captioned and demoted, never retired.
+	ResolveRef ResolveRef
 }
 
 // effectiveCap returns the number of findings to render, or 0 for "no cap".
@@ -503,6 +513,16 @@ func (o DigestOptions) resolvedRenderCap() int {
 // resolved on the findings by the time ranking runs, so only the path check
 // needs verify.
 //
+// A finding its own author has WITHDRAWN (findingRetracted) ranks below every
+// finding nobody has withdrawn, in ANY band. This is the one demotion that
+// crosses severity bands, and the reason is the same sentence that keeps the
+// others inside theirs: unverified means nobody re-checked, so an unverified
+// critical may still be the worst thing here. A retraction is the opposite --
+// the reporting agent DID re-check and said the finding does not stand -- so
+// its filed severity is the one claim it no longer makes. It still backfills
+// rather than being dropped, because the bead is open and only a maintainer
+// closes it (hivecommons/hive#2364).
+//
 // verify, when non-nil, reports whether a finding's file path still exists at
 // the analyzed snapshot. Verification is on-demand and ordered: the ranked list
 // is walked from the top and verify is called only until cap findings are in
@@ -556,6 +576,9 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 	// confirmed low — demoting across bands would let a cosmetic nit displace a
 	// security finding whose file was merely renamed.
 	var kept []Finding
+	// Withdrawn findings are collected across ALL bands and placed last -- see
+	// the band-crossing paragraph in the doc comment above.
+	var retracted []Finding
 	for i := 0; i < len(all) && len(kept) < cap; {
 		rank := severityRank(all[i].Severity)
 		j := i
@@ -571,6 +594,13 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 			if len(kept) == cap {
 				break
 			}
+			if findingRetracted(f) {
+				// Set aside BEFORE markPathStale: a withdrawn finding is only
+				// reached if slots go unclaimed, and verify is a lookup the
+				// ranking promises not to spend on findings it never renders.
+				retracted = append(retracted, f)
+				continue
+			}
 			markPathStale(&f)
 			if f.evidenceUnverified() {
 				unverified = append(unverified, f)
@@ -582,6 +612,15 @@ func applyTopN(byAgent map[string][]Finding, cap int, verify func(path string) b
 			kept = append(kept, unverified[k])
 		}
 		i = j
+	}
+	// Nothing live is left to show: rather than render a short digest, fill the
+	// remaining slots with the withdrawn findings, in the order they ranked.
+	// They arrive carrying the renderer's withdrawal caption, which is what
+	// tells a maintainer the bead wants closing rather than fixing.
+	for k := 0; len(kept) < cap && k < len(retracted); k++ {
+		f := retracted[k]
+		markPathStale(&f)
+		kept = append(kept, f)
 	}
 
 	capped := make(map[string][]Finding, len(byAgent))
@@ -678,6 +717,30 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 	// running it over the full set before ranking is free.
 	if opts.Snapshot != nil {
 		markStaleProvenanceIn(byAgent, opts.Snapshot.SHA)
+	}
+	// Retire the stale findings whose own text names GitHub work that has since
+	// closed (#6080), BEFORE the cap. These were not merely mislabelled: they
+	// were counted, severity-ranked and holding top-N slots, one of them at the
+	// exact commit that fixed it. Retiring them after the cap would leave the
+	// slot spent on a finding nobody needed to read.
+	var settledStale []ResolvedFinding
+	var retiredStale int
+	byAgent, settledStale, retiredStale = partitionSettledStale(byAgent, opts, time.Now())
+	resolved = append(resolved, settledStale...)
+	if retiredStale > 0 {
+		// The header count is recomputed from the survivors for the same reason
+		// collapseNearDuplicates recomputes it: a total that still counts
+		// retired findings misstates how much is open.
+		//
+		// Keyed on how many findings were RETIRED, not on how many are being
+		// announced. A retirement whose closure is older than refClosedWindow
+		// leaves the open set without appearing under Recently Resolved, and
+		// counting len(settledStale) here would leave the header claiming a
+		// finding the digest no longer lists anywhere.
+		total = 0
+		for _, fs := range byAgent {
+			total += len(fs)
+		}
 	}
 	// Cap AFTER collapsing: a top-10 built from uncollapsed restatements would
 	// spend its ten slots on one recurring problem. For the same reason the cap
@@ -859,9 +922,14 @@ func formatFindingRef(ref string, line int, org, primaryRepo, title string) stri
 			}
 			return fmt.Sprintf(" [#%d](%s)", num, issueURL(owner, repo, num))
 		}
-		if inlineRefPattern.FindString(ref) == ref {
-			if owner, repo, num, ok := splitInlineRef(ref, org); ok {
-				return fmt.Sprintf(" [%s](%s)", ref, issueURL(owner, repo, num))
+		// The prefix is stripped before the URL is built: beads carry
+		// "gh-<owner>/<repo>#<n>", and the prefix was being read as part of
+		// the OWNER, so every cross-repo reference in the digest pointed at a
+		// github.com/gh-<owner> that does not exist (#6080). Only the link and
+		// its visible text lose the prefix; the stored reference is untouched.
+		if bare := stripGHSourcePrefix(ref); inlineRefPattern.FindString(bare) == bare {
+			if owner, repo, num, ok := splitInlineRef(bare, org); ok {
+				return fmt.Sprintf(" [%s](%s)", bare, issueURL(owner, repo, num))
 			}
 		}
 	}
@@ -1092,7 +1160,14 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 			// letting it cover this one is the overclaim that got a stale
 			// finding reported as a fabrication.
 			prov := ""
-			if f.ProvenanceStale && f.ProvenanceSHA != "" {
+			if findingRetracted(f) {
+				// The reporting agent withdrew this finding in the detail
+				// rendered directly below, but the bead is still open at this
+				// severity -- only a maintainer closes it. Say which of the two
+				// the reader is looking at, so the entry reads as a bead to
+				// close rather than a problem to fix (#2364).
+				prov = " ⚠️ _(withdrawn by the reporting agent in the detail below — the bead is still open at this severity, so it wants closing rather than fixing)_"
+			} else if f.ProvenanceStale && f.ProvenanceSHA != "" {
 				prov = fmt.Sprintf(" ⚠️ _(evidence computed at `%s`, not re-verified at the analyzed commit)_", shortSHA(f.ProvenanceSHA))
 			} else if f.CachedReplays > 0 && f.ProvenanceSHA == "" {
 				// A no-provenance finding whose only "confirmations" were

@@ -312,6 +312,102 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 " "$_hgh_cfg" 2>/dev/null || true
 }
 
+# hive_git_bot_identity echoes the git identity every agent commits as, as a
+# single "name<TAB>email" line, derived from the SAME config the Go binary uses
+# for Config.EffectiveAIAuthor() (pkg/config/config.go):
+#
+#   1. project.ai_author, when set — the operator's explicit choice, always wins.
+#   2. else, unless github.app_authored_prs is false, the App bot
+#      "<github.app_slug or kubestellar-hive>[bot]" — but ONLY when the App is
+#      usable (real app_id, not the placeholder sentinel, and an
+#      installation_id), mirroring GitHubConfig.HasUsableApp(): a hive with no
+#      installed App has no bot that can author anything.
+#   3. else the legacy "kubestellar-hive <hive-bot@kubestellar.io>" pair, so a
+#      hive that never opted in behaves exactly as before.
+#
+# The email depends on the SHAPE of the login (#6251, #6254):
+#
+#   - A plain login (project.ai_author naming a user) gets
+#     "<login>@users.noreply.github.com", the address GitHub attributes to
+#     that account. It is a syntactically valid address, so DCO accepts it.
+#   - An App bot login ("<slug>[bot]") gets "<slug>@HIVE_GIT_BOT_EMAIL_DOMAIN"
+#     (default hive.kubestellar.io) — the bracket-free form. GitHub's own
+#     address for a bot is "<slug>[bot]@users.noreply.github.com", and that is
+#     exactly what MUST NOT be written here: probot-dco validates the sign-off
+#     email's syntax before it compares it to the author, and "[" "]" in the
+#     local-part fail that check, so every commit authored with the bracketed
+#     address is DCO-red forever — a matching Signed-off-by cannot fix it, a
+#     second human sign-off cannot fix it, and there is no .github/dco.yml to
+#     exempt it (measured on hivecommons/hive#6164: "hive-quality[bot]@users.
+#     noreply.github.com is not a valid email address"). The App still owns the
+#     PR (hive-open-pr) and the push (the credential helper); only the commit
+#     author/sign-off address has to be a real one. This is the same shape the
+#     agents' PRs that pass DCO already carry (quality@hive.kubestellar.io,
+#     sec-check@hive.kubestellar.io), and it is the SAME address git commit -s
+#     writes into the Signed-off-by trailer, so author and sign-off match.
+#
+# HIVE_GIT_BOT_EMAIL_DOMAIN is accepted only as [A-Za-z0-9.-] (it is written
+# to a gitconfig line unquoted); anything else falls back to the default.
+#
+# WHY THIS EXISTS. /etc/gitconfig used to hardcode the public kubestellar-hive
+# identity for every agent on every hive. A self-hosted hive with its own App
+# then authored commits as a bot that does not exist for it, unattributed, and
+# each agent improvised its own fix: one kick set the App login by hand, the
+# next committed as "hive-quality <quality@hive.local>", the next as the
+# hardcoded default — three identities on three consecutive PRs from the same
+# agent. PR authorship (hive-open-pr) was already the App; commit authorship
+# never was.
+#
+# Only [A-Za-z0-9._-] plus the literal "[bot]" suffix are accepted in a login;
+# anything else falls back to the legacy pair rather than reaching a gitconfig
+# line unquoted. Defined here because both boot phases need it — see
+# hive_ghe_git_host.
+hive_git_bot_identity() {
+  _hgbi_cfg="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+  _hgbi_login=""
+  if [ -f "$_hgbi_cfg" ]; then
+    _hgbi_login="$(python3 -c "
+import re, sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        cfg = yaml.safe_load(f) or {}
+except Exception:
+    sys.exit(0)
+proj = cfg.get('project') or {}
+gh = cfg.get('github') or {}
+login = (proj.get('ai_author') or '').strip()
+if not login and gh.get('app_authored_prs') is not False:
+    try:
+        app_id = int(gh.get('app_id') or 0)
+        inst_id = int(gh.get('installation_id') or 0)
+    except (TypeError, ValueError):
+        app_id, inst_id = 0, 0
+    # 999999999 is config.PlaceholderAppID — a claimed-but-unprovisioned hive.
+    if app_id and app_id != 999999999 and inst_id:
+        login = ((gh.get('app_slug') or '').strip() or 'kubestellar-hive') + '[bot]'
+if re.fullmatch(r'[A-Za-z0-9._-]+(\\[bot\\])?', login):
+    print(login)
+" "$_hgbi_cfg" 2>/dev/null || true)"
+  fi
+  if [ -n "$_hgbi_login" ]; then
+    case "$_hgbi_login" in
+      *'[bot]')
+        _hgbi_domain="${HIVE_GIT_BOT_EMAIL_DOMAIN:-hive.kubestellar.io}"
+        if [ -z "$_hgbi_domain" ] \
+           || [ "$(printf '%s' "$_hgbi_domain" | tr -cd 'A-Za-z0-9.-')" != "$_hgbi_domain" ]; then
+          _hgbi_domain="hive.kubestellar.io"
+        fi
+        printf '%s\t%s@%s\n' "$_hgbi_login" "${_hgbi_login%\[bot\]}" "$_hgbi_domain"
+        ;;
+      *)
+        printf '%s\t%s@users.noreply.github.com\n' "$_hgbi_login" "$_hgbi_login"
+        ;;
+    esac
+  else
+    printf 'kubestellar-hive\thive-bot@kubestellar.io\n'
+  fi
+}
+
 # hive_write_system_gitconfig writes /etc/gitconfig — the SYSTEM-level git
 # config, read by EVERY UID regardless of $HOME.
 #
@@ -344,6 +440,9 @@ if host and host.lower() != 'api.github.com' and host.lower() != 'github.com':
 hive_write_system_gitconfig() {
   _hwsg_path="${HIVE_SYSTEM_GITCONFIG:-/etc/gitconfig}"
   _hwsg_host="$(hive_ghe_git_host)"
+  _hwsg_identity="$(hive_git_bot_identity)"
+  _hwsg_name="${_hwsg_identity%%	*}"
+  _hwsg_email="${_hwsg_identity#*	}"
 
   # Refuse a planted symlink: /etc/gitconfig is read by every UID including
   # root, so it must never be redirected somewhere agent-writable.
@@ -356,8 +455,8 @@ hive_write_system_gitconfig() {
     echo "# System-level so EVERY agent UID reads it regardless of \$HOME. Contains no secret:"
     echo "# it names a helper path; the helper mints the per-agent scoped token."
     echo "[user]"
-    echo "	name = kubestellar-hive"
-    echo "	email = hive-bot@kubestellar.io"
+    echo "	name = ${_hwsg_name}"
+    echo "	email = ${_hwsg_email}"
     echo "[credential]"
     echo "	helper = "
     echo '[credential "https://github.com"]'
@@ -376,6 +475,7 @@ hive_write_system_gitconfig() {
   else
     echo "[entrypoint] git credential helper wired system-wide in $_hwsg_path (github.com) — readable by every agent UID"
   fi
+  echo "[entrypoint] agents commit as ${_hwsg_name} <${_hwsg_email}> (system gitconfig)"
 }
 
 # Detect Kubernetes vs Docker environment
@@ -708,6 +808,18 @@ if [ "$(id -u)" = "0" ]; then
   # group-writable mode would let any agent swap that file and spoof the
   # identity the gate validates against. Re-asserted on every boot.
   chmod 755 /var/run/hive-metrics/agent-tokens 2>/dev/null || true
+  # The token-access audit log (GET /api/token-access) is APPENDED by the
+  # per-UID agent processes — gh-wrapper.sh on every gh call and
+  # git-credential-hive.sh on every credential lookup — but the directory
+  # above is deliberately not agent-writable, so an agent can never create
+  # the file and every append failed silently: the audit endpoint on a
+  # per-UID hive stayed empty forever. Pre-create it here, owned by dev with
+  # group "node" (every agent UID) writable, so the appends land. The
+  # directory itself stays 0755: only this one file opens up, the
+  # bot-identity file the gh-wrapper author gate trusts is untouched.
+  touch /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  chown dev:node /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
+  chmod 664 /var/run/hive-metrics/token-access.jsonl 2>/dev/null || true
 
   # Fix permissions on bind-mounted secret files (host may own them as
   # a different UID with mode 600, making them unreadable by dev/UID 1001)
@@ -1942,8 +2054,9 @@ mkdir -p /data/vaults/hive-wiki
 # These do not fight: git precedence is system < global < local, and both
 # layers set the SAME helper for the SAME hosts, so the global layer shadows
 # nothing. What went wrong before was having ONLY layer 2.
-git config --global user.name "kubestellar-hive"
-git config --global user.email "hive-bot@kubestellar.io"
+_hgc_identity="$(hive_git_bot_identity)"
+git config --global user.name "${_hgc_identity%%	*}"
+git config --global user.email "${_hgc_identity#*	}"
 git config --global --replace-all credential.helper ""
 git config --global --replace-all "credential.https://github.com.helper" "/usr/local/bin/git-credential-hive.sh"
 

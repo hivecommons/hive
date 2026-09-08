@@ -7,6 +7,7 @@ updates:
       day: "monday"
     labels:
       - "dependencies"
+      - "no-changelog"
     open-pull-requests-limit: 10
     ignore:
       # Module path moved upstream to cel.dev/cel-go (v0.26.0+); dependabot
@@ -24,6 +25,7 @@ updates:
       day: "monday"
     labels:
       - "dependencies"
+      - "no-changelog"
     open-pull-requests-limit: 10
 
   - package-ecosystem: "docker"
@@ -33,6 +35,7 @@ updates:
       day: "monday"
     labels:
       - "dependencies"
+      - "no-changelog"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "npm"
@@ -43,4 +46,5 @@ updates:
       day: "monday"
     labels:
       - "dependencies"
+      - "no-changelog"
     open-pull-requests-limit: 10

@@ -73,13 +73,13 @@ concurrency:
 jobs:
   govulncheck:
     name: govulncheck (known vulnerabilities)
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       # Installed by version rather than via a marketplace action so the tool
@@ -99,7 +99,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       # Version floor is load-bearing: gosec v2.21.4 pins golang.org/x/tools
@@ -139,7 +139,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -149,7 +149,7 @@ jobs:
 
   action-pins:
     name: action pins resolve
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -164,7 +164,7 @@ jobs:
 
   notice-drift:
     name: NOTICE matches the module graph
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     # WHY THIS JOB EXISTS: a CNCF General Technical Review asks how the
     # project ensures third-party attribution stays correct and complete. A
     # generated NOTICE that can silently go stale is worse than no NOTICE at
@@ -206,7 +206,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - name: Regenerate NOTICE from the current module graph

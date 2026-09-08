@@ -632,7 +632,9 @@ forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM egress proxy
 - **Cluster DENIES `NET_ADMIN`:** the entrypoint **FATALs** (refusing to start
   with an advisory-only capability model — `src/deploy/entrypoint.sh`) and the
   pod crash-loops, with **exit code 77** when the missing capability is the
-  cause (see the checks section below for what 77 means and how to read it).
+  cause (see the checks section below for what 77 means and how to read it;
+  since #6003 the same code also fires when the node's kernel lacks a
+  netfilter module the gate needs, which neither remedy here fixes).
   Two remedies:
   1. **Grant the capability (preferred — full gate).** On OpenShift, a
      cluster-admin applies the
@@ -732,10 +734,31 @@ kubectl -n hive get pod -l app.kubernetes.io/name=hive \
   -o jsonpath='{.items[0].status.containerStatuses[0].lastState.terminated.exitCode}'
 ```
 
-`77` means precisely "grant the capability (or opt into advisory mode)"; any
-*other* cause of the same FATAL (no `iptables` binary, netfilter lock
-contention) exits `1`, since granting `NET_ADMIN` would not fix those. Full
-rationale: [net-admin-requirement.md](net-admin-requirement.md).
+`77` has exactly two causes, and only one of them is the capability. Since
+#6003 the entrypoint probes the kernel's netfilter extension modules in a
+throwaway chain *before* building the real ruleset, and a node whose kernel is
+missing `xt_mark` (the packet-mark exemption) or `xt_REDIRECT` (the `:443`
+redirect) also exits `77`, after a different set of lines:
+
+```
+[entrypoint] ERROR: netfilter REDIRECT target unavailable on this node (kernel module xt_REDIRECT): ...
+[entrypoint] FATAL: this node's kernel is missing netfilter module(s) required by the forced-egress gate: xt_REDIRECT.
+[entrypoint] FATAL: load the module(s) on this node - the durable fix is a MachineConfig writing an /etc/modules-load.d/ drop-in ...
+[entrypoint] FATAL: exiting 77 (EX_NOPERM) rather than 1 - see EXIT_NET_ADMIN_REQUIRED near the top of entrypoint.sh.
+```
+
+Tell them apart by the log, not the code: the module case names the module and
+never prints `Grant NET_ADMIN`; the capability case prints `Grant NET_ADMIN`
+and then the bounding-set line. Granting `NET_ADMIN` does not fix the module
+case (the capability is already there), and the SCC overlay above is the wrong
+remedy for it: load the modules on the node (on OpenShift/RHCOS, a MachineConfig
+writing an `/etc/modules-load.d/` drop-in so they survive a node rebuild) and
+taint or label the node until then. `xt_owner` is probed too but only warns.
+`HIVE_PROXY_ADVISORY_OK=true` is the opt-out for both causes. Any *other*
+cause of the same FATAL (no `iptables` binary, netfilter lock contention) still
+exits `1`, since neither fix would help those. Full rationale and the check
+order:
+[net-admin-requirement.md](net-admin-requirement.md#which-exit-77-do-i-have-the-check-order-since-6003).
 
 ### Firewall / egress (locked-down cluster)
 

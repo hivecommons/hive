@@ -128,17 +128,28 @@ hivectl agent pipeline-set quality --file pipeline.yaml   # map of step: bool
 
 ### knowledge — inspect and maintain knowledge
 
+The `knowledge` group is also available under the alias `wiki`.
+
 ```bash
 hivectl knowledge search "user journey" --limit 20
 hivectl knowledge list --layer project        # layer: personal|project|org|community
 hivectl knowledge get project create-project
 hivectl knowledge stats
+hivectl knowledge health                      # knowledge engine health check
+hivectl knowledge graph --root create-project --depth 3 -o json
 hivectl knowledge export > hive-knowledge.md
 
 hivectl knowledge create --file fact.yaml     # title + body required
 hivectl knowledge update project create-project --file update.yaml
+hivectl knowledge import --file ux-wiki.md --format markdown --layer project
 hivectl knowledge delete project create-project --yes
 ```
+
+`graph` reads the knowledge graph (`--root` optional; `--depth` defaults to 2
+and must be greater than zero). `import` posts Markdown or structured content
+from `--file` or `--stdin` (`--format` defaults to `markdown`, `--layer` to
+`project`) and, like the other knowledge writes, needs the layer's wiki `url`
+configured — see [Running against a local Hive](#running-against-a-local-hive).
 
 ### bead — work items
 

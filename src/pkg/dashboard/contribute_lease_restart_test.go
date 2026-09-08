@@ -27,6 +27,31 @@ import (
 // SOCKET drop and passes throughout, because that reconnect is to a live hub. These
 // tests exercise the same contract across a PROCESS boundary, which had no coverage.
 
+// waitContribDisconnect blocks until the hub's read-loop disconnect defer for
+// username has fully run, using the defer's own last observable act — the "left"
+// activity row — as the signal.
+//
+// It exists because this file's headline test is the one place ledger persistence
+// stays ON while real websocket handlers run: httptest.Server.Close does not wait
+// for hijacked connections, so a handler's disconnect defer (which books a release
+// cooldown and writes failed-tasks.json under ws-state/) can still be running when
+// the test returns — and t.TempDir's RemoveAll then races the write, failing the
+// test with "ws-state: directory not empty". Waiting for the "left" row orders the
+// defer's disk writes strictly before cleanup.
+func waitContribDisconnect(t *testing.T, h *ContributeWSHub, username string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range h.RecentActivity() {
+			if e.Username == username && e.Action == "left" {
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("timed out waiting for %s's disconnect defer to finish", username)
+}
+
 // restartedHub returns a second hub built over the same on-disk state as the first,
 // which is what a hub restart is: a new process, an empty connection table, and
 // whatever the previous process persisted. covK2Hub reuses HIVE_CONTRIBUTORS_DIR once
@@ -77,6 +102,10 @@ func TestLeaseRestart_ResumeSurvivesHubRestart(t *testing.T) {
 	// connection table, leases read back from disk.
 	conn.Close()
 	ts1.Close()
+	// ts1.Close does not wait for the hijacked websocket handler; its disconnect
+	// defer writes the release-cooldown ledger under ws-state/. Let it finish
+	// before the "restarted" hub boots over the same files.
+	waitContribDisconnect(t, s1.contributeHub, "restart-resume-user")
 
 	s2 := NewServer(0, slog.Default())
 	s2.registerContributeRoutes()
@@ -100,6 +129,10 @@ func TestLeaseRestart_ResumeSurvivesHubRestart(t *testing.T) {
 		t.Fatalf("reconnect dial: %v", err)
 	}
 	defer conn2.Close()
+	// Run after the deferred conn2.Close, before t.TempDir's RemoveAll: s2's
+	// handler defer must finish its ws-state/ writes before cleanup deletes the
+	// tree (the "directory not empty" TempDir flake).
+	t.Cleanup(func() { waitContribDisconnect(t, s2.contributeHub, "restart-resume-user") })
 	readMsg(t, conn2) // auth_challenge
 	conn2.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
 	readMsg(t, conn2) // auth_ok

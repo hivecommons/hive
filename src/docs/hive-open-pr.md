@@ -32,24 +32,40 @@ A drop-in for the common `gh pr create` shape:
 
 ```sh
 hive-open-pr --repo <owner/repo> --head <branch> [--base <branch>] \
-             --title "<title>" --body "<body>"
+             --title "<title>" --body "<body>" [--issues <N[,N...]>]
 ```
 
 | Flag | Required | Default |
 | --- | :---: | --- |
-| `--repo` | yes | — |
-| `--head` | effectively | the current git branch |
-| `--base` | no | `main` |
-| `--title` | yes | — |
-| `--body` | no | empty |
+| `--repo` / `-R` | yes | — |
+| `--head` / `-H` | effectively | the current git branch |
+| `--base` / `-B` | no | the target repo's default branch |
+| `--title` / `-t` | yes | — |
+| `--body` / `-b` | yes (or `--body-file`) | — |
+| `--body-file` / `-F` | — | read the body from a file, or stdin with `-` |
+| `--issues` / `--issue` | no | declare the originating issue number(s) |
 
 `--repo`, `--head`, and `--title` must resolve or the script exits `2`. Both
 `--flag value` and `--flag=value` forms work.
 
+**An empty body is refused**, loudly, with exit `2` and no request written.
+Every shipped policy requires a real PR body; an empty one at this point means
+the body was lost on the way in — the observed failure was `--body-file` being
+silently dropped by an older parser, which opened PRs whose entire body was the
+attribution footer. The floor is "non-blank" only: minimal bodies like
+`Closes #12` still pass.
+
+`--issues` declares which issue(s) this PR is for. The watcher then verifies
+the body actually references each declared issue — `Closes #N`, or `Refs #N`
+when part of the issue deliberately stays open — and rejects the request
+otherwise. Pass it whenever the run started from an issue, so a truncated or
+replaced body cannot open a PR that orphans its issue.
+
 Flags `gh` accepts but this path does not need — `--draft`, `--fill`, `--web`,
 `--no-maintainer-edit` — are **accepted and ignored**, so an agent's existing
 command line does not need rewriting. Note that `--draft` being ignored means
-**you cannot open a draft PR this way**; the PR opens ready for review.
+**you cannot open a draft PR this way**; the PR opens ready for review. Any
+other unrecognized flag is ignored with a warning on stderr naming it.
 
 ## It is asynchronous, by design
 

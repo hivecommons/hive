@@ -40,9 +40,8 @@ func leakTestProxy() *GitHubProxy {
 
 func shortenBodyStall(t *testing.T, d time.Duration) {
 	t.Helper()
-	old := responseBodyStallTimeout
-	responseBodyStallTimeout = d
-	t.Cleanup(func() { responseBodyStallTimeout = old })
+	old := responseBodyStallTimeout.Swap(int64(d))
+	t.Cleanup(func() { responseBodyStallTimeout.Store(old) })
 }
 
 func runProxyHTTP(p *GitHubProxy, client, upstream net.Conn) chan struct{} {

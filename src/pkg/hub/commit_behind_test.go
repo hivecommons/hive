@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func resetCommitBehindState(t *testing.T) {
@@ -52,6 +53,90 @@ func TestResolveCommitBehindCachesKnownAndUnknown(t *testing.T) {
 	}, nil)
 	if _, known := commitsBehindStableV4("fork123", nil); known {
 		t.Fatal("unknown compare result must stay unknown")
+	}
+}
+
+func TestCommitsBehindStableV4SameCommitShortCircuits(t *testing.T) {
+	resetCommitBehindState(t)
+	// A base that prefix-matches the stable head must report 0-behind
+	// immediately, with no compare dispatched.
+	got, known := commitsBehindStableV4("head999extended", nil)
+	if !known || got != 0 {
+		t.Fatalf("same-commit result = %d,%v; want 0,true", got, known)
+	}
+	commitBehindMu.Lock()
+	defer commitBehindMu.Unlock()
+	if len(commitBehindInFlight) != 0 {
+		t.Fatal("same-commit path must not dispatch a compare")
+	}
+}
+
+func TestCommitsBehindStableV4EmptySHAsStayUnknown(t *testing.T) {
+	resetCommitBehindState(t)
+	if _, known := commitsBehindStableV4("", nil); known {
+		t.Fatal("empty base SHA must stay unknown")
+	}
+
+	// No cached SHA for the stable branch → empty head → unknown.
+	latestSHAMu.Lock()
+	delete(latestSHAByBranch, stableReleaseBranch)
+	latestSHAMu.Unlock()
+	if _, known := commitsBehindStableV4("base111", nil); known {
+		t.Fatal("missing stable-branch head SHA must stay unknown")
+	}
+	commitBehindMu.Lock()
+	defer commitBehindMu.Unlock()
+	if len(commitBehindInFlight) != 0 {
+		t.Fatal("empty-SHA guard must not dispatch a compare")
+	}
+}
+
+func TestCommitsBehindStableV4InFlightDedupes(t *testing.T) {
+	resetCommitBehindState(t)
+	key := commitBehindKey{base: "base111", head: "head999"}
+	commitBehindMu.Lock()
+	commitBehindInFlight[key] = true
+	fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (int, bool, error) {
+		t.Error("in-flight compare must not be re-dispatched")
+		return 0, false, nil
+	}
+	commitBehindMu.Unlock()
+
+	if _, known := commitsBehindStableV4("base111", nil); known {
+		t.Fatal("in-flight compare must report unknown, not block")
+	}
+}
+
+func TestCommitsBehindStableV4DispatchesAndCaches(t *testing.T) {
+	resetCommitBehindState(t)
+	commitBehindMu.Lock()
+	fetchCommitBehindCount = func(base, head string, logger *slog.Logger) (int, bool, error) {
+		if base != "base111" || head != "head999" {
+			t.Errorf("compare dispatched with %s...%s; want base111...head999", base, head)
+		}
+		return 5, true, nil
+	}
+	commitBehindMu.Unlock()
+
+	// Cache miss: first call answers unknown and dispatches the compare
+	// asynchronously; note the base is truncated to the canonical short form.
+	if _, known := commitsBehindStableV4("base111full", nil); known {
+		t.Fatal("cache miss must answer unknown while the compare runs")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, known := commitsBehindStableV4("base111full", nil)
+		if known {
+			if got != 5 {
+				t.Fatalf("cached count = %d; want 5", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("compare result never cached")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

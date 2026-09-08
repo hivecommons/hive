@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: src
@@ -56,7 +56,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - name: Build
@@ -125,6 +125,17 @@ jobs:
       # (#4336) is untouched.
       - name: arm64 lane probes PR code, not the published image (#5370)
         run: bash deploy/test_arm64_lane_probes_pr_code.sh
+
+      # PR Verifier treated the VERIFICATION as advisory but the GHCR login and
+      # image pull as fatal, so a registry-side change failed the check on every
+      # open PR at once, before any PR content was examined (#6085: 11
+      # consecutive runs red on `manifest unknown` after the org move). This
+      # pins the relative invariant -- registry access is never treated more
+      # harshly than the verification it enables -- and it is a static check
+      # because pr-verifier.yml runs on pull_request_target, so a PR that fixes
+      # it executes the BASE branch's copy and cannot show itself passing.
+      - name: PR Verifier reports on the PR, not on registry reachability (#6085)
+        run: bash deploy/test_pr_verifier_advisory.sh
 
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
@@ -595,6 +606,17 @@ jobs:
         working-directory: .
         run: bash bin/test_backend_smoke_attribution.sh
 
+      # The other half of "this lane says the true thing" (#6086): it must pin
+      # THIS repository's contributor image, not upstream's. The lane exists to
+      # run the checkout's suite against the CLIs the image ships, and a
+      # hard-coded org made a fork's lane exercise upstream's binaries and stay
+      # green regardless of its own. Extracts the selection step and runs it
+      # against a stubbed podman, because the cases that matter -- lowercasing
+      # an uppercase owner, and the fallback being loud -- a grep cannot see.
+      - name: Backend smoke pins this repository's contributor image
+        working-directory: .
+        run: bash bin/test_backend_smoke_image_owner.sh
+
       # Keyless subset of the backend smoke: backend-list/Dockerfile-pin drift
       # checks plus the stub wire-contract scenarios (real relay, fake hub, a
       # stub CLI binary — no credentials, no network beyond localhost). The
@@ -823,9 +845,20 @@ jobs:
       - name: Every src/deploy/ test suite is wired into a workflow (#5529)
         working-directory: .
         run: bash src/deploy/test_deploy_suites_wired.sh
+
+      # Runner labels must degrade to a GitHub-hosted runner where no fleet
+      # exists (#6083). A fork that inherits a bare [self-hosted, hive] gets
+      # jobs that queue forever, cannot be cancelled, and wedge the workflow's
+      # concurrency group behind them — silently, because a job that never
+      # starts reports nothing. Checked here rather than remembered: the
+      # fork-guarded spelling was added deliberately and three jobs in the same
+      # files were still left bare.
+      - name: Runner labels are fork-portable (#6083)
+        working-directory: .
+        run: bash src/deploy/test_runner_labels_portable.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: [self-hosted, hive]
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: build-and-test
     permissions:
       contents: read
@@ -1036,7 +1069,7 @@ jobs:
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
-    runs-on: [self-hosted, hive]
+    runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     needs: [build-and-test, docker]
     permissions:
       contents: read

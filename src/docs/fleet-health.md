@@ -24,6 +24,12 @@ This is a different check from
 probes of the dashboard URL. A hive can pass every route probe and still be
 red here, because the verdict measures *output*, not *reachability*.
 
+It is also distinct from [fleet drift signals](fleet-drift-signals.md), the
+per-hive deviation badges on My Hives (`heartbeat-stale`, `duplicate-spoke`,
+`version-absent`, …): drift asks whether the row can be trusted and whether the
+hive's configuration matches the fleet, while the verdict here asks whether the
+hive is producing output.
+
 ## The four states
 
 | State | Dot on `/fleet` | Meaning |

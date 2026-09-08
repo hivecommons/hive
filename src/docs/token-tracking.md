@@ -32,6 +32,32 @@ The collector keeps the latest aggregate in memory and writes `/data/token-summa
 - `/api/repo-activity` is phase 1 of per-repo cost attribution: it reports audited output counts per repo and per `(repo, agent)` from `repo=` audit entries, plus an explicit `unattributed` bucket for output events with no repo. It reports activity only, not dollars; cost must not be smeared across repos until timestamped token joins exist.
 - Cost estimates are not invoices. Subscription plans, self-hosted inference, negotiated rates, and provider billing semantics can differ from list prices.
 
+## Metering diagnostics and zero-token health
+
+The collector keeps a non-secret `Diagnostics` snapshot alongside the aggregate (`pkg/tokens`, `Collector.Diagnostics()`), so consumers can distinguish "zero tokens because nothing used a model" from "zero tokens because metering itself is unhealthy":
+
+- `last_scan_error` — the flat-JSONL scan of `data.metrics_dir` failed. This aborts the whole scan cycle: the previous aggregate is kept and no other field is refreshed until the next cycle.
+- `last_claude_scan_error`, `last_copilot_scan_error`, `last_bob_scan_error` — a per-source scan failed. Only that source is skipped for the cycle; the other sources still merge. Each field is rebuilt every scan, so a source error clears on the next successful pass over that source.
+- `live_capture_enabled` — the Copilot proxy's live usage capture is active (set at boot via `SetCopilotLiveCapture`).
+
+The deep-health `tokens` check sent in spoke heartbeats (`HealthSummary` in `pkg/dashboard/server.go`) uses this to replace the bare "zero consumed" warning with a reason, evaluated in precedence order:
+
+| Status | Detail | Meaning |
+|---|---|---|
+| `skip` | `zero consumed — all agents paused` | Expected quiet: every enabled agent is paused. |
+| `skip` | `zero consumed — no agents due in the current governor mode` | Expected quiet: only on-demand or off-schedule agents remain. |
+| `warn` | `zero consumed — token parser/sink error: <err>` | Flat-JSONL scan failing (then Claude/Copilot/Bob parser errors, each named). |
+| `warn` | `zero consumed — sessions still open or live-capture has not accounted usage yet` | Live capture is on and sessions exist; usage may land shortly. |
+| `warn` | `zero consumed — sessions made no model calls` | Sessions were scanned but recorded no token usage. |
+| `warn` | `zero consumed — token sink or live metering disabled/misconfigured` | A metered agent is running with live capture off — check metering wiring. |
+| `warn` | `zero consumed — no model calls recorded` | Fallback when no better explanation applies. |
+
+On the hub's fleet page, the tokens column tooltip reads that check's detail out of the heartbeat health checks and renders `No tokens used: <reason>` for hives at or below the no-token threshold (`tokenHealthReason` / `tokenUsageTitle` in `pkg/hub/saas.go`).
+
+Caveat: the reasoned detail is heartbeat-path only. The local `/api/health/deep` tokens check still emits the plain `zero tokens consumed — agents may not be working` warning without consulting `Diagnostics`.
+
+See [health-checks.md](health-checks.md) for the operator-facing summary of the agent and token deep-health checks.
+
 ## Hub rollups
 
 Each spoke heartbeat sends one scalar `tokens_24h` value. Despite the historical name, current code sends the cumulative total from the spoke's token summary. The hub stores it as `totalTokens24h`, samples a 7-day fleet history every 15 minutes, and serves `/api/saas/usage` with rollups by org/repo, owner, and cluster plus zero-consumption hives.

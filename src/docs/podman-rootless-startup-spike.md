@@ -108,6 +108,17 @@ Exit status 77. The whole run was 21 log lines. The five retries cost real
 startup time for a condition that the bounding-set probe already knows is
 hopeless — a small improvement candidate, not a defect.
 
+Since #6003 the same run carries one extra line ahead of the retries,
+`WARN: could not create preflight chain to probe netfilter extensions: ...`,
+because the entrypoint now probes the kernel's `xt_mark` / `xt_REDIRECT`
+modules in a throwaway chain first and that probe fails the same way without
+the capability. Exit 77 is also no longer capability-only: a node whose kernel
+lacks a required module exits 77 through a different FATAL that names the
+module. The rootless CI lane's probe asserts status 77 plus the `exiting 77`
+line, which is the capability cause; the module cause is covered by
+`src/deploy/test_entrypoint_xt_module_preflight.sh`. See
+[net-admin-requirement.md](net-admin-requirement.md#which-exit-77-do-i-have-the-check-order-since-6003).
+
 ## Case 2 — rootless + `--cap-add NET_ADMIN`: the gate installs
 
 ```

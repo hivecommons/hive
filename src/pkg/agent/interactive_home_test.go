@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -108,6 +109,158 @@ func TestSetupInteractiveHome_CreatesHomeAndBridges(t *testing.T) {
 	// .bash_history must NOT be bridged.
 	if _, err := os.Lstat(filepath.Join(home, ".bash_history")); !os.IsNotExist(err) {
 		t.Errorf(".bash_history should not be bridged (err=%v)", err)
+	}
+	// .local must be a REAL per-agent directory (#6238), not a bridge.
+	if info, err := os.Lstat(filepath.Join(home, ".local")); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Errorf(".local should be a real per-agent dir: info=%v err=%v", info, err)
+	}
+}
+
+// --- per-agent XDG data/state (#6238) ------------------------------------------
+
+func xdgPairs(t *testing.T, m *Manager, ap *AgentProcess) (data, state string) {
+	t.Helper()
+	for _, p := range m.agentEnvPairs(ap) {
+		switch p.Key {
+		case "XDG_DATA_HOME":
+			data = p.Value
+		case "XDG_STATE_HOME":
+			state = p.Value
+		}
+	}
+	return data, state
+}
+
+func TestAgentEnvPairs_XDGStateHome_IsPerAgent(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner":  {Backend: "claude", Model: "sonnet"},
+		"reviewer": {Backend: "goose", Model: "sonnet"},
+	}, discardLogger(), ProjectContext{})
+
+	a := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude", Model: "sonnet"}}
+	b := &AgentProcess{Name: "reviewer", UID: 1002, Config: config.AgentConfig{Backend: "goose", Model: "sonnet"}}
+
+	dataA, stateA := xdgPairs(t, m, a)
+	dataB, stateB := xdgPairs(t, m, b)
+	if stateA == "" || stateB == "" || dataA == "" || dataB == "" {
+		t.Fatalf("XDG vars missing: a=(%q,%q) b=(%q,%q)", dataA, stateA, dataB, stateB)
+	}
+	if stateA == stateB {
+		t.Fatalf("two launched agents share XDG_STATE_HOME %q", stateA)
+	}
+	if dataA == dataB {
+		t.Fatalf("two launched agents share XDG_DATA_HOME %q", dataA)
+	}
+	// Each resolves under ITS OWN per-agent home, never under the shared tree.
+	if want := filepath.Join(interactiveHomePath("scanner"), ".local", "state"); stateA != want {
+		t.Errorf("scanner XDG_STATE_HOME = %q, want %q", stateA, want)
+	}
+	if want := filepath.Join(interactiveHomePath("reviewer"), ".local", "share"); dataB != want {
+		t.Errorf("reviewer XDG_DATA_HOME = %q, want %q", dataB, want)
+	}
+	sharedLocal := filepath.Join(shared, ".local") + string(filepath.Separator)
+	for _, v := range []string{dataA, stateA, dataB, stateB} {
+		if strings.HasPrefix(v, sharedLocal) {
+			t.Errorf("%q resolves under the shared .local tree", v)
+		}
+	}
+}
+
+func TestAgentEnvPairs_XDG_NotExportedUnderSharedHome(t *testing.T) {
+	withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+
+	// No UID: the process HOME is shared, so nothing is exported.
+	if data, state := xdgPairs(t, m, &AgentProcess{Name: "scanner", Config: config.AgentConfig{Backend: "claude"}}); data != "" || state != "" {
+		t.Errorf("uid-less agent exported XDG vars: %q %q", data, state)
+	}
+	// Escape hatch: legacy shared layout must stay whole.
+	t.Setenv("HIVE_SHARED_AGENT_HOME", "1")
+	if data, state := xdgPairs(t, m, &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}); data != "" || state != "" {
+		t.Errorf("escape hatch exported XDG vars: %q %q", data, state)
+	}
+}
+
+func TestSetupAgentXDGDirs_RetiresLegacyBridgeAndSharesOnlyNamedEntries(t *testing.T) {
+	shared := withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+
+	// A pre-#6238 home: .local is a symlink bridge into the shared tree, and
+	// the shared tree already holds state that must NOT be touched.
+	if err := os.MkdirAll(filepath.Join(shared, ".local", "share", "goose", "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(shared, ".local"), filepath.Join(home, ".local")); err != nil {
+		t.Fatal(err)
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	local := filepath.Join(home, ".local")
+	if info, err := os.Lstat(local); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("legacy .local bridge not retired: info=%v err=%v", info, err)
+	}
+	for _, dir := range []string{
+		agentXDGDataHome(home),
+		agentXDGStateHome(home),
+		filepath.Join(agentXDGStateHome(home), gooseLogsStateRel),
+	} {
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+			t.Errorf("per-agent XDG dir %s missing: info=%v err=%v", dir, info, err)
+		}
+	}
+	// Per-agent data is per-agent: goose sessions under the shared tree are
+	// NOT visible through the agent's XDG_DATA_HOME, and untouched in place.
+	if _, err := os.Stat(filepath.Join(agentXDGDataHome(home), "goose", "sessions")); !os.IsNotExist(err) {
+		t.Errorf("shared goose sessions leaked into per-agent data home (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(shared, ".local", "share", "goose", "sessions")); err != nil {
+		t.Errorf("shared goose sessions were disturbed: %v", err)
+	}
+	// The one named credential entry is bridged back to the shared tree.
+	link := filepath.Join(agentXDGDataHome(home), "opencode")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("opencode credential bridge missing: %v", err)
+	}
+	if want := filepath.Join(shared, ".local", "share", "opencode"); target != want {
+		t.Errorf("opencode bridge -> %q, want %q", target, want)
+	}
+
+	// Idempotent: a second provisioning keeps the real dir and the bridge.
+	m.setupInteractiveHome(ap, "claude")
+	if info, err := os.Lstat(local); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf(".local regressed to a bridge on re-provision: info=%v err=%v", info, err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != filepath.Join(shared, ".local", "share", "opencode") {
+		t.Errorf("opencode bridge not stable: target=%q err=%v", target, err)
+	}
+}
+
+func TestSetupAgentXDGDirs_KeepsExistingRealLocal(t *testing.T) {
+	withSharedAgentHome(t)
+	m := interactiveHomeTestManager(t)
+	ap := &AgentProcess{Name: "scanner", UID: 1001, Config: config.AgentConfig{Backend: "claude"}}
+	home := interactiveHomePath("scanner")
+
+	marker := filepath.Join(agentXDGStateHome(home), "muse", "keep-me")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m.setupInteractiveHome(ap, "claude")
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("live per-agent state lost: %v", err)
 	}
 }
 

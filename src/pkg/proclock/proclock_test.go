@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -91,5 +92,74 @@ func TestNilLockSafe(t *testing.T) {
 	l.Release() // must not panic
 	if l.Path() != "" {
 		t.Error("nil lock has a path")
+	}
+}
+
+// A contender whose lock file holds garbage (not a PID) must get the generic
+// "held by another process" error, not one naming a bogus holder.
+func TestIllegibleHolderFallsBackToGenericError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hive.lock")
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatalf("open lock file: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("not-a-pid\n"); err != nil {
+		t.Fatalf("seed garbage holder: %v", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("take external flock: %v", err)
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+
+	_, err = Acquire(path)
+	if err == nil {
+		t.Fatal("Acquire succeeded against an externally held lock")
+	}
+	if !strings.Contains(err.Error(), "held by another process") {
+		t.Errorf("error = %q, want the generic 'held by another process' form", err)
+	}
+	if strings.Contains(err.Error(), "not-a-pid") {
+		t.Errorf("error %q leaks the illegible holder content", err)
+	}
+}
+
+// An empty lock file (holder never recorded a PID) also gets the generic error.
+func TestEmptyHolderFallsBackToGenericError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hive.lock")
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatalf("open lock file: %v", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("take external flock: %v", err)
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+
+	_, err = Acquire(path)
+	if err == nil {
+		t.Fatal("Acquire succeeded against an externally held lock")
+	}
+	if !strings.Contains(err.Error(), "held by another process") {
+		t.Errorf("error = %q, want the generic 'held by another process' form", err)
+	}
+}
+
+// readHolder must return "" when the descriptor cannot seek (e.g. closed).
+func TestReadHolderSeekErrorReturnsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hive.lock")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create lock file: %v", err)
+	}
+	if _, err := f.WriteString("1234\n"); err != nil {
+		t.Fatalf("seed holder: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got := readHolder(f); got != "" {
+		t.Errorf("readHolder on closed file = %q, want empty", got)
 	}
 }

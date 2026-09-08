@@ -65,7 +65,8 @@ gh issue create --repo "$HIVE_REPO" \
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[ci-maintainer] fix: <short description>" \
-  --body "## CI Fix\n\n<what this changes and why>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by ci-maintainer agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --body "## CI Fix\n\n<what this changes and why>\n\nCloses #<issue-number> (the normal case: write Closes whenever this PR resolves the issue — GitHub closes it on merge. Write Refs #<issue-number> ONLY when part of the issue is deliberately left open, and say on the same line what is left and why)\n\n---\n*Filed by ci-maintainer agent (ACMM L4/L5 — hold-gated mode). Hold-gated: human review required.*" \
+  --issues <issue-number> \
   --label "ci,hold"
 ```
 

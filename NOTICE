@@ -506,9 +506,9 @@ SOFTWARE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/charmbracelet/x/term
-Version:  v0.2.1
+Version:  v0.2.2
 License:  MIT
-Source:   https://github.com/charmbracelet/x/blob/term/v0.2.1/term/LICENSE
+Source:   https://github.com/charmbracelet/x/blob/term/v0.2.2/term/LICENSE
 
 MIT License
 

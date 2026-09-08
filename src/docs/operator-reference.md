@@ -58,6 +58,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `hub` | Hub/spoke hosted-hive metadata. | Usually provisioner-owned. |
 | `hive_id` | Stable spoke identifier. | Usually provisioner-owned. |
 | `acmm_level` | Current ACMM pack level. | May be set by hub/dashboard. |
+| `auto_merge` | The App self-merge sweep: whether and how the Forge App merges its **own** CI-green PRs. | Default ON, but inert below `acmm_level: 6`. See [App self-merge sweep](#app-self-merge-sweep-auto_merge) below. |
 | `variables` | Trusted variable resolver definitions. | Env-only substitution works without this block. |
 | `removed_agents` | Persistent tombstones for deleted agents. | Dashboard/overlay-owned; do not seed casually. |
 
@@ -65,7 +66,7 @@ Top-level YAML keys accepted by `config.Config`:
 
 | Field | Default / behavior | Operator note |
 |---|---|---|
-| `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. |
+| `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
 | `governor.trajectory.enabled` | Defaults to enabled. | The lane no-ops until a reviewer endpoint and model resolve from `governor.trajectory` or `governor.litellm`. |
 | `dashboard.snapshot_frame_ancestors` | Empty list means CSP `frame-ancestors 'none'`. | Entries must be exact `https://` origins; paths, wildcards, credentials, query, and fragments are rejected. |
 | `dashboard.authorized_users` | Empty means no per-user direct-route allowlist. | Entries can be `user` or `user:role`; roles are `read`, `read-write`, `merger`, `owner`. |
@@ -75,6 +76,64 @@ Top-level YAML keys accepted by `config.Config`:
 | `data.copilot_sessions_dir` | `/data/home/.copilot/session-state` | Same, for the Copilot CLI backend's session state. |
 
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
+
+## App self-merge sweep (`auto_merge`)
+
+Two different mechanisms merge PRs automatically, and they share the word
+"automerge" without sharing any configuration:
+
+- **The human queue** — a merger/owner applies the `governor.labels.automerge`
+  label (default `lgtm`) and Hive squash-merges the PR once CI is green. A
+  human decision starts it. See
+  [contributor-trust-and-roles.md](contributor-trust-and-roles.md).
+- **The App self-merge sweep** (`SweepSelfAuthoredAutoMerges`,
+  `src/pkg/github/automerge_sweep.go`) — a background loop that merges the
+  App's **own** open PRs with no human queue-approval at all. This is what the
+  top-level `auto_merge:` block controls.
+
+The self-merge sweep exists because Prow structurally forbids self-approval: a
+PR the Forge App itself opens can never collect the `lgtm`+`approved` labels
+tide requires, since nobody but the App authored it and the App cannot review
+its own work. The sweep merges such PRs directly over the GitHub REST API
+(squash), bypassing tide entirely.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `auto_merge.self_authored` | **on** when unset | The only off switch. `false` disables the sweep and App-authored PRs fall back to fully manual merges. |
+| `auto_merge.max_merges` | `3` (`DefaultAutoMergeSweepMaxMerges`) when 0/unset | Caps merges per sweep pass. |
+| `auto_merge.required_checks` | unset | Operator-declared status-check contexts / check-run names (e.g. `["build-gate"]`) that the sweep's green gate requires on the head commit. See below. |
+
+**The ACMM gate.** `self_authored: true` (or unset) is necessary but not
+sufficient: the sweep only starts when the hive's `acmm_level` is **6 or
+higher** (`config.SelfMergeMinACMMLevel`). An unset `acmm_level` fails closed
+— a hive never gets self-merge by accident; the boot log records
+`self-authored auto-merge sweep disabled: acmm_level below minimum (or
+auto_merge.self_authored is off)` when either condition blocks it. This
+matches the [ACMM policy matrix](acmm-policy-matrix.md): below L6 all agent
+PRs are hold-gated and nothing merges its own work.
+
+**Eligibility per PR.** The sweep only ever considers open, non-draft PRs
+authored by the App bot login itself (re-verified per PR, not just at listing
+time — it never touches anyone else's PRs), that GitHub reports mergeable, and
+whose head commit is green on the required checks. The head SHA is re-fetched
+and re-verified at the merge step, so a push between evaluation and merge is
+never squashed unchecked.
+
+**Why `required_checks` exists.** Asking GitHub which checks a branch actually
+requires (`GetRequiredStatusChecks`) needs the `administration:read` scope,
+which the Hive GitHub App does not hold. Without a config-declared list the
+sweep falls back to that API (which errors) and then to a built-in
+meta-check allowlist — which can block on *non-required* checks (a cancelled
+"Detect untested files", a CodeQL analyze failure). Declaring the branch's
+real required set per hive removes the scope dependency entirely. The
+required-checks set is per-repo/per-branch, so there is deliberately no
+hardcoded default.
+
+**Rate-limit behavior.** The sweep ticks every 10 seconds on hives with ≤4
+configured repos. Above that, the interval scales so the sweep's list+candidate
+calls stay within 25% of the App's hourly REST allowance — a 45-repo hive on a
+fixed 10s tick used to exceed the whole allowance on list calls alone and
+starve every other GitHub caller, including the agents.
 
 ## Image provenance and tags
 

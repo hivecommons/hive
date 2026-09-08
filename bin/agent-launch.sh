@@ -192,6 +192,21 @@ if [[ "$BACKEND" == "codex" ]]; then
   mkdir -p "$CODEX_HOME" 2>/dev/null || true
 fi
 
+# XDG data/state (#6238): when the manager hands this launch a per-agent HOME
+# (/data/home/agents/<agent>), every backend CLI's session transcripts, run
+# locks and caches under ~/.local/share and ~/.local/state must land in THAT
+# home, never in the shared /data/home/.local that used to be bridged into
+# every agent's home. The manager exports these already (agentEnvPairs); this
+# is the fallback for launches that reach this script with only HOME set, and
+# it mirrors the per-agent CODEX_HOME rule above. Never applied to the legacy
+# shared HOME (HIVE_SHARED_AGENT_HOME=1 layout), where the spec defaults under
+# /data/home remain the intended answer. XDG_CONFIG_HOME is left alone on
+# purpose: ~/.config is the shared credential/config bridge.
+if [[ -n "${HOME:-}" && "$HOME" != "/data/home" && -n "${HIVE_AGENT_ID:-}" ]]; then
+  export XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+  export XDG_STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
+fi
+
 # Copilot CLI: use a fine-grained PAT via env var to bypass /login entirely.
 # The PAT file lives on the persistent /data volume, never in source control.
 if [[ "$BACKEND" == "copilot" ]]; then

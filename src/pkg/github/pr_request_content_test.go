@@ -92,7 +92,7 @@ func TestPRRequestWatcherRejectsInternalMetadata(t *testing.T) {
 	defer func() { prRequestDirForTest = old }()
 
 	reqPath, err := WritePRRequest(dir, PRRequest{
-		Repo: "o/r", Head: "outreach/page", Title: "docs: add page", Agent: "outreach",
+		Repo: "o/r", Head: "outreach/page", Title: "docs: add page", Body: "adds the docs page", Agent: "outreach",
 	})
 	if err != nil {
 		t.Fatal(err)

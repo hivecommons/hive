@@ -154,9 +154,16 @@ case "${1:-}" in
     if [ -n "$REQUEST_PROTOCOL" ] && [ "$REQUEST_PROTOCOL" != "https" ]; then
       exit 0
     fi
-    printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential","host":"%s"}\n' \
+    # The group wraps the append so a failed REDIRECTION is silenced too, the
+    # same shape gh-wrapper.sh uses (#4043): `>> f 2>/dev/null` only mutes the
+    # printf, and when the log cannot be opened by the agent UID — its
+    # directory is 0755 dev:node by design (#4044) and the file does not
+    # exist until the entrypoint pre-creates it — the shell's own
+    # "line N: .../token-access.jsonl: Permission denied" leaked into the
+    # agent's pane on every clone, fetch, and push.
+    { printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential","host":"%s"}\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" "${REQUESTED_HOST:-unknown}" \
-      >> "$TOKEN_ACCESS_LOG" 2>/dev/null || true
+      >> "$TOKEN_ACCESS_LOG"; } 2>/dev/null || true
     # Echo back the SAME host git asked about (github.com, github.ibm.com, or
     # any other configured GitHub Enterprise host) rather than a hardcoded
     # "github.com" — see the file header. entrypoint.sh only registers this

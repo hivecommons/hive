@@ -417,6 +417,13 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 		return CreateIssueResult{}, ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
+	// Before any API call: a structurally impossible repo (an unsubstituted
+	// prompt placeholder like "<org>/<target-repo>") would otherwise cost a
+	// dedupe lookup, one call per label, and a create — all 404 — and then be
+	// retried on the watcher's backoff for up to 24h.
+	if err := validateRepoRef(owner, repoName); err != nil {
+		return CreateIssueResult{}, fmt.Errorf("CreateIssue: %w", err)
+	}
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return CreateIssueResult{}, fmt.Errorf("CreateIssue: title is required")

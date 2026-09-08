@@ -107,10 +107,47 @@ func TestRecordRedStaleness(t *testing.T) {
 		recordRedStaleness(cfg, actionableWith(redPR("widgets", 7, "hive-agent", "abc")))
 		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
 		green := redPR("widgets", 7, "hive-agent", "abc")
+		green.CIStatus = "success"
 		green.FailingChecks = nil
 		recordRedStaleness(cfg, actionableWith(green))
 		if store.StaleRed("acme/widgets", 7, "abc") {
 			t.Error("a PR observed green must drop its staleness record")
+		}
+	})
+
+	t.Run("a pending pass keeps the clock", func(t *testing.T) {
+		store, clock := newTestEscalationStore(t)
+		cfg := escalationTestConfig()
+
+		recordRedStaleness(cfg, actionableWith(redPR("widgets", 7, "hive-agent", "abc")))
+		*clock = clock.Add(escalation.RedPRStaleAfter + time.Minute)
+		// Check-run fetch failed (or checks re-running): EnrichCIStatus
+		// reports "pending". That is no information, not a green.
+		pending := redPR("widgets", 7, "hive-agent", "abc")
+		pending.CIStatus = "pending"
+		pending.FailingChecks = nil
+		recordRedStaleness(cfg, actionableWith(pending))
+		if !store.StaleRed("acme/widgets", 7, "abc") {
+			t.Error("a pending pass must not reset the staleness clock")
+		}
+	})
+
+	t.Run("dependency bots are not hive agents", func(t *testing.T) {
+		store, _ := newTestEscalationStore(t)
+		cfg := escalationTestConfig()
+		recordRedStaleness(cfg, actionableWith(
+			redPR("widgets", 1, "renovate[bot]", "r1"),
+			redPR("widgets", 2, "dependabot[bot]", "d1"),
+			redPR("widgets", 3, "other-thing[bot]", "o1"),
+		))
+		if store.ReEngagements("acme/widgets", 1) != 0 || store.StaleRed("acme/widgets", 1, "r1") {
+			t.Error("renovate PR must not enter the fix-loop ledger")
+		}
+		if store.Attempts("acme/widgets", 2) != 0 {
+			t.Error("dependabot PR must not enter the fix-loop ledger")
+		}
+		if !store.TryReEngage("acme/widgets", 3, "o1") {
+			t.Error("a non-dependency bot is still an agent author")
 		}
 	})
 }

@@ -8,6 +8,8 @@ Hive can send operator notifications through three outbound channels configured 
 
 The notifier is implemented in `src/pkg/notify/notify.go` and is constructed from `config.NotificationsConfig` in `src/pkg/config/config.go`. The same notification is sent to every configured channel.
 
+Every notification title is prefixed with the sending hive's ID as `[<hive-id>] <title>` (`Notifier.SetHiveID` in `src/pkg/notify/notify.go`). Filters or routing rules that match on title - an ntfy topic shared by several hives, for example - should account for the prefix.
+
 ## Configuration
 
 ```yaml
@@ -58,9 +60,16 @@ The Hive Go process sends notifications for these events:
 |---|---|---|
 | Weekly token budget crosses the warning threshold. | default | `applyBudgetAlerts` in `src/cmd/hive/main.go` |
 | Weekly token budget is exhausted and non-exempt kicks are suspended. | high | `applyBudgetAlerts` in `src/cmd/hive/main.go` |
-| Actionable issues exceed the SLA threshold; up to three `SLA 2x breach` notifications are sent per refresh cycle for issues older than 60 minutes. | high | dashboard refresh loop in `src/cmd/hive/main.go` |
-| A running agent pane matches a configured login-required pattern; Hive pauses that agent and sends the backend-specific login instruction. | high | `scanForLoginRequired` in `src/cmd/hive/main.go` |
+| Actionable issues exceed the SLA threshold; up to three `SLA 2x breach` notifications are sent per eval cycle for issues older than 60 minutes (`maxSLANotificationsPerCycle`, `doubleSLAMinutes`). | high | `selectSLABreachNotifications` in `src/cmd/hive/eval_cycle_seams.go`, sent from `runEvalCycle` in `src/cmd/hive/main.go` |
+| A running agent pane matches a configured login-required pattern; Hive pauses that agent and sends the backend-specific login instruction (`Login required: <agent>`). | high | `scanForLoginRequired` in `src/cmd/hive/main.go` |
 | Trajectory review detects divergence and either pauses the agent or flags the divergence. | high | `src/pkg/dashboard/trajectory_sink.go` and `src/pkg/trajectory/lane.go` |
+| The inference provider starts rebuffing kicks with spending-limit errors; sent once per crossing of the latch, not per cycle (`Provider spending limit reached`). | high | provider-budget kick gate in `runEvalCycle`, `src/cmd/hive/main.go` |
+| A probe kick succeeds after a spending-limit clip and agent kicks resume (`Provider spending limit lifted`). | default | provider-budget recovery path in `runEvalCycle`, `src/cmd/hive/main.go` |
+| A PR stays red after exhausting its automated fix-attempt budget and is escalated to a human (`Fix loop escalated`). | high | `runEscalationSweep` in `src/cmd/hive/main.go` |
+| The planning stall-replan lane re-kicks the architect on a stalled plan (`Plan replan`) or hits the replan cap (`Plan replan-cap`). | high | `src/pkg/planning/replan.go` via `src/pkg/dashboard/replan_sink.go` |
+| The convergence rollout mode changes at runtime (settings PUT, YAML reload, or env override); sent once per transition, not per cycle (`Convergence mode changed`). | default | `applyConvergenceKickAdmission` in `src/cmd/hive/convergence_kick.go` |
+
+Operator-defined [hooks](hooks.md) with the `notify` action send through the same fanout: title, message, and priority come from the hook definition (`ActionNotify` in `src/pkg/hooks/action.go`, bridged by `notifierAdapter` in `src/cmd/hive/hookwire.go`). An unknown priority falls back to `default`, so any transition a hook can observe can also page these channels.
 
 The legacy shell scripts in `bin/` also use `bin/notify.sh` for events such as stale agents, rate limits, backend switches, and kick status when those scripts are deployed. Those scripts read environment variables (`NTFY_TOPIC`, `NTFY_SERVER`, `SLACK_WEBHOOK`, `DISCORD_WEBHOOK`) rather than the `notifications:` YAML block.
 
