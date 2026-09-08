@@ -113,13 +113,10 @@ too — treat it as effectively immutable once anything trusts it.
 ADR-0007 and the mint package describe a `.well-known/jwks.json` endpoint
 that downstream WIF providers fetch to verify tokens (`Minter.JWKS`,
 `mint.go:237-254`). **As of this branch, nothing in the hive process serves
-that endpoint.** `pkg/mint/README.md` states this explicitly:
-
-> `Server.Handler()` returns a handler; it does not listen. Nothing in this
-> repo currently serves it — the mint is used in-process through
-> `AgentMinter`. Whoever wires a listener owns the short-term hardening the
-> finding asks for: bind it to localhost or a pod-internal interface, and do
-> not expose `/mint` beyond the pod network.
+that endpoint.** An HTTP transport for `/mint` + JWKS (with a caller-identity
+seam, per-caller entitlements, and a Kubernetes TokenReview backend) was built
+in #4436 but never wired to a listener, and has since been removed as dead
+code — recover it from git history if an HTTP mint front door is ever wired.
 
 Confirmed by search: no route registers `jwks` or `well-known` anywhere
 under `pkg/dashboard/` or `cmd/hive/`. Today, `mint.enabled: true` only
@@ -140,11 +137,9 @@ turning `mint.enabled: true` on:
    per agent on the same refresh cadence as its GitHub App token
    (`main.go:1747`, `agent.go:80-97`). There is no exposed HTTP endpoint for
    an external caller to request a mint token from this hive (see JWKS
-   section above) — the "front door" described in `pkg/mint/README.md`
-   (`SharedSecretAuthenticator` / `TokenReviewAuthenticator` /
-   `MultiAuthenticator`) is real code but is not wired into `cmd/hive/main.go`
-   in this branch. Do not assume caller-identity checking is active just
-   because it exists in the package.
+   section above) — the HTTP "front door" (`SharedSecretAuthenticator` /
+   `TokenReviewAuthenticator` / `MultiAuthenticator`) built in #4436 was
+   never wired into `cmd/hive/main.go` and has been deleted as dead code.
 2. **What a token grants**: exactly the scopes for the subject's tier —
    never more (fail-closed on unknown tiers, `agent.go:53-58`) — for the
    fixed `hive-agent` audience, for at most `min(max_ttl_seconds,
