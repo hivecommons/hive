@@ -186,10 +186,15 @@ func TestClaudeLocalSandboxIsMandatory(t *testing.T) {
 		}
 	}
 	// The extra leading slash is the point: "Edit(/" + <absolute path> gives
-	// the `//` absolute form Claude Code's rule matcher requires (#6087).
+	// the `//` absolute form Claude Code's rule matcher requires (#6087) — a
+	// single leading "/" anchors at the settings source, not the filesystem
+	// root, so the rule would silently match nothing. And only Edit(path)
+	// rules are consulted for file-permission checks — a Write(path) rule is
+	// accepted but never matched — while Edit covers every built-in
+	// file-modifying tool, Write included. So: one Edit rule per root.
 	wantPermissions := []string{
-		"Edit(/" + workspace + "/**)", "Write(/" + workspace + "/**)",
-		"Edit(/" + agentCwd + "/**)", "Write(/" + agentCwd + "/**)",
+		"Edit(/" + workspace + "/**)",
+		"Edit(/" + agentCwd + "/**)",
 	}
 	if len(settings.Permissions.Allow) != len(wantPermissions) {
 		t.Fatalf("tool write permissions = %q, want %q", settings.Permissions.Allow, wantPermissions)
@@ -231,8 +236,8 @@ func TestClaudeLocalSandboxWithoutAgentCwdGrantsWorkspaceOnly(t *testing.T) {
 	if len(settings.Sandbox.Filesystem.AllowWrite) != 1 || settings.Sandbox.Filesystem.AllowWrite[0] != addDirs[0] {
 		t.Fatalf("sandbox write roots = %q, want only %q", settings.Sandbox.Filesystem.AllowWrite, addDirs[0])
 	}
-	want := []string{"Edit(/" + addDirs[0] + "/**)", "Write(/" + addDirs[0] + "/**)"}
-	if len(settings.Permissions.Allow) != 2 || settings.Permissions.Allow[0] != want[0] || settings.Permissions.Allow[1] != want[1] {
+	want := []string{"Edit(/" + addDirs[0] + "/**)"}
+	if len(settings.Permissions.Allow) != len(want) || settings.Permissions.Allow[0] != want[0] {
 		t.Fatalf("tool write permissions = %q, want %q", settings.Permissions.Allow, want)
 	}
 }

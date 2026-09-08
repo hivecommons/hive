@@ -462,7 +462,7 @@ test('relaunchCLI sends the cd-prefixed command to tmux', () => {
 
 // A faithful reduction of what claude_family_local_perm_flag_shell emits.
 const LOCAL_SANDBOXED_CLAUDE_CMD = 'claude --permission-mode dontAsk ' +
-  '--settings \\{\\"permissions\\":\\{\\"allow\\":\\[\\"Write\\(/home/dev/workspace/\\*\\*\\)\\"\\]\\},' +
+  '--settings \\{\\"permissions\\":\\{\\"allow\\":\\[\\"Edit\\(//home/dev/workspace/\\*\\*\\)\\"\\]\\},' +
   '\\"sandbox\\":\\{\\"enabled\\":true,\\"failIfUnavailable\\":true,\\"allowUnsandboxedCommands\\":false\\}\\} ' +
   '--add-dir /home/dev/workspace --disallowed-tools Bash\\(sudo:\\*\\),Bash\\(rpm-ostree:\\*\\)';
 const CONTAINER_BYPASS_PERM = '--dangerously-skip-permissions --permission-mode bypassPermissions';
