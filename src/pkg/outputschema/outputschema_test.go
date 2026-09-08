@@ -122,3 +122,63 @@ func TestAgentReportPathSanitizesAgentName(t *testing.T) {
 		t.Fatalf("AgentReportPath() = %q, want %q", got, want)
 	}
 }
+
+// A nil or violation-free ValidationError still yields the generic message —
+// callers wrap it blindly, so the fallback branch must not panic or go blank.
+func TestValidationErrorEmptyAndNil(t *testing.T) {
+	var nilErr *ValidationError
+	if got := nilErr.Error(); got != "agent report validation failed" {
+		t.Errorf("nil ValidationError.Error() = %q", got)
+	}
+	if got := (&ValidationError{}).Error(); got != "agent report validation failed" {
+		t.Errorf("empty ValidationError.Error() = %q", got)
+	}
+}
+
+// Exactly one JSON object: trailing content after the report is rejected.
+func TestValidateRejectsTrailingJSON(t *testing.T) {
+	raw := `{"lane":"scanner","kind":"summary","findings":[],"prs_opened":[],"beads_filed":[],"summary":"ok"}{"lane":"x"}`
+	_, err := Validate([]byte(raw))
+	if err == nil {
+		t.Fatal("Validate() accepted two JSON objects")
+	}
+	if !strings.Contains(err.Error(), "exactly one JSON object") {
+		t.Errorf("Validate() error = %q, want the exactly-one-object violation", err)
+	}
+}
+
+// Every collection cap has an over-limit branch; each must fire independently.
+func TestValidateReportOverMaxCollections(t *testing.T) {
+	report := AgentReport{
+		Lane:       "scanner",
+		Kind:       KindSummary,
+		Findings:   make([]Finding, MaxFindings+1),
+		PRsOpened:  make([]PROpened, MaxPRsOpened+1),
+		BeadsFiled: make([]BeadFiled, MaxBeadsFiled+1),
+		Artifacts:  make([]Artifact, MaxArtifacts+1),
+		Summary:    "too much of everything",
+	}
+	violations := validateReport(report)
+	for _, field := range []string{"findings", "prs_opened", "beads_filed", "artifacts"} {
+		found := false
+		for _, v := range violations {
+			if v.Field == field && strings.Contains(v.Message, "must contain at most") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no over-max violation for %q in %v", field, violations)
+		}
+	}
+}
+
+// A blank agent name must not produce the path "agent-report-.json".
+func TestAgentReportPathBlankNameFallsBackToUnknown(t *testing.T) {
+	for _, name := range []string{"", "   "} {
+		got := AgentReportPath(name)
+		if !strings.Contains(got, AgentReportFilePrefix+"unknown"+AgentReportFileSuffix) {
+			t.Errorf("AgentReportPath(%q) = %q, want the unknown fallback", name, got)
+		}
+	}
+}
