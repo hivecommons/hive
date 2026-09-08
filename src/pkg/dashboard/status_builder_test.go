@@ -117,77 +117,6 @@ func containsAny(names []string, needles ...string) bool {
 	return false
 }
 
-func TestComputeNextKick(t *testing.T) {
-	// off cadence
-	result := computeNextKick(nil, "off")
-	if result != "" {
-		t.Errorf("expected empty for off cadence, got %q", result)
-	}
-
-	// pause cadence
-	result = computeNextKick(nil, "pause")
-	if result != "" {
-		t.Errorf("expected empty for pause cadence, got %q", result)
-	}
-
-	// empty cadence
-	result = computeNextKick(nil, "")
-	if result != "" {
-		t.Errorf("expected empty for empty cadence, got %q", result)
-	}
-
-	// valid cadence with no last kick
-	result = computeNextKick(nil, "15m")
-	if result == "" {
-		t.Error("expected non-empty for valid cadence")
-	}
-
-	// valid cadence with last kick
-	now := time.Now()
-	result = computeNextKick(&now, "15m")
-	if result == "" {
-		t.Error("expected non-empty for valid cadence with last kick")
-	}
-}
-
-func TestLookupCadence(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
-			},
-		},
-	}
-	result := lookupCadence("scanner", cfg)
-	if result != "15m" {
-		t.Errorf("lookupCadence = %q, want 15m", result)
-	}
-
-	result = lookupCadence("nonexistent", cfg)
-	if result != "" {
-		t.Errorf("lookupCadence nonexistent = %q, want empty", result)
-	}
-}
-
-func TestLookupCadenceForMode(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"busy": {Cadences: map[string]config.Cadence{"scanner": "5m"}},
-			},
-		},
-	}
-	result := lookupCadenceForMode("scanner", "busy", cfg)
-	if result != "5m" {
-		t.Errorf("got %q, want 5m", result)
-	}
-
-	result = lookupCadenceForMode("scanner", "nonexistent", cfg)
-	if result != "" {
-		t.Errorf("got %q, want empty", result)
-	}
-}
-
 func TestBuildGovernor(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
@@ -755,14 +684,6 @@ func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	}
 }
 
-func TestComputeNextKick_WithDuration(t *testing.T) {
-	// Cover the parseCadenceDuration returning 0 branch
-	result := computeNextKick(nil, "invalid-cadence")
-	if result != "" {
-		t.Errorf("result = %q, want empty", result)
-	}
-}
-
 func TestBuildTokens_NilSummary(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -995,42 +916,6 @@ func TestLoadStatsConfig_NoFile(t *testing.T) {
 	stats := loadStatsConfig("nonexistent-agent-xyz")
 	if len(stats) != 0 {
 		t.Errorf("expected empty stats for missing file, got %d", len(stats))
-	}
-}
-
-func TestComputeNextKick_OffCadence(t *testing.T) {
-	result := computeNextKick(nil, "off")
-	if result != "" {
-		t.Errorf("expected empty for off cadence, got %q", result)
-	}
-}
-
-func TestComputeNextKick_PauseCadence(t *testing.T) {
-	result := computeNextKick(nil, "pause")
-	if result != "" {
-		t.Errorf("expected empty for pause cadence, got %q", result)
-	}
-}
-
-func TestComputeNextKick_EmptyCadence(t *testing.T) {
-	result := computeNextKick(nil, "")
-	if result != "" {
-		t.Errorf("expected empty for empty cadence, got %q", result)
-	}
-}
-
-func TestComputeNextKick_ValidCadenceWithLastKick(t *testing.T) {
-	lastKick := time.Now().Add(-5 * time.Minute)
-	result := computeNextKick(&lastKick, "10m")
-	if result == "" {
-		t.Error("expected non-empty result for valid cadence with last kick")
-	}
-}
-
-func TestComputeNextKick_ValidCadenceNoLastKick(t *testing.T) {
-	result := computeNextKick(nil, "15m")
-	if result == "" {
-		t.Error("expected non-empty result for valid cadence without last kick")
 	}
 }
 

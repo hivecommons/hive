@@ -1688,35 +1688,6 @@ func TestParseCadenceDuration_Variants(t *testing.T) {
 	}
 }
 
-func TestComputeNextKick_Empty(t *testing.T) {
-	result := computeNextKick(nil, "")
-	if result != "" {
-		t.Errorf("computeNextKick empty = %q", result)
-	}
-}
-
-func TestComputeNextKick_Pause(t *testing.T) {
-	result := computeNextKick(nil, "pause")
-	if result != "" {
-		t.Errorf("computeNextKick pause = %q", result)
-	}
-}
-
-func TestComputeNextKick_ValidCadence(t *testing.T) {
-	result := computeNextKick(nil, "15m")
-	if result == "" {
-		t.Error("expected non-empty next kick")
-	}
-}
-
-func TestComputeNextKick_WithLastKick(t *testing.T) {
-	now := time.Now()
-	result := computeNextKick(&now, "1h")
-	if result == "" {
-		t.Error("expected non-empty next kick")
-	}
-}
-
 func TestFormatCadenceDuration_Minutes(t *testing.T) {
 	got := formatCadenceDuration(300)
 	if got != "5m" {
@@ -1735,48 +1706,6 @@ func TestFormatCadenceDuration_Seconds(t *testing.T) {
 	got := formatCadenceDuration(45)
 	if got != "45s" {
 		t.Errorf("formatCadenceDuration(45) = %q, want 45s", got)
-	}
-}
-
-func TestLookupCadence_Found(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
-			},
-		},
-	}
-	got := lookupCadence("scanner", cfg)
-	if got != "15m" {
-		t.Errorf("lookupCadence = %q, want 15m", got)
-	}
-}
-
-func TestLookupCadence_NotFound(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
-			},
-		},
-	}
-	got := lookupCadence("worker", cfg)
-	if got != "" {
-		t.Errorf("lookupCadence = %q, want empty", got)
-	}
-}
-
-func TestLookupCadenceForMode_Busy(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"busy": {Cadences: map[string]config.Cadence{"scanner": "5m"}},
-			},
-		},
-	}
-	got := lookupCadenceForMode("scanner", "busy", cfg)
-	if got != "5m" {
-		t.Errorf("lookupCadenceForMode = %q, want 5m", got)
 	}
 }
 
