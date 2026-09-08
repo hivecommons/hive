@@ -1254,6 +1254,11 @@
     .repo-pr-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-pr-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-pr-pill .pill-merge-icon { font-size: 0.6rem; margin-left: 1px; }
+    /* Review-priority class badge (#6183): the snapshot orders PRs fixes >
+       refactors/docs > tests, then by age; the badge says WHY a PR sits
+       where it does. Presentational only — no agent reads it. */
+    .repo-pr-pill .pill-class { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; margin-right: 3px; opacity: 0.75; }
+    .repo-pr-pill .pill-class.fix { color: var(--red); opacity: 1; }
     /* needs-human: the escalation ledger (pkg/escalation) applies the
        `needs-human` GitHub label to a PR once automated fix attempts are
        exhausted. The pill turns status-alert orange (NOT brand amber) and a
@@ -4502,7 +4507,7 @@
           <div class="gov-metric"><span class="gm-label">actionable</span><span class="gm-val">${govActionable}</span></div>
           <div class="gov-metric"><span class="gm-label">PRs</span><span class="gm-val">${govPrs}</span></div>
           <div class="gov-metric"><span class="gm-label">MTTR</span><span class="gm-val">${formatFixTime(itmMedian)}</span></div>
-          <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
+          <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + (h.review_class ? ' [' + h.review_class + ']' : '') + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
           ${(() => {
             const plan = window._lastStatus?.planning || {};
             // Planning only runs at ACMM >= 5 (architect scheduled); hide the tile
@@ -7466,7 +7471,9 @@
       const holdTotal = holdData.total || 0;
       const holdItems = holdData.items || [];
       const holdExplain = 'ON HOLD — work intentionally paused, awaiting a human.\n\nWHAT: Issues and PRs that agents will NOT act on until a maintainer clears them. Excluded from the actionable-issue count that drives the mode.\n\nHOW: Count of open issues/PRs carrying a hold label (hold / do-not-merge / blocked). The list below names each held item; the sparkline shows how the backlog of held work is trending.\n\n';
-      const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
+      // Hold items arrive pre-sorted by review class (fixes > refactors/docs
+      // > tests) then age (#6183); the class tag makes that order legible.
+      const holdTooltip = holdItems.length > 0 ? escapeHtml(holdExplain + holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}${h.review_class ? ' [' + h.review_class + ']' : ''}: ${h.title}`).join('\n')) : escapeHtml(holdExplain + 'Nothing is currently on hold.');
       const holdSpark = sparkline('govHold');
 
       el.innerHTML = `
@@ -7773,7 +7780,12 @@
           // of truth — the same signal the ledger writes to GitHub — so this
           // view cannot drift from the ledger.
           const needsHuman = labels.includes('needs-human');
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
+          // review_class is the presentational triage class the snapshot is
+          // ordered by (fix > refactor-docs > tests, then age; #6183). It is
+          // derived server-side from the title prefix and lane label only.
+          const reviewClass = p.review_class ? String(p.review_class) : '';
+          const classBadge = reviewClass ? `<span class="pill-class ${esc(reviewClass)}">${esc(reviewClass === 'refactor-docs' ? 'refactor' : reviewClass)}</span>` : '';
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (reviewClass ? ' [review class: ' + reviewClass + ']' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '') + (needsHuman ? ' (needs human review)' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
@@ -7794,7 +7806,7 @@
           // needs-human wins the pill tint over mergeable green: a PR can be
           // technically mergeable AND escalated, and the escalation is what
           // the operator must see.
-          return `<a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${queueBtn}`;
+          return `<a class="repo-pr-pill${needsHuman ? ' needs-human' : mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}">${classBadge}<span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${queueBtn}`;
         }).join('');
         const allPills = issuePills + prPills;
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';

@@ -1,11 +1,13 @@
 # Hold-gated review queue triage policy
 
-> **Status: proposed.** This page is the reviewable artifact for
+> **Status: option 1 implemented; options 2 and 3 open.** This page is the
+> reviewable artifact for
 > [#6183](https://github.com/hivecommons/hive/issues/6183) (hold-gated review
-> queue has no triage signal). Nothing here changes agent or governor behavior
-> until maintainers settle the open decisions below; merging this page adopts
-> the triage *convention*, and the mechanism options are listed in
-> cheapest-first order.
+> queue has no triage signal). The presentational sort (mechanism option 1
+> below) ships in `pkg/github/review_priority.go`: `last-actionable.json`,
+> the dashboard PR list, and the on-hold tooltip order PRs by class then age
+> and expose the class as `review_class`. Nothing here changes agent or
+> governor behavior; options 2 and 3 wait on the maintainer decisions below.
 
 At ACMM L5 hold-gated, agent PR throughput permanently exceeds human review
 throughput by design: every agent PR carries the `hold` label and waits for a
