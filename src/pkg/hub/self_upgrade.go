@@ -95,6 +95,25 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 		return fmt.Errorf("no containers found on deployment %s/%s", namespace, selfUpgradeDeployName)
 	}
 
+	// Idempotence. The hub re-sends a switch on EVERY heartbeat until the
+	// spoke reports the new tag — and it is the OLD pod that heartbeats, on
+	// the old tag, for as long as the new pod is still initializing. Each
+	// re-send used to land here and stamp a fresh restart-at annotation onto
+	// a Deployment whose images already said the target, which is a new pod
+	// template: the ReplicaSet controller killed the pod that was mid-init
+	// and started another. A spoke whose pod needs longer than one heartbeat
+	// interval to become Ready never converged (observed live: 18
+	// ReplicaSets in 8 minutes for one hive, none reaching Ready, while a
+	// neighbour with the image already cached on its node won the race in
+	// 31s). When every container already carries the target image, the
+	// rollout is in flight — say so and leave the template alone.
+	if names.allAt(image) {
+		rememberSelfImage(image)
+		logger.Info("deployment already at target image — rollout in flight, not re-stamping",
+			"namespace", namespace, "deployment", selfUpgradeDeployName, "image", image)
+		return nil
+	}
+
 	var cs, ics []string
 	for _, n := range names.containers {
 		cs = append(cs, fmt.Sprintf(`{"name":%q,"image":%q}`, n, image))
@@ -109,9 +128,25 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
 		return fmt.Errorf("patching deployment image: %w", err)
 	}
+	rememberSelfImage(image)
 	logger.Info("deployment image switched via in-cluster API, pod will roll",
 		"namespace", namespace, "deployment", selfUpgradeDeployName, "image", image)
 	return nil
+}
+
+// rememberSelfImage refreshes the cached SelfDeploymentImage answer after this
+// pod has patched its own Deployment. The heartbeat reports that cached value
+// as image_ref, and the hub treats a reported image_ref matching the switch
+// tag as "switch complete" (server.go). Left to the cache TTL, the OLD pod
+// kept reporting the OLD tag for minutes after the patch had landed, so the
+// hub kept the switch armed and re-sent it every beat — the same loop the
+// allAt guard in SwitchImageSelf closes from the other side.
+func rememberSelfImage(image string) {
+	selfImageMu.Lock()
+	selfImageCached = image
+	selfImageFetched = time.Now()
+	selfImageAttempted = true
+	selfImageMu.Unlock()
 }
 
 // mutableTagSuffix marks image tags that CI republishes in place (v2-latest,
@@ -327,6 +362,25 @@ func selfDeploymentImage() (string, error) {
 type deploymentContainerNames struct {
 	containers     []string
 	initContainers []string
+	// images maps every container and init-container name to the image its
+	// pod template currently carries, so a switch can tell "already patched,
+	// rolling" from "needs patching" without a second GET.
+	images map[string]string
+}
+
+// allAt reports whether every container and init-container already carries
+// image. False for an empty deployment, so a caller never mistakes "nothing
+// to compare" for "already there".
+func (d deploymentContainerNames) allAt(image string) bool {
+	if len(d.containers)+len(d.initContainers) == 0 {
+		return false
+	}
+	for _, n := range append(append([]string{}, d.containers...), d.initContainers...) {
+		if d.images[n] != image {
+			return false
+		}
+	}
+	return true
 }
 
 // k8sDeploymentContainerNames GETs the deployment and returns its container +
@@ -342,10 +396,12 @@ func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) 
 			Template struct {
 				Spec struct {
 					Containers []struct {
-						Name string `json:"name"`
+						Name  string `json:"name"`
+						Image string `json:"image"`
 					} `json:"containers"`
 					InitContainers []struct {
-						Name string `json:"name"`
+						Name  string `json:"name"`
+						Image string `json:"image"`
 					} `json:"initContainers"`
 				} `json:"spec"`
 			} `json:"template"`
@@ -354,11 +410,14 @@ func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) 
 	if err := json.Unmarshal(body, &dep); err != nil {
 		return out, err
 	}
+	out.images = make(map[string]string, len(dep.Spec.Template.Spec.Containers)+len(dep.Spec.Template.Spec.InitContainers))
 	for _, c := range dep.Spec.Template.Spec.Containers {
 		out.containers = append(out.containers, c.Name)
+		out.images[c.Name] = c.Image
 	}
 	for _, c := range dep.Spec.Template.Spec.InitContainers {
 		out.initContainers = append(out.initContainers, c.Name)
+		out.images[c.Name] = c.Image
 	}
 	return out, nil
 }

@@ -258,6 +258,74 @@ func TestSwitchImageSelfSuccess(t *testing.T) {
 	}
 }
 
+// The re-patch loop. The hub re-sends a switch on every heartbeat until the
+// spoke reports the new tag, and the OLD pod keeps heartbeating the old tag
+// while the new pod initializes. Every re-send used to stamp a fresh
+// restart-at onto a Deployment already at the target image — a new pod
+// template each time — so the mid-init pod was killed and replaced on every
+// beat (observed live: 18 ReplicaSets in 8 minutes, none reaching Ready). A
+// Deployment whose containers all already carry the target must not be
+// PATCHed again.
+func TestSwitchImageSelfDoesNotRestampWhenAlreadyAtImage(t *testing.T) {
+	const target = "ghcr.io/hivecommons/hive:candidate"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + target + `"}],"initContainers":[{"name":"init","image":"` + target + `"}]}}}}`))
+			return
+		}
+		t.Errorf("deployment already at %s, but a %s was issued — that re-rolls the pod mid-init", target, r.Method)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if err := SwitchImageSelf(slog.Default(), target); err != nil {
+		t.Fatalf("SwitchImageSelf on an already-switched deployment must succeed quietly: %v", err)
+	}
+}
+
+// Positive control for the guard above: one container still on the old image
+// means the switch is genuinely outstanding and the PATCH must go out.
+func TestSwitchImageSelfPatchesWhenAnyContainerIsBehind(t *testing.T) {
+	const target = "ghcr.io/hivecommons/hive:candidate"
+	patched := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + target + `"}],"initContainers":[{"name":"init","image":"ghcr.io/hivecommons/hive:stable"}]}}}}`))
+			return
+		}
+		patched = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if err := SwitchImageSelf(slog.Default(), target); err != nil {
+		t.Fatalf("SwitchImageSelf: %v", err)
+	}
+	if !patched {
+		t.Fatal("an init container still on the old image must trigger the PATCH")
+	}
+}
+
+func TestDeploymentContainerNamesAllAt(t *testing.T) {
+	empty := deploymentContainerNames{}
+	if empty.allAt("x") {
+		t.Error("an empty deployment must never read as already-at-image")
+	}
+	d := deploymentContainerNames{
+		containers:     []string{"hive"},
+		initContainers: []string{"init"},
+		images:         map[string]string{"hive": "img:a", "init": "img:a"},
+	}
+	if !d.allAt("img:a") {
+		t.Error("all containers at img:a must report allAt")
+	}
+	if d.allAt("img:b") {
+		t.Error("no container at img:b must not report allAt")
+	}
+}
+
 func TestSwitchImageSelfNoContainers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[],"initContainers":[]}}}}`))

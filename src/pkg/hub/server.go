@@ -1152,6 +1152,14 @@ type HubServer struct {
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.
 	heartbeatSwitchTag map[string]string
+	// heartbeatSwitchSent records when each hive was last handed its
+	// heartbeatSwitchTag on the wire, keyed by hive ID, so the same tag is
+	// re-sent no more often than switchResendInterval. The OLD pod keeps
+	// heartbeating the old tag while the new pod initializes, and a spoke
+	// that re-patches on every beat kills that pod mid-init each time (the
+	// a-ks-wec2 n0sv loop: 18 ReplicaSets in 8 minutes, none Ready). A
+	// different tag, or a cleared switch, resets the clock.
+	heartbeatSwitchSent map[string]switchSend
 
 	// pendingWebhooks stores GitHub App installation webhooks that arrived
 	// before the matching spoke heartbeat.  Key: lowercase org name.
@@ -1403,6 +1411,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		poolReplenishHold:       make(map[string]time.Time),
 		heartbeatUpgrade:        make(map[string]string),
 		heartbeatSwitchTag:      make(map[string]string),
+		heartbeatSwitchSent:     make(map[string]switchSend),
 		clusterUnreachableUntil: make(map[string]time.Time),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
@@ -2677,6 +2686,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		if switchDone || (payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag) {
 			s.mu.Lock()
 			delete(s.heartbeatSwitchTag, payload.HiveID)
+			delete(s.heartbeatSwitchSent, payload.HiveID)
 			for i := range s.registry.Hives {
 				if s.registry.Hives[i].ID == payload.HiveID {
 					s.clearUpgradeLatch(i)
@@ -2691,8 +2701,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			s.logger.Debug("heartbeat: switch instruction withheld — spoke upgrades are paused",
 				"hive_id", payload.HiveID, "tag", switchTag,
 				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+		} else if sent, recent := s.switchRecentlySent(payload.HiveID, switchTag, time.Now()); recent {
+			// Already on the wire for this tag within the resend window. The
+			// spoke that answers this beat is the OLD pod — it reports the old
+			// tag until the new pod is Ready and replaces it — so re-sending
+			// now would only re-stamp the Deployment and kill the new pod
+			// mid-init (see heartbeatSwitchSent). A spoke whose PATCH actually
+			// failed gets the tag again once the window elapses.
+			s.logger.Debug("heartbeat: switch instruction withheld — sent recently, letting the rollout land",
+				"hive_id", payload.HiveID, "tag", switchTag, "sent_at", sent.At, "resend_after", switchResendInterval)
 		} else {
 			resp.SwitchToTag = switchTag
+			s.mu.Lock()
+			s.heartbeatSwitchSent[payload.HiveID] = switchSend{Tag: switchTag, At: time.Now()}
+			s.mu.Unlock()
 			s.logger.Info("heartbeat: instructing spoke to switch branch image",
 				"hive_id", payload.HiveID, "tag", switchTag)
 		}
