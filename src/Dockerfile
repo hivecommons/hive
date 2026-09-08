@@ -665,7 +665,23 @@ RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
 # agent on the same provider (EACCES -> login/onboarding screens). Launch
 # through wrappers that set umask 007 so shared state stays group-readable.
 # See RFC #4665.
-RUN for b in agy claude; do \
+#
+# muse belongs here for the same reason, and it fails HARDER than the two
+# above: muse does not degrade to a login screen, it exits non-zero before
+# doing any work at all —
+#
+#   failed to create session lock directory for session <uuid>:
+#   Permission denied (os error 13)
+#
+# and the agent then crash-loops. Observed on a live spoke where every
+# muse-backed agent reported state=running/busy=working while restarting
+# hundreds of times, because muse creates its whole state tree
+# ($XDG_DATA_HOME/muse: sessions/, runtime/, skills/, plugins/,
+# model-catalog/) on first launch and the default umask made those dirs
+# group-unwritable. The first agent to start muse then locked out every other
+# agent sharing /data/home. umask 007 makes that tree group-writable, so any
+# agent in the `node` group can take the next session.
+RUN for b in agy claude muse; do \
       [ -e "/usr/local/bin/$b" ] || continue; \
       mv "/usr/local/bin/$b" "/usr/local/bin/$b.real"; \
       printf '#!/bin/sh\numask 007\nexec /usr/local/bin/%s.real "$@"\n' "$b" > "/usr/local/bin/$b"; \
