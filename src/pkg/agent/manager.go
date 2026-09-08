@@ -3650,6 +3650,15 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// A tick that was already queued when ctx was cancelled can win
+			// the select above (Go picks uniformly among ready cases), so
+			// re-check here: the launch is over and nothing may be typed
+			// into its pane. Without this a cancelled watcher could answer
+			// the same prompt a second time after it had already been
+			// answered (#6282, #6283).
+			if ctx.Err() != nil {
+				return
+			}
 			output := m.captureTmuxPaneForAgent(agent)
 			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
 				answeredAt[label] = time.Now()

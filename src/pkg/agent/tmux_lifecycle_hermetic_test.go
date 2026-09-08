@@ -135,24 +135,56 @@ func TestHermeticWatchForTrustPromptForAgentSendsBackendSpecificKeys(t *testing.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// The seam runs on the watcher goroutine. It used to close(done) on every
+	// "Enter", so a second answer to the still-displayed prompt panicked the
+	// whole shard with "close of closed channel" (#6282, #6283): under -race
+	// on a loaded runner the first answer can stall past trustReanswerAfter
+	// with a tick already queued, and the watcher's select does not prefer
+	// the cancelled ctx over that tick. The close is now owned by a
+	// sync.Once, keys is guarded by a mutex (it is read from the test
+	// goroutine after the watcher may still be running), and the test waits
+	// for the watcher to exit before asserting so a late second answer is
+	// reported as a failed assertion instead of a process-wide panic.
+	var (
+		mu       sync.Mutex
+		keys     []string
+		doneOnce sync.Once
+	)
 	done := make(chan struct{})
-	var keys []string
 	termSeams(m).sendKeys = func(_ *AgentProcess, sent ...string) {
+		mu.Lock()
 		keys = append(keys, sent...)
+		mu.Unlock()
 		if len(sent) == 1 && sent[0] == "Enter" {
 			cancel()
-			close(done)
+			doneOnce.Do(func() { close(done) })
 		}
 	}
 
-	go m.watchForTrustPromptForAgent(agent, ctx)
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		m.watchForTrustPromptForAgent(agent, ctx)
+	}()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("watcher did not answer the fake codex update prompt")
 	}
-	if got, want := strings.Join(keys, ","), "3,Enter"; got != want {
-		t.Fatalf("sent keys = %q, want %q", got, want)
+	// The watcher must stop on the cancelled ctx without typing anything
+	// else: a queued tick may not outrank cancellation (manager.go re-checks
+	// ctx.Err() on the tick path). Waiting here also keeps the goroutine
+	// from outliving the test and touching the seams of a later test.
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not exit after its context was cancelled")
+	}
+	mu.Lock()
+	got := strings.Join(keys, ",")
+	mu.Unlock()
+	if want := "3,Enter"; got != want {
+		t.Fatalf("sent keys = %q, want %q (a second answer after cancel means the watcher ignored ctx)", got, want)
 	}
 }
 
