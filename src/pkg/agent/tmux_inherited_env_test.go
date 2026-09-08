@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -52,6 +53,9 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() })
 
+	// paneEnvTimeout bounds how long a fresh pane gets to write its environment.
+	const paneEnvTimeout = 5 * time.Second
+
 	// paneEnv forks a fresh pane in the session and returns the environment
 	// that pane's shell was given — the only thing that matters to a CLI.
 	paneEnv := func(tag string) map[string]string {
@@ -60,23 +64,19 @@ func TestApplySessionEnv_RemovesInheritedCredentialsFromPanes(t *testing.T) {
 		if err := exec.Command("tmux", "-L", socket, "new-window", "-t", session, "sh -c 'env > "+out+"'").Run(); err != nil {
 			t.Fatalf("new-window: %v", err)
 		}
-		deadline := time.Now().Add(5 * time.Second)
-		for {
+		return testutil.EventuallyValue(t, paneEnvTimeout, func() (map[string]string, bool) {
 			data, err := os.ReadFile(out)
-			if err == nil && len(data) > 0 {
-				env := map[string]string{}
-				for _, line := range strings.Split(string(data), "\n") {
-					if k, v, ok := strings.Cut(line, "="); ok {
-						env[k] = v
-					}
+			if err != nil || len(data) == 0 {
+				return nil, false
+			}
+			env := map[string]string{}
+			for _, line := range strings.Split(string(data), "\n") {
+				if k, v, ok := strings.Cut(line, "="); ok {
+					env[k] = v
 				}
-				return env
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("pane never wrote its environment to %s", out)
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
+			return env, true
+		}, "pane never wrote its environment to %s", out)
 	}
 
 	// CONTROL: before the strip, the planted credentials reach a pane. If this
