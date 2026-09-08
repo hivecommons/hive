@@ -2,7 +2,6 @@ package review
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -109,32 +108,5 @@ func BuildPerspectivePrompt(p Perspective, pr PullRequest) string {
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString("Allowed verdicts: approve, changes_requested, requires_human, reject. Finding severities: info, low, medium, high, critical.\n")
 	b.WriteString("Use approve only when this perspective finds no blocker. Use changes_requested for agent-fixable issues. Use requires_human for ambiguous/high-risk judgment. Use reject for fundamentally unsuitable or harmful PRs.\n")
-	return b.String()
-}
-
-func BuildPerspectivePrompts(pr PullRequest, perspectives []Perspective) map[Perspective]string {
-	if len(perspectives) == 0 {
-		perspectives = DefaultPerspectives
-	}
-	out := make(map[Perspective]string, len(perspectives))
-	for _, p := range perspectives {
-		out[p] = BuildPerspectivePrompt(p, pr)
-	}
-	return out
-}
-
-func BuildSequentialPrompt(pr PullRequest, perspectives []Perspective) string {
-	prompts := BuildPerspectivePrompts(pr, perspectives)
-	keys := make([]string, 0, len(prompts))
-	for p := range prompts {
-		keys = append(keys, string(p))
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	b.WriteString("Run the following review perspectives sequentially. In production the governor may fan these out to parallel review-capable agents; this prompt is the phase-1 sequential fallback.\n\n")
-	for _, k := range keys {
-		b.WriteString(prompts[Perspective(k)])
-		b.WriteString("\n---\n")
-	}
 	return b.String()
 }
