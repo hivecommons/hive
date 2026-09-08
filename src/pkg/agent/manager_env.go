@@ -216,8 +216,12 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			primary = m.project.Repos[0]
 		}
 		vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
-		full := make([]string, len(m.project.Repos))
-		for i, r := range m.project.Repos {
+		// HIVE_REPOS is the work scope templates iterate, so paused repos are
+		// omitted (#6203). HIVE_REPO above is identity, not scope, and keeps
+		// naming the primary repo even while it is paused — see ActiveRepos.
+		active := m.project.ActiveRepos()
+		full := make([]string, len(active))
+		for i, r := range active {
 			full[i] = m.project.Org + "/" + r
 		}
 		vars = append(vars, agentEnvPair{"HIVE_REPOS", strings.Join(full, ","), false})

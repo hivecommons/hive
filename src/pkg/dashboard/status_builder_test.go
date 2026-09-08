@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -118,77 +117,6 @@ func containsAny(names []string, needles ...string) bool {
 	return false
 }
 
-func TestComputeNextKick(t *testing.T) {
-	// off cadence
-	result := computeNextKick(nil, "off")
-	if result != "" {
-		t.Errorf("expected empty for off cadence, got %q", result)
-	}
-
-	// pause cadence
-	result = computeNextKick(nil, "pause")
-	if result != "" {
-		t.Errorf("expected empty for pause cadence, got %q", result)
-	}
-
-	// empty cadence
-	result = computeNextKick(nil, "")
-	if result != "" {
-		t.Errorf("expected empty for empty cadence, got %q", result)
-	}
-
-	// valid cadence with no last kick
-	result = computeNextKick(nil, "15m")
-	if result == "" {
-		t.Error("expected non-empty for valid cadence")
-	}
-
-	// valid cadence with last kick
-	now := time.Now()
-	result = computeNextKick(&now, "15m")
-	if result == "" {
-		t.Error("expected non-empty for valid cadence with last kick")
-	}
-}
-
-func TestLookupCadence(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
-			},
-		},
-	}
-	result := lookupCadence("scanner", cfg)
-	if result != "15m" {
-		t.Errorf("lookupCadence = %q, want 15m", result)
-	}
-
-	result = lookupCadence("nonexistent", cfg)
-	if result != "" {
-		t.Errorf("lookupCadence nonexistent = %q, want empty", result)
-	}
-}
-
-func TestLookupCadenceForMode(t *testing.T) {
-	cfg := &config.Config{
-		Governor: config.GovernorConfig{
-			Modes: map[string]config.ModeConfig{
-				"busy": {Cadences: map[string]config.Cadence{"scanner": "5m"}},
-			},
-		},
-	}
-	result := lookupCadenceForMode("scanner", "busy", cfg)
-	if result != "5m" {
-		t.Errorf("got %q, want 5m", result)
-	}
-
-	result = lookupCadenceForMode("scanner", "nonexistent", cfg)
-	if result != "" {
-		t.Errorf("got %q, want empty", result)
-	}
-}
-
 func TestBuildGovernor(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
@@ -290,21 +218,6 @@ func TestBuildRepos_NilActionable(t *testing.T) {
 	}
 	if repos[0].Issues != 0 {
 		t.Errorf("issues = %d", repos[0].Issues)
-	}
-}
-
-func TestBuildBeads(t *testing.T) {
-	// nil stores
-	fb := buildBeads(nil)
-	if fb.Workers != 0 || fb.Supervisor != 0 {
-		t.Error("expected zero beads for nil stores")
-	}
-
-	// with stores
-	stores := map[string]*beads.Store{}
-	fb = buildBeads(stores)
-	if fb.Workers != 0 {
-		t.Errorf("workers = %d", fb.Workers)
 	}
 }
 
@@ -634,13 +547,6 @@ func TestBuildBudget_NoBudget(t *testing.T) {
 	}
 }
 
-func TestBuildBeads_EmptyStores(t *testing.T) {
-	fb := buildBeads(map[string]*beads.Store{})
-	if fb.Workers != 0 || fb.Supervisor != 0 {
-		t.Errorf("beads = %+v", fb)
-	}
-}
-
 func TestBuildHealth_WithCachedHealth(t *testing.T) {
 	// Seed cached health and then call with nil client; the shared hook
 	// restores the pre-test cache state in t.Cleanup (#5570).
@@ -740,30 +646,6 @@ func TestBuildRepos_WithActionable(t *testing.T) {
 	}
 }
 
-func TestBuildBeads_WithData(t *testing.T) {
-	dir := t.TempDir()
-	s1, err := beads.NewStore(dir + "/supervisor")
-	if err != nil {
-		t.Fatalf("creating store: %v", err)
-	}
-	s2, err := beads.NewStore(dir + "/worker")
-	if err != nil {
-		t.Fatalf("creating store: %v", err)
-	}
-	stores := map[string]*beads.Store{
-		"supervisor": s1,
-		"worker":     s2,
-	}
-	fb := buildBeads(stores)
-	// Empty stores, count should be 0 for both
-	if fb.Supervisor != 0 {
-		t.Errorf("supervisor = %d", fb.Supervisor)
-	}
-	if fb.Workers != 0 {
-		t.Errorf("workers = %d", fb.Workers)
-	}
-}
-
 func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
@@ -799,14 +681,6 @@ func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	}
 	if payload.AgentMetrics["outreach"] == nil {
 		t.Error("expected outreach in metrics")
-	}
-}
-
-func TestComputeNextKick_WithDuration(t *testing.T) {
-	// Cover the parseCadenceDuration returning 0 branch
-	result := computeNextKick(nil, "invalid-cadence")
-	if result != "" {
-		t.Errorf("result = %q, want empty", result)
 	}
 }
 
@@ -1042,42 +916,6 @@ func TestLoadStatsConfig_NoFile(t *testing.T) {
 	stats := loadStatsConfig("nonexistent-agent-xyz")
 	if len(stats) != 0 {
 		t.Errorf("expected empty stats for missing file, got %d", len(stats))
-	}
-}
-
-func TestComputeNextKick_OffCadence(t *testing.T) {
-	result := computeNextKick(nil, "off")
-	if result != "" {
-		t.Errorf("expected empty for off cadence, got %q", result)
-	}
-}
-
-func TestComputeNextKick_PauseCadence(t *testing.T) {
-	result := computeNextKick(nil, "pause")
-	if result != "" {
-		t.Errorf("expected empty for pause cadence, got %q", result)
-	}
-}
-
-func TestComputeNextKick_EmptyCadence(t *testing.T) {
-	result := computeNextKick(nil, "")
-	if result != "" {
-		t.Errorf("expected empty for empty cadence, got %q", result)
-	}
-}
-
-func TestComputeNextKick_ValidCadenceWithLastKick(t *testing.T) {
-	lastKick := time.Now().Add(-5 * time.Minute)
-	result := computeNextKick(&lastKick, "10m")
-	if result == "" {
-		t.Error("expected non-empty result for valid cadence with last kick")
-	}
-}
-
-func TestComputeNextKick_ValidCadenceNoLastKick(t *testing.T) {
-	result := computeNextKick(nil, "15m")
-	if result == "" {
-		t.Error("expected non-empty result for valid cadence without last kick")
 	}
 }
 

@@ -354,6 +354,7 @@ func (w *spokeWire) wireSpokeConfigReloadAndHooks() {
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(w.cfg.Governor.Labels.AutoMerge))
 					}
 					newClient.SetIssueFilter(w.cfg.Project.IssueFilter)
+					newClient.SetRepoPausedFunc(w.cfg.IsRepoPaused) // #6203: a client rebuild must not un-pause repos
 					w.ghClient = newClient
 					w.installMutationBoundary(w.ghClient)
 					w.appAuth = newAppAuth

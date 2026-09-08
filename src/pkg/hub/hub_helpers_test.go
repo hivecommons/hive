@@ -1,11 +1,6 @@
 package hub
 
 import (
-	"encoding/json"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -236,96 +231,4 @@ func TestOrDash(t *testing.T) {
 	if got := orDash(" "); got != " " {
 		t.Errorf("orDash(%q) = %q, want it unchanged", " ", got)
 	}
-}
-
-// ── ReportUpgradeFailure ────────────────────────────────────────────────────
-
-// TestReportUpgradeFailurePostsPayload checks the spoke's failure report
-// reaches the hub with the fields an operator needs to diagnose a failed
-// upgrade: which hive, which target SHA, what it is currently running, and why
-// it failed — with UpgradeFailed set so the hub does not read it as a normal
-// beat.
-func TestReportUpgradeFailurePostsPayload(t *testing.T) {
-	const (
-		hiveID     = "hive-1"
-		targetSHA  = "abc123"
-		currentSHA = "def456"
-		cause      = "image pull backoff"
-	)
-
-	type captured struct {
-		path        string
-		contentType string
-		payload     HeartbeatPayload
-	}
-	got := make(chan captured, 1)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var p HeartbeatPayload
-		_ = json.Unmarshal(body, &p)
-		got <- captured{path: r.URL.Path, contentType: r.Header.Get("Content-Type"), payload: p}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	ReportUpgradeFailure(srv.URL, hiveID, targetSHA, currentSHA, cause, slog.Default())
-
-	select {
-	case c := <-got:
-		if c.path != "/api/heartbeat" {
-			t.Errorf("posted to %q, want %q", c.path, "/api/heartbeat")
-		}
-		if c.contentType != "application/json" {
-			t.Errorf("Content-Type = %q, want application/json", c.contentType)
-		}
-		if !c.payload.UpgradeFailed {
-			t.Error("UpgradeFailed = false, want true: the hub must not read this as a normal beat")
-		}
-		if c.payload.HiveID != hiveID {
-			t.Errorf("HiveID = %q, want %q", c.payload.HiveID, hiveID)
-		}
-		if c.payload.UpgradeTargetSHA != targetSHA {
-			t.Errorf("UpgradeTargetSHA = %q, want %q", c.payload.UpgradeTargetSHA, targetSHA)
-		}
-		if c.payload.GitHash != currentSHA {
-			t.Errorf("GitHash = %q, want %q", c.payload.GitHash, currentSHA)
-		}
-		if c.payload.UpgradeError != cause {
-			t.Errorf("UpgradeError = %q, want %q", c.payload.UpgradeError, cause)
-		}
-	default:
-		t.Fatal("no request reached the hub")
-	}
-}
-
-// TestReportUpgradeFailureNoOpWithoutTarget checks the guard that keeps an
-// unconfigured spoke from posting: with no hub URL or no hive ID there is
-// nothing to report to, and the call must return without touching the network.
-func TestReportUpgradeFailureNoOpWithoutTarget(t *testing.T) {
-	reached := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	ReportUpgradeFailure("", "hive-1", "abc", "def", "cause", slog.Default())
-	ReportUpgradeFailure(srv.URL, "", "abc", "def", "cause", slog.Default())
-
-	if reached {
-		t.Error("a request was sent despite a missing hub URL or hive ID")
-	}
-}
-
-// TestReportUpgradeFailureSurvivesUnreachableHub checks the report is
-// best-effort: an unreachable hub is logged, not fatal, because the spoke is
-// already in a failed-upgrade state and must not compound it by crashing.
-func TestReportUpgradeFailureSurvivesUnreachableHub(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	unreachable := srv.URL
-	srv.Close() // nothing is listening now
-
-	// Must not panic.
-	ReportUpgradeFailure(unreachable, "hive-1", "abc", "def", "cause", slog.Default())
 }

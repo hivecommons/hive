@@ -7,6 +7,36 @@ the second, **additive** layer on top of that: immutable, semver-tagged
 releases (`v1.2.3`) with a git tag and a GitHub Release, cut automatically —
 no human ever pushes a tag or clicks "Draft a release" in the normal path.
 
+## Release lines and the v5 semver policy
+
+Hive has two active release lines, `v4` and `v5`
+(`.github/release-lines.yml`, which still lists the sunset `v2` for CI
+carry-forward purposes). Only one of them cuts semver tags today:
+
+- **Semver tags are cut from `v4` only.** `tagged-release.yml` acts solely on
+  `docker.yml` runs whose `head_branch` is `v4`, both of its decision paths
+  read the tip of `v4` (`gh api repos/.../branches/v4`), and its concurrency
+  group is `tagged-release-v4`. Every existing release tag is a `v4.x.y`
+  (`v4.18.1` at the time of writing); no `v5.x` tag or GitHub Release exists.
+- **`v5` publishes continuous images only.** A merge to `v5` produces
+  `v5-latest`, the immutable short-SHA tag, and moves the `edge` channel
+  (`docker.yml`'s `LONG_LIVED` set and [release channels](release-channels.md)).
+  It never produces a `v5.x.y` tag, and `changelog.d/` fragments landing on
+  `v5` are validated by the fragment guard but are not consumed by any
+  release until a `v5` release path exists.
+- **A `v5` semver line is deliberately deferred** until the
+  [v5 GA readiness bar](v5-ga.md) is closed and a maintainer extends the
+  workflow: the branch pin, the concurrency group, and the `CHANGELOG.md`
+  source would all need to name `v5`, and the first `v5` version number has
+  to be chosen by hand, because this workflow never invents a major version
+  on its own authority (see "What still blocks cutting a real release"
+  below). Until then, the v5 GA candidate is identified by its immutable
+  short-SHA digest, not by a semver tag, and the
+  [digest-verifiable rollback](release-rollback.md) runbook is the
+  operator-facing procedure for pinning to and returning from it.
+
+The rest of this page describes the `v4` path as it runs today.
+
 ## What triggers a release
 
 `.github/workflows/tagged-release.yml` runs after every successful
@@ -127,6 +157,10 @@ separate, deliberate policy described in
 [release-channels.md](release-channels.md); cutting a version tag never
 silently couples to it, on purpose — the operator explicitly asked for these
 to stay decoupled.
+
+Rolling a hive back to any of the immutable rows above, and proving by digest
+that the rollback landed, is documented in
+[release-rollback.md](release-rollback.md).
 
 ## How a release is actually built
 

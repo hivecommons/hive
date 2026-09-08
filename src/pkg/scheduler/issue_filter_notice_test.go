@@ -57,7 +57,7 @@ func TestFormatIssueList_CarriesNotice(t *testing.T) {
 	s := newSchedulerWithFilter(config.IssueFilterConfig{
 		RequireLabels: []string{"approved-for-agents"},
 	})
-	out := s.formatIssueList(nil)
+	out, _ := s.formatIssueListWithPolicy(nil)
 	if !strings.Contains(out, "ISSUE FILTER") {
 		t.Errorf("empty ${ISSUE_LIST} missing issue-filter notice: %q", out)
 	}
@@ -66,7 +66,7 @@ func TestFormatIssueList_CarriesNotice(t *testing.T) {
 	}
 
 	// Unconfigured: exact legacy output, byte for byte.
-	legacy := newScheduler().formatIssueList(nil)
+	legacy, _ := newScheduler().formatIssueListWithPolicy(nil)
 	if legacy != "(none)" {
 		t.Errorf("unconfigured empty ${ISSUE_LIST} changed: %q, want %q", legacy, "(none)")
 	}

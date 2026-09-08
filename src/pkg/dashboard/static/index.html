@@ -1225,7 +1225,19 @@
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 6px; padding: 12px; overflow: hidden;
     }
-    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+    .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    /* Per-repo agent pause (#6203). A paused repo KEEPS its card — that is the
+       point of pause over deleting it from project.repos — so the card has to
+       say so, or a deliberately quiet repo looks exactly like an idle one. The
+       dimmed surface reads at a glance across a grid of cards; the pill carries
+       the provenance (who/when/why) in its tooltip. */
+    .repo-card.repo-paused { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border)); background: color-mix(in srgb, var(--yellow) 5%, var(--surface)); }
+    .repo-card.repo-paused .repo-stats { opacity: 0.55; }
+    .repo-paused-pill { flex: 0 0 auto; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: 3px 7px; border-radius: 999px; white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
+    .repo-pause-btn { flex: 0 0 auto; margin-left: auto; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: 999px; white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
+    .repo-card:hover .repo-pause-btn { opacity: 1; }
+    .repo-pause-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--fg) 35%, transparent); }
+    .repo-pause-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
     .repo-name a:hover { text-decoration: underline !important; }
     .repo-stats { display: flex; gap: 16px; font-size: 0.8rem; }
     .repo-stat .num { font-weight: 700; font-size: 1rem; }
@@ -7725,6 +7737,43 @@
       }
     }
 
+    // Per-repo agent pause (#6203): quiet ONE repo without stopping the hive.
+    //
+    // The reason prompt is not optional politeness. An unexplained pause is its
+    // own support burden — a week later nobody can tell a deliberate freeze
+    // from a malfunction — so the reason is collected here, at the only moment
+    // the person who knows it is present, and stored with the acting user and
+    // the timestamp. Cancelling the prompt cancels the pause.
+    async function toggleRepoPause(repo, paused, btn) {
+      if (btn && btn.dataset.busy === '1') return;
+      const resuming = !!paused;
+      let reason = '';
+      if (!resuming) {
+        reason = prompt('Pause ' + repo + ' — why?\n\nAgents stop writing to this repo and stop being handed work on it. It stays watched, scored and visible here. Recorded with your name and the time.', '');
+        if (reason === null) return;
+      }
+      const label = btn ? btn.textContent : '';
+      if (btn) { btn.dataset.busy = '1'; btn.textContent = resuming ? 'Resuming…' : 'Pausing…'; }
+      try {
+        const resp = await fetch('/api/repos/' + (resuming ? 'resume' : 'pause'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo, reason: reason })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        // persisted:false means the pause IS in force but could not be written
+        // to config — it will not survive a restart. Saying "done" without that
+        // would be a lie in the direction that matters.
+        if (data.warning) showToast(data.warning, 'error', true);
+        else showToast(resuming ? ('Resumed ' + repo) : ('Paused ' + repo + ' — agents will not write to it or be handed work on it'), 'success');
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast((resuming ? 'Resume' : 'Pause') + ' failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (btn) { btn.dataset.busy = ''; btn.textContent = label || (resuming ? '▶ resume' : '⏸ pause'); }
+      }
+    }
+
     function renderRepos(repos) {
       const el = document.getElementById('repos');
       const showPlan = planningAllowed();
@@ -7819,10 +7868,25 @@
         }).join('');
         const allPills = issuePills + prPills;
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
+        // Per-repo agent pause (#6203). The tooltip carries the provenance the
+        // pill has no room for; without it a paused repo raises "who did this
+        // and why" every time someone new looks at the dashboard.
+        const pauseTip = r.paused
+          ? 'Agents are paused on this repo'
+            + (r.pausedBy ? ' by ' + r.pausedBy : '')
+            + (r.pausedAt ? ' at ' + r.pausedAt : '')
+            + (r.pauseReason ? ' — ' + r.pauseReason : '')
+            + '. No agent writes to it and none is handed work on it; it is still watched, scored and counted here.'
+          : '';
+        const pausedPill = r.paused ? `<span class="repo-paused-pill" title="${esc(pauseTip)}">⏸ paused</span>` : '';
+        const canPauseRepo = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+        const pauseBtn = canPauseRepo
+          ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(r.name || '')}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
+          : '';
         return `
-        <div class="repo-card">
+        <div class="repo-card${r.paused ? ' repo-paused' : ''}">
           <div style="font-size:0.62rem;font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:2px" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
-          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a></div>
+          <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a>${pausedPill}${pauseBtn}</div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a></div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a></div>
@@ -15818,9 +15882,72 @@ function burnAreaChart() {
       return (_acmmEvalData.repo_results || []).find(r => r.repo === _acmmSelectedRepo) || _acmmEvalData;
     }
 
+    // acmmLevelWaivedCriteria returns the waived criteria at one level within
+    // a scope (a repo_results entry, or the aggregate).
+    function acmmLevelWaivedCriteria(source, level) {
+      if (!source) return [];
+      return (source.criteria_results || source.CriteriaResults || [])
+        .filter(c => c.level === level && c.waived);
+    }
+
+    // acmmLevelWaiverMark is the asterisk that rides beside a level's
+    // pass/fail glyph.
+    //
+    // A waived criterion scores, so a level can read a clean 9/9 in green
+    // while part of that nine is a declaration rather than a detection. The
+    // level bars are the altitude most operators actually read — the criterion
+    // rows are two clicks down — so without a mark here the waiver is
+    // invisible exactly where the summary judgement gets made. Red against the
+    // green bar because it should not blend in: the point is to interrupt
+    // someone skimming for green.
+    function acmmLevelWaiverMark(source, level) {
+      const waived = acmmLevelWaivedCriteria(source, level);
+      if (!waived.length) return '';
+      const names = waived.map(c =>
+        c.name + (c.waiver_satisfied_by ? ' (satisfied by ' + c.waiver_satisfied_by + ')' : '')).join('; ');
+      const lead = waived.length === 1
+        ? '1 criterion at this level is waived, not detected: '
+        : waived.length + ' criteria at this level are waived, not detected: ';
+
+      // The level's own pass/fail ignores waivers, so a level can show a
+      // full ratio and still not pass. Say so here rather than leaving the
+      // reader to reconcile "9/9" with "✗" on their own.
+      const lvl = (source && (source.levels || source.Levels) || []).find(l => l.level === level);
+      let rule = ' Waivers restore full green but never advance a level.';
+      if (lvl && !lvl.passed && lvl.detected !== undefined) {
+        rule = ' Level not passed: ' + lvl.detected + '/' + lvl.total + ' detected, below the ' +
+          Math.round((lvl.threshold || 0.7) * 100) + '% threshold. Waivers cannot advance a level.';
+      }
+      return '<span style="color:var(--red);font-weight:700;margin-left:3px;cursor:help" title="' +
+        escapeHtml(lead + names + '.' + rule) + '">*</span>';
+    }
+
+    // acmmWaiverDetail renders the justification a repo committed in
+    // .acmm.yml. It is shown inside the expanded row, above the pattern
+    // list, so a reader who opens a green row that matches none of its
+    // patterns finds the explanation in the same place they found the
+    // contradiction.
+    function acmmWaiverDetail(c) {
+      if (!c.waived) return '';
+      const where = c.waiver_satisfied_by || 'declared in .acmm.yml';
+      const inRepo = c.waiver_repo ? ' (waived in ' + escapeHtml(c.waiver_repo) + ')' : '';
+      return '<div style="font-size:0.72rem;border-left:2px solid var(--green);padding:2px 0 2px 8px;margin-bottom:8px">' +
+        '<div style="color:var(--green);font-weight:500">⌾ Waived — satisfied by ' + escapeHtml(where) + inRepo + '</div>' +
+        (c.waiver_reason ? '<div style="color:var(--muted);margin-top:2px;white-space:pre-wrap">' + escapeHtml(c.waiver_reason) + '</div>' : '') +
+        '</div>';
+    }
+
     function acmmCriterionRow(c, repoName) {
       const icon = c.passed ? '✅' : '❌';
       const tip = ACMM_CRITERION_TIPS[c.id] || '';
+      // A waived criterion is passed — it scores, and the level reads full
+      // green — but the row says the evidence is off-repo. Rendering it
+      // identically to a detection would make the panel unable to tell the
+      // operator why nothing here matches the pattern list below.
+      const waivedChip = c.waived
+        ? '<span style="font-size:0.62rem;padding:1px 6px;border-radius:9px;border:1px solid var(--green);color:var(--green);white-space:nowrap"' +
+          ' title="' + escapeHtml('Satisfied by ' + (c.waiver_satisfied_by || 'a declaration in .acmm.yml') + ' rather than by a file in this repo') + '">⌾ waived</span>'
+        : '';
       const patternItems = (c.patterns || []).map(p => '<span style="display:inline-block;font-size:0.68rem;background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border);margin:1px 2px;font-family:var(--font-mono)">' + escapeHtml(p) + '</span>').join('');
       let issueBtn = '';
       if (!c.passed) {
@@ -15843,10 +15970,12 @@ function burnAreaChart() {
         '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" data-action="ghToggleDisplayById" data-arg0="' + rowId + '">' +
         '<span style="font-size:0.9rem">' + icon + '</span>' +
         '<span style="font-size:0.82rem;font-weight:500;flex:1">' + escapeHtml(c.name) + '</span>' +
+        waivedChip +
         issueBtn +
         '</div>' +
         '<div id="' + rowId + '" style="display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">' +
         (tip ? '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px;font-style:italic">' + escapeHtml(tip) + '</div>' : '') +
+        acmmWaiverDetail(c) +
         '<div style="font-size:0.68rem;color:var(--muted);margin-bottom:3px">Looks for any of:</div>' +
         '<div style="line-height:1.6">' + patternItems + '</div>' +
         '</div></div>';
@@ -16154,7 +16283,7 @@ function burnAreaChart() {
               'style="cursor:pointer;padding:5px 6px;margin-bottom:3px;background:var(--bg);border-radius:4px;border:1px solid var(--border);transition:border-color .15s" ' +
               'data-mouseover-action="gh22" data-mouseout-action="gh21">' +
               '<div class="row-between">' +
-              '<span style="font-size:0.75rem;font-weight:500">' + (lvl.passed ? '✓' : '✗') + ' L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+              '<span style="font-size:0.75rem;font-weight:500">' + (lvl.passed ? '✓' : '✗') + ' L' + lvl.level + ' ' + escapeHtml(lvl.name) + acmmLevelWaiverMark(rr, lvl.level) + '</span>' +
               '<span style="font-size:0.7rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + '</span></div>' +
               '<div style="margin-top:3px;height:3px;background:var(--border);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
           }
@@ -16168,7 +16297,7 @@ function burnAreaChart() {
           const color = lvl.passed ? 'var(--green)' : (pct > 40 ? 'var(--yellow)' : 'var(--red)');
           html += '<div data-action="acmmShowLevelDialog" data-arg0="' + lvl.level + '" data-arg-types="j" class="row-card" data-mouseover-action="gh22" data-mouseout-action="gh21">' +
             '<div class="row-between">' +
-            '<span style="font-size:0.82rem;font-weight:600">' + (lvl.passed ? '✓' : '✗') + ' L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+            '<span style="font-size:0.82rem;font-weight:600">' + (lvl.passed ? '✓' : '✗') + ' L' + lvl.level + ' ' + escapeHtml(lvl.name) + acmmLevelWaiverMark(active, lvl.level) + '</span>' +
             '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + ' (' + pct + '%)</span></div>' +
             '<div style="margin-top:4px;height:4px;background:var(--bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
         }
@@ -16243,7 +16372,7 @@ function burnAreaChart() {
         const failCount = criteria.filter(c => !c.passed).length;
         html += '<div style="margin-bottom:8px">' +
           '<div data-action="ghAcmmCloseAndShowLevel" data-arg0="' + lvl.level + '" data-arg-types="j" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" data-mouseover-action="gh22" data-mouseout-action="gh21">' +
-          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + acmmLevelWaiverMark(active, lvl.level) + '</span>' +
           '<div style="display:flex;align-items:center;gap:6px">';
         if (failCount > 0) {
           html += '<button data-action="acmmOpenAllIssuesForLevel" data-arg0="' + lvl.level + '" data-arg-types="j" data-stop="1" style="padding:2px 6px;font-size:0.65rem;background:var(--card-bg);border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--muted)">📋 ' + failCount + '</button>';
@@ -16252,7 +16381,9 @@ function burnAreaChart() {
         for (const c of criteria) {
           html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 8px 3px 20px;font-size:0.78rem">' +
             '<span>' + (c.passed ? '✅' : '❌') + '</span>' +
-            '<span>' + escapeHtml(c.name) + '</span></div>';
+            '<span>' + escapeHtml(c.name) + '</span>' +
+            (c.waived ? '<span style="font-size:0.62rem;color:var(--green)" title="' + escapeHtml('Satisfied by ' + (c.waiver_satisfied_by || '.acmm.yml') + ', not by a file in this repo') + '">⌾ waived</span>' : '') +
+            '</div>';
         }
         html += '</div>';
       }

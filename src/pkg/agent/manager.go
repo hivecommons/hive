@@ -380,6 +380,35 @@ type ProjectContext struct {
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
+	// RepoPaused reports whether a repo carries an operator pause (#6203). It is
+	// a live predicate rather than a snapshot list because ProjectContext is
+	// built once at boot and a pause is taken mid-run — a repo frozen for a
+	// release must drop out of the next agent's scope without a hive restart.
+	// Nil means nothing is paused, which is every hive that does not use the
+	// feature and every test that constructs a ProjectContext literal.
+	RepoPaused func(repo string) bool
+}
+
+// ActiveRepos is Repos minus the operator-paused entries: the repos an agent
+// should be told to work.
+//
+// PrimaryRepo deliberately does NOT filter. The primary repo is the hive's
+// identity — what $HIVE_REPO names and what an agent's workdir is a checkout
+// of — and re-pointing it at a different repository because the operator
+// froze the first one would be a far larger surprise than the pause itself.
+// A paused primary simply stops appearing in the work scope.
+func (p ProjectContext) ActiveRepos() []string {
+	if p.RepoPaused == nil {
+		return p.Repos
+	}
+	out := make([]string, 0, len(p.Repos))
+	for _, r := range p.Repos {
+		if p.RepoPaused(r) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func (p ProjectContext) PrimaryRepo() string {

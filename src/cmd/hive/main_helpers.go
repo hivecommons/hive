@@ -3329,12 +3329,7 @@ func writeIntentVerdicts(
 	}
 	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)
 	aiAuthor := strings.TrimSpace(cfg.EffectiveAIAuthor())
-	intentCfg := intent.Config{
-		TestPathPatterns:      cfg.Intent.TestPathPatterns,
-		DocsPathPatterns:      cfg.Intent.DocsPathPatterns,
-		GuardrailPathPatterns: cfg.Intent.GuardrailPathPatterns,
-		FeatureSignals:        cfg.Intent.FeatureSignals,
-	}
+	intentCfg := intentConfigFromCfg(cfg)
 	var alignmentReviewer *intent.AlignmentReviewer
 	if strings.TrimSpace(cfg.Intent.AlignmentModel) != "" {
 		endpoint, apiKey, _ := cfg.Governor.ResolveReviewer()
@@ -3453,6 +3448,33 @@ func writeIntentVerdicts(
 	return verdicts
 }
 
+// intentConfigFromCfg maps config.IntentConfig onto the intent package's
+// classification config. Shared by writeIntentVerdicts (human merge lane) and
+// the App self-merge sweep's IntentGate (#6258) so both lanes classify with
+// identical patterns.
+func intentConfigFromCfg(cfg *config.Config) intent.Config {
+	if cfg == nil {
+		return intent.Config{}
+	}
+	return intent.Config{
+		TestPathPatterns:      cfg.Intent.TestPathPatterns,
+		DocsPathPatterns:      cfg.Intent.DocsPathPatterns,
+		GuardrailPathPatterns: cfg.Intent.GuardrailPathPatterns,
+		FeatureSignals:        cfg.Intent.FeatureSignals,
+	}
+}
+
+// selfMergeIntentGate builds the intent-tier gate the App self-merge sweep
+// enforces (#6258) from the same config and bead evidence the human merge
+// lane uses. Enforce is read through cfg on every call so a reload applies.
+func selfMergeIntentGate(cfg *config.Config, beadStores map[string]*beads.Store) *automerge.IntentGate {
+	return &automerge.IntentGate{
+		Config:     intentConfigFromCfg(cfg),
+		Enforce:    func() bool { return cfg != nil && cfg.Intent.Enforce },
+		BeadStores: beadStores,
+	}
+}
+
 func fetchIntentPREvidence(ctx context.Context, ghClient *github.Client, repo string, number int) (string, []intent.ChangedFile, bool, error) {
 	if ghClient == nil || ghClient.GoGitHub() == nil {
 		return "", nil, false, github.ErrNoGitHubClient
@@ -3466,28 +3488,9 @@ func fetchIntentPREvidence(ctx context.Context, ghClient *github.Client, repo st
 	if err != nil {
 		return "", nil, false, fmt.Errorf("getting PR: %w", err)
 	}
-	var files []intent.ChangedFile
-	fileOpts := &gh.ListOptions{PerPage: 100}
-	for {
-		page, resp, err := client.PullRequests.ListFiles(ctx, owner, repoName, number, fileOpts)
-		if err != nil {
-			return "", nil, false, fmt.Errorf("listing PR files: %w", err)
-		}
-		for _, f := range page {
-			files = append(files, intent.ChangedFile{
-				Filename:  f.GetFilename(),
-				Status:    f.GetStatus(),
-				Additions: f.GetAdditions(),
-				Deletions: f.GetDeletions(),
-			})
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		fileOpts.Page = resp.NextPage
-	}
-	if reported := pr.GetChangedFiles(); reported > len(files) {
-		return "", nil, false, fmt.Errorf("incomplete PR file list: GitHub reported %d changed files but API returned %d; intent alignment requires the complete changed-file list", reported, len(files))
+	files, err := automerge.ListChangedFiles(ctx, client, owner, repoName, pr)
+	if err != nil {
+		return "", nil, false, err
 	}
 	approved, err := hasMaintainerApproval(ctx, client, owner, repoName, number)
 	if err != nil {
@@ -3778,15 +3781,15 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			continue
 		}
 		fullRepo := fullRepoName(pr.Repo, org)
-		if enforceIntent {
-			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.MergeAllowed() {
-				reason := verdict.Reason
-				if verdict.Authorized && verdict.Alignment != nil && verdict.Alignment.Misaligned() {
-					reason = intent.ReasonAlignmentMisaligned + ": " + verdict.Alignment.Rationale
-				}
-				logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", reason)
-				continue
+		// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
+		// App self-merge sweep gates on the same function (#6258).
+		if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.BlocksMerge(enforceIntent) {
+			reason := verdict.Reason
+			if verdict.Authorized && verdict.Alignment != nil && verdict.Alignment.Misaligned() {
+				reason = intent.ReasonAlignmentMisaligned + ": " + verdict.Alignment.Rationale
 			}
+			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", reason)
+			continue
 		}
 
 		if pr.CIStatus == "failure" {

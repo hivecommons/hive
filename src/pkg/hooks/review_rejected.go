@@ -113,16 +113,28 @@ func NewReviewRejectedPayload(r ReviewRejection) Payload {
 	}
 }
 
+// FireFunc is the narrow "fire a transition" seam an emitting site holds when
+// it does not own the *Dispatcher itself. (*Dispatcher).Fire satisfies it
+// directly; the dashboard reaches the process-wide dispatcher through exactly
+// this shape (Dependencies.HookFire), which is what lets a package that must
+// not import cmd/hive still emit.
+type FireFunc func(ctx context.Context, p Payload)
+
 // EmitReviewRejected is the emitter a review surface calls when a human rejects
-// output. It builds the payload and fires the transition.
+// output. It builds the payload and fires the transition through fire.
 //
 // Call it AFTER the rejection is durably recorded, consistent with the
-// post-commit rule that applies to every transition.
-func EmitReviewRejected(ctx context.Context, d *Dispatcher, r ReviewRejection) {
-	if d == nil {
+// post-commit rule that applies to every transition. A nil fire is a no-op so
+// a surface wired before hooks are configured cannot panic.
+//
+// The shipped call site is the dashboard's approval desk: an owner denying a
+// queued agent action (POST /api/approvals/resolve or /bulk with
+// approved=false) is the human "send it back" verdict on that agent's output.
+func EmitReviewRejected(ctx context.Context, fire FireFunc, r ReviewRejection) {
+	if fire == nil {
 		return
 	}
-	d.Fire(ctx, NewReviewRejectedPayload(r))
+	fire(ctx, NewReviewRejectedPayload(r))
 }
 
 // ---------------------------------------------------------------------------

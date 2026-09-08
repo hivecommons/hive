@@ -43,6 +43,11 @@ func (w *spokeWire) wireSpokeProxyReadyAndLaunch() {
 		w.logger.Error("failed to create github proxy", "error", err)
 	} else {
 		w.githubProxy.SetCanaryScanner(w.cfg.Ioscan.IsEnabled() && w.cfg.Ioscan.Canaries, w.cfg.Ioscan.FailClosed(), ioscan.DefaultCanaries, canaryLeakHandler)
+		// Per-repo pause (#6203). This is the deterministic refusal the feature
+		// rests on: whatever an agent believes, a write to a paused repo is
+		// answered with a 403 here. The predicate reads live config, so pausing
+		// a repo in the dashboard takes effect on the next request.
+		w.githubProxy.SetRepoPausedFunc(w.cfg.IsRepoPaused)
 		// #1861: the proxy resolves an identified agent to its hub-held scoped
 		// token via the package-level registry WriteAgentToken feeds (NOT via
 		// the w.appAuth instance, which is replaced on key rotation — a closure

@@ -35,6 +35,14 @@ type selfSweepFixture struct {
 	recheckHeadSHA   *string
 	mergeHTTPCode    int  // non-zero: merge endpoint returns this HTTP status
 	mergeApplied     bool // "merged" field in merge response; default true via fixture setup
+
+	// Intent tier gate inputs (#6258). Only consulted when the Engine under
+	// test installs an IntentGate; the files route is otherwise never hit.
+	body          string   // PR body (linked-issue evidence)
+	files         []string // changed-file names returned by the files API
+	changedFiles  int      // PR "changed_files" count; 0 defaults to len(files)
+	filesHTTPCode int      // non-zero: files endpoint returns this HTTP status
+	mergeCalls    *int     // incremented on every PUT .../merge
 }
 
 func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
@@ -57,6 +65,9 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 	}
 	if fx.recheckHeadSHA == nil {
 		fx.recheckHeadSHA = fx.headSHA
+	}
+	if fx.changedFiles == 0 {
+		fx.changedFiles = len(fx.files)
 	}
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,12 +94,25 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				"number":          7,
 				"state":           fx.state,
 				"draft":           fx.draft,
+				"title":           "sweep fixture PR",
+				"body":            fx.body,
 				"labels":          prLabels,
+				"changed_files":   fx.changedFiles,
 				"mergeable_state": fx.mergeableState,
 				"mergeable":       fx.mergeableState == "clean",
 				"user":            map[string]string{"login": fx.author},
 				"head":            map[string]string{"sha": head},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/files":
+			if fx.filesHTTPCode != 0 {
+				w.WriteHeader(fx.filesHTTPCode)
+				return
+			}
+			var files []map[string]any
+			for _, name := range fx.files {
+				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 0})
+			}
+			json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 			if fx.statusHTTPCode != 0 {
 				w.WriteHeader(fx.statusHTTPCode)
@@ -102,6 +126,9 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]string{}})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
+			if fx.mergeCalls != nil {
+				*fx.mergeCalls++
+			}
 			if fx.mergeHTTPCode != 0 {
 				w.WriteHeader(fx.mergeHTTPCode)
 				return

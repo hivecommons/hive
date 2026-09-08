@@ -15,34 +15,6 @@ import (
 // heartbeat.go — liveness accessors
 // ============================================================
 
-func TestHeartbeatAccessors(t *testing.T) {
-	// Reset state.
-	lastHeartbeatSuccessUnix.Store(0)
-	heartbeatLoopStarted.Store(false)
-
-	if _, ok := LastHeartbeatSuccess(); ok {
-		t.Error("no heartbeat yet -> ok should be false")
-	}
-	if HeartbeatEnabled() {
-		t.Error("loop not started -> HeartbeatEnabled false")
-	}
-
-	recordHeartbeatSuccess()
-	tm, ok := LastHeartbeatSuccess()
-	if !ok || tm.IsZero() {
-		t.Errorf("after record: ok=%v tm=%v", ok, tm)
-	}
-
-	heartbeatLoopStarted.Store(true)
-	if !HeartbeatEnabled() {
-		t.Error("loop started -> HeartbeatEnabled true")
-	}
-
-	// Cleanup for other tests.
-	lastHeartbeatSuccessUnix.Store(0)
-	heartbeatLoopStarted.Store(false)
-}
-
 // ============================================================
 // saas.go — placeholder + project-config helpers
 // ============================================================

@@ -1,0 +1,1 @@
+- Deleted the dead policy-less scheduler wrappers `enforceIssueText`, `enforceLabels`, `formatIssueList`, `formatPRList` and `substituteTemplate` from `src/pkg/scheduler`; production code already called the `...WithPolicy` variants and the tests now do the same. No behavior change ([#6195](https://github.com/hivecommons/hive/pull/6195)).

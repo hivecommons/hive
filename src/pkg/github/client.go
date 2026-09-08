@@ -35,10 +35,16 @@ type Client struct {
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
-	rateLimits   rateLimitTracker
-	org          string
-	reposMu      sync.RWMutex
-	repos        []string
+	rateLimits rateLimitTracker
+	org        string
+	reposMu    sync.RWMutex
+	repos      []string
+	// repoPaused reports whether a repo is under an operator pause (#6203).
+	// Guarded by reposMu because the dashboard can pause a repo while the
+	// enumeration goroutine is deciding what work exists. Nil (the zero value,
+	// and what every test constructs) means nothing is paused, so the client
+	// behaves exactly as it did before.
+	repoPaused   func(repo string) bool
 	exemptLabels []string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
@@ -57,6 +63,10 @@ type Client struct {
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
 	autoMergeLabel   string
+	// requiredChecks is the config-declared auto_merge.required_checks set the
+	// merge-request watcher's CI gate consults (#6173); see SetRequiredChecks.
+	requiredChecksMu sync.RWMutex
+	requiredChecks   map[string]bool
 	logger           *slog.Logger
 	appAuth          *AppAuth // nil for token-authenticated clients
 	canariesEnabled  bool
@@ -593,6 +603,81 @@ func (c *Client) getRepos() []string {
 	return result
 }
 
+// SetRepoPausedFunc installs the operator's per-repo pause predicate (#6203).
+// The hive passes config's IsRepoPaused, so a pause taken in the dashboard is
+// in force on the very next sweep with nothing to re-wire; passing nil clears
+// it.
+func (c *Client) SetRepoPausedFunc(fn func(repo string) bool) {
+	if c == nil {
+		return
+	}
+	c.reposMu.Lock()
+	defer c.reposMu.Unlock()
+	c.repoPaused = fn
+}
+
+// RepoIsPaused reports whether repo is under an operator pause (#6203). repo
+// may be bare or "owner/repo" — the configured predicate normalizes both.
+//
+// The hive-mediated PR, merge, issue and review relays MUST check this
+// themselves: they fulfil agent requests with the hive's credentials, without
+// traversing the agent proxy. Proxy-only enforcement would leave agents able
+// to open and merge PRs, file issues, comment, claim issues and submit reviews
+// on a paused repo.
+func (c *Client) RepoIsPaused(repo string) bool {
+	if c == nil {
+		return false
+	}
+	c.reposMu.RLock()
+	paused := c.repoPaused
+	c.reposMu.RUnlock()
+	return paused != nil && paused(repo)
+}
+
+// RepoPausedReason is the operator-facing explanation written into a relay
+// request's result file when the target repo is paused.
+func RepoPausedReason(repo string) string {
+	return "repository " + repo + " is paused by the operator — the hive is deliberately quiet on it. Resume the repo to allow agent writes again."
+}
+
+// activeRepos is getRepos() minus the operator-paused repos: the set this
+// client may act on.
+//
+// It is deliberately NOT folded into getRepos(). getRepos() also answers
+// "which repos does this hive have" for things that are not work — primaryRepo()
+// reads repos[0], and filtering there would silently re-point the hive's
+// primary repo at a different repository the moment an operator paused the
+// first one. Work scope and identity are different questions; only the former
+// is narrowed by a pause.
+func (c *Client) activeRepos() []string {
+	if c == nil {
+		return nil
+	}
+	repos := c.getRepos()
+	c.reposMu.RLock()
+	paused := c.repoPaused
+	c.reposMu.RUnlock()
+	if paused == nil {
+		return repos
+	}
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if paused(repo) {
+			continue
+		}
+		out = append(out, repo)
+	}
+	return out
+}
+
+// ActiveRepositories is Repositories() minus the repos under an operator pause
+// (#6203). It satisfies the automerge sweep's optional pause-aware transport
+// capability; Repositories() stays unfiltered because it is the configured
+// list, not the actionable one.
+func (c *Client) ActiveRepositories() []string {
+	return c.activeRepos()
+}
+
 func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
@@ -608,7 +693,11 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	var allStaleDrafts []PullRequest
 	totalByRepo := make(map[string]RepoCounts)
 
-	repos := c.getRepos()
+	// activeRepos, not getRepos: a paused repo must produce no actionable
+	// issues or PRs, so no kick, claim or advisory built from this result can
+	// hand an agent work on it (#6203). Enumeration is the choke point every
+	// one of those paths runs through.
+	repos := c.activeRepos()
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {

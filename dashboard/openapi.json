@@ -17194,6 +17194,171 @@
         }
       }
     },
+    "/api/repos/pause": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Pause agent activity on one repository",
+        "description": "Owner-only. Quiets a single repository without stopping the hive: agents stop writing to it (the MITM proxy and the hive-open-pr/hive-merge relays refuse deterministically) and stop being handed work on it (enumeration produces nothing for it), while the repo keeps its dashboard card and its ACMM evaluation. Pause is a run-state, independent of which agents are paused and of the repo's ACMM level. The pause records who, when and why, and survives restarts. A no-op if the repo is already paused: returns changed=false and leaves the original provenance untouched. Rejects a repo that is not in project.repos, which would pause nothing.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository as project.repos spells it: a bare name (\"console\") or an explicit cross-org reference (\"laredo/cuga-agent\"). Sent in the body rather than the path because a cross-org name contains a slash."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the repo is being quieted (\"release freeze\", \"CI red\"). Recorded as pause provenance alongside the acting user and the timestamp."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pause result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "paused",
+                        "resumed"
+                      ]
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false when the repo was already in the requested state; the original pause provenance is left untouched."
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "paused",
+                        "running"
+                      ]
+                    },
+                    "pause": {
+                      "type": "object",
+                      "properties": {
+                        "repo": {
+                          "type": "string"
+                        },
+                        "paused": {
+                          "type": "boolean"
+                        },
+                        "by": {
+                          "type": "string",
+                          "description": "Operator who paused the repo; absent for a pause written by hand into the config."
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the pause was recorded; absent when unknown."
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "persisted": {
+                      "type": "boolean",
+                      "description": "Whether the change reached the config file. The pause is in effect either way; false means it will not survive a restart."
+                    },
+                    "warning": {
+                      "type": "string",
+                      "description": "Present only when persisted is false."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid repo, or a repo not listed in project.repos"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
+    "/api/repos/pauses": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "List the repositories currently paused",
+        "description": "Every repo pause with its provenance (who, when, why). Read-only, so any authenticated role may call it — the same state is already on the repository cards.",
+        "responses": {
+          "200": {
+            "description": "Current repo pauses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "pauses": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "paused": {
+                            "type": "boolean"
+                          },
+                          "by": {
+                            "type": "string",
+                            "description": "Operator who paused the repo; absent for a pause written by hand into the config."
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When the pause was recorded; absent when unknown."
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
     "/api/repos/rescan": {
       "post": {
         "tags": [
@@ -17251,6 +17416,116 @@
           },
           "503": {
             "description": "Rescan is not wired on this deployment (no forge credentials)"
+          }
+        }
+      }
+    },
+    "/api/repos/resume": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Resume agent activity on one repository",
+        "description": "Owner-only. Lifts a repository's pause; agents may write to it and are handed work on it again from the next request and the next enumeration. A no-op if the repo is not paused: returns changed=false. Unlike pause, this does not require the repo to be in project.repos, so a pause left behind by a repo that was removed while paused can still be cleared.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository as project.repos spells it: a bare name (\"console\") or an explicit cross-org reference (\"laredo/cuga-agent\"). Sent in the body rather than the path because a cross-org name contains a slash."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the repo is being quieted (\"release freeze\", \"CI red\"). Recorded as pause provenance alongside the acting user and the timestamp."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resume result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "paused",
+                        "resumed"
+                      ]
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false when the repo was already in the requested state; the original pause provenance is left untouched."
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "paused",
+                        "running"
+                      ]
+                    },
+                    "pause": {
+                      "type": "object",
+                      "properties": {
+                        "repo": {
+                          "type": "string"
+                        },
+                        "paused": {
+                          "type": "boolean"
+                        },
+                        "by": {
+                          "type": "string",
+                          "description": "Operator who paused the repo; absent for a pause written by hand into the config."
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the pause was recorded; absent when unknown."
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "persisted": {
+                      "type": "boolean",
+                      "description": "Whether the change reached the config file. The pause is in effect either way; false means it will not survive a restart."
+                    },
+                    "warning": {
+                      "type": "string",
+                      "description": "Present only when persisted is false."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid repo"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "No config loaded"
           }
         }
       }

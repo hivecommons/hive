@@ -143,6 +143,18 @@ func (v Verdict) MergeAllowed() bool {
 	return v.Alignment == nil || !v.Alignment.Misaligned()
 }
 
+// BlocksMerge is THE intent-enforcement refusal predicate, shared by every
+// merge lane: it reports whether, with intent.enforce set to enforce, this
+// verdict withholds the PR from merging. It is true only for an agent PR
+// (human PRs are never subject to intent authorization) whose verdict
+// MergeAllowed rejects, and only when enforcement is on — with enforce false
+// the verdict is advisory and never blocks. writeMergeEligible (the human
+// merge-queue lane) and the App self-merge sweep (#6258) both gate on this
+// single function so neither lane can merge at a tier the other refuses.
+func (v Verdict) BlocksMerge(enforce bool) bool {
+	return enforce && v.AgentPR && !v.MergeAllowed()
+}
+
 func Classify(pr PR, cfg Config) Classification {
 	if !pr.AgentAuthor {
 		return Classification{Tier: Tier0, Reason: "non-agent PR", AgentPR: false}

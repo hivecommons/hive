@@ -950,48 +950,6 @@ func TestFetchModelsFromEndpoints_Deduplicates(t *testing.T) {
 	}
 }
 
-// --- LoadStatsConfigWithCfg ---
-
-func TestLoadStatsConfigWithCfg_FromDisk(t *testing.T) {
-	dir := t.TempDir()
-	agentDir := filepath.Join(dir, "agents", "scanner")
-	os.MkdirAll(agentDir, 0o755)
-	stats := map[string]any{
-		"stats": []any{
-			map[string]any{"key": "test", "label": "Test"},
-		},
-	}
-	data, _ := json.Marshal(stats)
-	os.WriteFile(filepath.Join(agentDir, "stats.json"), data, 0o644)
-
-	// LoadStatsConfigWithCfg reads from /data/agents/<name>/stats.json
-	// which we can't override. Test the fallback to config.
-	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				StatsDisplay: []config.StatsDisplayEntry{
-					{Key: "test", Label: "Test Label", Source: "status", Field: "count", Style: "spark"},
-				},
-			},
-		},
-	}
-	// This will fall through to config since /data/agents/scanner doesn't exist
-	result := LoadStatsConfigWithCfg("scanner", cfg)
-	if len(result) == 0 {
-		t.Fatal("expected non-empty stats config")
-	}
-}
-
-func TestLoadStatsConfigWithCfg_DefaultFallback(t *testing.T) {
-	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{},
-	}
-	result := LoadStatsConfigWithCfg("scanner", cfg)
-	if len(result) == 0 {
-		t.Fatal("expected default stats config for scanner")
-	}
-}
-
 // --- BuildBeadsFromConfig ---
 
 func TestBuildBeadsFromConfig(t *testing.T) {

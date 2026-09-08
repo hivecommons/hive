@@ -9,7 +9,7 @@ import (
 )
 
 // TestSubstituteTemplate_BuiltinsAndOperatorVars verifies the resolver-backed
-// substituteTemplate: built-in ${VAR}s still render; an operator-defined
+// substituteTemplateWithPolicy: built-in ${VAR}s still render; an operator-defined
 // template variable renders; a built-in wins over a same-named operator def;
 // and an unknown ${VAR} is left literal (no env fallback in template scope).
 func TestSubstituteTemplate_BuiltinsAndOperatorVars(t *testing.T) {
@@ -33,7 +33,7 @@ func TestSubstituteTemplate_BuiltinsAndOperatorVars(t *testing.T) {
 	s := New(cfg, slog.Default())
 
 	tmpl := "org=${PROJECT_ORG} deploy=${DEPLOY_ENV} agent=${AGENT_NAME} miss=${UNKNOWN_TEMPLATE_VAR}"
-	out := s.substituteTemplate(tmpl, nil, "scanner", nil)
+	out, _ := s.substituteTemplateWithPolicy(tmpl, nil, "scanner", nil)
 
 	if !contains(out, "org=acme") {
 		t.Errorf("built-in PROJECT_ORG should win over operator def: %q", out)
@@ -62,7 +62,7 @@ func TestSubstituteTemplate_NoVariablesBlock(t *testing.T) {
 		Agents:  map[string]config.AgentConfig{"scanner": {Role: "scanner"}},
 	}
 	s := New(cfg, slog.Default())
-	out := s.substituteTemplate("a=${PROJECT_ORG} b=${NOPE}", nil, "scanner", nil)
+	out, _ := s.substituteTemplateWithPolicy("a=${PROJECT_ORG} b=${NOPE}", nil, "scanner", nil)
 	if out != "a=acme b=${NOPE}" {
 		t.Errorf("unexpected: %q", out)
 	}

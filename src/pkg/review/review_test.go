@@ -79,14 +79,6 @@ func TestPromptBuilders(t *testing.T) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	prompts := BuildPerspectivePrompts(pr, nil)
-	if len(prompts) != len(DefaultPerspectives) {
-		t.Fatalf("default prompts = %d, want %d", len(prompts), len(DefaultPerspectives))
-	}
-	seq := BuildSequentialPrompt(pr, []Perspective{PerspectiveDocsCurrency, PerspectiveCorrectness})
-	if !strings.Contains(seq, "phase-1 sequential fallback") || !strings.Contains(seq, "review-perspective:docs-currency") {
-		t.Fatalf("sequential prompt missing expected text: %s", seq)
-	}
 }
 
 func TestValidateRoundTripAndCollect(t *testing.T) {

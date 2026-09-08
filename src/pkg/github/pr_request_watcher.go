@@ -251,6 +251,19 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// Per-repo pause (#6203). Checked here, immediately after authorization and
+	// before any GitHub call, because this relay is the ONLY way an agent can
+	// open a PR: the proxy hard-denies direct POST /pulls for every mode, and
+	// the hive's own fulfilment does not traverse the proxy. Without this gate
+	// a paused repo still received agent PRs. It runs ahead of the claim and
+	// content gates below so a request against a quiet repo is told the repo is
+	// paused rather than being sent away to fix a request the hive would refuse
+	// anyway — and so a paused repo spends no API quota on validation.
+	if c.RepoIsPaused(req.Repo) {
+		c.rejectPRRequest(path, req, "repo-pause", RepoPausedReason(req.Repo), nowFn)
+		return
+	}
+
 	// Validate claims while the request is still at the server-side choke point.
 	// Agents cannot bypass this by invoking a different CLI: direct POST /pulls
 	// is denied by the proxy, and every supported path arrives here.

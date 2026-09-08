@@ -38,6 +38,18 @@ type ProjectConfig struct {
 	// directory that is absent or holds no AGENTS.md is also a no-op; nothing
 	// here can fail a kick. See CheckoutRootFor.
 	CheckoutsDir string `yaml:"checkouts_dir,omitempty"`
+
+	// PausedRepos is the per-repo agent pause: the repos in Repos that are
+	// currently quiet. It is a RUN-STATE, and deliberately a SEPARATE list
+	// rather than a field on a per-repo object, because #6111 (per-repo ACMM
+	// levels) proposes turning Repos from []string into objects — this feature
+	// must neither depend on that decision nor pre-empt it. A repo listed here
+	// stays in Repos: it keeps its dashboard card and its ACMM eval, and only
+	// agent activity stops. See RepoPause in repo_pause.go.
+	//
+	// Optional and additive. Absent — the state of every existing config —
+	// means nothing is paused and the hive behaves exactly as before.
+	PausedRepos []RepoPause `yaml:"paused_repos,omitempty"`
 }
 
 const (

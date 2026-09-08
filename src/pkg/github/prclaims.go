@@ -397,7 +397,9 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 	var claims []IssueClaim
 	var firstErr error
 
-	for _, repo := range c.getRepos() {
+	// Claims are what dispatch reads to decide who is already working what; a
+	// paused repo must contribute none (#6203).
+	for _, repo := range c.activeRepos() {
 		owner, repoName := c.splitRepo(repo)
 		opts := &gh.PullRequestListOptions{
 			State:       "open",

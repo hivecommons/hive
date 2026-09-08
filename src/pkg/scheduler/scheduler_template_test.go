@@ -158,7 +158,7 @@ func TestSubstituteTemplateVars(t *testing.T) {
 	s := New(cfg, slog.Default())
 
 	template := "Review ${PROJECT_ORG}/${PROJECT_PRIMARY_REPO} — issues: ${QUEUE_ISSUES}, PRs: ${QUEUE_PRS}"
-	result := s.substituteTemplate(template, &ghpkg.ActionableResult{
+	result, _ := s.substituteTemplateWithPolicy(template, &ghpkg.ActionableResult{
 		Issues: ghpkg.IssueResult{Count: 10},
 		PRs:    ghpkg.PRResult{Count: 5},
 	}, "scanner", nil)

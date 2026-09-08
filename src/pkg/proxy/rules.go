@@ -280,6 +280,13 @@ var repoPathPrefix = regexp.MustCompile(`^/repos/([^/]+/[^/]+)`)
 
 var gitPathPrefix = regexp.MustCompile(`^/([^/]+/[^/]+)\.git/`)
 
+// gitUploadPackPath matches the git FETCH endpoint. It is a POST that reads —
+// the same exception the mode rule table makes for it — so pause, which refuses
+// writes only, must not catch it. Without this carve-out `git clone` and
+// `git fetch` against a paused repo fail, and "reads still work" stops being
+// true in the one place agents notice first.
+var gitUploadPackPath = regexp.MustCompile(`\.git/git-upload-pack$`)
+
 var writeMethods = map[string]bool{
 	"POST":   true,
 	"PUT":    true,
@@ -295,6 +302,41 @@ func ExtractRepo(path string) string {
 		return m[1]
 	}
 	return ""
+}
+
+// RepoPauseRefusal reports whether this request writes to a repository the
+// operator has paused (#6203), and returns the agent-facing directive to put in
+// the 403 body.
+//
+// Three deliberate properties:
+//
+//   - WRITES ONLY. Pause stops the hive ACTING on a repo, not looking at one.
+//     An agent that can still read can say why it did nothing this session, and
+//     a paused repo's issues stay legible to a reviewer agent working elsewhere.
+//     git-upload-pack (fetch) counts as a read despite being a POST, exactly as
+//     it does in the mode table above.
+//   - Deny-by-repo, not by mode. Pause is a run-state: it must refuse a write
+//     from a MERGE-mode agent exactly as firmly as from an ADVISORY one, which
+//     is why this is not another row in the mode table.
+//   - Same repo extraction as RepoFilterAllowed, and the same blind spot: a
+//     path with no repo in it (notably POST /graphql, whose target repo is in
+//     the body) is not matched here. GraphQL writes are already tiered by
+//     GraphQLAllowed; closing that seam for pause too is a separate change and
+//     is called out in the docs rather than half-done here.
+//
+// isPaused is a live predicate rather than a snapshot set so a pause taken in
+// the dashboard is in force on the very next request, with nothing to re-wire
+// and no window in which the proxy is enforcing a stale list. Nil means nothing
+// is paused.
+func RepoPauseRefusal(isPaused func(repo string) bool, method, path string) (string, bool) {
+	if isPaused == nil || !writeMethods[method] || gitUploadPackPath.MatchString(path) {
+		return "", false
+	}
+	repo := ExtractRepo(path)
+	if repo == "" || !isPaused(repo) {
+		return "", false
+	}
+	return "repository " + repo + " is PAUSED by the operator — this hive is deliberately quiet on it (release freeze, incident, staged onboarding or budget triage). Reads still work; every write is refused until an operator resumes the repo. Do NOT retry, do NOT route around this with another CLI, `hive-open-pr`/`hive-merge` or the GitHub MCP, and do NOT file an issue about it: this is an operator decision, not an outage. Work one of the other authorized repos instead.", true
 }
 
 func RepoFilterAllowed(allowedRepos map[string]bool, method, path string) bool {

@@ -95,8 +95,12 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 	}
 
 	w.projectCtx = agent.ProjectContext{
-		Org:             w.cfg.Project.Org,
+		Org: w.cfg.Project.Org,
+		// Repos is the full watched set; RepoPaused narrows it to the work
+		// scope at read time (#6203), so a pause taken mid-run reaches the next
+		// agent's $HIVE_REPOS without rebuilding this context.
 		Repos:           w.cfg.Project.Repos,
+		RepoPaused:      w.cfg.IsRepoPaused,
 		PrimaryRepoName: w.cfg.Project.PrimaryRepo,
 		ACMMLevel:       w.acmmLevel,
 		PRsAllowed:      w.cfg.Project.PRsAllowed(),
@@ -329,6 +333,10 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 		// intact (SetRequiredChecks(nil) is a safe no-op).
 		if set, ok := w.cfg.AutoMerge.RequiredCheckSet(); ok {
 			autoMergeOpts.RequiredChecks = set
+			// The merge-request watcher's pre-merge CI gate (#6173) names the
+			// required checks that have not reported yet, so it needs the same
+			// declared set the sweep gates on.
+			w.ghClient.SetRequiredChecks(set)
 		}
 
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
@@ -356,6 +364,12 @@ func (w *spokeWire) wireSpokeAgentsAndRequests() {
 			autoMergeOpts.ApprovalDesk = newSelfMergeDeskHook(w.approvalDesk, w.approvalInbox, w.cfg, w.logger)
 		}
 		autoMergeOpts.MutationBoundary = w.mutationBoundary
+		// Intent tier gate (#6258): the human lane only queues PRs that
+		// survive writeMergeEligible's intent check, but this sweep lists
+		// the App's PRs on its own, so it carries the same policy (same
+		// config, same bead evidence, same BlocksMerge predicate) and asks
+		// intent.EvaluateForAppSelfMerge before every self-merge.
+		autoMergeOpts.IntentGate = selfMergeIntentGate(w.cfg, w.beadStores)
 		automerge.StartSelfAuthoredAutoMergeSweep(w.ctx, w.ghClient, w.cfg.AutoMerge.MaxMerges, w.cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(w.cfg.ACMMLevel), w.cfg.ACMMLevel, autoMergeOpts)
 	}
 

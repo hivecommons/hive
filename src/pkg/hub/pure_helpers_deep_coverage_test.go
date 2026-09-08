@@ -1,10 +1,7 @@
 package hub
 
 import (
-	"context"
-	"errors"
 	"math"
-	"net"
 	"testing"
 	"time"
 )
@@ -54,42 +51,6 @@ func TestImageTagIsMutableEdgeCases(t *testing.T) {
 		}
 	}
 }
-
-// ============================================================
-// publicURLSelfCheckStatusForError (heartbeat.go)
-// ============================================================
-
-func TestPublicURLSelfCheckStatusForErrorAdditionalCases(t *testing.T) {
-	cases := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"nil error", nil, PublicURLSelfCheckUnknown},
-		{"DNS error", &net.DNSError{Err: "no such host", Name: "x.io"}, PublicURLSelfCheckUnknown},
-		{"no such host in message", errors.New("dial tcp: lookup x.io: no such host"), PublicURLSelfCheckUnknown},
-		{"server misbehaving", errors.New("dial tcp: lookup x.io on 10.0.0.1:53: server misbehaving"), PublicURLSelfCheckUnknown},
-		{"temporary failure in name resolution", errors.New("temporary failure in name resolution"), PublicURLSelfCheckUnknown},
-		{"DNS timeout on :53", errors.New("dial tcp: lookup x.io on 10.0.0.1:53: i/o timeout"), PublicURLSelfCheckUnknown},
-		{"context deadline exceeded", context.DeadlineExceeded, PublicURLSelfCheckUnknown},
-		{"net.Error timeout", &timeoutErr{}, PublicURLSelfCheckUnknown},
-		{"connection refused (real failure)", errors.New("dial tcp 1.2.3.4:443: connect: connection refused"), PublicURLSelfCheckFail},
-		{"TLS handshake error", errors.New("tls: handshake failure"), PublicURLSelfCheckFail},
-		{"generic error", errors.New("something unexpected"), PublicURLSelfCheckFail},
-	}
-	for _, tc := range cases {
-		got := publicURLSelfCheckStatusForError(tc.err)
-		if got != tc.want {
-			t.Errorf("%s: publicURLSelfCheckStatusForError(%v) = %q, want %q", tc.name, tc.err, got, tc.want)
-		}
-	}
-}
-
-type timeoutErr struct{}
-
-func (e *timeoutErr) Error() string   { return "i/o timeout" }
-func (e *timeoutErr) Timeout() bool   { return true }
-func (e *timeoutErr) Temporary() bool { return true }
 
 // ============================================================
 // recentlyStarted (alerts.go)

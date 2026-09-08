@@ -293,6 +293,13 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
+	// The hive fulfils issues, comments and claims with its own credentials,
+	// bypassing the agent proxy. Enforce pause before any of those API calls.
+	if c.RepoIsPaused(req.Repo) {
+		c.denyIssueRequest(path, req, RepoPausedReason(req.Repo), nowFn)
+		return
+	}
+
 	meta := c.attributionMeta(req.Agent)
 	body := req.Body
 	if c.attributionTrailerOn() {

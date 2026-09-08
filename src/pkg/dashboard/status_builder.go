@@ -807,45 +807,6 @@ func resolveStatsSources(stats []any, cfg *config.Config) []any {
 	return stats
 }
 
-// LoadStatsConfigWithCfg reads stats from disk, then falls back to config StatsDisplay field.
-func LoadStatsConfigWithCfg(name string, cfg *config.Config) []any {
-	statsFile := fmt.Sprintf("/data/agents/%s/stats.json", name)
-	data, err := os.ReadFile(statsFile)
-	if err == nil {
-		var wrapper struct {
-			Stats []any `json:"stats"`
-		}
-		if json.Unmarshal(data, &wrapper) == nil && len(wrapper.Stats) > 0 {
-			return wrapper.Stats
-		}
-		var stats []any
-		if json.Unmarshal(data, &stats) == nil && len(stats) > 0 {
-			return stats
-		}
-	}
-	if agentCfg, ok := cfg.Agents[name]; ok && len(agentCfg.StatsDisplay) > 0 {
-		result := make([]any, 0, len(agentCfg.StatsDisplay))
-		for _, s := range agentCfg.StatsDisplay {
-			entry := map[string]any{
-				"key": s.Key, "label": s.Label,
-				"source": s.Source, "field": s.Field, "style": s.Style,
-			}
-			if s.TrendField != "" {
-				entry["trendField"] = s.TrendField
-			}
-			if s.Target > 0 {
-				entry["target"] = s.Target
-			}
-			if s.Desc != "" {
-				entry["desc"] = s.Desc
-			}
-			result = append(result, entry)
-		}
-		return result
-	}
-	return defaultStatsConfig(name)
-}
-
 func defaultStatsConfig(name string) []any {
 	defaults := map[string][]any{
 		"scanner": {
@@ -999,22 +960,6 @@ func formatHumanTime(t time.Time) string {
 	return local.Format("1/2 3:04 PM MST")
 }
 
-func computeNextKick(lastKick *time.Time, cadence string) string {
-	if cadence == "" || cadence == cadenceOff || cadence == cadencePause || cadence == cadenceOnDemand {
-		return ""
-	}
-	base := time.Now()
-	if lastKick != nil {
-		base = *lastKick
-	}
-	d := parseCadenceDuration(cadence)
-	if d == 0 {
-		return ""
-	}
-	next := base.Add(d)
-	return formatHumanTime(next)
-}
-
 func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
 	if cadence == "" || cadence.IsPaused() {
 		return ""
@@ -1059,14 +1004,6 @@ func formatCadenceDuration(seconds int64) string {
 		return fmt.Sprintf("%dm", seconds/secondsPerMinute)
 	}
 	return fmt.Sprintf("%ds", seconds)
-}
-
-func lookupCadence(agentName string, cfg *config.Config) string {
-	return lookupCadenceForMode(agentName, "idle", cfg)
-}
-
-func lookupCadenceForMode(agentName, modeName string, cfg *config.Config) string {
-	return cadenceDisplay(lookupCadenceValueForMode(agentName, modeName, cfg))
 }
 
 func lookupCadenceValue(agentName string, cfg *config.Config) config.Cadence {
@@ -1284,6 +1221,18 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 			ActionableIssues: issuesByRepo[repoName],
 			OpenPrs:          prsByRepo[repoName],
 		}
+		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
+		// paused repo keeps its card and its counts. Dropping it here would
+		// reproduce the very thing pause exists to avoid — a repo that vanishes
+		// from the operator's view and is easy to forget to bring back (#6203).
+		if rp, paused := cfg.RepoPauseFor(repoName); paused {
+			r.Paused = true
+			r.PausedBy = rp.By
+			r.PauseReason = rp.Reason
+			if rp.At != nil && !rp.At.IsZero() {
+				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
+			}
+		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
 		}
@@ -1294,19 +1243,6 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 	}
 
 	return repos
-}
-
-func buildBeads(stores map[string]*beads.Store) FrontendBeads {
-	fb := FrontendBeads{}
-	for name, store := range stores {
-		count := store.Count()
-		if name == "supervisor" {
-			fb.Supervisor = count
-		} else {
-			fb.Workers += count
-		}
-	}
-	return fb
 }
 
 // BuildPlanning computes the governor PLANNING metric block from bead metadata

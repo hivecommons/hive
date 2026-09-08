@@ -255,6 +255,14 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// governor's eval interval. Read-only — see handleReposRescan.
 	s.mux.HandleFunc("POST /api/repos/rescan", s.handleReposRescan)
 
+	// Per-repo agent pause (#6203): quiet one repo without stopping the hive.
+	// The repo travels in the request body, not the path, because a repos entry
+	// may be an explicit cross-org reference ("laredo/cuga-agent") whose slash
+	// cannot live in a single {repo} path value.
+	s.mux.HandleFunc("POST /api/repos/pause", s.handleRepoPause)
+	s.mux.HandleFunc("POST /api/repos/resume", s.handleRepoResume)
+	s.mux.HandleFunc("GET /api/repos/pauses", s.handleRepoPauses)
+
 	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
 	s.mux.HandleFunc("POST /api/acmm/issue", s.handleACMMCreateIssue)
 	s.mux.HandleFunc("GET /api/acmm-recommendation", s.handleACMMRecommendation)

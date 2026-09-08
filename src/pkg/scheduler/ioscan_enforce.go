@@ -111,19 +111,15 @@ func (s *Scheduler) ioscanFailClosed() bool {
 	return s.cfg != nil && s.cfg.Ioscan.FailClosed()
 }
 
-// enforceIssueText runs ioscan over one piece of untrusted external text (an
-// issue title about to be injected into a kick) and returns the text that is
-// safe to inject. When ioscan is disabled it is a strict no-op — the input is
-// returned unchanged with no scan and no allocation. When enabled and the input
-// is blocked, the raw text is replaced with a secret-safe annotation and the
-// event is written to the existing dashboard audit log (when an AuditFunc is
-// attached). Enforcement is fail-safe: it never errors and never drops the item,
-// only the untrusted text is withheld.
-func (s *Scheduler) enforceIssueText(text string) string {
-	sanitized, _ := s.enforceIssueTextVerdict(text)
-	return sanitized
-}
-
+// enforceIssueTextVerdict runs ioscan over one piece of untrusted external
+// text (an issue title about to be injected into a kick) and returns the text
+// that is safe to inject, together with the verdict. When ioscan is disabled it
+// is a strict no-op — the input is returned unchanged with no scan and no
+// allocation. When enabled and the input is blocked, the raw text is replaced
+// with a secret-safe annotation and the event is written to the existing
+// dashboard audit log (when an AuditFunc is attached). Enforcement is
+// fail-safe: it never errors and never drops the item, only the untrusted text
+// is withheld.
 func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict) {
 	if !s.ioscanEnabled() {
 		return text, ioscan.Verdict{}
@@ -170,18 +166,14 @@ func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict
 	return sanitized, v
 }
 
-// enforceLabels runs ioscan over each untrusted label before it is joined into
-// a kick line. Labels are attacker-controllable on public issues/PRs and drive
+// enforceLabelsWithPolicy runs ioscan over each untrusted label before it is
+// joined into a kick line, reporting whether any label tripped fail-closed
+// policy. Labels are attacker-controllable on public issues/PRs and drive
 // classification routing (pkg/classify), so a crafted label must not reach an
-// agent prompt raw. Like enforceIssueText it is a strict no-op when ioscan is
-// disabled (returns the input slice unchanged, no allocation). When enabled,
-// each label is scanned independently and a blocked label is annotated rather
-// than emitted raw. Fail-safe: never errors, never drops a label.
-func (s *Scheduler) enforceLabels(labels []string) []string {
-	out, _ := s.enforceLabelsWithPolicy(labels)
-	return out
-}
-
+// agent prompt raw. Like enforceIssueTextVerdict it is a strict no-op when
+// ioscan is disabled (returns the input slice unchanged, no allocation). When
+// enabled, each label is scanned independently and a blocked label is annotated
+// rather than emitted raw. Fail-safe: never errors, never drops a label.
 func (s *Scheduler) enforceLabelsWithPolicy(labels []string) ([]string, bool) {
 	if !s.ioscanEnabled() || len(labels) == 0 {
 		return labels, false

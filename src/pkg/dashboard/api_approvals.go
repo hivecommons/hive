@@ -201,6 +201,10 @@ func (s *Server) handleApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	operator := approvalOperator(r)
+	// Capture the row before Resolve removes it: the review_rejected emission
+	// below needs the requesting agent and target, and only the journal's
+	// operator/rationale survive the resolve.
+	pendingItem, wasPending := inbox.Get(req.ID)
 	rec, err := inbox.Resolve(req.ID, req.Approved, operator, req.Rationale)
 	if err != nil {
 		// A replayed resolve is a 409, not a 500: the caller's intent was
@@ -224,6 +228,13 @@ func (s *Server) handleApprovalResolve(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFromRequest(r, "approval-resolve",
 		auditDetail("id", req.ID, "approved", fmt.Sprintf("%t", req.Approved)), "")
+
+	// Post-commit emission (#6259): the denial is journaled, so a human has
+	// durably sent this agent's output back. Exactly once per rejection -- a
+	// replayed resolve returned above as 409 and never reaches here.
+	if !req.Approved && wasPending {
+		s.emitApprovalDenied(r, pendingItem, operator, req.Rationale)
+	}
 
 	jsonResponse(w, map[string]any{
 		"ok":          true,
@@ -273,13 +284,31 @@ func (s *Server) handleApprovalBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	operator := approvalOperator(r)
+	// Snapshot the rows before they leave the queue, for the same reason the
+	// single path does: a bulk deny is N individual rejections and each one
+	// emits its own review_rejected naming its own agent and target.
+	pendingItems := make(map[string]toolapprove.PendingItem, len(req.IDs))
+	if !req.Approved {
+		for _, id := range req.IDs {
+			if item, ok := inbox.Get(id); ok {
+				pendingItems[id] = item
+			}
+		}
+	}
 	// N individual resolutions through the SAME Resolve the single path uses.
 	results := inbox.ResolveMany(req.IDs, req.Approved, operator, req.Rationale)
 
 	okCount := 0
 	for _, res := range results {
-		if res.Ok {
-			okCount++
+		if !res.Ok {
+			continue
+		}
+		okCount++
+		// Only a resolution that actually journaled counts as a rejection; an
+		// ID another operator resolved between the list and the click is
+		// reported as a per-item error and emits nothing.
+		if item, ok := pendingItems[res.ID]; ok && !req.Approved {
+			s.emitApprovalDenied(r, item, operator, req.Rationale)
 		}
 	}
 

@@ -665,6 +665,16 @@ type FrontendRepo struct {
 	PRs              int    `json:"prs"`
 	ActionableIssues []any  `json:"actionableIssues"`
 	OpenPrs          []any  `json:"openPrs"`
+	// Paused and its provenance (#6203). A paused repo still gets a card —
+	// that is the point of pause over deleting it from project.repos — so the
+	// card has to say so, or a deliberately quiet repo is indistinguishable
+	// from one nobody has gotten to. By/At/Reason answer the question an
+	// unexplained pause always raises a week later (#4041/#4042): who did this,
+	// when, and why.
+	Paused      bool   `json:"paused,omitempty"`
+	PausedBy    string `json:"pausedBy,omitempty"`
+	PausedAt    string `json:"pausedAt,omitempty"`
+	PauseReason string `json:"pauseReason,omitempty"`
 }
 
 type FrontendBeads struct {

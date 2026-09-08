@@ -67,6 +67,18 @@ type RepoEvaluation struct {
 }
 
 // ACMMLevelScore summarizes pass/fail for a single ACMM level.
+//
+// Two scores, deliberately. Score/Matched are what the panel displays and
+// include waived criteria, so a repo whose capability moved off-repo reads
+// full green. DetectedScore/Detected count only criteria met by finding the
+// file, and Passed is computed from those alone.
+//
+// That split is what keeps waivers from being a way around the model. A
+// waiver can close the distance between "passes this level" and "full green
+// on this level"; it can never carry a level over the threshold. No amount of
+// committed YAML advances a repo, so the mechanism cannot be used to claim a
+// maturity level the repo has not earned — it can only stop punishing a repo
+// for moving a capability somewhere the file check cannot see.
 type ACMMLevelScore struct {
 	Level     int     `json:"level"`
 	Name      string  `json:"name"`
@@ -75,6 +87,13 @@ type ACMMLevelScore struct {
 	Passed    bool    `json:"passed"`
 	Total     int     `json:"total"`
 	Matched   int     `json:"matched"`
+	// Detected is Matched minus waivers, and DetectedScore is its ratio.
+	// Passed derives from DetectedScore, never from Score.
+	Detected      int     `json:"detected"`
+	DetectedScore float64 `json:"detected_score"`
+	// Waived is Matched minus Detected, surfaced so the panel can mark the
+	// level line without re-deriving it from the criteria list.
+	Waived int `json:"waived,omitempty"`
 }
 
 // CriterionResult records whether an individual criterion was detected.
@@ -86,6 +105,20 @@ type CriterionResult struct {
 	Patterns []string `json:"patterns"`
 	Passed   bool     `json:"passed"`
 	Repo     string   `json:"repo,omitempty"`
+	// Waived is true when Passed was granted by the repository's .acmm.yml
+	// rather than by finding one of Patterns. Such a criterion counts as met
+	// in every score, so a waived repo still reads as full green — but the
+	// flag travels with the result so the panel can say the evidence lives
+	// off-repo instead of implying a file that is not there.
+	Waived bool `json:"waived,omitempty"`
+	// WaiverSatisfiedBy and WaiverReason carry the declaration verbatim.
+	WaiverSatisfiedBy string `json:"waiver_satisfied_by,omitempty"`
+	WaiverReason      string `json:"waiver_reason,omitempty"`
+	// WaiverRepo is set on aggregate rows only, naming which repo's waiver
+	// is being shown. Per-repo rows leave it empty because Repo already
+	// answers that. When several repos waive the same criterion the
+	// aggregate reports the first; the per-repo drill-down has the rest.
+	WaiverRepo string `json:"waiver_repo,omitempty"`
 }
 
 // ACMMIssueRequest is the payload for creating an ACMM gap issue.
@@ -477,15 +510,22 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 	var repoEvals []RepoEvaluation
 	// Aggregate: a criterion passes if it passes in ANY repo.
 	aggPassed := make(map[string]bool)
+	// aggDetected tracks the stronger claim — passed in some repo by actually
+	// finding the file. A criterion that is only ever waived is still passed
+	// fleet-wide, but the aggregate row says so rather than presenting a
+	// waiver as a detection.
+	aggDetected := make(map[string]bool)
+	aggWaiver := make(map[string]CriterionResult)
 
 	for _, repo := range repos {
 		ctx, cancel := context.WithTimeout(context.Background(), acmmPerRepoTimeout)
 		dirCache := s.prefetchDirectories(ctx, owner, repo)
+		waivers := s.fetchACMMWaivers(ctx, owner, repo, dirCache)
 
 		var results []CriterionResult
 		for _, c := range universalCriteria {
 			passed := s.checkCriterion(ctx, owner, repo, c, dirCache)
-			results = append(results, CriterionResult{
+			res := CriterionResult{
 				ID:       c.ID,
 				Name:     c.Name,
 				Level:    c.Level,
@@ -493,9 +533,28 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 				Patterns: c.Patterns,
 				Passed:   passed,
 				Repo:     repo,
-			})
-			if passed {
+			}
+			// A waiver is only consulted when detection failed, so a repo
+			// that later adds the real file stops depending on it silently
+			// and the declaration becomes a no-op rather than a lie.
+			if !passed {
+				if w, ok := waivers[c.ID]; ok {
+					res.Passed = true
+					res.Waived = true
+					res.WaiverSatisfiedBy = w.SatisfiedBy
+					res.WaiverReason = w.Reason
+				}
+			}
+			results = append(results, res)
+			if res.Passed {
 				aggPassed[c.ID] = true
+				if res.Waived {
+					if _, seen := aggWaiver[c.ID]; !seen {
+						aggWaiver[c.ID] = res
+					}
+				} else {
+					aggDetected[c.ID] = true
+				}
 			}
 		}
 		cancel()
@@ -516,14 +575,26 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 	// Build aggregate criterion results (pass if ANY repo has it).
 	var aggResults []CriterionResult
 	for _, c := range universalCriteria {
-		aggResults = append(aggResults, CriterionResult{
+		row := CriterionResult{
 			ID:       c.ID,
 			Name:     c.Name,
 			Level:    c.Level,
 			Category: c.Category,
 			Patterns: c.Patterns,
 			Passed:   aggPassed[c.ID],
-		})
+		}
+		// Mark the aggregate waived only when no repo detected the real
+		// thing. One repo holding the file makes the fleet-wide claim true
+		// on its own, and a waiver elsewhere should not dilute that.
+		if row.Passed && !aggDetected[c.ID] {
+			if w, ok := aggWaiver[c.ID]; ok {
+				row.Waived = true
+				row.WaiverSatisfiedBy = w.WaiverSatisfiedBy
+				row.WaiverReason = w.WaiverReason
+				row.WaiverRepo = w.Repo
+			}
+		}
+		aggResults = append(aggResults, row)
 	}
 
 	eval := s.scoreResults(aggResults)
@@ -616,8 +687,9 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 // scoreResults calculates per-level scores and the overall codebase level.
 func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 	type levelBucket struct {
-		total   int
-		matched int
+		total    int
+		matched  int
+		detected int
 	}
 	buckets := make(map[int]*levelBucket)
 
@@ -632,6 +704,9 @@ func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 		if r.Passed {
 			b.matched++
 			totalPassed++
+			if !r.Waived {
+				b.detected++
+			}
 		}
 	}
 
@@ -644,9 +719,10 @@ func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 	var levelScores []ACMMLevelScore
 	for _, lvl := range levels {
 		b := buckets[lvl]
-		score := float64(0)
+		score, detectedScore := float64(0), float64(0)
 		if b.total > 0 {
 			score = float64(b.matched) / float64(b.total)
+			detectedScore = float64(b.detected) / float64(b.total)
 		}
 		name := acmmLevelNames[lvl]
 		if name == "" {
@@ -657,9 +733,13 @@ func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 			Name:      name,
 			Score:     score,
 			Threshold: acmmLevelThreshold,
-			Passed:    score >= acmmLevelThreshold,
-			Total:     b.total,
-			Matched:   b.matched,
+			// Deliberately detectedScore, not score. See ACMMLevelScore.
+			Passed:        detectedScore >= acmmLevelThreshold,
+			Total:         b.total,
+			Matched:       b.matched,
+			Detected:      b.detected,
+			DetectedScore: detectedScore,
+			Waived:        b.matched - b.detected,
 		})
 	}
 

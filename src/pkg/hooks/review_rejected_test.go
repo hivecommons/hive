@@ -34,7 +34,7 @@ func TestReviewRejectedEndToEndCarriesModelMetadata(t *testing.T) {
 	d := NewDispatcher(reg, quietLogger(), WithNotifier(notifier), WithAuditSink(audit))
 
 	// 2. A human rejects a review whose output came from a stale pinned model.
-	EmitReviewRejected(context.Background(), d, ReviewRejection{
+	EmitReviewRejected(context.Background(), d.Fire, ReviewRejection{
 		Agent:            "reviewer",
 		Repo:             "hivecommons/hive",
 		PRNumber:         4001,
@@ -158,7 +158,7 @@ func TestReviewRejectedWithoutDashboardURLStillNotifies(t *testing.T) {
 		}),
 		quietLogger(), WithNotifier(notifier))
 
-	EmitReviewRejected(context.Background(), d, ReviewRejection{
+	EmitReviewRejected(context.Background(), d.Fire, ReviewRejection{
 		Agent: "reviewer", Model: "claude-opus-4", Pin: "20240229",
 		// No DashboardBaseURL.
 	})

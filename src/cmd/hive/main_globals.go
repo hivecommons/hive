@@ -332,6 +332,10 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// rather than 403ing on every write until the self-heal tick runs.
 		healGitHubAppInstallation(ctx, out.AppAuth, cfg, logger)
 		out.Client = github.NewClientFromAppWithBotLogin(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
+		// Per-repo pause (#6203). A live predicate over the shared config, so a
+		// pause taken in the dashboard narrows the very next enumeration and
+		// automerge sweep without a restart.
+		out.Client.SetRepoPausedFunc(cfg.IsRepoPaused)
 		startDocsTokenRefresh(ctx, cfg, appKeyFile, logger)
 		return out
 	}
@@ -343,6 +347,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 	switch {
 	case ghToken != "":
 		out.Client = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
+		out.Client.SetRepoPausedFunc(cfg.IsRepoPaused) // #6203, see the App branch above
 		// PAT path only: introspect the token's granted scopes ONCE, here, so a
 		// too-narrow token is named at boot instead of surfacing hours later as
 		// a generic 403 inside an agent — or, worse, as an empty backlog that

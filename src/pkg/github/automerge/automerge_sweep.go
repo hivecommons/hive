@@ -37,6 +37,9 @@ type Options struct {
 	RequiredChecks   map[string]bool
 	ApprovalDesk     hgithub.ApprovalDeskHook
 	MutationBoundary effects.Boundary
+	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
+	// (#6258). nil installs no policy; see IntentGate for the semantics.
+	IntentGate *IntentGate
 }
 
 // Engine owns the automerge sweep policy state.
@@ -53,6 +56,9 @@ type Engine struct {
 
 	approvalDesk hgithub.ApprovalDeskHook
 	mutation     effects.Boundary
+
+	intentGateMu sync.RWMutex
+	intentGate   *IntentGate
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -69,6 +75,7 @@ func New(transport Transport, opts Options) *Engine {
 		requiredChecks: opts.RequiredChecks,
 		approvalDesk:   opts.ApprovalDesk,
 		mutation:       opts.MutationBoundary,
+		intentGate:     opts.IntentGate,
 	}
 	if e.mutation == nil {
 		if provider, ok := transport.(interface{ MutationBoundary() effects.Boundary }); ok {
@@ -80,6 +87,21 @@ func New(transport Transport, opts Options) *Engine {
 
 func (c *Engine) ready() bool {
 	return c != nil && c.transport != nil && c.gh != nil
+}
+
+// activeRepos is Repositories() minus the repos under an operator pause
+// (#6203). The narrowing lives behind an optional transport capability, the
+// same shape New uses for MutationBoundary: a transport that does not know
+// about pauses (the sweep's own fakes) keeps its full repository list, so
+// pause support is additive rather than a Transport-interface break.
+func (c *Engine) activeRepos() []string {
+	if c == nil || c.transport == nil {
+		return nil
+	}
+	if provider, ok := c.transport.(interface{ ActiveRepositories() []string }); ok {
+		return provider.ActiveRepositories()
+	}
+	return c.transport.Repositories()
 }
 
 // SweepQueuedAutoMerges consumes queued automerge requests using a one-shot engine.
@@ -339,7 +361,10 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 	noAppBotLoginWarned := false
 	noMergerAuthzWarned := false
 
-	for _, repo := range c.transport.Repositories() {
+	// activeRepos: an operator-paused repo receives no automerges (#6203). This
+	// sweep is hive-driven, not kick-driven, so leaving it on Repositories()
+	// would have kept merging into a repo during its release freeze.
+	for _, repo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
 		}
@@ -409,7 +434,9 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 // entirely rather than needing one.
 //
 // Every OTHER safety property is identical to the human queue: mergeability
-// (mergeableFromState), green required checks (commitGreen), and a head-SHA
+// (mergeableFromState), green required checks (commitGreen), the intent tier
+// gate (selfMergeIntentGate, #6258 — the same refusal predicate
+// writeMergeEligible applies before a PR can be queued), and a head-SHA
 // re-check immediately before the merge call so a push landing between
 // enumeration and merge can never be squashed unreviewed — mirrored below via
 // re-fetching the PR right before calling Merge and comparing SHAs, the same
@@ -435,7 +462,8 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		return result, nil
 	}
 
-	for _, repo := range c.transport.Repositories() {
+	// See the queued sweep above: paused repos are out of scope for automerge.
+	for _, repo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
 		}
@@ -664,6 +692,20 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
+	}
+
+	// Intent tier gate (#6258). The human merge lane never lets a PR reach
+	// trySweepQueuedPR at a tier intent enforcement refuses (writeMergeEligible
+	// drops it first); this path lists the App's PRs independently, so it
+	// must ask the same question itself — via intent.EvaluateForAppSelfMerge,
+	// the tier gate written for this path — or every green App PR merges
+	// regardless of tier. Consulted after commitGreen so the extra files
+	// fetch is only spent on PRs that are otherwise mergeable, and before the
+	// approval desk so the desk still only sees requests policy permits.
+	if intentReason, err := c.selfMergeIntentGate(ctx, displayRepo, owner, repo, pr, author, selfLabels); err != nil {
+		return AutoMergeSweepEvent{}, intentReason, err
+	} else if intentReason != "" {
+		return AutoMergeSweepEvent{}, intentReason, nil
 	}
 
 	// Approval desk (RFC #4000). Consulted AFTER the sweep's own eligibility
@@ -1023,78 +1065,15 @@ func parseHiveQueueReview(body string) string {
 // shipped conservative behavior is preserved rather than degrading to
 // "always green".
 func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
+	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
+	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
+	// identical rules; only the required-set precedence is engine-specific.
 	required, requiredKnown := c.requiredStatusCheckContexts(ctx, owner, repo, branch)
-
-	statusOpts := &gh.ListOptions{PerPage: 100}
-	for {
-		status, resp, err := c.gh.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
-		if err != nil {
-			return false, "status-check", err
-		}
-		for _, s := range status.Statuses {
-			ctxName := s.GetContext()
-			if requiredKnown {
-				// Required-checks-only gating: skip anything not on the
-				// branch's actual required list, no matter its state.
-				if !required[ctxName] {
-					continue
-				}
-			} else if hgithub.IsMetaCheck(ctxName) {
-				// Fail-closed fallback path (required set unavailable).
-				continue
-			}
-			switch s.GetState() {
-			case "success":
-			case "pending":
-				return false, "status-pending", nil
-			default: // "failure", "error"
-				if !requiredKnown && hgithub.IsIgnorableCICheck(ctxName) {
-					continue
-				}
-				return false, "status-" + s.GetState(), nil
-			}
-		}
-		if resp.NextPage == 0 {
-			break
-		}
-		statusOpts.Page = resp.NextPage
+	st, err := hgithub.EvaluateCommitCI(ctx, c.gh, owner, repo, sha, required, requiredKnown)
+	if err != nil {
+		return false, st.Reason, err
 	}
-
-	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	for {
-		checkRuns, resp, err := c.gh.Checks.ListCheckRunsForRef(ctx, owner, repo, sha, opts)
-		if err != nil {
-			return false, "check-runs", err
-		}
-		for _, cr := range checkRuns.CheckRuns {
-			name := cr.GetName()
-			if requiredKnown {
-				if !required[name] {
-					continue
-				}
-			} else if hgithub.IsMetaCheck(name) {
-				continue
-			}
-			if cr.GetStatus() != "completed" {
-				if !requiredKnown && hgithub.IsIgnorableCICheck(name) {
-					continue
-				}
-				return false, "check-pending", nil
-			}
-			switch cr.GetConclusion() {
-			case "success", "neutral", "skipped":
-			default:
-				if !requiredKnown && hgithub.IsIgnorableCICheck(name) {
-					continue
-				}
-				return false, "check-" + cr.GetConclusion(), nil
-			}
-		}
-		if resp.NextPage == 0 {
-			return true, "", nil
-		}
-		opts.Page = resp.NextPage
-	}
+	return st.Green, st.Reason, nil
 }
 
 // requiredStatusCheckContexts returns the set of status-check contexts /
@@ -1121,41 +1100,8 @@ func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 //     allowlist rather than treating "we don't know the required set" as
 //     "nothing is required" — see commitGreen's fail-closed comment.
 func (c *Engine) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
-	if set, ok := c.configRequiredChecks(); ok {
-		return set, true
-	}
-	if strings.TrimSpace(branch) == "" {
-		return nil, false
-	}
-	rsc, _, err := c.gh.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
-	if err != nil {
-		// gh.ErrBranchNotProtected means "this branch legitimately requires
-		// nothing" — that IS a known, empty required set, not a failure to
-		// determine it, so requiredKnown is true with an empty map (every
-		// check is then non-required and ignorable).
-		if errors.Is(err, gh.ErrBranchNotProtected) {
-			return map[string]bool{}, true
-		}
-		return nil, false
-	}
-	if rsc == nil {
-		return map[string]bool{}, true
-	}
-	required := make(map[string]bool)
-	if rsc.Contexts != nil {
-		for _, name := range *rsc.Contexts {
-			required[name] = true
-		}
-	}
-	if rsc.Checks != nil {
-		for _, check := range *rsc.Checks {
-			if check == nil {
-				continue
-			}
-			required[check.Context] = true
-		}
-	}
-	return required, true
+	set, ok := c.configRequiredChecks()
+	return hgithub.RequiredStatusCheckContexts(ctx, c.gh, owner, repo, branch, set, ok)
 }
 
 func labelNames(labels []*gh.Label) []string {

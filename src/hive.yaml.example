@@ -19,6 +19,16 @@ project:
   # keep no clones, so without this AGENTS.md injection stays a no-op — which is
   # the default. An absent directory or a repo with no AGENTS.md is also a no-op.
   # checkouts_dir: /data/checkouts
+  # Optional: quiet ONE repo without stopping the hive (src/docs/repo-pause.md).
+  # A paused repo stays in `repos` above — it keeps its dashboard card and its
+  # ACMM eval — but agents cannot write to it and are handed no work on it. Only
+  # `repo` is required; `by`/`at`/`reason` are the provenance the dashboard and
+  # POST /api/repos/pause fill in, and are what stops an unexplained quiet repo
+  # from becoming a support ticket a week later. Absent = nothing paused.
+  # paused_repos:
+  #   - repo: repo-two
+  #     by: your-github-login
+  #     reason: release freeze until Friday
 
 ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks

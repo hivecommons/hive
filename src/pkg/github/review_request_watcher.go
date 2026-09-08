@@ -207,6 +207,13 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		return
 	}
 
+	// Reviews use the hive's credentials and bypass the agent proxy, just like
+	// the other write relays. Pause applies to every review event.
+	if c.RepoIsPaused(req.Repo) {
+		c.denyReviewRequest(path, req, RepoPausedReason(req.Repo), nowFn)
+		return
+	}
+
 	meta := c.attributionMeta(req.Agent)
 	body := req.Body
 	if c.attributionTrailerOn() {

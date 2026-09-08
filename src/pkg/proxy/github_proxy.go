@@ -163,6 +163,16 @@ type GitHubProxy struct {
 	uidMap              *agent.UIDMap
 	allowedRepos        map[string]bool
 
+	// repoPaused reports whether a repo ("owner/repo", as ExtractRepo yields it)
+	// is under an operator pause (#6203). Guarded because the dashboard can
+	// pause a repo while request goroutines are reading it.
+	//
+	// Enforcement lives HERE rather than in an agent prompt on purpose: a
+	// prompt-only pause has already been observed to fail when an agent's model
+	// changes, and a run-state the operator relies on must not be advisory.
+	pausedMu   sync.RWMutex
+	repoPaused func(repo string) bool
+
 	// proxyAdvisoryOK mirrors entrypoint.sh's HIVE_PROXY_ADVISORY_OK — the SAME
 	// explicit, operator-set escape hatch that already governs whether a failed
 	// forced-egress iptables redirect is fatal. Read once at construction (it
@@ -363,6 +373,26 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 	}
 
 	return p, nil
+}
+
+// SetRepoPausedFunc installs the operator's per-repo pause predicate (#6203).
+// The hive passes config's IsRepoPaused, so pausing a repo in the dashboard is
+// enforced on the very next request without a restart — which matters, because
+// the pauses this serves (a release freeze, an incident) are measured in hours,
+// and an operator who has to roll the pod to quiet one repo is back to stopping
+// the whole hive. Passing nil clears it.
+func (p *GitHubProxy) SetRepoPausedFunc(fn func(repo string) bool) {
+	p.pausedMu.Lock()
+	p.repoPaused = fn
+	p.pausedMu.Unlock()
+}
+
+// repoPauseRefusal is RepoPauseRefusal against this proxy's current predicate.
+func (p *GitHubProxy) repoPauseRefusal(method, path string) (string, bool) {
+	p.pausedMu.RLock()
+	paused := p.repoPaused
+	p.pausedMu.RUnlock()
+	return RepoPauseRefusal(paused, method, path)
 }
 
 // ListenAddr returns the proxy listen address.
@@ -983,7 +1013,29 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		blocked := false
 		blockReason := ""
 
-		if isLinear && agentName == internalCallerName {
+		// Per-repo pause (#6203) is checked BEFORE the mode chain, and outside
+		// it, for two reasons. It is a run-state, not an autonomy tier: it must
+		// refuse the write whatever mode the agent holds and whichever branch
+		// below would otherwise have allowed it. And it carries its own reason,
+		// so the agent is told the repo is deliberately quiet instead of
+		// reading a mode error and going hunting for a permissions bug that
+		// does not exist.
+		//
+		// The hive's own control-plane traffic (App-token mint, heartbeat) is
+		// exempt, exactly as it is from the ACMM rules below: pause governs
+		// AGENT activity, and stopping the hive from minting a token would take
+		// the whole spoke down to quiet one repo.
+		if agentName != internalCallerName {
+			if reason, paused := p.repoPauseRefusal(req.Method, req.URL.Path); paused {
+				blocked = true
+				blockReason = reason
+			}
+		}
+
+		if blocked {
+			// Already refused by the repo pause above — the mode chain cannot
+			// un-block it, so skip it entirely.
+		} else if isLinear && agentName == internalCallerName {
 			// The hive's OWN Linear traffic — the read path #4178 shipped
 			// (backlog enumeration in pkg/worksource/linear.go) and, later,
 			// the OAuth/webhook plumbing. ACMM governs AGENT autonomy, so the

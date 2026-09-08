@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub"
@@ -103,6 +104,29 @@ func (w *spokeWire) wireSpokeConfigAndSignals() {
 		"agents", len(w.cfg.Agents),
 		"hive_id", w.cfg.HiveID,
 	)
+	// Per-repo pause (#6203). Say it out loud at boot: a repo that is quiet for
+	// an unexplained reason is its own support burden, and the operator reading
+	// this log after a restart is exactly the person who needs to know the hive
+	// came back up still holding a pause.
+	if pausedRepos := w.cfg.PausedRepoNames(); len(pausedRepos) > 0 {
+		for _, repo := range pausedRepos {
+			rp, _ := w.cfg.RepoPauseFor(repo)
+			attrs := []any{"repo", config.QualifyRepo(w.cfg.Project.Org, repo)}
+			if rp.By != "" {
+				attrs = append(attrs, "paused_by", rp.By)
+			}
+			if rp.At != nil && !rp.At.IsZero() {
+				attrs = append(attrs, "paused_at", rp.At.UTC().Format(time.RFC3339))
+			}
+			if rp.Reason != "" {
+				attrs = append(attrs, "reason", rp.Reason)
+			}
+			w.logger.Info("repo paused — agents will not write to it or be handed work on it", attrs...)
+		}
+	}
+	for _, warning := range config.PausedRepoWarnings(w.cfg) {
+		w.logger.Warn("per-repo pause config", "issue", warning)
+	}
 	startupRepoTargetIssue := config.ValidateRepoTargets(w.cfg)
 	if startupRepoTargetIssue != nil {
 		w.logger.Warn("repo target misconfigured — owner action required",
