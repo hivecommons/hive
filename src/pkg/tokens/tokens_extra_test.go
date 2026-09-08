@@ -6,39 +6,6 @@ import (
 	"testing"
 )
 
-func TestConfiguredAgentNamesCustom(t *testing.T) {
-	defer SetAgentNames(nil) // restore after test
-
-	SetAgentNames([]string{"custom-agent", "helper"})
-	names := ConfiguredAgentNames()
-	if len(names) != 2 {
-		t.Errorf("expected 2 custom names, got %d", len(names))
-	}
-	if names[0] != "custom-agent" {
-		t.Errorf("first name = %q, want 'custom-agent'", names[0])
-	}
-}
-
-func TestConfiguredAgentNamesDefault(t *testing.T) {
-	defer SetAgentNames(nil)
-
-	SetAgentNames(nil)
-	names := ConfiguredAgentNames()
-	if len(names) == 0 {
-		t.Error("should return default agent names")
-	}
-}
-
-func TestConfiguredAgentNamesEmptySlice(t *testing.T) {
-	defer SetAgentNames(nil)
-
-	SetAgentNames([]string{})
-	names := ConfiguredAgentNames()
-	if len(names) == 0 {
-		t.Error("should return default names when empty slice")
-	}
-}
-
 func TestSetDetectKeywords(t *testing.T) {
 	defer SetDetectKeywords(nil)
 
@@ -48,9 +15,10 @@ func TestSetDetectKeywords(t *testing.T) {
 	}
 	SetDetectKeywords(kw)
 
-	// Verify it doesn't panic and keywords are stored
-	names := ConfiguredAgentNames()
-	_ = names
+	// Verify keyword-driven detection uses the configured map.
+	if got := DefaultAgentDetector("please triage this"); got != "scanner" {
+		t.Errorf("DefaultAgentDetector = %q, want scanner", got)
+	}
 }
 
 func TestSaveSnapshotSuccess(t *testing.T) {
@@ -67,10 +35,6 @@ func TestSaveSnapshotSuccess(t *testing.T) {
 		TotalOutput: 500,
 	}
 	c.saveSnapshot(agg)
-
-	// File should exist
-	names := ConfiguredAgentNames()
-	_ = names
 }
 
 func TestSaveSnapshotNilAgg(t *testing.T) {

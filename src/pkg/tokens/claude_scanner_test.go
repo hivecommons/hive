@@ -229,7 +229,7 @@ func TestScanClaudeSessions_SubagentFiles(t *testing.T) {
 	content := `{"type":"assistant","timestamp":"2025-01-01T00:00:00Z","message":{"model":"haiku","usage":{"input_tokens":50,"output_tokens":20}}}` + "\n"
 	os.WriteFile(filepath.Join(subagentDir, "sub1.jsonl"), []byte(content), 0o600)
 
-	agg, err := ScanClaudeSessions(projectsDir, DefaultAgentDetector)
+	agg, err := ScanClaudeSessionsWithPathDetection(projectsDir)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestScanClaudeSessions_SubagentFiles(t *testing.T) {
 
 func TestScanClaudeSessions_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	agg, err := ScanClaudeSessions(dir, DefaultAgentDetector)
+	agg, err := ScanClaudeSessionsWithPathDetection(dir)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestScanClaudeSessions_EmptyDir(t *testing.T) {
 }
 
 func TestScanClaudeSessions_EmptyPath(t *testing.T) {
-	agg, err := ScanClaudeSessions("", DefaultAgentDetector)
+	agg, err := ScanClaudeSessionsWithPathDetection("")
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}

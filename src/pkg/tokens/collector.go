@@ -651,30 +651,12 @@ func (c *Collector) saveSnapshot(agg *AggregateSummary) {
 
 var detectMu sync.RWMutex
 var configuredDetectKeywords map[string][]string
-var configuredAgentNames []string
 
 // SetDetectKeywords sets the agent detection keyword map from config.
 func SetDetectKeywords(keywords map[string][]string) {
 	detectMu.Lock()
 	defer detectMu.Unlock()
 	configuredDetectKeywords = keywords
-}
-
-// SetAgentNames sets the list of known agent names from config.
-func SetAgentNames(names []string) {
-	detectMu.Lock()
-	defer detectMu.Unlock()
-	configuredAgentNames = names
-}
-
-// ConfiguredAgentNames returns the list of configured agent names.
-func ConfiguredAgentNames() []string {
-	detectMu.RLock()
-	defer detectMu.RUnlock()
-	if len(configuredAgentNames) > 0 {
-		return configuredAgentNames
-	}
-	return []string{"scanner", "ci-maintainer", "architect", "outreach", "supervisor", "sec-check", "quality", "analyst"}
 }
 
 var defaultDetectKeywords = map[string][]string{

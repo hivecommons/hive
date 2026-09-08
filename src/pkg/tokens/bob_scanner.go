@@ -91,13 +91,9 @@ const maxBobChatFileSize = 50 * 1024 * 1024 // 50 MB
 // maxBobSessionAge limits how far back to scan.
 const maxBobSessionAge = 30 * 24 * time.Hour
 
-// ScanBobSessions reads bobshell's chat recording files from the given
-// directory (typically /data/home/.bob or ~/.bob) and returns an
+// ScanBobSessionsWithLogger reads bobshell's chat recording files from the
+// given directory (typically /data/home/.bob or ~/.bob) and returns an
 // AggregateSummary. It walks tmp/*/chats/*.json looking for session recordings.
-func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
-	return scanBobSessions(bobHomeDir, nil)
-}
-
 func ScanBobSessionsWithLogger(bobHomeDir string, logger *slog.Logger) (*AggregateSummary, error) {
 	return scanBobSessions(bobHomeDir, logger)
 }

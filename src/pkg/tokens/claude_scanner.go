@@ -53,98 +53,6 @@ const (
 	maxScanBufSizeClaude = 10 * 1024 * 1024
 )
 
-// ScanClaudeSessions reads Claude Code's native session JSONL files from the
-// given projects directory and returns an AggregateSummary compatible with the
-// existing collector output. The projectsDir is typically ~/.claude/projects.
-//
-// It scans all *.jsonl files in all subdirectories (project hashes), plus any
-// subagent files in */subagents/*.jsonl.
-func ScanClaudeSessions(projectsDir string, agentDetector func(string) string) (*AggregateSummary, error) {
-	agg := &AggregateSummary{
-		ByAgent:       make(map[string]int64),
-		ByModel:       make(map[string]int64),
-		ByAgentDetail: make(map[string]*AgentModelBucket),
-		ByModelDetail: make(map[string]*AgentModelBucket),
-	}
-
-	if projectsDir == "" {
-		return agg, nil
-	}
-
-	// Find all JSONL files: <projectsDir>/*/*.jsonl and <projectsDir>/*/subagents/*.jsonl
-	patterns := []string{
-		filepath.Join(projectsDir, "*", "*.jsonl"),
-		filepath.Join(projectsDir, "*", "subagents", "*.jsonl"),
-	}
-
-	var files []string
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			continue
-		}
-		files = append(files, matches...)
-	}
-
-	now := time.Now()
-	cutoff := now.Add(-maxSessionAgeDays * 24 * time.Hour)
-
-	for _, file := range files {
-		// Skip old files based on modification time
-		info, err := os.Stat(file)
-		if err != nil || info.ModTime().Before(cutoff) {
-			continue
-		}
-
-		summary, err := parseClaudeSessionFile(file, agentDetector)
-		if err != nil || summary == nil {
-			continue
-		}
-		if summary.TotalTokens == 0 {
-			continue
-		}
-
-		agg.Sessions = append(agg.Sessions, *summary)
-		agg.TotalTokens += summary.TotalTokens
-		agg.TotalInput += summary.InputTokens
-		agg.TotalOutput += summary.OutputTokens
-		agg.TotalCacheRead += summary.CacheRead
-		agg.TotalCacheCreate += summary.CacheCreate
-		agg.TotalMessages += summary.Messages
-		agg.ByAgent[summary.Agent] += summary.TotalTokens
-		agg.ByModel[summary.Model] += summary.TotalTokens
-
-		// Per-agent detail
-		ab, ok := agg.ByAgentDetail[summary.Agent]
-		if !ok {
-			ab = &AgentModelBucket{}
-			agg.ByAgentDetail[summary.Agent] = ab
-		}
-		ab.Input += summary.InputTokens
-		ab.Output += summary.OutputTokens
-		ab.CacheRead += summary.CacheRead
-		ab.CacheCreate += summary.CacheCreate
-		ab.Messages += summary.Messages
-		ab.Sessions++
-
-		// Per-model detail
-		mb, ok := agg.ByModelDetail[summary.Model]
-		if !ok {
-			mb = &AgentModelBucket{}
-			agg.ByModelDetail[summary.Model] = mb
-		}
-		mb.Input += summary.InputTokens
-		mb.Output += summary.OutputTokens
-		mb.CacheRead += summary.CacheRead
-		mb.CacheCreate += summary.CacheCreate
-		mb.Messages += summary.Messages
-		mb.Sessions++
-	}
-
-	agg.SessionCount = len(agg.Sessions)
-	return agg, nil
-}
-
 // parseClaudeSessionFile reads a single Claude Code session JSONL file and
 // extracts token usage from the nested message.usage structure.
 func parseClaudeSessionFile(path string, agentDetector func(string) string) (*SessionSummary, error) {
@@ -364,31 +272,6 @@ func MergeAggregates(dst, src *AggregateSummary) {
 	dst.SessionCount = len(dst.Sessions)
 }
 
-// EnhancedAgentDetector uses the HIVE_AGENT environment variable that the agent
-// manager sets in each tmux session. The tmux session name is "hive-<agent>",
-// and HIVE_AGENT is set to the agent name. The projectsDir path structure
-// encodes the working directory, which typically contains the agent name.
-func EnhancedAgentDetector(sessionPath string, fallbackDetector func(string) string) func(string) string {
-	return func(firstMsg string) string {
-		// Check if the session path contains an agent name hint
-		// Claude projects dir structure: ~/.claude/projects/<hash-of-working-dir>/
-		// The working dir for agents is typically /data/agents/<agent-name>/
-		lower := strings.ToLower(sessionPath)
-		agents := ConfiguredAgentNames()
-		for _, agent := range agents {
-			if strings.Contains(lower, agent) {
-				return agent
-			}
-		}
-
-		// Fall back to message-based detection
-		if fallbackDetector != nil {
-			return fallbackDetector(firstMsg)
-		}
-		return "unknown"
-	}
-}
-
 // AgentFromTmuxEnv attempts to detect the agent name by checking if the session
 // file's parent directory path contains a known agent work directory pattern.
 // Agent work dirs follow the pattern /data/agents/<name>/, and Claude creates
@@ -430,8 +313,11 @@ func HiveAgentDetector(filePath string) func(string) string {
 	}
 }
 
-// ScanClaudeSessionsWithPathDetection is like ScanClaudeSessions but uses
-// the file path to help determine which agent owns each session.
+// ScanClaudeSessionsWithPathDetection reads Claude Code's native session JSONL
+// files from the given projects directory (typically ~/.claude/projects),
+// using the file path to help determine which agent owns each session. It
+// scans all *.jsonl files in all subdirectories (project hashes), plus any
+// subagent files in */subagents/*.jsonl.
 func ScanClaudeSessionsWithPathDetection(projectsDir string) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),

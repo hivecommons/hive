@@ -30,7 +30,7 @@ func TestScanBobSessions_RealSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agg, err := ScanBobSessions(dir)
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestScanBobSessions_EstimationFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agg, err := ScanBobSessions(dir)
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestScanBobSessions_EstimationFallback(t *testing.T) {
 
 func TestScanBobSessions_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	agg, err := ScanBobSessions(dir)
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestScanBobSessions_EmptyDir(t *testing.T) {
 }
 
 func TestScanBobSessions_EmptyString(t *testing.T) {
-	agg, err := ScanBobSessions("")
+	agg, err := ScanBobSessionsWithLogger("", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestScanBobSessions_LegacyUsageFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agg, err := ScanBobSessions(dir)
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestScanBobSessions_PerMessageModel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agg, err := ScanBobSessions(dir)
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestScanBobSessions_AttributesTrustedFolderAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agg, err := ScanBobSessions(dir)
+	agg, err := ScanBobSessionsWithLogger(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

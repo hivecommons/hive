@@ -4227,14 +4227,11 @@ func parseLogLevel(s string) slog.Level {
 // that previously relied on hardcoded agent name maps (classifier, discord, token detector).
 func initAgentConfigDrivenSystems(cfg *config.Config) {
 	var lanes []classify.LaneConfig
-	var agentNames []string
 	detectKeywords := make(map[string][]string)
 	discordIdentities := make(map[string]discord.AgentIdentity)
 	discordAliases := make(map[string]string)
 
 	for name, agent := range cfg.Agents {
-		agentNames = append(agentNames, name)
-
 		if len(agent.LaneKeywords) > 0 {
 			lanes = append(lanes, classify.LaneConfig{
 				Name:     name,
@@ -4267,7 +4264,6 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	if len(detectKeywords) > 0 {
 		tokens.SetDetectKeywords(detectKeywords)
 	}
-	tokens.SetAgentNames(agentNames)
 	discord.SetAgentIdentities(discordIdentities)
 	if len(discordAliases) > 0 {
 		discord.SetAgentAliases(discordAliases)

@@ -196,60 +196,6 @@ func TestSaveSnapshot_BadDir(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// EnhancedAgentDetector
-// ---------------------------------------------------------------------------
-
-func TestEnhancedAgentDetector_PathMatch(t *testing.T) {
-	detect := EnhancedAgentDetector("/data/agents/scanner/project", nil)
-	result := detect("some random first message")
-	if result != "scanner" {
-		t.Errorf("expected scanner from path, got %q", result)
-	}
-}
-
-func TestEnhancedAgentDetector_PathMatchCaseInsensitive(t *testing.T) {
-	detect := EnhancedAgentDetector("/Data/Agents/Architect/project", nil)
-	result := detect("some message")
-	if result != "architect" {
-		t.Errorf("expected architect from path, got %q", result)
-	}
-}
-
-func TestEnhancedAgentDetector_FallbackDetector(t *testing.T) {
-	fallback := func(msg string) string {
-		if strings.Contains(msg, "security") {
-			return "sec-check"
-		}
-		return "unknown"
-	}
-
-	detect := EnhancedAgentDetector("/some/other/path", fallback)
-	result := detect("run security scan")
-	if result != "sec-check" {
-		t.Errorf("expected sec-check from fallback, got %q", result)
-	}
-}
-
-func TestEnhancedAgentDetector_NoMatch(t *testing.T) {
-	detect := EnhancedAgentDetector("/some/random/path", nil)
-	result := detect("random message")
-	if result != "unknown" {
-		t.Errorf("expected unknown, got %q", result)
-	}
-}
-
-func TestEnhancedAgentDetector_AllAgents(t *testing.T) {
-	agents := []string{"scanner", "ci-maintainer", "architect", "outreach", "supervisor", "sec-check", "quality", "analyst"}
-	for _, agent := range agents {
-		detect := EnhancedAgentDetector("/path/to/"+agent+"/dir", nil)
-		result := detect("anything")
-		if result != agent {
-			t.Errorf("agent %q: got %q", agent, result)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Collector.scan with claude sessions
 // ---------------------------------------------------------------------------
 
