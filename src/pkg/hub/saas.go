@@ -7003,12 +7003,25 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// The hub image is a SEPARATE build from the spoke image and can land in
 	// either order (or fail independently). Probe it on its own so the hub's
 	// upgrade target is never gated on the spoke build, and vice versa.
-	if candidateSHA != getLatestHubSHAForBranch(branch) &&
-		ghcrTagExists(client, ghcrRepoHub, candidateSHA, logger) {
-		latestSHAMu.Lock()
-		latestHubSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
-		latestSHAMu.Unlock()
-		logger.Info("SHA poll: hub image verified on GHCR", "branch", branch, "sha", candidateSHA)
+	if currentHub := getLatestHubSHAForBranch(branch); candidateSHA != currentHub {
+		if ghcrTagExists(client, ghcrRepoHub, candidateSHA, logger) {
+			latestSHAMu.Lock()
+			latestHubSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
+			latestSHAMu.Unlock()
+			logger.Info("SHA poll: hub image verified on GHCR", "branch", branch, "sha", candidateSHA)
+		} else if info, ok := newestPublishedHubAncestor(client, branch, candidateSHA, currentHub, logger); ok {
+			// The tip has no hub image (image-less release commit, or a build
+			// still in flight). Do not freeze on the last verified tip: target
+			// the newest OLDER commit whose hub image is published, so the hub
+			// keeps advancing through everything reachable. See
+			// hub_target_walkback.go.
+			latestSHAMu.Lock()
+			latestHubSHAByBranch[branch] = info
+			commitMsgBySHA[info.SHA] = info.Message
+			latestSHAMu.Unlock()
+			logger.Info("SHA poll: hub image verified on GHCR behind an image-less tip",
+				"branch", branch, "sha", info.SHA, "tip", candidateSHA)
+		}
 	}
 
 	if candidateSHA == getLatestSHAForBranch(branch) {
