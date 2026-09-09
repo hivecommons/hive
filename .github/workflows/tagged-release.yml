@@ -219,11 +219,15 @@ jobs:
         run: |
           set -euo pipefail
           sha="${{ steps.target.outputs.sha }}"
+          # A `push` run is the normal case; a `workflow_dispatch` run on v4
+          # is the post-release rebuild of a GITHUB_TOKEN merge commit (see
+          # "Rebuild images for the merged v4 tip") — both publish the
+          # <sha> / v4-latest / candidate tags, so both count as published.
           conclusion="$(gh api \
             "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
-            --jq '[.workflow_runs[] | select(.event == "push")] | last | .conclusion // ""')"
+            --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v4"))] | last | .conclusion // ""')"
           if [ "$conclusion" != "success" ]; then
-            echo "::warning::Backstop standing down: docker.yml has no successful completed push run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
+            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -888,6 +892,35 @@ jobs:
             sleep 5
           done
           echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # The merge above lands a new commit on v4 via the API with this job's
+      # GITHUB_TOKEN, and GitHub's recursive-workflow guard means that commit
+      # never fires docker.yml's `push` trigger (same reason the scratch push
+      # needed an explicit dispatch — #5072). The scratch-branch dispatch
+      # built the release commit but deliberately did not publish it
+      # (docker.yml's `release-gate/*` exception), so v4's new tip has NO
+      # image and no docker.yml run: the hub dashboard flags it as
+      # "build stale/unknown", the `candidate` / `v4-latest` moving tags stay
+      # pinned to the pre-release commit, and the hourly backstop stands down
+      # on it until an unrelated human push happens to rebuild the branch.
+      # Dispatch docker.yml against v4 so the tip is built and published like
+      # any other v4 push. docker.yml's gate treats a workflow_dispatch on v4
+      # as push=true, and this workflow's `workflow_run` filter already
+      # ignores workflow_dispatch-sourced docker.yml runs, so this cannot
+      # re-enter the release loop. Best-effort: the release itself is already
+      # tagged and published; a failed dispatch only leaves the tip unbuilt,
+      # which is exactly the pre-existing state, so warn rather than fail.
+      - name: Rebuild images for the merged v4 tip
+        if: steps.push_v4.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh workflow run docker.yml --ref v4; then
+            echo "Dispatched docker.yml on v4 so the release merge commit gets a published image (GITHUB_TOKEN merges do not trigger it — #5072)."
+          else
+            echo "::warning::Failed to dispatch docker.yml on v4 after merging v${VERSION}. The release is published, but v4's tip has no image until the next push to v4 rebuilds it — the hub will show it as 'build stale/unknown' until then. Re-run manually: gh workflow run docker.yml --ref v4"
+          fi
 
       # --notes-file and --generate-notes have fragile combined behavior
       # across gh versions, so notes are built as one file. The canonical
