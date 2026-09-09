@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -63,5 +64,34 @@ func TestLegacyCookieDomainStillNamesTheOldDomain(t *testing.T) {
 	}
 	if !strings.Contains(legacyImpersonateCookieDomain, "kubestellar.io") {
 		t.Errorf("legacyImpersonateCookieDomain = %q; same reason", legacyImpersonateCookieDomain)
+	}
+}
+
+// The public landing page has the same fallback, and it is static — served raw
+// with no server templating — so it cannot be handed hub_spoke_domain the way
+// the dashboard is. It derives the parent domain from location.hostname
+// instead: the page is served BY the hub, so the hub's own host is the domain
+// hosted spokes hang off, and unlike a literal it follows a domain move.
+func TestLandingPageBuildsTenantURLsFromItsOwnHost(t *testing.T) {
+	b, err := fs.ReadFile(staticFS, "static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	page := string(b)
+	if strings.Contains(page, "'.hive.kubestellar.io'") ||
+		strings.Contains(page, "+ '.hive.kubestellar.io'") {
+		t.Error("landing page still builds tenant URLs from a hardcoded hostname; " +
+			"derive the parent domain from location.hostname so the links survive a domain move")
+	}
+	if !strings.Contains(page, "location.hostname") {
+		t.Error("landing page does not derive the tenant parent domain from location.hostname")
+	}
+	// An unknown or non-public host must suppress the link rather than emit
+	// "<id>.localhost" or a bare relative "/contribute" on the hub itself.
+	if !strings.Contains(page, "if (!cBase) return '';") {
+		t.Error("contributeButton does not guard on an underivable tenant base")
+	}
+	if !strings.Contains(page, "if (!cBase2) {") {
+		t.Error("the access-status renderer does not guard on an underivable tenant base")
 	}
 }

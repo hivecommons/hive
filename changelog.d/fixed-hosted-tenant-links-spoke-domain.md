@@ -9,3 +9,10 @@
   takes the parent domain from the server (`hub_spoke_domain`, derived from
   `HIVE_HUB_SPOKE_DOMAIN`) and suppresses the link entirely when the domain is
   not yet known, rather than guessing a host (#5925).
+
+- Fixed the same hardcoded domain in the public landing page's "Contribute Now"
+  and "Open Contribute Page" links. That page is static and cannot be handed the
+  configured domain, so it now derives it from the host it is served on — which
+  is the hub's own host, and therefore the domain hosted spokes hang off — and
+  omits the link when it cannot be derived rather than emitting a guessed one
+  (#5925).

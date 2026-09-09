@@ -1304,6 +1304,14 @@
     // either a hive object or a hive id (looked up in _allMainHives). Previously
     // these links hardcoded <id>.hive.kubestellar.io, which was a dead host for
     // every non-hub-reachable-cluster spoke.
+    //
+    // The fallback derives the parent domain from location.hostname rather than
+    // naming it. This page is served BY the hub, so its own host IS the domain
+    // hosted spokes hang off, and a literal here does not survive a domain move:
+    // after the fleet moved to hive.hivecommons.dev the hardcoded value kept
+    // pointing at a host outside the fleet wildcard certificate, so these links
+    // did not redirect — the browser refused the TLS handshake. Deriving it means
+    // the links follow the hub wherever it is served from. See #5925.
     function contributeBase(hiveOrId) {
       var h = (typeof hiveOrId === 'string')
         ? (_allMainHives || []).find(function(x) { return x.id === hiveOrId; })
@@ -1312,7 +1320,9 @@
         return h.dashboardUrl.replace(/\/+$/, '');
       }
       var id = h ? h.id : hiveOrId;
-      return 'https://' + esc(id) + '.hive.kubestellar.io';
+      var host = (location && location.hostname) || '';
+      if (!host || host === 'localhost' || host === '127.0.0.1') return '';
+      return 'https://' + esc(id) + '.' + esc(host);
     }
 
     function contributeButton(h) {
@@ -1321,7 +1331,9 @@
       var access = _userAccessStatus[hid];
       if (_isLoggedIn && access) {
         if (access.status === 'accepted') {
-          var cUrl = contributeBase(h) + '/contribute';
+          var cBase = contributeBase(h);
+          if (!cBase) return '';
+          var cUrl = cBase + '/contribute';
           return '<a href="' + cUrl + '" target="_blank" style="padding:2px 8px;background:rgba(116,223,154,0.15);color:#74df9a;border:1px solid rgba(116,223,154,0.3);border-radius:4px;font-size:0.65rem;text-decoration:none">Contribute Now</a>';
         }
         if (access.status === 'pending') {
@@ -1660,8 +1672,11 @@
 
       var access = _userAccessStatus[id];
       if (access && access.status === 'accepted') {
-        var cUrl = contributeBase(id) + '/contribute';
-        area.innerHTML = '<p style="font-size:0.75rem;color:var(--green);margin-bottom:8px">You have <strong>' + esc(access.role) + '</strong> access to this hive.</p>' +
+        var cBase2 = contributeBase(id);
+        var roleLine = '<p style="font-size:0.75rem;color:var(--green);margin-bottom:8px">You have <strong>' + esc(access.role) + '</strong> access to this hive.</p>';
+        if (!cBase2) { area.innerHTML = roleLine; return; }
+        var cUrl = cBase2 + '/contribute';
+        area.innerHTML = roleLine +
           '<a href="' + cUrl + '" target="_blank" style="padding:8px 16px;background:var(--green);color:#fff;border-radius:6px;font-size:0.85rem;font-weight:600;text-decoration:none;display:inline-block">Open Contribute Page</a>';
         return;
       }
