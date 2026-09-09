@@ -93,6 +93,8 @@ agents:
                                  #   one from backend + model + mode when omitted)
 ```
 
+The dashboard API can update this field through [`POST /api/effort/{agent}/{effort}`](api-reference.md#agents-and-controls).
+
 > The dashboard also offers **gemini** as a live method (with live model discovery); as a persisted `backend:` value in `hive.yaml`, stick to the validated list above.
 
 ### Behavior — what it may do, and when
