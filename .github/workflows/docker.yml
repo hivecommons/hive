@@ -151,6 +151,31 @@ jobs:
           echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
           echo "Push to GHCR: $push (branch=$REF_NAME sha=$TARGET_SHA event=$EVENT)"
 
+      # #6419: well-formed 40-hex is NOT "reachable from this branch". Without
+      # this, any principal with `actions: write` could dispatch
+      # `release_sha=<any commit object in the repo>` — including an
+      # unreviewed PR head — and every job below would build and publish it
+      # under the dispatched branch's moving tags (`<branch>-latest`,
+      # `candidate`, ...), laundered through the normal pipeline with
+      # legitimate provenance labels. tagged-release.yml, the only intended
+      # caller, already runs this exact `git merge-base --is-ancestor` check
+      # before it ever tags a commit (see its "push_v4" step) — the gate job
+      # re-verified nothing on the receiving end. Only fetch full history when
+      # a release_sha was actually supplied; the ordinary push/PR path (99% of
+      # runs) pays nothing extra.
+      - name: Checkout dispatched ref for release_sha ancestry check (#6419)
+        if: inputs.release_sha != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Verify release_sha is an ancestor of the dispatched branch (#6419)
+        if: inputs.release_sha != ''
+        env:
+          TARGET_SHA: ${{ inputs.release_sha }}
+        run: bash src/scripts/check-release-sha-ancestry.sh "$TARGET_SHA" HEAD .
+
       # DUAL-PUBLISH (kubestellar -> hivecommons org transfer). During the
       # transfer window every image publish is mirrored into the OTHER org's
       # GHCR namespace, so a hive pinned to either registry path keeps

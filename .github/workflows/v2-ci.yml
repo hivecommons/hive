@@ -168,6 +168,15 @@ jobs:
       - name: Release push retry/deferral state machine (#5142)
         run: bash scripts/test-release-push-retry.sh
 
+      # #6419: docker.yml's `gate` job calls this helper to refuse a dispatched
+      # `release_sha` that is well-formed hex but not actually reachable from
+      # the branch being built — otherwise any `actions: write` principal could
+      # publish an unreviewed commit under a release line's moving tags. Drive
+      # the helper against real fixture git histories rather than trusting the
+      # workflow's inline call to be correct.
+      - name: release_sha ancestry guard (#6419)
+        run: bash scripts/test-check-release-sha-ancestry.sh
+
       # #5675: changelog entries land as changelog.d/ fragments and
       # tagged-release.yml folds them into CHANGELOG.md's Unreleased section
       # via scripts/compile-changelog.sh before deriving the release. A
