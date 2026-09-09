@@ -311,7 +311,9 @@ func TestManifestShape(t *testing.T) {
 		`"ttlSecondsAfterFinished":3600`,
 		`"restartPolicy":"Never"`,
 		`"nodeSelector":{"accelerator":"spyre"}`,
-		`"tolerations":[{"key":"spyre","operator":"Exists","effect":"NoSchedule"}]`,
+		// The fake decodes the manifest into a map before we re-marshal it
+		// here, so keys come back alphabetical regardless of struct order.
+		`"tolerations":[{"effect":"NoSchedule","key":"spyre","operator":"Exists"}]`,
 		`"limits":{"ibm.com/spyre_pf":"2"}`,
 		`"serviceAccountName":"hive"`,
 		`"envFrom":[{"secretRef":{"name":"artifact-registry"}}]`,
