@@ -97,6 +97,18 @@ name.
 
 Do not hand-swap the `dco-signoff` label as the normal response. Instead:
 
+**Merge-method policy (decided by #6312):** `hive` PRs are merged by
+**rebase**, not squash. Squash is not used on `v4`/`v5` because Tide rebuilds
+the merge commit from PR metadata rather than the branch's own commits,
+which is what drops or mismatches the `Signed-off-by:` trailer above. Once
+[hivecommons/infra#3](https://github.com/hivecommons/infra/pull/3) lands,
+Tide will merge `hivecommons/hive` PRs with `merge_method: rebase`
+automatically; until then, maintainers merge by hand with
+`gh pr merge --admin --rebase`. Because rebase lands every commit on the PR
+branch verbatim (none are squashed into one), **every commit on a PR branch
+must carry its own valid `Signed-off-by:` trailer** — not just the PR's final
+or merge commit.
+
 1. Identify the offending v4 squash commits with the post-merge checker:
 
    ```sh
@@ -104,13 +116,22 @@ Do not hand-swap the `dco-signoff` label as the normal response. Instead:
    ```
 
    Increase the window when the sync range is larger than the default.
-2. Fix the source of the bad protected-branch commits. The preferred ask to the
-   Prow/Tide config owner is tracked in
-   [#6312](https://github.com/hivecommons/hive/issues/6312): either configure
-   Tide's squash commit template for `v4`/`v5` to emit a `Signed-off-by:` trailer
-   whose email matches the squash commit author, or use a merge mode such as
-   `--no-ff`/rebase for signed branches so reviewed signed commits are preserved.
-   That Prow/Tide configuration is outside this repository.
+2. Fix the source of the bad protected-branch commits. [#6312](https://github.com/hivecommons/hive/issues/6312)
+   determined that a squash commit template cannot reliably fix this: Tide only
+   has the PR title/body/author *login* available at merge time, not the
+   author's DCO-signing email, so it cannot reconstruct a matching trailer.
+   The fix is instead to merge `hivecommons/hive` by **rebase**, not squash:
+   rebase replays each already-signed branch commit onto the base as-is, so
+   every commit keeps its own valid `Signed-off-by:` trailer. That change is
+   requested in [hivecommons/infra#3](https://github.com/hivecommons/infra/pull/3),
+   which adds a `hivecommons/hive: rebase` override to Tide's
+   `merge_method` config (the org-wide default for other hivecommons repos
+   stays `squash`). Rebase requires PRs to be free of merge conflicts and
+   `needs-rebase`-clean, which Tide's existing query already enforces via
+   `missingLabels`. Until that Prow config change is applied and taken over by
+   Tide, maintainers merge `hive` PRs by hand with
+   `gh pr merge --admin --rebase` so the DCO trailer on every commit survives.
+   That Prow/Tide configuration itself is outside this repository.
 3. For the sync PR itself, use a real merge commit that preserves the original
    v4 SHAs. Never rewrite another contributor's commits and never add a
    sign-off on someone else's behalf; see
