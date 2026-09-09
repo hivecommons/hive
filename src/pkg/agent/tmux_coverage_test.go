@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,9 +123,20 @@ func inferenceReadyStub(t *testing.T) {
 // newRawTmuxSession creates a bare tmux session on the package test tmux server
 // and registers cleanup. Used to drive pane-inspection helpers without spawning
 // a real CLI.
+//
+// The session is created at the production pane geometry (500x50, see
+// defaultTmuxPaneWidth/#3878) rather than tmux's detached-session default of
+// 80x24. Readiness detection reads the VISIBLE pane without -J line rejoining
+// (captureVisiblePaneForAgent), so on a host whose shell prompt is long — a
+// live hive pod's prompt is ~78 characters — a paneInject'd marker wraps at
+// column 80 and the substring match never fires, failing every readiness-gated
+// test for reasons unrelated to the code under test. Production sessions are
+// always 500 columns wide, so the wide pane is also the more faithful fixture.
 func newRawTmuxSession(t *testing.T, session string) {
 	t.Helper()
-	if err := testTmuxCommand("new-session", "-d", "-s", session).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d",
+		"-x", strconv.Itoa(defaultTmuxPaneWidth), "-y", strconv.Itoa(defaultTmuxPaneHeight),
+		"-s", session).Run(); err != nil {
 		// Every caller gates on tmuxAvailable() first, so tmux IS on PATH by
 		// the time we get here and TMUX_TMPDIR points at a directory TestMain
 		// created. A failure now is a broken test — a stale socket, a server
