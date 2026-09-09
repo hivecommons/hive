@@ -61,7 +61,7 @@ hive owns, rather than `$HOME`. It is a **write root only** — deliberately not
 under, an agent has no reason to `Edit` a build cache, and adding it as a working
 directory would put megabytes of object files in the agent's view of the tree.
 
-The backends with no mechanism (goose, agy, bob, pi, aider, kilo) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all five.
+The backends with no mechanism (goose, agy, bob, pi, aider, kilo) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all six.
 
 For `agy` specifically, this local-mode refusal used to be a dead end (#5048): `src/Dockerfile.contributor` never installed the `agy` binary, so container mode — the only real boundary any of these five backends can get on this path — was unavailable too, leaving no working path at all. That is now fixed: the image installs `agy` from Google's published, checksummed release tarball, so `just contribute-hive agy` (container mode, the default) actually works. Nothing above about agy's *local*-mode posture changed — it still has no sandbox and still refuses without the escape hatch, exactly like goose/bob/pi/aider.
 
