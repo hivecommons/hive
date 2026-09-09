@@ -132,6 +132,19 @@ type Client struct {
 	// sweep goroutine reads it. Set by SetRequiredChecks.
 	requiredChecksMu sync.RWMutex
 	requiredChecks   map[string]bool
+	// mergePolicy holds the per-repo merge-request policy sets (#6281):
+	// allowUnprotectedBase permits merging into a base branch with no GitHub
+	// branch protection (default refuse — on an unprotected base the hive's
+	// own CI-evidence gate is the ONLY gate), and noCIOK downgrades the
+	// "unverified" CI verdict (zero statuses/check runs/workflow runs) to
+	// green for repos with genuinely no CI. Keys are lowercase "owner/repo"
+	// and/or bare repo names (config.AutoMergeConfig.AllowUnprotectedBaseSet
+	// / NoCIOKSet). Guarded because config reload re-installs them while the
+	// merge-request watcher goroutine reads them. Set by
+	// SetMergeRequestPolicy.
+	mergePolicyMu        sync.RWMutex
+	allowUnprotectedBase map[string]bool
+	noCIOKRepos          map[string]bool
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning

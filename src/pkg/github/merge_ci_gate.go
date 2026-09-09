@@ -34,8 +34,14 @@ const (
 	mergeCIRed
 	// mergeCIUnverified: zero statuses, zero check runs, zero workflow runs
 	// on the head SHA. GitHub has no verdict at all, so neither does the
-	// hive. Refuse.
+	// hive. Refuse (unless the repo is opted in via auto_merge.no_ci_ok).
 	mergeCIUnverified
+	// mergeCIUnprotectedBase: the PR's base branch has no GitHub branch
+	// protection and the repo is not allowlisted in
+	// auto_merge.allow_unprotected_base (#6281). On such a branch the hive's
+	// own CI-evidence gate is the only gate — nothing external refuses a
+	// merge if the hive's evidence gathering has a bug — so refuse.
+	mergeCIUnprotectedBase
 )
 
 func (v mergeCIVerdict) String() string {
@@ -48,6 +54,8 @@ func (v mergeCIVerdict) String() string {
 		return "red"
 	case mergeCIUnverified:
 		return "unverified"
+	case mergeCIUnprotectedBase:
+		return "unprotected-base"
 	}
 	return fmt.Sprintf("mergeCIVerdict(%d)", int(v))
 }
@@ -73,6 +81,52 @@ var workflowRunFailureConclusions = map[string]bool{
 	"timed_out":       true,
 	"startup_failure": true,
 	"action_required": true,
+}
+
+// SetMergeRequestPolicy installs the per-repo merge-request policy sets
+// (#6281): allowUnprotectedBase (repos that may merge into a base branch with
+// no GitHub branch protection) and noCIOK (repos whose "unverified" CI
+// verdict — zero statuses, check runs, and workflow runs — is downgraded to
+// green). Keys are lowercase "owner/repo" and/or bare repo names, as produced
+// by config.AutoMergeConfig.AllowUnprotectedBaseSet / NoCIOKSet. nil/empty
+// clears a set (refuse everywhere — fail closed). Safe to call repeatedly on
+// config reload; the watcher goroutine reads through mergePolicyMu.
+func (c *Client) SetMergeRequestPolicy(allowUnprotectedBase, noCIOK map[string]bool) {
+	if c == nil {
+		return
+	}
+	c.mergePolicyMu.Lock()
+	defer c.mergePolicyMu.Unlock()
+	c.allowUnprotectedBase = allowUnprotectedBase
+	c.noCIOKRepos = noCIOK
+}
+
+// repoInMergePolicySet reports whether owner/name is a member of one of the
+// installed policy sets, matching the full "owner/name" form or the bare repo
+// name (both lowercased — the sets are normalized on install).
+func repoInMergePolicySet(set map[string]bool, owner, name string) bool {
+	if len(set) == 0 {
+		return false
+	}
+	return set[strings.ToLower(owner+"/"+name)] || set[strings.ToLower(name)]
+}
+
+func (c *Client) repoAllowsUnprotectedBase(owner, name string) bool {
+	if c == nil {
+		return false
+	}
+	c.mergePolicyMu.RLock()
+	defer c.mergePolicyMu.RUnlock()
+	return repoInMergePolicySet(c.allowUnprotectedBase, owner, name)
+}
+
+func (c *Client) repoNoCIOK(owner, name string) bool {
+	if c == nil {
+		return false
+	}
+	c.mergePolicyMu.RLock()
+	defer c.mergePolicyMu.RUnlock()
+	return repoInMergePolicySet(c.noCIOKRepos, owner, name)
 }
 
 // verifyMergeRequestCI computes the pre-merge CI verdict for a merge request.
@@ -110,6 +164,25 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: head moved: request pinned %s but PR head is %s", shortSHA(sha), shortSHA(headSHA)), nil
 	}
 
+	// Unprotected-base gate (#6281): on a base branch with no branch
+	// protection, GitHub refuses nothing — the hive's own CI-evidence gate
+	// below is the only gate. Require an explicit per-repo allowlisting
+	// (auto_merge.allow_unprotected_base) before merging into such a branch,
+	// so that a bug in the hive's evidence gathering never has zero external
+	// backstops silently. Branch.protected is readable with plain contents
+	// scope (unlike GetRequiredStatusChecks, which needs administration:read),
+	// so this check works with the Hive App token. An API failure here means
+	// the protection state is UNKNOWN — fail closed as a failed attempt.
+	if baseBranch != "" {
+		br, _, berr := c.client.Repositories.GetBranch(ctx, owner, name, baseBranch, 0)
+		if berr != nil {
+			return mergeCIUnverified, "merge gate: fetching base branch protection state", fmt.Errorf("merge gate: fetching base branch %q of %s/%s: %w", baseBranch, owner, name, berr)
+		}
+		if !br.GetProtected() && !c.repoAllowsUnprotectedBase(owner, name) {
+			return mergeCIUnprotectedBase, fmt.Sprintf("merge gate: base branch %q of %s/%s has no branch protection and the repo is not allowlisted in auto_merge.allow_unprotected_base - refusing to merge with no gate behind the hive's own", baseBranch, owner, name), nil
+		}
+	}
+
 	cfgSet, cfgKnown := c.configRequiredChecks()
 	required, requiredKnown := RequiredStatusCheckContexts(ctx, c.client, owner, name, baseBranch, cfgSet, cfgKnown)
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, required, requiredKnown)
@@ -140,6 +213,14 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	case len(opaquePending) > 0:
 		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaquePending, ", ")), nil
 	case st.Evidence == 0:
+		// Per-repo no-CI opt-in (#6281): a repo with genuinely no CI (docs-
+		// only, config-only) can never produce evidence, so "unverified"
+		// would refuse it forever. Only the explicit auto_merge.no_ci_ok
+		// opt-in downgrades this — and ONLY this — verdict; red and pending
+		// are never downgraded, and the default stays refuse.
+		if c.repoNoCIOK(owner, name) {
+			return mergeCIGreen, fmt.Sprintf("ci gate: no CI evidence on %s, permitted by explicit auto_merge.no_ci_ok opt-in for %s/%s", shortSHA(sha), owner, name), nil
+		}
 		return mergeCIUnverified, fmt.Sprintf("ci gate: no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
 	}
 	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil

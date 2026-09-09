@@ -1,0 +1,1 @@
+- The merge-request watcher now refuses to merge into a base branch that has no GitHub branch protection unless the repo is explicitly allowlisted in `auto_merge.allow_unprotected_base`, and repos with genuinely no CI can be opted in per-repo with `auto_merge.no_ci_ok` to downgrade only the "unverified" CI verdict — the default for both stays refuse (#6281)

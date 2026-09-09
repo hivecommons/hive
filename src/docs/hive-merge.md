@@ -72,7 +72,20 @@ computes its own verdict:
   refusal.
 - **unverified** - zero statuses, zero check runs, zero workflow runs. GitHub
   has no verdict, so neither does the hive. Refused; quarantined at the retry
-  limit with the reason in the result file.
+  limit with the reason in the result file. Repos with genuinely no CI (docs-
+  only, config-only) can be opted out per-repo with `auto_merge.no_ci_ok`
+  (#6281): listing the repo (`owner/repo` or bare name) downgrades this — and
+  ONLY this — verdict to green. Red and pending are never downgraded, and the
+  default stays refuse.
+- **unprotected-base** (#6281) - the PR's base branch has no GitHub branch
+  protection. On such a branch the hive's own CI-evidence gate is the ONLY
+  gate — nothing external refuses the merge if the hive's evidence gathering
+  has a bug — so the watcher refuses unless the repo is explicitly
+  allowlisted in `auto_merge.allow_unprotected_base` (`owner/repo` or bare
+  name). The refusal reason lands in the result file and the log so an
+  operator can see why the request was quarantined. Note a no-CI repo whose
+  base is also unprotected needs BOTH entries — the two opt-outs are
+  deliberately independent.
 
 An API error while gathering that evidence is a failed attempt, never a pass.
 

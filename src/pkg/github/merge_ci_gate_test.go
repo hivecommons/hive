@@ -24,6 +24,10 @@ type ciFixture struct {
 	statuses    []ciStatus
 	checks      []ciCheck
 	runs        []ciRun
+	// baseUnprotected makes GET /branches/{branch} report protected=false,
+	// exercising the #6281 unprotected-base gate. Zero value (false) models
+	// the common protected base so pre-#6281 fixtures are unaffected.
+	baseUnprotected bool
 	// mergeStatus, when non-zero, is the HTTP status PUT /merge answers with
 	// (to exercise the GitHub-side refusal paths); zero merges successfully.
 	mergeStatus int
@@ -66,6 +70,8 @@ func (f *ciFixture) serveCI(w http.ResponseWriter, r *http.Request) bool {
 			head = h
 		}
 		enc(map[string]any{"number": n, "state": "open", "head": map[string]any{"sha": head}, "base": map[string]any{"ref": "main"}})
+	case strings.Contains(p, "/branches/") && !strings.Contains(p, "/protection"): // /repos/{o}/{r}/branches/{branch}
+		enc(map[string]any{"name": p[strings.LastIndex(p, "/")+1:], "protected": !f.baseUnprotected})
 	case strings.HasSuffix(p, "/status"):
 		statuses := []map[string]string{}
 		for _, s := range f.statuses {
@@ -453,9 +459,125 @@ func TestMergeCIGate_EvidenceAPIErrorRefuses(t *testing.T) {
 }
 
 func TestMergeCIVerdictString(t *testing.T) {
-	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
+	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCIUnprotectedBase: "unprotected-base", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
 		if got := v.String(); got != want {
 			t.Errorf("%d.String() = %q, want %q", int(v), got, want)
 		}
+	}
+}
+
+// #6281 gate 1: an unprotected base branch refuses the merge outright unless
+// the repo is explicitly allowlisted — even when CI is fully green. The
+// refusal names the missing allowlist entry so an operator can see why the
+// request was quarantined, and it must not re-engage the fix loop (there is
+// no red check to fix).
+func TestMergeCIGate_UnprotectedBaseRefuses(t *testing.T) {
+	f := greenFixture()
+	f.baseUnprotected = true
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if got := merges.Load(); got != 0 {
+		t.Fatalf("INVARIANT VIOLATED: merged into an unprotected base branch (%d PUT /merge calls)", got)
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, "allow_unprotected_base") {
+		t.Fatalf("expected a refusal naming allow_unprotected_base, got %+v", resp)
+	}
+	if hooks := driveToExhaustion(t, c, reqPath); hooks != 0 {
+		t.Fatalf("unprotected-base refusal must not re-engage the fix loop, got %d calls", hooks)
+	}
+	if merges.Load() != 0 {
+		t.Fatalf("INVARIANT VIOLATED on retry: %d merges", merges.Load())
+	}
+	mustExist(t, reqPath+".exhausted", "unprotected-base request after retry budget")
+	mustNotExist(t, reqPath, "live request after exhaustion")
+}
+
+// #6281 gate 1 opt-out: the explicit per-repo allowlist restores the pre-gate
+// behavior — an unprotected base with green CI merges. Both the "owner/repo"
+// and bare-name config forms must match.
+func TestMergeCIGate_UnprotectedBaseAllowlisted(t *testing.T) {
+	for name, allow := range map[string]map[string]bool{"owner/repo form": {"o/r": true}, "bare name form": {"r": true}} {
+		t.Run(name, func(t *testing.T) {
+			f := greenFixture()
+			f.baseUnprotected = true
+			var merges atomic.Int32
+			srv := ciGateServer(t, f, &merges)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+			c.SetMergeRequestPolicy(allow, nil)
+
+			reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+			if got := merges.Load(); got != 1 {
+				t.Fatalf("allowlisted repo with green CI should merge exactly once, got %d", got)
+			}
+			mustNotExist(t, reqPath, "request consumed after merge")
+		})
+	}
+}
+
+// #6281 gate 2: the per-repo no_ci_ok opt-in downgrades ONLY the unverified
+// verdict. A repo with zero CI evidence merges when opted in; the same
+// opt-in never rescues a RED verdict.
+func TestMergeCIGate_NoCIOKOptIn(t *testing.T) {
+	f := &ciFixture{defaultHead: "abc"} // zero statuses/checks/runs, base protected
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	c.SetMergeRequestPolicy(nil, map[string]bool{"o/r": true})
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+	if got := merges.Load(); got != 1 {
+		t.Fatalf("no_ci_ok repo with zero CI evidence should merge exactly once, got %d", got)
+	}
+	mustNotExist(t, reqPath, "request consumed after merge")
+
+	// RED stays red: a failed check on an opted-in repo still refuses.
+	f2 := &ciFixture{defaultHead: "abc", checks: []ciCheck{{"build", "completed", "failure"}}}
+	var merges2 atomic.Int32
+	srv2 := ciGateServer(t, f2, &merges2)
+	defer srv2.Close()
+	c2 := testMergeClient(t, srv2.URL)
+	c2.SetMergeRequestPolicy(nil, map[string]bool{"o/r": true})
+
+	reqPath2, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 43, ExpectSHA: "abc", Agent: "scanner"})
+	c2.handleOneMergeRequest(context.Background(), reqPath2, fixedNow)
+	if merges2.Load() != 0 {
+		t.Fatalf("INVARIANT VIOLATED: no_ci_ok downgraded a RED verdict to green")
+	}
+	resp := readMergeResult(t, reqPath2)
+	if resp.OK || !strings.Contains(resp.Error, "has not succeeded") {
+		t.Fatalf("expected a red refusal despite no_ci_ok, got %+v", resp)
+	}
+}
+
+// #6281: a nil/cleared policy fails closed — no allowlist, no opt-in.
+func TestMergeCIGate_PolicyFailsClosed(t *testing.T) {
+	c := testMergeClient(t, "http://127.0.0.1:0")
+	if c.repoAllowsUnprotectedBase("o", "r") || c.repoNoCIOK("o", "r") {
+		t.Fatalf("uninstalled merge policy must deny everything")
+	}
+	c.SetMergeRequestPolicy(map[string]bool{"o/r": true}, map[string]bool{"r": true})
+	if !c.repoAllowsUnprotectedBase("o", "r") || !c.repoNoCIOK("o", "r") {
+		t.Fatalf("installed merge policy should match o/r")
+	}
+	c.SetMergeRequestPolicy(nil, nil)
+	if c.repoAllowsUnprotectedBase("o", "r") || c.repoNoCIOK("o", "r") {
+		t.Fatalf("cleared merge policy must deny everything again")
+	}
+	var nilClient *Client
+	nilClient.SetMergeRequestPolicy(map[string]bool{"o/r": true}, nil) // must not panic
+	if nilClient.repoAllowsUnprotectedBase("o", "r") || nilClient.repoNoCIOK("o", "r") {
+		t.Fatalf("nil client must deny everything")
 	}
 }

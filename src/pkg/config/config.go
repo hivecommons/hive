@@ -6115,6 +6115,61 @@ type AutoMergeConfig struct {
 	// per-repo (e.g. console's main branch requires only "build-gate"), so
 	// the operator must declare it per-hive in `auto_merge.required_checks`.
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
+	// AllowUnprotectedBase is the per-repo allowlist for merging into a base
+	// branch that has NO GitHub branch protection (#6281). The merge-request
+	// watcher's CI-evidence gate (#6173/#6279) is hive's own gate; on an
+	// unprotected base branch it is also the ONLY gate — if hive's evidence
+	// gathering has a bug, nothing external refuses the merge. The watcher
+	// therefore refuses to merge into an unprotected base branch unless the
+	// repo is explicitly listed here ("owner/repo" or bare repo name). The
+	// refusal reason is recorded in the request's result file and the log so
+	// an operator can see why a request was quarantined. Default: empty —
+	// refuse everywhere (fail closed).
+	AllowUnprotectedBase []string `yaml:"allow_unprotected_base,omitempty" json:"allow_unprotected_base,omitempty"`
+	// NoCIOK is the per-repo opt-in that downgrades the merge-request
+	// watcher's "unverified" CI verdict (zero statuses, zero check runs, zero
+	// workflow runs on the head SHA) to green for that repo only (#6281).
+	// Some adopted repos have no CI at all by design (docs-only repos, config
+	// repos); without this opt-in such repos can never merge via the
+	// merge-request path, because #6279 correctly treats absent CI as
+	// unverified. Entries are "owner/repo" or bare repo names. The opt-in is
+	// deliberately per-repo and explicit, never global, and only affects the
+	// UNVERIFIED verdict — red and pending verdicts are untouched. Default:
+	// empty — absent CI refuses everywhere (fail closed).
+	NoCIOK []string `yaml:"no_ci_ok,omitempty" json:"no_ci_ok,omitempty"`
+}
+
+// repoNameSet normalizes a per-repo config list ("owner/repo" or bare repo
+// names) into a lowercase membership set. Empty/blank entries are dropped;
+// an empty list returns nil.
+func repoNameSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			continue
+		}
+		set[name] = true
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// AllowUnprotectedBaseSet returns AllowUnprotectedBase as a normalized
+// (lowercase) membership set; nil when unset.
+func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
+	return repoNameSet(a.AllowUnprotectedBase)
+}
+
+// NoCIOKSet returns NoCIOK as a normalized (lowercase) membership set; nil
+// when unset.
+func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
+	return repoNameSet(a.NoCIOK)
 }
 
 // RequiredCheckSet returns the config-declared required-status-check set as a
