@@ -16,9 +16,9 @@ expectations explicit because the [v5 GA bar](https://github.com/hivecommons/hiv
 requires green `v5` gates over a soak window and a v4→v5 migration guide —
 both of which degrade as drift grows.
 
-The proposed post-freeze lifecycle decision now lives in the
-[v5 GA bar](v5-ga.md#v4-lifecycle-policy-proposed): if maintainers sign off on
-[#6346](https://github.com/hivecommons/hive/issues/6346), v4 freezes when the
+The post-freeze lifecycle decision lives in the
+[v5 GA bar](v5-ga.md#v4-lifecycle-policy-accepted): accepted on 2026-09-09
+([#6346](https://github.com/hivecommons/hive/issues/6346)), v4 freezes when the
 Release-train rows are green or on the recorded date, and future v4→v5 movement
 becomes cherry-pick-only with per-commit DCO sign-off.
 
