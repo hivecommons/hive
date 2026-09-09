@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/kubejob"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
 )
@@ -26,6 +27,46 @@ func (m *Manager) SetSandboxLauncher(l sandbox.Launcher) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sandboxLauncher = l
+}
+
+func (m *Manager) setSandboxJobLauncherFactoryForTest(f func(config.SandboxJobConfig) sandbox.Launcher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxJobLauncherFactory = f
+}
+
+// jobLauncherLocked returns the launcher for a sandbox.runtime: job kick:
+// the injected factory's, or a real in-cluster kubejob.Launcher.
+func (m *Manager) jobLauncherLocked(job config.SandboxJobConfig) sandbox.Launcher {
+	if m.sandboxJobLauncherFactory != nil {
+		return m.sandboxJobLauncherFactory(job)
+	}
+	return &kubejob.Launcher{Options: JobOptionsFromConfig(job)}
+}
+
+// JobOptionsFromConfig converts the operator's job block into the launcher's
+// options. The config package deliberately owns its own types so it does not
+// import the launcher; this is the one place the two shapes meet.
+func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
+	opts := kubejob.Options{
+		WorkspaceClaim:      job.WorkspaceClaim,
+		WorkspaceClaimMount: job.WorkspaceClaimMount,
+		NodeSelector:        job.NodeSelector,
+		ServiceAccount:      job.ServiceAccount,
+		EnvFromSecrets:      append([]string(nil), job.EnvFromSecrets...),
+		TTLSeconds:          job.TTLSeconds,
+		Resources: kubejob.Resources{
+			Limits:   job.Resources.Limits,
+			Requests: job.Resources.Requests,
+		},
+	}
+	for _, t := range job.Tolerations {
+		opts.Tolerations = append(opts.Tolerations, kubejob.Toleration{Key: t.Key, Operator: t.Operator, Value: t.Value, Effect: t.Effect})
+	}
+	for _, v := range job.Volumes {
+		opts.ExtraVolumes = append(opts.ExtraVolumes, kubejob.VolumeMount{Name: v.Name, Claim: v.Claim, MountPath: v.MountPath, ReadOnly: v.ReadOnly})
+	}
+	return opts
 }
 
 func (m *Manager) setSandboxRunnerForTest(r sandboxCommandRunner) {
@@ -81,6 +122,21 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	if repo == "" {
 		return fmt.Errorf("agent %s sandbox execution requires a primary repo", agent.Name)
 	}
+	// Runtime selection (#6311). Resolved BEFORE the agent is marked running,
+	// so a misconfigured runtime refuses the kick the same way a missing image
+	// does, instead of failing it after the state machine has moved.
+	runtime := agent.Config.SandboxRuntime(m.sandboxConfig)
+	if !config.ValidSandboxRuntimes[runtime] {
+		return fmt.Errorf("agent %s sandbox runtime %q is not one hive has (%s or %s)", agent.Name, runtime, config.SandboxRuntimePodman, config.SandboxRuntimeJob)
+	}
+	launcher := m.sandboxLauncher
+	if runtime == config.SandboxRuntimeJob {
+		job := agent.Config.SandboxJob(m.sandboxConfig)
+		if strings.TrimSpace(job.WorkspaceClaim) == "" {
+			return fmt.Errorf("agent %s sandbox job runtime requires job.workspace_claim — the PVC hive's sandbox workspace root lives on, mounted RWX so the Job can see it from another node", agent.Name)
+		}
+		launcher = m.jobLauncherLocked(job)
+	}
 	now := time.Now()
 	agent.State = StateRunning
 	agent.StartedAt = &now
@@ -97,10 +153,10 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	}
 	agent.KickHistory = append(agent.KickHistory, KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet})
 	if agent.OutputBuffer != nil {
-		agent.OutputBuffer.Write("sandbox kick started")
+		agent.OutputBuffer.Write("sandbox kick started (runtime=" + runtime + ")")
 	}
 	m.recordPrompt(agent.Name, "sandbox-kick", message)
-	m.logger.Info("audit: sandbox agent kicked", "name", agent.Name, "repo", repo)
+	m.logger.Info("audit: sandbox agent kicked", "name", agent.Name, "repo", repo, "runtime", runtime)
 
 	spec := SandboxKickSpec{
 		Agent: agent.Name,
@@ -120,7 +176,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	agent.cancel = cancel
-	launcher, runner := m.sandboxLauncher, m.sandboxRunner
+	runner := m.sandboxRunner
 	mutationBoundary := m.sandboxMutation
 	cloneMinter := m.tieredSandboxMinterLocked(m.agentMode(agent).TokenTier())
 	var pushMinter pushbroker.TokenMinter

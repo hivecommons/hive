@@ -1,0 +1,36 @@
+# Lets the spoke run a sandboxed agent kick as a Kubernetes Job in its own
+# namespace (sandbox.runtime: job, #6311; pkg/kubejob). The spoke creates the
+# Job, polls it, reads the pod's log and exit code, and deletes it.
+# Namespace-scoped and nothing more: no exec, no secrets read. The Job's own
+# secrets are referenced by name in the pod template and resolved by
+# Kubernetes; hive never reads them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-sandbox-jobs
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-sandbox-jobs
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-sandbox-jobs

@@ -586,11 +586,15 @@ type Manager struct {
 	deadSessionRecoveryOwnedElsewhere bool
 	sandboxConfig                     config.AgentSandboxConfig
 	sandboxLauncher                   sandbox.Launcher
-	sandboxRunner                     sandboxCommandRunner
-	sandboxPushMinter                 pushbroker.TokenMinter
-	sandboxPRClient                   PRCreator
-	sandboxMutation                   effects.Boundary
-	sandboxAuditCallback              atomic.Pointer[func(agent, action, detail string)]
+	// sandboxJobLauncherFactory builds the Kubernetes Job launcher for an
+	// agent on sandbox.runtime: job (#6311). Nil means the real in-cluster
+	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.
+	sandboxJobLauncherFactory func(config.SandboxJobConfig) sandbox.Launcher
+	sandboxRunner             sandboxCommandRunner
+	sandboxPushMinter         pushbroker.TokenMinter
+	sandboxPRClient           PRCreator
+	sandboxMutation           effects.Boundary
+	sandboxAuditCallback      atomic.Pointer[func(agent, action, detail string)]
 
 	// terminal is the nil-safe pane/tmux boundary. Nil means use the real tmux
 	// implementation, preserving zero-value Manager behavior in tests.

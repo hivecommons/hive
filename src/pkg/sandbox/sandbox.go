@@ -151,3 +151,9 @@ func isCredentialName(name string) bool {
 	_, ok := credentialEnvNames[name]
 	return ok || strings.Contains(name, "TOKEN") || strings.Contains(name, "SECRET")
 }
+
+// IsCredentialName reports whether an environment variable name is one the
+// sandbox refuses to pass into a workload. Exported so other launchers (the
+// Kubernetes Job launcher in pkg/kubejob) apply exactly the same rule rather
+// than a copy that can drift.
+func IsCredentialName(name string) bool { return isCredentialName(name) }

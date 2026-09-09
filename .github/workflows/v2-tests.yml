@@ -720,6 +720,7 @@ jobs:
             [ioscan]=96
             [sandbox]=98
             [pushbroker]=99
+            [kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
 
             # ── Stale module-path parser repaired on v5 (#6066) ─────────────
             # These packages were pre-existing below-default floors that became

@@ -2837,6 +2837,44 @@ subjects:
 {{- end}}
   namespace: {{.Namespace}}
 ---
+# hive-sandbox-jobs lets a spoke run a sandboxed agent kick as a Kubernetes
+# Job in its OWN namespace (sandbox.runtime: job, #6311; pkg/kubejob). The
+# spoke creates the Job, polls it, reads the pod's log and exit code, and
+# deletes it. Namespace-scoped and nothing more: no exec, no secrets read —
+# the Job's own secrets are referenced by name in the pod template and
+# resolved by Kubernetes, never read by hive. Unconditional like
+# hive-self-upgrade: the Job runtime is a spoke feature on every cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-sandbox-jobs
+  namespace: {{.Namespace}}
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-sandbox-jobs
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-sandbox-jobs
+subjects:
+- kind: ServiceAccount
+{{- if .RequiresSCC}}
+  name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
+  namespace: {{.Namespace}}
+---
 # hive-route-reader lets the spoke discover the external hostname its OWN
 # Route/Ingress serves, which it reports to the hub as dashboard_url (see
 # SpokeServedHost). Without it the spoke falls back to synthesising

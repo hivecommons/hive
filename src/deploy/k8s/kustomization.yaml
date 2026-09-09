@@ -9,6 +9,7 @@ resources:
   - secret.yaml
   - pvc.yaml
   - dashboard-route-rbac.yaml
+  - sandbox-job-rbac.yaml
   - deployment.yaml
   - service.yaml
 
