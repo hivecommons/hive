@@ -47,6 +47,11 @@ that status is the thing to check before treating a page as current behaviour:
   `v2/pkg/...` path examples are **deliberately historical** — PRs merged before
   the `v2/` → `src/` rename report those paths from the forge API forever, and
   the component mapper still handles both eras (`src/pkg/reach/mapping.go`).
+- [Sourcing token metering from ccusage behind a tokens.Source seam](token-metering-ccusage.md) — **proposed.**
+  Design for replacing most hand-written token parsing with a pinned offline
+  ccusage subprocess behind a `tokens.Source` seam, while preserving Hive's
+  attribution layer, native-versus-estimated cost labeling, and Bob coverage.
+  Credits RFC #6234 and incorporates the v5 #6142 scanner cleanup.
 - [Knowledge system and the ACMM developer journey](knowledge-system.md) —
   **partly shipped.** The layered llm-wiki knowledge base — layers,
   subscriptions, the pre-seeded deployment vault, and the extraction/promotion

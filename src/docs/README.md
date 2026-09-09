@@ -122,6 +122,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [CI runner labels](https://github.com/hivecommons/hive/blob/v4/src/docs/ci-runner-labels.md) — how `runs-on:` picks the self-hosted fleet, why a fork must degrade to a GitHub-hosted runner, and the one variable `hivecommons` sets.
 - [Design documents](design/README.md) — longer-form design records with the full reasoning behind a decision, indexed with a status each (shipped / partly shipped / design only / historical) so a proposal is not mistaken for current behaviour: master secret rotation, wrapped master delivery to pull-only spokes, PR reach telemetry, and the knowledge system.
 - [Podman Compose-provider selection spike](https://github.com/hivecommons/hive/blob/v4/src/docs/podman-compose-provider-spike.md) — why `podman compose` must name its provider explicitly, and which provider needs no Docker tooling.
+- [Sourcing token metering from ccusage behind a tokens.Source seam](design/token-metering-ccusage.md) — proposed design for ccusage-backed token metering with attribution preservation, Bob fallback, and cutover diagnostics (RFC #6234).
 - [Trajectory review](https://github.com/hivecommons/hive/blob/v4/src/docs/trajectory-review.md) — trajectory safety lane and review signals.
 - [Podman Quadlet `.container`/`.pod` spike](https://github.com/hivecommons/hive/blob/v4/src/docs/podman-quadlet-container-pod-spike.md) — feasibility result for explicit Quadlet units: readiness via `Notify=healthy`, the startup-timeout trap, and what the generator does not validate.
 
