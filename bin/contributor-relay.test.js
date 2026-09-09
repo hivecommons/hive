@@ -1,4 +1,4 @@
-// Tests for bin/contributor-relay.sh (JavaScript despite the .sh extension).
+// Tests for bin/contributor-relay.js.
 //
 // Regression coverage for kubestellar/hive#2203 — "Contributor agent stuck in
 // infinite crash loop after periodic CLI restart". Reported with a full source
@@ -184,13 +184,10 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   process.env.HIVE_GH_TOKEN_CACHE = path.join(tmpDir, 'gh-token.cache');
   if (env) Object.assign(process.env, env);
 
-  // node refuses to require a .sh file with the default extension handlers;
-  // register .sh as JavaScript. This must happen BEFORE require.resolve(), and
-  // the cache must be cleared on every load so each test gets a fresh module
+  // The cache must be cleared on every load so each test gets a fresh module
   // wired to its own execSync stub.
-  Module._extensions['.sh'] = Module._extensions['.js'];
   for (const key of Object.keys(require.cache)) {
-    if (key.includes('contributor-relay.sh')) delete require.cache[key];
+    if (key.includes('contributor-relay.js')) delete require.cache[key];
   }
   let relay;
   try {
@@ -3638,7 +3635,7 @@ test('the relay declares the same protocol version the hub speaks', () => {
   const relay = loadRelay();
   try {
     assert.strictEqual(relay.RELAY_PROTOCOL_VERSION, m[1],
-      'bin/contributor-relay.sh and the hub must declare the same contributor-protocol version; ' +
+      'bin/contributor-relay.js and the hub must declare the same contributor-protocol version; ' +
       'bump both in the same PR');
   } finally { teardown(relay); }
 });
