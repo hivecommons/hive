@@ -91,6 +91,12 @@ that status is the thing to check before treating a page as current behaviour:
   timestamps and `InferenceSink` discards them, so persisting per-request usage
   with its timestamp would move Copilot from "structurally impossible" to
   phase 3's existing join, in `pkg/tokens` only and off the request path.
+- [Discord reaction-consensus issue promotion](discord-issue-promotion.md) — **proposed.**
+  Design for turning Discord community reaction consensus into the same
+  approval label that `project.issue_filter.require_labels` already uses, while
+  keeping the bot credential-free and having Hive perform the audited,
+  server-side allowlisted label write. Credits RFC #6239 and records the
+  Discord intents/partials trap before implementation.
 
 - [`hive tui` — a terminal dashboard for Hive](tui.md) — **shipped (v1).** The
   design record for the k9s-style terminal client tracked in #4907: scope, the
