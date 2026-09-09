@@ -1,0 +1,15 @@
+  checked upstream evidence 34
+  checked upstream evidence 35
+  checked upstream evidence 36
+  checked upstream evidence 37
+  checked upstream evidence 38
+  checked upstream evidence 39
+dev@codex-contributor:~/workspace$ codex --dangerously-bypass-approvals-and-sandbox
+╭─────────╮
+│ >_ OpenAI Codex (v0.146.0)                          │
+│ model:       gpt-5.6-luna medium   /model to change │
+│ directory:   ~/workspace                            │
+╰─────────╯
+  Tip: Use /rename to rename your threads for easier thread resuming.
+› Run /review on my current changes
+  gpt-5.6-luna medium · ~/workspace

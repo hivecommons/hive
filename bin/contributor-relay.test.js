@@ -6493,6 +6493,83 @@ test('#5650 a stale verdict does not block the chrome-idle fallback either', () 
 });
 
 // ---------------------------------------------------------------------------
+// Shared golden pane fixtures (kubestellar/hive#6427).
+//
+// bin/testdata/pane-fixtures/ holds realistic, full-height (50-row) padded
+// tmux capture-pane -p dumps as plain text, one <name>.pane.txt per case, each
+// paired with:
+//   - <name>.tail.txt  — the exact string paneTail(text, tailLines) must
+//                        return, byte for byte;
+//   - <name>.json      — a sidecar naming the backend, the tailLines used to
+//                        produce tail.txt, and the expected classification.
+//
+// The SAME files are read by a Go test in src/pkg/agent/pane_fixtures_test.go,
+// so the JS and Go pane-tail/classifier implementations are checked against
+// one shared source of truth instead of two independently written fixture
+// sets that could quietly drift apart again, exactly as paneTail and
+// paneTailNonBlank did.
+const PANE_FIXTURES_DIR = path.join(__dirname, 'testdata', 'pane-fixtures');
+
+function loadPaneFixtures() {
+  if (!fs.existsSync(PANE_FIXTURES_DIR)) return [];
+  return fs.readdirSync(PANE_FIXTURES_DIR)
+    .filter((f) => f.endsWith('.pane.txt'))
+    .map((f) => f.slice(0, -'.pane.txt'.length))
+    .sort();
+}
+
+for (const name of loadPaneFixtures()) {
+  const paneFile = path.join(PANE_FIXTURES_DIR, `${name}.pane.txt`);
+  const tailFile = path.join(PANE_FIXTURES_DIR, `${name}.tail.txt`);
+  const jsonFile = path.join(PANE_FIXTURES_DIR, `${name}.json`);
+  const pane = fs.readFileSync(paneFile, 'utf8');
+  const expectedTail = fs.readFileSync(tailFile, 'utf8');
+  const sidecar = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+
+  test(`pane fixture ${name}: paneTail(text, ${sidecar.tailLines}) matches the shared golden tail.txt`, () => {
+    const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+    try {
+      assert.strictEqual(relay.paneTail(pane, sidecar.tailLines), expectedTail,
+        `paneTail() diverged from the golden tail.txt Go is also checked against (${sidecar.note})`);
+    } finally { teardown(relay); }
+  });
+
+  if (Object.prototype.hasOwnProperty.call(sidecar.expect, 'getCLIState')) {
+    test(`pane fixture ${name}: getCLIState() is ${sidecar.expect.getCLIState}`, () => {
+      const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+      try {
+        assert.strictEqual(relay.getCLIState(), sidecar.expect.getCLIState, sidecar.note);
+      } finally { teardown(relay); }
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(sidecar.expect, 'classifyTmuxPane')) {
+    test(`pane fixture ${name}: classifyTmuxPane() is ${sidecar.expect.classifyTmuxPane}`, () => {
+      const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+      try {
+        assert.strictEqual(relay.classifyTmuxPane(pane), relay[sidecar.expect.classifyTmuxPane], sidecar.note);
+      } finally { teardown(relay); }
+    });
+  }
+
+  for (const fn of ['paneShowsTransientAPIError', 'paneShowsUnretryableAPIError', 'paneShowsLoginRequiredError']) {
+    if (Object.prototype.hasOwnProperty.call(sidecar.expect, fn)) {
+      test(`pane fixture ${name}: ${fn}() is ${sidecar.expect[fn]}`, () => {
+        const relay = loadRelay({ backend: sidecar.backend, paneText: pane });
+        try {
+          assert.strictEqual(relay[fn](pane), sidecar.expect[fn], sidecar.note);
+        } finally { teardown(relay); }
+      });
+    }
+  }
+}
+
+test('pane fixtures directory exists and is not empty (kubestellar/hive#6427)', () => {
+  assert.ok(fs.existsSync(PANE_FIXTURES_DIR), `expected shared fixtures at ${PANE_FIXTURES_DIR}`);
+  assert.ok(loadPaneFixtures().length > 0, 'expected at least one *.pane.txt fixture');
+});
+
+// ---------------------------------------------------------------------------
 
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.

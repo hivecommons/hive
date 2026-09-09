@@ -1,0 +1,10 @@
+{
+  "backend": "claude",
+  "tailLines": 15,
+  "expect": {
+    "paneShowsTransientAPIError": true,
+    "paneShowsUnretryableAPIError": false,
+    "paneShowsLoginRequiredError": false
+  },
+  "note": "The #6413 failure mode applied to the transient-API-error detectors: the error chrome sits at rows 1-8 of a 50-row pane and rows 9-50 are blank padding. A blank-including tail (TRANSIENT_API_ERROR_TAIL_LINES=12, i.e. rows 39-50) is always empty here, so the four API-error detectors were blind to this shape before they were switched onto the non-blank paneTail."
+}

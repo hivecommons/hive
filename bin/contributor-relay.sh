@@ -1406,7 +1406,7 @@ function blockingPromptKey(text) {
   // persists, so this prompt stops coming back on every restart the way a
   // plain "Skip" would.
   if (/Update available!/.test(text) && /Skip until next version/.test(text)) return '3';
-  const recent = paneTailNonBlank(text, 15);
+  const recent = paneTail(text, 15);
   // agy: "Terms of Service & Data Use" ends on a [Previous] [Done] button row
   // with focus on the CHECKBOX above it, where Enter toggles consent instead of
   // advancing ("enter Toggle"). A bare Enter therefore never leaves this page.
@@ -1501,16 +1501,17 @@ function getCLIState() {
       // visible tail only: old task output may quote the wizard text, and a
       // stale quote must not make a live prompt look blocked.
       //
-      // Use paneTailNonBlank, not paneTail: agy renders inline at the TOP of
-      // the pane (banner, input box and its "? for shortcuts" footer all land
-      // in rows 1-16 of a 50-row capture), so a plain last-15-rows tail is
-      // rows 36-50 — always blank on a healthy, idle agy pane. That made
-      // getCLIState() return 'starting' forever, waitForCLI() time out at
+      // paneTail: agy renders inline at the TOP of the pane (banner, input box
+      // and its "? for shortcuts" footer all land in rows 1-16 of a 50-row
+      // capture), so a plain last-15-rows slice of the raw text is rows 36-50
+      // — always blank on a healthy, idle agy pane. That made getCLIState()
+      // return 'starting' forever, waitForCLI() time out at
       // CLI_READY_TIMEOUT_MS, and every task handed back with "CLI never
-      // became ready" (#6413). Trimming trailing blank rows before slicing
-      // keeps the "recent output only" intent above intact while making the
-      // window track actual content instead of the pane's fixed height.
-      const recent = paneTailNonBlank(text, 15);
+      // became ready" (#6413). paneTail already trims trailing blank rows
+      // before slicing, which keeps the "recent output only" intent above
+      // intact while making the window track actual content instead of the
+      // pane's fixed height.
+      const recent = paneTail(text, 15);
       if (/not signed in|Select login method/i.test(recent)) return 'needs-login';
       if (/Choose your color scheme|Terms of Service & Data Use|Do you trust the contents|I trust this (?:folder|directory)|Welcome to (?:the )?Antigravity/i.test(recent)) return 'onboarding';
       // agy shows "? for shortcuts" at the bottom when its interactive prompt
@@ -2150,26 +2151,38 @@ function paneLooksBlockedOnHuman(text) {
   return classifyBlockedOnHumanReason(text) !== null;
 }
 
-// paneTail returns the last n lines of a pane capture. Pure, so the detectors
-// below are table-testable without tmux.
+// paneTail returns the last n NON-BLANK lines of a pane capture: blank
+// (whitespace-only) lines are dropped WHEREVER they occur, not just at the
+// end, and the n most recent real rows are kept in their original order.
+// tmux capture-pane -p always pads its output to the pane's full height, so a
+// UI that renders inline near the top (agy's banner + input box land in rows
+// 1-16 of a 50-row pane) leaves a plain last-n-rows window that is entirely
+// blank rows the terminal never touched. Dropping blanks first makes the
+// window track actual content instead of the pane's fixed geometry, while
+// still preserving the "recent output only" intent this exists for: a stale
+// quote of wizard text further up the (non-blank) history is still excluded
+// once it falls outside the last n real rows.
+//
+// This is the ONE tail semantics for pane captures in this file — it matches
+// Go's paneTail in src/pkg/agent/manager.go (manager.go:~3527), which has
+// always filtered blank lines this same way (scanning from the end, skipping
+// any blank line, collecting until n non-blank rows are found, then
+// reversing). A second, blank-including variant (paneTailNonBlank's
+// predecessor) used to live beside this one; the divergence between that
+// blank-including JS behavior and Go's non-blank one was the direct root
+// cause of kubestellar/hive#6413 (agy contributors stuck at 'starting'
+// forever, because a plain last-15-rows slice of a 50-row pane is always
+// blank for a UI that renders near the top). Pure, so the detectors below
+// are table-testable without tmux.
 function paneTail(text, n) {
-  return String(text || '').split('\n').slice(-n).join('\n');
-}
-
-// paneTailNonBlank returns the last n non-trailing-blank lines of a pane
-// capture: trailing whitespace-only rows are dropped first, then the tail is
-// sliced. tmux capture-pane -p always pads its output to the pane's full
-// height, so a UI that renders inline near the top (agy's banner + input box
-// land in rows 1-16 of a 50-row pane) leaves a paneTail() window that is
-// entirely blank rows the terminal never touched. Trimming those first makes
-// the window track actual content instead of the pane's fixed geometry, while
-// still preserving the "recent output only" intent paneTail exists for: a
-// stale quote of wizard text further up the (non-blank) history is still
-// excluded once it falls outside the last n real rows.
-function paneTailNonBlank(text, n) {
   const lines = String(text || '').split('\n');
-  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
-  return lines.slice(-n).join('\n');
+  const kept = [];
+  for (let i = lines.length - 1; i >= 0 && kept.length < n; i--) {
+    if (lines[i].trim() === '') continue;
+    kept.push(lines[i]);
+  }
+  kept.reverse();
+  return kept.join('\n');
 }
 
 // paneShowsTransientAPIError reports whether the visible tail carries a
@@ -4119,6 +4132,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     startProgressReporting,
     progressTick,
     classifyTmuxPane,
+    paneTail,
     paneLooksBlockedOnHuman,
     blockingPromptKey,
     PANE_STATE_WORKING,
