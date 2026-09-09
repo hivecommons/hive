@@ -9,6 +9,10 @@ attribution substrate — but until now none of them defined its shape.
 
 This page defines it, so a consumer can parse the file without reading Go.
 
+A related but distinct record — which agent used a GitHub credential, and with
+what `gh` command — lives in the
+[token-access audit log](token-access-log.md), not here.
+
 ## Format
 
 One JSON object per line (JSONL), append-only. Written by
