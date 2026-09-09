@@ -1,6 +1,6 @@
 # Agent backend setup
 
-Hive validates backend names in `src/pkg/config` and launches CLIs in `src/pkg/agent/manager.go`. `backend:` selects the runtime for an agent; inference backends are covered separately in [inference-backends.md](inference-backends.md). The acceptance bar for adding a new CLI backend, and which support tier it lands in, is in [backend-support-tiers.md](../src/docs/backend-support-tiers.md).
+Hive validates backend names in `src/pkg/config` and launches CLIs in `src/pkg/agent/manager.go`. `backend:` selects the runtime for an agent; inference backends are covered separately in [inference-backends.md](inference-backends.md). The acceptance bar for adding a new CLI backend, and which support tier it lands in, is in [backend-support-tiers.md](../src/docs/backend-support-tiers.md). That policy also defines the metering requirement for budget-gated hives and the deprecation path when upstream CLI drift breaks a backend.
 
 ## CLI backends
 

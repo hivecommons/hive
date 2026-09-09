@@ -153,6 +153,67 @@ credential that does not survive a pod restart); the discovering issue cites
 the criterion number above, and the fix moves the backend's posture in
 `localBackendPostures` and the allowlists in the same PR.
 
+
+## Metering coverage and budget-gated hives
+
+Backend support is also a metering contract. Budget gates in `pkg/governor`
+close when token spend reaches the configured weekly budget: the governor reads
+collector totals through `UpdateBudgetFromTotals`, stores the current window in
+`BudgetInfo`, and suppresses scheduled, resume, and CEL kicks while the budget is
+exhausted unless an agent is explicitly exempt. A backend that produces no token
+or cost data can therefore make a budget-gated hive look cheaper than it is.
+
+Metered sources today are the scanner and sink implementations in `pkg/tokens`:
+
+| Source | Coverage today | Notes |
+| --- | --- | --- |
+| `claude_scanner.go` | Claude Code session JSONL | Native usage blocks from recent Claude session files. |
+| `copilot_scanner.go` | Copilot CLI `events.jsonl` | Reads `session.shutdown.modelMetrics` and avoids double-counting live proxy captures. |
+| `bob_scanner.go` | Bob CLI chat recordings | Uses Bob's explicit token fields, falling back to content-size estimates only when a recording lacks token data. |
+| `inference_sink.go` | vLLM, llm-d, LiteLLM, live Copilot proxy usage | Hive-written JSONL under the metrics directory. |
+
+Policy: a backend without token/cost coverage **cannot run under a
+budget-gated hive unless the operator explicitly marks it unmetered**, and the
+dashboard must display that backend as `unmetered` rather than folding it into
+normal spend. New backend PRs should state whether the backend is metered,
+unmetered but allowed outside budget gates, or blocked until a scanner/sink
+exists. This ties directly to the ccusage sourcing RFC
+[#6234](https://github.com/hivecommons/hive/issues/6234): if Hive adopts
+ccusage for the nine covered CLI backends, tier assignment should prefer that
+shared parser over adding one-off scanners.
+
+## Deprecation path
+
+A backend can be demoted or removed when its upstream CLI breaks Hive's contract
+and no maintainer or community owner repairs it within the grace period.
+
+1. **Detection.** The scheduled [backend smoke](backend-smoke.md) workflow is the
+   primary canary. Its `latest` lane detects incoming vendor drift before Hive's
+   pinned image moves; its `pinned` lane detects breakage in the contributor
+   image operators already use. Matrix/list-parity tests catch repository-local
+   drift such as a backend present in `KNOWN_BACKENDS` but missing from Go config
+   or docs.
+2. **Triage and grace period.** A red `latest` smoke opens or updates a
+   `backend-smoke` issue and starts a 14-day repair window for supported and
+   experimental backends. A red `pinned` lane is production breakage: it may
+   trigger immediate demotion from T1/T2 while keeping a 7-day window to restore
+   the old tier. Core/headless-pod backends get maintainer escalation before
+   removal because hives may depend on them for unattended operation.
+3. **Demotion.** If the backend still authenticates but no longer satisfies a
+   higher-tier criterion, move only the tier-specific allowlists or posture:
+   `HEADLESS_BACKENDS` in the `Justfile`, `K8S_HEADLESS_BACKENDS` in
+   `src/pkg/dashboard/api_contribute.go`, the confinement posture tests, and the
+   docs rows that claimed the higher tier.
+4. **Removal.** If the backend cannot be launched reliably or has no owner after
+   the grace period, remove it from `KNOWN_BACKENDS`, `CLIBackends`, backend
+   matrix tests, `docs/backend-setup.md`, this tier document, and any
+   sandbox/contributor docs. The removal PR cites the smoke issue and states the
+   replacement path for operators.
+
+Deprecation is not punishment for vendor drift; it keeps the public backend list
+honest. A removed backend can return through the same acceptance bar as a new
+backend, with fresh smoke evidence and metering posture.
+
 ## Worked example
 
 PR [#6222](https://github.com/hivecommons/hive/pull/6222) (Muse Code) is the
