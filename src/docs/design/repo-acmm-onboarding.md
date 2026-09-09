@@ -4,12 +4,21 @@ Status: Declined (2026-09-09) — kept as a record of the decision.
 
 > **Decision.** The maintainers closed RFC #6235 without adopting it, and RFC
 > #6111 (per-repo ACMM levels under a hive-wide ceiling) is on hold: the hive
-> keeps a single hive-wide ACMM level rather than per-repo levels, so a
+> keeps a single hive-wide ACMM level rather than a level per repository, so a
 > reconciler that drives each repo toward its own target level has no policy
-> to enforce. Off-repo criterion waivers (#6264, backported in #6395) cover
-> the legitimate "capability provided elsewhere" case without per-repo
-> levels. Nothing below is scheduled for implementation; reopen #6235 before
-> building on it.
+> to enforce. Nothing below is scheduled for implementation; reopen #6235
+> before building on it.
+>
+> **Per-repo ACMM may still be reachable another way.** Declining per-repo
+> *levels* is not declining per-repo *behaviour*. The hive already has
+> per-repo primitives that compose without a second level model: off-repo
+> criterion waivers (#6264, backported in #6395) let a repo declare a
+> capability satisfied elsewhere; per-repo agent scope (#6215) limits which
+> agents act on which repos; per-repo pause (#6211) removes a repo from
+> autonomous dispatch. A future proposal that achieves per-repo maturity
+> outcomes by composing primitives like these — keeping one hive-wide level as
+> the ceiling and the single source of truth — would be reviewed on its own
+> merits; see the discussion on #6111.
 
 RFC credit: this design turns the adopter RFC in
 [#6235](https://github.com/hivecommons/hive/issues/6235) into a reviewable plan
