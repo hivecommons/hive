@@ -51,6 +51,19 @@ Resolution is live: the hub HEADs the GHCR manifests for each tracked branch's `
 
 The **My Hives** page also shows a `Release channels:` block above the per-branch `Latest available images:` rows, mapping each channel to its currently resolved branch/digest. Each branch row also carries a compact per-line image-pulls bar chart (package pulls landing during each of that line's release windows; `—` when the line has no closed window yet), and the header's "Pulls per release" chart follows the **active** line — the branch `stable` currently resolves to — rather than any hard-coded branch.
 
+## Channel distance: how much is queued for promotion
+
+Each row in the `Release channels:` block also shows how far that channel has drifted from the stage **immediately upstream** of it in the promotion order ([#6418](https://github.com/hivecommons/hive/pull/6418)): `stable` is measured against `candidate`, `candidate` against `edge`. Edge has no upstream — it is where builds enter — so its row carries no distance. The upstream stage is derived from the promotion order rather than hardcoded, so a new track wires itself up. Measuring every channel against edge instead would roughly restate the sum of the hops and could not distinguish a starved soak from a stalled promotion; one hop per row keeps each number actionable.
+
+How to read it:
+
+- `↓N vs candidate` (amber) — N commits are on `candidate` that `stable` does not have: the promotion backlog for that hop.
+- `↑N` (blue) — N commits are on this channel that its upstream does not have. Both arrows can appear at once: the channels follow different branches, and a branch synced from another both carries commits the other lacks and misses commits merged since the sync. GitHub's compare API reports this as *diverged*, and the UI shows **both** counts rather than collapsing them into a direction that does not exist. The tooltip spells out the full sentence.
+- `in sync with candidate` — the two stages resolve to the same commit (or the compare returned no counts).
+- **No distance shown at all** — the compare could not be resolved. This is deliberate: rendering `0` would read as "level with upstream", the one answer that must never be guessed, since it turns a stalled promotion into a healthy-looking row.
+
+Distances are computed hub-side (`pkg/hub/channel_distance.go`) via GitHub's compare API and cached permanently: the distance between two fixed commits is immutable, and a moved channel is a new SHA pair, so entries become unreferenced rather than stale — there is no TTL after which a shown distance could be wrong.
+
 ## Persistence: the tracked channel is durable
 
 The hive's tracked channel is stored hub-side in the per-hive metadata record (`tracked_channel` in `/data/saas/hives/<hive-id>/meta.json`, on the hub PVC). It is set when you switch to a channel and cleared when you switch to a plain branch. Two failure modes are specifically handled:
