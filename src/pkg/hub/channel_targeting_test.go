@@ -558,3 +558,143 @@ func TestGhcrTagRevisionFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================
+// Hub-managed fallback: the armed target must be reachable too
+// ============================================================
+
+// armHubManagedUpgrade registers hive id (via one heartbeat) and then arms the
+// hub-managed heartbeat fallback at target, the way manual/bulk/stale-recovery
+// arming did before they became channel-aware.
+func armHubManagedUpgrade(t *testing.T, srv *HubServer, id, gitHash, target string) {
+	t.Helper()
+	postChannelHeartbeat(t, srv,
+		`{"hive_id":"`+id+`","git_hash":"`+gitHash+`","git_branch":"v2","auto_upgrade":false,`+
+			`"image_ref":"ghcr.io/hivecommons/hive:stable"}`)
+	srv.mu.Lock()
+	if srv.heartbeatUpgrade == nil {
+		srv.heartbeatUpgrade = map[string]string{}
+	}
+	srv.heartbeatUpgrade[id] = target
+	for i := range srv.registry.Hives {
+		if srv.registry.Hives[i].ID == id {
+			srv.beginUpgrade(i, target)
+		}
+	}
+	srv.mu.Unlock()
+}
+
+// The 2026-09-09 wedge: 12 :stable spokes were armed at the v4 tip. Each one
+// re-pulled :stable, came back on the channel's commit, and was told again on
+// every beat to reach a commit its tag does not carry — "Upgrading" forever
+// with a ✓ on the SHA. A spoke already at its channel's commit must drain the
+// fallback and clear the latch, whatever was armed.
+func TestHeartbeatDrainsHubManagedTargetWhenSpokeIsAtItsChannel(t *testing.T) {
+	resetCommitOrderState(t)
+	stubBranchHead(t, "v2", "0056109")
+	stubChannelRevisions(t, map[string]string{"stable": "55bd2bc"})
+	srv := newHubServerForTest(t)
+	srv.setHubSecret("")
+	armHubManagedUpgrade(t, srv, "wedged", "55bd2bc", "0056109")
+
+	resp := postChannelHeartbeat(t, srv,
+		`{"hive_id":"wedged","git_hash":"55bd2bc","git_branch":"v2","auto_upgrade":false,`+
+			`"image_ref":"ghcr.io/hivecommons/hive:stable"}`)
+
+	if resp.UpgradeTo != "" {
+		t.Errorf("upgrade_to = %q, want empty — the spoke is at everything :stable carries", resp.UpgradeTo)
+	}
+	srv.mu.RLock()
+	_, armed := srv.heartbeatUpgrade["wedged"]
+	var latched bool
+	for _, h := range srv.registry.Hives {
+		if h.ID == "wedged" {
+			latched = h.Upgrading || h.UpgradeTarget != ""
+		}
+	}
+	srv.mu.RUnlock()
+	if armed {
+		t.Error("heartbeat fallback still armed for a spoke at its channel's commit")
+	}
+	if latched {
+		t.Error("Upgrading latch still set for a spoke at its channel's commit")
+	}
+}
+
+// A hub-managed :stable spoke that is genuinely behind its channel but was
+// armed at the branch tip must be re-aimed at the channel's commit, not told
+// to reach the tip.
+func TestHeartbeatReaimsHubManagedTargetAtTheSpokesChannel(t *testing.T) {
+	resetCommitOrderState(t)
+	stubBranchHead(t, "v2", "0056109")
+	stubChannelRevisions(t, map[string]string{"stable": "55bd2bc"})
+	srv := newHubServerForTest(t)
+	srv.setHubSecret("")
+	armHubManagedUpgrade(t, srv, "behind", "df9b867", "0056109")
+
+	resp := postChannelHeartbeat(t, srv,
+		`{"hive_id":"behind","git_hash":"df9b867","git_branch":"v2","auto_upgrade":false,`+
+			`"image_ref":"ghcr.io/hivecommons/hive:stable"}`)
+
+	if resp.UpgradeTo != "55bd2bc" {
+		t.Errorf("upgrade_to = %q, want the channel's commit 55bd2bc, not the armed tip 0056109", resp.UpgradeTo)
+	}
+	srv.mu.RLock()
+	got := srv.heartbeatUpgrade["behind"]
+	var target string
+	for _, h := range srv.registry.Hives {
+		if h.ID == "behind" {
+			target = h.UpgradeTarget
+		}
+	}
+	srv.mu.RUnlock()
+	if got != "55bd2bc" || target != "55bd2bc" {
+		t.Errorf("armed = %q, registry target = %q, want both re-aimed to 55bd2bc", got, target)
+	}
+}
+
+// A branch-tracking hub-managed spoke is unaffected by the guard: the armed
+// branch tip IS reachable for it.
+func TestHeartbeatHubManagedBranchSpokeKeepsArmedTip(t *testing.T) {
+	resetCommitOrderState(t)
+	stubBranchHead(t, "v2", "0056109")
+	stubChannelRevisions(t, map[string]string{"stable": "55bd2bc"})
+	srv := newHubServerForTest(t)
+	srv.setHubSecret("")
+	postChannelHeartbeat(t, srv,
+		`{"hive_id":"br","git_hash":"df9b867","git_branch":"v2","auto_upgrade":false,`+
+			`"image_ref":"ghcr.io/hivecommons/hive:v2-latest"}`)
+	srv.mu.Lock()
+	if srv.heartbeatUpgrade == nil {
+		srv.heartbeatUpgrade = map[string]string{}
+	}
+	srv.heartbeatUpgrade["br"] = "0056109"
+	srv.mu.Unlock()
+
+	resp := postChannelHeartbeat(t, srv,
+		`{"hive_id":"br","git_hash":"df9b867","git_branch":"v2","auto_upgrade":false,`+
+			`"image_ref":"ghcr.io/hivecommons/hive:v2-latest"}`)
+
+	if resp.UpgradeTo != "0056109" {
+		t.Errorf("upgrade_to = %q, want the armed branch tip 0056109 for a branch-tracking spoke", resp.UpgradeTo)
+	}
+}
+
+// An unresolvable channel withholds the hub-managed target rather than
+// delivering one the hub cannot vouch for.
+func TestHeartbeatWithholdsHubManagedTargetWhenChannelDoesNotResolve(t *testing.T) {
+	resetCommitOrderState(t)
+	stubBranchHead(t, "v2", "0056109")
+	stubChannelRevisions(t, map[string]string{})
+	srv := newHubServerForTest(t)
+	srv.setHubSecret("")
+	armHubManagedUpgrade(t, srv, "dark", "df9b867", "0056109")
+
+	resp := postChannelHeartbeat(t, srv,
+		`{"hive_id":"dark","git_hash":"df9b867","git_branch":"v2","auto_upgrade":false,`+
+			`"image_ref":"ghcr.io/hivecommons/hive:stable"}`)
+
+	if resp.UpgradeTo != "" {
+		t.Errorf("upgrade_to = %q, want empty when the channel cannot be resolved", resp.UpgradeTo)
+	}
+}

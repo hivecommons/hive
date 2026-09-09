@@ -15,13 +15,13 @@ implementation.
 
 ## The three tiers
 
-The 11 shell-known CLIs (`KNOWN_BACKENDS` in `config/backends.conf`) already
+The 12 shell-known CLIs (`KNOWN_BACKENDS` in `config/backends.conf`) already
 fall into three classes that are enforced in code. This document names them.
 
 | Tier | Meaning | Backends today | Enforcement point |
 | --- | --- | --- | --- |
 | **T1 - core (headless-pod)** | Runs unattended in a TTY-less pod from staged or env-injected credentials | `claude`, `litellm`, `copilot`, `codex`, `goose` | `HEADLESS_BACKENDS` in the `Justfile` (`contribute-k8s`) and `K8S_HEADLESS_BACKENDS` in `src/pkg/dashboard/api_contribute.go` |
-| **T2 - supported (confined)** | Has a confinement floor hive can wire on the contributor local path: an OS sandbox, or at least a host-state deny-list | `claude`/`litellm`, `codex`, `copilot` (sandboxed); `opencode` (deny-listed) | `backend_perm_flag` and the `*_local_perm_flag_shell` helpers in `config/backends.conf` |
+| **T2 - supported (confined)** | Has a confinement floor hive can wire on the contributor local path: an OS sandbox, or at least a host-state deny-list | `claude`/`litellm`, `codex`, `copilot`, `muse` (sandboxed); `opencode` (deny-listed) | `backend_perm_flag` and the `*_local_perm_flag_shell` helpers in `config/backends.conf` |
 | **T3 - experimental (unconfined)** | No confinement hive can wire; local mode refuses to launch without a per-backend opt-in, container mode is the default | `goose`, `agy`, `bob`, `pi`, `aider`, `kilo` | `unconfined_local_perm_flag_shell` and `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1` (#4918) |
 
 Tier assignment is per launch path. `goose` is T1 on the pod path (it has a
@@ -36,7 +36,10 @@ backend.
 ## The acceptance bar
 
 A PR adding backend `<name>` states, in its body, the tier it claims per path
-and the evidence for each criterion below. The criteria are cumulative: T3 is
+and the evidence for each criterion below. The PR template's backend-addition
+checklist is the standing enforcement mechanism for that body-level claim: if a
+backend PR deletes the optional section as inapplicable, reviewers should still
+ask for it when the diff wires a CLI backend. The criteria are cumulative: T3 is
 the floor, T2 adds confinement, T1 adds the unattended-credential story.
 
 ### All tiers
@@ -134,8 +137,8 @@ sandbox, no deny-list, and no unattended-credential story still lands here.
     tool call. "Works on a host that already signed in" is T2 evidence, not
     T1: `copilot` and `codex` are in `HEADLESS_BACKENDS` for capability but
     the preflight still refuses them because their OAuth state directories
-    are unverified in a pod, and `agy`, `opencode`, and `kilo` are kept out
-    of the allowlist for the same reason (see
+    are unverified in a pod, and `agy`, `opencode`, `kilo`, and `muse` are kept
+    out of the allowlist until their credentials are verified in a fresh pod (see
     [Backends excluded from the headless K8s allowlist](../../docs/backend-setup.md#backends-excluded-from-the-headless-k8s-allowlist)).
 12. **Allowlist touchpoints.** Update all three together: `HEADLESS_BACKENDS`
     in the `Justfile`, `K8S_HEADLESS_BACKENDS` in
@@ -214,13 +217,27 @@ Deprecation is not punishment for vendor drift; it keeps the public backend list
 honest. A removed backend can return through the same acceptance bar as a new
 backend, with fresh smoke evidence and metering posture.
 
-## Worked example
+## Retroactive tier record: Muse Code
 
-PR [#6222](https://github.com/hivecommons/hive/pull/6222) (Muse Code) is the
-shape this bar expects: it claims T2 on the local path (own OS sandbox, on by
-default, narrowed rather than bypassed), shows the invalid-value transcript
-for `--approval-mode` (criterion 3), explains why `detect_cli` probes the
-credential rather than `--version` (criterion 4), pins the image install by
-digest (criterion 6), and explicitly declines T1 because unattended pod
-credentials were not verified (criterion 11). A future PR that supplies
-criterion 11 promotes it.
+PR [#6379](https://github.com/hivecommons/hive/pull/6379) (Muse Code, carrying
+forward [#6222](https://github.com/hivecommons/hive/pull/6222)) is now recorded
+retroactively as **local path T2** and **pod path not T1**. The merged diff added
+`muse` to `KNOWN_BACKENDS` and `backend_perm_flag` in `config/backends.conf`, to
+`CLIBackends` in `src/pkg/config/config.go`, and to the local posture matrix as
+`postureSandboxed` in
+`src/pkg/dashboard/contribute_local_mode_backend_matrix_test.go`. Its local
+path is T2 because `muse_local_perm_flag_shell` keeps Muse Code's own OS
+sandbox on, narrows it with `--workspace`, `--sandbox-network proxy-only`, and
+`--no-foreign-personal-context`, and keeps the disable-sandbox `--yolo` flag
+behind `HIVE_MUSE_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1`; the same posture
+is documented in `src/docs/sandbox-isolation.md` and `docs/backend-setup.md`.
+The pod path is not T1 yet because `muse` is absent from the `Justfile`
+`contribute-k8s` `HEADLESS_BACKENDS` allowlist and from
+`K8S_HEADLESS_BACKENDS` in `src/pkg/dashboard/api_contribute.go`, and
+`docs/backend-setup.md` says unattended fresh-pod credentials have not been
+verified. The images pin Muse Code by `MUSE_VERSION` and per-architecture
+`MUSE_SHA256_*` values in both `src/Dockerfile` and
+`src/Dockerfile.contributor`. Metering remains unclaimed: `pkg/tokens` has
+scanners/sinks for Claude, Copilot, Bob, and inference proxy usage, but no Muse
+scanner, so budget-gated hives must treat Muse as unmetered or blocked until a
+scanner/sink is added.

@@ -36,9 +36,12 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 	resetChannelRevisionCache(t)
 	origRev := ghcrTagRevision
 	ghcrTagRevision = func(string, string, *slog.Logger) string { return "" }
+	origMsg := channelCommitMessage
+	channelCommitMessage = func(string, *slog.Logger) string { return "" }
 	t.Cleanup(func() {
 		ghcrTagDigest = orig
 		ghcrTagRevision = origRev
+		channelCommitMessage = origMsg
 		resetChannelTargetCache()
 	})
 }
@@ -152,12 +155,26 @@ func TestResolveChannelTargetsUnmatchedDigestFallsBackToRevisionLabel(t *testing
 		ReleaseChannelEdge:      "sha256:aaaa",
 	})
 	stubChannelRevisions(t, map[string]string{ReleaseChannelStable: "df9b867"})
+	channelCommitMessage = func(sha string, _ *slog.Logger) string {
+		if sha == "df9b867" {
+			return "fix(release): log which evidence the promotion gate actually saw (#6000)"
+		}
+		return ""
+	}
 
 	got := resolveChannelTargets(map[string]string{"v4": "6d3846d"}, testChannelLogger())
 
 	stable := targetFor(got, ReleaseChannelStable)
 	if stable.SHA != "df9b867" {
 		t.Errorf("stable sha = %q, want df9b867 from the image revision label", stable.SHA)
+	}
+	if !strings.HasPrefix(stable.Message, "fix(release)") {
+		t.Errorf("stable message = %q, want the commit's first line so the row reads like the branch rows", stable.Message)
+	}
+	// Cached: a second resolve must not re-fetch.
+	channelCommitMessage = func(string, *slog.Logger) string { t.Error("commit message re-fetched despite cache"); return "" }
+	if again := targetFor(resolveChannelTargets(map[string]string{"v4": "6d3846d"}, testChannelLogger()), ReleaseChannelStable); again.Message != stable.Message {
+		t.Errorf("second resolve message = %q, want cached %q", again.Message, stable.Message)
 	}
 	if stable.Branch != "" {
 		t.Errorf("stable branch = %q, want empty — a revision label names a commit, not a branch", stable.Branch)

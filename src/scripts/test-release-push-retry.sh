@@ -395,6 +395,17 @@ guard = next((s for s in dec.get("steps", [])
 if guard is None:
     bad("the backstop's published-images guard is gone — a scheduled run could "
         "tag a v4 tip whose docker.yml build was cancelled or is still running (#5318)")
+else:
+    guard_run = guard.get("run") or ""
+    # #6380: the exact-SHA docker.yml handoff is a workflow_dispatch run on v4,
+    # not a push. The backstop may count that publishing run, but the decide
+    # job's workflow_run filter above must still reject workflow_dispatch so
+    # the handoff cannot re-enter the release loop.
+    if '.event == "workflow_dispatch"' not in guard_run or '.head_branch == "v4"' not in guard_run:
+        bad("the backstop no longer accepts v4 workflow_dispatch docker.yml publishing runs (#6380)")
+    decide_if = dec.get("if") or ""
+    if "github.event.workflow_run.event != 'workflow_dispatch'" not in decide_if:
+        bad("decide no longer filters workflow_dispatch workflow_run events, risking a release loop (#6380)")
 push_step = next((s for s in rel.get("steps", [])
                    if s.get("id") == "push_v4"), None)
 if push_step is None:

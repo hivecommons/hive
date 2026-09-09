@@ -222,11 +222,15 @@ jobs:
         run: |
           set -euo pipefail
           sha="${{ steps.target.outputs.sha }}"
+          # A `push` run is the normal case; a `workflow_dispatch` run on v4
+          # is the post-release exact-SHA rebuild of a GITHUB_TOKEN merge commit
+          # (#6380). Both publish the <sha> / v4-latest / candidate tags, so
+          # both count as published for the backstop.
           conclusion="$(gh api \
             "repos/${{ github.repository }}/actions/workflows/docker.yml/runs?head_sha=${sha}&status=completed" \
-            --jq '[.workflow_runs[] | select(.event == "push")] | last | .conclusion // ""')"
+            --jq '[.workflow_runs[] | select(.event == "push" or (.event == "workflow_dispatch" and .head_branch == "v4"))] | last | .conclusion // ""')"
           if [ "$conclusion" != "success" ]; then
-            echo "::warning::Backstop standing down: docker.yml has no successful completed push run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
+            echo "::warning::Backstop standing down: docker.yml has no successful completed publishing run for v4 tip ${sha} (found '${conclusion:-none}'), so there is no published digest to retag. The next hourly tick will retry. If this persists, the images for v4's tip are not being built (#5318)."
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

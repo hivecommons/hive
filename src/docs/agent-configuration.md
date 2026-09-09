@@ -98,6 +98,8 @@ agents:
                                  #   launch_cmd, prompt, tools, and skills at launch.
 ```
 
+The dashboard API can update this field through [`POST /api/effort/{agent}/{effort}`](api-reference.md#agents-and-controls).
+
 > The dashboard also offers **gemini** as a live method (with live model discovery); as a persisted `backend:` value in `hive.yaml`, stick to the validated list above.
 
 ### BYO-agent specs
