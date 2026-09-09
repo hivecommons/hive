@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"github.com/hivecommons/hive/internal/testutil"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -106,15 +107,10 @@ func TestCommitsBehindTargetDispatchesAgainstGivenHead(t *testing.T) {
 	if _, known := commitsBehindTarget("df9b867", "21b30e8", nil); known {
 		t.Fatal("first call must report unknown while the compare is in flight")
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if got, known := commitsBehindTarget("df9b867", "21b30e8", nil); known {
-			if got != 3 {
-				t.Fatalf("cached count = %d, want 3", got)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	got := testutil.EventuallyValue(t, 2*time.Second, func() (int, bool) {
+		return commitsBehindTarget("df9b867", "21b30e8", nil)
+	}, "compare result never landed in the cache")
+	if got != 3 {
+		t.Fatalf("cached count = %d, want 3", got)
 	}
-	t.Fatal("compare result never landed in the cache")
 }
