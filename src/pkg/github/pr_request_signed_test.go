@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -250,11 +251,15 @@ func TestPRRequestWatcher_SignedCommits_ReauthorsBranchBeforeOpening(t *testing.
 		t.Errorf("headline must be the oldest commit's subject, got %q", msg["headline"])
 	}
 	body := msg["body"].(string)
-	for _, want := range []string{"Adds 51 tests.", "fixup: no-op assertion", "Signed-off-by: onboard-ai-hive-bot[bot]"} {
+	// The trailers arrive from the pane in the bracketed pre-#6276 form; the
+	// signed commit must carry them re-addressed to the bracket-free form
+	// (#6251), with the name and everything else the agent wrote intact.
+	for _, want := range []string{"Adds 51 tests.", "fixup: no-op assertion", "Signed-off-by: onboard-ai-hive-bot[bot] <onboard-ai-hive-bot@hive.kubestellar.io>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body must carry the agents' messages and DCO trailers; missing %q in:\n%s", want, body)
 		}
 	}
+	assertSignoffsDCOValid(t, body)
 	fc := input["fileChanges"].(map[string]any)
 	adds := map[string]string{}
 	for _, a := range fc["additions"].([]any) {
@@ -380,6 +385,94 @@ func TestPRRequestWatcher_SignedCommits_OffTouchesNothing(t *testing.T) {
 				t.Errorf("signing off must not touch %s", call)
 			}
 		}
+	}
+}
+
+// dcoValidEmailRE is the address shape probot-dco's validator accepts
+// (local@domain.tld, no brackets) — the same check
+// src/deploy/test_entrypoint_system_gitconfig.sh applies to the pane identity.
+var dcoValidEmailRE = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$`)
+
+// assertSignoffsDCOValid fails unless every Signed-off-by line in msg carries
+// a bracket-free, syntactically valid address (#6251). At least one trailer
+// must be present, or the check would pass vacuously.
+func assertSignoffsDCOValid(t *testing.T, msg string) {
+	t.Helper()
+	trailers := signedTrailerLineRE.FindAllStringSubmatch(msg, -1)
+	if len(trailers) == 0 {
+		t.Fatalf("expected at least one Signed-off-by trailer in:\n%s", msg)
+	}
+	for _, m := range trailers {
+		email := m[3]
+		if strings.ContainsAny(email, "[]") {
+			t.Errorf("Signed-off-by address %q carries a bracket; probot-dco rejects it as malformed (#6251)", email)
+			continue
+		}
+		if !dcoValidEmailRE.MatchString(email) {
+			t.Errorf("Signed-off-by address %q is not a syntactically valid email address", email)
+		}
+	}
+}
+
+func TestSignedTrailerEmail(t *testing.T) {
+	t.Setenv(signedTrailerDomainEnv, "")
+	cases := map[string]string{
+		// GitHub's bot address, as a pre-#6276 pane writes it.
+		"onboard-ai-hive-bot[bot]@users.noreply.github.com": "onboard-ai-hive-bot@hive.kubestellar.io",
+		// The same with GitHub's numeric id prefix.
+		"4744647+onboard-ai-hive-bot[bot]@users.noreply.github.com": "onboard-ai-hive-bot@hive.kubestellar.io",
+		// Domain case must not matter.
+		"kubestellar-hive[bot]@Users.NoReply.GitHub.com": "kubestellar-hive@hive.kubestellar.io",
+		// Already the #6276 form: untouched.
+		"onboard-ai-hive-bot@hive.kubestellar.io": "onboard-ai-hive-bot@hive.kubestellar.io",
+		// The legacy pair a hive without a usable App signs with: untouched.
+		"hive-bot@kubestellar.io": "hive-bot@kubestellar.io",
+		// A human's noreply address is valid and attributable: untouched.
+		"some-maintainer@users.noreply.github.com": "some-maintainer@users.noreply.github.com",
+		// A [bot] local-part on a foreign domain is not GitHub's shape; leave
+		// the agent's own sign-off alone rather than guess.
+		"x[bot]@example.org": "x[bot]@example.org",
+		// Degenerate: nothing left once the suffix goes; leave it.
+		"[bot]@users.noreply.github.com": "[bot]@users.noreply.github.com",
+		"not-an-address":                 "not-an-address",
+	}
+	for in, want := range cases {
+		if got := signedTrailerEmail(in); got != want {
+			t.Errorf("signedTrailerEmail(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// The domain is operator-configurable, exactly as entrypoint.sh honours it
+	// for the pane identity: a plain hostname is used, anything else falls
+	// back so the two identities never diverge on an unsafe value.
+	t.Setenv(signedTrailerDomainEnv, "bots.example.org")
+	if got := signedTrailerEmail("onboard-ai-hive-bot[bot]@users.noreply.github.com"); got != "onboard-ai-hive-bot@bots.example.org" {
+		t.Errorf("domain override: got %q", got)
+	}
+	t.Setenv(signedTrailerDomainEnv, "evil.example\n[core]\n\tsshCommand = evil")
+	if got := signedTrailerEmail("onboard-ai-hive-bot[bot]@users.noreply.github.com"); got != "onboard-ai-hive-bot@hive.kubestellar.io" {
+		t.Errorf("unsafe domain must fall back to the default, got %q", got)
+	}
+}
+
+func TestSignedCommitMessage_TrailersBracketFree(t *testing.T) {
+	t.Setenv(signedTrailerDomainEnv, "")
+	mk := func(msg string) *gh.RepositoryCommit {
+		return &gh.RepositoryCommit{Commit: &gh.Commit{Message: gh.Ptr(msg)}}
+	}
+	_, body := signedCommitMessage([]*gh.RepositoryCommit{
+		mk("subject\n\nbody\n\nSigned-off-by: onboard-ai-hive-bot[bot] <onboard-ai-hive-bot[bot]@users.noreply.github.com>"),
+		mk("second\n\nSigned-off-by: Gregory Hunt <greg@on-board.ai>\nSigned-off-by: kubestellar-hive[bot] <4744647+kubestellar-hive[bot]@users.noreply.github.com>  "),
+	})
+	want := "body\n\nSigned-off-by: onboard-ai-hive-bot[bot] <onboard-ai-hive-bot@hive.kubestellar.io>\n\nsecond\n\nSigned-off-by: Gregory Hunt <greg@on-board.ai>\nSigned-off-by: kubestellar-hive[bot] <kubestellar-hive@hive.kubestellar.io>"
+	if body != want {
+		t.Errorf("trailers must be re-addressed bracket-free and nothing else touched:\n got %q\nwant %q", body, want)
+	}
+	assertSignoffsDCOValid(t, body)
+	// The name keeps its "[bot]": only the address is what DCO validates, and
+	// the name is how the commit reads as the App's.
+	if !strings.Contains(body, "Signed-off-by: onboard-ai-hive-bot[bot] <") {
+		t.Errorf("the sign-off name must keep the bot login, got:\n%s", body)
 	}
 }
 

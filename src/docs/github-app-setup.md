@@ -173,6 +173,8 @@ github:
 
 With it on, the PR-request watcher (the choke point every `hive-open-pr` request passes through) re-authors the head branch before it opens the PR: it reads the `base...head` diff, builds one commit through the mutation with the App installation token — same tree, the agents' original commit messages and DCO trailers as the message — force-updates the branch to it, and then opens the PR. The PR arrives with a single commit, signed by GitHub, authored by `<app_slug>[bot]`, that a `required_signatures` rule accepts.
 
+**DCO.** The mutation takes no author: GitHub stamps its own bot account on the commit (`<app_slug>[bot] <id+slug[bot]@users.noreply.github.com>`). That is fine for the DCO checks - probot-dco exempts a commit whose GitHub author resolves to a Bot account, and Prow's `dco` plugin only requires a `Signed-off-by` line to be present. The `Signed-off-by` trailers copied from the agents' commits are what the hive controls, and they are re-addressed to the bracket-free form the pane identity uses since #6276: a `<slug>[bot]@users.noreply.github.com` sign-off (with or without GitHub's numeric prefix) becomes `<slug>@hive.kubestellar.io` (`HIVE_GIT_BOT_EMAIL_DOMAIN`), because probot-dco rejects the bracketed local-part as "not a valid email address" wherever it does validate it (#6251). Every other sign-off address, a human's or the legacy `hive-bot@kubestellar.io`, is copied unchanged.
+
 What it does not do, and falls back on (the PR still opens on the agent's own commits, the reason lands in the request's `.result.json` as `signed_skipped` and in the hive log at WARN):
 
 - changes the mutation cannot express: executable bits, symlinks, submodule pointers;

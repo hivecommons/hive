@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -276,10 +278,15 @@ func (c *Client) collectSignedFileChanges(ctx context.Context, owner, repo, head
 // its body, then every later commit's full message, form the body — so
 // nothing the agent wrote (issue references, DCO sign-offs) is lost, and a
 // single-commit branch reads exactly as the agent committed it.
+//
+// Every Signed-off-by trailer is passed through signedTrailerLine on the way
+// in, so the one address the DCO validators reject (#6251) never reaches the
+// signed commit's message even when an agent's pane still carries it.
 func signedCommitMessage(commits []*gh.RepositoryCommit) (headline, body string) {
 	var parts []string
 	for i, rc := range commits {
 		msg := strings.TrimSpace(rc.GetCommit().GetMessage())
+		msg = signedTrailersBracketFree(msg)
 		if msg == "" {
 			continue
 		}
@@ -297,6 +304,92 @@ func signedCommitMessage(commits []*gh.RepositoryCommit) (headline, body string)
 		headline = "Signed re-author of agent commits"
 	}
 	return headline, strings.Join(parts, "\n\n")
+}
+
+// The DCO trailer the signed commit carries (#6251, #6254, #6276).
+//
+// createCommitOnBranch takes no author or committer: GitHub stamps the
+// authenticated App's own bot account on the commit, "<slug>[bot]
+// <id+slug[bot]@users.noreply.github.com>". That address is GitHub's, we never
+// write it, and it is harmless there — probot-dco exempts a commit whose
+// GitHub author resolves to a Bot account before it looks at any email, and
+// Prow's dco plugin only asks that a Signed-off-by line be present.
+//
+// What #6123 DOES write is the message, and the agents' Signed-off-by trailers
+// go into it verbatim. An agent whose pane identity predates #6276 signs off
+// as "<slug>[bot] <<slug>[bot]@users.noreply.github.com>", the bracketed form
+// probot-dco rejects outright as "not a valid email address" when it does
+// validate (a git-authored commit that GitHub cannot resolve to the bot, as on
+// hivecommons/hive#6164). #6276 fixed the pane identity in entrypoint.sh so
+// git commit -s writes "<slug>@HIVE_GIT_BOT_EMAIL_DOMAIN"; this file applies
+// the same rule to the trailers it copies, so the signed commit's message is
+// bracket-free whatever the pane wrote — a stale image, or a branch of the
+// tree that has not received #6276 yet, cannot reintroduce #6251 through it.
+const (
+	// signedTrailerDomainEnv names the domain of the bracket-free bot address,
+	// the same knob entrypoint.sh honours for the pane identity.
+	signedTrailerDomainEnv = "HIVE_GIT_BOT_EMAIL_DOMAIN"
+	// signedTrailerDomainDefault matches entrypoint.sh's default so a hive that
+	// sets nothing signs off and re-authors with one and the same address.
+	signedTrailerDomainDefault = "hive.kubestellar.io"
+	// signedTrailerBotSuffix is the GitHub bot-login suffix whose presence in
+	// a local-part makes the address invalid to probot-dco's validator.
+	signedTrailerBotSuffix = "[bot]"
+	// signedTrailerNoreplyDomain is the domain GitHub attributes bot logins to.
+	signedTrailerNoreplyDomain = "users.noreply.github.com"
+)
+
+var (
+	// signedTrailerLineRE matches one Signed-off-by trailer line, capturing
+	// the name and the address (probot-dco's own trailer regex, anchored the
+	// same way).
+	signedTrailerLineRE = regexp.MustCompile(`(?mi)^(Signed-off-by: )(.*) <(.*)>[ \t]*$`)
+	// signedTrailerDomainRE is the hostname shape entrypoint.sh accepts for
+	// HIVE_GIT_BOT_EMAIL_DOMAIN; anything else falls back to the default.
+	signedTrailerDomainRE = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+)
+
+// signedTrailerDomain is the domain a bracket-free bot address is minted
+// under: HIVE_GIT_BOT_EMAIL_DOMAIN when it is a plain hostname, else the
+// default — the exact rule hive_git_bot_identity applies in entrypoint.sh.
+func signedTrailerDomain() string {
+	if d := strings.TrimSpace(os.Getenv(signedTrailerDomainEnv)); d != "" && signedTrailerDomainRE.MatchString(d) {
+		return d
+	}
+	return signedTrailerDomainDefault
+}
+
+// signedTrailerEmail returns the address a Signed-off-by trailer should carry
+// in the signed commit. A GitHub bot address — "<slug>[bot]@users.noreply.
+// github.com", with or without GitHub's "<id>+" prefix — becomes the
+// bracket-free "<slug>@<domain>" #6276 gives the pane identity. Any other
+// address is returned unchanged: it is the agent's own sign-off and not ours
+// to rewrite.
+func signedTrailerEmail(email string) string {
+	local, domain, ok := strings.Cut(email, "@")
+	if !ok || !strings.EqualFold(domain, signedTrailerNoreplyDomain) || !strings.HasSuffix(local, signedTrailerBotSuffix) {
+		return email
+	}
+	slug := strings.TrimSuffix(local, signedTrailerBotSuffix)
+	if _, rest, hasID := strings.Cut(slug, "+"); hasID {
+		slug = rest
+	}
+	if slug == "" {
+		return email
+	}
+	return slug + "@" + signedTrailerDomain()
+}
+
+// signedTrailersBracketFree rewrites every Signed-off-by line in msg through
+// signedTrailerEmail, leaving the rest of the message byte-for-byte intact.
+func signedTrailersBracketFree(msg string) string {
+	return signedTrailerLineRE.ReplaceAllStringFunc(msg, func(line string) string {
+		m := signedTrailerLineRE.FindStringSubmatch(line)
+		if m == nil {
+			return line
+		}
+		return m[1] + m[2] + " <" + signedTrailerEmail(m[3]) + ">"
+	})
 }
 
 // createCommitOnBranch runs the mutation and returns the new commit's oid.
