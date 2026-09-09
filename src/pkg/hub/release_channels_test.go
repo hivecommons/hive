@@ -29,8 +29,16 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 		}
 		return byTag[tag]
 	}
+	// The revision-label fallback is a separate registry read; default it to
+	// "no label" so digest-only tests stay hermetic and stay about digests.
+	// Tests of the fallback override it via stubChannelRevisions
+	// (channel_targeting_test.go).
+	resetChannelRevisionCache(t)
+	origRev := ghcrTagRevision
+	ghcrTagRevision = func(string, string, *slog.Logger) string { return "" }
 	t.Cleanup(func() {
 		ghcrTagDigest = orig
+		ghcrTagRevision = origRev
 		resetChannelTargetCache()
 	})
 }
@@ -123,10 +131,43 @@ func TestResolveChannelTargetsUnmatchedDigestGetsNoBranch(t *testing.T) {
 
 	tgt := targetFor(got, ReleaseChannelStable)
 	if tgt.Branch != "" || tgt.SHA != "" {
-		t.Errorf("stable = branch %q sha %q, want both empty — an unmatched digest must not be attributed to a branch", tgt.Branch, tgt.SHA)
+		t.Errorf("stable = branch %q sha %q, want both empty — an unmatched digest with no revision label must not be attributed to anything", tgt.Branch, tgt.SHA)
 	}
 	if tgt.Digest != "sha256:cccc" {
 		t.Errorf("stable digest = %q, want sha256:cccc so the UI can still identify the build", tgt.Digest)
+	}
+}
+
+// TestResolveChannelTargetsUnmatchedDigestFallsBackToRevisionLabel is the
+// 2026-09-09 header: stable pinned to df9b867 (Sept 4) while v4-latest had
+// moved on, so no branch tip carried stable's digest and the header rendered
+// the digest prefix "ef5a603" — which looks like a commit, is not one, and
+// disagreed with every spoke on the channel reporting df9b867. The revision
+// label names the commit; the header must show it. Branch stays empty.
+func TestResolveChannelTargetsUnmatchedDigestFallsBackToRevisionLabel(t *testing.T) {
+	stubChannelDigests(t, map[string]string{
+		"v4-latest":             "sha256:aaaa",
+		ReleaseChannelStable:    "sha256:ef5a603a",
+		ReleaseChannelCandidate: "sha256:aaaa",
+		ReleaseChannelEdge:      "sha256:aaaa",
+	})
+	stubChannelRevisions(t, map[string]string{ReleaseChannelStable: "df9b867"})
+
+	got := resolveChannelTargets(map[string]string{"v4": "6d3846d"}, testChannelLogger())
+
+	stable := targetFor(got, ReleaseChannelStable)
+	if stable.SHA != "df9b867" {
+		t.Errorf("stable sha = %q, want df9b867 from the image revision label", stable.SHA)
+	}
+	if stable.Branch != "" {
+		t.Errorf("stable branch = %q, want empty — a revision label names a commit, not a branch", stable.Branch)
+	}
+	if stable.Digest != "sha256:ef5a603a" {
+		t.Errorf("stable digest = %q, want preserved for the tooltip", stable.Digest)
+	}
+	// Channels that DO match a branch tip must be untouched by the fallback.
+	if cand := targetFor(got, ReleaseChannelCandidate); cand.Branch != "v4" || cand.SHA != "6d3846d" {
+		t.Errorf("candidate = branch %q sha %q, want v4/6d3846d from the digest match", cand.Branch, cand.SHA)
 	}
 }
 

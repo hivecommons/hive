@@ -13234,6 +13234,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var t = _channelTargets[i];
         if (t && t.channel === v) {
           if (t.branch) return v + ' (' + t.branch + ')';
+          if (t.sha) return v + ' (' + t.sha + ')';
           if (t.digest) return v + ' (' + shortDigest(t.digest) + ')';
           return v + ' (?)';
         }
@@ -16094,10 +16095,17 @@ const dashboardHTML = `<!DOCTYPE html>
             if (ct.branch) {
               var ctMsg = _latestSHAMessages[ct.branch] || '';
               ctTarget = '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(ct.branch) + '</span><span style="font-family:monospace;color:var(--muted);margin-left:6px">' + esc(ct.sha || '') + '</span>' + (ctMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(ctMsg) + '</span>' : '');
+            } else if (ct.sha) {
+              /* Resolved to a build no tracked branch tip points at (stable
+                 lags v4-latest by design), but the image's revision label
+                 names its commit. Show THAT — it is the same SHA the spokes on
+                 this channel report, so the header and the fleet agree. Still
+                 no branch pill: a label names a commit, not a branch. */
+              ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest || '') + '">' + esc(ct.sha) + '</span>';
             } else if (ct.digest) {
-              /* Resolved, but to something no tracked branch points at — a
-                 pinned or mid-promotion build. Show the digest so the operator
-                 can still identify it; do NOT attribute it to a branch. */
+              /* Resolved, but to something no tracked branch points at and
+                 whose image carries no revision label. Show the digest so the
+                 operator can still identify it; do NOT attribute it to a branch. */
               ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest) + '">' + esc(shortDigest(ct.digest)) + '</span>';
             } else {
               ctTarget = '<span style="color:var(--muted);opacity:0.7;font-size:0.7rem" title="Channel tag could not be resolved on GHCR">unknown</span>';

@@ -220,6 +220,15 @@ func resolveChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []
 			if b, ok := branchByDigest[t.Digest]; ok {
 				t.Branch = b
 				t.SHA = branchSHAs[b]
+			} else {
+				// No branch tip carries this digest — the channel is pinned to
+				// an older build (stable lags v4-latest by design). The build
+				// still has a commit: read it from the image's revision label,
+				// exactly as reachableUpgradeTarget does for spokes, so the
+				// header shows the SAME SHA the spokes report instead of a
+				// digest prefix that looks like an unrelated commit (#6294).
+				// Branch stays empty: a label names a commit, not a branch.
+				t.SHA = channelRevisionSHA(ch, logger)
 			}
 		}
 		out = append(out, t)
