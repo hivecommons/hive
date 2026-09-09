@@ -104,6 +104,26 @@ type ChannelTarget struct {
 	// Digest is the registry digest the channel tag resolves to, or "" when the
 	// channel could not be resolved at all (tag absent, or GHCR unreachable).
 	Digest string `json:"digest,omitempty"`
+
+	// CompareTo names the channel this row's distance is measured against —
+	// the stage immediately upstream in the promotion order (see
+	// channel_distance.go). Empty when the distance is unknown or the channel
+	// has no upstream, and the UI then renders no distance rather than
+	// implying the tracks are level.
+	CompareTo string `json:"compare_to,omitempty"`
+
+	// CompareStatus is GitHub's compare verdict against CompareTo:
+	// "identical", "ahead", "behind" or "diverged". Carried alongside the
+	// counts so "identical" stays distinguishable from an unresolved compare,
+	// which also has both counts zero.
+	CompareStatus string `json:"compare_status,omitempty"`
+
+	// Ahead is how many commits this channel has that CompareTo does not.
+	Ahead int `json:"ahead,omitempty"`
+
+	// Behind is how many commits CompareTo has that this channel does not —
+	// i.e. what is queued to be promoted into this channel.
+	Behind int `json:"behind,omitempty"`
 }
 
 // channelDigestTTL bounds how stale a channel→digest association may be. A
@@ -242,6 +262,9 @@ func resolveChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []
 		}
 		out = append(out, t)
 	}
+	// Distances come last: every channel's SHA must be known before any row can
+	// be measured against another.
+	annotateChannelDistances(out, logger)
 	return out
 }
 

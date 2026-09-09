@@ -38,12 +38,50 @@ func stubChannelDigests(t *testing.T, byTag map[string]string) {
 	ghcrTagRevision = func(string, string, *slog.Logger) string { return "" }
 	origMsg := channelCommitMessage
 	channelCommitMessage = func(string, *slog.Logger) string { return "" }
+	// Distance resolution is a THIRD network read that resolveChannelTargets
+	// now performs. Default it to "unresolved" so every existing digest test
+	// stays hermetic and off api.github.com; distance tests opt in via
+	// stubChannelDistances.
+	resetChannelDistanceCache()
+	origDist := fetchCommitCompareCounts
+	fetchCommitCompareCounts = func(base, head string, _ *slog.Logger) (channelDistance, error) {
+		return channelDistance{}, fmt.Errorf("compare not stubbed in this test")
+	}
 	t.Cleanup(func() {
 		ghcrTagDigest = orig
 		ghcrTagRevision = origRev
 		channelCommitMessage = origMsg
+		fetchCommitCompareCounts = origDist
+		resetChannelDistanceCache()
 		resetChannelTargetCache()
 	})
+}
+
+// stubChannelDistances points fetchCommitCompareCounts at a fixed
+// base→head→distance table for one test. Keyed by the SHAs the channel rows
+// resolve to, so a test states "stable is N behind candidate" in the same
+// terms the dashboard renders.
+func stubChannelDistances(t *testing.T, by map[channelDistanceKey]channelDistance) {
+	t.Helper()
+	resetChannelDistanceCache()
+	orig := fetchCommitCompareCounts
+	fetchCommitCompareCounts = func(base, head string, _ *slog.Logger) (channelDistance, error) {
+		d, ok := by[channelDistanceKey{base: shortSHA(base), head: shortSHA(head)}]
+		if !ok {
+			return channelDistance{}, fmt.Errorf("no stubbed compare for %s...%s", base, head)
+		}
+		return d, nil
+	}
+	t.Cleanup(func() {
+		fetchCommitCompareCounts = orig
+		resetChannelDistanceCache()
+	})
+}
+
+func resetChannelDistanceCache() {
+	channelDistanceMu.Lock()
+	channelDistanceCache = map[channelDistanceKey]channelDistance{}
+	channelDistanceMu.Unlock()
 }
 
 func resetChannelTargetCache() {

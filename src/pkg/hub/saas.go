@@ -16144,7 +16144,37 @@ const dashboardHTML = `<!DOCTYPE html>
             } else {
               ctTarget = '<span style="color:var(--muted);opacity:0.7;font-size:0.7rem" title="Channel tag could not be resolved on GHCR">unknown</span>';
             }
-            chLines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:0.7rem">-&gt;</span>' + ctTarget + '</div>';
+            /* Distance to the channel one stage upstream in the promotion
+               order (server-computed; see channel_distance.go). Absent whenever
+               it could not be resolved, so a row never implies the tracks are
+               level when we simply do not know. Diverged shows BOTH counts —
+               collapsing them into one direction would misreport the branch
+               pairs these channels actually track. */
+            var ctDist = '';
+            if (ct.compare_to && ct.compare_status) {
+              var dBits = [];
+              if (ct.behind) dBits.push('<span style="color:#fbbf24">&darr;' + ct.behind + '</span>');
+              if (ct.ahead) dBits.push('<span style="color:#60a5fa">&uarr;' + ct.ahead + '</span>');
+              var dTitle;
+              if (ct.compare_status === 'identical') {
+                dTitle = 'Same commit as ' + ct.compare_to;
+              } else if (ct.compare_status === 'diverged') {
+                dTitle = 'Diverged from ' + ct.compare_to + ': ' + ct.behind +
+                  ' commit(s) on ' + ct.compare_to + ' not here, ' + ct.ahead + ' here not on ' + ct.compare_to;
+              } else {
+                dTitle = (ct.behind ? ct.behind + ' commit(s) behind ' : '') +
+                  (ct.ahead ? ct.ahead + ' commit(s) ahead of ' : '') + ct.compare_to;
+              }
+              if (!dBits.length) {
+                /* identical, or a status with no counts: say so in words
+                   rather than rendering an empty pair of arrows. */
+                ctDist = '<span style="font-size:0.6rem;color:var(--muted);opacity:0.7" title="' + escAttr(dTitle) + '">in sync with ' + esc(ct.compare_to) + '</span>';
+              } else {
+                ctDist = '<span style="font-size:0.6rem;font-family:monospace;display:inline-flex;gap:4px" title="' + escAttr(dTitle) + '">' + dBits.join('') +
+                  '<span style="color:var(--muted);opacity:0.6;font-family:inherit">vs ' + esc(ct.compare_to) + '</span></span>';
+              }
+            }
+            chLines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:0.7rem">-&gt;</span>' + ctTarget + ctDist + '</div>';
           }
           if (chLines) {
             chLines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Release channels:</div>' + chLines +
