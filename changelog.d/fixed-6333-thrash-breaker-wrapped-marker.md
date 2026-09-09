@@ -1,1 +1,1 @@
-Fixed the agent thrash breaker pane capture to join tmux display-wrapped lines so blocked-action markers split by narrow panes are detected reliably.
+- Fixed the agent thrash breaker pane capture to join tmux display-wrapped lines so blocked-action markers split by narrow panes are detected reliably.
