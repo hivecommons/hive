@@ -128,7 +128,7 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 		return b.fail(res, fmt.Errorf("reading HEAD: %w", err))
 	}
 	res.Commit = strings.TrimSpace(string(commit))
-	if err := b.rejectEmptyOutgoingCommits(ctx); err != nil {
+	if err := b.rejectEmptyOutgoingCommits(ctx, res.Commit); err != nil {
 		return b.fail(res, err)
 	}
 
@@ -160,7 +160,7 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 			return b.fail(res, fmt.Errorf("reading HEAD after newline normalisation: %w", err))
 		}
 		res.Commit = strings.TrimSpace(string(commit))
-		if err := b.rejectEmptyOutgoingCommits(ctx); err != nil {
+		if err := b.rejectEmptyOutgoingCommits(ctx, res.Commit); err != nil {
 			return b.fail(res, err)
 		}
 		files, err = b.changedFiles(ctx)
@@ -256,19 +256,37 @@ func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 	return splitLines(out), err
 }
 
-func (b *Broker) rejectEmptyOutgoingCommits(ctx context.Context) error {
+func (b *Broker) rejectEmptyOutgoingCommits(ctx context.Context, head string) error {
 	rangeSpec := "HEAD"
+	baseExists := false
 	if base := strings.TrimSpace(b.BaseRef); base != "" {
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
 			rangeSpec = base + "..HEAD"
+			baseExists = true
 		}
 	} else {
 		base := b.remoteRef()
 		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
 			rangeSpec = base + "..HEAD"
+			baseExists = true
 		}
 	}
-	out, err := b.git(ctx, "rev-list", "--reverse", rangeSpec)
+	args := []string{"rev-list", "--reverse", rangeSpec}
+	if !baseExists {
+		out := strings.TrimSpace(head)
+		if out == "" {
+			return nil
+		}
+		for _, commit := range []string{out} {
+			if empty, err := b.commitHasEmptyTreeDelta(ctx, commit); err != nil {
+				return err
+			} else if empty {
+				return fmt.Errorf("pushbroker: refusing to push empty commit %s; retrigger CI with gh run rerun --failed or workflow_dispatch instead of pushing to the PR branch", shortSHA(commit))
+			}
+		}
+		return nil
+	}
+	out, err := b.git(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("reading outgoing commits for empty-commit guard: %w", err)
 	}

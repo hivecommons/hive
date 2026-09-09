@@ -86,6 +86,21 @@ func TestBrokerRejectsCommitMadeEmptyByNormalisation(t *testing.T) {
 	}
 }
 
+func TestBrokerFirstPushEmptyGuardChecksOnlyHead(t *testing.T) {
+	dir := initRepo(t)
+	runGit(t, dir, "commit", "--allow-empty", "-m", "historical empty commit")
+	writeCommit(t, dir, "safe.txt", "new branch work\n")
+	r := &recordingRunner{}
+
+	res, err := (&Broker{Workspace: dir, Branch: "new-work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v (res=%+v)", err, res)
+	}
+	if !res.Pushed {
+		t.Fatal("Pushed=false")
+	}
+}
+
 func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "safe.txt", "hello\n")

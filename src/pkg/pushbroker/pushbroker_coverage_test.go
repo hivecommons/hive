@@ -52,6 +52,10 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 	if strings.HasPrefix(key, "rev-list --reverse ") {
 		return nil, nil
 	}
+	if strings.HasPrefix(key, "rev-list --parents -n 1 ") {
+		commit := args[len(args)-1]
+		return []byte(commit + " parent\n"), nil
+	}
 	return nil, errors.New("unscripted git invocation: " + name + " " + key)
 }
 
