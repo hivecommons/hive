@@ -8,7 +8,8 @@
   <meta property="og:title" content="Hive — AI agents that maintain your repo">
   <meta property="og:description" content="Put your repo on autopilot. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — test coverage earns the confidence to raise a level, and you (the admin) choose when to raise it.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://hive.kubestellar.io">
+  <meta property="og:url" content="https://hive.hivecommons.dev">
+  <link rel="canonical" href="https://hive.hivecommons.dev">
   <meta name="description" content="Hive — the AI maintainer you own outright. AI agents triage issues, write fixes, patch CVEs, and merge on green behind six autonomy levels. Coverage earns the confidence to level up; the admin decides when to raise it.">
   <title>Hive — AI agents that maintain your repo</title>
   <style>
@@ -1369,7 +1370,7 @@
         var repoLink = repoPath ? '<a href="https://github.com/' + esc(repoPath) + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '';
         var repoCount = (h.repos || []).length;
         var htype = (h.hiveType || 'local') === 'hosted'
-          ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Hosted on hive.kubestellar.io">hosted</span>'
+          ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Hosted on hive.hivecommons.dev">hosted</span>'
           : '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="Self-hosted by the owner">local</span>';
         return '<tr>' +
           '<td style="white-space:nowrap">' + contributeButton(h) + '</td>' +

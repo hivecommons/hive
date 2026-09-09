@@ -10379,7 +10379,8 @@ const ogFallbackHTML = `<!DOCTYPE html><html><head>
 <meta property="og:description" content="AI Agent Orchestration for Open Source. Manage your hive instances — monitor agents, governor mode, issues, PRs, and contributor activity.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Hive Hub">
-<meta property="og:url" content="https://hive.kubestellar.io/dashboard">
+<meta property="og:url" content="https://hive.hivecommons.dev/dashboard">
+<link rel="canonical" href="https://hive.hivecommons.dev/dashboard">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
 <title>My Hives — Hive Hub</title>
 </head><body></body></html>`
