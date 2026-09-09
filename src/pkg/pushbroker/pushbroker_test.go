@@ -101,6 +101,118 @@ func TestBrokerFirstPushEmptyGuardChecksOnlyHead(t *testing.T) {
 	}
 }
 
+func TestRejectEmptyOutgoingCommitsSurfacesRevListFailure(t *testing.T) {
+	git := &scriptedGit{
+		replies: map[string]string{
+			"rev-parse --verify origin/main": "base\n",
+		},
+		fails: map[string]error{
+			"rev-list --reverse origin/main..HEAD": errors.New("bad revision"),
+		},
+	}
+	err := (&Broker{Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main", Runner: git}).rejectEmptyOutgoingCommits(context.Background(), "head")
+	if err == nil || !strings.Contains(err.Error(), "reading outgoing commits for empty-commit guard") {
+		t.Fatalf("rejectEmptyOutgoingCommits error = %v, want rev-list failure", err)
+	}
+}
+
+func TestRejectEmptyOutgoingCommitsSurfacesListedCommitFailure(t *testing.T) {
+	git := &scriptedGit{
+		replies: map[string]string{
+			"rev-parse --verify origin/main":       "base\n",
+			"rev-list --reverse origin/main..HEAD": "badhead\n",
+		},
+		fails: map[string]error{
+			"rev-list --parents -n 1 badhead": errors.New("corrupt commit"),
+		},
+	}
+	err := (&Broker{Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main", Runner: git}).rejectEmptyOutgoingCommits(context.Background(), "head")
+	if err == nil || !strings.Contains(err.Error(), "reading parents for empty-commit guard") {
+		t.Fatalf("rejectEmptyOutgoingCommits error = %v, want listed commit failure", err)
+	}
+}
+
+func TestRejectEmptyOutgoingCommitsRejectsListedEmptyCommit(t *testing.T) {
+	git := &scriptedGit{
+		replies: map[string]string{
+			"rev-parse --verify origin/main":       "base\n",
+			"rev-list --reverse origin/main..HEAD": "deadbeef\n",
+			"rev-list --parents -n 1 deadbeef":     "deadbeef parent\n",
+			"diff-tree --quiet parent deadbeef":    "",
+		},
+	}
+	err := (&Broker{Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main", Runner: git}).rejectEmptyOutgoingCommits(context.Background(), "head")
+	if err == nil || !strings.Contains(err.Error(), "refusing to push empty commit") {
+		t.Fatalf("rejectEmptyOutgoingCommits error = %v, want empty listed commit rejection", err)
+	}
+}
+
+func TestRejectEmptyOutgoingCommitsIgnoresEmptyUnknownHead(t *testing.T) {
+	git := &scriptedGit{
+		fails: map[string]error{
+			"rev-parse --verify refs/remotes/origin/work": errors.New("unknown revision"),
+		},
+	}
+	if err := (&Broker{Workspace: fakeGitWorkspace(t), Branch: "work", Runner: git}).rejectEmptyOutgoingCommits(context.Background(), " "); err != nil {
+		t.Fatalf("rejectEmptyOutgoingCommits = %v, want nil for empty head", err)
+	}
+}
+
+func TestRejectEmptyOutgoingCommitsSurfacesHeadOnlyParentFailure(t *testing.T) {
+	git := &scriptedGit{
+		fails: map[string]error{
+			"rev-parse --verify refs/remotes/origin/work": errors.New("unknown revision"),
+			"rev-list --parents -n 1 badhead":             errors.New("corrupt commit"),
+		},
+	}
+	err := (&Broker{Workspace: fakeGitWorkspace(t), Branch: "work", Runner: git}).rejectEmptyOutgoingCommits(context.Background(), "badhead")
+	if err == nil || !strings.Contains(err.Error(), "reading parents for empty-commit guard") {
+		t.Fatalf("rejectEmptyOutgoingCommits error = %v, want parent read failure", err)
+	}
+}
+
+func TestCommitHasEmptyTreeDeltaSurfacesParentFailure(t *testing.T) {
+	git := &scriptedGit{
+		fails: map[string]error{
+			"rev-list --parents -n 1 bad": errors.New("corrupt commit"),
+		},
+	}
+
+	_, err := (&Broker{Workspace: fakeGitWorkspace(t), Runner: git}).commitHasEmptyTreeDelta(context.Background(), "bad")
+	if err == nil || !strings.Contains(err.Error(), "reading parents for empty-commit guard") {
+		t.Fatalf("commitHasEmptyTreeDelta error = %v, want parent read failure", err)
+	}
+}
+
+func TestBrokerSurfacesEmptyCommitCheckFailureAfterNormalisation(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "main.go", "package main\n\nfunc main() {}\n\n")
+	r := &nthCallFailingRunner{failSubstr: "rev-list --parents -n 1", failOnCall: 2, failErr: errors.New("corrupt amended head")}
+	_, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reading parents for empty-commit guard") {
+		t.Fatalf("Run error = %v, want post-normalisation empty-check failure", err)
+	}
+}
+
+func TestCommitHasEmptyTreeDeltaHandlesRootCommit(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "safe.txt", "root content\n")
+	head := strings.TrimSpace(runGitOutput(t, dir, "rev-parse", "HEAD"))
+	empty, err := (&Broker{Workspace: dir}).commitHasEmptyTreeDelta(context.Background(), head)
+	if err != nil {
+		t.Fatalf("commitHasEmptyTreeDelta: %v", err)
+	}
+	if empty {
+		t.Fatal("root commit adding a file was classified as empty")
+	}
+}
+
+func TestShortSHALeavesShortValuesAlone(t *testing.T) {
+	if got := shortSHA("abc123"); got != "abc123" {
+		t.Fatalf("shortSHA = %q, want original short value", got)
+	}
+}
+
 func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 	dir := initRepo(t)
 	writeCommit(t, dir, "safe.txt", "hello\n")
