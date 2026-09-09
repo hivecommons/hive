@@ -17,7 +17,8 @@ import (
 // funcTerminal (see terminal_seams_test.go) to fake individual methods.
 type TerminalSession interface {
 	// CapturePane returns the agent's pane content including scrollback
-	// (bounded by tmuxCaptureLines), for diff-based output detection.
+	// (bounded by tmuxCaptureLines), for diff-based output detection. Wrapped
+	// display lines are joined so substring detectors see the original output.
 	CapturePane(agent *AgentProcess) string
 	// CaptureVisiblePane returns only the visible pane, no scrollback.
 	CaptureVisiblePane(agent *AgentProcess) string
@@ -56,7 +57,7 @@ type tmuxTerminal struct {
 }
 
 func (t tmuxTerminal) CapturePane(agent *AgentProcess) string {
-	cmd := t.m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p",
+	cmd := t.m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
 		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
 	out, err := cmd.Output()
 	if err != nil {

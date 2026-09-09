@@ -151,6 +151,51 @@ func paneInject(t *testing.T, session, text string) {
 	time.Sleep(400 * time.Millisecond)
 }
 
+func TestCapturePaneJoinsWrappedBlockedActionMarker(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	const (
+		narrowPaneWidth  = "40"
+		narrowPaneHeight = "10"
+		markerOffset     = 36
+	)
+	session := "hive-wrap-marker"
+	line := strings.Repeat("x", markerOffset) + blockedActionMarkers[0] + " advisory mode"
+	if err := testTmuxCommand("new-session", "-d", "-x", narrowPaneWidth, "-y", narrowPaneHeight,
+		"-s", session, "printf '%s\n' '"+line+"'; sleep 60").Run(); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	t.Cleanup(func() { _ = testTmuxCommand("kill-session", "-t", session).Run() })
+
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+	agent := &AgentProcess{Name: "wrap-marker", tmuxSession: session}
+	var output string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		output = tmuxTerminal{m: m}.CapturePane(agent)
+		if strings.Contains(output, blockedActionMarkers[0]) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	var matchedLine string
+	for _, captured := range strings.Split(output, "\n") {
+		if strings.Contains(captured, blockedActionMarkers[0]) {
+			matchedLine = captured
+			break
+		}
+	}
+	if matchedLine == "" {
+		t.Fatalf("joined capture did not keep blocked marker on one line; capture:\n%s", output)
+	}
+
+	m.checkBlockedThrash(agent.Name, matchedLine)
+	if st := m.thrash[agent.Name]; st == nil || len(st.times) != 1 {
+		t.Fatalf("joined blocked marker did not feed thrash detector; state=%v line=%q", st, matchedLine)
+	}
+}
+
 // requirePaneShows blocks until capture-pane actually returns text in the
 // session's visible pane, failing the test if it never renders.
 //

@@ -94,6 +94,23 @@ func TestTmuxTerminalSessionAttachedReachesManagerSeam(t *testing.T) {
 	}
 }
 
+func TestTmuxTerminalCapturePaneJoinsWrappedLinesCommand(t *testing.T) {
+	logPath := installAttachFakeTmux(t)
+	term := tmuxTerminal{m: NewManager(nil, discardLogger(), ProjectContext{})}
+	agent := &AgentProcess{Name: "quality", tmuxSession: "hive-capture-join-test"}
+
+	_ = term.CapturePane(agent)
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("fake tmux was never invoked: %v", err)
+	}
+	logged := string(raw)
+	if !strings.Contains(logged, "capture-pane -t hive-capture-join-test -p -J -S") {
+		t.Fatalf("CapturePane sent %q, want capture-pane with -p -J -S", logged)
+	}
+}
+
 func TestTmuxTerminalClearHistorySendsClearHistoryCommand(t *testing.T) {
 	logPath := installAttachFakeTmux(t)
 	term := tmuxTerminal{m: NewManager(nil, discardLogger(), ProjectContext{})}
