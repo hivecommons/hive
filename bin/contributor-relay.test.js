@@ -2765,6 +2765,59 @@ test('agy startup gates are classified before readiness, using only the visible 
   }
 });
 
+// #6413: agy renders inline at the TOP of the pane — banner, input box and its
+// "? for shortcuts" footer land in rows 1-16 of a 50-row tmux capture, leaving
+// rows 17-50 blank. A plain last-15-lines tail (paneTail) is therefore rows
+// 36-50 on a real, idle agy pane — always blank — so getCLIState() returned
+// 'starting' forever and the CLI never became ready. Build the exact 50-row
+// shape (16 content rows, 34 trailing blank rows) rather than reusing
+// AGY_READY_PANE so this regresses if paneTail is ever reintroduced here.
+const AGY_READY_PANE_50_ROW_CAPTURE = [
+  '      \u2584\u2580\u2580\u2584        Antigravity CLI 1.1.27',
+  '     \u2580\u2580\u2580\u2580\u2580\u2580       account@example.com (Google AI Pro)',
+  '    \u2580\u2580\u2580\u2580\u2580\u2580\u2580\u2580      Gemini 3.8 Flash (High)',
+  '   \u2584\u2580\u2580    \u2580\u2580\u2584     ~/.local/state/hive/agent-cwd',
+  '  \u2584\u2580\u2580      \u2580\u2580\u2584',
+  '',
+  '\u2500'.repeat(60),
+  '> ',
+  '\u2500'.repeat(60),
+  '? for shortcuts                        Gemini 3.8 Flash \u00b7 high',
+  '', '', '', '', '', '',
+  ...Array.from({ length: 34 }, () => ''),
+].join('\n');
+
+test('a 50-row agy capture with "? for shortcuts" above a blank last-15-rows tail is ready (regression #6413)', () => {
+  const rows = AGY_READY_PANE_50_ROW_CAPTURE.split('\n');
+  assert.strictEqual(rows.length, 50, 'test fixture must model the real 50-row pane geometry');
+  assert.strictEqual(/\? for shortcuts/.test(rows[9]), true,
+    'the fixture must place the marker at row 10, well above the last 15 rows');
+  assert.strictEqual(rows.slice(-15).every((r) => r.trim() === ''), true,
+    'the last-15-rows window must be blank, exactly as on the real pane from #6413');
+  const relay = loadRelay({ backend: 'agy', cliStates: [AGY_READY_PANE_50_ROW_CAPTURE] });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'ready',
+      'a live, idle agy pane whose "? for shortcuts" footer sits above a blank last-15-rows tail must be ready, not starting forever');
+  } finally { teardown(relay); }
+});
+
+test('agy onboarding marker only in old scrollback above recent blank/idle rows is not onboarding', () => {
+  // The wizard text sits far above the last 15 non-blank rows, which show a
+  // plain idle prompt with no readiness marker at all — this must NOT match
+  // onboarding just because the word appears earlier in the capture.
+  const pane = [
+    'Terms of Service & Data Use',
+    '[Previous] [Done]',
+    ...Array.from({ length: 20 }, (_, i) => `ordinary output line ${i}`),
+    '> ',
+  ].join('\n');
+  const relay = loadRelay({ backend: 'agy', cliStates: [pane] });
+  try {
+    assert.notStrictEqual(relay.getCLIState(), 'onboarding',
+      'stale wizard prose above the visible tail must not reclassify a live, unrelated prompt as onboarding');
+  } finally { teardown(relay); }
+});
+
 test('agy ready gate does not fire on splash or wizard cursor', () => {
   for (const pane of [
     'Antigravity CLI\nloading workspace...\n',
