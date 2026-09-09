@@ -1,0 +1,1 @@
+- Dashboard token-access audit endpoint now skips torn or invalid JSONL lines (reporting a `skipped` count) instead of returning an empty body when the log is read mid-append ([#6407](https://github.com/hivecommons/hive/issues/6407)).

@@ -2252,13 +2252,23 @@ func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
 		start = len(lines) - tokenAccessMaxEntries
 	}
 	entries := make([]json.RawMessage, 0, len(lines)-start)
+	skipped := 0
 	for _, line := range lines[start:] {
+		line = strings.TrimSpace(line)
 		if line == "" {
+			continue
+		}
+		// The log is appended concurrently by the gh-wrapper audit path, so a
+		// reader can observe a torn (partially written) final line. Skip and
+		// count any line that isn't valid JSON instead of letting it corrupt
+		// the whole response (#6407).
+		if !json.Valid([]byte(line)) {
+			skipped++
 			continue
 		}
 		entries = append(entries, json.RawMessage(line))
 	}
-	jsonResponse(w, map[string]interface{}{"entries": entries})
+	jsonResponse(w, map[string]interface{}{"entries": entries, "skipped": skipped})
 }
 
 // --- Token endpoints ---
