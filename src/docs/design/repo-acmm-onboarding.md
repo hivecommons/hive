@@ -1,6 +1,15 @@
 # Automatic repo ACMM onboarding reconciler
 
-Status: Proposed — discussion on #6235.
+Status: Declined (2026-09-09) — kept as a record of the decision.
+
+> **Decision.** The maintainers closed RFC #6235 without adopting it, and RFC
+> #6111 (per-repo ACMM levels under a hive-wide ceiling) is on hold: the hive
+> keeps a single hive-wide ACMM level rather than per-repo levels, so a
+> reconciler that drives each repo toward its own target level has no policy
+> to enforce. Off-repo criterion waivers (#6264, backported in #6395) cover
+> the legitimate "capability provided elsewhere" case without per-repo
+> levels. Nothing below is scheduled for implementation; reopen #6235 before
+> building on it.
 
 RFC credit: this design turns the adopter RFC in
 [#6235](https://github.com/hivecommons/hive/issues/6235) into a reviewable plan

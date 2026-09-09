@@ -21,7 +21,7 @@ that status is the thing to check before treating a page as current behaviour:
 ## Records
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
-- [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **proposed.**
+- [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **declined** (RFC #6235 closed; #6111 on hold).
   Design for per-repo ACMM targets, gap-to-work reconciliation, explicit
   `agent-actionable` / `needs-human` / `waived` classification, and the
   anti-gaming controls required before agents generate onboarding PRs. Credits
