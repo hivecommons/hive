@@ -10,15 +10,15 @@ Status: Declined (2026-09-09) — kept as a record of the decision.
 > before building on it.
 >
 > **Per-repo ACMM may still be reachable another way.** Declining per-repo
-> *levels* is not declining per-repo *behaviour*. The hive already has
-> per-repo primitives that compose without a second level model: off-repo
-> criterion waivers (#6264, backported in #6395) let a repo declare a
-> capability satisfied elsewhere; per-repo agent scope (#6215) limits which
-> agents act on which repos; per-repo pause (#6211) removes a repo from
-> autonomous dispatch. A future proposal that achieves per-repo maturity
-> outcomes by composing primitives like these — keeping one hive-wide level as
-> the ceiling and the single source of truth — would be reviewed on its own
-> merits; see the discussion on #6111.
+> *levels* is not declining per-repo *behaviour*. The direction under
+> discussion on #6111 is a per-repo **mode clamp**: the hive keeps one level
+> (roster driver, dashboard number, ceiling) and a repo may only *lower* the
+> effective policy mode of agents acting on it (`max_mode: advisory | pr`),
+> enforced at the same points (proxy, merge gates, task filtering, prompt
+> context). It composes with per-repo agent scope (#6215) and off-repo
+> criterion waivers (#6264, #6395) and fails closed to the hive-level mode
+> when a repo cannot be resolved. A reconciler that drives repos toward
+> maturity could be revisited on top of that primitive if the need returns.
 
 RFC credit: this design turns the adopter RFC in
 [#6235](https://github.com/hivecommons/hive/issues/6235) into a reviewable plan
