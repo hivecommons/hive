@@ -24,10 +24,12 @@ Hive validates backend names in `src/pkg/config` and launches CLIs in `src/pkg/a
 
 `just contribute-k8s` runs backends in a TTY-less pod and only permits the
 backends in its `HEADLESS_BACKENDS` allowlist, currently
-`claude litellm copilot codex goose` (`Justfile:1692`). `agy`, `opencode`, and
-`kilo` are deliberately excluded: their credentials are not verified for
-unattended use in a fresh pod, and `agy` in particular has no API-key mode at
-all.
+`claude litellm copilot codex goose` (the `contribute-k8s` `HEADLESS_BACKENDS`
+allowlist in the `Justfile`). `agy`, `opencode`, `kilo`, and `muse` are
+deliberately excluded: their credentials are not verified for unattended use in
+a fresh pod, and `agy` in particular has no API-key mode at all. `muse` has an
+API-key shape that should be pod-friendly, but it stays out until that path is
+verified end-to-end.
 
 If you need one of the excluded backends, either choose a supported headless
 backend, or run it attended on the container or local path
