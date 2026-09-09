@@ -360,6 +360,27 @@ func TestBuildDigestKeepsStaleFindingWithOpenWork(t *testing.T) {
 	}
 }
 
+func TestBuildDigestKeepsScannerFindingWhenReferencedIssue157IsOpen(t *testing.T) {
+	store := staleFindingStore(t, "Evidence computed at "+computedAt+". launcher log API exists; requester relay still missing; see #157")
+	resolve, calls := closedRefs(nil)
+
+	d := BuildDigestFromBeads(map[string]*beads.Store{"scanner": store}, "advisory", DigestOptions{
+		MaxFindings: 10,
+		ResolveRef:  resolve,
+		Snapshot:    &Snapshot{Owner: "hivecommons", Repo: "hive", SHA: analyzedAt},
+	})
+
+	if got := len(digestFindings(d)); got != 1 {
+		t.Errorf("%d findings open, want 1 -- hivecommons/hive#157 is still open", got)
+	}
+	if len(d.RecentlyResolved) != 0 {
+		t.Fatalf("RecentlyResolved = %+v, want none for a finding that references an open issue", d.RecentlyResolved)
+	}
+	if *calls == 0 {
+		t.Fatal("issue #157 was not consulted")
+	}
+}
+
 // With no resolver the pipeline behaves exactly as it did before #6080: the
 // finding is captioned and demoted, never retired. This is what makes the
 // feature safe to ship ahead of the client wiring.

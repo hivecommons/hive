@@ -83,7 +83,7 @@ func extractProvenanceSHA(text string) string {
 // The two sources are deliberately NOT interchangeable for every caller. The
 // explicit field is a statement by the producer; the prose match is an
 // inference. An inference is good enough to LABEL a finding as computed
-// elsewhere, but not to change whether that finding survives staleness pruning
+// elsewhere, but not to change whether that finding avoids staleness marking
 // — so PersistAsBeads uses the explicit field alone.
 func findingProvenanceSHA(f Finding) string {
 	if s := normalizeSHA(f.ProvenanceSHA); s != "" {

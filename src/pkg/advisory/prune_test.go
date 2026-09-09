@@ -37,11 +37,10 @@ func statusOf(t *testing.T, store *beads.Store, id string) beads.Status {
 	return b.Status
 }
 
-// TestPruneStaleAdvisoryBeads is the core of the "beads never close" fix: a
-// finding no agent has re-reported inside the window is retired, a freshly
-// re-reported one is left alone, and a bead filed before LastSeenAt existed is
-// never touched (its silence carries no information).
-func TestPruneStaleAdvisoryBeads(t *testing.T) {
+// TestMarkStaleAdvisoryBeadsDoesNotResolveAbsentFindings pins #6262: a finding
+// absent from the next agent output is not proven fixed. It stays open, is
+// captioned as unverified in the digest, and does not move to Recently Resolved.
+func TestMarkStaleAdvisoryBeadsDoesNotResolveAbsentFindings(t *testing.T) {
 	store, err := beads.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("creating store: %v", err)
@@ -52,31 +51,48 @@ func TestPruneStaleAdvisoryBeads(t *testing.T) {
 	fresh := newPrunableBead(t, store, "fresh finding re-reported this morning", time.Now().Add(-1*time.Hour))
 	legacy := newPrunableBead(t, store, "legacy finding filed before last_seen_at existed", time.Time{})
 
-	closed := PruneStaleAdvisoryBeads(map[string]*beads.Store{"scanner": store}, window)
+	marked := MarkStaleAdvisoryBeads(map[string]*beads.Store{"scanner": store}, window)
 
-	if len(closed) != 1 || closed[0] != stale.Title {
-		t.Fatalf("closed titles = %v, want exactly [%q]", closed, stale.Title)
+	if len(marked) != 1 || marked[0] != stale.Title {
+		t.Fatalf("marked titles = %v, want exactly [%q]", marked, stale.Title)
 	}
-	if got := statusOf(t, store, stale.ID); got != beads.StatusClosed {
-		t.Errorf("stale bead status = %q, want %q", got, beads.StatusClosed)
+	if got := statusOf(t, store, stale.ID); got != beads.StatusOpen {
+		t.Errorf("stale bead status = %q, want %q — silence is not a resolution", got, beads.StatusOpen)
 	}
 	if got := statusOf(t, store, fresh.ID); got != beads.StatusOpen {
 		t.Errorf("fresh bead status = %q, want %q — a re-reported finding must survive", got, beads.StatusOpen)
 	}
 	if got := statusOf(t, store, legacy.ID); got != beads.StatusOpen {
-		t.Errorf("nil-LastSeenAt bead status = %q, want %q — pre-Upsert beads must never be pruned", got, beads.StatusOpen)
+		t.Errorf("nil-LastSeenAt bead status = %q, want %q — pre-Upsert beads must never be marked stale", got, beads.StatusOpen)
 	}
 
 	sb, _ := store.Get(stale.ID)
-	if got := sb.Meta(closeReasonMetadataKey); got != staleCloseReason {
-		t.Errorf("close_reason = %q, want %q", got, staleCloseReason)
+	if got := sb.Meta(staleUnverifiedMetadataKey); got != staleUnverifiedReason {
+		t.Errorf("stale marker = %q, want %q", got, staleUnverifiedReason)
+	}
+	d := BuildDigestFromBeads(map[string]*beads.Store{"scanner": store}, "observe", DigestOptions{})
+	if len(d.RecentlyResolved) != 0 {
+		t.Fatalf("RecentlyResolved = %+v, want none for an absent-but-unproven finding", d.RecentlyResolved)
+	}
+	got, ok := d.ByAgent["scanner"]
+	if !ok || len(got) != 3 {
+		t.Fatalf("open findings = %+v, want stale/fresh/legacy still open", d.ByAgent)
+	}
+	var sawStale bool
+	for _, f := range got {
+		if f.Title == stale.Title {
+			sawStale = f.StaleUnverified
+		}
+	}
+	if !sawStale {
+		t.Fatalf("stale finding was not marked unverified in digest: %+v", got)
 	}
 }
 
-// TestPruneStaleAdvisoryBeadsSkipsNonAdvisoryTypes confirms the prune stays
+// TestMarkStaleAdvisoryBeadsSkipsNonAdvisoryTypes confirms the marker stays
 // inside the digest's own bead types: an agent's internal task bead is work in
-// progress, not a finding, and closing it would silently delete queued work.
-func TestPruneStaleAdvisoryBeadsSkipsNonAdvisoryTypes(t *testing.T) {
+// progress, not a finding, and marking it would create noisy false warnings.
+func TestMarkStaleAdvisoryBeadsSkipsNonAdvisoryTypes(t *testing.T) {
 	store, err := beads.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("creating store: %v", err)
@@ -89,10 +105,37 @@ func TestPruneStaleAdvisoryBeadsSkipsNonAdvisoryTypes(t *testing.T) {
 		t.Fatalf("stamping task bead: %v", err)
 	}
 
-	if closed := PruneStaleAdvisoryBeads(map[string]*beads.Store{"scanner": store}, 24*time.Hour); len(closed) != 0 {
-		t.Fatalf("closed = %v, want none — task beads are not advisory findings", closed)
+	if marked := MarkStaleAdvisoryBeads(map[string]*beads.Store{"scanner": store}, 24*time.Hour); len(marked) != 0 {
+		t.Fatalf("marked = %v, want none — task beads are not advisory findings", marked)
 	}
 	if got := statusOf(t, store, task.ID); got != beads.StatusOpen {
 		t.Errorf("task bead status = %q, want %q", got, beads.StatusOpen)
+	}
+}
+
+func TestStaleAdvisoryMarkerClearedOnFreshReport(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating store: %v", err)
+	}
+	old := newPrunableBead(t, store, "issue #157 launcher log API exists; requester relay still missing", time.Now().Add(-10*24*time.Hour))
+	if marked := MarkStaleAdvisoryBeads(map[string]*beads.Store{"scanner": store}, 7*24*time.Hour); len(marked) != 1 {
+		t.Fatalf("marked = %v, want one", marked)
+	}
+
+	PersistAsBeads([]Finding{{
+		Agent:    "scanner",
+		Type:     "advisory",
+		Severity: "high",
+		Title:    old.Title,
+		Detail:   "still open in hivecommons/hive#157",
+	}}, map[string]*beads.Store{"scanner": store})
+
+	got, err := store.Get(old.ID)
+	if err != nil {
+		t.Fatalf("reading bead: %v", err)
+	}
+	if marker := got.Meta(staleUnverifiedMetadataKey); marker != "" {
+		t.Fatalf("stale marker after fresh report = %q, want cleared", marker)
 	}
 }

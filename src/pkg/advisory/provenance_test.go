@@ -258,8 +258,8 @@ func TestPersistAsBeadsGatesKeepAliveOnProvenance(t *testing.T) {
 	if !seen.Equal(stale.UTC()) {
 		t.Errorf("identical-provenance re-report refreshed LastSeenAt to %s; it must leave the staleness clock running", seen)
 	}
-	if pruned := PruneStaleAdvisoryBeads(stores, 7*24*time.Hour); len(pruned) != 1 {
-		t.Errorf("stale finding was not retired: pruned %v", pruned)
+	if marked := MarkStaleAdvisoryBeads(stores, 7*24*time.Hour); len(marked) != 1 {
+		t.Errorf("stale finding was not marked unverified: marked %v", marked)
 	}
 }
 

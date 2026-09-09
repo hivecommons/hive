@@ -24,34 +24,37 @@ governor:
 
 ## Keeping findings current
 
-A digest is only useful if the findings on it are findings that still hold. Two
-mechanisms retire the ones that do not.
+A digest is only useful if it distinguishes current findings from findings no
+agent has recently re-verified. Only positive evidence retires a finding.
 
-### Staleness auto-close
+### Staleness marking
 
 An advisory agent re-files a finding for as long as its condition holds. The
 re-file does **not** create a second bead: the hive upserts it, refreshing the
-bead's `last_seen_at` stamp instead. That makes silence meaningful — a finding no
-agent has re-reported for `governor.advisory.staleness_days` days is one no agent
-still sees.
+bead's `last_seen_at` stamp instead. A finding no agent has re-reported for
+`governor.advisory.staleness_days` days is no longer recently verified, but
+silence alone does **not** prove the condition is gone: an agent run can be
+partial, truncated, non-deterministic, or absent.
 
-Each eval cycle, before the digest is built, the hive closes every open advisory
-bead whose `last_seen_at` is older than that window. Closed findings leave the
-open list and appear once under **Recently Resolved** before dropping out
-entirely.
+Each eval cycle, before the digest is built, the hive marks every open advisory
+bead whose `last_seen_at` is older than that window. Marked findings stay in the
+open list with a warning caption: "not re-reported within the staleness window —
+still open, but not recently verified". They do **not** appear under
+**Recently Resolved** unless another path has positive evidence of resolution.
 
 - `governor.advisory.staleness_days` — default `7`, minimum `1`. Agents re-scan
   far more often than weekly, so a week is a generous margin. Shorten it on a
   hive whose advisory agents run constantly; lengthen it on one whose agents run
-  rarely, or a finding may be closed between two runs of the agent that reports
+  rarely, or a finding may be marked stale between two runs of the agent that reports
   it.
 - Beads filed **before** this feature existed carry no `last_seen_at` and are
-  never pruned for staleness. "Not re-reported" cannot be told apart from "never
-  stamped", so those beads are left alone and close through the normal paths.
+  never marked for staleness. "Not re-reported" cannot be told apart from
+  "never stamped", so those beads are left alone and close through the normal
+  paths.
 
-The close is recorded on the bead as
-`close_reason: auto-closed: finding not re-reported within staleness window`, so
-every automatic close is inspectable with `bd show`.
+The stale marker is recorded on the bead as
+`stale_unverified: not re-reported within staleness window`, so every warning is
+inspectable with `bd show`. A fresh re-report clears it.
 
 Agents get the upsert behavior for free: `bd create --type advisory` with a title
 matching an open advisory bead refreshes that bead instead of adding a second
@@ -65,7 +68,7 @@ therefore retires the finding it addresses immediately, instead of waiting out
 the staleness window.
 
 - `governor.advisory.pr_autoclose` — default `true`. Set it to `false` to rely on
-  staleness (and explicit agent closes) alone.
+  explicit agent closes and other positive-resolution paths alone.
 - Matching is title similarity only, so it is deliberately best-effort: a finding
   closed in error comes straight back the next time an agent files it, because a
   re-file after a close opens a fresh bead.
@@ -113,7 +116,7 @@ captions it nor implies it was verified.
 
 #### Provenance and the staleness clock
 
-Provenance also fixes a hole in [staleness auto-close](#staleness-auto-close).
+Provenance also fixes a hole in [staleness marking](#staleness-marking).
 The re-report of a finding is what refreshes its `last_seen_at`, on the reasoning
 that an agent only re-files a finding while its condition holds. But agents
 re-report from **cached prior findings**, not from re-verification — so a
@@ -123,9 +126,10 @@ prune window.
 A re-report that carries the **same** `provenance_sha` the bead already records
 is therefore a restatement of evidence computed once, not fresh confirmation
 that the condition still holds. It no longer refreshes `last_seen_at`, so the
-staleness clock keeps running and `staleness_days` retires the finding on the
-normal schedule. A re-report computed at a *different* commit is a genuine
-re-check: it refreshes the stamp and records its new provenance.
+staleness clock keeps running and `staleness_days` marks the finding as
+unverified on the normal schedule. A re-report computed at a *different* commit
+is a genuine re-check: it refreshes the stamp, records its new provenance, and
+clears the stale marker.
 
 Two deliberate limits keep this from retiring findings that still hold:
 

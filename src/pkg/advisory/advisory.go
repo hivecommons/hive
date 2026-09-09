@@ -59,6 +59,10 @@ type Finding struct {
 	// stale claim and the downstream issue refuting it cannot both read as
 	// live work.
 	CachedReplays int `json:"cached_replays,omitempty"`
+	// StaleUnverified is set when the configured staleness window has passed
+	// without a fresh agent re-report. Silence is not proof of resolution, so
+	// the finding stays open and is captioned as unverified.
+	StaleUnverified bool `json:"stale_unverified,omitempty"`
 }
 
 // Snapshot identifies the single commit that a digest's analysis is pinned to.
@@ -388,11 +392,16 @@ func collapseNearDuplicates(findings []Finding) []Finding {
 //     nothing re-ran it here (#5130).
 //   - CachedReplays with no provenance — the finding's only "confirmations"
 //     were byte-identical replays of cached text (#5236).
+//   - StaleUnverified — no agent refreshed the finding inside the configured
+//     staleness window, which is absence of evidence rather than a fix.
 //
-// None of the three proves the finding is FIXED, only that it is unconfirmed
+// None of these proves the finding is FIXED, only that it is unconfirmed
 // here, so applyTopN demotes on it rather than dropping.
 func (f Finding) evidenceUnverified() bool {
 	if f.PathStale {
+		return true
+	}
+	if f.StaleUnverified {
 		return true
 	}
 	if f.ProvenanceStale && f.ProvenanceSHA != "" {
@@ -695,6 +704,7 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string, opts Dige
 			}
 			f.ProvenanceSHA = b.Meta(provenanceSHAMetadataKey)
 			f.CachedReplays, _ = strconv.Atoi(b.Meta(evidenceReplayCountMetadataKey))
+			f.StaleUnverified = b.Meta(staleUnverifiedMetadataKey) != ""
 			f = capCoverageGapSeverity(f)
 			byAgent[agentName] = append(byAgent[agentName], f)
 			total++
@@ -1176,6 +1186,8 @@ func FormatDigestMarkdown(d *Digest, opts DigestOptions) string {
 				// presents a possibly-disproved claim as live work alongside
 				// whatever downstream issue refutes it (#5236).
 				prov = fmt.Sprintf(" ⚠️ _(re-reported %d× from cached evidence, not re-verified)_", f.CachedReplays)
+			} else if f.StaleUnverified {
+				prov = " ⚠️ _(not re-reported within the staleness window — still open, but not recently verified)_"
 			}
 			b.WriteString(fmt.Sprintf("- **[%s]** %s%s%s%s _%s_\n", f.Type, linkifyRefs(title, org), loc, repeat, prov, f.Agent))
 			if detail != "" {
@@ -1307,9 +1319,9 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 		// confirmation that the condition still holds. Refreshing LastSeenAt
 		// for it is what let fixed findings outlive their fix: agents re-report
 		// from cached prior findings, PersistAsBeads read that as "still
-		// happening", and PruneStaleAdvisoryBeads never got to age them out
+		// happening", and MarkStaleAdvisoryBeads never got to flag them
 		// (#5130). Skipping the whole finding leaves the staleness clock
-		// running, so silence retires it on the normal schedule.
+		// running, so silence marks it unverified on the normal schedule.
 		//
 		// Gated on an explicit provenance SHA on BOTH sides; findings that
 		// record none take the evidence-identity gate below instead.
@@ -1354,11 +1366,11 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 			if b.Title == f.Title && b.Type == beads.TypeAdvisory {
 				// The finding is being re-reported from evidence this bead has
 				// not seen before (identical-provenance re-reports were skipped
-				// above), which is exactly the signal staleness pruning
-				// consumes: stamp it so PruneStaleAdvisoryBeads keeps this bead
-				// alive for another window. Skipping the stamp here would let a
-				// finding an agent reports every single cycle still age out and
-				// be auto-closed.
+				// above), which is exactly the signal staleness marking
+				// consumes: stamp it so MarkStaleAdvisoryBeads knows this bead
+				// was recently verified. Skipping the stamp here would let a
+				// finding an agent reports every single cycle still be marked
+				// stale.
 				_ = store.SetLastSeenAt(b.ID, time.Now())
 				if prov != "" {
 					_ = store.SetMetadata(b.ID, provenanceSHAMetadataKey, prov)
@@ -1368,6 +1380,7 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 				// the evidence visibly changed.
 				_ = store.SetMetadata(b.ID, evidenceHashMetadataKey, hash)
 				_ = store.SetMetadata(b.ID, evidenceReplayCountMetadataKey, "0")
+				_ = store.UnsetMetadata(b.ID, staleUnverifiedMetadataKey)
 				dup = true
 				break
 			}
@@ -1411,6 +1424,7 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 		for k, v := range meta {
 			_ = store.SetMetadata(b.ID, k, v)
 		}
+		_ = store.UnsetMetadata(b.ID, staleUnverifiedMetadataKey)
 		created++
 	}
 	return created

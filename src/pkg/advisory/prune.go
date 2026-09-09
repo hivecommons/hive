@@ -6,27 +6,30 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 )
 
-// staleCloseReason is stamped into a bead's metadata when staleness pruning
-// retires it. Named so logs, tests and the bead trail agree on the wording.
-const staleCloseReason = "auto-closed: finding not re-reported within staleness window"
+// staleUnverifiedReason is stamped into a bead's metadata when the staleness
+// window passes without a fresh report. That absence is not proof the finding
+// healed, so the digest must keep the bead open and caption it as unverified
+// instead of moving it to Recently Resolved.
+const staleUnverifiedReason = "not re-reported within staleness window"
 
-// PruneStaleAdvisoryBeads closes any open advisory bead whose LastSeenAt is
-// older than the staleness window, returning the closed titles for logging.
+const staleUnverifiedMetadataKey = "stale_unverified"
+
+// MarkStaleAdvisoryBeads marks any open advisory bead whose LastSeenAt is older
+// than the staleness window, returning the marked titles for logging.
 //
-// This is the general answer to "advisory beads never close": only a handful of
-// findings (app-auth access, PR-linked fixes) can be actively proven healed, but
-// EVERY finding is re-reported by its agent for as long as the condition holds.
-// So absence of a re-report within the window is the evidence a finding is gone,
-// and the digest stops carrying it.
+// Silence from an advisory agent is not positive evidence that a finding is
+// gone: runs can be partial, truncated, non-deterministic, or absent. Keep the
+// finding open unless another path has proof of resolution (for example a
+// referenced GitHub issue actually closed).
 //
-// Beads with a nil LastSeenAt are never pruned: they were filed before Upsert
+// Beads with a nil LastSeenAt are never marked: they were filed before Upsert
 // existed, so "not re-reported" cannot be distinguished from "never stamped",
-// and closing them would silently retire findings that may well still hold.
-func PruneStaleAdvisoryBeads(stores map[string]*beads.Store, window time.Duration) []string {
+// and marking them would warn on findings that may never have had a clock.
+func MarkStaleAdvisoryBeads(stores map[string]*beads.Store, window time.Duration) []string {
 	if window <= 0 {
 		return nil
 	}
-	var closed []string
+	var marked []string
 	for _, store := range stores {
 		if store == nil {
 			continue
@@ -44,15 +47,21 @@ func PruneStaleAdvisoryBeads(stores map[string]*beads.Store, window time.Duratio
 			if time.Since(b.LastSeenAt.Time) <= window {
 				continue
 			}
-			title := b.Title
-			if err := store.Update(b.ID, func(bd *beads.Bead) {
-				bd.Status = beads.StatusClosed
-			}); err != nil {
+			if b.Meta(staleUnverifiedMetadataKey) != "" {
 				continue
 			}
-			_ = store.SetMetadata(b.ID, closeReasonMetadataKey, staleCloseReason)
-			closed = append(closed, title)
+			title := b.Title
+			if err := store.SetMetadata(b.ID, staleUnverifiedMetadataKey, staleUnverifiedReason); err != nil {
+				continue
+			}
+			marked = append(marked, title)
 		}
 	}
-	return closed
+	return marked
+}
+
+// PruneStaleAdvisoryBeads is kept for older callers. It no longer closes beads:
+// absence of a report is only an unverified/stale signal, never a resolution.
+func PruneStaleAdvisoryBeads(stores map[string]*beads.Store, window time.Duration) []string {
+	return MarkStaleAdvisoryBeads(stores, window)
 }

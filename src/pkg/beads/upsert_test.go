@@ -20,7 +20,7 @@ func TestBeadUpsert(t *testing.T) {
 	}
 	firstSeen, ok := first.LastSeen()
 	if !ok {
-		t.Fatal("first upsert did not stamp LastSeenAt — staleness pruning would never consider this bead")
+		t.Fatal("first upsert did not stamp LastSeenAt — staleness marking would never consider this bead")
 	}
 
 	// Cosmetic drift only (a different run number): the SAME finding.

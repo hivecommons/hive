@@ -48,8 +48,8 @@ func TestFindingEvidenceHashDiscriminatesEveryField(t *testing.T) {
 // TestPersistAsBeadsIdenticalNoProvenanceReplayDoesNotRefresh is the #5236
 // regression fixture. The first report must create a normally-stamped bead (a
 // genuinely new no-provenance finding is never silently discarded); identical
-// cached re-reports must NOT refresh the staleness clock, so pruning finally
-// retires the bead on the normal schedule.
+// cached re-reports must NOT refresh the staleness clock, so staleness marking
+// finally captions the bead as unverified on the normal schedule.
 func TestPersistAsBeadsIdenticalNoProvenanceReplayDoesNotRefresh(t *testing.T) {
 	store, err := beads.NewStore(t.TempDir())
 	if err != nil {
@@ -92,9 +92,10 @@ func TestPersistAsBeadsIdenticalNoProvenanceReplayDoesNotRefresh(t *testing.T) {
 		t.Fatalf("replays created extra beads: store holds %d", n)
 	}
 
-	// The whole point: the disproved finding now ages out within one window.
-	if pruned := PruneStaleAdvisoryBeads(stores, 7*24*time.Hour); len(pruned) != 1 {
-		t.Errorf("stale replayed finding was not retired: pruned %v", pruned)
+	// The whole point: a replayed finding is marked as unverified within one window
+	// instead of being presented as freshly confirmed.
+	if marked := MarkStaleAdvisoryBeads(stores, 7*24*time.Hour); len(marked) != 1 {
+		t.Errorf("stale replayed finding was not marked unverified: marked %v", marked)
 	}
 }
 

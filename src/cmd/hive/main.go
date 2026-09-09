@@ -6704,16 +6704,15 @@ func runEvalCycle(
 		primaryRepo == primaryRepoAtCycleStart &&
 		hadPinnedAdvisoryIssueAtCycleStart
 	if shouldBuildAdvisoryDigest(beadStores, ghClient, hasExistingPinnedIssueForEmptyDigest) {
-		// Retire findings no agent has re-reported inside the staleness window
-		// BEFORE the digest is built, so a stale finding never appears in the
-		// comment one last time after it has been proven gone. Agents re-file a
-		// finding for as long as its condition holds (beads.Store.Upsert), so
-		// silence is the evidence here.
+		// Mark findings no agent has re-reported inside the staleness window
+		// BEFORE the digest is built, so stale evidence is captioned. Silence is
+		// not proof a finding healed: an agent run can be partial, truncated, or
+		// non-deterministic, so absence cannot move an item to Recently Resolved.
 		advCfg := cfg.Governor.Advisory
 		if advCfg.StalenessDays > 0 {
-			if pruned := advisory.PruneStaleAdvisoryBeads(beadStores, time.Duration(advCfg.StalenessDays)*24*time.Hour); len(pruned) > 0 {
-				logger.Info("closed stale advisory findings not re-reported within the staleness window",
-					"count", len(pruned), "staleness_days", advCfg.StalenessDays, "titles", strings.Join(pruned, "; "))
+			if marked := advisory.MarkStaleAdvisoryBeads(beadStores, time.Duration(advCfg.StalenessDays)*24*time.Hour); len(marked) > 0 {
+				logger.Info("marked advisory findings not re-reported within the staleness window",
+					"count", len(marked), "staleness_days", advCfg.StalenessDays, "titles", strings.Join(marked, "; "))
 			}
 		}
 		// Repo entries may be org-qualified ("org/repo"); the digest linkifier

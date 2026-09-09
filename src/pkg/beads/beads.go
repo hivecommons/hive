@@ -120,9 +120,9 @@ type Bead struct {
 	// LastSeenAt is when this bead's underlying condition was last CONFIRMED
 	// to still hold — set by Upsert every time an agent re-files the same
 	// finding. It is deliberately distinct from UpdatedAt, which any edit
-	// touches: staleness pruning needs "nobody has re-reported this", not
+	// touches: staleness marking needs "nobody has re-reported this", not
 	// "nothing has written to this". nil means the bead predates Upsert and is
-	// never pruned for staleness.
+	// never marked for staleness.
 	LastSeenAt *flexTime `json:"last_seen_at,omitempty"`
 	DependsOn  []string  `json:"depends_on,omitempty"`
 }
