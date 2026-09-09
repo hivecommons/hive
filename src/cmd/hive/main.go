@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -12,6 +13,21 @@ import (
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/proclock"
 )
+
+func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
+	if len(args) == 0 {
+		return false, 0
+	}
+	switch args[0] {
+	case "--version", "version":
+		fmt.Fprintf(stdout, "hive %s (commit %s, branch %s)\n", version, gitShort, gitBranch)
+		return true, 0
+	case "validate", "--config-check":
+		return true, runConfigCheck(args[1:], stdout, stderr)
+	default:
+		return false, 0
+	}
+}
 
 func main() {
 	// Startup order is intentionally linear and dependency-ordered:
@@ -28,9 +44,8 @@ func main() {
 	// standard flag set would reject it ("flag provided but not defined").
 	// dd's full CLI dispatcher handles this via a version subcommand; this is
 	// the minimal equivalent for the v4 line.
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
-		fmt.Printf("hive %s (commit %s, branch %s)\n", version, gitShort, gitBranch)
-		return
+	if handled, code := dispatchSubcommand(os.Args[1:], os.Stdout, os.Stderr); handled {
+		os.Exit(code)
 	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"

@@ -136,7 +136,42 @@ func (w *spokeWire) wireSpokeManagersAndLinear() {
 		})
 	}
 
-	w.dashSrv.RegisterAPI(&dashboard.Dependencies{
+	w.dashSrv.RegisterAPI(w.dashboardDependencies())
+	// Forge App tab inventory: the resolved active key path and the per-app-id
+	// PVC keys live here in cmd/hive, so they are injected as a provider (the
+	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
+	// provider never touches key material.
+	w.dashSrv.SetForgeAppInventoryFn(func() dashboard.ForgeAppInventory {
+		held := appKeys.HeldFingerprints()
+		keys := make([]dashboard.ForgeAppKey, 0, len(held))
+		for idStr, fp := range held {
+			keys = append(keys, dashboard.ForgeAppKey{
+				AppID:       idStr,
+				Path:        appKeys.PerAppIDKeyPathFor(idStr),
+				Fingerprint: fp,
+			})
+		}
+		return dashboard.ForgeAppInventory{
+			ActiveKeyFile: appKeys.Resolve(w.cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), w.cfg.GitHub.AppID),
+			HeldKeys:      keys,
+		}
+	})
+
+	w.dashSrv.SetGitHubAppRequired(w.githubAppRequired)
+	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
+	// classified state is applied only after it, and only when a failure was
+	// actually detected.
+	if w.githubAppRequired {
+		w.dashSrv.SetGitHubAppState(w.githubAppState.String())
+		if w.githubAppDiag != "" {
+			w.dashSrv.SetGitHubAppPermIssue(w.githubAppDiag)
+		}
+	}
+
+}
+
+func (w *spokeWire) dashboardDependencies() *dashboard.Dependencies {
+	return &dashboard.Dependencies{
 		Config:   w.cfg,
 		AgentMgr: w.agentMgr,
 		// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
@@ -193,6 +228,12 @@ func (w *spokeWire) wireSpokeManagersAndLinear() {
 		},
 		EnumerateFunc: func() {
 			runEvalCycle(w.ctx, w.cfg, w.ghClient, w.gov, w.sched, w.agentMgr, w.dashSrv, w.notifier, w.beadStores, w.tokenCollector, w.metricsCollector, w.nousState, &w.lastActionable, w.advisoryStore, w.advisoryIssues, nil, w.approvalDesk, w.logger)
+		},
+		// The REPOSITORIES "Rescan" button. Unlike EnumerateFunc above — which
+		// runs the WHOLE eval cycle, kicks included — this only refreshes what
+		// the operator is looking at. See rescanRepos.
+		RescanReposFunc: func(rescanCtx context.Context) (*github.ActionableResult, error) {
+			return rescanRepos(rescanCtx, w.cfg, w.ghClient, &w.lastActionable, w.refreshDashboard, w.logger)
 		},
 		AdvisoryResetFunc: func(newPrimaryRepo string) {
 			w.logger.Info("advisory reset: primary repo changed, creating new advisory issue", "repo", newPrimaryRepo)
@@ -276,39 +317,7 @@ func (w *spokeWire) wireSpokeManagersAndLinear() {
 		ResolveAppKeyFileFunc: func(configured string, appID int64) string {
 			return appKeys.Resolve(configured, os.Getenv("GH_APP_KEY_FILE"), appID)
 		},
-	})
-
-	// Forge App tab inventory: the resolved active key path and the per-app-id
-	// PVC keys live here in cmd/hive, so they are injected as a provider (the
-	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
-	// provider never touches key material.
-	w.dashSrv.SetForgeAppInventoryFn(func() dashboard.ForgeAppInventory {
-		held := appKeys.HeldFingerprints()
-		keys := make([]dashboard.ForgeAppKey, 0, len(held))
-		for idStr, fp := range held {
-			keys = append(keys, dashboard.ForgeAppKey{
-				AppID:       idStr,
-				Path:        appKeys.PerAppIDKeyPathFor(idStr),
-				Fingerprint: fp,
-			})
-		}
-		return dashboard.ForgeAppInventory{
-			ActiveKeyFile: appKeys.Resolve(w.cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), w.cfg.GitHub.AppID),
-			HeldKeys:      keys,
-		}
-	})
-
-	w.dashSrv.SetGitHubAppRequired(w.githubAppRequired)
-	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
-	// classified state is applied only after it, and only when a failure was
-	// actually detected.
-	if w.githubAppRequired {
-		w.dashSrv.SetGitHubAppState(w.githubAppState.String())
-		if w.githubAppDiag != "" {
-			w.dashSrv.SetGitHubAppPermIssue(w.githubAppDiag)
-		}
 	}
-
 }
 
 func (w *spokeWire) wireSpokeAppCallbacks() {
