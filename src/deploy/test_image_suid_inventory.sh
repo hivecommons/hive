@@ -162,7 +162,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ${APT_PACKAGES}
  && rm -rf /var/lib/apt/lists/*
 ARG SU_EXEC_COMMIT=${SU_EXEC_COMMIT}
 ARG SU_EXEC_SHA256=${SU_EXEC_SHA256}
-RUN curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \\
+RUN curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \\
       -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/\${SU_EXEC_COMMIT}/su-exec.c" \\
  && echo "\${SU_EXEC_SHA256}  /tmp/su-exec.c" | sha256sum -c - \\
  && gcc -Wall -o /usr/local/bin/su-exec /tmp/su-exec.c \\

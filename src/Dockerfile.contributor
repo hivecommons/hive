@@ -113,7 +113,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64|aarch64) MUSE_FILE=muse-aarch64-linux; MUSE_SHA256="$MUSE_SHA256_ARM64" ;; \
       *) echo "unsupported arch for muse: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+    curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors \
       -o /tmp/muse "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_VERSION}&file=${MUSE_FILE}" && \
     echo "${MUSE_SHA256}  /tmp/muse" | sha256sum -c - && \
     install -m 0755 /tmp/muse /usr/local/bin/muse && \
@@ -156,7 +156,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
        *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
      esac \
-  && if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
        -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz"; then \
        echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - \
@@ -234,7 +234,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        *) echo "unsupported arch for agy: $ARCH" >&2; exit 1 ;; \
      esac \
   && mkdir -p /tmp/agy-dl \
-  && if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 180 \
        "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}/${AGY_PLATFORM}/${AGY_TARBALL}" \
        -o /tmp/agy-dl/agy.tar.gz; then \
