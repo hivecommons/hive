@@ -222,7 +222,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			primary = scoped[0]
 		}
 		if primary != "" {
-			vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
+			vars = append(vars, agentEnvPair{"HIVE_REPO", config.QualifyRepo(m.project.Org, primary), false})
 		}
 		// HIVE_REPOS is the work scope templates iterate: the agent's own repos
 		// (#6204) minus any the operator has paused (#6203). HIVE_REPO above is
@@ -231,7 +231,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		active := m.project.ActiveReposFor(agent.Name)
 		full := make([]string, len(active))
 		for i, r := range active {
-			full[i] = m.project.Org + "/" + r
+			full[i] = config.QualifyRepo(m.project.Org, r)
 		}
 		vars = append(vars, agentEnvPair{"HIVE_REPOS", strings.Join(full, ","), false})
 	}

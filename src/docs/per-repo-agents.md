@@ -103,7 +103,12 @@ The `AgentSpec` **interface is unchanged**. Scope is a separate optional
 interface (`RepoScoped`) read through `skillreg.SpecRepos`, because adding a
 sixth method would break every existing third-party implementation at compile
 time — a spec that compiled last release would stop compiling. A spec with no
-scope is hive-wide, exactly as every spec written before the field was.
+scope is hive-wide, exactly as every spec written before the field was. On
+config load and reload, a spec `repos:` list is copied into the agent config
+and marked `repos_owner: spec`, so the proxy, relays and kick filtering enforce
+it through the same `Config.AgentServesRepo` predicate as dashboard-defined
+scopes. If an operator explicitly sets `repos_owner: operator`, that operator
+choice wins over the spec until the owner marker is cleared.
 
 A `repos:` key that is present but names nothing (`repos: ["", "  "]`) is
 rejected at parse time: it would read as "scoped" while silently widening the
@@ -169,7 +174,9 @@ will look at it.
 ACMM packs reconcile the roster on **every** restart, and the ownership marker
 family (#5632/#5706) exists because a pack that does not know a field was chosen
 by a human silently reverts it on the next pod roll. `repos` carries the same
-marker: an operator edit stamps `repos_owner: operator`.
+marker: an operator edit stamps `repos_owner: operator`, while a BYO spec
+stamps `repos_owner: spec` when its scope is loaded. Operator-owned scopes are
+left alone on subsequent spec reloads; otherwise the spec is authoritative.
 
 No pack ships a repo scope today, so nothing reconciles it away today. The
 marker is there so a pack that someday does cannot widen a specialist back to

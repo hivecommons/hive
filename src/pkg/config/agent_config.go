@@ -643,6 +643,10 @@ const (
 	// FieldOwnerOperator marks a value an operator chose in the Governor grid.
 	// Operator-owned values are never overwritten by a pack apply.
 	FieldOwnerOperator = "operator"
+	// FieldOwnerSpec marks a value sourced from a BYO agent spec. Spec-owned
+	// values are refreshed from the spec on config load/reload unless the
+	// operator has explicitly taken ownership.
+	FieldOwnerSpec = "spec"
 )
 
 // ModelIsOperatorOwned reports whether an operator explicitly chose this

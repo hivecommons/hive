@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // scopeOf builds the predicate the proxy takes from a simple agent → repos map,
@@ -51,6 +54,44 @@ func readRefusal(t *testing.T, c net.Conn) string {
 	}
 	_ = c.SetReadDeadline(time.Time{})
 	return sb.String()
+}
+
+func TestAgentRepoScopeRefusal_UsesReposFromAgentSpec(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "schema.yaml")
+	if err := os.WriteFile(specPath, []byte(`name: schema
+backend: copilot
+model: auto
+repos: [console]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "hive.yaml")
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`project:
+  org: acme
+  repos: [console, dashboard]
+agents:
+  schema:
+    backend: copilot
+    model: auto
+    agent_spec: %q
+github:
+  token: test
+`, specPath)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadWithOverrides(configPath, "-")
+	if err != nil {
+		t.Fatalf("LoadWithOverrides: %v", err)
+	}
+
+	if _, refused := AgentRepoScopeRefusal(cfg.AgentServesRepo, "schema", http.MethodPost, "/repos/acme/console/issues"); refused {
+		t.Fatal("refused an in-scope repo from the agent spec")
+	}
+	if _, refused := AgentRepoScopeRefusal(cfg.AgentServesRepo, "schema", http.MethodPost, "/repos/acme/dashboard/issues"); !refused {
+		t.Fatal("allowed an out-of-scope repo because the spec repos were not wired into config")
+	}
 }
 
 // The scope refuses writes and only writes. It says which repos an agent is

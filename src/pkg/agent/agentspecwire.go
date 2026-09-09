@@ -63,6 +63,10 @@ func applyAgentSpecConfig(cfg config.AgentConfig) (config.AgentConfig, string, b
 	if len(spec.Skills) > 0 {
 		cfg.Skills = append([]string(nil), spec.Skills...)
 	}
+	if cfg.ReposOwner != config.FieldOwnerOperator {
+		cfg.Repos = append([]string(nil), skillreg.SpecRepos(spec)...)
+		cfg.ReposOwner = config.FieldOwnerSpec
+	}
 	if spec.Tools != nil {
 		cfg.Tools = &config.ToolsConfig{
 			Preset: spec.Tools.Preset,
