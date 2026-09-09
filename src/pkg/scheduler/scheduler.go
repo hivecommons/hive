@@ -1281,6 +1281,10 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool) string
 
 // buildCIFailingListFor renders the CI-failing list narrowed to the repos the
 // predicate accepts (#6204). A nil predicate keeps everything.
+func (s *Scheduler) buildCIFailingList() string {
+	return s.buildCIFailingListFor(nil)
+}
+
 func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	data, err := os.ReadFile(ciFailingPath)
 	if err != nil {
