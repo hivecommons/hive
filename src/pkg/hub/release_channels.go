@@ -91,9 +91,15 @@ type ChannelTarget struct {
 	Branch string `json:"branch,omitempty"`
 
 	// SHA is the short commit SHA displayed for this channel. It comes from the
-	// matched branch's resolved SHA when Branch is set; otherwise it is empty
-	// and the UI falls back to showing the digest.
+	// matched branch's resolved SHA when Branch is set; otherwise from the
+	// image's revision label; empty only when neither is known, and the UI
+	// falls back to showing the digest.
 	SHA string `json:"sha,omitempty"`
+
+	// Message is the first line of SHA's commit message when SHA came from the
+	// revision label (no Branch): the UI has per-branch messages for matched
+	// rows, but nothing keyed by a bare SHA, so the row carries its own.
+	Message string `json:"message,omitempty"`
 
 	// Digest is the registry digest the channel tag resolves to, or "" when the
 	// channel could not be resolved at all (tag absent, or GHCR unreachable).
@@ -229,6 +235,9 @@ func resolveChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []
 				// digest prefix that looks like an unrelated commit (#6294).
 				// Branch stays empty: a label names a commit, not a branch.
 				t.SHA = channelRevisionSHA(ch, logger)
+				if t.SHA != "" {
+					t.Message = commitMessageForSHA(t.SHA, logger)
+				}
 			}
 		}
 		out = append(out, t)
@@ -283,4 +292,32 @@ func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []Chan
 	channelTargetCachedAt = time.Now()
 	channelTargetMu.Unlock()
 	return append([]ChannelTarget(nil), fresh...)
+}
+
+// commitMessageForSHA returns the first line of sha's commit message, serving
+// the SHA-poll cache when it has it and otherwise fetching once and caching.
+// Looked up via the channelCommitMessage hook so tests stay off the network.
+func commitMessageForSHA(sha string, logger *slog.Logger) string {
+	sha = shortSHA(sha)
+	latestSHAMu.RLock()
+	msg, ok := commitMsgBySHA[sha]
+	latestSHAMu.RUnlock()
+	if ok {
+		return msg
+	}
+	msg = channelCommitMessage(sha, logger)
+	if msg == "" {
+		return ""
+	}
+	latestSHAMu.Lock()
+	commitMsgBySHA[sha] = msg
+	latestSHAMu.Unlock()
+	return msg
+}
+
+// channelCommitMessage is the network read behind commitMessageForSHA; a var
+// so tests can stub it.
+var channelCommitMessage = func(sha string, logger *slog.Logger) string {
+	client := &http.Client{Timeout: channelResolveTimeout}
+	return fetchCommitMessage(client, sha, logger)
 }

@@ -2741,6 +2741,57 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		hbTarget = ""
 	}
 
+	// Delivery-time guard for the hub-managed fallback: whatever armed
+	// hbTarget, a spoke on a release channel can only land on the commit its
+	// channel tag carries. If the armed target is anything else (a branch tip
+	// armed before #6294, or by a path that still reads the tip), re-aim it at
+	// the channel's commit — or drain it when the spoke is already there.
+	// Without this a :stable spoke armed at the v4 tip re-pulls :stable, comes
+	// back on the same commit, and is re-told to upgrade on every beat:
+	// "Upgrading" forever, ✓ on the SHA (12 spokes on 2026-09-09).
+	if hbTarget != "" && payload.GitHash != "" {
+		trackedChannel := ""
+		if saasHive != nil {
+			trackedChannel = saasHive.TrackedChannel
+		}
+		if channel := spokeReleaseChannel(payload.ImageRef, trackedChannel); channel != "" {
+			reach := s.reachableUpgradeTarget(branch, payload.ImageRef, trackedChannel)
+			switch {
+			case !reach.Resolved || reach.SHA == "":
+				// Unknown reachable set: do not deliver a target we cannot vouch for.
+				s.logger.Warn("heartbeat: hub-managed upgrade withheld — the spoke's release channel did not resolve to a commit",
+					"hive_id", payload.HiveID, "channel", channel, "armed_target", hbTarget)
+				hbTarget = ""
+			case sameCommit(payload.GitHash, reach.SHA) || commitAtOrAheadOfTarget(payload.GitHash, reach.SHA, s.logger):
+				s.logger.Info("heartbeat: draining hub-managed upgrade — spoke is at its release channel's commit",
+					"hive_id", payload.HiveID, "channel", channel, "current", payload.GitHash, "armed_target", hbTarget)
+				s.mu.Lock()
+				delete(s.heartbeatUpgrade, payload.HiveID)
+				for i := range s.registry.Hives {
+					if s.registry.Hives[i].ID == payload.HiveID {
+						s.clearUpgradeLatch(i)
+						break
+					}
+				}
+				s.mu.Unlock()
+				hbTarget = ""
+			case !sameCommit(hbTarget, reach.SHA):
+				s.logger.Info("heartbeat: re-aiming hub-managed upgrade at the spoke's release channel",
+					"hive_id", payload.HiveID, "channel", channel, "armed_target", hbTarget, "reachable", reach.SHA)
+				s.mu.Lock()
+				s.heartbeatUpgrade[payload.HiveID] = reach.SHA
+				for i := range s.registry.Hives {
+					if s.registry.Hives[i].ID == payload.HiveID {
+						s.registry.Hives[i].UpgradeTarget = reach.SHA
+						break
+					}
+				}
+				s.mu.Unlock()
+				hbTarget = reach.SHA
+			}
+		}
+	}
+
 	// Chase-latest target for a spoke-managed hive, resolved through the tag
 	// its Deployment actually tracks (#5994). A spoke on :stable can only ever
 	// land on the digest :stable carries, so answering every beat with branch

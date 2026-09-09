@@ -321,10 +321,11 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 	// registry, not stored on the SaaS record — same lookup
 	// handleToggleAutoUpgrade performs before computing an upgrade target.
 	s.mu.RLock()
-	branch := ""
+	branch, imageRef := "", ""
 	for _, reg := range s.registry.Hives {
 		if reg.ID == id {
 			branch = reg.GitBranch
+			imageRef = reg.ImageRef
 			break
 		}
 	}
@@ -332,7 +333,14 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 	if branch == "" {
 		branch = bulkDefaultBranch
 	}
-	latestSHA := getLatestSHAForBranch(branch)
+	// The spoke's REACHABLE latest, not the branch tip: a release-channel
+	// spoke can only land on its channel's commit (#6294). Resolved outside
+	// s.mu because the channel lookup may consult GHCR.
+	reach := s.reachableUpgradeTarget(branch, imageRef, h.TrackedChannel)
+	if action == bulkActionUpgrade && !reach.Resolved {
+		return BulkHiveResult{HiveID: id, Ok: false, Error: "release channel " + reach.Channel + " did not resolve to a commit"}
+	}
+	latestSHA := reach.SHA
 
 	// PULL ONLY — no kubectl push. An upgrade is delivered by arming
 	// heartbeatUpgrade below; a plain restart is delivered by arming the

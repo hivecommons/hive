@@ -4904,6 +4904,32 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	// Refused with 409, matching the pause-switch refusal above. The reason is
 	// operator-facing by construction and documented to carry no kubeconfig
 	// paths or credentials, so it is safe in the body.
+	//
+	// The target is the spoke's REACHABLE latest (reachableUpgradeTarget), not
+	// the branch tip: a spoke pinned to a release channel can only ever land
+	// on the commit its channel tag points at, so arming the v4 tip for a
+	// :stable spoke wedges it — it re-pulls :stable, comes back on the same
+	// commit, and stays "Upgrading" against a target it cannot reach (#6294).
+	// Resolved OUTSIDE s.mu: the channel lookup may consult GHCR.
+	s.mu.RLock()
+	var regBranch, regImageRef string
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == id {
+			regBranch = s.registry.Hives[i].GitBranch
+			regImageRef = s.registry.Hives[i].ImageRef
+			break
+		}
+	}
+	s.mu.RUnlock()
+	reach := s.reachableUpgradeTarget(s.upgradeBranchOrDefault(regBranch), regImageRef, h.TrackedChannel)
+	if !reach.Resolved {
+		s.logger.Warn("manual upgrade not armed — the spoke's release channel did not resolve to a commit",
+			"hive_id", id, "by", username, "channel", reach.Channel, "image_ref", regImageRef)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "release channel " + reach.Channel + " did not resolve to a commit — try again shortly"})
+		return
+	}
 	s.mu.Lock()
 	var latestSHA, lastHeartbeat string
 	var found bool
@@ -4911,8 +4937,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		if s.registry.Hives[i].ID == id {
 			found = true
 			lastHeartbeat = s.registry.Hives[i].LastHeartbeat
-			branch := s.upgradeBranchOrDefault(s.registry.Hives[i].GitBranch)
-			latestSHA = getLatestSHAForBranch(branch)
+			latestSHA = reach.SHA
 			break
 		}
 	}
@@ -6654,8 +6679,14 @@ func (s *HubServer) triggerAutoUpgrades() {
 					// the target that was requested — with AutoUpgrade off,
 					// silently delivering a newer build than the one the owner
 					// clicked would override their setting.
-					if latestSHA := getLatestSHAForBranch(branch); latestSHA != "" && latestSHA != upgradeTarget {
-						recoverTarget = latestSHA
+					//
+					// Advance to the spoke's REACHABLE latest, never the raw
+					// branch tip: a :stable spoke re-armed at the v4 tip can
+					// only re-pull :stable, so it would wedge on an unreachable
+					// target forever (#6294). An unresolved channel keeps the
+					// old target rather than inventing one.
+					if reach := s.reachableUpgradeTarget(branch, imageRef, h.TrackedChannel); reach.Resolved && reach.SHA != "" && reach.SHA != upgradeTarget {
+						recoverTarget = reach.SHA
 					}
 				}
 				if recoverTarget != upgradeTarget {
@@ -16101,7 +16132,7 @@ const dashboardHTML = `<!DOCTYPE html>
                  names its commit. Show THAT — it is the same SHA the spokes on
                  this channel report, so the header and the fleet agree. Still
                  no branch pill: a label names a commit, not a branch. */
-              ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest || '') + '">' + esc(ct.sha) + '</span>';
+              ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest || '') + '">' + esc(ct.sha) + '</span>' + (ct.message ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(ct.message) + '</span>' : '');
             } else if (ct.digest) {
               /* Resolved, but to something no tracked branch points at and
                  whose image carries no revision label. Show the digest so the
