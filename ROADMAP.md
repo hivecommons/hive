@@ -175,6 +175,7 @@ Highlights from the last month of merges to `v4` (and `v5` where noted):
 Candidate themes, deliberately not committed — see the
 [Later section of the detailed roadmap](src/docs/roadmap.md#later):
 
+- Gitea/Forgejo forge program sequencing is proposed against the v5 GA bar: Wave 0 docs-only ADRs now, Wave 1 behind `pkg/forge` on `v5`, and enumeration-policy extraction only post-GA-cut or v5-first without resetting the required-gate soak ([#6177](https://github.com/hivecommons/hive/issues/6177), [#6167](https://github.com/hivecommons/hive/issues/6167)).
 - Cross-forge orchestration (GitHub, GitLab, Forgejo/Gitea) on the
   `pkg/forge` abstraction.
 - Memory and learning maturation: durable, auditable priming from retro
