@@ -630,7 +630,9 @@ jobs:
   # memory) keeps working. Fails closed: every shard AND the partition job
   # must succeed — a failed/skipped partition means packages may not have run.
   test:
-    if: always()
+    # Do not run this aggregate in concurrency-cancelled twin runs (#6293);
+    # the surviving run still fail-closes on any non-success shard result.
+    if: ${{ !cancelled() }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","hive"]') || 'ubuntu-latest' }}
     needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     steps:
