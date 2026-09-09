@@ -32,7 +32,7 @@ func TestSandboxRuntimePrecedence(t *testing.T) {
 func TestSandboxJobMergeSemantics(t *testing.T) {
 	global := AgentSandboxConfig{Job: &SandboxJobConfig{
 		WorkspaceClaim: "hive-data", WorkspaceClaimMount: "/data", TTLSeconds: 900,
-		NodeSelector: map[string]string{"pool": "general"},
+		NodeSelector:   map[string]string{"pool": "general"},
 		EnvFromSecrets: []string{"global-secret"},
 	}}
 	var nilAgent *AgentConfig
