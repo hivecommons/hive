@@ -115,6 +115,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 ## Architecture and design
 
 - [Architecture](architecture.md) — process model, governor loop, guardrails, hub/spoke, and walkthrough.
+- [Automatic repo ACMM onboarding reconciler](design/repo-acmm-onboarding.md) — proposed design for per-repo ACMM targets, gap-to-work reconciliation, human hand-off, waivers, and anti-gaming controls (RFC #6235).
 - [Hive federation design](https://github.com/hivecommons/hive/blob/v4/docs/federation-design.md) — the multi-hive registry: live `/api/hives` endpoints, project onboarding, contributor flow across hubs, and what remains future design work.
 - [Public roadmap](roadmap.md) — the v4 direction as Now / Next / Later, with the tracking issue behind each item. Directional rather than a promise, maintained by pull request; check the date in its header before relying on the ordering.
 - [Landscape and positioning](landscape.md) — how Hive's operations-plane design compares to nearby agentic orchestration tools, with public references per project. Explicitly time-sensitive; check the conducted date in its header before quoting product details.

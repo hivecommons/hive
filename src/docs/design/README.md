@@ -21,6 +21,12 @@ that status is the thing to check before treating a page as current behaviour:
 ## Records
 
 - [Gate-integrity invariants for agent lanes](gate-integrity-invariants.md) — **design only / proposed.** Names the write-gate invariants for agent lanes: no history rewrites on branches a lane did not create, no agent sign-off on other authors' commits, and ACMM demotion for gate manipulation.
+- [Automatic repo ACMM onboarding reconciler](repo-acmm-onboarding.md) — **proposed.**
+  Design for per-repo ACMM targets, gap-to-work reconciliation, explicit
+  `agent-actionable` / `needs-human` / `waived` classification, and the
+  anti-gaming controls required before agents generate onboarding PRs. Credits
+  RFC #6235 and relates it to #6111, #6264, and #6208.
+
 - [Hub master secret rotation](master-key-rotation.md) — **partly shipped.** Why
   every signing value on the platform (heartbeat bearer, session cookie, session
   and SSO Ed25519 seeds, impersonate, terminal, invite keys) is a pure function
