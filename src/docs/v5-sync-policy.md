@@ -84,6 +84,44 @@ Before merge, a sync PR must have:
   they are not required for the sync).
 - DCO present on the merge commit.
 
+## Inherited DCO failures from v4
+
+A v4→v5 sync PR can inherit DCO failures from commits that already landed on
+`v4`. The current failure mode is Tide squash history: Tide builds the squash
+commit from the PR title/body and the PR author's identity, so the resulting
+commit can either drop `Signed-off-by:` entirely or keep a trailer for a
+different identity. A common example is an author email such as
+`andan02@gmail.com` with a retained trailer for `andy@clubanderson.com`; DCO
+checks compare the trailer email to the commit author email, not just the human
+name.
+
+Do not hand-swap the `dco-signoff` label as the normal response. Instead:
+
+1. Identify the offending v4 squash commits with the post-merge checker:
+
+   ```sh
+   src/scripts/check-dco-trailers.sh 50 origin/v4
+   ```
+
+   Increase the window when the sync range is larger than the default.
+2. Fix the source of the bad protected-branch commits. The preferred ask to the
+   Prow/Tide config owner is tracked in
+   [#6312](https://github.com/hivecommons/hive/issues/6312): either configure
+   Tide's squash commit template for `v4`/`v5` to emit a `Signed-off-by:` trailer
+   whose email matches the squash commit author, or use a merge mode such as
+   `--no-ff`/rebase for signed branches so reviewed signed commits are preserved.
+   That Prow/Tide configuration is outside this repository.
+3. For the sync PR itself, use a real merge commit that preserves the original
+   v4 SHAs. Never rewrite another contributor's commits and never add a
+   sign-off on someone else's behalf; see
+   [#6329](https://github.com/hivecommons/hive/issues/6329). If a maintainer
+   performs a DCO override for the sync PR, record it as a PR comment listing
+   every affected SHA and the reason the override is acceptable.
+
+Contributors can avoid the author/trailer mismatch class by configuring
+`git user.email` to match the email they put in their `Signed-off-by:` trailer
+before commits are merged or squashed.
+
 ## Confirming zero delta
 
 After fetching both branches, this command reports how many v4 commits are not
